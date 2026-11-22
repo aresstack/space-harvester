@@ -71,7 +71,9 @@ class FillJobsTest {
                 }
             }
             if (failing.contains(key.pageId())) {
-                throw new IllegalStateException("Quelle drosselt");
+                throw new com.aresstack.spaceharvester.application.sources.SourceAccessException("wiki",
+                        com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNAVAILABLE,
+                        "erfunden", null);
             }
             loaded.add(key.pageId());
             gaps.remove(key.pageId());
@@ -136,6 +138,8 @@ class FillJobsTest {
         assertThat(done.progress().discovered()).isEqualTo(done.progress().processed());
         assertThat(done.error().code()).isEqualTo(FillJobs.PAGES_MISSING);
         assertThat(loaded).containsExactly("1");
+        // Der Grund kommt vom Ticket des Planers, nicht „unbekannt“ (Codex #1087).
+        assertThat(jobs.events(done.id())).anySatisfy(event -> assertThat(event.message()).contains("UNAVAILABLE"));
     }
 
     @Test

@@ -101,7 +101,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     public FillJobs(BackgroundJobs background, Jobs jobs) {
         this.background = Objects.requireNonNull(background, "background");
         Objects.requireNonNull(jobs, "jobs");
-        background.register(new BackgroundKind(KIND, this::work, () -> true, false, true));
+        // Ausschließlich je Quelle und Space: Ein fortgesetzter alter Teil verdrängt nie den laufenden (Codex #1087).
+        background.register(new BackgroundKind(KIND, this::work, () -> true, true, true));
         synchronized (monitor) {
             for (JobStatus status : jobs.listAll(JobType.SYNC)) {
                 if (status.state() == JobState.COMPLETED) {
@@ -228,9 +229,11 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     public void handed(BackgroundFill.Where where) {
         Live part;
         boolean start;
+        // Außerhalb der eigenen Sperre: canRun nimmt die Sperre der Aufträge, deren Stopp-Rückruf diese hier nimmt.
+        boolean canRun = background.canRun();
         synchronized (monitor) {
             part = live.get(where);
-            start = part == null && !open.contains(where) && background.canRun();
+            start = part == null && !open.contains(where) && canRun;
             if (start) {
                 // Vor dem Start vermerkt, damit die nächste Seite keinen zweiten Teil anlegt.
                 open.add(where);
@@ -331,6 +334,11 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
         Live part;
         synchronized (monitor) {
             part = live.remove(where);
+            if (part != null) {
+                // Gleich frei für die nächste Welle: Nicht erst die verzögerte Auftragsmeldung abwarten, sonst legte
+                // eine jetzt übergebene Seite keinen Teil an (Codex #1087).
+                open.remove(where);
+            }
         }
         if (part != null) {
             finish(part);

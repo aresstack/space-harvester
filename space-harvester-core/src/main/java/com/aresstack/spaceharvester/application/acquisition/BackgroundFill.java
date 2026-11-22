@@ -11,10 +11,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.CancellationException;
@@ -255,6 +258,10 @@ public final class BackgroundFill implements AutoCloseable {
     private final Map<PageKey, Where> whereOf = new LinkedHashMap<>();
     /** Wartende Seiten je Quelle und Space (übergebene zählen mit, bis ihr Abruf endet); unter {@link #monitor}. */
     private final Map<Where, Integer> waitingIn = new LinkedHashMap<>();
+    /** Abrufe je Space, deren Abschluss gerade gemeldet wird; „leer“ erst danach (Codex #1087). Unter monitor. */
+    private final Map<Where, Integer> reporting = new HashMap<>();
+    /** Spaces, deren Schlange leer ist, deren „leer“ aber noch auf laufende Meldungen wartet; unter monitor. */
+    private final Set<Where> idlePending = new HashSet<>();
     /** Ob {@link #whereOf} die Warteschlange schon spiegelt; unter {@link #monitor}. */
     private boolean mirrored;
 
@@ -416,9 +423,25 @@ public final class BackgroundFill implements AutoCloseable {
 
     /** Nimmt einen Eintrag aus der Warteschlange; war es der letzte seines Space, meldet das {@link Observer#idle}. */
     private void dequeue(PageKey key) {
-        Where emptied = dequeueQuietly(key);
-        if (emptied != null) {
-            notifyIdle(emptied);
+        settle(dequeueQuietly(key));
+    }
+
+    /**
+     * Meldet „leer“ für einen Space, dessen Schlange eben leer wurde, aber erst, wenn kein gleichzeitiger Abschluss
+     * dieses Space mehr gemeldet wird: Der Teil endet nie, bevor alle seine Seiten gezählt sind.
+     */
+    private void settle(Where where) {
+        if (where == null) {
+            return;
+        }
+        boolean idle;
+        synchronized (monitor) {
+            idlePending.add(where);
+            idle = reporting.getOrDefault(where, 0) == 0 && !waitingIn.containsKey(where)
+                    && idlePending.remove(where);
+        }
+        if (idle) {
+            notifyIdle(where);
         }
     }
 
@@ -886,6 +909,9 @@ public final class BackgroundFill implements AutoCloseable {
         Where at;
         synchronized (monitor) {
             at = whereOf.get(key);
+            if (at != null && !withdrawn && !closed) {
+                reporting.merge(at, 1, Integer::sum);
+            }
         }
         if (!withdrawn && !closed) {
             // Geladen oder gescheitert: der Eintrag ist erledigt; eine bleibende Lücke findet die nächste Suche im
@@ -895,16 +921,30 @@ public final class BackgroundFill implements AutoCloseable {
             if (at != null) {
                 // Erst austragen, dann zählen, dann „leer“: Der Teil des Space endet nie vor seiner letzten Seite, und
                 // „wartend“ zählt eine erledigte Seite nie mit.
+                // Der Planer schließt einen gescheiterten Abruf mit false und merkt den Grund am Ticket.
+                Throwable cause = ticket.failure().map(Throwable.class::cast).orElse(failure);
                 try {
-                    observer.completed(at, Boolean.TRUE.equals(stored), failure);
+                    observer.completed(at, Boolean.TRUE.equals(stored), cause);
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.DEBUG, "Zuschauer der Hintergrundfüllung scheiterte ({0})",
                             e.getClass().getName());
+                } finally {
+                    synchronized (monitor) {
+                        if (reporting.merge(at, -1, Integer::sum) <= 0) {
+                            reporting.remove(at);
+                        }
+                    }
+                }
+                if (emptied == null) {
+                    // Wurde die Schlange leer, während diese Meldung lief, meldet die letzte Meldung „leer“.
+                    synchronized (monitor) {
+                        if (idlePending.contains(at)) {
+                            emptied = at;
+                        }
+                    }
                 }
             }
-            if (emptied != null) {
-                notifyIdle(emptied);
-            }
+            settle(emptied);
         }
         synchronized (monitor) {
             inFlight.remove(key, ticket);
