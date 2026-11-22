@@ -518,7 +518,8 @@ class BackgroundFillTest {
         started.set(fill);
         BackgroundFill.Gap page = gap("wiki", "page", BackgroundFill.Kind.NOT_LOADED);
         fill.offer(List.of(page));
-        eventually(() -> running.containsKey("page"));
+        // Erst übergeben und eingetragen: Danach heißt „nichts mehr unterwegs“, dass der Abschluss ganz durch ist.
+        eventually(() -> running.containsKey("page") && fill.status().inFlight() == 1);
 
         endBeforeAdd.set(true);
         fill.offer(List.of(page));

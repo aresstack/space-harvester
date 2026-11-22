@@ -2578,23 +2578,15 @@ public final class Workspace {
                 // gemerkt: eine kurz verweigerte Prüfung (etwa beim Start) löscht ihn nicht aus der Liste.
             }
         }
-        // Exporte, Anreicherungen, Bilder und Anhänge auch direkt aus der Auftragsablage: Bilder und Anhänge stehen als
-        // Unterzeilen unter ihrem Export, der deshalb nie fehlen darf, auch wenn die gemerkte Liste ihn verloren hat.
-        List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.EXPORT));
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
-        // Auch die Dateien („Datei erzeugen“) gehören zu ihrem Export und gehen nie verloren.
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.CONVERSION));
-        // Hintergrundaufträge (ADR 0025 Nachtrag) stößt der Core selbst an; sie stehen im Reiter „Hintergrund“.
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.BACKGROUND));
-        // Aufträge des Aufrufers der App (Zusammenfassen, Synonymlauf, Aussagenanalyse) sind ebenso global sichtbar.
+        // Alle Aufträge der Eigentümer auch direkt aus der Auftragsablage, jeder Art (Fundstelle 4, Angelo 21.11.2026:
+        // nichts läuft unsichtbar): auch Abgleiche und Neueinlesen, die der Core selbst anstößt (Nachholen beim Start,
+        // Abgleich vor der Suche, Inventur, Wiederaufnahme), und Exporte samt ihren Bildern, Anhängen und Dateien, die
+        // als Unterzeilen nie fehlen dürfen, auch wenn die gemerkte Liste sie verloren hat. Hintergrundaufträge
+        // (ADR 0025 Nachtrag) stehen im Reiter „Hintergrund“.
+        List<JobStatus> followUps = new ArrayList<>();
         for (String owner : jobOwners()) {
-            if (!owner.equals(Harvester.OWNER)) {
-                for (JobType type : JobType.values()) {
-                    followUps.addAll(harvester.jobs().list(owner, type));
-                }
+            for (JobType type : JobType.values()) {
+                followUps.addAll(harvester.jobs().list(owner, type));
             }
         }
         for (JobStatus followUp : followUps) {

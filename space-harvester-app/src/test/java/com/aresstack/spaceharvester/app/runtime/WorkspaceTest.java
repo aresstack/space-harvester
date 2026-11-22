@@ -945,6 +945,24 @@ class WorkspaceTest {
     }
 
     /**
+     * Fundstelle 4 (Angelo 21.11.2026: nichts läuft unsichtbar): Ein Abgleich, den der Core selbst anstößt (etwa
+     * Nachholen beim Start oder Abgleich vor der Suche), steht in der Auftragsliste, obwohl die App ihn nie gemerkt hat.
+     */
+    @Test
+    void aSyncTheCoreStartsByItselfIsListed() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+
+        JobStatus automatic = started.harvester().syncs().catchUp("handbuch", space,
+                com.aresstack.spaceharvester.core.Harvester.OWNER, null);
+
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(automatic.id());
+        await(workspace, automatic);
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(automatic.id());
+    }
+
+    /**
      * AT zu #1059: Die Teile der Aussagenanalyse gehören dem Core. Wer lesen, aber nicht abgleichen darf, sieht sie in
      * der Auftragsliste nicht ({@code sync}); das Ergebnis im Reiter „Aussagen“ liest er trotzdem, und verfolgen und
      * abbrechen geht ohne Fehler.
