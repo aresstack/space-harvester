@@ -41,6 +41,30 @@ class ActivitiesBackgroundScreenshotTest {
                 ActivitiesView view = new ActivitiesView(context, null);
                 view.tabs.select(ActivitiesView.JOBS_TAB);
             });
+            // Das Hauptfenster mit der rechten Seitenleiste: erst die Aufträge, dann der Chat, zum Vergleich der
+            // Kopf- und Fußzeilen mit der Mitte.
+            SwingUtilities.invokeAndWait(() -> {
+                MainWindow window = new MainWindow(context);
+                javax.swing.JPanel surface = window.content(() -> { }, () -> { });
+                surface.setSize(1400, 820);
+                window.show(AppContext.Section.CONTENT);
+                window.activities().tabs.select(ActivitiesView.BACKGROUND_TAB);
+                window.jobsOpen(true);
+                window.activities().showJobsForTest(ActivitiesBackgroundTabTest.sample());
+                Screenshots.write(surface, out.resolve("fenster-auftraege-leiste.png"));
+                window.chatOpen(true);
+                Screenshots.write(surface, out.resolve("fenster-chat-leiste.png"));
+                window.jobsOpen(true);
+                window.chatLarge(true);
+                window.activities().showJobsForTest(ActivitiesBackgroundTabTest.sample());
+                Screenshots.write(surface, out.resolve("fenster-auftraege-gross.png"));
+                window.chatLarge(false);
+                window.chatOpen(false);
+                surface.setSize(1700, 820);
+                window.jobsOpen(true);
+                Screenshots.write(surface, out.resolve("fenster-auftraege-leiste-420.png"));
+                window.jobsOpen(false);
+            });
         } finally {
             context.shutdown();
         }

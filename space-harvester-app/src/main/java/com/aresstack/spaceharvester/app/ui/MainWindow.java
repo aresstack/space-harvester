@@ -92,6 +92,14 @@ public final class MainWindow implements AppContext.Navigator {
     static final String CHAT_OPEN_KEY = "chat.open";
     static final String CHAT_WIDTH_KEY = "chat.width";
     static final String CHAT_LARGE_KEY = "chat.large";
+    /** Ob die rechte Seitenleiste zuletzt die Aufträge zeigte (1) oder den Chat (0). */
+    static final String SIDE_JOBS_KEY = "sidebar.right.jobs";
+    private static final String SIDE_CHAT = "chat";
+    private static final String SIDE_JOBS = "jobs";
+    /** Die rechte Seitenleiste zeigt entweder den Chat oder die Aufträge (Angelo 22.11.2026). */
+    private final java.awt.CardLayout sideModes = new java.awt.CardLayout();
+    private final JPanel sideDeck = new JPanel(sideModes);
+    private boolean sideJobs;
     /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
     private boolean chatLarge;
     static final String CHAT_TOOLTIP = "Chat (Strg+J)";
@@ -213,7 +221,12 @@ public final class MainWindow implements AppContext.Navigator {
         views.put(AppContext.Section.SEARCH, searchView);
         views.put(AppContext.Section.SETTINGS, settings);
         deck.setBackground(Comic.SURFACE);
-        views.forEach((section, view) -> deck.add(view.component(), section.name()));
+        // Die Aufträge sind kein Bereich der Mitte mehr: sie stehen in der rechten Seitenleiste neben dem Chat.
+        views.forEach((section, view) -> {
+            if (view != activities) {
+                deck.add(view.component(), section.name());
+            }
+        });
         actionDeck.setOpaque(false);
         // Der Fortschritt der Aufträge steht global in der Statuszeile; ohne eigene Aktionszeile bleibt die Zeile leer.
         actionDeck.add(new JPanel(), JOBS);
@@ -311,7 +324,15 @@ public final class MainWindow implements AppContext.Navigator {
                 continue;
             }
             ComposerToggleButton button = navButton(section, shortcutNumber(section));
-            navGroup.add(button);
+            if (section == AppContext.Section.ACTIVITIES) {
+                // Wie der Chat-Knopf: schaltet die Seitenleiste um, ein zweiter Klick klappt sie zu.
+                for (java.awt.event.ActionListener listener : button.getActionListeners()) {
+                    button.removeActionListener(listener);
+                }
+                button.addActionListener(e -> sideOpen(button.isSelected(), true));
+            } else {
+                navGroup.add(button);
+            }
             nav.put(section, button);
             (section.administration() ? administration : section.trailing() ? trailing : icons).add(button);
         }
@@ -322,7 +343,7 @@ public final class MainWindow implements AppContext.Navigator {
         chatToggle.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         chatToggle.getAccessibleContext().setAccessibleName(
                 com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE);
-        chatToggle.addActionListener(e -> chatOpen(chatToggle.isSelected()));
+        chatToggle.addActionListener(e -> sideOpen(chatToggle.isSelected(), false));
         trailing.add(chatToggle, 0);
         // Die Reiter der Seitenansicht schalten die Mitte um: ein Klick zeigt Inhalte, auch aus einem anderen Bereich.
         JComponent tabBar = content.tabBar();
@@ -417,7 +438,11 @@ public final class MainWindow implements AppContext.Navigator {
         work.add(deckHolder, BorderLayout.CENTER);
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
-        chatSidebar.collapseButton().addActionListener(e -> chatOpen(false));
+        chatSidebar.onCollapse(() -> sideOpen(false, sideJobs));
+        activities.sidebar(() -> chatLarge(!chatLarge), () -> sideOpen(false, sideJobs));
+        sideDeck.setBackground(Comic.SURFACE);
+        sideDeck.add(chatSidebar, SIDE_CHAT);
+        sideDeck.add(activities.component(), SIDE_JOBS);
         chatSidebar.chat().onAnswer(this::chatAnswered);
         // Ein Quellen-Link soll die Seite zeigen: die große Ansicht wird wieder zur Leiste.
         chatSidebar.chat().onSourceOpened(() -> {
@@ -426,7 +451,7 @@ public final class MainWindow implements AppContext.Navigator {
             }
         });
         chatSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
-        chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, work, chatSidebar);
+        chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, work, sideDeck);
         chatSplit.setBorder(null);
         chatSplit.setBackground(Comic.SURFACE);
         chatSplit.setResizeWeight(1);
@@ -438,7 +463,7 @@ public final class MainWindow implements AppContext.Navigator {
                 @Override
                 public void mouseClicked(java.awt.event.MouseEvent event) {
                     if (event.getClickCount() == 2) {
-                        chatOpen(!chatOpen);
+                        sideOpen(!chatOpen, sideJobs);
                     }
                 }
             });
@@ -455,7 +480,10 @@ public final class MainWindow implements AppContext.Navigator {
                 WindowSizes.recallInt(CHAT_WIDTH_KEY, chatWidth));
         chatOpen = WindowSizes.recallInt(CHAT_OPEN_KEY, 0) == 1;
         chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
-        chatToggle.setSelected(chatOpen);
+        sideJobs = WindowSizes.recallInt(SIDE_JOBS_KEY, 0) == 1;
+        chatToggle.setSelected(chatOpen && !sideJobs);
+        nav.get(AppContext.Section.ACTIVITIES).setSelected(chatOpen && sideJobs);
+        sideModes.show(sideDeck, sideJobs ? SIDE_JOBS : SIDE_CHAT);
         placeChat();
         split = new ComicSplitPane(side, chatSplit, 200, 520, Comic.PALETTE);
         split.setBackground(Comic.SURFACE);
@@ -554,7 +582,7 @@ public final class MainWindow implements AppContext.Navigator {
         surface.getActionMap().put("chat", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
-                chatOpen(!chatOpen);
+                chatOpen(!chatOpen());
             }
         });
         // Esc stellt aus der großen Chat-Ansicht die Leiste wieder her, gleich wo der Fokus steht (auch im Explorer);
@@ -596,21 +624,47 @@ public final class MainWindow implements AppContext.Navigator {
      * Teiler). Zugeklappt bleibt nur der schmale Teiler; der Zustand und die Breite gelten auch nach dem Neustart.
      */
     void chatOpen(boolean open) {
+        sideOpen(open, false);
+    }
+
+    /** Klappt die Seitenleiste mit den Aufträgen auf oder zu (Knopf oben rechts, Strg+Ziffer). */
+    void jobsOpen(boolean open) {
+        sideOpen(open, true);
+    }
+
+    /**
+     * Die rechte Seitenleiste zeigt den Chat oder die Aufträge: der Knopf des einen blendet das andere aus, ein
+     * zweiter Klick auf den aktiven Knopf klappt die Leiste zu (Angelo 22.11.2026). Breite und „groß“ gelten für
+     * beide; was zuletzt offen war, gilt auch nach dem Neustart.
+     */
+    private void sideOpen(boolean open, boolean jobs) {
         chatOpen = open;
-        chatToggle.setSelected(open);
         if (open) {
+            sideJobs = jobs;
+            WindowSizes.rememberInt(SIDE_JOBS_KEY, jobs ? 1 : 0);
+            sideModes.show(sideDeck, jobs ? SIDE_JOBS : SIDE_CHAT);
+        }
+        chatToggle.setSelected(open && !sideJobs);
+        nav.get(AppContext.Section.ACTIVITIES).setSelected(open && sideJobs);
+        if (open && !sideJobs) {
             chatUnread(false);
         }
         WindowSizes.rememberInt(CHAT_OPEN_KEY, open ? 1 : 0);
         placeChat();
-        if (open) {
+        if (open && sideJobs) {
+            activities.shown();
+        } else if (open) {
             chatSidebar.chat().focusEditor();
         }
     }
 
+    boolean jobsOpen() {
+        return chatOpen && sideJobs;
+    }
+
     /** Eine Antwort ist fertig: Ist die Leiste zu, zeigt der Chat-Knopf einen Punkt, bis sie aufgeklappt wird. */
     void chatAnswered() {
-        if (!chatOpen) {
+        if (!chatOpen()) {
             chatUnread(true);
         }
     }
@@ -627,7 +681,7 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     boolean chatOpen() {
-        return chatOpen;
+        return chatOpen && !sideJobs;
     }
 
     /**
@@ -638,7 +692,7 @@ public final class MainWindow implements AppContext.Navigator {
         chatLarge = large;
         WindowSizes.rememberInt(CHAT_LARGE_KEY, large ? 1 : 0);
         placeChat();
-        if (chatOpen) {
+        if (chatOpen()) {
             chatSidebar.chat().focusEditor();
         }
     }
@@ -652,10 +706,12 @@ public final class MainWindow implements AppContext.Navigator {
         placingChat = true;
         try {
             int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
-            chatSidebar.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
-            chatSidebar.shown(chatOpen);
+            sideDeck.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
+            chatSidebar.shown(chatOpen && !sideJobs);
+            activities.sidebarShown(chatOpen && sideJobs);
             boolean large = chatOpen && chatLarge;
             chatSidebar.large(large);
+            activities.large(large);
             // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
             chatSplit.getLeftComponent().setVisible(!large);
             // Zugeklappt lässt sich der Teiler nicht ziehen, nur doppelt klicken. Die Teilung selbst bleibt
@@ -720,6 +776,11 @@ public final class MainWindow implements AppContext.Navigator {
         if (section == AppContext.Section.STATUS) {
             show(AppContext.Section.SETTINGS);
             settings.select(SettingsView.DIAGNOSIS);
+            return;
+        }
+        if (section == AppContext.Section.ACTIVITIES) {
+            // Die Aufträge stehen in der Seitenleiste; die Mitte bleibt, wie sie ist.
+            jobsOpen(true);
             return;
         }
         cards.show(deck, section.name());
@@ -1180,6 +1241,10 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /** Für Tests: die Suche im sichtbaren Bereich. */
+    ActivitiesView activities() {
+        return activities;
+    }
+
     FindBar findBar() {
         return findBar;
     }
