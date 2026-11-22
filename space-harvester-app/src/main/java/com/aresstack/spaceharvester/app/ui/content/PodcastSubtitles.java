@@ -28,6 +28,36 @@ final class PodcastSubtitles {
     private PodcastSubtitles() {
     }
 
+    /** Die Pause, mit der die Beiträge beim Vertonen aneinandergefügt werden; sie gehört zu keinem Satz. */
+    static final long JOIN_PAUSE_MILLIS = 350;
+
+    /**
+     * Der Satz an {@code millis} im Abschnitt der Länge {@code length}. Sind die Startzeiten aller Beiträge beim
+     * Vertonen gemessen, bestimmen sie den Beitrag genau; nur die Stelle innerhalb des Beitrags wird nach der
+     * Textlänge geschätzt. Sonst (älteres Audio) gilt die Schätzung über den ganzen Abschnitt.
+     */
+    static Cue at(List<Podcast.Line> lines, long millis, long length) {
+        List<Podcast.Line> spoken = lines.stream().filter(line -> !line.text().isBlank()).toList();
+        boolean measured = !spoken.isEmpty() && spoken.stream().allMatch(line -> line.startMillis() >= 0);
+        for (int i = 1; measured && i < spoken.size(); i++) {
+            measured = spoken.get(i).startMillis() > spoken.get(i - 1).startMillis();
+        }
+        if (!measured) {
+            return at(lines, length <= 0 ? 0 : millis / (double) length);
+        }
+        int index = 0;
+        while (index + 1 < spoken.size() && millis >= spoken.get(index + 1).startMillis()) {
+            index++;
+        }
+        long start = spoken.get(index).startMillis();
+        boolean last = index == spoken.size() - 1;
+        long end = last ? Math.max(length, start + 1) : spoken.get(index + 1).startMillis();
+        // Vor dem nächsten Beitrag liegt die Pause; in ihr bleibt der letzte Satz stehen.
+        long span = Math.max(1, end - start - (last ? 0 : Math.min(JOIN_PAUSE_MILLIS, (end - start) / 2)));
+        return at(List.of(new Podcast.Line(spoken.get(index).host(), spoken.get(index).text())),
+                (millis - start) / (double) span);
+    }
+
     /** Der Satz an der Stelle {@code share} (0 bis 1) des Abschnitts mit den Beiträgen {@code lines}. */
     static Cue at(List<Podcast.Line> lines, double share) {
         List<String> sentences = new ArrayList<>();
