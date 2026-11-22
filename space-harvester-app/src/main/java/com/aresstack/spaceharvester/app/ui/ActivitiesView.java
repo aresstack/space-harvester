@@ -362,6 +362,21 @@ public final class ActivitiesView implements View {
         head.add(titleRow, BorderLayout.NORTH);
         head.add(signIn, BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
+        // Codefeld und Meldung erscheinen auch ohne gewählten Auftrag (Anmeldung auf Abruf, „Nicht übernommen“):
+        // Der Detailbereich öffnet sich dann für sie und schließt sich mit ihnen wieder.
+        java.awt.event.ComponentAdapter opens = new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentShown(java.awt.event.ComponentEvent event) {
+                syncDetails();
+            }
+
+            @Override
+            public void componentHidden(java.awt.event.ComponentEvent event) {
+                syncDetails();
+            }
+        };
+        signIn.addComponentListener(opens);
+        feedback.addComponentListener(opens);
 
         // Eine Kachel über die volle Breite; Ergebnis und Ausgabe stehen unter Inhalte › Export.
         JComponent tiles = stack(Comic.plate("Auftrag", Comic.PETROL, facts));
@@ -773,7 +788,17 @@ public final class ActivitiesView implements View {
         selectedId = null;
         detail = null;
         table.clearSelection();
+        // Die Meldung gehörte zum abgewählten Auftrag; sie hielte den Detailbereich sonst offen.
+        feedback.clear();
         render();
+    }
+
+    /** Der Detailbereich ist offen, solange er etwas zeigt: einen Auftrag, das Codefeld oder eine Meldung. */
+    private void syncDetails() {
+        boolean job = selectedId != null || currentStatus().isPresent();
+        // Ohne Auftrag steht dort nur das Codefeld oder die Meldung, kein „Kein Auftrag gewählt“.
+        title.setVisible(job);
+        showDetails(job || signIn.isVisible() || feedback.isVisible());
     }
 
     /**
@@ -831,8 +856,7 @@ public final class ActivitiesView implements View {
         signIn.refresh();
         Optional<JobStatus> current = currentStatus();
         facts.reset();
-        // Auch ein offenes Codefeld (Anmeldung ohne wartenden Auftrag) braucht den Detailbereich.
-        showDetails(selectedId != null || current.isPresent() || signIn.isVisible());
+        syncDetails();
         if (current.isEmpty()) {
             title.setText(selectedId != null ? "Auftrag wird geladen …"
                     : model.rows.isEmpty() ? "Noch keine Aufträge" : "Kein Auftrag gewählt");
@@ -1644,6 +1668,10 @@ public final class ActivitiesView implements View {
     }
 
     /** Für Tests. */
+    Feedback feedbackForTest() {
+        return feedback;
+    }
+
     /** Für Tests und Proben: die Überschrift des Detailbereichs. */
     String detailTitleForTest() {
         return title.getText();
