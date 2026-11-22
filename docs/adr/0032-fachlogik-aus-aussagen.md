@@ -363,7 +363,8 @@ Tests; den Chat-Anschluss (Werkzeug, System-Prompt) baut der Chat-Strang, die zu
 - Zugang: `Harvester#termKnowledge`, `Workspace#termKnowledge`.
 - Nachtrag (Abnahme W7): Auch „ist ein Fachbegriff“, Synonyme und Vorschläge entscheidet der Kern nur nach dem
   Bereich (`DomainTermGraph#groupWithin`, die Seiten werden einmal gelesen): Ein Eintrag zählt nur, wenn einer seiner
-  Geltungsbereiche global ist oder eine lesbare Seite des Bereichs abdeckt (Quelle, Space). Dazu die KI-Freigabe
+  Geltungsbereiche global ist oder eine lesbare Seite des Bereichs abdeckt (Quelle, Space), auch eine noch nicht
+  analysierte (Space aus dem Bestand, `KnowledgeGraph#place`, nur nachgeschlagen wenn nötig). Dazu die KI-Freigabe
   (`AiRelease`): Ein Name, der nur in Quellen ohne Freigabe gilt, geht nur mit, wenn eine schon freigegebene Seite des
   Bereichs darin liegt oder die Antwort eine Seite darin liefert und damit freigibt; global geltende Einträge bleiben.
   Mit `Delivery.NONE` (Suche, nichts geht an ein Modell) entfällt nur diese Freigabe-Prüfung, der Bereich gilt

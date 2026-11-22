@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.knowledge;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.terms.RelationScope;
 import com.aresstack.spaceharvester.application.terms.TermText;
@@ -346,6 +347,9 @@ public final class DomainTermGraph {
      * eine Auswahl nicht erst die ganze Ablage liest; {@code null}: {@link #analysed} lesen und danach filtern.
      */
     private final java.util.function.BiFunction<AccessContext, PageSet, List<KnowledgeGraph.AnalysedPage>> analysedOn;
+    /** Wo eine lesbare Seite liegt, auch ohne Analyse ({@link KnowledgeGraph#place}); für den Bereich. */
+    private java.util.function.BiFunction<AccessContext, PageKey, java.util.Optional<KnowledgeGraph.Place>> places =
+            (caller, key) -> java.util.Optional.empty();
     private final Vocabulary vocabulary;
     private final Comparison comparison;
     private final java.util.function.Supplier<AnalyzerChoice> selected;
@@ -362,6 +366,7 @@ public final class DomainTermGraph {
     public DomainTermGraph(KnowledgeGraph graph, Vocabulary vocabulary,
                            java.util.function.Supplier<AnalyzerChoice> selected, Comparison comparison) {
         this(Objects.requireNonNull(graph, "graph")::analysed, graph::analysed, vocabulary, selected, comparison);
+        this.places = graph::place;
     }
 
     DomainTermGraph(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed, Vocabulary vocabulary) {
@@ -478,13 +483,71 @@ public final class DomainTermGraph {
      * Ergebnis von {@link #groupWithin}: die Begriffsgruppe, die gelesenen Seiten des Bereichs und das Lexikon, das nur
      * Einträge kennt, deren Geltungsbereich den Bereich schneidet.
      */
-    record Within(View view, List<KnowledgeGraph.PageRef> area, Lexicon lexicon) {
+    record Within(View view, Area area, Lexicon lexicon) {
+    }
+
+    /**
+     * Der Bereich als Prüfung für Geltungsbereiche: global, oder eine lesbare Seite des Bereichs liegt darin (Quelle,
+     * Space). Analysierte Seiten sind schon bekannt; Seiten ohne Analyse werden nur nachgeschlagen, wenn ein
+     * Geltungsbereich ihrer Quelle sonst nicht abgedeckt wäre, und dann nur einmal.
+     */
+    static final class Area implements java.util.function.Predicate<RelationScope> {
+        private final List<KnowledgeGraph.Place> known = new ArrayList<>();
+        private final List<PageKey> rest = new ArrayList<>();
+        private final java.util.function.Function<PageKey, java.util.Optional<KnowledgeGraph.Place>> resolve;
+        private final Map<PageKey, java.util.Optional<KnowledgeGraph.Place>> resolved = new LinkedHashMap<>();
+
+        Area(List<KnowledgeGraph.PageRef> analysed, PageSet pages,
+             java.util.function.Function<PageKey, java.util.Optional<KnowledgeGraph.Place>> resolve) {
+            this.resolve = resolve;
+            Set<PageKey> seen = new java.util.HashSet<>();
+            for (KnowledgeGraph.PageRef ref : analysed) {
+                if (seen.add(ref.key())) {
+                    known.add(new KnowledgeGraph.Place(ref.key(), ref.spaceKey()));
+                }
+            }
+            pages.asMap().forEach((sourceId, ids) -> ids.forEach(pageId -> {
+                PageKey key = new PageKey(sourceId, pageId);
+                if (!seen.contains(key)) {
+                    rest.add(key);
+                }
+            }));
+        }
+
+        @Override
+        public boolean test(RelationScope scope) {
+            if (scope.global()) {
+                return true;
+            }
+            for (KnowledgeGraph.Place place : known) {
+                if (scope.covers(place.key().sourceId(), place.spaceKey())) {
+                    return true;
+                }
+            }
+            for (PageKey key : rest) {
+                if (!key.sourceId().equals(scope.sourceId())) {
+                    continue;
+                }
+                java.util.Optional<KnowledgeGraph.Place> place = resolved.computeIfAbsent(key, resolve);
+                if (place.isPresent() && scope.covers(key.sourceId(), place.get().spaceKey())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /** Die bekannten lesbaren Seiten des Bereichs (analysierte und schon nachgeschlagene). */
+        List<KnowledgeGraph.Place> places() {
+            List<KnowledgeGraph.Place> all = new ArrayList<>(known);
+            resolved.values().forEach(place -> place.ifPresent(all::add));
+            return all;
+        }
     }
 
     /**
      * Die Begriffsgruppe wie {@link #group}, aber nur mit Einträgen, die im Bereich {@code options.pages()} gelten
      * (für {@link TermKnowledge}): Ein Fachbegriff oder Synonym zählt nur, wenn einer seiner Geltungsbereiche global
-     * ist oder eine lesbare Seite des Bereichs abdeckt (Quelle, Space). So entscheiden auch „ist ein Fachbegriff“,
+     * ist oder eine lesbare Seite des Bereichs abdeckt (Quelle, Space), auch eine noch nicht analysierte. So entscheiden auch „ist ein Fachbegriff“,
      * Synonyme und Vorschläge nur nach dem Bereich, nie nach dem ganzen Glossar. Die Seiten werden einmal gelesen.
      *
      * @throws IllegalArgumentException ohne Seitenauswahl
@@ -499,11 +562,11 @@ public final class DomainTermGraph {
         List<KnowledgeGraph.AnalysedPage> source = (analysedOn != null ? analysedOn.apply(caller, options.pages())
                 : analysed.apply(caller)).stream().filter(page -> options.pages().contains(page.page().key()))
                 .toList();
-        List<KnowledgeGraph.PageRef> area = source.stream().map(KnowledgeGraph.AnalysedPage::page).toList();
-        java.util.function.Predicate<RelationScope> within = scope -> scope.global() || area.stream()
-                .anyMatch(ref -> scope.covers(ref.key().sourceId(), ref.spaceKey()));
+        // Auch Seiten ohne Analyse gehören zum Bereich: ihr Space kommt aus dem Bestand (nur wenn nötig).
+        Area area = new Area(source.stream().map(KnowledgeGraph.AnalysedPage::page).toList(), options.pages(),
+                key -> places.apply(caller, key));
         Lexicon lexicon = new Lexicon(vocabulary.terms(caller), vocabulary.synonyms(caller),
-                vocabulary.technical(caller), within);
+                vocabulary.technical(caller), area);
         String centre = start == null ? "" : TermText.normalize(start).strip();
         if (centre.isEmpty()) {
             return new Within(View.of(Outcome.EMPTY_START), area, lexicon);

@@ -279,6 +279,30 @@ public class KnowledgeGraph {
         return access.canRead(caller, key.sourceId(), space, key.pageId());
     }
 
+    /** Quelle, Seite und Space einer Seite im Bestand. */
+    public record Place(PageKey key, String spaceKey) {
+        public Place {
+            Objects.requireNonNull(key, "key");
+        }
+    }
+
+    /**
+     * Wo eine Seite im Bestand liegt (Space aus dem Bestand), gleich ob sie analysiert ist; leer, wenn sie dort nicht
+     * liegt, ihre Quelle abgeschaltet ist oder der Aufrufer sie nicht lesen darf (wie {@link #readable}).
+     */
+    public Optional<Place> place(AccessContext caller, PageKey key) {
+        if (!activeSources.test(key.sourceId())) {
+            return Optional.empty();
+        }
+        Optional<PageSnapshot> snapshot = snapshots.apply(key);
+        if (snapshot.isEmpty()) {
+            return Optional.empty();
+        }
+        String space = snapshot.get().spaceKey();
+        return access.canRead(caller, key.sourceId(), space, key.pageId()) ? Optional.of(new Place(key, space))
+                : Optional.empty();
+    }
+
     /**
      * Ein sichtbares analysiertes Dokument: Seite, Anhang oder enthaltene Datei (ADR 0026, Punkt 10). Leer ohne Analyse
      * oder ohne Leserecht auf die Seite (nicht unterscheidbar); ein Dokument hat die Rechte seiner Seite.

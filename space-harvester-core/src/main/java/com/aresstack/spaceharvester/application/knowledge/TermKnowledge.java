@@ -248,8 +248,8 @@ public final class TermKnowledge {
             if (scope.global() || delivery == Delivery.NONE || ai.sourceReleased(scope.sourceId())) {
                 return true;
             }
-            for (KnowledgeGraph.PageRef ref : within.area()) {
-                if (scope.covers(ref.key().sourceId(), ref.spaceKey()) && ai.mayProcess(ref.key())) {
+            for (KnowledgeGraph.Place place : within.area().places()) {
+                if (scope.covers(place.key().sourceId(), place.spaceKey()) && ai.mayProcess(place.key())) {
                     return true;
                 }
             }

@@ -432,6 +432,25 @@ class TermKnowledgeTest {
     }
 
     @Test
+    void aReadablePageWithoutAnalysisAlsoPutsItsSourceAndSpaceIntoTheScope() {
+        term("Plan");
+        terms.add(new DomainTermGraph.Term("Aktenplan", new RelationScope("akte", "DEV")));
+        terms.add(new DomainTermGraph.Term("Altplan", new RelationScope("akte", "ALT")));
+        analyse("1", "Der Text ist kurz.");
+        PageSnapshot unanalysed = EnrichmentTestPages.text("akte", "9", "1", "Noch nicht analysiert.");
+        cache.put(unanalysed.key(), unanalysed);
+        PageSet scope = PageSet.ofKeys(List.of(key("1"), new PageKey("akte", "9")));
+
+        TermKnowledge.Answer found = knowledge().answer(CALLER, "Aktenplan", scope, recording, () -> false);
+        assertThat(found.outcome()).as("Space „DEV“ der nicht analysierten Seite liegt im Bereich")
+                .isEqualTo(TermKnowledge.Outcome.FOUND);
+        assertThat(knowledge().answer(CALLER, "lan", scope, TermKnowledge.Delivery.NONE, () -> false).candidates())
+                .as("„Altplan“ gilt nur im Space „ALT“").containsExactlyInAnyOrder("Plan", "Aktenplan");
+        assertThat(knowledge().answer(CALLER, "Aktenplan", pages("1"), recording, () -> false).outcome())
+                .isEqualTo(TermKnowledge.Outcome.NOT_A_TERM);
+    }
+
+    @Test
     void aGlobalTermIsDeliveredEvenWithoutAnyAiRelease() {
         term("Plan");
         analyse("1", "Der Text ist kurz.");
