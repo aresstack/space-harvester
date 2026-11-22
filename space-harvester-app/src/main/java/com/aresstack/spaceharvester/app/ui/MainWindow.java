@@ -602,7 +602,7 @@ public final class MainWindow implements AppContext.Navigator {
         surface.getActionMap().put("find", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
-                findBar.focus();
+                findTarget().focus();
             }
         });
     }
@@ -1241,6 +1241,16 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /** Für Tests: die Suche im sichtbaren Bereich. */
+    /**
+     * Wohin Strg+F führt: in die Leiste der Aufträge, wenn sie groß gezeigt wird oder der Fokus in ihr steht, sonst
+     * in die Leiste der Mitte.
+     */
+    FindBar findTarget() {
+        Component focus = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+        boolean inJobs = focus != null && javax.swing.SwingUtilities.isDescendingFrom(focus, activities.component());
+        return jobsOpen() && (chatLarge || inJobs) ? activities.findBar() : findBar;
+    }
+
     ActivitiesView activities() {
         return activities;
     }

@@ -526,8 +526,14 @@ class MainWindowTest {
                 assertThat(window.chatToggle().isSelected()).isFalse();
                 assertThat(window.current()).isNotEqualTo(AppContext.Section.ACTIVITIES);
                 assertThat(WindowSizes.recallInt(MainWindow.SIDE_JOBS_KEY, -1)).isEqualTo(1);
+                // Strg+F sucht groß gezeigt in den Aufträgen, sonst (Fokus in der Mitte) in der Mitte.
+                assertThat(window.findTarget()).isSameAs(window.findBar());
+                window.chatLarge(true);
+                assertThat(window.findTarget()).isSameAs(window.activities().findBar());
+                window.chatLarge(false);
                 window.jobsOpen(false);
                 assertThat(window.jobsOpen()).isFalse();
+                assertThat(window.findTarget()).isSameAs(window.findBar());
                 window.jobsOpen(true);
                 window.chatToggle().doClick();
                 layoutAll(surface);
