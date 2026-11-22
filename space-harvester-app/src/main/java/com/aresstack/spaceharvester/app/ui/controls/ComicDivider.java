@@ -57,12 +57,24 @@ public final class ComicDivider extends BasicSplitPaneDivider {
      * Sperrt oder erlaubt das Ziehen dieses Trenners, ohne die Teilung selbst abzuschalten: Eine abgeschaltete
      * Teilung nähme allem darin den eigenen Mauszeiger (die Zeigersuche von AWT überspringt abgeschaltete Flächen
      * samt Inhalt), auch den Doppelpfeil der Trenner weiter innen. Gesperrt zeigt der Trenner den normalen Zeiger;
-     * Klicks (etwa der Doppelklick zum Aufklappen) kommen weiter an.
+     * Klicks (etwa der Doppelklick zum Aufklappen) kommen weiter an, die Tastatur (F8) verschiebt ihn nicht.
      */
     public static void draggable(JSplitPane pane, boolean draggable) {
         if (pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider) {
             divider.draggable = draggable;
             divider.showCursor();
+            // Auch die Tastatur verschiebt einen gesperrten Trenner nicht: F8 beginnt das Verschieben mit den
+            // Pfeiltasten, Pos1 und Ende; gesperrt ist die Taste hier ohne Wirkung.
+            javax.swing.InputMap keys = pane.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+            javax.swing.KeyStroke resize = javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F8, 0);
+            if (draggable) {
+                keys.remove(resize);
+            } else {
+                keys.put(resize, "none");
+                if (pane.isFocusOwner()) {
+                    pane.transferFocus();
+                }
+            }
         }
     }
 

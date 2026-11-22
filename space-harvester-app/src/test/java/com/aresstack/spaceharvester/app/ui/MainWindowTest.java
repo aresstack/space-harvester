@@ -340,6 +340,14 @@ class MainWindowTest {
             assertThat(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.draggable(window.chatSplit()))
                     .isFalse();
             assertThat(window.chatSplit().isEnabled()).isTrue();
+            // Auch F8 (Verschieben per Tastatur) greift am gesperrten Trenner nicht, offen wieder schon.
+            javax.swing.KeyStroke f8 = javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F8, 0);
+            javax.swing.InputMap keys = window.chatSplit()
+                    .getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+            assertThat(keys.get(f8)).isEqualTo("none");
+            window.chatOpen(true);
+            assertThat(keys.get(f8)).isEqualTo("startResize");
+            window.chatOpen(false);
             for (AppContext.Section section : AppContext.Section.values()) {
                 window.show(section);
                 layout(surface);
