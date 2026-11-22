@@ -86,6 +86,10 @@ public final class SearchHitLoads implements AutoCloseable {
     private final Map<PageKey, String> loading = new HashMap<>();
     /** Seiten je Teil, für {@link #loading}; unter {@link #monitor}. */
     private final Map<String, List<PageKey>> pagesOf = new HashMap<>();
+    /** Stapel, deren Gruppe der Arbeiter gerade anlegt; ein Abbrechen in dieser Zeit merkt er sich in {@link #cancelled}. */
+    private final java.util.Set<String> starting = new java.util.HashSet<>();
+    /** Während des Anlegens abgebrochene Stapel: Ihre Gruppe wird gleich nach dem Start abgebrochen. */
+    private final java.util.Set<String> cancelled = new java.util.HashSet<>();
     /** Gruppen je Stapel, für Abbrechen in der Trefferliste; unter {@link #monitor}. */
     private final Map<String, List<String>> groupsOf = new LinkedHashMap<>() {
         @Override
@@ -143,6 +147,10 @@ public final class SearchHitLoads implements AutoCloseable {
         synchronized (monitor) {
             pending.remove(token);
             groups = new ArrayList<>(groupsOf.getOrDefault(token, List.of()));
+            // Legt der Arbeiter die Gruppe gerade an, kennt groupsOf sie noch nicht: Er bricht sie nach dem Start ab.
+            if (starting.contains(token)) {
+                cancelled.add(token);
+            }
         }
         for (String groupId : groups) {
             try {
@@ -158,10 +166,34 @@ public final class SearchHitLoads implements AutoCloseable {
         Map<PageKey, AcquisitionScheduler.Ticket> tickets;
         synchronized (monitor) {
             tickets = pending.remove(token);
+            if (tickets != null) {
+                starting.add(token);
+            }
         }
         if (tickets == null) {
             return;
         }
+        String groupId = null;
+        try {
+            groupId = start(token, tickets);
+        } finally {
+            boolean cancelNow;
+            synchronized (monitor) {
+                starting.remove(token);
+                cancelNow = cancelled.remove(token);
+            }
+            if (cancelNow && groupId != null) {
+                try {
+                    background.cancel(groupId);
+                } catch (RuntimeException e) {
+                    // Schon beendet: bleibt, wie er ist.
+                }
+            }
+        }
+    }
+
+    /** Legt die Gruppe für {@code tickets} an; ihre Kennung oder {@code null}, wenn keine entstand. */
+    private String start(String token, Map<PageKey, AcquisitionScheduler.Ticket> tickets) {
         Map<List<String>, List<PageKey>> bySpace = new LinkedHashMap<>();
         Map<PageKey, AcquisitionScheduler.Ticket> taken = new LinkedHashMap<>();
         for (Map.Entry<PageKey, AcquisitionScheduler.Ticket> entry : tickets.entrySet()) {
@@ -185,7 +217,7 @@ public final class SearchHitLoads implements AutoCloseable {
             taken.put(entry.getKey(), entry.getValue());
         }
         if (bySpace.isEmpty()) {
-            return;
+            return null;
         }
         String groupId = BackgroundJobs.newGroupId();
         List<BackgroundPart.Draft> drafts = new ArrayList<>();
@@ -205,7 +237,7 @@ public final class SearchHitLoads implements AutoCloseable {
                 adopted.remove(groupId);
                 taken.keySet().forEach(key -> loading.remove(key, groupId));
             }
-            return;
+            return null;
         }
         synchronized (monitor) {
             groupsOf.computeIfAbsent(token, ignored -> new ArrayList<>()).add(groupId);
@@ -215,6 +247,7 @@ public final class SearchHitLoads implements AutoCloseable {
                 keys.forEach(key -> loading.put(key, part.id()));
             }
         }
+        return groupId;
     }
 
     private static List<PageKey> keys(JobStatus part) {

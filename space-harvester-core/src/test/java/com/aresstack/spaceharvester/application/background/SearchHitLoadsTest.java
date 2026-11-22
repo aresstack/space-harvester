@@ -158,7 +158,8 @@ class SearchHitLoadsTest {
 
         eventually(() -> onlyGroup().orElseThrow().parts().stream().allMatch(part -> part.state()
                 == JobState.CANCELLED));
-        assertThat(tickets.values()).allMatch(ticket -> ticket.done().isCancelled());
+        // Die Abrufe zieht die Auftragsmeldung zurück, und die kommt auf dem Zustell-Thread erst nach dem Zustand an.
+        eventually(() -> tickets.values().stream().allMatch(ticket -> ticket.done().isCancelled()));
     }
 
     @Test
