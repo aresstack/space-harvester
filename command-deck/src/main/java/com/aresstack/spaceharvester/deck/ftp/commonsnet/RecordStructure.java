@@ -1,7 +1,13 @@
 package com.aresstack.spaceharvester.deck.ftp.commonsnet;
 
+import com.aresstack.spaceharvester.deck.ftp.TextEncodingException;
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
+import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CodingErrorAction;
 import java.util.Arrays;
 
 /**
@@ -35,15 +41,51 @@ final class RecordStructure {
         return stripLines(new String(transformed, charset));
     }
 
-    static byte[] encode(String text, Charset charset) {
+    static byte[] encode(String text, Charset charset) throws TextEncodingException {
         String[] lines = (text == null ? "" : text).split("\n", -1);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        for (String line : lines) {
-            out.writeBytes(rtrim(line).getBytes(charset));
+        for (int i = 0; i < lines.length; i++) {
+            out.writeBytes(bytes(rtrim(lines[i]), charset, i + 1));
             out.writeBytes(RECORD_END);
         }
         out.writeBytes(FILE_END);
         return out.toByteArray();
+    }
+
+    /**
+     * Kodiert einen ganzen Text; ein Zeichen, das der Zeichensatz nicht kennt, bricht mit Grund ab (nie still „?“).
+     */
+    static byte[] text(String text, Charset charset) throws TextEncodingException {
+        String[] lines = (text == null ? "" : text).split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            bytes(lines[i], charset, i + 1);
+        }
+        return (text == null ? "" : text).getBytes(charset);
+    }
+
+    private static byte[] bytes(String line, Charset charset, int lineNumber) throws TextEncodingException {
+        CharsetEncoder encoder = charset.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT);
+        try {
+            ByteBuffer buffer = encoder.encode(CharBuffer.wrap(line));
+            byte[] result = new byte[buffer.remaining()];
+            buffer.get(result);
+            return result;
+        } catch (CharacterCodingException e) {
+            int offset = 0;
+            while (offset < line.length()) {
+                int codePoint = line.codePointAt(offset);
+                if (!charset.newEncoder().canEncode(new String(Character.toChars(codePoint)))) {
+                    break;
+                }
+                offset += Character.charCount(codePoint);
+            }
+            String character = offset < line.length()
+                    ? new String(Character.toChars(line.codePointAt(offset))) : "?";
+            throw new TextEncodingException("Nicht gespeichert: Das Zeichen „" + character + "“ in Zeile " + lineNumber
+                    + ", Spalte " + (offset + 1) + " gibt es im Zeichensatz " + charset.name()
+                    + " der Verbindung nicht. Bitte ersetzen oder unter „Erweitert“ einen anderen Zeichensatz wählen.");
+        }
     }
 
     /** Entfernt alle Füllbytes (wie MainframeMate beim Lesen im Textmodus). */

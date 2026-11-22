@@ -73,6 +73,9 @@ final class FtpDatasetsView extends JPanel {
     private final IconButton reloadDocument;
     private final ComposerButton closeDocument;
     private final JPanel documentsHead;
+    /** Rückfrage vor dem Überschreiben eines vorhandenen Members (Tests ersetzen sie). */
+    java.util.function.Predicate<String> confirmOverwrite =
+            question -> Dialogs.confirm(this, "Überschreiben", question);
     private EditorSession document;
     private final PlaceholderField newName = new PlaceholderField(12, "");
     private final JLabel newLabel = Comic.text("");
@@ -513,6 +516,9 @@ final class FtpDatasetsView extends JPanel {
         }
         String created = target;
         boolean dataset = creatingDataset;
+        if (!dataset && !mayOverwrite(created)) {
+            return;
+        }
         owner.run(owner.session().filesOnce(files -> {
             if (dataset) {
                 files.createDirectory(created);
@@ -587,6 +593,9 @@ final class FtpDatasetsView extends JPanel {
             target = current.endsWith("/") ? current + base : current + "/" + base;
         }
         String destination = target;
+        if (!mayOverwrite(destination)) {
+            return;
+        }
         owner.run(owner.session().filesOnce(files -> {
             files.write(destination, asText(Files.readString(source, StandardCharsets.UTF_8)));
             return destination;
@@ -594,6 +603,29 @@ final class FtpDatasetsView extends JPanel {
             navigate(current, false);
             owner.status("Hochgeladen: " + done, false);
         });
+    }
+
+    /**
+     * Gibt es das Ziel in der gezeigten Liste schon, wird erst gefragt; sonst ginge sein Inhalt still verloren.
+     *
+     * @return ob geschrieben werden darf
+     */
+    private boolean mayOverwrite(String target) {
+        boolean mvs = owner.session().mvs();
+        RemoteEntry existing = model.all.stream()
+                .filter(entry -> !entry.directory())
+                .filter(entry -> mvs ? MvsPath.unquote(entry.path()).equalsIgnoreCase(MvsPath.unquote(target))
+                        : entry.path().equals(target))
+                .findFirst().orElse(null);
+        if (existing == null) {
+            return true;
+        }
+        boolean yes = confirmOverwrite.test("„" + existing.name() + "“ gibt es hier schon. Wirklich überschreiben? "
+                + "Der bisherige Inhalt geht dabei verloren.");
+        if (!yes) {
+            owner.status("Nicht überschrieben: " + existing.name(), false);
+        }
+        return yes;
     }
 
     /**
@@ -639,6 +671,13 @@ final class FtpDatasetsView extends JPanel {
     String documentText() {
         DocumentEditor editor = document == null ? null : editorOf.get(document);
         return editor == null ? "" : editor.text();
+    }
+
+    /** Legt wie über „Neues Member …“ an (für Tests). */
+    void createNamed(String name) {
+        askNew(false);
+        newName.setText(name);
+        create();
     }
 
     EditorSession document() {

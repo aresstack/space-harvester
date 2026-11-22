@@ -324,8 +324,7 @@ final class CommonsNetFiles implements FileConnection {
 
     @Override
     public void write(String path, String text) throws IOException {
-        byte[] bytes = recordStructure ? RecordStructure.encode(text, charset)
-                : (text == null ? "" : text).getBytes(charset);
+        byte[] bytes = recordStructure ? RecordStructure.encode(text, charset) : RecordStructure.text(text, charset);
         store(path, bytes);
     }
 

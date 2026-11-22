@@ -36,15 +36,27 @@ class RecordStructureTest {
     }
 
     @Test
-    void encodeAddsRecordEndAfterEachLineAndFileEnd() {
+    void encodeAddsRecordEndAfterEachLineAndFileEnd() throws Exception {
         assertThat(RecordStructure.encode("LINE1  \nLINE2\r", ISO_8859_1))
                 .containsExactly(bytes("LINE1", "<R>", "LINE2", "<R>", "<E>"));
     }
 
     @Test
-    void roundTrip() {
+    void roundTrip() throws Exception {
         String text = "//JOB1 JOB\n//S1 EXEC PGM=IEFBR14\nGrüße";
         assertThat(RecordStructure.decode(RecordStructure.encode(text, ISO_8859_1), ISO_8859_1)).isEqualTo(text);
         assertThat(RecordStructure.decode(new byte[0], ISO_8859_1)).isEmpty();
+    }
+
+    @Test
+    void charactersOutsideTheCharsetAreReportedNotReplaced() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> RecordStructure.encode("//JOB1 JOB\nPreis 5 €", ISO_8859_1))
+                .isInstanceOf(com.aresstack.spaceharvester.deck.ftp.TextEncodingException.class)
+                .hasMessageContaining("„€“").hasMessageContaining("Zeile 2").hasMessageContaining("Spalte 9")
+                .hasMessageContaining("ISO-8859-1");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> RecordStructure.text("a\n€", ISO_8859_1))
+                .isInstanceOf(com.aresstack.spaceharvester.deck.ftp.TextEncodingException.class)
+                .hasMessageContaining("Zeile 2");
     }
 }

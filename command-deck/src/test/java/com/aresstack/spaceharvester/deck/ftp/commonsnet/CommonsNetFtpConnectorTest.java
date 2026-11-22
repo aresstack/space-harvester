@@ -101,6 +101,17 @@ class CommonsNetFtpConnectorTest {
     }
 
     @Test
+    void refusesTextTheCharsetCannotHoldAndWritesNothing() throws Exception {
+        try (FileConnection files = files()) {
+            assertThatThrownBy(() -> files.write("'KKR.JCL(BUILD)'", "//BUILD JOB\n* 5 €"))
+                    .isInstanceOf(com.aresstack.spaceharvester.deck.ftp.TextEncodingException.class)
+                    .hasMessageContaining("€");
+            assertThat(host.text("KKR.JCL(BUILD)")).startsWith("//BUILD    JOB (ACCT)");
+            assertThat(files.alive()).isTrue();
+        }
+    }
+
+    @Test
     void writesMembersRecordByRecordAndDetectsConflicts() throws Exception {
         try (FileConnection files = files()) {
             files.write("'KKR.JCL(NEU)'", "//NEU      JOB\n//S1  EXEC PGM=IEFBR14   ");
