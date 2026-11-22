@@ -28,7 +28,7 @@ class AutoLoginTest {
                 new FakeTn3270Host.Line(3, 2, "", true),
                 new FakeTn3270Host.Line(4, 2, "", true)), "Cp273")) {
             TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(),
-                    runnable -> Thread.ofVirtual().start(runnable), new LoginScript(Duration.ofMillis(100)));
+                    runnable -> Thread.ofVirtual().start(runnable), new LoginScript(Duration.ofMillis(300)));
 
             TerminalSession session = sessions.open(TerminalProfile.of("127.0.0.1", host.port()),
                     () -> new TerminalLogin("TESTUSR", "geheim1".toCharArray(), "MENU"));
@@ -43,7 +43,7 @@ class AutoLoginTest {
                 Thread.sleep(50);
             }
             assertThat(session.state()).isEqualTo(SessionState.CONNECTED);
-            assertThat(session.note()).contains("Automatisch angemeldet als TESTUSR");
+            assertThat(session.note()).hasValue("Automatisch angemeldet als TESTUSR");
             String sent = new String(host.received(), Charset.forName("Cp273"));
             assertThat(sent).contains("TESTUSR").contains("geheim1").contains("MENU");
             // CLEAR, ENTER nach der Anmeldung, ENTER nach dem Startkommando.

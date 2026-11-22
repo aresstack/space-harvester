@@ -40,8 +40,6 @@ import javax.swing.JPanel;
 final class ConnectForm extends JPanel {
 
     static final String ENTRY_KEY = "deck.terminal.entry";
-    static final String HOST_KEY = "deck.terminal.host";
-    static final String PORT_KEY = "deck.terminal.port";
     static final String MODEL_KEY = "deck.terminal.model";
     static final String TLS_KEY = "deck.terminal.tls";
     static final String CODE_PAGE_KEY = "deck.terminal.code-page";
@@ -63,6 +61,7 @@ final class ConnectForm extends JPanel {
     private final JPanel advanced = new JPanel(new GridBagLayout());
     private final JLabel advancedToggle = new JLabel();
     private final ServerAccounts accounts;
+    private ServerAccount shownAccount;
     private final BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect;
     private boolean loaded;
 
@@ -198,6 +197,13 @@ final class ConnectForm extends JPanel {
 
     private void serverChanged() {
         ServerAccount account = selected();
+        // Eine abweichende Adresse (und ein abweichender Port) gilt nur für die eben gewählte Verbindung: Wer den Server wechselt, verbindet sich
+        // mit dessen Adresse, damit Zugangsdaten nie an eine vergessene, verdeckte Adresse gehen.
+        if (account != shownAccount) {
+            host.setText("");
+            port.setText("");
+            shownAccount = account;
+        }
         host.setPlaceholder(account == null || account.host().isEmpty() ? "Rechnername oder Adresse"
                 : account.host());
         int fallback = account != null && account.port().isPresent() ? account.port().getAsInt()
@@ -289,7 +295,6 @@ final class ConnectForm extends JPanel {
     private void remember() {
         ServerAccount account = selected();
         AppState.shared().putAll(Map.of(ENTRY_KEY, account == null ? "" : account.entry(),
-                HOST_KEY, host.getText().trim(), PORT_KEY, port.getText().trim(),
                 MODEL_KEY, ((TerminalModel) model.getSelectedItem()).name(), TLS_KEY, String.valueOf(tls.isSelected()),
                 CODE_PAGE_KEY, codePage.getText().trim(), KEEP_ALIVE_KEY, keepAlive.getText().trim(),
                 AUTO_LOGIN_KEY, String.valueOf(autoLogin.isSelected()), COMMAND_KEY, command.getText().trim()));
@@ -297,8 +302,6 @@ final class ConnectForm extends JPanel {
 
     private void recall() {
         AppState state = AppState.shared();
-        host.setText(nonNull(state.get(HOST_KEY)));
-        port.setText(nonNull(state.get(PORT_KEY)));
         String modelName = state.get(MODEL_KEY);
         for (TerminalModel candidate : TerminalModel.values()) {
             if (candidate.name().equals(modelName)) {
