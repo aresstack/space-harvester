@@ -19,6 +19,8 @@ java {
 dependencies {
     // TN3270-Emulation wie in MainframeMate (reines Java, LGPL, keine nativen Teile)
     implementation libs.openterm
+    // FTP und JES wie in MainframeMate (Apache Commons Net, reines Java)
+    implementation libs.commons.net
 
     testImplementation platform(libs.junit.bom)
     testImplementation 'org.junit.jupiter:junit-jupiter'
