@@ -191,14 +191,20 @@ class StatusLineTest {
         SwingUtilities.invokeAndWait(() -> {
             StatusLabel lead = new StatusLabel();
             String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
-            lead.show(new StatusNote("Wissensgraph wird erzeugt · " + skipped + " · " + skipped.toUpperCase(),
+            lead.show(new StatusNote("Wissensgraph wird erzeugt · " + skipped + " · " + skipped.toUpperCase()
+                    + " · " + skipped + " · " + skipped.toUpperCase(),
                     StatusNote.Tone.PLAIN, null, null, List.of(new StatusNote.Mark(skipped, StatusNote.Tone.WARNING)),
                     null));
             JLabel center = new JLabel("Download DEV: 3 von 10 Seiten");
             JLabel east = new JLabel("© 2026 AresStack");
             StatusLine line = new StatusLine(new JProgressBar(), lead, new JLabel(" "), center, east);
-            line.setSize(900, 28);
+            // Die Breite hängt nicht an den Schriftmaßen: Mitte und Copyright passen sicher in die 40 %, die der
+            // linke Teil (LEFT_SHARE) frei lässt; der lange Stand links kürzt trotzdem.
+            int width = Math.max(900, (int) Math.ceil((center.getPreferredSize().width
+                    + east.getPreferredSize().width + 120) / (1 - StatusLine.LEFT_SHARE)));
+            line.setSize(width, 28);
             layOut(line);
+            assertThat(lead.getPreferredSize().width).as("der Stand ist länger als die Zeile").isGreaterThan(width);
             assertThat(center.getWidth()).as("die Mitte ganz").isGreaterThanOrEqualTo(
                     center.getPreferredSize().width);
             assertThat(lead.getText()).endsWith("…</nobr></html>");
