@@ -395,22 +395,29 @@ wird automatisch verwaltet.
     rechnen (Embeddings, Absätze und Navigation mit Modell, Satzanalyse `statements`), lief bisher auf einem Thread
     mit 1.000 Plätzen und verwarf still, was nicht mehr hineinpasste. Mit Hintergrundaufträgen ist sie die Art
     `enrichment` „KI-Anreicherung“ (`Enrichments#background`):
-    - Je Quelle ein Teil, der die Berechnungen seiner Quelle nacheinander abholt, auch die, die erst während seines
-      Laufs dazukommen (jede abgelegte Seite, Öffnen, Freigabe- und Update-Neuberechnung). Gewartet wird nur mit
-      Prozessor und Seite, ohne Grenze und ohne Verwerfen; den Snapshot liest der Teil erst beim Rechnen, die
-      KI-Freigabe prüft wie bisher jede Berechnung bei der Ausführung.
-    - Die Teile laufen hintereinander (`BackgroundJobs#startBehindOpen`, `Jobs#AFTER`), wie vorher der eine Thread;
-      die Logik der Berechnung bleibt gleich.
-    - Anhalten: Der Teil sammelt weiter und rechnet beim Fortsetzen; solange er angehalten ist, warten die Teile
-      anderer Quellen („wartet auf …“). Abbrechen verwirft die wartenden Berechnungen der Quelle, das Ereignis des
-      Abbruchs sagt es (`Jobs#CANCEL_NOTE`); fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf
-      nach. Scheitert ein Teil (etwa Laufzeitgrenze), übernimmt ein neuer Teil, was liegen blieb.
+    - Je Quelle ein Teil, der neue Berechnungen aufnimmt, solange er noch nicht angefangen hat (jede abgelegte
+      Seite, Öffnen, Freigabe- und Update-Neuberechnung). Ab seinem Start rechnet er nur, was dann wartete; Späteres
+      bekommt einen neuen Teil hinten in der Kette, so hält eine Quelle mit stetem Zufluss keine andere auf (Reihenfolge
+      wie beim alten FIFO). Gewartet wird nur mit Prozessor und Seite, ohne Grenze und ohne Verwerfen; den Snapshot
+      liest der Teil erst beim Rechnen, die KI-Freigabe prüft wie bisher jede Berechnung bei der Ausführung.
+    - Die Teile laufen hintereinander (`BackgroundJobs#startBehindOpen`, `Jobs#AFTER`, nur der Reihe wegen), wie
+      vorher der eine Thread; die Logik der Berechnung bleibt gleich.
+    - Anhalten: Ein Teil, der noch nicht lief, sammelt weiter; ein angehaltener rechnet beim Fortsetzen weiter. Er hält
+      nur Teile seiner eigenen Quelle auf, denn Anhalten von A darf B nicht stoppen (gilt für jeden Teil, der nur der
+      Reihe wegen wartet). Abbrechen verwirft die wartenden Berechnungen des Teils, das Ereignis des Abbruchs sagt es
+      (`Jobs#CANCEL_NOTE`): Fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach, erzwungene
+      Neuberechnungen nach einer Freigabe oder einem Update erst der Abgleich beim nächsten Start. Scheitert eine
+      Berechnung (auch beim Lesen des Snapshots), meldet der Teil das gelb mit Quelle und Exception-Klasse und macht
+      mit der nächsten weiter. Scheitert ein Teil (etwa Laufzeitgrenze), übernimmt ein neuer Teil, was liegen blieb.
     - Erzwungene Neuberechnungen (`recomputeInBackground`) warten nicht mehr auf einen der 50 Plätze: Ein Teil wie
       „KI-Freigabe nachziehen“, der dort wartete, hielte einen Platz des Hintergrunds, den die KI-Anreicherung zum
       Freigeben braucht.
-    - Grenze: Die Warteschlange lebt im Speicher. Nach einem Neustart ist sie leer, ein fortgesetzter Teil endet
-      sofort; fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach, erzwungene nicht (wie
-      bisher). Nimmt der Hintergrund einen Teil nicht an (voll, beim Beenden), rechnet der bisherige Weg.
+    - Bisheriger Weg: Kann der Hintergrund nicht laufen (nur ein Platz unter „Vorbereitung“, `Jobs#SINGLE_SLOT`) oder
+      nimmt er einen Teil nicht an (voll, beim Beenden, jeder andere Fehler), rechnet der bisherige eigene Thread.
+    - Grenze: Die Warteschlange lebt im Speicher. Nach einem Neustart ist sie leer; Teile von vorher, die sich noch
+      fortsetzen ließen, werden beim Start abgeschlossen (Info „Warteschlange nach Neustart leer“), damit kein
+      angehaltener alle neuen aufhält. Fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach,
+      erzwungene der Abgleich beim Start.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

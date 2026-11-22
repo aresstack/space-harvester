@@ -159,6 +159,16 @@ public class Jobs implements AutoCloseable {
          */
         boolean holds(JobStatus predecessor);
 
+        /**
+         * Wie {@link #holds(JobStatus)}, mit dem wartenden Nachfolger, etwa damit ein angehaltener Vorgänger nur
+         * Nachfolger derselben Quelle hält (Abnahme #1077). Vorgabe: fragt {@link #holds(JobStatus)}.
+         *
+         * @param follower der wartende Auftrag
+         */
+        default boolean holds(JobStatus predecessor, JobStatus follower) {
+            return holds(predecessor);
+        }
+
         /** Vorgabe: hält, solange der Vorgänger offen oder angehalten ist. */
         PredecessorGate DEFAULT = predecessor -> predecessor != null
                 && (!predecessor.state().terminal() || predecessor.state() == JobState.PAUSED);
@@ -1748,6 +1758,7 @@ public class Jobs implements AutoCloseable {
             return false;
         }
         boolean held = false;
+        JobStatus follower = null;
         for (String id : after.split(",")) {
             if (id.isBlank()) {
                 continue;
@@ -1755,7 +1766,10 @@ public class Jobs implements AutoCloseable {
             Job open = this.open.get(id);
             JobStatus predecessor = open != null ? open.snapshot()
                     : predecessors.computeIfAbsent(id, store::find).orElse(null);
-            if (gate.holds(predecessor)) {
+            if (follower == null) {
+                follower = job.snapshot();
+            }
+            if (gate.holds(predecessor, follower)) {
                 held = true;
                 break;
             }

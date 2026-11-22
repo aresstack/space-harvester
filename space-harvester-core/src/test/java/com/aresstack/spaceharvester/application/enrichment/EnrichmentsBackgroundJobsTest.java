@@ -4,7 +4,6 @@ import static com.aresstack.spaceharvester.application.enrichment.EnrichmentTest
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
-import com.aresstack.spaceharvester.application.background.BackgroundGroup;
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
@@ -90,24 +89,27 @@ class EnrichmentsBackgroundJobsTest {
     void aPausedPartKeepsCollectingAndComputesOnResume() throws Exception {
         Remote remote = new Remote();
         ExecutorService executor = Enrichments.background(10);
-        // Ein Platz: der Teil wartet und lässt sich anhalten, bevor er läuft.
-        Jobs jobs = jobs(Runnable::run, 1);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
         BackgroundJobs background = new BackgroundJobs(jobs, "app");
         try {
             Enrichments enrichments = enrichments(remote, executor, background);
+            // Ein laufender Teil davor: der Teil der Quelle wartet und lässt sich anhalten, bevor er läuft.
+            enrichments.refresh(page("x", "1", "Vorne"));
             enrichments.refresh(page("wiki", "1", "Eins"));
-            String groupId = background.groups().getFirst().groupId();
+            String groupId = part(background, "wiki").parameter(BackgroundJobs.GROUP);
             background.pause(groupId);
             enrichments.refresh(page("wiki", "2", "Zwei"));
-            assertThat(background.groups()).as("der angehaltene Teil nimmt die neue Seite mit").hasSize(1);
+            assertThat(background.parts(Enrichments.BACKGROUND_KIND)).as("der angehaltene Teil nimmt die neue Seite mit")
+                    .hasSize(2);
 
-            jobs.parallelPreparations(2);
+            runAll(held);
+            assertThat(remote.calls).containsOnlyKeys("x/1");
             background.resume(groupId);
-            awaitUntil(() -> background.group(groupId).orElseThrow().finished());
+            runAll(held);
 
-            assertThat(remote.calls).containsOnlyKeys("wiki/1", "wiki/2");
-            assertThat(background.group(groupId).orElseThrow().parts().getFirst().state())
-                    .isEqualTo(JobState.COMPLETED);
+            assertThat(remote.calls).containsOnlyKeys("x/1", "wiki/1", "wiki/2");
+            assertThat(part(background, "wiki").state()).isEqualTo(JobState.COMPLETED);
         } finally {
             executor.shutdownNow();
         }
@@ -117,24 +119,24 @@ class EnrichmentsBackgroundJobsTest {
     void cancellingDropsTheWaitingWorkSaysSoAndTheNextPageStartsANewPart() throws Exception {
         Remote remote = new Remote();
         ExecutorService executor = Enrichments.background(10);
-        Jobs jobs = jobs(Runnable::run, 1);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
         BackgroundJobs background = new BackgroundJobs(jobs, "app");
         try {
             Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.refresh(page("x", "1", "Vorne"));
             enrichments.refresh(page("wiki", "1", "Eins"));
-            BackgroundGroup first = background.groups().getFirst();
-            background.cancel(first.groupId());
-            String partId = first.parts().getFirst().id();
-            assertThat(jobs.events(partId)).anySatisfy(event -> assertThat(event.message())
+            JobStatus first = part(background, "wiki");
+            background.cancel(first.parameter(BackgroundJobs.GROUP));
+            assertThat(jobs.events(first.id())).anySatisfy(event -> assertThat(event.message())
                     .endsWith("; " + Enrichments.CANCEL_NOTE));
 
-            jobs.parallelPreparations(2);
             enrichments.refresh(page("wiki", "2", "Zwei"));
-            awaitUntil(() -> remote.calls.containsKey("wiki/2"));
+            runAll(held);
 
-            assertThat(background.groups()).hasSize(2);
+            assertThat(background.parts(Enrichments.BACKGROUND_KIND)).hasSize(3);
             assertThat(remote.calls).as("die abgebrochene Seite holt der nächste Abgleich nach")
-                    .containsOnlyKeys("wiki/2");
+                    .containsOnlyKeys("x/1", "wiki/2");
         } finally {
             executor.shutdownNow();
         }
@@ -146,23 +148,21 @@ class EnrichmentsBackgroundJobsTest {
         // Hintergrunds, den die KI-Anreicherung zum Freigeben braucht.
         Remote remote = new Remote();
         ExecutorService executor = Enrichments.background(10);
-        Jobs jobs = jobs(Runnable::run, 1);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
         BackgroundJobs background = new BackgroundJobs(jobs, "app");
         try {
             Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.refresh(page("x", "1", "Vorne"));
             assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
                 for (int i = 0; i <= Enrichments.FORCED_IN_BACKGROUND; i++) {
                     assertThat(enrichments.recomputeInBackground(page("wiki", "p" + i, "Text " + i),
                             List.of("remote"))).isEqualTo(1);
                 }
             });
-            assertThat(background.groups()).singleElement().satisfies(group -> assertThat(group.parts())
-                    .singleElement().satisfies(part -> assertThat(part.state()).isEqualTo(JobState.QUEUED)));
+            assertThat(part(background, "wiki").state()).isEqualTo(JobState.QUEUED);
 
-            jobs.parallelPreparations(2);
-            // Ein Platz mehr gibt den wartenden Teil frei.
-            enrichments.refresh(page("ops", "1", "Anstoß"));
-            awaitUntil(() -> remote.calls.size() == Enrichments.FORCED_IN_BACKGROUND + 2);
+            runAll(held);
             assertThat(remote.calls).hasSize(Enrichments.FORCED_IN_BACKGROUND + 2);
         } finally {
             executor.shutdownNow();
@@ -195,18 +195,17 @@ class EnrichmentsBackgroundJobsTest {
         Remote remote = new Remote();
         remote.failing.add("wiki/2");
         ExecutorService executor = Enrichments.background(10);
-        Jobs jobs = jobs(Runnable::run, 4);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
         BackgroundJobs background = new BackgroundJobs(jobs, "app");
         try {
             Enrichments enrichments = enrichments(remote, executor, background);
             PageSnapshot ok = page("wiki", "1", "Eins");
             PageSnapshot broken = page("wiki", "2", "Zwei");
-            // Beide warten, bevor der Teil läuft: ein Platz, dann zwei.
-            jobs.parallelPreparations(1);
+            // Beide warten, bevor der Teil läuft.
             enrichments.refresh(ok);
             enrichments.refresh(broken);
-            jobs.parallelPreparations(2);
-            awaitUntil(() -> part(background, "wiki").state() == JobState.COMPLETED);
+            runAll(held);
 
             assertThat(part(background, "wiki").progress()).satisfies(progress -> {
                 assertThat(progress.processed()).isEqualTo(2);
@@ -235,6 +234,160 @@ class EnrichmentsBackgroundJobsTest {
             assertThat(enrichments.recomputeInBackground(page("wiki", "1", "Eins"), List.of("remote"))).isEqualTo(1);
 
             assertThat(remote.calls).containsOnlyKeys("wiki/1");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void withASingleSlotTheBackgroundNeverRunsSoTheWorkGoesTheFormerWay() throws Exception {
+        // Abnahme #1077: Mit einem Platz läuft kein Hintergrundteil; die KI-Anreicherung stünde sonst still.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        Jobs jobs = jobs(Runnable::run, 1);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.refresh(page("wiki", "1", "Eins"));
+            assertThat(enrichments.recomputeInBackground(page("wiki", "2", "Zwei"), List.of("remote"))).isEqualTo(1);
+            executor.shutdown();
+            assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(background.groups()).isEmpty();
+            assertThat(remote.calls).containsOnlyKeys("wiki/1", "wiki/2");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void workArrivingWhileAPartRunsGoesToANewPartBehindTheOtherSources() throws Exception {
+        // Abnahme #1077: Ein Teil nimmt nur, was bei seinem Start wartete; sonst hielte steter Zufluss andere auf.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            PageSnapshot later = page("wiki", "2", "Zwei");
+            remote.during.put("wiki/1", () -> enrichments.refresh(later));
+            enrichments.refresh(page("wiki", "1", "Eins"));
+            enrichments.refresh(page("ops", "1", "Drei"));
+
+            runAll(held);
+
+            assertThat(remote.order).containsExactly("wiki/1", "ops/1", "wiki/2");
+            List<JobStatus> parts = background.parts(Enrichments.BACKGROUND_KIND);
+            assertThat(parts).hasSize(3).extracting(JobStatus::sourceId)
+                    .containsExactlyInAnyOrder("wiki", "ops", "wiki");
+            JobStatus ops = part(background, "ops");
+            JobStatus second = parts.stream().filter(part -> part.sourceId().equals("wiki")
+                    && part.parameter(Jobs.AFTER) != null && part.parameter(Jobs.AFTER).contains(ops.id()))
+                    .findFirst().orElseThrow();
+            assertThat(second.parameter(Jobs.AFTER).split(",")).as("hinten in der Kette, hinter beiden").hasSize(2);
+            assertThat(parts).extracting(JobStatus::state).containsOnly(JobState.COMPLETED);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void aPausedPartHoldsOnlyItsOwnSourceNotTheOthersBehindIt() throws Exception {
+        // Abnahme #1077: Anhalten von A darf B nicht stoppen.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.refresh(page("x", "1", "Vorne"));
+            enrichments.refresh(page("wiki", "1", "Eins"));
+            JobStatus paused = part(background, "wiki");
+            background.pause(paused.parameter(BackgroundJobs.GROUP));
+            enrichments.refresh(page("ops", "1", "Drei"));
+            assertThat(part(background, "ops").parameter(Jobs.AFTER)).contains(paused.id());
+
+            runAll(held);
+
+            assertThat(remote.calls).containsOnlyKeys("x/1", "ops/1");
+            assertThat(part(background, "wiki").state()).isEqualTo(JobState.PAUSED);
+            assertThat(part(background, "ops").state()).isEqualTo(JobState.COMPLETED);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void partsFromBeforeTheRestartAreRetiredSoTheyHoldNoNewPart() throws Exception {
+        // Abnahme #1077: Die Warteschlange lag im Speicher; ein angehaltener Teil von vorher hielte alle neuen auf.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs before = new Jobs(jobStore, held::add, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+        BackgroundJobs backgroundBefore = new BackgroundJobs(before, "app");
+        try {
+            Enrichments first = enrichments(remote, executor, backgroundBefore);
+            first.refresh(page("x", "1", "Vorne"));
+            first.refresh(page("wiki", "1", "Eins"));
+            JobStatus old = part(backgroundBefore, "wiki");
+            backgroundBefore.pause(old.parameter(BackgroundJobs.GROUP));
+            assertThat(backgroundBefore.part(old.id()).orElseThrow().state()).isEqualTo(JobState.PAUSED);
+
+            // Neustart: dieselbe Ablage, neue Auftragsverwaltung, leere Warteschlange.
+            Jobs after = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs backgroundAfter = new BackgroundJobs(after, "app");
+            Enrichments second = enrichments(remote, executor, backgroundAfter);
+
+            assertThat(backgroundAfter.part(old.id()).orElseThrow().state()).isEqualTo(JobState.CANCELLED);
+            assertThat(after.events(old.id())).anySatisfy(event -> assertThat(event.message())
+                    .isEqualTo(Enrichments.EMPTY_AFTER_RESTART));
+
+            second.refresh(page("wiki", "2", "Zwei"));
+            awaitUntil(() -> remote.calls.containsKey("wiki/2"));
+            assertThat(remote.calls).containsKey("wiki/2").doesNotContainKey("wiki/1");
+            assertThat(backgroundAfter.parts(Enrichments.BACKGROUND_KIND)).filteredOn(BackgroundJobs::open)
+                    .isEmpty();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void aComputationThatThrowsIsReportedAndThePartGoesOnWithTheNext() throws Exception {
+        // Abnahme #1077: Sonst scheiterte der Teil, und jeder Ersatzteil verlöre die nächste Berechnung.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
+            enrichments.background(background, key -> {
+                if (key.pageId().equals("kaputt")) {
+                    throw new IllegalStateException("Ablage nicht lesbar");
+                }
+                return Optional.ofNullable(cache.get(key));
+            });
+            enrichments.refresh(page("wiki", "kaputt", "Eins"));
+            enrichments.refresh(page("wiki", "2", "Zwei"));
+
+            runAll(held);
+
+            JobStatus wiki = part(background, "wiki");
+            assertThat(wiki.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(wiki.progress()).satisfies(progress -> {
+                assertThat(progress.processed()).isEqualTo(2);
+                assertThat(progress.failed()).isEqualTo(1);
+                assertThat(progress.written()).isEqualTo(1);
+            });
+            assertThat(remote.calls).containsOnlyKeys("wiki/2");
+            assertThat(jobs.events(wiki.id())).anySatisfy(event -> {
+                assertThat(event.code()).isEqualTo(Enrichments.WORK_FAILED);
+                assertThat(event.message()).contains("wiki", "IllegalStateException").doesNotContain("kaputt");
+            });
         } finally {
             executor.shutdownNow();
         }
@@ -280,6 +433,9 @@ class EnrichmentsBackgroundJobsTest {
 
         private final Map<String, AtomicInteger> calls = new ConcurrentHashMap<>();
         private final java.util.Set<String> failing = ConcurrentHashMap.newKeySet();
+        private final java.util.List<String> order = new java.util.concurrent.CopyOnWriteArrayList<>();
+        /** Läuft während der Berechnung dieser Seite, etwa ein neuer Zufluss. */
+        private final Map<String, Runnable> during = new ConcurrentHashMap<>();
 
         @Override
         public String id() {
@@ -305,6 +461,11 @@ class EnrichmentsBackgroundJobsTest {
         public EnrichmentOutput process(PageKey key, PageText text) {
             String page = key.sourceId() + "/" + key.pageId();
             calls.computeIfAbsent(page, ignored -> new AtomicInteger()).incrementAndGet();
+            order.add(page);
+            Runnable hook = during.remove(page);
+            if (hook != null) {
+                hook.run();
+            }
             if (failing.contains(page)) {
                 throw new IllegalStateException("Dienst nicht erreichbar");
             }
