@@ -240,4 +240,17 @@ class PodcastPicturesTest {
         assertThat(calls.get()).isGreaterThanOrEqualTo(3);
         assertThat(outside).hasValue(0);
     }
+
+    @Test
+    void aRetriedTopicDoesNotTakeAPageImageALaterTopicAlreadyStored() throws Exception {
+        PodcastPictures pictures = pictures(answering("{\"choice\":2}", new AtomicInteger()),
+                answering(DiagramComposerTest.PLAN, new AtomicInteger()), source(png(640, 360)));
+        // Thema 4 hat im ersten Lauf das Ablaufbild bekommen
+        assertThat(pictures.make(KEY, "s", new PodcastPictures.Brief(4, "t", "m", List.of("p2")), new HashSet<>(),
+                new ArrayList<>()).sha256()).isEqualTo("bb");
+        // neuer Lauf, leere Vergabe: Thema 1 darf es nicht noch einmal nehmen
+        PodcastPictures.Picture retry = pictures.make(KEY, "s", new PodcastPictures.Brief(1, "t", "m",
+                List.of("p1", "p2")), new HashSet<>(), new ArrayList<>());
+        assertThat(retry.sha256()).isNotEqualTo("bb");
+    }
 }

@@ -285,6 +285,19 @@ public final class PodcastPictures {
         return none;
     }
 
+    /** Die Fingerabdrücke aller schon abgelegten Seitenbilder dieser Folge. */
+    private Set<String> storedFingerprints(String key) {
+        Set<String> found = new java.util.HashSet<>();
+        try (var files = Files.list(store.folder(key))) {
+            files.map(file -> file.getFileName().toString()).filter(name -> name.matches("pic-\\d{2}\\.json"))
+                    .forEach(name -> stored(store, key, Integer.parseInt(name.substring(4, 6)))
+                            .map(Picture::sha256).ifPresent(found::add));
+        } catch (IOException | java.io.UncheckedIOException e) {
+            // keine Ablage: nichts vergeben
+        }
+        return found;
+    }
+
     /** Wie viele Läufe am Bild dieses Themas schon gescheitert sind. */
     static int failures(PodcastStore store, String key, int topic) {
         Path meta = store.folder(key).resolve(name(topic, "json"));
@@ -302,6 +315,10 @@ public final class PodcastPictures {
                                           List<String> repairs) {
         if (brief.pageIds().isEmpty() || !chooser.available()) {
             return Optional.empty();
+        }
+        Set<String> taken = storedFingerprints(key);
+        synchronized (used) {
+            used.addAll(taken); // Seitenbilder, die andere Themen schon abgelegt haben, auch aus früheren Läufen
         }
         List<PageImageSource.Candidate> candidates = new ArrayList<>();
         for (PageImageSource.Candidate candidate : images.candidates(sourceId, brief.pageIds())) {
