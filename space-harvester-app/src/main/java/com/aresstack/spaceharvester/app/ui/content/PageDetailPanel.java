@@ -42,6 +42,7 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageBookmark;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
+import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -670,7 +671,11 @@ public final class PageDetailPanel extends JPanel {
         shownStore = storeSetting();
         storeField.show(shownStore);
         sourceChanges.onStatus(text -> tabStatus(READ, text));
-        graphView.onStatus(text -> tabStatus(GRAPH, text));
+        graphView.onStatus(text -> {
+            graphStatus = text;
+            showGraphStatus();
+        });
+        graphView.onSubpages(this::belowGraphLoaded);
         // Lauf-, Erfolgs- und Infomeldungen gehen in die Statuszeile des Hauptfensters; die Platte zeigt nur Probleme.
         feedback.statusLine((text, tone) -> context.events().publish(
                 new com.aresstack.spaceharvester.app.event.StatusMessageEvent(text,
@@ -827,6 +832,8 @@ public final class PageDetailPanel extends JPanel {
         sourceId = null;
         pageId = null;
         page = null;
+        // Der Graph verlässt die Seite vor den Unterseiten: Deren Abmeldung soll für die alte Seite nichts mehr laden.
+        graphView.page(null);
         subpages.page(null, null, null, null);
         pagePodcast.summary(null);
         assetsLoaded = false;
@@ -1399,7 +1406,9 @@ public final class PageDetailPanel extends JPanel {
         breadcrumbs.clear();
         positionShown.accept(null);
         references.message(" ");
-        // Die Unterseiten der vorigen Seite gelten ab jetzt nicht mehr, auch wenn das Laden scheitert.
+        // Die Unterseiten der vorigen Seite gelten ab jetzt nicht mehr, auch wenn das Laden scheitert. Der Graph
+        // verlässt die Seite zuerst, damit deren Abmeldung für die alte Seite nichts mehr lädt.
+        graphView.page(null);
         subpages.page(null, null, null, null);
         int current = ++request;
         update.dismiss();
@@ -1408,7 +1417,6 @@ public final class PageDetailPanel extends JPanel {
         // Bis die Seite da ist, dreht sich auch über dem Text die Sanduhr.
         textBusy.setBusy(true);
         statementsView.pending(new PageKey(sourceId, pageId));
-        graphView.page(null);
         acronymHint.setText(" ");
         closeAttachmentOverlay();
         assetsModel.set(null);
@@ -1616,6 +1624,15 @@ public final class PageDetailPanel extends JPanel {
         belowRelationsGeneration++;
         belowSectionFor.clear();
         BELOW_TABS.forEach(tab -> belowSectionGeneration.merge(tab, 1L, Long::sum));
+        // Der Seitengraph rechnet selbst über Seite und Unterseiten (W4); vor dem Abschnitt, der sein Ergebnis zeigt. Er
+        // folgt der Checkbox, nicht below(): „Absätze“ sperrt sie nur, das soll Ansicht und „Zurück“ nicht verwerfen.
+        // Neu rechnen bei anderer Menge oder neuem Ergebnis der Nachfahren (geänderter Bestand, gleiche Menge).
+        Subpages.Below known = subpages.checked() ? subpages.known() : null;
+        boolean reload = subpages.revision() != graphSubpagesRevision;
+        graphSubpagesRevision = subpages.revision();
+        graphView.subpages(runtime == null ? null : graphSubpages(known), reload);
+        graphBelowNote = "";
+        showGraphStatus();
         if (below == null || runtime == null) {
             terms.below(null);
             references.belowLoading(-1);
@@ -1742,7 +1759,7 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
-    /** Die Reiter mit einem Abschnitt „Aus Unterseiten“, der je Unterseite liest. */
+    /** Die Reiter mit einem Abschnitt „Aus Unterseiten“; unter Graph aus dem Ergebnis des Graphen selbst (W4). */
     private static final List<String> BELOW_TABS = List.of(IMAGES, STATEMENTS, GRAPH);
     /** Höchstens so viele Zeilen je Abschnitt; darüber sagt die Statuszeile „die ersten“. */
     static final int BELOW_ROWS_LIMIT = 1000;
@@ -1783,6 +1800,20 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         belowSectionFor.put(tab, below);
+        if (GRAPH.equals(tab)) {
+            // Aus demselben Ergebnis wie der Graph darüber, nicht eigens je Unterseite (W4); sonst kommt es mit
+            // graphView.onSubpages.
+            graphBelow.loading();
+            GraphNeighbourhood.Stack stack = graphView.subpageStack();
+            if (stack != null) {
+                showBelowGraph(below, runtime.workspace(), stack);
+            } else {
+                // Ohne Ergebnis lädt der Graph neu oder meldet sofort „nichts“ (etwa nach einem gescheiterten Laden,
+                // dann „Absätze“ und zurück), damit der Abschnitt nicht ewig lädt.
+                graphView.requestSubpages();
+            }
+            return;
+        }
         long generation = belowSectionGeneration.merge(tab, 1L, Long::sum);
         java.util.function.BooleanSupplier current = () -> generation == belowSectionGeneration.getOrDefault(tab, 0L);
         section.loading();
@@ -1803,6 +1834,103 @@ public final class PageDetailPanel extends JPanel {
                 tabStatus(tab, "Unterseiten nicht lesbar: " + Problems.describe(error).title());
             }
         });
+    }
+
+    /** Statuszeile des Seitengraphen; nur sie nennt die Unterseiten ohne Analyse. */
+    private String graphStatus = " ";
+    /** Das Ergebnis der Nachfahren ({@link Subpages#revision()}), das der Seitengraph zuletzt bekam. */
+    private int graphSubpagesRevision = -1;
+    /** Was der Abschnitt „Aus Unterseiten“ unter dem Graph dazu sagt („ · …“), sonst leer. */
+    private String graphBelowNote = "";
+
+    /** Graph und Abschnitt darunter teilen sich eine Statuszeile: erst der Graph, dann der Abschnitt. */
+    private void showGraphStatus() {
+        String base = graphStatus == null ? " " : graphStatus;
+        tabStatus(GRAPH, graphBelowNote.isEmpty() ? base
+                : base.isBlank() ? graphBelowNote.substring(3) : base + graphBelowNote);
+    }
+
+    /**
+     * Die Unterseiten, über die der Seitengraph rechnet: die ermittelten Nachfahren, solange wenigstens eine nicht
+     * gesperrt ist; sonst {@code null} wie ohne Unterseiten. {@link PageSelection#size()} zählt gesperrte mit, die keinen
+     * Inhalt haben.
+     */
+    static com.aresstack.spaceharvester.application.holdings.PageSelection graphSubpages(Subpages.Below known) {
+        return known == null || known.pages().unlockedSize() == 0 ? null : known.pages();
+    }
+
+    /** Ein Ergebnis des Seitengraphen mit Unterseiten; zeigt es im Abschnitt, wenn der für diese Unterseiten gilt. */
+    private void belowGraphLoaded(GraphNeighbourhood.Stack stack) {
+        Subpages.Below below = subpages.below();
+        AppRuntime runtime = context.runtime();
+        if (below != null && runtime != null && below.equals(belowSectionFor.get(GRAPH))) {
+            showBelowGraph(below, runtime.workspace(), stack);
+        }
+    }
+
+    /** Füllt den Abschnitt unter dem Graph aus {@code stack} ({@code null}: Graph nicht geladen); Titel im Hintergrund. */
+    private void showBelowGraph(Subpages.Below below, com.aresstack.spaceharvester.app.runtime.Workspace workspace,
+                                GraphNeighbourhood.Stack stack) {
+        long generation = belowSectionGeneration.merge(GRAPH, 1L, Long::sum);
+        java.util.function.BooleanSupplier current = () -> generation == belowSectionGeneration.getOrDefault(GRAPH, 0L);
+        if (stack == null) {
+            graphBelow.rows(List.of(), true);
+            graphBelowNote = "";
+            showGraphStatus();
+            return;
+        }
+        Background.run(() -> belowGraphRows(workspace, below, stack), found -> {
+            if (current.getAsBoolean()) {
+                graphBelow.rows(found.rows(), true);
+                graphBelowNote = found.cut() ? " · unten die ersten 1.000 von mehr" : "";
+                showGraphStatus();
+            }
+        }, error -> {
+            if (current.getAsBoolean()) {
+                graphBelow.rows(List.of(), true);
+                graphBelowNote = " · Unterseiten nicht lesbar: " + Problems.describe(error).title();
+                showGraphStatus();
+            }
+        });
+    }
+
+    /**
+     * Die Zeilen unter dem Graph aus dessen Ergebnis über Seite und Unterseiten (W4): je Unterseite mit Knoten im Graph
+     * eine Zeile, Zahl ihrer gezeigten Knoten als Chip – mit denselben Filtern (auch „Veraltete zeigen“) und Grenzen
+     * wie der Graph. {@code missing} zählt die Unterseiten ohne sichtbare Analyse wie dessen Statuszeile. Gesperrte
+     * Unterseiten zählen nirgends, auch wenn eine Analyse von früher vorliegt. Nie auf dem EDT.
+     */
+    static BelowRows belowGraphRows(com.aresstack.spaceharvester.app.runtime.Workspace workspace,
+                                    Subpages.Below below, GraphNeighbourhood.Stack stack) {
+        return belowGraphRows(workspace::pageNodes, below, stack);
+    }
+
+    /** Wie oben, mit {@code pageNodes} wie {@code Workspace#pageNodes}. */
+    static BelowRows belowGraphRows(java.util.function.Function<java.util.Collection<PageKey>, java.util.Map<PageKey,
+            com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode>> pageNodes,
+                                    Subpages.Below below, GraphNeighbourhood.Stack stack) {
+        PageSet pages = below.pages().pages();
+        PageSet locked = below.pages().locked();
+        java.util.function.Predicate<PageKey> counted = key -> pages.contains(key) && !locked.contains(key);
+        java.util.Map<PageKey, Integer> counts = new java.util.HashMap<>();
+        for (GraphNeighbourhood.Node node : stack.graph().nodes()) {
+            if (counted.test(node.page().key())) {
+                counts.merge(node.page().key(), 1, Integer::sum);
+            }
+        }
+        int missing = (int) stack.missing().stream().filter(counted).count();
+        var nodes = pageNodes.apply(counts.keySet());
+        List<PageKey> ordered = new java.util.ArrayList<>(nodes.keySet());
+        ordered.sort(java.util.Comparator.comparing((PageKey key) -> Breadcrumbs.title(nodes.get(key)),
+                String.CASE_INSENSITIVE_ORDER).thenComparing(PageKey::pageId));
+        List<SubpageSection.Row> rows = new java.util.ArrayList<>();
+        for (PageKey key : ordered) {
+            if (rows.size() >= BELOW_ROWS_LIMIT) {
+                return new BelowRows(List.copyOf(rows), missing, true);
+            }
+            rows.add(new SubpageSection.Row(List.of(), nodes.get(key), List.of(), null, counts.get(key)));
+        }
+        return new BelowRows(List.copyOf(rows), missing, false);
     }
 
     /**
@@ -1875,12 +2003,6 @@ public final class PageDetailPanel extends JPanel {
                                                         com.aresstack.spaceharvester.app.runtime.Workspace workspace,
                                                         com.aresstack.spaceharvester.application.snapshot.PageKey key,
                                                         com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode node) {
-        if (GRAPH.equals(tab)) {
-            var graph = workspace.knowledgeGraphOfPage(key,
-                    com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood.Options.DEFAULT);
-            int count = graph.nodes().size() + graph.hidden();
-            return count == 0 ? null : List.of(new SubpageSection.Row(List.of(), node, List.of(), null, count));
-        }
         var page = workspace.cachedPage(key.sourceId(), key.pageId());
         if (page.isEmpty()) {
             return null;
@@ -2021,10 +2143,11 @@ public final class PageDetailPanel extends JPanel {
         views = loaded.enrichments();
         PageSnapshot snapshot = page.snapshot();
         PageMetadata metadata = page.header().metadata();
+        // Der Graph zuerst: die Unterseiten, die die Checkbox danach meldet, gehören schon zur neuen Seite (W4).
+        graphView.page(snapshot.key(), snapshot.spaceKey());
         subpages.page(context.runtime() == null ? null : context.runtime().workspace(), sourceId,
                 metadata.partitionKey(), metadata.pageId());
         statementsView.page(snapshot, loaded.reader() == null ? null : loaded.reader().text());
-        graphView.page(snapshot.key(), snapshot.spaceKey());
         pagePodcast.summary(new PodcastPage(sourceId, metadata.pageId()));
         pageShown.accept(sourceId, metadata.partitionKey());
         title.setText(metadata.title());

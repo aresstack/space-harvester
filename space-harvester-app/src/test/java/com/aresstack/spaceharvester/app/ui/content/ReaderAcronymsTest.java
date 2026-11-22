@@ -279,7 +279,10 @@ class ReaderAcronymsTest {
      */
     @Test
     void withSubpagesTheTermsTabShowsTheTermsOfTheSubpagesBelowItsOwn() throws Exception {
-        FakeConfluence wiki = confluence("200", "Schnittstellen", WIKI_PAGE);
+        FakeConfluence wiki = new FakeConfluence();
+        wiki.space("DEV", "Entwicklung");
+        FakeConfluence.FakePage head = wiki.page("200", "Schnittstellen", "DEV", "<p>Ansicht</p>").storage(WIKI_PAGE);
+        wiki.homepage("DEV", "200");
         wiki.page("210", "Zahlungen", "DEV", "<p>Ansicht</p>").storage("<p>Der ZV (Zahlungsverkehr) nutzt die "
                 + "API.</p>");
         wiki.child("200", "210");
@@ -346,10 +349,15 @@ class ReaderAcronymsTest {
                 .isEqualTo("Synonyme vorschlagen");
 
         // P3c: Bilder, Aussagen und Graph zeigen nur Vorhandenes; die Unterseite ist nicht analysiert, also steht dort
-        // nichts, und die Statuszeile sagt, für wie viele Unterseiten noch nichts vorliegt. Kein KI-Lauf.
+        // nichts, und die Statuszeile sagt, für wie viele Unterseiten noch nichts vorliegt. Kein KI-Lauf. Der Graph
+        // rechnet über Seite und Unterseiten mit den Filtern des Reiters (W4); der Abschnitt zählt aus demselben
+        // Ergebnis, nur die Unterseiten.
         Subpages.Below subpagesBelow = onEdt(() -> panel.subpages().below());
-        PageDetailPanel.BelowRows graphRows = PageDetailPanel.belowRows("Graph", workspace, subpagesBelow, () -> true,
-                partial -> { });
+        com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood.Stack stack =
+                workspace.knowledgeGraphOfPages(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki",
+                        "200"), subpagesBelow.pages(), onEdt(() -> panel.graph().options()));
+        assertThat(stack.missing()).as("Seite und Unterseite ohne Analyse").hasSize(2);
+        PageDetailPanel.BelowRows graphRows = PageDetailPanel.belowGraphRows(workspace, subpagesBelow, stack);
         assertThat(graphRows.rows()).isEmpty();
         assertThat(graphRows.missing()).isEqualTo(1);
         assertThat(PageDetailPanel.belowStatus("Graph", 1, graphRows))
@@ -366,6 +374,41 @@ class ReaderAcronymsTest {
         });
         awaitTrue(() -> onEdt(() -> panel.belowSectionOf("Graph").shown()
                 && panel.belowSectionOf("Graph").count() == 0));
+
+        // W4: Der Seitengraph selbst rechnet über Seite und Unterseite (ohne Bildschirm das Laden von Hand anstoßen).
+        onEdt(() -> {
+            panel.graph().showPageNow();
+            return null;
+        });
+        awaitTrue(() -> onEdt(() -> panel.graph().subpageStack() != null));
+        com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood.Stack graphStack =
+                onEdt(() -> panel.graph().subpageStack());
+        assertThat(graphStack.considered()).isEqualTo(1);
+        // „Absätze“ sperrt die Checkbox nur: Ansicht, Historie und Ergebnis des Graphen bleiben, nichts lädt neu.
+        onEdt(() -> {
+            panel.selectTab("Absätze");
+            panel.selectTab("Graph");
+            return null;
+        });
+        assertThat(onEdt(() -> panel.graph().subpageStack())).isSameAs(graphStack);
+        assertThat(onEdt(() -> panel.graph().pageLoaded())).isTrue();
+
+        // „Seite neu laden“ zeigt dieselbe Seite noch einmal, ohne dass die Checkbox etwas Neues meldet: Der Graph
+        // rechnet weiter mit den Unterseiten.
+        synchronized (wiki) {
+            head.version(2, "2026-10-19T08:00:00.000Z");
+        }
+        open(panel, "wiki", "200", false);
+        awaitTrue(() -> !onEdt(panel::updateOffer).isEmpty());
+        awaitTrue(() -> onEdt(() -> panel.subpages().below() != null));
+        onEdt(() -> {
+            panel.clickUpdate();
+            panel.graph().showPageNow();
+            return null;
+        });
+        awaitTrue(() -> onEdt(() -> panel.graph().subpageStack() != null));
+        assertThat(onEdt(() -> panel.graph().subpageStack().considered())).isEqualTo(1);
+        assertThat(onEdt(() -> panel.graph().statusText())).contains("mit 1 Unterseite");
 
         onEdt(() -> {
             panel.subpages().box().setSelected(false);
