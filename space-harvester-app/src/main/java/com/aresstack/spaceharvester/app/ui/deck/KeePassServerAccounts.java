@@ -11,8 +11,8 @@ import java.util.function.Supplier;
 
 /**
  * Host-Zugänge des Command Deck aus KeePass, über dieselbe Kopplung wie die Wissensquellen (Einstellungen ›
- * Sicherheit › KeePass). Die Liste wird nur gelesen, wenn schon gekoppelt ist; einen Kopplungsdialog öffnet das
- * Deck nie von selbst.
+ * Sicherheit › KeePass). Gelesen wird nur, wenn schon gekoppelt ist, und nur über den stillen Zugang: Auch eine von
+ * KeePass widerrufene Kopplung öffnet keinen Kopplungsdialog, sondern endet als Fehler mit Grund.
  */
 public final class KeePassServerAccounts implements ServerAccounts {
 
@@ -27,7 +27,7 @@ public final class KeePassServerAccounts implements ServerAccounts {
     @Override
     public List<ServerAccount> accounts() throws Exception {
         KeePassLink keePass = paired();
-        return keePass.entries().stream()
+        return keePass.entriesSilently().stream()
                 .filter(entry -> entry.title() != null && !entry.title().isBlank())
                 .map(KeePassServerAccounts::account)
                 .toList();
@@ -35,7 +35,7 @@ public final class KeePassServerAccounts implements ServerAccounts {
 
     @Override
     public ServerCredentials credentials(String entry) throws Exception {
-        try (VaultEntryDraft draft = paired().read(entry)) {
+        try (VaultEntryDraft draft = paired().readSilently(entry)) {
             char[] password = draft.copyPassword();
             try {
                 return new ServerCredentials(new ServerAccount(draft.title(), draft.location(), draft.userName()),
