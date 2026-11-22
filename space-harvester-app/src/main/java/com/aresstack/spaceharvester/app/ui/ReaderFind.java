@@ -266,6 +266,12 @@ final class ReaderFind {
         return value == null ? null : String.valueOf(value);
     }
 
+    /** Ob die Zelle gerade als Treffer markiert ist; Tabellen, die Zellen durchsichtig zeichnen, fragen danach. */
+    static boolean marked(JTable table, int row, int column) {
+        Object property = table == null ? null : table.getClientProperty(TABLE_HITS);
+        return property instanceof Map && ((Map<?, ?>) property).containsKey(new Cell(row, column));
+    }
+
     /** Der angezeigte Spaltentitel. */
     private static String headerText(JTable table, int column) {
         Object value = table.getColumnModel().getColumn(column).getHeaderValue();
@@ -369,6 +375,14 @@ final class ReaderFind {
         TableCellRenderer cells = table.getDefaultRenderer(Object.class);
         if (!(cells instanceof MarkingRenderer)) {
             table.setDefaultRenderer(Object.class, new MarkingRenderer(cells, false));
+        }
+        // Spalten mit eigenem Renderer (Zustand, Art, Zeit …) zeichnen sonst an der Markierung vorbei: Der Treffer
+        // zählte, war aber nicht zu sehen.
+        for (int column = 0; column < table.getColumnModel().getColumnCount(); column++) {
+            javax.swing.table.TableColumn own = table.getColumnModel().getColumn(column);
+            if (own.getCellRenderer() != null && !(own.getCellRenderer() instanceof MarkingRenderer)) {
+                own.setCellRenderer(new MarkingRenderer(own.getCellRenderer(), false, true));
+            }
         }
         JTableHeader header = table.getTableHeader();
         if (header != null && !(header.getDefaultRenderer() instanceof MarkingRenderer)) {
@@ -518,16 +532,31 @@ final class ReaderFind {
     private static final class MarkingRenderer implements TableCellRenderer {
         private final TableCellRenderer delegate;
         private final boolean header;
+        /** Renderer einer einzelnen Spalte: unmarkierte Zellen bleiben, wie er sie zeichnet. */
+        private final boolean ownColumn;
+        /** Was dieser Renderer zuletzt umgefärbt hat, mit dem Aussehen davor. */
+        private final Map<JComponent, Object[]> painted = new IdentityHashMap<JComponent, Object[]>();
 
         MarkingRenderer(TableCellRenderer delegate, boolean header) {
+            this(delegate, header, false);
+        }
+
+        MarkingRenderer(TableCellRenderer delegate, boolean header, boolean ownColumn) {
             this.delegate = delegate;
             this.header = header;
+            this.ownColumn = ownColumn;
         }
 
         @Override
         @SuppressWarnings("unchecked")
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focused,
                                                        int row, int column) {
+            // Ein Renderer benutzt eine Fläche für alle Zellen: Die Markierung der vorigen Zelle erst zurücknehmen.
+            for (Map.Entry<JComponent, Object[]> entry : painted.entrySet()) {
+                entry.getKey().setOpaque((Boolean) entry.getValue()[0]);
+                entry.getKey().setBackground((Color) entry.getValue()[1]);
+            }
+            painted.clear();
             Component component = delegate.getTableCellRendererComponent(table, value, selected, focused, row,
                     column);
             Object property = table == null ? null : table.getClientProperty(TABLE_HITS);
@@ -551,9 +580,12 @@ final class ReaderFind {
             if (component instanceof JComponent) {
                 JComponent target = (JComponent) component;
                 if (mark != null) {
+                    if (ownColumn) {
+                        painted.put(target, new Object[] {target.isOpaque(), target.getBackground()});
+                    }
                     target.setOpaque(true);
                     target.setBackground(mark);
-                } else {
+                } else if (!ownColumn) {
                     target.setBackground(selected ? table.getSelectionBackground() : table.getBackground());
                 }
             }

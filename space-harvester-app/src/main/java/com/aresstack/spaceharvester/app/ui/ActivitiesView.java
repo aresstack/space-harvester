@@ -2587,7 +2587,9 @@ public final class ActivitiesView implements View {
             Component cell = super.prepareRenderer(renderer, row, column);
             if (cell instanceof JComponent component) {
                 // Derselbe Renderer zeichnet alle Zeilen: für jede Zelle neu festlegen.
-                component.setOpaque((bands == null || bandAt(row) == null) && !toned(row));
+                // Ein Suchtreffer (Leiste unten) bleibt deckend, sonst verschwände seine Markierung im Band.
+                component.setOpaque(ReaderFind.marked(this, row, column)
+                        || (bands == null || bandAt(row) == null) && !toned(row));
             }
             return cell;
         }

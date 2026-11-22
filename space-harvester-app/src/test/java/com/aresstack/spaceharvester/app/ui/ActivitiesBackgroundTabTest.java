@@ -108,6 +108,42 @@ class ActivitiesBackgroundTabTest {
         assertThat(rows.get(0).lifecycle().actions()).contains(JobAction.CANCEL);
     }
 
+    /** Die Suchleiste unten findet auch in der Auftragsliste und färbt dort jede Spalte, auch Art und Zustand. */
+    @Test
+    void theSearchBarMarksItsHitsInTheJobList() throws Exception {
+        Path home = Files.createTempDirectory("bgfind");
+        AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home),
+                home.resolve("app.yml"), "test");
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                ActivitiesView view = new ActivitiesView(context, null);
+                view.tabs.select(ActivitiesView.JOBS_TAB);
+                view.showJobsForTest(sample());
+                javax.swing.JTable table = view.table();
+                FindBar bar = new FindBar(view::component);
+                for (int column : new int[] {0, 1, 2}) {
+                    String shown = ((javax.swing.JLabel) table.prepareRenderer(table.getCellRenderer(0, column), 0,
+                            column)).getText();
+                    assertThat(bar.search(shown)).as("Spalte " + column).isPositive();
+                    java.awt.Component hit = table.prepareRenderer(table.getCellRenderer(0, column), 0, column);
+                    assertThat(hit.getBackground()).as("Spalte " + column).isIn(ReaderFind.CURRENT_HIT,
+                            ReaderFind.HIT);
+                    assertThat(hit.isOpaque()).isTrue();
+                    // Die Nachbarzeile derselben Spalte bleibt, wie sie war: ein Renderer zeichnet alle Zellen.
+                    java.awt.Component other = table.prepareRenderer(table.getCellRenderer(1, column), 1, column);
+                    if (!shown.equals(((javax.swing.JLabel) other).getText())) {
+                        assertThat(other.getBackground()).isNotIn(ReaderFind.CURRENT_HIT, ReaderFind.HIT);
+                    }
+                }
+                bar.search("");
+                assertThat(table.prepareRenderer(table.getCellRenderer(0, 2), 0, 2).getBackground())
+                        .isNotIn(ReaderFind.CURRENT_HIT, ReaderFind.HIT);
+            });
+        } finally {
+            context.shutdown();
+        }
+    }
+
     @Test
     void theViewShowsTheTabsAndCountsRunningBackgroundJobs() throws Exception {
         Path home = Files.createTempDirectory("bgtab");
