@@ -134,6 +134,9 @@ public final class PodcastPictures {
         };
     }
 
+    /** Nach so vielen gescheiterten Läufen bleibt ein Thema ohne Bild. */
+    static final int RUNS = 3;
+
     private final PodcastStore store;
     private final StepModel chooser;
     private final DiagramComposer.Models drawer;
@@ -204,6 +207,10 @@ public final class PodcastPictures {
             JsonNode node = JSON.readTree(Files.readString(meta, StandardCharsets.UTF_8));
             Kind kind = Kind.valueOf(node.path("kind").asString("NONE"));
             if (kind == Kind.NONE) {
+                int failures = node.path("failures").asInt(0);
+                if (failures > 0 && failures < RUNS) {
+                    return Optional.empty(); // gescheitert, aber noch nicht aufgegeben: neu versuchen
+                }
                 return Optional.of(Picture.none(text(node, "reason")));
             }
             String file = text(node, "file");
@@ -252,16 +259,41 @@ public final class PodcastPictures {
                 // Ohne Zeichenmodell nichts festschreiben: ist es später eingestellt, entsteht das Schaubild noch.
                 return Picture.none("kein Modell der Bildgenerierung");
             }
-            picture = page.or(() -> diagram(key, brief, repairs))
-                    .orElseGet(() -> Picture.none("kein passendes Bild"));
+            Optional<Picture> found = page.or(() -> diagram(key, brief, repairs));
+            if (found.isEmpty()) {
+                return failed(key, brief.topic(), "kein Schaubild zustande gekommen");
+            }
+            picture = found.get();
         } catch (Closed e) {
             throw e;
         } catch (RuntimeException e) {
             repairs.add("Bild " + (brief.topic() + 1) + " gescheitert (" + e.getClass().getSimpleName() + ")");
-            picture = Picture.none("gescheitert (" + e.getClass().getSimpleName() + ")");
+            return failed(key, brief.topic(), "gescheitert (" + e.getClass().getSimpleName() + ")");
         }
-        save(key, brief.topic(), picture);
+        save(key, brief.topic(), picture, 0);
         return picture;
+    }
+
+    /**
+     * Ein gescheitertes Bild ist nicht endgültig (selbstheilend): Der nächste Lauf versucht es noch einmal, erst nach
+     * {@value #RUNS} gescheiterten Läufen bleibt das Thema ohne Bild.
+     */
+    private Picture failed(String key, int topic, String reason) {
+        int failures = failures(store, key, topic) + 1;
+        Picture none = Picture.none(reason);
+        save(key, topic, none, failures);
+        return none;
+    }
+
+    /** Wie viele Läufe am Bild dieses Themas schon gescheitert sind. */
+    static int failures(PodcastStore store, String key, int topic) {
+        Path meta = store.folder(key).resolve(name(topic, "json"));
+        try {
+            return Files.isRegularFile(meta)
+                    ? JSON.readTree(Files.readString(meta, StandardCharsets.UTF_8)).path("failures").asInt(0) : 0;
+        } catch (IOException | JacksonException e) {
+            return 0;
+        }
     }
 
     // --- Stufe 1: Seitenbild ------------------------------------------------------------------------------------
@@ -424,9 +456,12 @@ public final class PodcastPictures {
 
     // --- Ablage -------------------------------------------------------------------------------------------------
 
-    private void save(String key, int topic, Picture picture) {
+    private void save(String key, int topic, Picture picture, int failures) {
         ObjectNode node = JSON.createObjectNode();
         node.put("kind", picture.kind().name());
+        if (failures > 0) {
+            node.put("failures", failures);
+        }
         if (picture.file() != null) {
             node.put("file", picture.file().getFileName().toString());
             node.put("mediaType", picture.mediaType());

@@ -91,6 +91,31 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void aFinishedPodcastWithoutPicturesStaysIncompleteUntilTheyAreDrawn() throws Exception {
+        FakeModel model = new FakeModel();
+        FakeSpeech speech = new FakeSpeech(voice -> false);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        // erzeugt, bevor es Bilder gab: das Audio ist vollständig
+        podcasts(model, speech).start(caller, summary);
+        UpdatePodcasts later = podcasts(model, speech);
+        assertThat(later.podcast(summary).orElseThrow().complete()).isTrue();
+
+        AtomicInteger drawn = new AtomicInteger();
+        later.pictures(DiagramComposerTest.model(DiagramComposerTest.PLAN, DiagramComposerTest.ICON, drawn),
+                PodcastPictures.PageImageSource.NONE);
+        Podcast before = later.podcast(summary).orElseThrow();
+        assertThat(before.picturesPending()).isTrue();
+        assertThat(before.complete()).as("fehlende Bilder: die Wiedergabe setzt den Auftrag fort").isFalse();
+
+        int spoken = speech.calls.get();
+        assertThat(jobs.status(later.start(caller, summary).id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(speech.calls.get()).as("Audio bleibt").isEqualTo(spoken);
+        assertThat(later.podcast(summary).orElseThrow().complete()).isTrue();
+        assertThat(later.podcast(summary).orElseThrow().parts()).allSatisfy(part ->
+                assertThat(part.picture()).isNotNull());
+    }
+
+    @Test
     void aSecondRunReusesEverythingOnDisk() throws Exception {
         FakeModel model = new FakeModel();
         FakeSpeech speech = new FakeSpeech(voice -> false);

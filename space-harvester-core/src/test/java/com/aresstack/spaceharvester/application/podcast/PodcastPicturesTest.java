@@ -169,8 +169,14 @@ class PodcastPicturesTest {
             }
         };
         PodcastPictures pictures = pictures(broken, broken, PodcastPictures.PageImageSource.NONE);
-        PodcastPictures.Picture picture = pictures.make(KEY, "s", new PodcastPictures.Brief(3, "t", "m", List.of()),
-                new HashSet<>(), new ArrayList<>());
+        PodcastPictures.Brief brief = new PodcastPictures.Brief(3, "t", "m", List.of());
+        // selbstheilend: ein gescheiterter Lauf ist nicht endgültig, erst nach RUNS Läufen bleibt das Thema ohne Bild
+        for (int run = 1; run < PodcastPictures.RUNS; run++) {
+            assertThat(pictures.make(KEY, "s", brief, new HashSet<>(), new ArrayList<>()).kind())
+                    .isEqualTo(PodcastPictures.Kind.NONE);
+            assertThat(pictures.picture(KEY, 3)).isEmpty();
+        }
+        PodcastPictures.Picture picture = pictures.make(KEY, "s", brief, new HashSet<>(), new ArrayList<>());
         assertThat(picture.kind()).isEqualTo(PodcastPictures.Kind.NONE);
         assertThat(pictures.picture(KEY, 3)).map(PodcastPictures.Picture::kind).contains(PodcastPictures.Kind.NONE);
         assertThat(pictures.picture(KEY, 4)).isEmpty();
