@@ -17,6 +17,11 @@ public interface SummaryModel {
      */
     String complete(String instructions, String input);
 
+    /** So viele Anfragen gehen höchstens zugleich an das Modell ({@code ai.parallel}); ohne Angabe eine. */
+    default int parallel() {
+        return 1;
+    }
+
     /** Kein Modell. */
     SummaryModel NONE = new SummaryModel() {
         @Override

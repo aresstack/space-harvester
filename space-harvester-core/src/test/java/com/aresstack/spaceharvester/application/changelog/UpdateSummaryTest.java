@@ -156,12 +156,33 @@ class UpdateSummaryTest {
         }
 
         @Override
+        public int parallel() {
+            return parallel;
+        }
+
+        @Override
         public String complete(String given, String input) {
             instructions.add(given);
             inputs.add(input);
+            int now = running.incrementAndGet();
+            mostAtOnce.accumulateAndGet(now, Math::max);
+            try {
+                if (delayMillis > 0) {
+                    Thread.sleep(delayMillis);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                running.decrementAndGet();
+            }
             return answer;
         }
     };
+    private int parallel = 1;
+    private long delayMillis;
+    private final java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger mostAtOnce =
+            new java.util.concurrent.atomic.AtomicInteger();
     private final List<Runnable> held = new ArrayList<>();
     private final Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(1, 5, Duration.ofHours(1)),
             Clock.fixed(T0.plusSeconds(3600), ZoneOffset.UTC));
@@ -601,6 +622,35 @@ class UpdateSummaryTest {
         assertThat(summaries.get(key("wiki", ChangeUpdate.OPEN, null)).statements())
                 .hasSizeLessThanOrEqualTo(UpdateSummarizer.MAX_TOPICS)
                 .allSatisfy(statement -> assertThat(statement.pageIds()).isNotEmpty());
+    }
+
+    /** Angelo 22.11.2026: der Auftrag hält sich an ai.parallel; Teile und Zusammenführen laufen gleichzeitig. */
+    @Test
+    void partsRunAtOnceUpToTheConfiguredParallelism() {
+        parallel = 3;
+        delayMillis = 150;
+        row(1, "1", "DEV", ChangeKind.NEW, "Start");
+        mark(10, true);
+        String paragraph = "Absatz mit Inhalt. ".repeat(25);
+        for (int i = 0; i < 24; i++) {
+            String pageId = "p" + i;
+            row(1, pageId, "DEV", ChangeKind.NEW, "Seite " + i);
+            row(12, pageId, "DEV", ChangeKind.CONTENT_CHANGED, "Seite " + i);
+            ParagraphChange[] changes = new ParagraphChange[12];
+            for (int j = 0; j < changes.length; j++) {
+                changes[j] = new ParagraphChange(ParagraphChange.Kind.CHANGED, paragraph + j, paragraph + "neu " + j);
+            }
+            diff(12, pageId, "1", "2", false, changes);
+            released.add(pageId);
+        }
+        answer = """
+                {"zusammenfassung": "Überblick.", "themen": [{"titel": "Seiten", "text": "Inhalt.", "seiten": ["p0"]}]}""";
+
+        assertThat(run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state()).isEqualTo(JobState.COMPLETED);
+
+        long parts = instructions.stream().filter(UpdateSummarizer.INSTRUCTIONS::equals).count();
+        assertThat(parts).as("mindestens so viele Teile, wie zugleich laufen dürfen").isGreaterThanOrEqualTo(3);
+        assertThat(mostAtOnce.get()).as("gleichzeitig, aber nie mehr als ai.parallel").isEqualTo(3);
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.changelog;
 
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -17,6 +18,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import tools.jackson.databind.JsonNode;
@@ -46,6 +51,8 @@ final class UpdateSummarizer {
      * Auszug bis {@link #MAX_EXCERPT_CHARS}), und beim Zusammenführen Rahmen ohne Spaces plus zwei Teilantworten.
      */
     static final int MAX_REQUEST_CHARS = 32_000;
+    /** Kleinster Teil, wenn die Seiten auf gleichzeitige Anfragen verteilt werden; kleinere lohnen den Aufruf nicht. */
+    static final int MIN_PART_CHARS = 8_000;
     /** Zeichen der Unterschiede je Seite; darüber gekürzt und so gekennzeichnet. */
     static final int MAX_PAGE_DIFF_CHARS = 6_000;
     /** Zeichen des Auszugs aus dem Lesetext einer Seite ohne Unterschied, etwa einer neuen. */
@@ -175,7 +182,7 @@ final class UpdateSummarizer {
                 .thenComparing(material -> String.valueOf(material.page().title()), String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(material -> material.page().pageId()));
         ObjectNode frame = frame(update, spaces, spaceNames, withheld);
-        List<List<Material>> parts = parts(materials, frame.toString().length());
+        List<List<Material>> parts = parts(materials, frame.toString().length(), model.parallel());
         context.discovered(parts.size());
         context.phase(COMPONENT, PHASE);
         Map<String, String> pageSpaces = new LinkedHashMap<>();
@@ -186,14 +193,13 @@ final class UpdateSummarizer {
                 pageTitles.put(material.page().pageId(), cut(material.page().title(), MAX_COMBINE_TITLE_CHARS));
             }
         });
-        List<Answer> answers = new ArrayList<>();
-        for (List<Material> part : parts) {
-            context.checkpoint();
+        // Die Teile sind unabhängig: bis zu ai.parallel zugleich (Angelo, 22.11.2026); nur das Zusammenführen wartet.
+        List<Answer> answers = inParallel(parts, context, part -> {
             ObjectNode input = frame.deepCopy();
             ArrayNode changes = input.putArray("aenderungen");
             part.forEach(material -> changes.add(material.node()));
-            answers.add(ask(INSTRUCTIONS, input.toString(), ids(part), context));
-        }
+            return ask(INSTRUCTIONS, input.toString(), ids(part), context);
+        });
         Answer answer = combine(answers, frame(update, Map.of(), spaceNames, withheld),
                 new Pages(pageSpaces, pageTitles), context);
         List<StoredSummary.InputPage> inputs = materials.stream()
@@ -232,13 +238,11 @@ final class UpdateSummarizer {
             }
             groups.add(group);
             context.discovered(groups.stream().filter(candidate -> candidate.size() > 1).count());
-            List<Answer> next = new ArrayList<>();
-            for (List<Answer> members : groups) {
+            // Die Gruppen einer Stufe sind unabhängig voneinander und laufen ebenfalls gleichzeitig.
+            level = inParallel(groups, context, members -> {
                 if (members.size() == 1) {
-                    next.add(members.getFirst());
-                    continue;
+                    return members.getFirst();
                 }
-                context.checkpoint();
                 ObjectNode input = frame.deepCopy();
                 ArrayNode summaries = input.putArray("teile");
                 List<StoredSummary.Statement> topics = new ArrayList<>();
@@ -248,10 +252,8 @@ final class UpdateSummarizer {
                 }
                 String raw = model.complete(COMBINE, input.toString());
                 context.processed(1);
-                Answer merged = merge(raw, topics, members);
-                next.add(merged);
-            }
-            level = next;
+                return merge(raw, topics, members);
+            });
         }
         return level.getFirst();
     }
@@ -372,12 +374,27 @@ final class UpdateSummarizer {
 
     /** Teile bis zum Budget, in der Reihenfolge nach Space; jeder Teil hat mindestens eine Seite. */
     private static List<List<Material>> parts(List<Material> materials, int frameChars) {
+        return parts(materials, frameChars, 1);
+    }
+
+    /**
+     * Teilt die Seiten so, dass jede gleichzeitige Anfrage ({@code ai.parallel}) etwas zu tun hat: Statt wenige volle
+     * Teile nacheinander gibt es mindestens so viele kleinere Teile, wie zugleich laufen dürfen, jedes nicht kleiner
+     * als {@link #MIN_PART_CHARS} und nie größer als {@link #MAX_REQUEST_CHARS} (Angelo, 22.11.2026).
+     */
+    static List<List<Material>> parts(List<Material> materials, int frameChars, int parallel) {
+        long total = 0;
+        for (Material material : materials) {
+            total += material.node().toString().length() + 1;
+        }
+        long share = parallel <= 1 ? Long.MAX_VALUE : frameChars + (total + parallel - 1) / parallel;
+        int budget = (int) Math.min(MAX_REQUEST_CHARS, Math.max(MIN_PART_CHARS, share));
         List<List<Material>> parts = new ArrayList<>();
         List<Material> part = new ArrayList<>();
         int chars = frameChars;
         for (Material material : materials) {
             int size = material.node().toString().length() + 1;
-            if (!part.isEmpty() && chars + size > MAX_REQUEST_CHARS) {
+            if (!part.isEmpty() && chars + size > budget) {
                 parts.add(part);
                 part = new ArrayList<>();
                 chars = frameChars;
@@ -522,6 +539,53 @@ final class UpdateSummarizer {
     }
 
     record Answer(String text, List<StoredSummary.Statement> statements) {
+    }
+
+    /**
+     * Wendet {@code work} auf jeden Eintrag an, höchstens {@link SummaryModel#parallel()} zugleich, und liefert die
+     * Ergebnisse in der Reihenfolge der Einträge. Nach Abbruch beginnt kein neuer; der erste Fehler beendet den Lauf.
+     */
+    private <T, R> List<R> inParallel(List<T> items, JobContext context, Function<T, R> work) {
+        int parallel = Math.max(1, Math.min(model.parallel(), items.size()));
+        if (parallel == 1) {
+            List<R> results = new ArrayList<>(items.size());
+            for (T item : items) {
+                context.checkpoint();
+                results.add(work.apply(item));
+            }
+            return results;
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(parallel,
+                Thread.ofPlatform().daemon().name("update-summary-", 0).factory());
+        try {
+            List<Future<R>> running = new ArrayList<>(items.size());
+            for (T item : items) {
+                running.add(pool.submit(() -> {
+                    context.checkpoint();
+                    return work.apply(item);
+                }));
+            }
+            List<R> results = new ArrayList<>(items.size());
+            for (Future<R> future : running) {
+                try {
+                    results.add(future.get());
+                } catch (ExecutionException e) {
+                    running.forEach(other -> other.cancel(true));
+                    if (e.getCause() instanceof RuntimeException runtime) {
+                        throw runtime;
+                    }
+                    throw new IllegalStateException(e.getCause());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    running.forEach(other -> other.cancel(true));
+                    throw new JobCancelledException(context.jobId());
+                }
+            }
+            context.checkpoint();
+            return results;
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     private Answer ask(String instructions, String input, Set<String> known, JobContext context) {

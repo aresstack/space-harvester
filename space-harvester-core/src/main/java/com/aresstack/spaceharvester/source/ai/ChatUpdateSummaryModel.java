@@ -65,6 +65,12 @@ public final class ChatUpdateSummaryModel implements SummaryModel {
     }
 
     @Override
+    public int parallel() {
+        AiServiceSettings current = settings.get();
+        return current == null ? AiServiceSettings.DEFAULT_PARALLEL : Math.max(1, current.parallel());
+    }
+
+    @Override
     public String complete(String instructions, String input) {
         AiServiceSettings current = settings.get();
         if (current == null || !current.chat()) {
