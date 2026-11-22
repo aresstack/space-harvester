@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
+import com.aresstack.spaceharvester.application.acquisition.BackgroundFill;
 import com.aresstack.spaceharvester.application.assets.AssetStore;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.DocumentRereads;
@@ -47,6 +48,7 @@ class SourceDataConfiguration {
     @Bean
     SourceDataPurge sourceDataPurge(Jobs jobs, ConfiguredSourceCatalog catalog,
                                     ObjectProvider<LuceneFillQueue> fillQueue,
+                                    ObjectProvider<BackgroundFill> backgroundFill,
                                     AiRelease aiRelease,
                                     ObjectProvider<LucenePageCache> cache,
                                     ObjectProvider<LucenePageTextIndex> texts,
@@ -65,7 +67,17 @@ class SourceDataConfiguration {
                                     ObjectProvider<FactEditStore> facts, ObjectProvider<InventoryLog> inventory,
                                     ObjectProvider<AcquisitionScheduler> acquisition) {
         Clock clock = Clock.systemUTC();
-        SourceDataStores stores = SourceDataStores.builder().fillQueue(fillQueue.getIfAvailable())
+        LuceneFillQueue queue = fillQueue.getIfAvailable();
+        // Über die Füllung, wenn es sie gibt: Sie bereinigt ihren Spiegel mit (Abnahme #1087); erst beim Bereinigen
+        // nachgesehen, damit hier keine Abhängigkeit auf die Füllung entsteht.
+        SourceDataStores stores = SourceDataStores.builder().fillQueue(queue == null ? null : sourceId -> {
+                    BackgroundFill fill = backgroundFill.getIfAvailable();
+                    if (fill != null) {
+                        fill.removeSource(sourceId);
+                    } else {
+                        queue.removeSource(sourceId);
+                    }
+                })
                 .pageReleases(aiRelease.pages());
         cache.ifAvailable(stores::pageCache);
         texts.ifAvailable(stores::fullText);
