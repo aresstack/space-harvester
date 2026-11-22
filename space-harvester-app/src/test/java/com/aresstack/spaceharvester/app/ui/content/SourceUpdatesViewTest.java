@@ -715,7 +715,7 @@ class SourceUpdatesViewTest {
     }
 
     @Test
-    void whileThePodcastTellsATopicTheReportMarksItYellowLikeTheSearch() {
+    void whileThePodcastTellsATopicTheReportMarksItYellowLikeTheSearch() throws Exception {
         actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, null, "Zwei Neuerungen im Beispielarchiv.",
                 List.of(new SummaryStatement("Das Archiv wird auf ein neues Format umgestellt.",
                                 List.of(new SummaryPage("20", "Neue Seite", "BAU")), "Archivumstellung", null),
@@ -727,6 +727,15 @@ class SourceUpdatesViewTest {
 
         summary.followPodcast(List.of(1));
 
+        assertThat(summary.podcastMarked()).containsExactlyInAnyOrder("Suche in Anhängen",
+                "Die Suche findet jetzt auch Anhänge.");
+
+        // ein Abgleich zeichnet den Bericht neu, während der Podcast läuft: die Markierung bleibt
+        int renders = summary.reportRenders();
+        actions.openGrows = true;
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(summary.reportRenders()).isGreaterThan(renders);
         assertThat(summary.podcastMarked()).containsExactlyInAnyOrder("Suche in Anhängen",
                 "Die Suche findet jetzt auch Anhänge.");
 

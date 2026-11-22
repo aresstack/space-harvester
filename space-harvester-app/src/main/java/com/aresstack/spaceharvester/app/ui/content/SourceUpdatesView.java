@@ -194,6 +194,8 @@ final class SourceUpdatesView extends JPanel {
     private final Map<Integer, List<JComponent>> topicParts = new java.util.HashMap<>();
     /** Nimmt die gelbe Markierung des Themas zurück, dem der Podcast gerade folgt. */
     private final List<Runnable> unmark = new ArrayList<>();
+    /** Die Themen, von denen der Podcast gerade erzählt; bleiben markiert, auch wenn der Bericht neu gezeichnet wird. */
+    private List<Integer> followed = List.of();
     private Consumer<String> onSelected = id -> { };
 
     SourceUpdatesView(Supplier<Workspace> workspace, Mode mode) {
@@ -1298,6 +1300,8 @@ final class SourceUpdatesView extends JPanel {
         int before = reportBody.getComponentCount();
         try {
             renderTopics(found, summary);
+            // Neu gezeichnet, während der Podcast läuft (etwa nach einem Abgleich): die Markierung bleibt.
+            markFollowed();
         } catch (RuntimeException e) {
             // Nie eine leere Seite: was an der Darstellung scheitert, fällt auf den reinen Text zurück.
             topicParts.clear();
@@ -1458,15 +1462,8 @@ final class SourceUpdatesView extends JPanel {
      * diese Themen gelb wie die Suche; die vorige Markierung verschwindet. Leer = nur die Markierung weg.
      */
     void followPodcast(List<Integer> statements) {
-        unmark.forEach(Runnable::run);
-        unmark.clear();
-        JComponent first = null;
-        for (Integer number : statements) {
-            for (JComponent part : topicParts.getOrDefault(number, List.of())) {
-                first = first == null ? part : first;
-                mark(part);
-            }
-        }
+        followed = List.copyOf(statements);
+        JComponent first = markFollowed();
         if (first != null && reportScroll instanceof javax.swing.JScrollPane pane) {
             report.validate();
             javax.swing.JViewport port = pane.getViewport();
@@ -1477,6 +1474,20 @@ final class SourceUpdatesView extends JPanel {
                     report.getHeight() - port.getExtentSize().height));
             port.setViewPosition(new java.awt.Point(port.getViewPosition().x, y));
         }
+    }
+
+    /** Markiert die Themen, denen der Podcast gerade folgt, und nur diese; das erste markierte Teil oder null. */
+    private JComponent markFollowed() {
+        unmark.forEach(Runnable::run);
+        unmark.clear();
+        JComponent first = null;
+        for (Integer number : followed) {
+            for (JComponent part : topicParts.getOrDefault(number, List.of())) {
+                first = first == null ? part : first;
+                mark(part);
+            }
+        }
+        return first;
     }
 
     private void mark(JComponent part) {
