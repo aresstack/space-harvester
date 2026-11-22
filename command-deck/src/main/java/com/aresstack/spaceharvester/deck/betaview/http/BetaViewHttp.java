@@ -3,9 +3,6 @@ package com.aresstack.spaceharvester.deck.betaview.http;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.CookieManager;
-import java.net.CookiePolicy;
-import java.net.HttpCookie;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -33,8 +30,8 @@ final class BetaViewHttp {
     private final HttpClient client;
     private final URI base;
     private final Duration timeout;
-    /** Nimmt nur Cookies des antwortenden Servers an (kein Setzen für fremde Domains). */
-    private final CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER);
+    /** Cookies nach RFC 6265: nie für fremde Domains angenommen, nie an fremde Hosts gesendet. */
+    private final CookieJar cookies = new CookieJar();
     private String csrfToken;
 
     BetaViewHttp(HttpClient client, URI base, Duration timeout) {
@@ -175,42 +172,12 @@ final class BetaViewHttp {
     }
 
     private void storeCookies(HttpResponse<?> response) {
-        try {
-            cookies.put(response.uri(), response.headers().map());
-        } catch (IOException | IllegalArgumentException e) {
-            // Ein unlesbares Set-Cookie verwerfen wie ein Browser; die Anmeldung meldet dann den echten Fehler.
-        }
+        cookies.store(response.uri(), response.headers().allValues("Set-Cookie"));
     }
 
-    /**
-     * Die Cookie-Zeile für {@code target}: nur Cookies, deren Domain und Pfad passen, die nicht abgelaufen sind und –
-     * wenn sie {@code Secure} tragen – nur über HTTPS. So erreicht keine Sitzungs-ID einen fremden Host.
-     */
+    /** Die Cookie-Zeile für {@code target} (nur passende Domain, Pfad, Secure, nicht abgelaufen). */
     String cookieLine(URI target) {
-        String path = target.getPath() == null || target.getPath().isEmpty() ? "/" : target.getPath();
-        boolean https = "https".equalsIgnoreCase(target.getScheme());
-        StringBuilder line = new StringBuilder();
-        for (HttpCookie cookie : cookies.getCookieStore().get(target)) {
-            if (cookie.hasExpired() || (cookie.getSecure() && !https) || !pathMatches(path, cookie.getPath())) {
-                continue;
-            }
-            if (line.length() > 0) {
-                line.append("; ");
-            }
-            line.append(cookie.getName()).append('=').append(cookie.getValue());
-        }
-        return line.toString();
-    }
-
-    private static boolean pathMatches(String requestPath, String cookiePath) {
-        if (cookiePath == null || cookiePath.isEmpty() || "/".equals(cookiePath)) {
-            return true;
-        }
-        if (!requestPath.startsWith(cookiePath)) {
-            return false;
-        }
-        return requestPath.length() == cookiePath.length() || cookiePath.endsWith("/")
-                || requestPath.charAt(cookiePath.length()) == '/';
+        return cookies.header(target);
     }
 
     /** Hängt das CSRF-Token an GET-Adressen von {@code .action}, wie das JavaScript von BetaView es tut. */
