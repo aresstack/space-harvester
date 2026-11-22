@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.background.services.AnalysisServ
 import com.aresstack.spaceharvester.application.background.services.MissingPages;
 import com.aresstack.spaceharvester.application.background.services.ServicePlan;
 import com.aresstack.spaceharvester.application.background.services.ServicePlanner;
+import com.aresstack.spaceharvester.application.background.services.ServicePreview;
 import com.aresstack.spaceharvester.application.background.services.ServiceStart;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLifecycleState;
@@ -536,5 +537,157 @@ class ServicePlannerTest {
         });
         assertThat(part(group, "goal", "ALPHA").parameter(AnalysisService.PAGES)).isEqualTo("a1\na2");
         assertThat(part(group, "goal", "BETA").parameter(AnalysisService.PAGES)).isEqualTo("b1");
+    }
+
+    /** Die Seiten der Teile einer Art in der Gruppe ({@link AnalysisService#PAGES}). */
+    private static int pagesOf(BackgroundGroup group, String kind) {
+        return group.parts().stream().filter(status -> kind.equals(status.parameter(BackgroundJobs.KIND)))
+                .mapToInt(status -> status.parameter(AnalysisService.PAGES).split("\n").length).sum();
+    }
+
+    private static long partsOf(BackgroundGroup group, String kind) {
+        return group.parts().stream().filter(status -> kind.equals(status.parameter(BackgroundJobs.KIND))).count();
+    }
+
+    private static ServicePreview.Stage stage(ServicePreview preview, String id) {
+        return preview.stages().stream().filter(stage -> stage.id().equals(id)).findFirst().orElseThrow();
+    }
+
+    @Test
+    void thePreviewCountsWhatTheStartCreatesWithTheSameNotes() {
+        BackgroundJobs background = background(jobs());
+        ServicePlanner planner = planner(background);
+        planner.register(service("images", "Bilder"));
+        planner.register(service("statements", "Aussagen"));
+        planner.register(service("graph", "Graph", "statements", "images"));
+        missing.put("images", missingIn(ALPHA));
+        missing.put("statements", new MissingPages(Map.of(ALPHA, Set.of("a1", "a2"), BETA, Set.of("b1")), 0, 2));
+        starts.put("pre", ServiceStart.DISABLED);
+        planner.register(service("statements", "Aussagen", "pre"));
+
+        ServicePreview preview = planner.preview(CALLER, "graph", PAGES);
+        ServicePlan plan = planner.start(CALLER, "graph", PAGES);
+
+        BackgroundGroup group = plan.group().orElseThrow();
+        assertThat(preview.stages()).extracting(ServicePreview.Stage::id)
+                .as("Vorstufen vor ihren Nachfolgern, das Ziel zuletzt").endsWith("graph");
+        for (String kind : List.of("images", "statements", "graph")) {
+            assertThat(stage(preview, kind).pages()).as(kind).isEqualTo(pagesOf(group, kind));
+            assertThat((long) stage(preview, kind).parts()).as(kind).isEqualTo(partsOf(group, kind));
+            assertThat(stage(preview, kind).state()).isEqualTo(ServicePreview.State.PLANNED);
+        }
+        assertThat(stage(preview, "statements").toLoad()).isEqualTo(2);
+        assertThat(stage(preview, "pre").state()).isEqualTo(ServicePreview.State.DISABLED);
+        assertThat(preview.notes()).isEqualTo(plan.notes()).containsExactly(
+                "„Vorstufe“ ist abgeschaltet und wurde bewusst ausgelassen",
+                "„Aussagen“: 2 Seiten erst laden – bleiben ausgelassen",
+                "1 Seite ohne Zugriff ausgelassen");
+        assertThat(preview.inaccessible()).isEqualTo(plan.inaccessible()).isEqualTo(1);
+        assertThat(preview.nothingMissing()).isFalse();
+        assertThat(preview.goal().orElseThrow().id()).isEqualTo("graph");
+    }
+
+    @Test
+    void thePreviewStartsNothingAndAsksNoServiceForItsParameters() {
+        BackgroundJobs background = background(jobs());
+        ServicePlanner planner = planner(background);
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        planner.register(new AnalysisService("pre", "Vorstufe", start("pre"), List.of(), "pre",
+                (caller, pages) -> missingIn(ALPHA), caller -> Map.of("run",
+                Integer.toString(asked.incrementAndGet()))));
+        planner.register(new AnalysisService("goal", "Ziel", start("goal"), List.of("pre"), "goal",
+                (caller, pages) -> MissingPages.NONE, caller -> Map.of("run",
+                Integer.toString(asked.incrementAndGet()))));
+
+        ServicePreview preview = planner.preview(CALLER, "goal", PAGES);
+        executor.runAll();
+
+        assertThat(asked).as("die Angaben legen etwa den Aufrufer ab").hasValue(0);
+        assertThat(background.groups()).isEmpty();
+        assertThat(ran).isEmpty();
+        assertThat(stage(preview, "pre").pages()).isEqualTo(1);
+        assertThat(stage(preview, "goal").parts()).isEqualTo(2);
+    }
+
+    @Test
+    void thePreviewCountsPagesOfARunningPrerequisiteAsAlreadyRunning() {
+        BackgroundJobs background = background(jobs());
+        background.start("pre", "Früher", List.of(new BackgroundPart.Draft("wiki", "ALPHA",
+                Map.of(AnalysisService.PAGES, "a1"))));
+        ServicePlanner planner = planner(background);
+        PageSet alpha = PageSet.of(Map.of("wiki", Set.of("a1", "a2")));
+
+        missing.put("pre", new MissingPages(Map.of(ALPHA, Set.of("a1", "a2")), 0));
+        ServicePreview partly = planner.preview(CALLER, "goal", alpha);
+        missing.put("pre", new MissingPages(Map.of(ALPHA, Set.of("a1")), 0));
+        ServicePreview covered = planner.preview(CALLER, "goal", alpha);
+
+        assertThat(stage(partly, "pre")).isEqualTo(new ServicePreview.Stage("pre", "Vorstufe",
+                ServicePreview.State.PLANNED, 1, 0, 1, 1));
+        assertThat(stage(covered, "pre")).isEqualTo(new ServicePreview.Stage("pre", "Vorstufe",
+                ServicePreview.State.RUNNING, 0, 0, 1, 0));
+        assertThat(covered.nothingMissing()).as("das Ziel wartet auf den laufenden Teil").isFalse();
+    }
+
+    @Test
+    void pagesToLoadAreCarriedAndNotedAlikeInPreviewAndStart() {
+        BackgroundJobs background = background(jobs());
+        ServicePlanner planner = planner(background);
+        missing.put("pre", new MissingPages(Map.of(), 0, 3));
+        PageSet alpha = PageSet.of(Map.of("wiki", Set.of("a1")));
+
+        ServicePreview preview = planner.preview(CALLER, "goal", alpha);
+        ServicePlan plan = planner.start(CALLER, "goal", alpha);
+
+        assertThat(stage(preview, "pre")).isEqualTo(new ServicePreview.Stage("pre", "Vorstufe",
+                ServicePreview.State.NOTHING_MISSING, 0, 3, 0, 0));
+        assertThat(preview.notes()).isEqualTo(plan.notes())
+                .containsExactly("„Vorstufe“: 3 Seiten erst laden – bleiben ausgelassen");
+        assertThat(preview.nothingMissing()).as("zu laden ist nichts, was der Planer rechnen könnte").isTrue();
+    }
+
+    @Test
+    void aDisabledStageShowsDisabledInThePreviewWithTheYellowNote() {
+        BackgroundJobs background = background(jobs());
+        missing.put("pre", missingIn(ALPHA));
+        starts.put("pre", ServiceStart.DISABLED);
+        ServicePlanner planner = planner(background);
+
+        ServicePreview preview = planner.preview(CALLER, "goal", PageSet.of(Map.of("wiki", Set.of("a1"))));
+
+        assertThat(stage(preview, "pre")).isEqualTo(new ServicePreview.Stage("pre", "Vorstufe",
+                ServicePreview.State.DISABLED, 0, 0, 0, 0));
+        assertThat(preview.notes()).containsExactly("„Vorstufe“ ist abgeschaltet und wurde bewusst ausgelassen");
+        assertThat(preview.nothingMissing()).isTrue();
+    }
+
+    @Test
+    void aPrerequisiteWithoutWorkShowsNotWiredWithoutANote() {
+        BackgroundJobs background = background(jobs());
+        ServicePlanner planner = planner(background);
+        planner.register(new AnalysisService("pre", "Vorstufe", start("pre"), List.of(), null,
+                (caller, pages) -> missingIn(ALPHA)));
+        PageSet alpha = PageSet.of(Map.of("wiki", Set.of("a1")));
+
+        ServicePreview preview = planner.preview(CALLER, "goal", alpha);
+        ServicePlan plan = planner.start(CALLER, "goal", alpha);
+
+        assertThat(stage(preview, "pre").state()).isEqualTo(ServicePreview.State.NOT_WIRED);
+        assertThat(preview.notes()).isEmpty();
+        assertThat(plan.notes()).as("kein gelber Hinweis beim Start").isEmpty();
+        assertThat(plan.group().orElseThrow().parts()).singleElement()
+                .satisfies(status -> assertThat(status.parameter(BackgroundJobs.KIND)).isEqualTo("goal"));
+    }
+
+    @Test
+    void aDisabledGoalShowsOnlyItselfAsDisabled() {
+        BackgroundJobs background = background(jobs());
+        starts.put("goal", ServiceStart.DISABLED);
+
+        ServicePreview preview = planner(background).preview(CALLER, "goal", PAGES);
+
+        assertThat(preview.stages()).containsExactly(new ServicePreview.Stage("goal", "Ziel",
+                ServicePreview.State.DISABLED, 0, 0, 0, 0));
+        assertThat(preview.notes()).containsExactly("„Ziel“ ist abgeschaltet und wurde bewusst ausgelassen");
     }
 }

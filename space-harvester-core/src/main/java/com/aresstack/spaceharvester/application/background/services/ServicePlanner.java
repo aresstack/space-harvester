@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *     <li>Läuft schon ein Teil gleicher Art für Quelle und Space, wird er Vorgänger statt neu angelegt.</li>
  *     <li>Eine gescheiterte, abgebrochene oder gelöschte Vorstufe hält die Kette nicht auf (gelb); eine angehaltene
  *     hält sie an.</li>
+ *     <li>{@link #preview} zählt mit demselben Code, was {@link #start} anlegen würde, und startet nichts (W5).</li>
  * </ul>
  */
 public final class ServicePlanner {
@@ -84,13 +85,42 @@ public final class ServicePlanner {
      *                                  Arbeit hat
      */
     public ServicePlan start(AccessContext caller, String target, PageSet pages) {
+        Plan plan = plan(caller, target, pages, true);
+        if (plan.steps().isEmpty()) {
+            return new ServicePlan(Optional.empty(), plan.notes(), plan.inaccessible());
+        }
+        BackgroundGroup group = background.startSteps(BackgroundJobs.newGroupId(), plan.goal().kind(),
+                plan.goal().title(), plan.steps());
+        return new ServicePlan(Optional.of(group), plan.notes(), plan.inaccessible());
+    }
+
+    /**
+     * Was {@link #start} jetzt anlegen würde, je Stufe gezählt (W5); startet nichts und fragt die Dienste nicht nach
+     * ihren Angaben ({@link AnalysisService#parameters()}), denn die legen dabei etwa den Aufrufer ab. Liest nur, was
+     * fehlt, und welche Teile schon laufen.
+     *
+     * @throws IllegalArgumentException wie {@link #start}
+     */
+    public ServicePreview preview(AccessContext caller, String target, PageSet pages) {
+        Plan plan = plan(caller, target, pages, false);
+        return new ServicePreview(plan.stages(), plan.notes(), plan.inaccessible());
+    }
+
+    /**
+     * Der gemeinsame Plan von {@link #start} und {@link #preview}.
+     *
+     * @param forStart nur dann holt er die Angaben der Dienste; die Vorschau legt sonst nichts ab
+     */
+    private Plan plan(AccessContext caller, String target, PageSet pages, boolean forStart) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(pages, "pages");
         AnalysisService goal = require(target);
         List<String> notes = new ArrayList<>();
+        List<ServicePreview.Stage> stages = new ArrayList<>();
         if (goal.start().get() == ServiceStart.DISABLED) {
             notes.add(skipped(goal));
-            return new ServicePlan(Optional.empty(), notes, 0);
+            stages.add(new ServicePreview.Stage(goal.id(), goal.title(), ServicePreview.State.DISABLED, 0, 0, 0, 0));
+            return new Plan(goal, List.of(), notes, 0, stages);
         }
         if (goal.kind() == null) {
             throw new IllegalArgumentException("„" + goal.title() + "“ hat noch keine Arbeit");
@@ -107,15 +137,26 @@ public final class ServicePlanner {
             produced.put(service.id(), own);
             if (!isGoal && service.start().get() == ServiceStart.DISABLED) {
                 notes.add(skipped(service));
+                stages.add(new ServicePreview.Stage(service.id(), service.title(), ServicePreview.State.DISABLED,
+                        0, 0, 0, 0));
                 continue;
             }
             if (!isGoal && service.kind() == null) {
+                // Nur Beschreibung: still ausgelassen, die Vorschau nennt die Stufe „nicht angebunden“.
+                stages.add(new ServicePreview.Stage(service.id(), service.title(), ServicePreview.State.NOT_WIRED,
+                        0, 0, 0, 0));
                 continue;
             }
             MissingPages missing = isGoal ? scope.of(caller, pages) : service.missing().of(caller, pages);
-            Map<String, String> given = new LinkedHashMap<>(service.parameters().of(caller));
+            Map<String, String> given = new LinkedHashMap<>(forStart ? service.parameters().of(caller) : Map.of());
             given.remove(AnalysisService.PAGES);
             inaccessible = Math.max(inaccessible, missing.inaccessible());
+            if (missing.toLoad() > 0) {
+                notes.add(toLoad(service, missing.toLoad()));
+            }
+            int planned = 0;
+            int reused = 0;
+            int parts = 0;
             for (Map.Entry<MissingPages.Scope, Set<String>> entry : missing.pages().entrySet()) {
                 MissingPages.Scope area = entry.getKey();
                 List<Ref> after = new ArrayList<>(new LinkedHashSet<>(waitsFor(service, area, produced, all)));
@@ -127,7 +168,9 @@ public final class ServicePlanner {
                     Optional<JobStatus> running = background.running(service.kind(), area.sourceId(),
                             area.spaceKey());
                     if (running.isPresent()) {
+                        int before = rest.size();
                         rest.removeAll(pages(running.get()));
+                        reused += before - rest.size();
                         refs.add(new Ref(running.get().id(), -1, service.title()));
                     }
                 }
@@ -137,6 +180,8 @@ public final class ServicePlanner {
                 }
                 refs.add(new Ref(null, steps.size(), service.title()));
                 own.put(area, refs);
+                planned += rest.size();
+                parts++;
                 steps.add(new BackgroundJobs.Step(service.kind(), service.title(),
                         new BackgroundPart.Draft(area.sourceId(), area.spaceKey(),
                                 withPages(given, rest)),
@@ -144,15 +189,15 @@ public final class ServicePlanner {
                         after.stream().filter(ref -> ref.jobId() == null).map(Ref::step).toList(),
                         after.stream().map(Ref::title).toList()));
             }
+            ServicePreview.State state = parts > 0 ? ServicePreview.State.PLANNED
+                    : reused > 0 ? ServicePreview.State.RUNNING : ServicePreview.State.NOTHING_MISSING;
+            stages.add(new ServicePreview.Stage(service.id(), service.title(), state, planned, missing.toLoad(),
+                    reused, parts));
         }
         if (inaccessible > 0) {
             notes.add(inaccessible + (inaccessible == 1 ? " Seite" : " Seiten") + " ohne Zugriff ausgelassen");
         }
-        if (steps.isEmpty()) {
-            return new ServicePlan(Optional.empty(), notes, inaccessible);
-        }
-        BackgroundGroup group = background.startSteps(BackgroundJobs.newGroupId(), goal.kind(), goal.title(), steps);
-        return new ServicePlan(Optional.of(group), notes, inaccessible);
+        return new Plan(goal, steps, notes, inaccessible, stages);
     }
 
     /** Die Angaben eines Teils: die des Dienstes und seine Seiten. */
@@ -280,6 +325,17 @@ public final class ServicePlanner {
 
     private static String skipped(AnalysisService service) {
         return "„" + service.title() + "“ ist abgeschaltet und wurde bewusst ausgelassen";
+    }
+
+    /** Der gelbe Hinweis zu Seiten, die erst geladen werden müssten; in Vorschau und Start wörtlich gleich. */
+    private static String toLoad(AnalysisService service, int pages) {
+        return "„" + service.title() + "“: " + pages + (pages == 1 ? " Seite erst laden – bleibt ausgelassen"
+                : " Seiten erst laden – bleiben ausgelassen");
+    }
+
+    /** Der Plan: Teile für {@link BackgroundJobs#startSteps}, Hinweise und die Zahlen je Stufe. */
+    private record Plan(AnalysisService goal, List<BackgroundJobs.Step> steps, List<String> notes, int inaccessible,
+                        List<ServicePreview.Stage> stages) {
     }
 
     /** Ein Vorgänger: ein bestehender Auftrag oder ein Teil dieser Gruppe. */
