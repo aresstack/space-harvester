@@ -107,8 +107,20 @@ final class PodcastProduction {
                 continue;
             }
             for (int s = 0; s < segments.get().size(); s++) {
+                List<Turn> script = store.script(key, t, s).orElse(List.of());
+                // Gemessen beim Vertonen (für die Untertitel); passt die Messung nicht zum Text, gilt sie nicht.
+                List<Long> starts = store.starts(key, t, s);
+                boolean measured = starts.size() == script.size();
+                List<Podcast.Line> lines = new ArrayList<>();
+                for (int i = 0; i < script.size(); i++) {
+                    Turn turn = script.get(i);
+                    if (!turn.text().isBlank()) {
+                        lines.add(new Podcast.Line(turn.speaker() == PodcastPlan.Speaker.HOST, turn.text(),
+                                measured ? starts.get(i) : -1));
+                    }
+                }
                 parts.add(new Podcast.Part(t, s, topicTitle, segments.get().get(s).title(),
-                        store.audio(key, t, s).orElse(null), picture));
+                        store.audio(key, t, s).orElse(null), picture, lines));
             }
         }
         // Fehlen noch Bilder, ist der Podcast nicht fertig: Ein neuer Lauf zeichnet nur sie (Audio bleibt).
@@ -206,9 +218,11 @@ final class PodcastProduction {
         if (models.isEmpty()) {
             throw new JobFailedException("NO_SPEECH_MODEL", "Der KI-Dienst bietet kein Sprachmodell (TTS) an");
         }
-        PodcastSpeaker speaker = new PodcastSpeaker(speech, models, voices);
-        PodcastVoices.Pair pair = store.meta(key).filter(meta -> speaker.model().equals(meta.model()))
-                .map(meta -> new PodcastVoices.Pair(meta.host(), meta.cohost())).orElse(speaker.pair());
+        // Ein Modell und zwei feste Stimmen für den ganzen Podcast, auch über Neustarts hinweg (Angelo 22.11.2026).
+        String speechModel = models.get(0);
+        PodcastVoices.Pair pair = store.meta(key).filter(meta -> speechModel.equals(meta.model()))
+                .map(meta -> new PodcastVoices.Pair(meta.host(), meta.cohost())).orElse(voices.pair(speechModel));
+        PodcastSpeaker speaker = new PodcastSpeaker(speech, speechModel, pair);
         store.saveMeta(origin.voiced(speaker.model(), pair.host(), pair.cohost()));
         notify(key);
         PodcastWriter writer = new PodcastWriter(model, attempt -> waits.accept(context, attempt));
@@ -500,8 +514,11 @@ final class PodcastProduction {
         guard(key);
         voices.acquire();
         try {
-            byte[] wav = speaker.speak(turns, repairs);
-            fence.write(() -> store.saveAudio(key, topic, segment, wav));
+            PodcastSpeaker.Section spoken = speaker.section(turns, repairs);
+            fence.write(() -> {
+                store.saveStarts(key, topic, segment, spoken.starts());
+                store.saveAudio(key, topic, segment, spoken.wav());
+            });
             notify(key);
             return true;
         } catch (PodcastPictures.Closed closed) {

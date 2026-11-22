@@ -55,12 +55,14 @@ public final class UpdatePodcasts {
     /** Parameter des Auftrags: das Update. */
     public static final String UPDATE_PARAMETER = "update";
     /** Kennung des Verfahrens; Teil des Schlüssels, damit eine neue Fassung neu plant. */
-    public static final String VERSION = "update-podcast-v2";
+    public static final String VERSION = "update-podcast-v3";
 
     private final Jobs jobs;
     private final PodcastProduction production;
     private final PodcastStore store;
     private final Ancestors ancestors;
+    /** Die Art einer Quelle (etwa {@code confluence}) zu ihrer ID; nennt die Sendung, nie den Server. */
+    private volatile java.util.function.Function<String, String> sourceTypes = sourceId -> null;
     private final Object starting = new Object();
 
     /**
@@ -91,6 +93,35 @@ public final class UpdatePodcasts {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.production = new PodcastProduction(model, speech, store, voices, parallel, waits);
         this.store = store;
+    }
+
+    /**
+     * Woher die Sendung ihren Namen nimmt (Angelo 22.11.2026: „Willkommen zum Confluence-Update“ statt eines erdachten
+     * Namens): die Art der Quelle zu ihrer ID, {@code null}, wenn sie unbekannt ist.
+     */
+    public UpdatePodcasts sourceTypes(java.util.function.Function<String, String> types) {
+        this.sourceTypes = Objects.requireNonNull(types, "types");
+        return this;
+    }
+
+    /** Der Name der Sendung zur Art der Quelle; nie ein Servername. */
+    static String show(String sourceType) {
+        String type = sourceType == null ? "" : sourceType.strip().toLowerCase(java.util.Locale.ROOT);
+        return switch (type) {
+            case "confluence" -> "Confluence-Update";
+            case "bscw" -> "BSCW-Update";
+            case "jira" -> "Jira-Update";
+            case "git" -> "Git-Update";
+            default -> "Update";
+        };
+    }
+
+    private String show(UpdateSummary summary) {
+        try {
+            return show(sourceTypes.apply(summary.sourceId()));
+        } catch (RuntimeException e) {
+            return show((String) null);
+        }
     }
 
     /** Der Schlüssel des Podcasts einer Zusammenfassung. */
@@ -193,7 +224,8 @@ public final class UpdatePodcasts {
             throw new IllegalStateException("Kein Chat-Modell oder keine Sprachausgabe eingerichtet");
         }
         String key = key(summary);
-        PodcastWriter.Material material = material(summary, page -> places(caller, summary, page));
+        PodcastWriter.Material material = material(summary, page -> places(caller, summary, page))
+                .withShow(show(summary));
         synchronized (starting) {
             JobStatus running = open(key);
             if (running != null) {

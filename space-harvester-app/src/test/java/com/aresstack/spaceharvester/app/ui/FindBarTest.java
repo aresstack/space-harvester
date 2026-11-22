@@ -13,6 +13,54 @@ import org.junit.jupiter.api.Test;
 /** Die Suche über der Statuszeile: markiert wie im Browser, zählt, schaltet durch und folgt dem Bereich. */
 class FindBarTest {
 
+    /**
+     * Angelo 22.11.2026: Das Kopieren-Icon saß höher als die Lupe. Ein Werkzeug neben der Lupe steht immer auf ihrer
+     * Höhe, gleich wie seine Zeile gebaut ist (FlowLayout, BorderLayout, verschachtelt), auch mit Linie darüber.
+     */
+    @Test
+    void everyToolNextToTheMagnifierSitsAtItsHeight() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            for (boolean line : new boolean[] {true, false}) {
+                for (int kind = 0; kind < 3; kind++) {
+                    FindBar bar = new FindBar(JPanel::new);
+                    bar.line(line);
+                    IconButton tool = new IconButton(Glyph.TRASH,
+                            "Kopieren");
+                    JPanel row = kind == 1 ? new JPanel(new java.awt.BorderLayout())
+                            : new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+                    row.add(tool, kind == 1 ? java.awt.BorderLayout.WEST : null);
+                    JComponent shown = row;
+                    if (kind == 2) {
+                        // wie die Seitenansicht: ein Halter, der seine Zeile über die ganze Leiste zieht
+                        JPanel holder = new JPanel(new java.awt.BorderLayout());
+                        holder.putClientProperty(View.TOOLS_FILL, Boolean.TRUE);
+                        holder.add(row, java.awt.BorderLayout.CENTER);
+                        shown = holder;
+                    }
+                    bar.tools(shown);
+                    bar.setSize(600, bar.getPreferredSize().height);
+                    layoutAll(bar);
+                    int magnifier = centerY(bar.findButton(), bar);
+                    assertThat(centerY(tool, bar)).as("Linie " + line + ", Zeile " + kind)
+                            .isBetween(magnifier - 1, magnifier + 1);
+                }
+            }
+        });
+    }
+
+    private static int centerY(java.awt.Component part, java.awt.Component root) {
+        return SwingUtilities.convertPoint(part.getParent(), 0, part.getY(), root).y + part.getHeight() / 2;
+    }
+
+    private static void layoutAll(java.awt.Container root) {
+        root.doLayout();
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof java.awt.Container container) {
+                layoutAll(container);
+            }
+        }
+    }
+
     @Test
     void highlightsCountsAndCyclesThroughHits() throws Exception {
         SwingUtilities.invokeAndWait(() -> {

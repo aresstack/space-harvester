@@ -14,8 +14,9 @@ import org.junit.jupiter.api.Test;
 class JobsAwaitTest {
 
     private final ManualExecutor executor = new ManualExecutor();
+    private final MutableClock clock = new MutableClock();
     private final Jobs jobs = new Jobs(new InMemoryJobStore(), executor, new JobLimits(1, 5, Duration.ofHours(1)),
-            new MutableClock());
+            clock);
 
     @AfterEach
     void close() {
@@ -59,6 +60,128 @@ class JobsAwaitTest {
         assertThat(jobs.await(id, "client-a", Duration.ZERO).state()).isEqualTo(JobState.COMPLETED);
     }
 
+    @Test
+    void manyWaitersOnVirtualThreadsNeverHoldTheirCarriers() throws Exception {
+        // Architekt 22.11.2026: Mit synchronized und wait() hielte jeder Wartende seinen Träger fest.
+        int waiters = 400;
+        String id = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> { })).id();
+        java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(waiters);
+        java.util.List<java.util.concurrent.Future<JobStatus>> waiting = new java.util.ArrayList<>();
+        java.util.List<Thread> threads = new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (java.util.concurrent.ExecutorService virtual =
+                     java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            try {
+                for (int i = 0; i < waiters; i++) {
+                    waiting.add(virtual.submit(() -> {
+                        threads.add(Thread.currentThread());
+                        entered.countDown();
+                        return jobs.await(id, "client-a", Duration.ofMinutes(1));
+                    }));
+                }
+                assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                // Erst wenn alle wirklich parken, sagt der freie Träger etwas (Abnahme #1133).
+                assertThat(allParked(threads)).isTrue();
+                assertThat(virtual.submit(() -> "frei").get(10, TimeUnit.SECONDS)).isEqualTo("frei");
+
+                executor.runNext();
+                for (java.util.concurrent.Future<JobStatus> each : waiting) {
+                    assertThat(each.get(10, TimeUnit.SECONDS).state()).isEqualTo(JobState.COMPLETED);
+                }
+            } finally {
+                // Scheitert eine Frist, wartet close() des Executors sonst auf die Wartenden: Der Auftrag läuft schon,
+                // close() allein beendet ihn nicht (Abnahme #1133).
+                if (executor.pending() > 0) {
+                    executor.runNext();
+                }
+                jobs.close();
+            }
+        }
+    }
+
+    @Test
+    void manyCallersOfCancelSourceOnVirtualThreadsNeverHoldTheirCarriers() throws Exception {
+        // Architekt, Abnahme #1133: Wer auf das Ende der Aufträge einer Quelle wartet, parkt ohne Träger.
+        Jobs threaded = new Jobs(new InMemoryJobStore(), command -> Thread.ofPlatform().daemon().start(command),
+                new JobLimits(1, 5, Duration.ofHours(1)), new MutableClock());
+        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        threaded.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> {
+            started.countDown();
+            release.await();
+        }));
+        assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+        runManyWaiters(() -> threaded.cancelSource("wiki", Duration.ofMinutes(1)), release::countDown,
+                threaded::close, Boolean.TRUE);
+    }
+
+    @Test
+    void manyCallersOfAwaitSettledOnVirtualThreadsNeverHoldTheirCarriers() throws Exception {
+        // Abnahme #1133: Die Wartenden müssen in der eigenen Schleife von awaitSettled parken, also auf einen nach der
+        // Anhaltefrist abgekoppelten Schritt warten, nicht nur in await.
+        CompletableFuture<Void> hanging = new CompletableFuture<>();
+        String id = jobs.submit(JobType.ASSETS, "wiki", "DEV", "client-a", context -> hanging).id();
+        executor.runNext();
+        jobs.pause(id, "client-a");
+        clock.advance(Jobs.STOP_GRACE.plusSeconds(1));
+        assertThat(jobs.status(id).state()).isEqualTo(JobState.PAUSED);
+        assertThatThrownBy(() -> jobs.awaitSettled(id, "client-a", Duration.ZERO))
+                .isInstanceOf(TimeoutException.class);
+
+        runManyWaiters(() -> jobs.awaitSettled(id, "client-a", Duration.ofMinutes(1)).state(),
+                () -> hanging.complete(null), () -> { }, JobState.PAUSED);
+    }
+
+    /** 400 Wartende auf virtuellen Threads: alle parken, ein Träger bleibt frei, das Freigeben weckt alle. */
+    private static <T> void runManyWaiters(java.util.concurrent.Callable<T> wait, Runnable release, Runnable close,
+                                           T expected) throws Exception {
+        int waiters = 400;
+        java.util.List<java.util.concurrent.Future<T>> waiting = new java.util.ArrayList<>();
+        java.util.List<Thread> threads = new java.util.concurrent.CopyOnWriteArrayList<>();
+        try (java.util.concurrent.ExecutorService virtual =
+                     java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            try {
+                for (int i = 0; i < waiters; i++) {
+                    waiting.add(virtual.submit(() -> {
+                        threads.add(Thread.currentThread());
+                        return wait.call();
+                    }));
+                }
+                assertThat(allParkedOnceStarted(threads, waiters)).isTrue();
+                assertThat(virtual.submit(() -> "frei").get(10, TimeUnit.SECONDS)).isEqualTo("frei");
+
+                release.run();
+                for (java.util.concurrent.Future<T> each : waiting) {
+                    assertThat(each.get(10, TimeUnit.SECONDS)).isEqualTo(expected);
+                }
+            } finally {
+                release.run();
+                close.run();
+            }
+        }
+    }
+
+    /** Wie {@link #allParked}, wartet aber erst, bis alle {@code count} Threads gestartet sind. */
+    private static boolean allParkedOnceStarted(java.util.List<Thread> threads, int count) {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (threads.size() < count && System.nanoTime() < until) {
+            Thread.onSpinWait();
+        }
+        return threads.size() == count && allParked(threads);
+    }
+
+    /** Ob alle Threads binnen zehn Sekunden parken (WAITING oder TIMED_WAITING); ohne Schlafen. */
+    static boolean allParked(java.util.List<Thread> threads) {
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < until) {
+            if (threads.stream().allMatch(thread -> thread.getState() == Thread.State.WAITING
+                    || thread.getState() == Thread.State.TIMED_WAITING)) {
+                return true;
+            }
+            Thread.onSpinWait();
+        }
+        return false;
+    }
+
     private CompletableFuture<JobStatus> waitFor(String id, Duration timeout) throws InterruptedException {
         CompletableFuture<JobStatus> waited = new CompletableFuture<>();
         Thread waiter = new Thread(() -> {
@@ -70,8 +193,12 @@ class JobsAwaitTest {
         });
         waiter.setDaemon(true);
         waiter.start();
-        // Erst weitermachen, wenn der Wartende wirklich wartet.
+        // Erst weitermachen, wenn der Wartende wirklich wartet; mit Frist, damit ein Fehler nie den Lauf aufhängt.
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (waiter.getState() != Thread.State.TIMED_WAITING && !waited.isDone()) {
+            if (System.nanoTime() >= until) {
+                throw new AssertionError("Der Wartende wartet nach zehn Sekunden noch nicht");
+            }
             Thread.onSpinWait();
         }
         return waited;

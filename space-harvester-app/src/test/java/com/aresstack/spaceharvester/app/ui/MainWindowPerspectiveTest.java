@@ -1,0 +1,132 @@
+package com.aresstack.spaceharvester.app.ui;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
+import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.app.ui.controls.Starfield;
+import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
+import java.awt.Component;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import javax.swing.JComponent;
+import javax.swing.JMenuItem;
+import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * Der Titel schaltet die Perspektiven um (#1141): Space Harvester, Command Deck, Mission Protocol. Die rechte
+ * Seitenleiste bleibt dieselbe Instanz samt Zustand, ein Bereich des Space Harvesters führt in ihn zurück.
+ */
+class MainWindowPerspectiveTest {
+
+    @TempDir
+    Path home;
+
+    private AppContext context;
+
+    @AfterEach
+    void shutdown() {
+        if (context != null) {
+            context.shutdown();
+        }
+    }
+
+    @Test
+    void theTitleSwitchesPerspectivesAndKeepsTheSidebar() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("betrieb.md"), "# Betrieb\n\nText.\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Betriebshandbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            surface.setSize(1280, 820);
+            surface.doLayout();
+            window.show(AppContext.Section.CONTENT);
+            Perspectives perspectives = window.perspectives();
+
+            // Menü: genau drei Einträge in dieser Reihenfolge, Mission Protocol als Platzhalter gekennzeichnet.
+            var menu = window.perspectiveSwitcher().menu();
+            assertThat(menu.getComponents()).hasSize(3);
+            assertThat(((JMenuItem) menu.getComponent(0)).getAccessibleContext().getAccessibleName())
+                    .isEqualTo("Space Harvester");
+            assertThat(((JMenuItem) menu.getComponent(0)).isSelected()).isTrue();
+            assertThat(((JMenuItem) menu.getComponent(1)).getAccessibleContext().getAccessibleName())
+                    .isEqualTo("Command Deck");
+            assertThat(((JMenuItem) menu.getComponent(2)).getAccessibleContext().getAccessibleName())
+                    .isEqualTo("Mission Protocol, in Vorbereitung");
+            assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Space Harvester");
+
+            window.chatOpen(true);
+            Component sidebar = window.sideDeck();
+            Component harvesterWork = window.chatSplit().getLeftComponent();
+
+            ((JMenuItem) menu.getComponent(2)).doClick();
+            assertThat(perspectives.isCurrent(Perspectives.MISSION_PROTOCOL)).isTrue();
+            assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Mission Protocol");
+            assertThat(visible(window.stage())).isInstanceOf(Starfield.class);
+            assertThat(window.split().isLeftCollapsed()).as("ohne linke Leiste").isTrue();
+            assertThat(window.split().getDividerSize()).isZero();
+            // Dieselbe Seitenleiste, offen wie zuvor; keine zweite Instanz.
+            assertThat(window.sideDeck()).isSameAs(sidebar);
+            assertThat(window.chatSplit().getRightComponent()).isSameAs(sidebar);
+            assertThat(window.chatSplit().getLeftComponent()).isSameAs(harvesterWork);
+            assertThat(window.chatOpen()).isTrue();
+            // Aufträge öffnen die globale Leiste, die Perspektive bleibt.
+            window.show(AppContext.Section.ACTIVITIES);
+            assertThat(perspectives.isCurrent(Perspectives.MISSION_PROTOCOL)).isTrue();
+            assertThat(window.jobsOpen()).isTrue();
+
+            // Ein Bereich des Space Harvesters (Suche, auch über einen Link) führt in dessen Perspektive zurück.
+            window.show(AppContext.Section.SEARCH);
+            assertThat(perspectives.isCurrent(Perspectives.HARVESTER)).isTrue();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
+            assertThat(window.split().isLeftCollapsed()).as("Explorer wieder offen").isFalse();
+            assertThat(window.jobsOpen()).isTrue();
+
+            // War der Explorer zu, bleibt er nach dem Ausflug zu.
+            window.toggleDrawer();
+            assertThat(window.split().isLeftCollapsed()).isTrue();
+            perspectives.select(Perspectives.COMMAND_DECK);
+            assertThat(window.commandDeck().sessions().all()).as("Wechsel verbindet nicht").isEmpty();
+            assertThat(SwingUtilities.isDescendingFrom(window.commandDeck().perspective().navigation(),
+                    window.windowBar())).isTrue();
+            perspectives.select(Perspectives.MISSION_PROTOCOL);
+            assertThat(window.commandDeck().perspective().navigation().isShowing()).isFalse();
+            perspectives.select(Perspectives.HARVESTER);
+            assertThat(window.split().isLeftCollapsed()).isTrue();
+            assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+            window.toggleDrawer();
+        });
+    }
+
+    private static Component visible(JComponent stage) {
+        for (Component child : stage.getComponents()) {
+            if (child.isVisible()) {
+                return child;
+            }
+        }
+        return null;
+    }
+}

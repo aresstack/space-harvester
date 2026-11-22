@@ -45,11 +45,22 @@ public record Podcast(String key, String title, List<Part> parts, boolean runnin
      * @param segmentTitle Titel des Abschnitts, {@code null} beim Platzhalter
      * @param audio        die WAV-Datei, {@code null}, solange sie fehlt
      * @param picture      das Bild des Themas, {@code null}, solange keins da ist (oder keins passt)
+     * @param lines        die Beiträge des Abschnitts in Sprechreihenfolge (für Untertitel); leer, solange er nicht
+     *                     geschrieben ist
      */
-    public record Part(int topic, int segment, String topicTitle, String segmentTitle, Path audio, Picture picture) {
+    public record Part(int topic, int segment, String topicTitle, String segmentTitle, Path audio, Picture picture,
+                       List<Line> lines) {
+
+        public Part {
+            lines = lines == null ? List.of() : List.copyOf(lines);
+        }
+
+        public Part(int topic, int segment, String topicTitle, String segmentTitle, Path audio, Picture picture) {
+            this(topic, segment, topicTitle, segmentTitle, audio, picture, List.of());
+        }
 
         public Part(int topic, int segment, String topicTitle, String segmentTitle, Path audio) {
-            this(topic, segment, topicTitle, segmentTitle, audio, null);
+            this(topic, segment, topicTitle, segmentTitle, audio, null, List.of());
         }
 
         /** Ob der Abschnitt ein Thema beginnt (dort steht eine Marke). */
@@ -74,6 +85,25 @@ public record Podcast(String key, String title, List<Part> parts, boolean runnin
         /** Ob es ein gezeichnetes Schaubild ist (SVG). */
         public boolean vector() {
             return "image/svg+xml".equals(mediaType);
+        }
+    }
+
+    /**
+     * Ein Beitrag eines Abschnitts, wie er gesprochen wird.
+     *
+     * @param host        ob der Gastgeber spricht (sonst der Co-Host)
+     * @param text        der gesprochene Text
+     * @param startMillis wo der Beitrag im Audio des Abschnitts beginnt, gemessen beim Vertonen; {@code -1}, wenn
+     *                    unbekannt (Audio aus der Zeit davor oder noch nicht gesprochen)
+     */
+    public record Line(boolean host, String text, long startMillis) {
+        public Line {
+            text = text == null ? "" : text.strip();
+            startMillis = startMillis < 0 ? -1 : startMillis;
+        }
+
+        public Line(boolean host, String text) {
+            this(host, text, -1);
         }
     }
 }

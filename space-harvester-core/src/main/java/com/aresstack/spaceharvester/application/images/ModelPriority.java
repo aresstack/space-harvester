@@ -81,7 +81,7 @@ public final class ModelPriority {
                 // Abmelden kann nicht scheitern; nichts zu tun.
             }
         }
-        // Außerhalb der Sperre: der Prüfpunkt nimmt die Sperre der Auftragsverwaltung.
+        // Außerhalb der Sperre: Der Prüfpunkt wirft bei Abbruch, Anhalten oder abgelaufener Laufzeitgrenze.
         context.checkpoint();
         return true;
     }

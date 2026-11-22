@@ -90,6 +90,55 @@ class ChangeEventsTest {
     }
 
     @Test
+    void manyWaitersOnVirtualThreadsNeverHoldTheirCarriers() throws Exception {
+        // Architekt 22.11.2026: Mit synchronized und timedWait hielte jeder Wartende in awaitIdle seinen Träger fest.
+        int waiters = 400;
+        Thread caller = Thread.currentThread();
+        java.util.concurrent.CountDownLatch draining = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        ChangeEvents held = new ChangeEvents(syncs, source.queries(), sourceId -> {
+            if (Thread.currentThread() != caller) {
+                // Der Durchgang hält an, damit alle Wartenden warten.
+                draining.countDown();
+                try {
+                    release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return true;
+        }, sourceId -> SECRET.toCharArray());
+        try {
+            source.change("1", "4", 1);
+            assertThat(held.accept("wiki", List.of(new ChangeEvent(ChangeEvent.Kind.CHANGED, "1", "DOC", "4"))))
+                    .isTrue();
+            assertThat(draining.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(waiters);
+            List<java.util.concurrent.Future<Boolean>> waiting = new ArrayList<>();
+            try (java.util.concurrent.ExecutorService virtual =
+                         java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+                for (int i = 0; i < waiters; i++) {
+                    waiting.add(virtual.submit(() -> {
+                        entered.countDown();
+                        return held.awaitIdle(Duration.ofMinutes(1));
+                    }));
+                }
+                assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(virtual.submit(() -> "frei").get(10, java.util.concurrent.TimeUnit.SECONDS))
+                        .isEqualTo("frei");
+
+                release.countDown();
+                for (java.util.concurrent.Future<Boolean> each : waiting) {
+                    assertThat(each.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                }
+            }
+        } finally {
+            release.countDown();
+            held.close();
+        }
+    }
+
+    @Test
     void aChangedPageIsOnlyMarkedOutdatedAndNothingIsLoaded() throws Exception {
         SyncBaseline before = baseline();
         source.change("1", "4", 1);

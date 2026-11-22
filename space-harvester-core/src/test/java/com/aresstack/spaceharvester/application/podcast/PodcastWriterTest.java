@@ -101,6 +101,46 @@ class PodcastWriterTest {
     }
 
     @Test
+    void theShowIsNamedAfterTheKindOfSourceNeverAServer() {
+        // Angelo 22.11.2026: „Willkommen zum Confluence-Update“ statt „IT-Info“, nie den Servernamen.
+        List<String> prompts = new ArrayList<>();
+        PodcastWriter writer = new PodcastWriter(new com.aresstack.spaceharvester.application.stepmodel.StepModel() {
+            @Override
+            public String version() {
+                return "test";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String complete(String instructions, String input) {
+                prompts.add(input);
+                return input.contains("# ABSCHNITT") ? "{\"turns\":[{\"speaker\":\"host\",\"text\":\"Hallo.\"}]}"
+                        : "{\"title\":\"Folge\",\"topics\":[{\"title\":\"Einstieg\",\"stories\":[]},"
+                        + "{\"title\":\"Startseite\",\"stories\":[1]},{\"title\":\"Abschluss\",\"stories\":[]}]}";
+            }
+        }, attempt -> { });
+        PodcastWriter.Material material = new PodcastWriter.Material("", List.of(new PodcastWriter.Story(
+                "Neue Startseite", "Die Startseite zeigt die Ansprechstellen je Team.", List.of())), null)
+                .withShow(UpdatePodcasts.show("confluence"));
+
+        PodcastPlan plan = writer.outline(material);
+        Segment segment = new Segment("Hallo", List.of(new Beat(Speaker.HOST, "begrüßt")));
+        writer.script(material, plan, 0, List.of(segment), 0, null, false, new PodcastWriter.Voices("Jana", "Thomas"),
+                new ArrayList<>());
+
+        assertThat(prompts.get(0)).contains("Plane eine Folge \"Confluence-Update\"");
+        assertThat(prompts.get(1)).contains("„Willkommen zum Confluence-Update“", "keine Server- oder Rechnernamen");
+        assertThat(PodcastWriter.fallbackScript(material, plan.topics().get(0), true, false).get(0).text())
+                .startsWith("Hallo und willkommen zum Confluence-Update!");
+        assertThat(UpdatePodcasts.show("bscw")).isEqualTo("BSCW-Update");
+        assertThat(UpdatePodcasts.show(null)).isEqualTo("Update");
+    }
+
+    @Test
     void theNewsNeverHearWhereAStoryStandsTheExplainerStillDoes() {
         PodcastWriter.Story story = new PodcastWriter.Story("Neue Startseite",
                 "Die Startseite zeigt die Ansprechstellen je Team.", List.of("auf der Seite „Start“ im Space NLX 4711"));

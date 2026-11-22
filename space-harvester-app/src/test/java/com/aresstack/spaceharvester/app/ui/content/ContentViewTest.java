@@ -385,14 +385,10 @@ class ContentViewTest {
             if (view.tools() != foot || foot.getComponentCount() > 1) {
                 return false;
             }
-            for (java.awt.Component row : foot.getComponents()) {
-                for (java.awt.Component tool : ((java.awt.Container) row).getComponents()) {
-                    if (!(tool instanceof com.aresstack.spaceharvester.app.ui.controls.CopyButton)) {
-                        return false;
-                    }
-                }
-            }
-            return true;
+            // Unten stehen nur Symbolknöpfe des Podcasts: links „Transkript kopieren“, rechts „Untertitel“.
+            return find(foot, javax.swing.AbstractButton.class).stream().allMatch(tool ->
+                    tool instanceof com.aresstack.spaceharvester.app.ui.controls.CopyButton
+                            || tool instanceof com.aresstack.spaceharvester.app.ui.IconButton);
         }))
                 .as("unten keine Chat-Chips").isTrue();
         // Ohne gezeigte Mitte verschwindet nur die dunkle Füllung, der gewählte Reiter bleibt.

@@ -1098,7 +1098,9 @@ public final class Harvester implements AutoCloseable {
                     () -> {
                         com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
                         return current == null ? 1 : current.parallel();
-                    });
+                    })
+                    // „Willkommen zum Confluence-Update“ (Angelo 22.11.2026): die Art der Quelle, nie der Server.
+                    .sourceTypes(sourceId -> catalog.find(sourceId).map(HarvestSource::type).orElse(null));
             // Erklär-Podcast einer Seite (Angelo 21.11.2026): derselbe Ablauf, Eingabe die Seite und ihre Unterseiten;
             // an das Modell nur lokal liegende, lesbare Seiten mit KI-Freigabe (ADR 0028), wie das Wissen des Chats.
             PageQueries podcastPages = this.pages;

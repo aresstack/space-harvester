@@ -182,6 +182,15 @@ public final class PodcastPlayer {
         }
     }
 
+    /** Wo {@code millis} im eigenen Abschnitt liegt: {@code [Stelle, Länge]} in Millisekunden; {0, 0} außerhalb. */
+    public long[] inTrack(long millis) {
+        synchronized (lock) {
+            int index = indexAt(millis);
+            return index < 0 ? new long[] {0, 0}
+                    : new long[] {Math.max(0, millis - startOf(index)), Math.max(0, durationAt(index))};
+        }
+    }
+
     public String titleAt(long millis) {
         synchronized (lock) {
             int index = indexAt(millis);

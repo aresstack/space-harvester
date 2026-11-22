@@ -70,6 +70,14 @@ public class ChangeEvents implements AutoCloseable {
     private final Map<String, Map<String, ChangeEvent>> queued = new LinkedHashMap<>();
     private int busy;
     private boolean scheduled;
+    /**
+     * Schützt {@link #queued}, {@link #busy} und {@link #scheduled}. {@link java.util.concurrent.locks.ReentrantLock}
+     * statt {@code synchronized} (Architekt 22.11.2026): Wer in {@link #awaitIdle} wartet, gibt als virtueller Thread
+     * seinen Träger frei.
+     */
+    private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+    /** Ein Durchgang ist fertig oder die Warteschlange verfallen. */
+    private final java.util.concurrent.locks.Condition idle = lock.newCondition();
 
     /**
      * @param enabled ob die Quelle Ereignisse annimmt, bei jedem Aufruf neu gelesen (Konfiguration zur Laufzeit)
@@ -173,15 +181,18 @@ public class ChangeEvents implements AutoCloseable {
     /** Wartet, bis keine Ereignisse mehr anstehen; {@code false} nach Ablauf von {@code timeout}. */
     public boolean awaitIdle(Duration timeout) throws InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();
-        synchronized (this) {
+        lock.lock();
+        try {
             while (busy > 0 || !queued.isEmpty()) {
                 long left = deadline - System.nanoTime();
                 if (left <= 0) {
                     return false;
                 }
-                TimeUnit.NANOSECONDS.timedWait(this, left);
+                idle.awaitNanos(left);
             }
             return true;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -218,25 +229,30 @@ public class ChangeEvents implements AutoCloseable {
         }
     }
 
-    private synchronized void enqueue(String sourceId, List<ChangeEvent> events) {
-        if (events.isEmpty()) {
-            return;
-        }
-        Map<String, ChangeEvent> pages = queued.computeIfAbsent(sourceId, id -> new LinkedHashMap<>());
-        int dropped = 0;
-        for (ChangeEvent event : events) {
-            ChangeEvent earlier = pages.get(event.pageId());
-            if (earlier == null && pages.size() >= MAX_QUEUED) {
-                dropped++;
-                continue;
+    private void enqueue(String sourceId, List<ChangeEvent> events) {
+        lock.lock();
+        try {
+            if (events.isEmpty()) {
+                return;
             }
-            pages.put(event.pageId(), merge(earlier, event));
+            Map<String, ChangeEvent> pages = queued.computeIfAbsent(sourceId, id -> new LinkedHashMap<>());
+            int dropped = 0;
+            for (ChangeEvent event : events) {
+                ChangeEvent earlier = pages.get(event.pageId());
+                if (earlier == null && pages.size() >= MAX_QUEUED) {
+                    dropped++;
+                    continue;
+                }
+                pages.put(event.pageId(), merge(earlier, event));
+            }
+            if (dropped > 0) {
+                LOG.log(System.Logger.Level.WARNING, "Änderungsereignisse von {0}: Warteschlange voll, {1} verworfen",
+                        sourceId, dropped);
+            }
+            schedule(Duration.ZERO);
+        } finally {
+            lock.unlock();
         }
-        if (dropped > 0) {
-            LOG.log(System.Logger.Level.WARNING, "Änderungsereignisse von {0}: Warteschlange voll, {1} verworfen",
-                    sourceId, dropped);
-        }
-        schedule(Duration.ZERO);
     }
 
     /** Die spätere Meldung gilt; eine Rechteänderung bleibt aber stehen, damit die Seite neu geprüft wird. */
@@ -260,18 +276,21 @@ public class ChangeEvents implements AutoCloseable {
             // geschlossen: anstehende Ereignisse verfallen, das Nachholen holt sie
             scheduled = false;
             queued.clear();
-            notifyAll();
+            idle.signalAll();
         }
     }
 
     private void drain() {
         Map<String, List<ChangeEvent>> batch;
-        synchronized (this) {
+        lock.lock();
+        try {
             scheduled = false;
             batch = new LinkedHashMap<>();
             queued.forEach((sourceId, pages) -> batch.put(sourceId, List.copyOf(pages.values())));
             queued.clear();
             busy++;
+        } finally {
+            lock.unlock();
         }
         Map<String, List<ChangeEvent>> deferred = new LinkedHashMap<>();
         try {
@@ -291,7 +310,8 @@ public class ChangeEvents implements AutoCloseable {
                 }
             });
         } finally {
-            synchronized (this) {
+            lock.lock();
+            try {
                 busy--;
                 deferred.forEach((sourceId, events) -> {
                     Map<String, ChangeEvent> pages = queued.computeIfAbsent(sourceId, id -> new LinkedHashMap<>());
@@ -302,7 +322,9 @@ public class ChangeEvents implements AutoCloseable {
                 if (!queued.isEmpty()) {
                     schedule(deferred.isEmpty() ? Duration.ZERO : RETRY);
                 }
-                notifyAll();
+                idle.signalAll();
+            } finally {
+                lock.unlock();
             }
         }
     }

@@ -17,6 +17,9 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.brand.ApplicationIcons;
 import com.aresstack.spaceharvester.app.ui.content.ContentView;
+import com.aresstack.spaceharvester.app.ui.controls.PerspectiveSwitcher;
+import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
+import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
 
 import com.aresstack.spaceharvester.app.event.Severity;
 import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
@@ -173,6 +176,29 @@ public final class MainWindow implements AppContext.Navigator {
     JPanel windowBar() {
         return top;
     }
+    /** Die Perspektiven des Fensters (#1141); entsteht mit {@link #content}. */
+    private Perspectives perspectives;
+    private PerspectiveSwitcher switcher;
+    /** Navigation der gewählten Perspektive rechts neben dem Titel. */
+    private final JPanel navigationSlot = new JPanel(new BorderLayout()) {
+        @Override
+        public Dimension getPreferredSize() {
+            // Die Titelleiste behält in jeder Perspektive ihre Höhe: so hoch wie die Navigation des Space Harvesters.
+            Dimension size = super.getPreferredSize();
+            return harvesterNavigation == null ? size
+                    : new Dimension(size.width, Math.max(size.height, harvesterNavigation.getPreferredSize().height));
+        }
+    };
+    private JComponent harvesterNavigation;
+    /** Arbeitsflächen aller Perspektiven; die rechte Seitenleiste liegt daneben, nicht darin. */
+    private final CardLayout stageCards = new CardLayout();
+    private final JPanel stage = new JPanel(stageCards);
+    private JComponent searchSlot;
+    /** Ob die linke Leiste des Space Harvesters zu war, als er verlassen wurde. */
+    private boolean harvesterDrawerCollapsed;
+    /** Das Command Deck (#1142); seine Sitzungen leben so lange wie das Fenster, über jeden Wechsel hinweg. */
+    private final com.aresstack.spaceharvester.app.ui.deck.CommandDeck commandDeck =
+            new com.aresstack.spaceharvester.app.ui.deck.CommandDeck();
     private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
@@ -282,6 +308,7 @@ public final class MainWindow implements AppContext.Navigator {
             public void windowClosing(WindowEvent event) {
                 if (confirmClose(frame)) {
                     WindowPlacement.remember(frame);
+                    commandDeck.shutdown();
                     frame.dispose();
                     context.shutdown();
                     System.exit(0);
@@ -315,11 +342,6 @@ public final class MainWindow implements AppContext.Navigator {
         surface.setBackground(Comic.SURFACE);
         surface.setBorder(ComicBorder.windowBorder(Comic.PALETTE, WINDOW_PADDING));
 
-        JLabel title = new JLabel("Space Harvester");
-        title.setFont(Comic.semiBold(18f));
-        title.setForeground(Comic.INK);
-        title.setIcon(ApplicationIcons.titleLogo());
-        title.setIconTextGap(8);
         JPanel icons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
         icons.setOpaque(false);
         // Knapper als früher (28), damit das Suchfeld auch bei 960 px Fensterbreite seine Mindestbreite behält.
@@ -366,11 +388,15 @@ public final class MainWindow implements AppContext.Navigator {
             }
         }
         icons.add(tabBar);
-        // Der Titel steht in der Mitte der linken Gruppe und ist ihr einziger kürzbarer Teil (HeaderLayout).
+        // Der Titel steht in der Mitte der linken Gruppe und ist ihr einziger kürzbarer Teil (HeaderLayout). Er ist
+        // zugleich der Umschalter der Perspektiven (#1141); rechts daneben steht die Navigation der gewählten.
         JPanel west = new JPanel(new BorderLayout());
         west.setOpaque(false);
-        west.add(title, BorderLayout.CENTER);
-        west.add(icons, BorderLayout.EAST);
+        perspectives = new Perspectives();
+        switcher = new PerspectiveSwitcher(ApplicationIcons.titleLogo(), perspectives);
+        west.add(switcher, BorderLayout.CENTER);
+        navigationSlot.setOpaque(false);
+        west.add(navigationSlot, BorderLayout.EAST);
         JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
         east.setOpaque(false);
         east.add(trailing);
@@ -382,7 +408,8 @@ public final class MainWindow implements AppContext.Navigator {
         top.add(west, BorderLayout.WEST);
         top.add(east, BorderLayout.EAST);
         // Ein Suchfeld für das ganze Fenster, mittig zwischen den Icon-Gruppen (#515).
-        top.add(SearchBarLayout.wrap(searchView.searchBar()), BorderLayout.CENTER);
+        searchSlot = SearchBarLayout.wrap(searchView.searchBar());
+        top.add(searchSlot, BorderLayout.CENTER);
         ComicWindowDragger.install(top);
         // Meldet die Leiste beim Tooltip-Dienst an; den Text liefert getToolTipText je nach Fensterzustand.
         top.setToolTipText(MAXIMIZE_TOOLTIP);
@@ -463,7 +490,20 @@ public final class MainWindow implements AppContext.Navigator {
             }
         });
         chatSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
-        chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, work, sideDeck);
+        // Die Mitte gehört der gewählten Perspektive; die rechte Seitenleiste bleibt dieselbe Instanz für alle (#1141).
+        stage.setBackground(Comic.SURFACE);
+        stage.setMinimumSize(new Dimension(320, 0));
+        perspectives.add(new Perspective(Perspectives.HARVESTER, "Space Harvester",
+                "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null));
+        perspectives.add(commandDeck.perspective());
+        perspectives.add(Perspectives.missionProtocol());
+        for (Perspective perspective : perspectives.all()) {
+            stage.add(perspective.workspace(), perspective.id());
+        }
+        harvesterNavigation = icons;
+        navigationSlot.add(icons, BorderLayout.CENTER);
+        perspectives.onChange(this::perspectiveChanged);
+        chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, stage, sideDeck);
         chatSplit.setBorder(null);
         chatSplit.setBackground(Comic.SURFACE);
         chatSplit.setResizeWeight(1);
@@ -619,7 +659,12 @@ public final class MainWindow implements AppContext.Navigator {
         surface.getActionMap().put("find", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
-                findTarget().focus();
+                FindBar target = findTarget();
+                // Die Suchleiste unten gehört zum Space Harvester; in anderen Perspektiven nur die der Aufträge.
+                if (target == findBar && perspectives != null && !perspectives.isCurrent(Perspectives.HARVESTER)) {
+                    return;
+                }
+                target.focus();
             }
         });
     }
@@ -782,6 +827,70 @@ public final class MainWindow implements AppContext.Navigator {
         split.setDividerSize(COLLAPSED_DIVIDER);
     }
 
+    /**
+     * Tauscht Navigation, Arbeitsfläche und linke Leiste gegen die der neuen Perspektive. Titelleiste, rechte
+     * Seitenleiste (Chat und Aufträge), Statuszeile und laufende Aufträge bleiben unberührt (#1141).
+     */
+    private void perspectiveChanged(Perspective next) {
+        boolean harvester = Perspectives.HARVESTER.equals(next.id());
+        navigationSlot.removeAll();
+        if (next.navigation() != null) {
+            navigationSlot.add(next.navigation(), BorderLayout.CENTER);
+        }
+        navigationSlot.revalidate();
+        navigationSlot.repaint();
+        // Die Suchleiste gehört zum Space Harvester; für die anderen Perspektiven ist keine Suche festgelegt.
+        searchSlot.setVisible(harvester);
+        stageCards.show(stage, next.id());
+        if (!harvester) {
+            // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.
+            viewStatus.setVisible(false);
+            jobStatus.navigationVisible(false);
+        }
+        if (next.drawer() == null) {
+            if (split.getDividerSize() > 0 || !split.isLeftCollapsed()) {
+                harvesterDrawerCollapsed = split.isLeftCollapsed();
+            }
+            // Ganz ohne Teiler: die Mitte nimmt die volle Breite; der gemerkte Zustand der Leiste bleibt.
+            split.collapseLeft();
+        } else if (harvesterDrawerCollapsed) {
+            collapseDrawer();
+        } else {
+            split.openLeft();
+        }
+        if (harvester) {
+            // Zurück im Space Harvester: der Bereich von vorhin mit seinem Stand und seinen Knöpfen.
+            showSection(current);
+        }
+        top.revalidate();
+        top.repaint();
+    }
+
+    /** Die Perspektiven (für Tests und künftige Aufrufer). */
+    Perspectives perspectives() {
+        return perspectives;
+    }
+
+    /** Der Umschalter im Titel (für Tests). */
+    PerspectiveSwitcher perspectiveSwitcher() {
+        return switcher;
+    }
+
+    /** Die Arbeitsfläche der gewählten Perspektive (für Tests). */
+    JComponent stage() {
+        return stage;
+    }
+
+    /** Das Command Deck (für Tests). */
+    com.aresstack.spaceharvester.app.ui.deck.CommandDeck commandDeck() {
+        return commandDeck;
+    }
+
+    /** Die Chat-/Auftrags-Seitenleiste (für Tests). */
+    JComponent sideDeck() {
+        return sideDeck;
+    }
+
     @Override
     public void show(AppContext.Section section) {
         // Wer einen Bereich aufruft, will ihn sehen: aus der großen Chat-Ansicht wird wieder die Leiste. Nur die
@@ -796,6 +905,12 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Zeigt den Bereich, ohne die große Chat-Ansicht zu verlassen (Auswahl im Explorer). */
     private void showSection(AppContext.Section section) {
+        // Ein Bereich des Space Harvesters (auch über einen Link im Chat) führt in dessen Perspektive zurück; die Aufträge
+        // stehen in der globalen Seitenleiste und lassen die Perspektive, wie sie ist.
+        if (perspectives != null && section != AppContext.Section.ACTIVITIES
+                && !perspectives.isCurrent(Perspectives.HARVESTER)) {
+            perspectives.select(Perspectives.HARVESTER);
+        }
         if (section == AppContext.Section.STATUS) {
             show(AppContext.Section.SETTINGS);
             settings.select(SettingsView.DIAGNOSIS);
