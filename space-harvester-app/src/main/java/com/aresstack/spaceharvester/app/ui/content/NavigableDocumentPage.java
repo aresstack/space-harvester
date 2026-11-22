@@ -84,6 +84,50 @@ final class NavigableDocumentPage extends JLayeredPane {
         return sky;
     }
 
+    /** Abstand eines Knopfs oben rechts zum Rand, wie der Podcast-Knopf der Update-Ansicht. */
+    static final int ORB_INSET = 10;
+
+    /** Ein runder Knopf oben rechts über dem Himmel (der Play-Knopf des Seiten-Podcasts, Angelo 21.11.2026). */
+    private javax.swing.JComponent orb;
+
+    /**
+     * Legt {@code button} oben rechts über den Himmel, links neben die Bildlaufleiste; der Himmel hält rechts Platz frei
+     * und der Text beginnt darunter.
+     */
+    void setOrb(javax.swing.JComponent button) {
+        if (orb != null) {
+            remove(orb);
+        }
+        orb = button;
+        if (button != null) {
+            add(button, JLayeredPane.MODAL_LAYER);
+            sky.setTrailingInset(button.getPreferredSize().width + 2 * ORB_INSET);
+            // Kommt der Knopf oder geht er, rückt der Text nach.
+            button.addComponentListener(new ComponentAdapter() {
+                @Override
+                public void componentShown(ComponentEvent event) {
+                    applyTopInset();
+                }
+
+                @Override
+                public void componentHidden(ComponentEvent event) {
+                    applyTopInset();
+                }
+            });
+            // Bildlaufleiste erscheint oder verschwindet: der Knopf bleibt links daneben.
+            scroll.getViewport().addComponentListener(new ComponentAdapter() {
+                @Override
+                public void componentResized(ComponentEvent event) {
+                    doLayout();
+                }
+            });
+        }
+        topInset = -1;
+        applyTopInset();
+        revalidate();
+        repaint();
+    }
+
     JScrollPane scroll() {
         return scroll;
     }
@@ -117,6 +161,18 @@ final class NavigableDocumentPage extends JLayeredPane {
     public void doLayout() {
         scroll.setBounds(0, 0, getWidth(), getHeight());
         sky.setBounds(0, 0, getWidth(), getHeight());
+        if (orb != null) {
+            java.awt.Dimension size = orb.getPreferredSize();
+            int bar = scroll.getVerticalScrollBar().isVisible() ? scroll.getVerticalScrollBar().getWidth() : 0;
+            orb.setBounds(getWidth() - bar - ORB_INSET - size.width, orbTop(size.height), size.width, size.height);
+        }
+    }
+
+    /** Oberkante des Knopfs: mittig auf der Wolkenreihe des Himmels. */
+    private static int orbTop(int height) {
+        int top = com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics.SKY_PADDING_TOP
+                + (com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics.CLOUD_CHIP_HEIGHT - height) / 2;
+        return Math.max(2, top);
     }
 
     @Override
@@ -127,6 +183,11 @@ final class NavigableDocumentPage extends JLayeredPane {
     private void applyTopInset() {
         Object value = sky.getClientProperty(DocumentNavigationSky.TOP_INSET_PROPERTY);
         int inset = value instanceof Integer ? Math.max(0, (Integer) value) : 0;
+        if (orb != null && orb.isVisible()) {
+            // Ohne Wolken (Seite ohne Überschriften) beginnt der Text trotzdem unter dem Knopf.
+            int height = orb.getPreferredSize().height;
+            inset = Math.max(inset, orbTop(height) + height + 4);
+        }
         if (inset == topInset) {
             return;
         }

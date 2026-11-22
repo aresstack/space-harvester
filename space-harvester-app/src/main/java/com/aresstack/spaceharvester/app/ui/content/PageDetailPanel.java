@@ -235,6 +235,12 @@ public final class PageDetailPanel extends JPanel {
     private final VideoTranscriptionPanel videoTranscript = new VideoTranscriptionPanel(
             new TranscribeAudioUseCase(new VlcPcmAudioDecoder(), new WhisperSpeechTranscriber()));
     private final NavigableDocumentPage readerPage;
+    /** Der Erklär-Podcast der Seite (Angelo 21.11.2026): Play-Knopf oben rechts im Himmel des Lesetexts. */
+    private final PodcastControl<PodcastPage> pagePodcast;
+
+    /** Wofür der Erklär-Podcast entsteht: eine Seite samt Unterseiten. */
+    record PodcastPage(String sourceId, String pageId) {
+    }
     /** Die Sanduhr über dem Text, solange die Seite lädt (wie bei den Anhängen, ohne Esc). */
     private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay textBusy;
     private final JLabel acronymHint = Comic.muted(" ");
@@ -522,6 +528,15 @@ public final class PageDetailPanel extends JPanel {
         readerPanel.add(acronymBar, BorderLayout.NORTH);
         // Der Banner liegt als eigene Ebene über dem Lesetext und nimmt ihm keine Breite.
         readerPage = new NavigableDocumentPage(Comic.scroll(reader), reader, READER_PADDING_TOP);
+        pagePodcast = new PodcastControl<>(this::pagePodcasts, new SourceUpdatesView.Runner() {
+            @Override
+            public <T> void run(java.util.concurrent.Callable<T> work, Consumer<T> onSuccess,
+                                Consumer<Throwable> onFailure) {
+                Background.run(work, onSuccess, onFailure);
+            }
+        }, PodcastControl.Labels.PAGE);
+        pagePodcast.events(context.events()::publish);
+        readerPage.setOrb(pagePodcast.orb());
         textBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(readerPage);
         textBusy.setHighlight(Comic.BLUE);
         textBusy.setVeilColor(Comic.SURFACE);
@@ -820,6 +835,7 @@ public final class PageDetailPanel extends JPanel {
         // Der Graph verlässt die Seite vor den Unterseiten: Deren Abmeldung soll für die alte Seite nichts mehr laden.
         graphView.page(null);
         subpages.page(null, null, null, null);
+        pagePodcast.summary(null);
         assetsLoaded = false;
         readingLoaded = false;
         referencesLoaded = false;
@@ -1383,6 +1399,8 @@ public final class PageDetailPanel extends JPanel {
         this.referencesLoaded = false;
         this.imagesLoaded = false;
         this.page = null;
+        // Der Podcast der vorigen Seite endet sofort, nicht erst, wenn die neue geladen ist (oder nie, wenn das scheitert).
+        pagePodcast.summary(null);
         closeOriginalFile();
         readingPane.loading();
         breadcrumbs.clear();
@@ -2130,6 +2148,7 @@ public final class PageDetailPanel extends JPanel {
         subpages.page(context.runtime() == null ? null : context.runtime().workspace(), sourceId,
                 metadata.partitionKey(), metadata.pageId());
         statementsView.page(snapshot, loaded.reader() == null ? null : loaded.reader().text());
+        pagePodcast.summary(new PodcastPage(sourceId, metadata.pageId()));
         pageShown.accept(sourceId, metadata.partitionKey());
         title.setText(metadata.title());
         path.setText(sourceId + " · Space " + metadata.partitionKey() + " · Seite " + metadata.pageId()
@@ -5235,6 +5254,53 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Für Tests: die angezeigte Seite oder {@code null} ohne Seite und während des Ladens. */
+    /** Der Erklär-Podcast der gezeigten Seite über die Laufzeit; ohne Laufzeit bleibt der Knopf aus. */
+    private PodcastControl.Source<PodcastPage> pagePodcasts() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return PodcastControl.Source.none();
+        }
+        com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
+        return new PodcastControl.Source<>() {
+            @Override
+            public boolean available() {
+                return workspace.pagePodcastsAvailable();
+            }
+
+            @Override
+            public String key(PodcastPage page) {
+                return workspace.pagePodcastKey(page.sourceId(), page.pageId());
+            }
+
+            @Override
+            public Optional<com.aresstack.spaceharvester.application.podcast.Podcast> podcast(PodcastPage page) {
+                return workspace.pagePodcast(page.sourceId(), page.pageId());
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.jobs.JobStatus start(PodcastPage page) {
+                return workspace.startPagePodcast(page.sourceId(), page.pageId());
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.observe.Subscription subscribe(String key,
+                                                                                         Runnable listener) {
+                return workspace.subscribePagePodcast(key, listener);
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.observe.Subscription subscribeJobs(
+                    com.aresstack.spaceharvester.application.jobs.JobListener listener) {
+                return workspace.subscribeJobs(listener);
+            }
+        };
+    }
+
+    /** Der Erklär-Podcast der Seite (für Tests). */
+    PodcastControl<PodcastPage> pagePodcast() {
+        return pagePodcast;
+    }
+
     DeliveredPage shownPage() {
         return page;
     }
