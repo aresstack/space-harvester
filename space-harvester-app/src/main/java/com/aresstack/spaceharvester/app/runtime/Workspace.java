@@ -1722,6 +1722,18 @@ public final class Workspace {
         return harvester.domainTermGraph().onPages(caller, options, cancelled);
     }
 
+    /**
+     * Begriffswissen für Chat und Suche (Paket W6): was der Wissensgraph im Bereich {@code scope} über einen
+     * bestätigten Fachbegriff weiß, begrenzt und mit Stufe je Aussage. Jede gelieferte Seite geht vorher an
+     * {@code delivery} (für den Chat die KI-Freigabe, ADR 0033 Punkt 8). Rechtegeprüft, rechnet nie; nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.TermKnowledge.Answer termKnowledge(String query,
+            com.aresstack.spaceharvester.application.snapshot.PageSet scope,
+            com.aresstack.spaceharvester.application.knowledge.TermKnowledge.Delivery delivery,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.termKnowledge().answer(caller, query, scope, delivery, cancelled);
+    }
+
     /** Vorschläge für das Startfeld der Fachsicht: nur bestätigte Fachbegriffe und Synonyme. Nie auf dem EDT. */
     public java.util.List<String> domainTermSuggestions(String query, int limit) {
         return harvester.domainTermGraph().suggestions(caller, query, limit);

@@ -440,6 +440,29 @@ public final class DomainTermGraph {
     }
 
     /**
+     * Die Begriffsgruppe um {@code start} für das Begriffswissen (Paket W6, {@link TermKnowledge}): der Begriff, die
+     * unmittelbar an ihm hängenden Synonyme und alle Verb-Partner dieser Gruppe, höchstens {@link #MAX_NODES} Knoten,
+     * die Partner mit den meisten Belegen zuerst. Gezählt wird genau wie in {@link #around} (derselbe Aufbau). Anders als
+     * dort meldet {@link View#truncated()} nur, dass Verb-Kanten der Gruppe fehlen; Nachbarn der Partner gehören nicht
+     * dazu und werden nicht gesucht. {@link Options#depth()} gilt hier nicht.
+     */
+    View group(AccessContext caller, String start, Options options, BooleanSupplier cancelled) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(cancelled, "cancelled");
+        String centre = start == null ? "" : TermText.normalize(start).strip();
+        if (centre.isEmpty()) {
+            return View.of(Outcome.EMPTY_START);
+        }
+        Lexicon lexicon = lexicon(caller);
+        if (!lexicon.labels.containsKey(centre)) {
+            return View.of(Outcome.NOT_A_TERM);
+        }
+        return collect(caller, lexicon, options, cancelled).finish(edges -> groupLayout(centre, lexicon, edges),
+                selected);
+    }
+
+    /**
      * Die seitenweite Fachsicht ohne Startbegriff (Paket W4b): alle bestätigten Fachbegriffe und Synonyme der Seiten
      * {@code options.pages()}, die dort mit einem anderen Knoten durch ein Verb verbunden sind, höchstens
      * {@link #MAX_NODES}. Gezählt wird genau wie in {@link #around} (derselbe Aufbau): Standardansicht,
@@ -682,6 +705,48 @@ public final class DomainTermGraph {
      * dann Wortlaut ohne Groß-/Kleinschreibung, dann Schlüssel; höchstens {@link #MAX_NODES}, jeder mit mindestens
      * einem gezeigten Verb-Partner, alle Tiefe 0 ohne Vorgänger. Synonym-Kanten zählen nicht für die Auswahl und erscheinen nur zwischen gezeigten Knoten.
      */
+    /** Aufbau für {@link #group}: Gruppe zuerst, dann ihre Verb-Partner nach Zahl der Belege. */
+    private static View groupLayout(String centre, Lexicon lexicon, Map<String, EdgeBuilder> edges) {
+        Map<String, List<EdgeBuilder>> touching = touching(edges);
+        Map<String, Node> nodes = new LinkedHashMap<>();
+        nodes.put(centre, lexicon.node(centre, 0, null));
+        List<String> group = new ArrayList<>();
+        group.add(centre);
+        for (EdgeBuilder edge : touching.getOrDefault(centre, List.of())) {
+            String other = edge.from.equals(centre) ? edge.to : edge.from;
+            if (edge.kind == EdgeKind.SYNONYM && !nodes.containsKey(other) && nodes.size() < MAX_NODES) {
+                nodes.put(other, lexicon.node(other, 1, centre));
+                group.add(other);
+            }
+        }
+        List<EdgeBuilder> verbs = new ArrayList<>();
+        Map<EdgeBuilder, String> owner = new java.util.IdentityHashMap<>();
+        for (String key : group) {
+            for (EdgeBuilder edge : touching.getOrDefault(key, List.of())) {
+                if (edge.kind == EdgeKind.VERB && !owner.containsKey(edge)) {
+                    owner.put(edge, key);
+                    verbs.add(edge);
+                }
+            }
+        }
+        verbs.sort(java.util.Comparator.comparingInt((EdgeBuilder edge) -> edge.evidence.size()).reversed());
+        boolean truncated = false;
+        for (EdgeBuilder edge : verbs) {
+            String key = owner.get(edge);
+            String other = edge.from.equals(key) ? edge.to : edge.from;
+            if (nodes.containsKey(other)) {
+                continue;
+            }
+            if (nodes.size() >= MAX_NODES) {
+                truncated = true;
+                continue;
+            }
+            nodes.put(other, lexicon.node(other, nodes.get(key).depth() + 1, key));
+        }
+        return new View(Outcome.FOUND, new ArrayList<>(nodes.values()), shown(nodes, touching), truncated, 0,
+                Set.of());
+    }
+
     private static View pageLayout(Lexicon lexicon, Map<String, EdgeBuilder> edges) {
         Map<String, Integer> weights = new LinkedHashMap<>();
         for (EdgeBuilder edge : edges.values()) {
