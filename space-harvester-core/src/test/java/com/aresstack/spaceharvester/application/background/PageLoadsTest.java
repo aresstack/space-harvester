@@ -463,6 +463,28 @@ class PageLoadsTest {
     }
 
     @Test
+    void aPartRunningAgainInItsEntryIsInTheImageAtOnce() throws Exception {
+        // Abnahme #1133: Ein Teil, der aus FAILED neu läuft, steht sofort im Abbild, nicht erst mit der Meldung.
+        BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("4")).orElseThrow();
+        String partId = first.parts().get(0).id();
+        java.util.concurrent.CountDownLatch failed = new java.util.concurrent.CountDownLatch(1);
+        background.subscribe(PageLoads.KIND, status -> {
+            if (status.id().equals(partId) && status.state() == JobState.FAILED) {
+                failed.countDown();
+            }
+        }, last -> { });
+        executor.runAll();
+        assertThat(failed.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        background.resumeWithoutCaller(partId);
+        PageLoads.Joined again = loads.join(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("4"));
+
+        assertThat(again.started()).isEmpty();
+        assertThat(again.joined()).containsExactly(first.groupId());
+    }
+
+    @Test
     void afterARestartTheImageStartsWithThePartsLeftOpen() {
         BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
                 pages("1")).orElseThrow();
@@ -560,10 +582,14 @@ class PageLoadsTest {
         assertThat(checkpoints.get()).isEqualTo(3);
     }
 
-    /** Zählt, wie oft der ganze Speicher gelesen wird. */
+    /**
+     * Zählt, wie oft der Testthread den ganzen Speicher liest; Zustellungen auf anderen Threads (etwa ein watch, der
+     * group() liest) zählen nicht (Abnahme #1133).
+     */
     private static final class CountingStore extends InMemoryJobStore {
 
         private final java.util.concurrent.atomic.AtomicLong reads = new java.util.concurrent.atomic.AtomicLong();
+        private final Thread counted = Thread.currentThread();
 
         long reads() {
             return reads.get();
@@ -571,7 +597,9 @@ class PageLoadsTest {
 
         @Override
         public List<JobStatus> all() {
-            reads.incrementAndGet();
+            if (Thread.currentThread() == counted) {
+                reads.incrementAndGet();
+            }
             return super.all();
         }
     }

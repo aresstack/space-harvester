@@ -251,7 +251,7 @@ public final class BackgroundJobs {
                         parameters.put(Jobs.AFTER_TITLES, title);
                     }
                 }
-                rerun = jobs.rerun(jobId, owner, parameters, task(true, false));
+                rerun = rerun(jobId, parameters, task(true, false));
             } catch (RuntimeException e) {
                 retry.abandoned(part);
                 throw e;
@@ -912,14 +912,14 @@ public final class BackgroundJobs {
             throw new JobNotResumableException(jobId, "die Art „" + kind + "“ ist nicht angemeldet");
         }
         if (!registered.exclusive()) {
-            return jobs.rerun(jobId, owner, task(true, false));
+            return rerun(jobId, null, task(true, false));
         }
         synchronized (startLock(kind)) {
             Optional<JobStatus> open = openOther(kind, current.sourceId(), current.partitionKey(), jobId);
             if (open.isPresent()) {
                 throw new BackgroundPartOpenException(jobId, open.get().id());
             }
-            return jobs.rerun(jobId, owner, task(true, false));
+            return rerun(jobId, null, task(true, false));
         }
     }
 
@@ -971,7 +971,7 @@ public final class BackgroundJobs {
             }
             try {
                 if (!kind.exclusive()) {
-                    resumed.add(jobs.rerun(status.id(), owner, task(true, true)));
+                    resumed.add(rerun(status.id(), null, task(true, true)));
                     continue;
                 }
                 List<JobStatus> siblings = exclusiveParts.get(PartKey.of(status));
@@ -1064,7 +1064,7 @@ public final class BackgroundJobs {
                 siblings.forEach(sibling -> retire(sibling, SUPERSEDED_BY_OPEN));
                 return Optional.empty();
             }
-            JobStatus resumed = jobs.rerun(youngest.id(), owner, task(true, true));
+            JobStatus resumed = rerun(youngest.id(), null, task(true, true));
             older.forEach(sibling -> retire(sibling, SUPERSEDED_BY_YOUNGER));
             return Optional.of(resumed);
         }
@@ -1262,6 +1262,47 @@ public final class BackgroundJobs {
                         com.aresstack.spaceharvester.application.jobs.JobEvent.Category.JOB, "background",
                         PREDECESSOR_MISSING, "Vorstufe " + (name == null ? "" : "„" + name + "“ ") + reason
                                 + "; läuft über das Vorhandene"));
+            }
+        }
+    }
+
+    /**
+     * Wer erfährt, dass ein Teil im selben Eintrag neu läuft (Fortsetzen, „Nur Fehler neu versuchen“, Neustart), sofort
+     * und nicht erst mit der gebündelten Auftragsmeldung: etwa ein Abbild der offenen Teile (Abnahme #1133).
+     */
+    public interface Reruns {
+
+        /** Vor dem Neustart des Teils, auf dem Thread des Aufrufers. */
+        void before(String partId);
+
+        /**
+         * Nach dem Neustart, auch wenn er scheiterte.
+         *
+         * @param rerun der Stand nach dem Neustart, oder {@code null}, wenn er scheiterte
+         */
+        void after(String partId, JobStatus rerun);
+    }
+
+    private final java.util.List<Reruns> reruns = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Meldet {@code listener} für jeden Neustart eines Teils dieser Laufzeit an, gleich welcher Art. */
+    public Subscription onRerun(Reruns listener) {
+        reruns.add(Objects.requireNonNull(listener, "listener"));
+        return () -> reruns.remove(listener);
+    }
+
+    /** Startet einen Teil im selben Eintrag neu und meldet das den {@link #onRerun Zuhörern} davor und danach. */
+    private JobStatus rerun(String jobId, Map<String, String> parameters, JobTask task) {
+        for (Reruns listener : reruns) {
+            listener.before(jobId);
+        }
+        JobStatus result = null;
+        try {
+            result = parameters == null ? jobs.rerun(jobId, owner, task) : jobs.rerun(jobId, owner, parameters, task);
+            return result;
+        } finally {
+            for (Reruns listener : reruns) {
+                listener.after(jobId, result);
             }
         }
     }
