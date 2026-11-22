@@ -401,6 +401,26 @@ public final class BackgroundJobs {
      */
     public static final String ORDER_ONLY = PREFIX + "orderOnly";
 
+    /** Angabe eines Teils: sein Anlass, {@value #USER} für einen Lauf, den ein Benutzer startete. */
+    public static final String TRIGGER = "trigger";
+    /** Anlass eines Teils, den ein Benutzer startete. */
+    public static final String USER = "user";
+    /** Angaben eines Teils, die seinen Benutzer nennen: Eigentümer, Benutzer oder Start-Aufrufer. */
+    private static final List<String> STARTER = List.of("owner", "principal", "caller");
+
+    /**
+     * Ob ein Benutzer diesen Teil gestartet hat (Abnahme #1073): Anlass {@value #USER} ({@value #TRIGGER}) oder ein
+     * Eigentümer, Benutzer oder Start-Aufrufer in den Angaben ({@code owner}, {@code principal}, {@code caller}), wie
+     * bei „Bilder beschreiben“, der Aussagenanalyse und jedem Teil des Dienst-Planers. Automatik und Abgleiche beim
+     * Start tragen nichts davon. Wer die Laufzeit ersetzt, fragt nur für solche Teile nach, denn mit dem Aufrufer im
+     * Speicher verlieren sie ihre Rechte und halten danach gelb „von Hand fortsetzen“ an.
+     */
+    public static boolean startedByUser(JobStatus part) {
+        Objects.requireNonNull(part, "part");
+        return part.type() == JobType.BACKGROUND && (USER.equals(part.parameter(TRIGGER))
+                || STARTER.stream().anyMatch(key -> part.parameter(key) != null));
+    }
+
     /** Alle Teile dieser Art, älteste zuerst, in jedem Zustand; etwa für Teile, die der Start zu Ende führt. */
     public List<JobStatus> parts(String kind) {
         Objects.requireNonNull(kind, "kind");
