@@ -847,7 +847,8 @@ public final class ChangeLog implements AutoCloseable {
                     com.aresstack.spaceharvester.application.jobs.JobContext.class.getClassLoader(),
                     new Class<?>[] {com.aresstack.spaceharvester.application.jobs.JobContext.class},
                     (proxy, method, args) -> {
-                        if (method.getName().equals("failed") || method.getName().equals("incomplete")) {
+                        if (method.getName().equals("failed") || method.getName().equals("incomplete")
+                                || method.getName().equals("record")) {
                             method.invoke(parent, args);
                         }
                         try {
