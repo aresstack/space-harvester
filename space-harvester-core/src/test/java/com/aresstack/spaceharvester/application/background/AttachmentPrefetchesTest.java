@@ -143,6 +143,38 @@ class AttachmentPrefetchesTest {
     }
 
     @Test
+    void cancellingAWaitingPartDiscardsItsPagesBeforeItRuns() throws Exception {
+        gates.put("a1", new CountDownLatch(1));
+        prefetches.request("wiki", "DEV", "100", List.of("a1"), loader).orElseThrow();
+        eventually(() -> entered.contains("a1"));
+        // Der einzige Hintergrundplatz ist belegt: Der Teil des zweiten Space wartet.
+        JobStatus waiting = prefetches.request("wiki", "OPS", "300", List.of("c1"), loader).orElseThrow();
+        assertThat(waiting.state()).isEqualTo(JobState.QUEUED);
+
+        background.cancel(waiting.parameter(BackgroundJobs.GROUP));
+
+        eventually(() -> prefetches.waitingPages("wiki", "OPS") == 0);
+        gates.get("a1").countDown();
+        eventually(() -> parts().stream().allMatch(part -> part.state().terminal()));
+        assertThat(loaded).containsExactly("100/a1");
+    }
+
+    @Test
+    void aWaitingPageTakesTheAttachmentsOfALaterRequestToo() throws Exception {
+        gates.put("a1", new CountDownLatch(1));
+        prefetches.request("wiki", "DEV", "100", List.of("a1"), loader).orElseThrow();
+        eventually(() -> entered.contains("a1"));
+        prefetches.request("wiki", "DEV", "200", List.of("b1", "b2"), loader).orElseThrow();
+        // Eine andere Art derselben Seite: kommt hinzu, statt die erste zu ersetzen.
+        prefetches.request("wiki", "DEV", "200", List.of("b2", "v1"), loader).orElseThrow();
+
+        gates.get("a1").countDown();
+
+        eventually(() -> part(JobState.COMPLETED).isPresent());
+        assertThat(loaded).containsExactly("100/a1", "200/b1", "200/b2", "200/v1");
+    }
+
+    @Test
     void aPartFromBeforeARestartEndsAtOnce() throws Exception {
         BackgroundGroup group = background.start(AttachmentPrefetches.KIND, AttachmentPrefetches.TITLE,
                 List.of(new BackgroundPart.Draft("wiki", "DEV", Map.of(AttachmentPrefetches.PAGE, "100"))));

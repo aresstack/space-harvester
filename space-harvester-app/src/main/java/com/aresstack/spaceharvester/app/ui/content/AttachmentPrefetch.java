@@ -19,8 +19,8 @@ import java.util.function.Function;
  * Ergebnis auch ablegt; die zuletzt geladenen Bytes bleiben im Speicher, damit Zurückblättern sofort zeigt.
  *
  * <p>Mit {@code handOff} (Fundstelle 18) lädt er selbst nur den gezeigten, seine {@value #NEAR} Nachbarn je Seite und
- * was {@code uiOnly} nennt (Standbilder der Videomarken brauchen den offenen Player); die übrigen gibt er einmal ab, an
- * den Hintergrundteil „Anhänge vorladen“. Lehnt der ab (nur ein Platz), bleibt es beim bisherigen Weg.
+ * was {@code uiOnly} nennt (Standbilder der Videomarken brauchen den offenen Player); die übrigen gibt er je Anhang
+ * einmal ab, an den Hintergrundteil „Anhänge vorladen“, auch wenn danach eine andere Art derselben Seite gezeigt wird. Lehnt der ab (nur ein Platz), bleibt es beim bisherigen Weg.
  */
 final class AttachmentPrefetch implements AutoCloseable {
 
@@ -48,8 +48,8 @@ final class AttachmentPrefetch implements AutoCloseable {
     /** Gibt die übrigen Anhänge ab; {@code true}, wenn sie angenommen wurden. {@code null}: alles selbst laden. */
     private final Function<List<String>, Boolean> handOff;
     private final java.util.function.Predicate<String> uiOnly;
-    /** Ob die übrigen schon abgegeben oder abgelehnt sind. */
-    private boolean handedOff;
+    /** Schon abgegebene Anhänge; ob der Hintergrund ablehnte. */
+    private final Set<String> handedOff = new HashSet<>();
     private boolean refused;
     private final Map<String, byte[]> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
@@ -186,14 +186,15 @@ final class AttachmentPrefetch implements AutoCloseable {
         return null;
     }
 
-    /** Die übrigen Anhänge zum Abgeben, einmal je Vorlader; leer, wenn nichts (mehr) abzugeben ist. */
+    /** Die übrigen Anhänge zum Abgeben, jeder einmal; leer, wenn nichts (mehr) abzugeben ist. */
     private synchronized List<String> rest() {
-        if (closed || handOff == null || refused || handedOff) {
+        if (closed || handOff == null || refused) {
             return List.of();
         }
-        handedOff = true;
-        return order.stream().filter(key -> !uiOnly.test(key) && !loaded.contains(key) && !failed.contains(key))
-                .toList();
+        List<String> rest = order.stream().filter(key -> !uiOnly.test(key) && !loaded.contains(key)
+                && !failed.contains(key) && !handedOff.contains(key)).toList();
+        handedOff.addAll(rest);
+        return rest;
     }
 
     private void run() {

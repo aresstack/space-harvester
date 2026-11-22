@@ -3537,6 +3537,11 @@ public final class PageDetailPanel extends JPanel {
             harvestWatch.close();
             harvestWatch = null;
         }
+        // Ebenso die Rückmeldung von „Anhänge vorladen“ (ein angehaltener Teil endet vielleicht nie).
+        if (prefetchWatch != null) {
+            prefetchWatch.close();
+            prefetchWatch = null;
+        }
         super.removeNotify();
     }
 

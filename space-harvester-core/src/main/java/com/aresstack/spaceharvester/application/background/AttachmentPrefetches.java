@@ -58,8 +58,9 @@ public final class AttachmentPrefetches implements AutoCloseable {
     /** Der laufende Teil je Space, der weitere Seiten mitnimmt; unter {@link #lock}. */
     private final Map<Where, String> draining = new HashMap<>();
     /**
-     * Was ein angehaltener Teil zurücklegte, je Auftrag: Wird er abgebrochen oder gelöscht, fallen genau diese Seiten
-     * weg, später angefragte bleiben. Unter {@link #lock}.
+     * Die Seiten, die ein Teil noch laden soll, ohne dass er läuft, je Auftrag: was ein wartender Teil annahm und was
+     * ein angehaltener zurücklegte. Wird er abgebrochen oder gelöscht, fallen genau diese Seiten weg, später angefragte
+     * bleiben; sobald er läuft, nimmt er sie ohnehin. Unter {@link #lock}.
      */
     private final Map<String, Stop> stopped = new HashMap<>();
     private final com.aresstack.spaceharvester.application.observe.Subscription states;
@@ -74,11 +75,12 @@ public final class AttachmentPrefetches implements AutoCloseable {
         // zu lassen (wie ConnectionChecks).
         background.retireResumable(KIND, AFTER_RESTART);
         // Anhalten und Abbrechen unterscheidet erst der Zustand: Abbrechen verwirft, was beim Anhalten liegen blieb.
+        // Wartend und angehalten bleiben die Seiten dem Teil zugeordnet (auch nach Fortsetzen ohne freien Platz).
         this.states = background.subscribe(KIND, status -> {
             switch (status.state()) {
-                case PAUSED -> { }
+                case QUEUED, PAUSED -> { }
                 case CANCELLED -> discard(status.id());
-                default -> {
+                case RUNNING, COMPLETED, FAILED -> {
                     synchronized (lock) {
                         stopped.remove(status.id());
                     }
@@ -109,7 +111,8 @@ public final class AttachmentPrefetches implements AutoCloseable {
     }
 
     /**
-     * Gibt die Anhänge einer Seite zum Vorladen ab; eine neue Anfrage derselben Seite ersetzt die alte.
+     * Gibt die Anhänge einer Seite zum Vorladen ab; wartet die Seite schon, kommen die neuen Anhänge hinzu (etwa die
+     * einer anderen Art).
      *
      * @return der Teil, der sie lädt (neu, wartend oder laufend); leer bei nur einem Platz unter „Vorbereitung“ oder wenn
      *         kein Teil angelegt werden kann, dann lädt der Aufrufer wie bisher selbst
@@ -124,11 +127,24 @@ public final class AttachmentPrefetches implements AutoCloseable {
         }
         Where where = new Where(sourceId, spaceKey);
         String runningPart;
+        Page page;
         synchronized (lock) {
-            pending.computeIfAbsent(where, ignored -> new LinkedHashMap<>()).put(pageId,
-                    new Page(pageId, new ArrayDeque<>(attachmentIds), loader));
+            LinkedHashMap<String, Page> pages = pending.computeIfAbsent(where, ignored -> new LinkedHashMap<>());
+            page = pages.get(pageId);
+            if (page == null) {
+                page = new Page(pageId, new ArrayDeque<>(attachmentIds), loader);
+                pages.put(pageId, page);
+            } else {
+                // Wartende Seiten lädt gerade niemand: Hinzufügen unter der Sperre genügt.
+                for (String attachmentId : attachmentIds) {
+                    if (!page.attachments().contains(attachmentId)) {
+                        page.attachments().addLast(attachmentId);
+                    }
+                }
+            }
             runningPart = draining.get(where);
         }
+        Page requested = page;
         if (runningPart != null) {
             Optional<JobStatus> running = background.part(runningPart);
             if (running.isPresent()) {
@@ -138,8 +154,11 @@ public final class AttachmentPrefetches implements AutoCloseable {
         try {
             Optional<BackgroundGroup> group = background.startUnlessWaiting(KIND, TITLE,
                     new BackgroundPart.Draft(sourceId, spaceKey, Map.of(PAGE, pageId)));
-            return group.map(started -> started.parts().getFirst())
+            Optional<JobStatus> part = group.map(started -> started.parts().getFirst())
                     .or(() -> background.waiting(KIND, sourceId, spaceKey));
+            part.filter(status -> status.state() == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED)
+                    .ifPresent(queued -> assign(queued.id(), where, requested));
+            return part;
         } catch (RuntimeException e) {
             synchronized (lock) {
                 LinkedHashMap<String, Page> pages = pending.get(where);
@@ -151,6 +170,17 @@ public final class AttachmentPrefetches implements AutoCloseable {
                 }
             }
             return Optional.empty();
+        }
+    }
+
+    /**
+     * Ordnet eine Seite dem wartenden Teil zu: Wird er abgebrochen, bevor er läuft, fällt sie weg (sonst nähme der
+     * nächste Teil des Space sie mit).
+     */
+    private void assign(String jobId, Where where, Page page) {
+        synchronized (lock) {
+            stopped.computeIfAbsent(jobId, ignored -> new Stop(where, new LinkedHashMap<>()))
+                    .pages().put(page.pageId(), page);
         }
     }
 

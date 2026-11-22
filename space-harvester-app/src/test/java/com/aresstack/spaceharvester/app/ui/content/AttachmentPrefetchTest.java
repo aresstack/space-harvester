@@ -55,6 +55,24 @@ class AttachmentPrefetchTest {
     }
 
     @Test
+    void anotherKindOfTheSamePageIsHandedOffToo() throws Exception {
+        Recording source = new Recording();
+        List<List<String>> handed = Collections.synchronizedList(new ArrayList<>());
+        try (AttachmentPrefetch prefetch = new AttachmentPrefetch(source, Throwable::getMessage, () -> { }, 10, 100,
+                rest -> handed.add(rest), key -> key.startsWith("mark-"))) {
+            // Zuerst nur Videomarken: nichts abzugeben, das darf die übrigen Arten nicht sperren.
+            prefetch.focus(List.of("mark-1", "mark-2"), "mark-1");
+            eventually(() -> source.idle.get() == 1);
+            prefetch.focus(KEYS, "a1");
+            eventually(() -> source.idle.get() == 2);
+            prefetch.focus(List.of("b1", "b2", "b3", "b4", "b5"), "b1");
+            eventually(() -> source.idle.get() == 3);
+        }
+
+        assertThat(handed).containsExactly(List.of("a4", "a5", "a6", "a7"), List.of("b4", "b5"));
+    }
+
+    @Test
     void withoutAPlaceInTheBackgroundItLoadsEverythingAsBefore() throws Exception {
         Recording source = new Recording();
         try (AttachmentPrefetch prefetch = new AttachmentPrefetch(source, Throwable::getMessage, () -> { }, 10, 100,
