@@ -175,4 +175,62 @@ class PodcastPicturesTest {
         assertThat(pictures.picture(KEY, 3)).map(PodcastPictures.Picture::kind).contains(PodcastPictures.Kind.NONE);
         assertThat(pictures.picture(KEY, 4)).isEmpty();
     }
+
+    @Test
+    void aClosedRunWritesNothingAndKeepsNoDecision() throws Exception {
+        PodcastPictures pictures = new PodcastPictures(new PodcastStore(folder),
+                answering("{\"choice\":0}", new AtomicInteger()), answering(DiagramComposerTest.PLAN,
+                new AtomicInteger()), source(png(640, 360)), Runnable::run, a -> { },
+                write -> {
+                    throw new PodcastPictures.Closed("zurückgezogen");
+                });
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> pictures.make(KEY, "s",
+                        new PodcastPictures.Brief(0, "t", "m", List.of("p1")), new HashSet<>(), new ArrayList<>()))
+                .isInstanceOf(PodcastPictures.Closed.class);
+        try (var files = Files.walk(folder)) {
+            assertThat(files.filter(Files::isRegularFile)).isEmpty();
+        }
+    }
+
+    @Test
+    void choiceAndPlanGoThroughTheBoundedPool() throws Exception {
+        ThreadLocal<Boolean> inPool = ThreadLocal.withInitial(() -> false);
+        AtomicInteger outside = new AtomicInteger();
+        AtomicInteger calls = new AtomicInteger();
+        java.util.concurrent.Executor pool = task -> {
+            inPool.set(true);
+            try {
+                task.run();
+            } finally {
+                inPool.set(false);
+            }
+        };
+        java.util.function.Function<String, StepModel> model = answer -> new StepModel() {
+            @Override
+            public String version() {
+                return "t";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String complete(String instructions, String input) {
+                calls.incrementAndGet();
+                if (!inPool.get()) {
+                    outside.incrementAndGet();
+                }
+                return instructions.contains("icon") || input.startsWith("Draw") ? DiagramComposerTest.ICON : answer;
+            }
+        };
+        PodcastPictures pictures = new PodcastPictures(new PodcastStore(folder), model.apply("{\"choice\":0}"),
+                model.apply(DiagramComposerTest.PLAN), source(png(640, 360)), pool, a -> { });
+        pictures.make(KEY, "s", new PodcastPictures.Brief(0, "t", "m", List.of("p1")), new HashSet<>(),
+                new ArrayList<>());
+        // Auswahl, Plan und jedes Symbol: kein Modellaufruf am Pool vorbei
+        assertThat(calls.get()).isGreaterThanOrEqualTo(3);
+        assertThat(outside).hasValue(0);
+    }
 }

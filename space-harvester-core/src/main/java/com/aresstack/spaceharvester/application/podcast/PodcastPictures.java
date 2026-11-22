@@ -140,14 +140,46 @@ public final class PodcastPictures {
     private final PageImageSource images;
     private final Executor parts;
     private final PodcastWriter.Pause pause;
+    private final Fence fence;
+
+    /**
+     * Lässt Ablagen nur zu, solange der Lauf noch ablegen darf (Podcast nicht zurückgezogen, ADR 0028). Prüfen und
+     * Schreiben geschehen unter einem gemeinsamen Schloss mit dem Lauf, sodass nach dem Schließen nichts mehr entsteht.
+     */
+    public interface Fence {
+        /** Führt das Ablegen aus oder wirft {@link Closed}. */
+        void write(Runnable write);
+
+        /** Lässt alles zu. */
+        Fence OPEN = Runnable::run;
+    }
+
+    /** Der Lauf darf nichts mehr ablegen; bricht das Bild ab, ohne Ersatz festzuschreiben. */
+    public static final class Closed extends RuntimeException {
+        public Closed(String message) {
+            super(message);
+        }
+    }
 
     /**
      * @param chooser wählt anhand der Beschreibungen ein Seitenbild (das Chat-Modell des Podcasts)
      * @param drawer  zeichnet die Schaubilder (Modell der Bildgenerierung mit eigener Tokenlänge)
-     * @param parts   führt die Teile eines Schaubilds aus; seine Größe begrenzt die gleichzeitigen Aufrufe
+     * @param parts   führt alle Modellaufrufe aus; seine Größe begrenzt die gleichzeitigen Aufrufe
      */
     public PodcastPictures(PodcastStore store, StepModel chooser, StepModel drawer, PageImageSource images,
                            Executor parts, PodcastWriter.Pause pause) {
+        this(store, chooser, drawer, images, parts, pause, Fence.OPEN);
+    }
+
+    /**
+     * @param chooser wählt anhand der Beschreibungen ein Seitenbild (das Chat-Modell des Podcasts)
+     * @param drawer  zeichnet die Schaubilder (Modell der Bildgenerierung mit eigener Tokenlänge)
+     * @param parts   führt alle Modellaufrufe aus; seine Größe begrenzt die gleichzeitigen Aufrufe
+     * @param fence   lässt jede Ablage nur zu, solange der Lauf noch ablegen darf
+     */
+    public PodcastPictures(PodcastStore store, StepModel chooser, StepModel drawer, PageImageSource images,
+                           Executor parts, PodcastWriter.Pause pause, Fence fence) {
+        this.fence = Objects.requireNonNull(fence, "fence");
         this.store = Objects.requireNonNull(store, "store");
         this.chooser = Objects.requireNonNull(chooser, "chooser");
         this.drawer = Objects.requireNonNull(drawer, "drawer");
@@ -208,6 +240,8 @@ public final class PodcastPictures {
             Optional<Picture> page;
             try {
                 page = pagePicture(key, sourceId, brief, used, repairs);
+            } catch (Closed e) {
+                throw e;
             } catch (RuntimeException e) {
                 // Ablage der Seitenbilder gestört: das Schaubild bleibt möglich
                 repairs.add("Bild " + (brief.topic() + 1) + ": Seitenbilder nicht lesbar (" + e.getClass()
@@ -220,6 +254,8 @@ public final class PodcastPictures {
             }
             picture = page.or(() -> diagram(key, brief, repairs))
                     .orElseGet(() -> Picture.none("kein passendes Bild"));
+        } catch (Closed e) {
+            throw e;
         } catch (RuntimeException e) {
             repairs.add("Bild " + (brief.topic() + 1) + " gescheitert (" + e.getClass().getSimpleName() + ")");
             picture = Picture.none("gescheitert (" + e.getClass().getSimpleName() + ")");
@@ -289,9 +325,12 @@ public final class PodcastPictures {
                 + "Bezug zum Thema zählen nicht. Passt keins, antworte mit 0.\nAntworte mit genau einem JSON-Objekt: "
                 + "{\"choice\":1}");
         for (int attempt = 1; attempt <= PodcastWriter.ATTEMPTS; attempt++) {
+            if (Thread.currentThread().isInterrupted()) {
+                return -1;
+            }
             try {
-                JsonNode answer = PodcastWriter.json(chooser.complete(CHOOSE_STYLE,
-                        prompt.toString()));
+                JsonNode answer = PodcastWriter.json(DiagramComposer.call(parts,
+                        () -> chooser.complete(CHOOSE_STYLE, prompt.toString())));
                 if (answer != null && answer.path("choice").canConvertToInt()) {
                     int choice = answer.path("choice").asInt();
                     return choice >= 1 && choice <= candidates.size() ? choice - 1 : -1;
@@ -415,7 +454,11 @@ public final class PodcastPictures {
         return value.isString() ? value.asString() : "";
     }
 
-    private static void writeBytes(Path file, byte[] bytes) {
+    private void writeBytes(Path file, byte[] bytes) {
+        fence.write(() -> writeNow(file, bytes));
+    }
+
+    private static void writeNow(Path file, byte[] bytes) {
         try {
             Files.createDirectories(file.getParent());
             Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
