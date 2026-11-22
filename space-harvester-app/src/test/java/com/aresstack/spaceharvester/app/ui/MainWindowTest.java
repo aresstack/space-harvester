@@ -318,6 +318,77 @@ class MainWindowTest {
     }
 
     @Test
+    void everyVisibleDividerShowsItsResizeCursor() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            surface.setSize(1280, 820);
+            // Zugeklappter Chat: sein Trenner lässt sich nicht ziehen und zeigt den normalen Zeiger.
+            window.chatOpen(true);
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.draggable(window.chatSplit()))
+                    .isTrue();
+            window.chatOpen(false);
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.draggable(window.chatSplit()))
+                    .isFalse();
+            assertThat(window.chatSplit().isEnabled()).isTrue();
+            // Auch F8 (Verschieben per Tastatur) greift am gesperrten Trenner nicht, offen wieder schon.
+            javax.swing.KeyStroke f8 = javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F8, 0);
+            javax.swing.InputMap keys = window.chatSplit()
+                    .getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+            assertThat(keys.get(f8)).isEqualTo("none");
+            window.chatOpen(true);
+            assertThat(keys.get(f8)).isEqualTo("startResize");
+            window.chatOpen(false);
+            for (AppContext.Section section : AppContext.Section.values()) {
+                window.show(section);
+                layout(surface);
+                layout(surface);
+                java.util.List<javax.swing.plaf.basic.BasicSplitPaneDivider> dividers = new java.util.ArrayList<>();
+                dividers(surface, dividers);
+                assertThat(dividers).as(section.name()).isNotEmpty();
+                for (javax.swing.plaf.basic.BasicSplitPaneDivider divider : dividers) {
+                    java.awt.Point middle = SwingUtilities.convertPoint(divider, divider.getWidth() / 2,
+                            divider.getHeight() / 2, surface);
+                    if (surface.findComponentAt(middle) != divider) {
+                        continue; // liegt auf einer gerade nicht gezeigten Karte
+                    }
+                    javax.swing.JSplitPane pane = (javax.swing.JSplitPane) divider.getParent();
+                    String where = section.name() + " " + divider.getBounds();
+                    // AWT sucht den Zeiger nur in eingeschalteten Flächen: Eine abgeschaltete Fläche über dem
+                    // Trenner nähme ihm den Doppelpfeil.
+                    for (java.awt.Container up = divider.getParent(); up != null; up = up.getParent()) {
+                        assertThat(up.isEnabled()).as(where + " in " + up.getClass().getSimpleName()).isTrue();
+                    }
+                    int expected = pane == window.chatSplit() ? java.awt.Cursor.DEFAULT_CURSOR
+                            : pane.getOrientation() == javax.swing.JSplitPane.VERTICAL_SPLIT
+                                    ? java.awt.Cursor.S_RESIZE_CURSOR : java.awt.Cursor.E_RESIZE_CURSOR;
+                    assertThat(divider.getCursor().getType()).as(where).isEqualTo(expected);
+                }
+            }
+        });
+    }
+
+    private static void dividers(java.awt.Container root,
+            java.util.List<javax.swing.plaf.basic.BasicSplitPaneDivider> found) {
+        for (Component component : root.getComponents()) {
+            if (component instanceof javax.swing.plaf.basic.BasicSplitPaneDivider divider) {
+                found.add(divider);
+            } else if (component instanceof java.awt.Container container) {
+                dividers(container, found);
+            }
+        }
+    }
+
+    @Test
     void withoutSourcesTheOverviewWelcomesWithTheWayToTheFirstSource() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """

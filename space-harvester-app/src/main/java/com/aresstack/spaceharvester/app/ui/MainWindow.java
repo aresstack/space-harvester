@@ -621,8 +621,9 @@ public final class MainWindow implements AppContext.Navigator {
             chatSidebar.large(large);
             // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
             chatSplit.getLeftComponent().setVisible(!large);
-            // Zugeklappt lässt sich der Teiler nicht ziehen, nur doppelt klicken.
-            chatSplit.setEnabled(chatOpen && !large);
+            // Zugeklappt lässt sich der Teiler nicht ziehen, nur doppelt klicken. Die Teilung selbst bleibt
+            // eingeschaltet: Abgeschaltet verlören alle Trenner der Arbeitsfläche ihren Doppelpfeil-Zeiger.
+            ComicDivider.draggable(chatSplit, chatOpen && !large);
             chatSplit.setDividerSize(large ? 0 : chatOpen ? ComicDivider.THICKNESS : COLLAPSED_DIVIDER);
             int width = chatSplit.getWidth();
             if (width > 0 && !large) {
