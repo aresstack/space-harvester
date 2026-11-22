@@ -88,6 +88,23 @@ public record StatusNote(String text, Tone tone, String link, Runnable action, L
         return new StatusNote(other, tone, link, action, marks, icon);
     }
 
+    /**
+     * Dieselbe Meldung mit {@code suffix} dahinter (etwa „ · 5 Knoten, 4 Kanten“), der grau bleibt, auch wenn die Zeile
+     * gelb oder rot ist: Nur die Hinweise tragen den Ton, nicht der Stand dahinter.
+     */
+    public StatusNote plus(String suffix) {
+        if (suffix == null || suffix.isEmpty()) {
+            return this;
+        }
+        String part = suffix.startsWith(" · ") ? suffix.substring(3) : suffix;
+        List<Mark> more = marks;
+        if (tone != Tone.PLAIN && !part.isBlank() && !text.contains(part)) {
+            more = new java.util.ArrayList<>(marks);
+            more.add(new Mark(part, Tone.PLAIN));
+        }
+        return new StatusNote(text + suffix, tone, link, action, more, icon);
+    }
+
     /** Dieselbe Meldung mit diesen Tönen der Teile. */
     public StatusNote withMarks(List<Mark> other) {
         return new StatusNote(text, tone, link, action, other, icon);

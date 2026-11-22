@@ -1867,8 +1867,9 @@ public final class PageDetailPanel extends JPanel {
     /** Graph und Abschnitt darunter teilen sich eine Statuszeile: erst der Graph, dann der Abschnitt. */
     private void showGraphStatus() {
         String base = graphStatus.text();
-        tabNote(GRAPH, graphStatus.withText(graphBelowNote.isEmpty() ? base
-                : base.isBlank() ? graphBelowNote.substring(3) : base + graphBelowNote));
+        // Der Abschnitt dahinter bleibt grau, auch hinter einem gelben oder roten Hinweis von „Wissensgraph erzeugen“.
+        tabNote(GRAPH, graphBelowNote.isEmpty() ? graphStatus : base.isBlank()
+                ? graphStatus.withText(graphBelowNote.substring(3)) : graphStatus.plus(graphBelowNote));
     }
 
     /**
@@ -2151,7 +2152,10 @@ public final class PageDetailPanel extends JPanel {
         String tab = selectedTab();
         StatusNote note = tabStatus.getOrDefault(tab,
                 StatusNote.plain(" "));
-        statusShown.accept(note.withText(withStore(tab, note.text(), shownStore)));
+        String shown = withStore(tab, note.text(), shownStore);
+        // Die Ablage dahinter bleibt grau, auch wenn die Meldung gelb oder rot ist.
+        statusShown.accept(shown != null && shown.startsWith(note.text())
+                ? note.plus(shown.substring(note.text().length())) : note.withText(shown));
     }
 
     /**

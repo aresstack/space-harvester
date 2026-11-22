@@ -1036,8 +1036,11 @@ class KnowledgeGraphTabTest {
         assertThat(actions.started).hasSize(1);
         assertThat(actions.watched).containsExactly("g-1");
         StatusNote progress = tab.generateNoteForTests();
-        assertThat(progress.text()).isEqualTo("Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig ✕");
-        assertThat(progress.link()).isEqualTo(KnowledgeGraphTab.CANCEL_LINK);
+        assertThat(progress.text()).isEqualTo("Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig");
+        assertThat(progress.icon().glyph()).as("ein gezeichnetes ✕, kein Zeichen")
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.Glyph.CANCEL);
+        assertThat(progress.icon().after()).as("direkt hinter dem Fortschritt").isEqualTo(progress.text());
+        assertThat(progress.icon().tooltip()).isEqualTo(KnowledgeGraphTab.CANCEL_TIP);
         assertThat(notes.get(notes.size() - 1).text()).startsWith(progress.text()).contains("3 Knoten");
         assertThat(tab.generateOffered()).as("gesperrt, solange die Gruppe läuft").isFalse();
         assertThat(tab.generateTooltip()).isEqualTo(KnowledgeGraphTab.GENERATE_BUSY_TIP);
@@ -1046,7 +1049,7 @@ class KnowledgeGraphTabTest {
                 part("p-2", JobState.RUNNING, "Wissensgraph")));
         assertThat(tab.generateNoteForTests().text()).contains("Wissensgraph: 1 von 2 Teilen fertig");
 
-        tab.generateNoteForTests().action().run();
+        tab.generateNoteForTests().icon().action().run();
         runner.runAll();
         assertThat(actions.cancelled).containsExactly("g-1");
 
@@ -1133,7 +1136,7 @@ class KnowledgeGraphTabTest {
         actions.watcher.accept(group(part("p-1", JobState.RUNNING, "Aussagenanalyse"),
                 part("p-2", JobState.QUEUED, "Wissensgraph", "p-1")));
         assertThat(tab.generateNoteForTests().text())
-                .isEqualTo("Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig ✕");
+                .isEqualTo("Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig");
 
         actions.watcher.accept(group(part("p-1", JobState.PAUSED, "Aussagenanalyse"),
                 part("p-2", JobState.QUEUED, "Wissensgraph")));
@@ -1188,6 +1191,8 @@ class KnowledgeGraphTabTest {
      */
     @Test
     void planNotesAndMissingCoverageAreYellowAndAFailedStageIsRed() {
+        List<StatusNote> shown = new ArrayList<>();
+        tab.onNote(shown::add);
         tab.confirmGenerateWith(preview -> true);
         showPage();
         actions.preview = missing();
@@ -1200,7 +1205,7 @@ class KnowledgeGraphTabTest {
 
         assertThat(tab.generateNoteForTests().tone()).isEqualTo(StatusNote.Tone.WARNING);
         assertThat(tab.generateNoteForTests().text()).as("das ✕ vor den Hinweisen, damit es sichtbar bleibt")
-                .isEqualTo("Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig ✕ · " + skipped);
+                .isEqualTo("Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig · " + skipped);
 
         actions.watcher.accept(group(part("p-1", JobState.FAILED, "Aussagenanalyse"),
                 part("p-2", JobState.COMPLETED, "Wissensgraph")));
@@ -1210,8 +1215,14 @@ class KnowledgeGraphTabTest {
         String failed = "Vorstufe „Aussagenanalyse“ gescheitert (DEV)";
         String coverage = "DEV: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden";
         assertThat(end.tone()).as("die Zeile hat einen Fehler").isEqualTo(StatusNote.Tone.ERROR);
-        assertThat(end.text()).startsWith("Wissensgraph mit Fehler beendet").contains(skipped).contains(failed)
-                .contains(coverage).endsWith("Einzelheiten unter Hintergrund");
+        assertThat(end.text()).as("die gescheiterte Stufe mit Kreispfeil gleich hinter dem Ergebnis, dann die Hinweise")
+                .startsWith("Wissensgraph mit Fehler beendet · " + failed + " · " + skipped).contains(coverage)
+                .endsWith("Einzelheiten unter Hintergrund");
+        StatusNote line = shown.get(shown.size() - 1);
+        String stand = line.text().substring(end.text().length() + 3);
+        assertThat(stand).as("der Stand des Graphen dahinter").contains("Knoten");
+        assertThat(line.toneOf(stand)).as("bleibt grau, auch hinter Rot").isEqualTo(StatusNote.Tone.PLAIN);
+        assertThat(line.toneOf(failed)).isEqualTo(StatusNote.Tone.ERROR);
         assertThat(end.toneOf("Wissensgraph mit Fehler beendet")).isEqualTo(StatusNote.Tone.ERROR);
         assertThat(end.toneOf(failed)).isEqualTo(StatusNote.Tone.ERROR);
         assertThat(end.toneOf(skipped)).isEqualTo(StatusNote.Tone.WARNING);
@@ -1264,8 +1275,8 @@ class KnowledgeGraphTabTest {
                 part("p-3", JobState.QUEUED, "Aussagenanalyse"), part("p-4", JobState.FAILED, "Bilder beschreiben"),
                 part("p-2", JobState.COMPLETED, "Wissensgraph")));
         assertThat(tab.generateNoteForTests().text())
-                .startsWith("Wissensgraph wird erzeugt · Aussagenanalyse: 2 von 4 Teilen fertig ✕");
-        assertThat(tab.generateNoteForTests().link()).isEqualTo(KnowledgeGraphTab.CANCEL_LINK);
+                .startsWith("Wissensgraph wird erzeugt · Aussagenanalyse: 2 von 4 Teilen fertig");
+        assertThat(tab.generateNoteForTests().icon().glyph()).isEqualTo(com.aresstack.spaceharvester.app.ui.Glyph.CANCEL);
         assertThat(tab.generateOffered()).isFalse();
 
         actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
@@ -1303,14 +1314,15 @@ class KnowledgeGraphTabTest {
         runner.runAll();
 
         StatusNote progress = tab.generateNoteForTests();
-        String head = "Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig ✕";
+        String head = "Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig";
         assertThat(progress.text()).isEqualTo(head + " · " + skipped + " · " + hidden);
         assertThat(progress.tone()).isEqualTo(StatusNote.Tone.ERROR);
         assertThat(progress.toneOf(head)).isEqualTo(StatusNote.Tone.PLAIN);
         assertThat(progress.toneOf(skipped)).isEqualTo(StatusNote.Tone.WARNING);
         assertThat(progress.toneOf(hidden)).isEqualTo(StatusNote.Tone.ERROR);
-        assertThat(progress.link()).isEqualTo(KnowledgeGraphTab.CANCEL_LINK);
-        assertThat(progress.icon()).as("kein Kreispfeil ohne gescheiterte Stufe").isNull();
+        assertThat(progress.icon().glyph()).isEqualTo(com.aresstack.spaceharvester.app.ui.Glyph.CANCEL);
+        assertThat(progress.icon().glyph()).as("kein Kreispfeil ohne gescheiterte Stufe, nur das ✕")
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.Glyph.CANCEL);
 
         actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
                 part("p-2", JobState.COMPLETED, "Wissensgraph")));

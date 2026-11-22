@@ -23,6 +23,8 @@ import java.util.Objects;
  */
 public final class StatusLabel extends JLabel {
 
+    /** Ende eines gekürzten Texts. */
+    private static final String ELLIPSIS = "…";
     /** Gelb der Ampel als Schrift: dunkel genug, um auf hellem Grund lesbar zu sein. */
     static final Color WARNING = Comic.STANDING_UNCLEAR;
     /** Breite des Symbols eines {@link StatusNote.IconLink} in Pixeln. */
@@ -40,6 +42,19 @@ public final class StatusLabel extends JLabel {
     /** Wo im {@link #measured} der Platz für das Symbol beginnt, und wie viele Leerzeichen er hat; -1 ohne. */
     private int slotAt = -1;
     private int slotSpaces;
+    /**
+     * Mit Tönen, Link oder Symbol (HTML): der ganze Text wie gemessen ({@link #measured} ungekürzt), je Zeichen Farbe
+     * und Link, wo der Platz des Symbols beginnt und das Link-Wort; {@code null} ohne HTML.
+     */
+    private String full;
+    private Color[] fullColors;
+    private boolean[] fullLinked;
+    private int fullSlot = -1;
+    private int fullLink = -1;
+    /** Ob das Link-Wort ganz zu sehen ist (nicht weggekürzt). */
+    private boolean linkShown;
+    /** Die Breite, für die der HTML-Text zuletzt gebaut wurde. */
+    private int renderedWidth = -1;
 
     public StatusLabel() {
         super(" ");
@@ -117,12 +132,16 @@ public final class StatusLabel extends JLabel {
         slotAt = -1;
         slotSpaces = 0;
         measured = text;
+        full = null;
+        linkShown = note.hasLink();
+        renderedWidth = -1;
         if (!note.hasLink() && note.marks().isEmpty() && !note.hasIcon()) {
             setText(text);
+            setToolTipText(null);
         } else {
-            setText(html(text));
+            prepare(text);
+            render(getWidth());
         }
-        setToolTipText(note.hasLink() || note.hasIcon() ? note.text() : null);
         setCursor(null);
         setFocusable(note.hasLink() || note.hasIcon());
         getAccessibleContext().setAccessibleName(text.isBlank() ? null : text);
@@ -136,10 +155,10 @@ public final class StatusLabel extends JLabel {
     }
 
     /**
-     * Der Text als HTML: Teile in ihrem Ton, das Link-Wort blau unterstrichen, hinter dem Teil des Symbols Platz dafür
-     * (geschützte Leerzeichen, gezeichnet in {@link #paintComponent}). Setzt {@link #measured} und den Platz.
+     * Zerlegt den Text für HTML: je Zeichen Ton und Link, hinter dem Teil des Symbols Platz dafür (Leerzeichen, gezeichnet
+     * in {@link #paintComponent}). Gebaut wird er erst für eine Breite ({@link #render}).
      */
-    private String html(String text) {
+    private void prepare(String text) {
         int n = text.length();
         Color[] colors = new Color[n];
         boolean[] linked = new boolean[n];
@@ -149,9 +168,10 @@ public final class StatusLabel extends JLabel {
                 colors[i] = color(mark.tone());
             }
         }
+        int linkAt = -1;
         if (note.hasLink()) {
-            int at = text.lastIndexOf(note.link());
-            for (int i = at; i < at + note.link().length(); i++) {
+            linkAt = text.lastIndexOf(note.link());
+            for (int i = linkAt; i < linkAt + note.link().length(); i++) {
                 linked[i] = true;
             }
         }
@@ -161,35 +181,117 @@ public final class StatusLabel extends JLabel {
             int space = Math.max(1, getFontMetrics(getFont()).stringWidth(" "));
             slotSpaces = Math.max(3, (ICON + 2 * space + space - 1) / space);
         }
-        StringBuilder html = new StringBuilder("<html>");
-        StringBuilder plain = new StringBuilder();
+        StringBuilder plain = new StringBuilder(text);
+        Color[] withSlotColors = colors;
+        boolean[] withSlotLinked = linked;
+        fullSlot = -1;
+        if (slot >= 0) {
+            plain.insert(slot, " ".repeat(slotSpaces));
+            withSlotColors = new Color[n + slotSpaces];
+            withSlotLinked = new boolean[n + slotSpaces];
+            System.arraycopy(colors, 0, withSlotColors, 0, slot);
+            System.arraycopy(colors, slot, withSlotColors, slot + slotSpaces, n - slot);
+            System.arraycopy(linked, 0, withSlotLinked, 0, slot);
+            System.arraycopy(linked, slot, withSlotLinked, slot + slotSpaces, n - slot);
+            fullSlot = slot;
+            if (linkAt >= slot) {
+                linkAt += slotSpaces;
+            }
+        }
+        full = plain.toString();
+        fullColors = withSlotColors;
+        fullLinked = withSlotLinked;
+        fullLink = linkAt;
+    }
+
+    /**
+     * Baut den HTML-Text für {@code width}: immer eine Zeile. Passt er nicht, endet er mit „…“ (wie ein einfacher Text);
+     * ein weggekürztes Symbol oder Link-Wort ist dann nicht anklickbar, der ganze Text steht im Tooltip. Setzt
+     * {@link #measured} und den Platz des Symbols.
+     */
+    private void render(int width) {
+        if (full == null) {
+            return;
+        }
+        renderedWidth = width;
+        FontMetrics metrics = getFontMetrics(getFont());
+        Insets insets = getInsets();
+        // Etwas Luft: HTML misst minimal anders als FontMetrics und bräche sonst in eine zweite Zeile um.
+        int room = width - insets.left - insets.right - 2;
+        int shown = full.length();
+        boolean cut = width > 0 && metrics.stringWidth(full) > room;
+        if (cut) {
+            int ellipsis = metrics.stringWidth(ELLIPSIS);
+            while (shown > 0 && metrics.stringWidth(full.substring(0, shown)) + ellipsis > room) {
+                shown--;
+            }
+            if (fullSlot >= 0 && shown > fullSlot && shown < fullSlot + slotSpaces) {
+                shown = fullSlot;
+            }
+            while (shown > 0 && full.charAt(shown - 1) == ' ') {
+                shown--;
+            }
+        }
+        slotAt = fullSlot >= 0 && fullSlot + slotSpaces <= shown ? fullSlot : -1;
+        linkShown = fullLink >= 0 && fullLink + note.link().length() <= shown;
+        StringBuilder html = new StringBuilder("<html><nobr>");
         int i = 0;
-        while (i <= n) {
-            if (i == slot) {
-                slotAt = plain.length();
-                html.append("&nbsp;".repeat(slotSpaces));
-                plain.append(" ".repeat(slotSpaces));
-            }
-            if (i == n) {
-                break;
-            }
+        while (i < shown) {
             int end = i + 1;
-            while (end < n && end != slot && Objects.equals(colors[end], colors[i]) && linked[end] == linked[i]) {
+            boolean slotRun = slotAt >= 0 && i >= slotAt && i < slotAt + slotSpaces;
+            while (end < shown && !slotRun && end != slotAt && Objects.equals(fullColors[end], fullColors[i])
+                    && fullLinked[end] == fullLinked[i]) {
                 end++;
             }
-            String run = text.substring(i, end);
-            plain.append(run);
-            String escaped = escape(run);
-            if (linked[i]) {
+            if (slotRun) {
+                end = slotAt + slotSpaces;
+                html.append("&nbsp;".repeat(slotSpaces));
+                i = end;
+                continue;
+            }
+            String escaped = escape(full.substring(i, end));
+            if (fullLinked[i] && linkShown) {
                 escaped = "<u><font color='" + hex(Comic.BLUE) + "'>" + escaped + "</font></u>";
-            } else if (colors[i] != null) {
-                escaped = "<font color='" + hex(colors[i]) + "'>" + escaped + "</font>";
+            } else if (fullColors[i] != null) {
+                escaped = "<font color='" + hex(fullColors[i]) + "'>" + escaped + "</font>";
             }
             html.append(escaped);
             i = end;
         }
-        measured = plain.toString();
-        return html.append("</html>").toString();
+        measured = full.substring(0, shown) + (cut ? ELLIPSIS : "");
+        if (cut) {
+            html.append(ELLIPSIS);
+        }
+        setText(html.append("</nobr></html>").toString());
+        setToolTipText(note.hasLink() || note.hasIcon() || cut ? note.text() : null);
+    }
+
+    /** Mit HTML immer eine Zeile, so breit wie der ganze Text; schmaler gesetzt, kürzt er sich mit „…“. */
+    @Override
+    public java.awt.Dimension getPreferredSize() {
+        if (full == null || isPreferredSizeSet()) {
+            return super.getPreferredSize();
+        }
+        FontMetrics metrics = getFontMetrics(getFont());
+        Insets insets = getInsets();
+        return new java.awt.Dimension(insets.left + insets.right + metrics.stringWidth(full) + 2,
+                insets.top + insets.bottom + metrics.getHeight());
+    }
+
+    @Override
+    public java.awt.Dimension getMinimumSize() {
+        if (full == null || isMinimumSizeSet()) {
+            return super.getMinimumSize();
+        }
+        return new java.awt.Dimension(0, getPreferredSize().height);
+    }
+
+    @Override
+    public void setBounds(int x, int y, int width, int height) {
+        super.setBounds(x, y, width, height);
+        if (full != null && width != renderedWidth) {
+            render(width);
+        }
     }
 
     private static Color color(StatusNote.Tone tone) {
@@ -215,7 +317,7 @@ public final class StatusLabel extends JLabel {
             int[] icon = iconSpan();
             note.icon().glyph().paintIcon(ICON_HOST, graphics, icon[0], (getHeight() - ICON) / 2);
         }
-        if (note.hasLink() && isFocusOwner()) {
+        if (note.hasLink() && linkShown && isFocusOwner()) {
             int[] span = linkSpan();
             java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
             try {
@@ -235,7 +337,7 @@ public final class StatusLabel extends JLabel {
 
     /** Ob {@code x} über dem Link-Wort liegt, gemessen am Text davor (eine Zeile, linksbündig). */
     boolean overLink(int x) {
-        if (!note.hasLink()) {
+        if (!note.hasLink() || !linkShown) {
             return false;
         }
         int[] span = linkSpan();

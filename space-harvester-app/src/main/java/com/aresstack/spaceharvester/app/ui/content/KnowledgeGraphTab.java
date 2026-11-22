@@ -140,8 +140,11 @@ final class KnowledgeGraphTab extends JPanel {
     /** Nichts gestartet, etwa weil der Dienst abgeschaltet ist; die Hinweise sagen, warum. */
     static final String NOT_GENERATED = "Wissensgraph nicht erzeugt";
     static final String COUNTING = "Wissensgraph: Vorstufen werden gezählt …";
-    /** Das Zeichen in der Statuszeile, das die laufende Gruppe abbricht. */
-    static final String CANCEL_LINK = "✕";
+    /**
+     * Tooltip des gezeichneten ✕ ({@link Glyph#CANCEL}) hinter dem Fortschritt, das die laufende Gruppe abbricht; ein
+     * Zeichen „✕“ fehlt der App-Schrift (Inter) und erschiene als Kästchen.
+     */
+    static final String CANCEL_TIP = "Abbrechen; fertige Teilergebnisse bleiben";
     /** Link der Ergebnisse auf den Reiter „Hintergrund“ der Auftragsverwaltung. */
     static final String JOBS_LINK = "Hintergrund";
     static final String FILTERED_TERM = "Treffer gibt es, aber die gewählten Filter blenden sie aus "
@@ -447,8 +450,9 @@ final class KnowledgeGraphTab extends JPanel {
     private void pushStatus() {
         String base = statusText == null ? " " : statusText;
         String line = exportNote.isBlank() ? base : base.isBlank() ? exportNote : base + " · " + exportNote;
+        // Der Stand des Graphen hinter der Meldung von „Wissensgraph erzeugen“ bleibt grau, auch wenn sie gelb oder rot ist.
         StatusNote note = generateNote == null ? StatusNote.plain(line)
-                : generateNote.withText(line.isBlank() ? generateNote.text() : generateNote.text() + " · " + line);
+                : line.isBlank() ? generateNote : generateNote.plus(" · " + line);
         onStatus.accept(note.text());
         if (onNote != null) {
             onNote.accept(note);
@@ -1705,9 +1709,9 @@ final class KnowledgeGraphTab extends JPanel {
                 .or(() -> group.parts().stream().filter(part -> !part.state().terminal()).findFirst())
                 .map(part -> part.parameter(BackgroundJobs.STEP_TITLE)).orElse(null);
         String text = GENERATING + (stage == null ? "" : " · " + stage) + ": " + done + " von "
-                + GraphGeneration.parts(group.parts().size()) + " fertig " + CANCEL_LINK;
+                + GraphGeneration.parts(group.parts().size()) + " fertig";
         StatusNote note = notes(text, StatusNote.Tone.PLAIN, planNotes);
-        generateNote(new StatusNote(note.text(), note.tone(), CANCEL_LINK, this::cancelGraph, note.marks(), null));
+        generateNote(note.withIcon(new StatusNote.IconLink(Glyph.CANCEL, text, CANCEL_TIP, this::cancelGraph)));
     }
 
     /**
@@ -1715,8 +1719,9 @@ final class KnowledgeGraphTab extends JPanel {
      * Stufen, ohne Zugriff, gescheiterte Stufe, fehlende Abdeckung) oder angehalten; „Hintergrund“ bleibt ein Link.
      */
     private StatusNote result(BackgroundGroup group, List<String> eventNotes) {
-        List<String> all = new ArrayList<>(planNotes);
-        // Gescheiterte Teile rot; hinter dem ersten der Kreispfeil, der genau dessen Stufe wiederholt.
+        // Gescheiterte Teile rot und gleich hinter dem Ergebnis, damit der Kreispfeil hinter dem ersten (er wiederholt
+        // genau dessen Stufe) auch in einer schmalen Statuszeile sichtbar bleibt; danach die gelben Hinweise.
+        List<String> all = new ArrayList<>();
         JobStatus firstFailed = null;
         String failedNote = null;
         for (JobStatus part : group.parts()) {
@@ -1729,6 +1734,7 @@ final class KnowledgeGraphTab extends JPanel {
                 }
             }
         }
+        all.addAll(planNotes);
         all.addAll(eventNotes);
         String jobId = group.parts().isEmpty() ? null : group.parts().get(0).id();
         Runnable open = jobId == null ? null : () -> showJob.accept(jobId);

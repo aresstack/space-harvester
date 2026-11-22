@@ -44,8 +44,9 @@ final class StatusLine extends JPanel {
     }
 
     /**
-     * @param lead Stand des sichtbaren Bereichs vor {@code west}; höchstens {@link #LEAD_SHARE} der Breite, darin
-     *             kürzt der Bereich selbst (etwa einen langen Hinweis mit „…“), {@code null} ohne
+     * @param lead Stand des sichtbaren Bereichs vor {@code west}; höchstens {@link #LEAD_SHARE} der Breite oder, wenn
+     *             mehr, was von {@link #LEFT_SHARE} neben Hinweis und {@code west} frei bleibt; darin kürzt der
+     *             Bereich selbst (etwa einen langen Hinweis mit „…“), {@code null} ohne
      */
     StatusLine(JProgressBar model, JComponent lead, JComponent west, JComponent center, JComponent east) {
         this(model, null, lead, west, center, east);
@@ -72,13 +73,26 @@ final class StatusLine extends JPanel {
             // FlowLayout statt BoxLayout: Es fragt die (von der Breite abhängigen) Größen jedes Mal neu ab.
             JPanel left = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
             left.setOpaque(false);
-            if (alert != null) {
-                left.add(new Capped(alert, LEAD_SHARE));
+            Capped alertCap = alert == null ? null : new Capped(alert, LEAD_SHARE);
+            Capped westCap = new Capped(west, 0.4);
+            if (alertCap != null) {
+                left.add(alertCap);
             }
             if (lead != null) {
-                left.add(new Capped(lead, LEAD_SHARE));
+                // Der Stand des Bereichs darf über LEAD_SHARE hinaus, was im linken Teil (LEFT_SHARE) neben Hinweis und
+                // Stand der App frei bleibt, etwa solange die App nichts meldet: Sonst kürzt sich ein langer Stand
+                // (etwa „Wissensgraph mit Fehler beendet · …“ mit Kreispfeil) neben leerem Platz.
+                left.add(new Capped(lead, LEAD_SHARE) {
+                    @Override
+                    int cap() {
+                        int spare = (int) (StatusLine.this.getWidth() * LEFT_SHARE)
+                                - (alertCap == null ? 0 : alertCap.getPreferredSize().width)
+                                - westCap.getPreferredSize().width;
+                        return Math.max(super.cap(), spare);
+                    }
+                });
             }
-            left.add(new Capped(west, 0.4));
+            left.add(westCap);
             // Zusammen höchstens LEFT_SHARE: Die Mitte (Stand der Aufträge) und das Copyright behalten ihren
             // Platz, auch wenn Hinweis, Stand des Bereichs und Stand der App je für sich voll wären; was dann
             // rechts im linken Teil nicht mehr passt (der Stand der App), fällt weg.
@@ -222,7 +236,7 @@ final class StatusLine extends JPanel {
     }
 
     /** Hält ein Kind auf höchstens einen Anteil der Breite der Statuszeile. */
-    private final class Capped extends JPanel {
+    private class Capped extends JPanel {
         private final double share;
 
         Capped(JComponent child, double share) {
@@ -235,7 +249,7 @@ final class StatusLine extends JPanel {
         @Override
         public java.awt.Dimension getPreferredSize() {
             java.awt.Dimension size = super.getPreferredSize();
-            int cap = (int) (StatusLine.this.getWidth() * share);
+            int cap = cap();
             if (cap > 0 && size.width > cap) {
                 size.width = cap;
             }
@@ -245,6 +259,11 @@ final class StatusLine extends JPanel {
         @Override
         public java.awt.Dimension getMinimumSize() {
             return new java.awt.Dimension(0, super.getMinimumSize().height);
+        }
+
+        /** Die größte Breite in Pixeln. */
+        int cap() {
+            return (int) (StatusLine.this.getWidth() * share);
         }
     }
 

@@ -145,6 +145,66 @@ class StatusLabelTest {
         });
     }
 
+    /**
+     * Mit Tönen, Link oder Symbol bleibt die Meldung eine Zeile: schmaler gesetzt endet sie mit „…“ statt umzubrechen;
+     * weggekürzte Symbole und Link-Wörter sind nicht mehr anklickbar, der ganze Text steht im Tooltip.
+     */
+    @Test
+    void aLongMarkedNoteStaysOneLineAndEndsWithAnEllipsis() throws Exception {
+        AtomicInteger retried = new AtomicInteger();
+        SwingUtilities.invokeAndWait(() -> {
+            StatusLabel plain = new StatusLabel();
+            plain.show(StatusNote.plain("Plan"));
+            StatusLabel label = new StatusLabel();
+            String failed = "Vorstufe „Aussagenanalyse“ gescheitert (DEV)";
+            String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
+            String text = "Wissensgraph mit Fehler beendet · " + failed + " · " + skipped
+                    + " · Einzelheiten unter Hintergrund";
+            label.show(new StatusNote(text, StatusNote.Tone.ERROR, "Hintergrund", () -> { },
+                    java.util.List.of(new StatusNote.Mark(skipped, StatusNote.Tone.WARNING)),
+                    new StatusNote.IconLink(com.aresstack.spaceharvester.app.ui.Glyph.REFRESH, failed,
+                            "„Aussagenanalyse“ wiederholen", retried::incrementAndGet)));
+            FontMetrics metrics = label.getFontMetrics(label.getFont());
+            int whole = label.getPreferredSize().width;
+            assertThat(whole).as("so breit wie der ganze Text").isGreaterThan(metrics.stringWidth(text));
+            assertThat(label.getPreferredSize().height).as("eine Zeile").isEqualTo(plain.getPreferredSize().height);
+
+            int narrow = metrics.stringWidth("Wissensgraph mit Fehler beendet · " + failed) + 60;
+            label.setBounds(0, 0, narrow, label.getPreferredSize().height);
+            assertThat(label.getText()).startsWith("<html><nobr>").endsWith("…</nobr></html>")
+                    .doesNotContain("Hintergrund").doesNotContain("<u>");
+            assertThat(label.getPreferredSize().width).as("die gewünschte Breite bleibt die volle").isEqualTo(whole);
+            assertThat(label.getToolTipText()).isEqualTo(text);
+            int[] icon = label.iconSpan();
+            assertThat(icon[1]).as("der Kreispfeil passt noch").isLessThanOrEqualTo(narrow);
+            click(label, (icon[0] + icon[1]) / 2);
+            assertThat(retried).hasValue(1);
+            assertThat(label.overLink(narrow - 5)).as("das weggekürzte Link-Wort").isFalse();
+
+            label.setBounds(0, 0, metrics.stringWidth("Wissensgraph mit Fehler beendet · Vorstufe"),
+                    label.getPreferredSize().height);
+            assertThat(label.getText()).doesNotContain("&nbsp;");
+            click(label, label.getWidth() - 3);
+            assertThat(retried).as("ein weggekürztes Symbol löst nichts aus").hasValue(1);
+
+            label.setBounds(0, 0, whole, label.getPreferredSize().height);
+            assertThat(label.getText()).doesNotContain("…").contains("<u>").contains("&nbsp;");
+        });
+    }
+
+    /** Was hinter einer gelben oder roten Meldung angehängt wird (etwa der Stand des Graphen), bleibt grau. */
+    @Test
+    void anAppendedStandStaysPlainBehindAColouredNote() {
+        StatusNote warning = new StatusNote("2 erst laden", StatusNote.Tone.WARNING, null, null);
+        StatusNote shown = warning.plus(" · 5 Knoten, 4 Kanten");
+        assertThat(shown.text()).isEqualTo("2 erst laden · 5 Knoten, 4 Kanten");
+        assertThat(shown.tone()).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(shown.toneOf("2 erst laden")).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(shown.toneOf("5 Knoten, 4 Kanten")).isEqualTo(StatusNote.Tone.PLAIN);
+        assertThat(StatusNote.plain("Plan").plus(" · Ablage: Parser").marks()).as("grau braucht keinen Teil").isEmpty();
+        assertThat(warning.plus("")).isSameAs(warning);
+    }
+
     @Test
     void marksAndIconsFollowTheTextAndVanishWithTheirPart() {
         StatusNote note = new StatusNote("A gescheitert · B", StatusNote.Tone.ERROR, null, null,
