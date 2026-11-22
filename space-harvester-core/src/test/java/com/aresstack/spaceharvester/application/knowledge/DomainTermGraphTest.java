@@ -917,6 +917,121 @@ class DomainTermGraphTest {
                 () -> true)).isInstanceOf(java.util.concurrent.CancellationException.class);
     }
 
+    @Test
+    void negationModalityAndTimeSplitAnEdgeIntoStatementsWithTheirOwnEvidenceAndStage() {
+        term("Plan");
+        term("Ziel");
+        analyse("wiki", "1", "Der Plan prüft das Ziel. Der Plan prüft das Ziel.");
+        analyse("wiki", "2", "Der Plan prüft das Ziel.");
+        analyse("wiki", "3", "Der Plan prüft das Ziel.");
+        analyse("wiki", "4", "Der Plan prüft das Ziel.");
+        Map<String, ParsedStatements.Features> features = Map.of(
+                "1", new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE,
+                        ParsedStatements.Temporality.GILT),
+                "2", new ParsedStatements.Features(ParsedStatements.Negation.NEGATED, ParsedStatements.Modality.NONE,
+                        ParsedStatements.Temporality.GILT),
+                "3", new ParsedStatements.Features(ParsedStatements.Negation.NEGATED, ParsedStatements.Modality.MUSS,
+                        ParsedStatements.Temporality.GEPLANT),
+                "4", ParsedStatements.Features.UNKNOWN);
+        DomainTermGraph split = new DomainTermGraph(caller -> withFeatures(caller, page -> {
+            ParsedStatements.Features chosen = features.get(page);
+            return statement -> {
+                // Grundform „prüfen“; Seite 3 ohne Grundform (nur die gebeugte Form aus dem Text)
+                ParsedStatements.Statement changed = rebuilt(statement, chosen, page.equals("3") ? "" : "prüfen");
+                return page.equals("2") ? changed.withReview(ParsedStatements.Review.CONFIRMED) : changed;
+            };
+        }), vocabulary());
+
+        DomainTermGraph.View view = split.around(CALLER, "Plan", DomainTermGraph.Options.DEFAULT, () -> false);
+
+        assertThat(view.edges()).filteredOn(edge -> edge.kind() == DomainTermGraph.EdgeKind.VERB)
+                .extracting(DomainTermGraph.Edge::phrase, DomainTermGraph.Edge::count, DomainTermGraph.Edge::trust)
+                .as("„nicht bestimmt“ zählt wie schlicht; „nicht prüfen“ ist nie Beleg für „prüfen“")
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("prüfen", 3, DomainTermGraph.Trust.UNGEPRUEFT),
+                        org.assertj.core.groups.Tuple.tuple("nicht prüfen", 1, DomainTermGraph.Trust.GEPRUEFT),
+                        // ohne Grundform kein „muss nicht prüft“: Modalverb und Verneinung entfallen im Wortlaut
+                        org.assertj.core.groups.Tuple.tuple("prüft (geplant)", 1, DomainTermGraph.Trust.UNGEPRUEFT));
+        assertThat(split.around(CALLER, "Plan", new DomainTermGraph.Options(2, false, null, true), () -> false)
+                .edges()).as("„nur geprüft“ je Teil").singleElement()
+                .satisfies(edge -> assertThat(edge.qualifiers().negated()).isTrue());
+        DomainTermGraph.View page = split.onPages(CALLER, new DomainTermGraph.Options(2, false,
+                pages("1", "2", "3", "4")), () -> false);
+        assertThat(page.nodes()).extracting(DomainTermGraph.Node::label).containsExactly("Plan", "Ziel");
+        assertThat(page.edges()).hasSize(3);
+    }
+
+    @Test
+    void theGroupRanksPartnersByAllTheirStatementsNotByTheStrongestOne() {
+        term("Plan");
+        term("Ziel");
+        term("Start");
+        analyse("wiki", "1", "Der Plan prüft das Ziel.");
+        analyse("wiki", "2", "Der Plan prüft das Ziel.");
+        analyse("wiki", "3", "Der Plan prüft das Ziel.");
+        analyse("wiki", "4", "Der Plan prüft den Start. Der Plan prüft den Start.");
+        Map<String, ParsedStatements.Features> features = Map.of(
+                "2", new ParsedStatements.Features(ParsedStatements.Negation.NEGATED, ParsedStatements.Modality.NONE,
+                        ParsedStatements.Temporality.GILT),
+                "3", new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.MUSS,
+                        ParsedStatements.Temporality.GILT));
+        DomainTermGraph split = new DomainTermGraph(caller -> withFeatures(caller, page -> statement ->
+                rebuilt(statement, features.getOrDefault(page, ParsedStatements.Features.UNKNOWN))), vocabulary());
+
+        DomainTermGraph.View group = split.group(CALLER, "Plan", DomainTermGraph.Options.DEFAULT, () -> false);
+
+        assertThat(group.nodes()).extracting(DomainTermGraph.Node::label)
+                .as("Ziel trägt drei Aussagen mit zusammen drei Belegen, Start eine mit zwei")
+                .containsExactly("Plan", "Ziel", "Start");
+    }
+
+    @Test
+    void theWordingNamesModalNegationAndTimeButNeverGilt() {
+        DomainTermGraph.Qualifiers plain = DomainTermGraph.Qualifiers.PLAIN;
+        assertThat(plain.phrase("prüfen")).isEqualTo("prüfen");
+        assertThat(plain.plain()).isTrue();
+        assertThat(new DomainTermGraph.Qualifiers(true, null, null).phrase("prüfen")).isEqualTo("nicht prüfen");
+        assertThat(new DomainTermGraph.Qualifiers(false, ParsedStatements.Modality.KANN,
+                ParsedStatements.Temporality.UNKNOWN).phrase("prüfen")).isEqualTo("kann prüfen");
+        assertThat(new DomainTermGraph.Qualifiers(true, ParsedStatements.Modality.MUSS,
+                ParsedStatements.Temporality.GEPLANT).phrase("prüfen")).isEqualTo("muss nicht prüfen (geplant)");
+        assertThat(new DomainTermGraph.Qualifiers(true, ParsedStatements.Modality.MUSS,
+                ParsedStatements.Temporality.GEPLANT).phrase("prüft", false))
+                .as("ohne Grundform kein Vorsatz vor der gebeugten Form").isEqualTo("prüft (geplant)");
+        DomainTermGraph.Qualifiers earlier = new DomainTermGraph.Qualifiers(false, ParsedStatements.Modality.NONE,
+                ParsedStatements.Temporality.FRUEHER);
+        assertThat(earlier.phrase("prüfen")).isEqualTo("prüfen (früher)");
+        assertThat(earlier.past()).isTrue();
+        assertThat(new DomainTermGraph.Qualifiers(false, ParsedStatements.Modality.SOLL,
+                ParsedStatements.Temporality.VERWORFEN).phrase("prüfen")).isEqualTo("soll prüfen (verworfen)");
+        assertThat(DomainTermGraph.Qualifiers.of(null)).isEqualTo(plain);
+    }
+
+    private List<KnowledgeGraph.AnalysedPage> withFeatures(AccessContext caller, java.util.function.Function<String,
+            java.util.function.UnaryOperator<ParsedStatements.Statement>> how) {
+        return graph.analysed(caller).stream().map(page -> {
+            ParsedStatements result = page.analysis().result();
+            java.util.function.UnaryOperator<ParsedStatements.Statement> change = how.apply(page.page().key().pageId());
+            return new KnowledgeGraph.AnalysedPage(page.page(), page.analysis().withResult(new ParsedStatements(
+                    result.sentences(), result.mentions(), result.statements().stream().map(change).toList(),
+                    result.attachments(), result.components(), result.conllu())));
+        }).toList();
+    }
+
+    private static ParsedStatements.Statement rebuilt(ParsedStatements.Statement statement,
+                                                      ParsedStatements.Features features) {
+        return rebuilt(statement, features, statement.predicateLemma());
+    }
+
+    private static ParsedStatements.Statement rebuilt(ParsedStatements.Statement statement,
+                                                      ParsedStatements.Features features, String lemma) {
+        return new ParsedStatements.Statement(statement.id(), statement.sentence(), statement.start(),
+                statement.end(), statement.predicateText(), lemma, statement.voice(),
+                statement.clause(), statement.core(), statement.arguments(), statement.findings(),
+                statement.paragraph(), statement.quality(), statement.qualityReasons(), statement.review(), features,
+                statement.derivation(), statement.check());
+    }
+
     private DomainTermGraph.View onPages(PageSet pages) {
         return fachsicht.onPages(CALLER, new DomainTermGraph.Options(2, false, pages), () -> false);
     }

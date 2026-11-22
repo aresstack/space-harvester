@@ -32,6 +32,11 @@ final class HitReasons {
         if (neighbor(reasons) != null) {
             return new MarkedTextRenderer.Mark(NEIGHBOR, NEIGHBOR);
         }
+        // Suchmethode „Seiten zu Fachbegriffen“ (W8): Der Treffer kam über die Belege eines Fachbegriffs herein.
+        HitReason term = term(reasons);
+        if (term != null) {
+            return new MarkedTextRenderer.Mark(TERM + " „" + term.query() + "“", TERM);
+        }
         List<HitReason> text = reasons.stream().filter(reason -> reason.kind() == HitReason.Kind.TEXT).toList();
         if (text.isEmpty()) {
             boolean similar = reasons.stream().anyMatch(reason -> reason.kind() == HitReason.Kind.SEMANTIC);
@@ -52,6 +57,15 @@ final class HitReasons {
     /** Die Marke eines Nachbar-Treffers (R2). */
     static final String NEIGHBOR = "Nachbar";
 
+    /** Die Marke eines Treffers über die Belege eines Fachbegriffs (W8). */
+    static final String TERM = "Fachbegriff";
+
+    /** Die erste Fachbegriff-Ursache oder {@code null}. */
+    private static HitReason term(List<HitReason> reasons) {
+        return reasons == null ? null : reasons.stream().filter(reason -> reason.kind() == HitReason.Kind.TERM)
+                .findFirst().orElse(null);
+    }
+
     /** Die erste Nachbar-Ursache oder {@code null}. */
     private static HitReason neighbor(List<HitReason> reasons) {
         return reasons == null ? null : reasons.stream().filter(reason -> reason.kind() == HitReason.Kind.NEIGHBOR)
@@ -63,6 +77,10 @@ final class HitReasons {
         HitReason first = neighbor(reasons);
         if (first != null) {
             return neighborLine(first.via());
+        }
+        HitReason term = term(reasons);
+        if (term != null) {
+            return "Aussagen zum Fachbegriff „" + term.query() + "“ auf dieser Seite";
         }
         HitReason.Relation synonym = synonymOnly(reasons);
         return synonym == null ? null : synonymLine(synonym);
@@ -133,6 +151,9 @@ final class HitReasons {
             case NEIGHBOR -> text.append("Nachbarseite: ").append(neighborLine(reason.via()))
                     .append(", einem besseren Treffer. Als Kandidat dazugenommen und wie jeder Treffer gegen „")
                     .append(reason.query()).append("“ geprüft.");
+            case TERM -> text.append("Die Anfrage nennt den Fachbegriff „").append(reason.query())
+                    .append("“, und der Wissensgraph belegt auf dieser Seite Aussagen zu ihm. Mit „")
+                    .append(reason.query()).append("“ auf diesen Seiten gesucht.");
         }
         if (reason.relation() != null) {
             HitReason.Relation relation = reason.relation();

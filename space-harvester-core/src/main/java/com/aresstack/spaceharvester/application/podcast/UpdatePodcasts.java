@@ -142,6 +142,16 @@ public final class UpdatePodcasts {
     }
 
     /**
+     * Der gesprochene Text des Podcasts einer Zusammenfassung, soweit er schon geschrieben ist: Titel, je Thema eine
+     * Überschrift, darunter die Beiträge mit ihrem Sprecher. Leer, solange nichts geschrieben ist. Liest Dateien, nie
+     * auf dem EDT.
+     */
+    public Optional<String> transcript(UpdateSummary summary) {
+        Objects.requireNonNull(summary, "summary");
+        return production.transcript(key(summary));
+    }
+
+    /**
      * Wovon ein Thema des Podcasts erzählt, als Nummern der Themen der Zusammenfassung
      * ({@link UpdateSummary#statements()}, ab 0): Die Leseansicht rollt dorthin und markiert sie, solange das Thema
      * läuft (Angelo 22.11.2026). Leer für Einstieg und Abschluss, ohne Plan oder bei älteren Zusammenfassungen ohne

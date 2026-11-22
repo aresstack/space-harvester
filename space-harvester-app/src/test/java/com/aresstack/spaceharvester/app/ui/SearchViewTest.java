@@ -118,7 +118,8 @@ class SearchViewTest {
         assertThat(first[2]).isEqualTo("DEV");
         assertThat(keys).hasSize(2 * PAGES_PER_SOURCE);
         assertThat(sourcesSeen).containsExactlyInAnyOrder("alpha", "beta");
-        assertThat(view[0].statusText()).doesNotContain("unvollständig");
+        assertThat(view[0].statusText()).doesNotContain("unvollständig").doesNotContain("Fachbegriffen");
+        assertThat(view[0].termSearchesStarted).as("ohne Haken keine Suche nach Seiten zu Fachbegriffen").isZero();
         assertThat(view[0].progressText.getText()).isEqualTo("Die Suche ist abgeschlossen · "
                 + (2 * PAGES_PER_SOURCE) + " Treffer");
 
@@ -340,6 +341,8 @@ class SearchViewTest {
         await(view[0].semantic::isEnabled);
         assertThat(view[0].semantic.getToolTipText()).contains("nach Regeln");
         SwingUtilities.invokeAndWait(() -> {
+            // Reste einer Schlagwortsuche mit Seiten zu Fachbegriffen (Abnahme AT): gehen mit der neuen Suche.
+            view[0].termPagesNoteForTest(SearchView.TERM_PAGES_UNCHECKED);
             view[0].semantic.setSelected(true);
             assertThat(view[0].modeLabel.getText()).isEqualTo("Modus: Semantische Suche");
             view[0].search("Betrieb Plattform Wartung");
@@ -350,7 +353,7 @@ class SearchViewTest {
         assertThat(view[0].progressText.getText()).startsWith(SearchView.DONE);
         JTable table = find(whole(view[0]), JTable.class).get(0);
         assertThat(table.getRowCount()).isPositive();
-        assertThat(view[0].statusText()).contains("semantisch");
+        assertThat(view[0].statusText()).contains("semantisch").doesNotContain("Fachbegriffen");
         assertThat(button(whole(view[0]), "Weitere laden").isVisible()).isFalse();
         // Am Ende „Fertig“ statt „Abbrechen“; die Ansicht hat keine eigene Aktionszeile mehr.
         assertThat(view[0].actions()).isNull();
@@ -544,9 +547,19 @@ class SearchViewTest {
             // K5a: „Synonyme der Fachbegriffe einbeziehen“ direkt unter den Nachbarseiten, Standard aus.
             List<String> methods = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
                     .filter(text -> text.equals(SearchView.SEMANTIC) || text.equals(SearchView.NEIGHBORS)
-                            || text.equals(SearchView.SYNONYMS) || text.equals(SearchView.TECHNICAL_TERMS)).toList();
+                            || text.equals(SearchView.SYNONYMS) || text.equals(SearchView.TERM_PAGES)
+                            || text.equals(SearchView.TECHNICAL_TERMS)).toList();
+            // W8: „Seiten zu Fachbegriffen einbeziehen“ unter den Synonymen, Standard aus.
             assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS, SearchView.SYNONYMS,
-                    SearchView.TECHNICAL_TERMS);
+                    SearchView.TERM_PAGES, SearchView.TECHNICAL_TERMS);
+            assertThat(view[0].termPages.isSelected()).as("Seiten zu Fachbegriffen ist Standard aus").isFalse();
+            assertThat(view[0].termPages.isEnabled()).isTrue();
+            assertThat(view[0].modeLabel.getText()).doesNotContain("Fachbegriffe");
+            view[0].termPages.doClick();
+            assertThat(view[0].modeLabel.getText()).endsWith(" + Fachbegriffe");
+            view[0].termPages.doClick();
+            assertThat(view[0].modeLabel.getText()).doesNotContain("Fachbegriffe");
+            assertThat(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().termPages()).isFalse();
             assertThat(view[0].technicalTerms.isSelected()).as("„Nur Fachbegriffe“ ist Standard aus").isFalse();
             assertThat(view[0].glossarySynonyms.isSelected()).isFalse();
             assertThat(view[0].glossarySynonyms.isEnabled()).isTrue();
@@ -763,6 +776,82 @@ class SearchViewTest {
         });
 
         assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b", "c", "n1", "n2");
+    }
+
+    @Test
+    void termPagesKeepTheRestOfTheStatusLineAndReplaceTheirOwnPart() {
+        String first = SearchView.withTermTail("12 Treffer · Wiki: nicht erreichbar", "", 14,
+                " · 2 Seiten zu Fachbegriffen dazu");
+        assertThat(first).isEqualTo("14 Treffer · Wiki: nicht erreichbar · 2 Seiten zu Fachbegriffen dazu");
+
+        // Nachbarseiten danach: der alte Teil geht, der neue steht am Ende, die Zahl stimmt.
+        String withNeighbors = SearchView.withNeighbors(first, 14, 15, 1);
+        String second = SearchView.withTermTail(withNeighbors, " · 2 Seiten zu Fachbegriffen dazu", 15,
+                " · 2 Seiten zu Fachbegriffen dazu · " + SearchView.TERM_PAGES_UNCHECKED);
+        assertThat(second).isEqualTo("15 Treffer · 1 Nachbarseite dazu · Wiki: nicht erreichbar · 2 Seiten zu "
+                + "Fachbegriffen dazu · " + SearchView.TERM_PAGES_UNCHECKED);
+
+        assertThat(SearchView.withTermTail("Keine Treffer", "", 3, " · 3 Seiten zu Fachbegriffen dazu"))
+                .isEqualTo("3 Treffer · 3 Seiten zu Fachbegriffen dazu");
+    }
+
+    @Test
+    void termPagesAreNeverShownTwiceAreCountedAndAYellowNoteSurvivesALaterRow() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].model.set(List.of(row("a"), row("b")));
+            view[0].status.setText("2 Treffer");
+            // Kommt während eines Stapels: wartet auf ihn.
+            view[0].searching = new java.util.concurrent.CompletableFuture<Void>();
+            view[0].appendTermPages(List.of(neighbor("t1")));
+        });
+        assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b");
+
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].searching = null;
+            view[0].releaseNeighbors();
+            view[0].appendTermPages(List.of(neighbor("a"), neighbor("t1"), neighbor("t2")));
+        });
+
+        assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b", "t1", "t2");
+        assertThat(view[0].status.getText()).isEqualTo("4 Treffer · 2 Seiten zu Fachbegriffen dazu");
+
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].termPagesNoteForTest(SearchView.TERM_PAGES_CAPPED);
+            view[0].appendNeighbors(List.of(neighbor("n1")));
+        });
+        assertThat(view[0].status.getText()).startsWith("5 Treffer · 1 Nachbarseite dazu")
+                .endsWith("2 Seiten zu Fachbegriffen dazu · " + SearchView.TERM_PAGES_CAPPED);
+        assertThat(view[0].status.getForeground()).isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.ORANGE);
+    }
+
+    @Test
+    void cancelStaysWhileTermPagesRunAndComesBackForTheNextLoad() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].model.set(List.of(row("a")));
+            java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+            view[0].termPagesStop = stop;
+            // (a) Ein zweites „Fertig“ nach dem Cache-Laden blendet Abbrechen nicht aus, solange die Begriffe laufen.
+            view[0].idle("Fertig");
+            assertThat(view[0].cancel.isVisible()).isTrue();
+            assertThat(view[0].cancel.isEnabled()).isTrue();
+            // (b) Nur die Begriffssuche abbrechen: sie hört auf, Abbrechen geht.
+            view[0].cancelSearch();
+            assertThat(stop.get()).isTrue();
+            assertThat(view[0].cancel.isVisible()).isFalse();
+            view[0].termPagesStop = null;
+            // Das nächste Laden in den Cache schaltet Abbrechen wieder ein.
+            view[0].progressId = "lauf";
+            view[0].progress(new com.aresstack.spaceharvester.application.query.KeywordSearch.Progress("lauf", 4, 1,
+                    0, false));
+        });
+        assertThat(view[0].cancel.isVisible()).isTrue();
+        assertThat(view[0].cancel.isEnabled()).isTrue();
     }
 
     private static SearchView.Hit row(String pageId) {

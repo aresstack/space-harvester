@@ -388,6 +388,15 @@ public final class PageDetailPanel extends JPanel {
      * eines Videos der Transkript-Knopf (Angelo, 19.11.2026: eine Leiste, die je nach Ansicht wechselt).
      */
     private final JPanel footTools = new JPanel(new BorderLayout());
+    /** Neben der Lupe in der Leseansicht: „Transkript kopieren“ des Podcasts der Quellenseite bzw. der Seite. */
+    private final JPanel sourceFoot = footRow();
+    private final JPanel pageFoot = footRow();
+
+    private static JPanel footRow() {
+        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+        row.setOpaque(false);
+        return row;
+    }
     private VideoViewerPanel originalVideoViewer;
     /** Das gezeigte MP4-Video für seine Standbilder in „Analysen › Bilder“; {@code null} ohne Video. */
     private VideoFrameSource videoFrames;
@@ -544,6 +553,8 @@ public final class PageDetailPanel extends JPanel {
             }
         }, PodcastControl.Labels.PAGE);
         pagePodcast.events(context.events()::publish);
+        pageFoot.add(pagePodcast.transcriptCopy());
+        sourceFoot.add(sourceView.podcast().transcriptCopy());
         readerPage.setOrb(pagePodcast.orb());
         textBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(readerPage);
         textBusy.setHighlight(Comic.BLUE);
@@ -978,6 +989,11 @@ public final class PageDetailPanel extends JPanel {
         standing.shown(standingShown);
         showOverviewHelp();
         updateFootTools(selected);
+        if (sourceMenuShown()) {
+            more.setEnabled(true);
+        } else if (SOURCE_CARD.equals(pageCard)) {
+            more.setEnabled(false);
+        }
         heading.revalidate();
         heading.repaint();
         String page = pageCard;
@@ -2813,6 +2829,8 @@ public final class PageDetailPanel extends JPanel {
         // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
         JComponent shown = READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
                 : READ.equals(selected) && videoTranscriptShown ? videoTranscript.action()
+                : READING.equals(selected) && SOURCE_CARD.equals(pageCard) ? sourceFoot
+                : READING.equals(selected) && PAGE.equals(pageCard) ? pageFoot
                 : null;
         if (footTools.getComponentCount() == (shown == null ? 0 : 1)
                 && (shown == null || footTools.getComponent(0) == shown)) {
@@ -5300,7 +5318,7 @@ public final class PageDetailPanel extends JPanel {
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
         bookmark.setEnabled(enabled);
-        more.setEnabled(enabled);
+        more.setEnabled(enabled || sourceMenuShown());
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
         updatePreviewEnabled();
@@ -5336,18 +5354,87 @@ public final class PageDetailPanel extends JPanel {
         return more;
     }
 
-    /** „Lesezeichen kopieren“ und „Im Browser öffnen“; je Eintrag so wählbar wie die Aktion gerade gilt. */
+    static final String SAVE_SUMMARY = "Zusammenfassung speichern …";
+    static final String SAVE_TRANSCRIPT = "Transkript speichern …";
+    /** Ohne Rückfrage: der Podcast lässt sich jederzeit neu erzeugen (Angelo, UX-Manager 22.11.2026). */
+    static final String RENEW_PODCAST = "Podcast neu erstellen";
+    static final String RENEW_PODCAST_TIP = "Verwirft Texte, Audio und Bilder des Podcasts und erzeugt ihn neu";
+
+    /** Auf der Quellenseite in der Leseansicht hat das Dreieck die Speicher-Einträge der Zusammenfassung. */
+    private boolean sourceMenuShown() {
+        return SOURCE_CARD.equals(pageCard) && READING.equals(tabs.selected()) && sourceView.sourceId() != null;
+    }
+
+    /**
+     * Zur Seite „Lesezeichen kopieren“ und „Im Browser öffnen“, mit Podcast auch „Transkript speichern …“; auf der
+     * Quellenseite „Zusammenfassung speichern …“ und „Transkript speichern …“ (Angelo 22.11.2026). Je Eintrag so
+     * wählbar wie die Aktion gerade gilt.
+     */
     javax.swing.JPopupMenu moreMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        if (sourceMenuShown()) {
+            menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", sourceView.hasSummary(),
+                    this::saveSummary));
+            menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
+                    sourceView.podcast().hasTranscript(), () -> saveTranscript(sourceView.podcast())));
+            menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceView.podcastRenewable(),
+                    sourceView::renewPodcast));
+            return menu;
+        }
         for (ComposerButton action : List.of(bookmark, browse)) {
-            javax.swing.JMenuItem item = new javax.swing.JMenuItem(action.getText());
-            item.setFont(Comic.regular(13f));
-            item.setToolTipText(action.getToolTipText());
-            item.setEnabled(action.isEnabled());
-            item.addActionListener(e -> action.doClick());
-            menu.add(item);
+            menu.add(menuItem(action.getText(), action.getToolTipText(), action.isEnabled(), action::doClick));
+        }
+        if (PAGE.equals(pageCard) && pagePodcast.hasTranscript()) {
+            menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei", true,
+                    () -> saveTranscript(pagePodcast)));
         }
         return menu;
+    }
+
+    private static javax.swing.JMenuItem menuItem(String text, String tooltip, boolean enabled, Runnable action) {
+        javax.swing.JMenuItem item = new javax.swing.JMenuItem(text);
+        item.setFont(Comic.regular(13f));
+        item.setToolTipText(tooltip);
+        item.setEnabled(enabled);
+        item.addActionListener(e -> action.run());
+        return item;
+    }
+
+    /** Fragt nach der Datei; Tests setzen einen Ersatz. */
+    java.util.function.Function<String, java.nio.file.Path> saveTarget = this::chooseSaveTarget;
+
+    private java.nio.file.Path chooseSaveTarget(String fileName) {
+        JFileChooser chooser = com.aresstack.spaceharvester.app.ui.controls.SaveChooser.create(fileName);
+        return chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION ? chooser.getSelectedFile().toPath()
+                : null;
+    }
+
+    private void saveSummary() {
+        if (sourceView.hasSummary()) {
+            saveText("Zusammenfassung " + safeName(title.getText()) + ".txt", sourceView.copyText(),
+                    "Zusammenfassung");
+        }
+    }
+
+    private void saveTranscript(PodcastControl<?> podcast) {
+        String name = "Transkript " + safeName(title.getText()) + ".md";
+        podcast.transcript(text -> {
+            if (text.isBlank()) {
+                tabStatus(READING, "Transkript: Der Podcast hat noch keinen Text");
+            } else {
+                saveText(name, text, "Transkript");
+            }
+        });
+    }
+
+    private void saveText(String fileName, String text, String what) {
+        java.nio.file.Path target = saveTarget.apply(fileName);
+        if (target == null) {
+            return;
+        }
+        Background.execute(() -> Files.writeString(target, text, java.nio.charset.StandardCharsets.UTF_8),
+                () -> tabStatus(READING, what + " gespeichert: " + target),
+                failure -> tabStatus(READING, what + " nicht gespeichert: " + Problems.describe(failure).title()));
     }
 
     Breadcrumbs breadcrumbs() {
@@ -5467,6 +5554,11 @@ public final class PageDetailPanel extends JPanel {
             public com.aresstack.spaceharvester.application.observe.Subscription subscribeJobs(
                     com.aresstack.spaceharvester.application.jobs.JobListener listener) {
                 return workspace.subscribeJobs(listener);
+            }
+
+            @Override
+            public Optional<String> transcript(PodcastPage page) {
+                return workspace.pagePodcastTranscript(page.sourceId(), page.pageId());
             }
         };
     }

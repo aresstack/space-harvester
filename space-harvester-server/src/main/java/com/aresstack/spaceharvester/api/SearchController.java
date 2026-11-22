@@ -389,7 +389,7 @@ public class SearchController {
      * @param viaTitle         bei {@code neighbor} ihr Titel
      * @param viaEdge          bei {@code neighbor} die Kante von der Ausgangsseite zum Treffer
      */
-    public record HitReasonResponse(@Schema(allowableValues = {"text", "source", "semantic", "neighbor"}) String kind,
+    public record HitReasonResponse(@Schema(allowableValues = {"text", "source", "semantic", "neighbor", "term"}) String kind,
                                     String query,
                                     @Schema(nullable = true) String relationTerm,
                                     @Schema(nullable = true) String relationCounterpart,

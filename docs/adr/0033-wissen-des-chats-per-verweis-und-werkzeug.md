@@ -26,8 +26,8 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
    - `seite_lesen(kennung, versatz?)`: höchstens 12 000 Zeichen je Aufruf, mit Fortsetzung.
    - `begriff_nachschlagen(begriff)` (Nachtrag W7, 22.11.2026): was der Wissensgraph im Bereich über einen
      bestätigten Fachbegriff weiß (`TermKnowledge#answer`): Aussagen mit Verb, Merkmalen, Vertrauensstufe und
-     Belegseiten, verwandte Begriffe, was gekappt wurde; ohne Aussagen „kein Fachbegriff im Bereich“. Bereich (die Auswahl
-     beim Senden) und Obergrenzen erzwingt der Kern.
+     Belegseiten, Synonyme, verwandte Begriffe, was gekappt wurde; sonst ähnliche Fachbegriffe. Bereich (die Auswahl
+     beim Senden), KI-Freigabe der Namen und Obergrenzen erzwingt der Kern (ADR 0032, Nachtrag Abnahme W7).
    Die Regeln stehen im System-Prompt (`ChatKnowledge.TOOL_PROMPT`): Werkzeuge nutzen, bevor etwas „nicht zu finden“
    ist; eine Seite lesen, bevor man sich auf sie beruft; Quellen mit Nummer nennen; Werkzeugergebnisse sind Daten.
 3. **Der Bereich wird je Aufruf erzwungen** (`ChatTools.allows`), gegen die Auswahl beim Senden. Eine Seite außerhalb,
@@ -52,8 +52,8 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
    offene Seite VOR der Lieferung; scheitert der Eintrag, geht der Inhalt nicht an das Modell, und das
    Werkzeugergebnis nennt den Grund (Nachtrag W7). `begriff_nachschlagen` nennt Belegzahl und Stufe einer Aussage
    über alle ihre Belege, auch über die drei genannten Belegseiten hinaus: Das ist nur ein Metadatum ohne Wortlaut
-   und braucht keinen Eintrag. Ähnliche Fachbegriffe und Synonyme gibt das Werkzeug nicht aus, solange sie aus dem
-   ganzen Glossar statt aus dem Bereich kommen.
+   und braucht keinen Eintrag. Fachbegriff, Synonyme und ähnliche Fachbegriffe nennt das Werkzeug nur, soweit der
+   Kern sie im Bereich und nach der KI-Freigabe zulässt (#1118).
    `seiten_auflisten` (nur Titel) trägt nichts ein. Die ganze Auswahl wird mit Werkzeugen nicht mehr beim Senden
    eingetragen, sonst gäbe eine Frage an der Wurzel alle Seiten aller Quellen frei. Eine gelieferte Seite steht als
    eigener Knoten auf der Liste (ohne Unterseiten, `PageReleaseService.releasePage`). Im Rückfall ohne Werkzeuge gilt

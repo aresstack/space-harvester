@@ -11,6 +11,7 @@ import java.util.prefs.Preferences;
 public final class SearchMethods {
 
     static final String NEIGHBORS = "search.method.neighbors";
+    static final String TERM_PAGES = "search.method.term-pages";
 
     private static final SearchMethods USER = new SearchMethods(Preferences.userNodeForPackage(SearchMethods.class));
 
@@ -47,6 +48,32 @@ public final class SearchMethods {
     }
 
     private volatile Boolean session;
+
+    /**
+     * Suchmethode „Seiten zu Fachbegriffen“ (W8); Standard aus. Wie die Nachbarseiten bleibt die Stellung über den
+     * Neustart erhalten; der Suchqualitätslauf übernimmt sie als Vorgabe.
+     */
+    public boolean termPages() {
+        try {
+            Boolean held = termPagesSession;
+            return held != null ? held : preferences.getBoolean(TERM_PAGES, false);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    public void termPages(boolean on) {
+        try {
+            preferences.putBoolean(TERM_PAGES, on);
+        } catch (RuntimeException e) {
+            // Ohne Ablage gilt die Stellung nur bis zum Ende der Sitzung; die Suche läuft trotzdem.
+            termPagesSession = on;
+            return;
+        }
+        termPagesSession = null;
+    }
+
+    private volatile Boolean termPagesSession;
 
     /** Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a); Standard aus, gilt nur für die Sitzung. */
     private volatile boolean glossarySynonyms;

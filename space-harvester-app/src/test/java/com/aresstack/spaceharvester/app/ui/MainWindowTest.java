@@ -73,6 +73,15 @@ class MainWindowTest {
         SwingUtilities.invokeAndWait(() -> {
             window[0] = new MainWindow(context);
             window[0].content(() -> { }, () -> { }).setSize(1280, 820);
+            // Ein langer Stand eines anderen Bereichs macht den linken Teil nicht breit: Sonst stünde der Auftragstext
+            // mittig und Zurück und Vor rechts, neben einer leeren Fläche (Angelo 22.11.2026).
+            window[0].show(AppContext.Section.CONTENT);
+            int own = window[0].viewStatus().getPreferredSize().width;
+            javax.swing.JLabel far = new javax.swing.JLabel("Sehr langer Stand eines anderen Bereichs ".repeat(8));
+            ((JPanel) window[0].viewStatus()).add(far, "fremd");
+            assertThat(far.getPreferredSize().width).isGreaterThan(900);
+            assertThat(window[0].viewStatus().getPreferredSize().width).isEqualTo(own);
+            ((JPanel) window[0].viewStatus()).remove(far);
             context.events().publish(new com.aresstack.spaceharvester.app.event.StatusMessageEvent(
                     "PDF wird eingeplant …", Integer.MAX_VALUE,
                     com.aresstack.spaceharvester.app.event.Severity.INFO, false));

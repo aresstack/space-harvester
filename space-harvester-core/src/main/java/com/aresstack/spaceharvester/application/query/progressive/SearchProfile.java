@@ -22,10 +22,14 @@ import java.util.Objects;
  * @param neighbors        Suchmethode „Nachbarseiten“ (R2, Haken, Standard aus): Nach den Varianten nimmt die Suche
  *                         Eltern-, Unterseiten und Verweisziele bzw. -quellen der besten Treffer als Kandidaten und
  *                         bewertet sie wie jeden Treffer gegen die ursprüngliche Anfrage; aus ändert nichts am Ablauf
+ * @param technicalTerms   Suchmethode „Fachbegriffe“ (W8, Haken, Standard aus): Nennt die Anfrage einen bestätigten
+ *                         Fachbegriff, kommen nach den Nachbarseiten die Seiten dazu, auf denen der Wissensgraph
+ *                         Aussagen zu ihm belegt ({@link TermSearch}); aus ändert nichts am Ablauf
  */
 public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, double minScore, Duration timeBudget,
                             int searchBudget, int limitPerSearch, SearchExecutionPolicy execution,
-                            Expansion expansion, Ranking ranking, boolean neighbors) {
+                            Expansion expansion, Ranking ranking, boolean neighbors,
+                            boolean technicalTerms) {
 
     public enum Mode {
         QUALITY,
@@ -87,6 +91,14 @@ public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, dou
         }
     }
 
+    /** Ohne die Suchmethode „Fachbegriffe“. */
+    public SearchProfile(Mode mode, int maxVariants, int minRelevantHits, double minScore, Duration timeBudget,
+                         int searchBudget, int limitPerSearch, SearchExecutionPolicy execution, Expansion expansion,
+                         Ranking ranking, boolean neighbors) {
+        this(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget, limitPerSearch, execution,
+                expansion, ranking, neighbors, false);
+    }
+
     /** Ohne die Suchmethode „Nachbarseiten“. */
     public SearchProfile(Mode mode, int maxVariants, int minRelevantHits, double minScore, Duration timeBudget,
                          int searchBudget, int limitPerSearch, SearchExecutionPolicy execution, Expansion expansion,
@@ -111,38 +123,44 @@ public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, dou
 
     public SearchProfile withMode(Mode next) {
         return new SearchProfile(next, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, execution, expansion, ranking, neighbors);
+                limitPerSearch, execution, expansion, ranking, neighbors, technicalTerms);
     }
 
     public SearchProfile withExecution(SearchExecutionPolicy next) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, next, expansion, ranking, neighbors);
+                limitPerSearch, next, expansion, ranking, neighbors, technicalTerms);
     }
 
     public SearchProfile withBudget(Duration time, int searches) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, time, searches, limitPerSearch,
-                execution, expansion, ranking, neighbors);
+                execution, expansion, ranking, neighbors, technicalTerms);
     }
 
     public SearchProfile withQuality(int hits, double score) {
         return new SearchProfile(mode, maxVariants, hits, score, timeBudget, searchBudget, limitPerSearch,
-                execution, expansion, ranking, neighbors);
+                execution, expansion, ranking, neighbors, technicalTerms);
     }
 
     public SearchProfile withExpansion(Expansion next) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, execution, next, ranking, neighbors);
+                limitPerSearch, execution, next, ranking, neighbors, technicalTerms);
     }
 
     public SearchProfile withRanking(Ranking next) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, execution, expansion, next, neighbors);
+                limitPerSearch, execution, expansion, next, neighbors, technicalTerms);
     }
 
     /** Mit bzw. ohne die Suchmethode „Nachbarseiten“ (R2). */
     public SearchProfile withNeighbors(boolean next) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, execution, expansion, ranking, next);
+                limitPerSearch, execution, expansion, ranking, next, technicalTerms);
+    }
+
+    /** Mit bzw. ohne die Suchmethode „Fachbegriffe“ (W8). */
+    public SearchProfile withTechnicalTerms(boolean next) {
+        return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
+                limitPerSearch, execution, expansion, ranking, neighbors, next);
     }
 
     /** Die Qualitätsregel dieses Profils. */

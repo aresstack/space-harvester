@@ -401,7 +401,7 @@ class ChatToolsTurnTest {
 
         assertThat(asked).containsExactly(space.pages());
         assertThat(order).containsExactly("geliefert " + ChatTools.ref(evidence), "antwort");
-        assertThat(text).contains("Fachbegriff: Spool").doesNotContain("Ausgabeablage")
+        assertThat(text).contains("Fachbegriff: Spool").contains("Synonyme: Ausgabeablage")
                 .contains("Nachtlauf —muss nicht füllen→ Spool [geprüft, 2 Belege]")
                 .contains(ChatTools.ref(evidence) + " (Nachtlauf) und 1 weitere")
                 .contains("Verwandte Begriffe: Nachtlauf")
@@ -436,13 +436,13 @@ class ChatToolsTurnTest {
     }
 
     @Test
-    void aWordThatIsNoTermNamesNoTermsFromOutsideAndWithoutAreaNothingIsAsked() {
+    void aWordThatIsNoTermNamesSimilarTermsOfTheAreaAndWithoutAreaNothingIsAsked() {
         ChatTools tools = tools(new ArrayList<>()).termLookup((query, scope, delivery, cancelled) ->
                 new TermKnowledge.Answer(TermKnowledge.Outcome.NOT_A_TERM, List.of(), List.of(),
                         List.of("Spool", "Spoolbereich"), List.of(), limitsNone()));
-        // Ähnliche Fachbegriffe kommen aus dem ganzen Glossar, nicht aus dem Bereich: Sie gehen nicht hinaus.
-        assertThat(tools.term("Spol")).isEqualTo("„Spol“ ist im gewählten Bereich kein bestätigter Fachbegriff; "
-                + "nutze " + ChatTools.SEARCH + ".");
+        // Die Vorschläge filtert der Core nach Bereich und KI-Freigabe (#1118); das Werkzeug gibt sie weiter.
+        assertThat(tools.term("Spol")).isEqualTo("„Spol“ ist im gewählten Bereich kein bestätigter Fachbegriff. "
+                + "Ähnliche Fachbegriffe: Spool, Spoolbereich. Sonst nutze " + ChatTools.SEARCH + ".");
         assertThat(tools.term("   ")).isEqualTo("Bitte einen Fachbegriff angeben.");
 
         ChatTools nowhere = new ChatTools(workspace, null, java.util.Set.of(), sources(new ArrayList<>()))
@@ -723,10 +723,16 @@ class ChatToolsTurnTest {
             @Override
             public List<DomainTermGraph.Synonym> synonyms(
                     com.aresstack.spaceharvester.application.access.AccessContext who) {
-                return List.of();
+                // Ein global geltendes Synonym und eines, das nur in einer anderen Quelle gilt.
+                return List.of(new DomainTermGraph.Synonym("Spool", "Ausgabeablage",
+                                new com.aresstack.spaceharvester.application.terms.RelationScope(null, null)),
+                        new DomainTermGraph.Synonym("Spool", "Druckpuffer",
+                                new com.aresstack.spaceharvester.application.terms.RelationScope("andere", null)));
             }
         };
-        TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(graph, vocabulary));
+        // Alle Quellen freigegeben: geprüft wird hier die Reihenfolge Freigabe vor Antwort, nicht die KI-Freigabe (#1118).
+        TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(graph, vocabulary),
+                com.aresstack.spaceharvester.application.release.AiRelease.ofSources(sourceId -> true));
         List<String> order = new CopyOnWriteArrayList<>();
 
         String text = tools(order).termLookup((query, scope, delivery, cancelled) -> {
@@ -735,8 +741,9 @@ class ChatToolsTurnTest {
             return answer;
         }).term("Spool");
 
-        assertThat(text).contains("Fachbegriff: Spool").contains("Nachtlauf —prüft→ Spool")
-                .contains(ChatTools.ref(inside)).doesNotContain("sendet").doesNotContain("fremd");
+        assertThat(text).contains("Fachbegriff: Spool").contains("Synonyme: Ausgabeablage")
+                .contains("Nachtlauf —prüft→ Spool").contains(ChatTools.ref(inside))
+                .doesNotContain("sendet").doesNotContain("fremd").doesNotContain("Druckpuffer");
         assertThat(order).containsExactly("geliefert " + ChatTools.ref(inside), "antwort");
     }
 
@@ -810,9 +817,11 @@ class ChatToolsTurnTest {
                 List.of(), List.of(), new TermKnowledge.Limits(800, 500, 0, 0, 0, 0, false, 0));
 
         assertThat(ChatTools.render("Spule", answer))
-                .as("ohne gelieferte Aussage wie „kein Fachbegriff“, mit dem Teil-Lesen, ohne Namen aus dem Glossar")
-                .isEqualTo("„Spule“ ist im gewählten Bereich kein bestätigter Fachbegriff (gelesen wurden 500 von "
-                        + "800 Seiten des Bereichs, die übrigen sind ungelesen); nutze " + ChatTools.SEARCH + ".");
+                .startsWith("Fachbegriff: Spool\n")
+                .contains("In den gelesenen Seiten gibt es keine Aussagen zu diesem Begriff (gelesen wurden 500 von "
+                        + "800 Seiten des Bereichs, die übrigen sind ungelesen)")
+                .contains("Unvollständig: 500 von 800 Seiten des Bereichs gelesen")
+                .doesNotContain(ChatTools.READ);
     }
 
     private ChatTools tools(List<String> order) {

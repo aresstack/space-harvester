@@ -339,9 +339,12 @@ Tests; den Chat-Anschluss (Werkzeug, System-Prompt) baut der Chat-Strang, die zu
   Aussagen (`Subjekt —Verb→ Objekt`) mit Vertrauensstufe, Zahl der Belege und Belegseiten als `PageKey` mit Space und
   Titel, außerdem die Nachbarbegriffe. Gezählt wird genau wie in der Fachsicht: Standardansicht, verworfene Aussagen
   nie, veraltete Seiten ausgelassen und gezählt. Nur lesen, kein KI-Aufruf, nichts gespeichert.
-- Verneinung, Verbindlichkeit (Modalverb) und Zeitbezug trennen Aussagen: Die Belege einer Kante der Fachsicht
-  werden nach diesen Merkmalen geteilt, jede Aussage trägt sie, „prüft“ und „prüft nicht“ sind nie eine Aussage.
-- Stufe je Aussage (je Teil aus dessen Belegen): `ABWEICHEND`, wenn ein Beleg abweicht und keiner geprüft ist, sonst die höchste Stufe der Belege.
+- Verneinung, Verbindlichkeit (Modalverb) und Zeitbezug trennen Aussagen: Seit W9 ist jede Verb-Kante der Fachsicht
+  schon eine Aussage mit diesen Merkmalen (`DomainTermGraph.Qualifiers`); das Begriffswissen übernimmt sie Kante für
+  Kante und teilt nicht mehr selbst. „Prüft“ und „prüft nicht“ sind nie eine Aussage. Die Kante faltet „nicht
+  bestimmt“ in „schlicht“; dem Chat meldet `TermKnowledge` je Merkmal `UNKNOWN`, solange keine Belegstelle der
+  Aussage es bestimmt; bei gemischten Belegen gilt der bestimmte Wert.
+- Stufe je Aussage (aus ihren Belegen): `ABWEICHEND`, wenn ein Beleg abweicht und keiner geprüft ist, sonst die höchste Stufe der Belege.
   Reihenfolge geprüft, einig, ungeprüft, abweichend, innerhalb der Stufe nach Belegen. Ungeprüftes kommt mit, trägt
   aber seine Stufe („Was ich sehe, sieht der Bot“: Die Fachsicht zeigt es ebenfalls).
 - Bereich im Core erzwungen: Gelesen werden nur die Analysen der Seiten des Bereichs (`KnowledgeGraph#analysed` mit
@@ -361,3 +364,52 @@ Tests; den Chat-Anschluss (Werkzeug, System-Prompt) baut der Chat-Strang, die zu
   Graph nicht mehr, an einer Stelle für alle Leser (`Harvester#analysedSources` als `activeSources`): Graph, Fachsicht,
   Begriffswissen, Chat und Suche. Damit meldet auch die `Delivery` keine solche Seite.
 - Zugang: `Harvester#termKnowledge`, `Workspace#termKnowledge`.
+- Nachtrag (Abnahme W7): Auch „ist ein Fachbegriff“, Synonyme und Vorschläge entscheidet der Kern nur nach dem
+  Bereich (`DomainTermGraph#groupWithin`, die Seiten werden einmal gelesen): Ein Eintrag zählt nur, wenn einer seiner
+  Geltungsbereiche global ist oder eine lesbare Seite des Bereichs abdeckt (Quelle, Space), auch eine noch nicht
+  analysierte (Space aus den Kopfdaten des Bestands, `KnowledgeGraph#place`, nie der ganze Snapshot; nur
+  nachgeschlagen wenn nötig, ein Abbruch wirkt schon dabei). Dazu die KI-Freigabe
+  (`AiRelease`): Ein Name, der nur in Quellen ohne Freigabe gilt, geht nur mit, wenn eine schon freigegebene Seite des
+  Bereichs darin liegt oder die Antwort eine Seite darin liefert und damit freigibt; global geltende Einträge bleiben.
+  Mit `Delivery.NONE` (Suche, nichts geht an ein Modell) entfällt nur diese Freigabe-Prüfung, der Bereich gilt
+  trotzdem. Ein Synonym zählt nach dem Geltungsbereich seiner Beziehung zum gesuchten Begriff, nicht nach seinen
+  übrigen Einträgen. Ein Fachbegriff, der nur außerhalb des Bereichs gilt, wird auch über ein Synonym kein Knoten
+  (gezählt wird wie in der Fachsicht). Erst filtern, dann auf fünf Begriffe kappen und Ausgelassenes zählen; als
+  ausgelassen zählt nur, wer auch ohne Seiten unfreigegebener Quellen nennbar wäre. Für „schon freigegebene Seite des
+  Bereichs“ prüft der Kern alle Bereichsseiten der Quelle (`Area#coveredReleased`), nicht nur die zufällig schon
+  nachgeschlagenen. Fällt ein Name erst an den tatsächlich gelieferten Seiten durch (seine Seite fiel einer Grenze
+  zum Opfer), wird ohne ihn neu gebaut; geliefert werden nur die Seiten des letzten Baus, und scheitert der gesuchte
+  Begriff selbst, gibt es keine Antwort und keine Lieferung.
+
+## Umsetzung W9: eine Kante je Aussage in der Fachsicht (Core und App)
+
+Auftrag des Architekten, Form A des UX-Managers.
+
+- Core: `DomainTermGraph#collect` trennt Verb-Kanten nach Verneinung, Modalverb und Zeitbezug
+  (`DomainTermGraph.Qualifiers`); „prüfen“ und „nicht prüfen“ sind zwei Kanten mit eigenen Belegen und eigener Stufe,
+  ein Beleg zählt nie für die Gegenaussage. „Nicht bestimmt“ zählt wie schlicht (gilt, ohne Modalverb). Der
+  Wortlaut (`Edge#phrase`) nennt Modalverb, Verneinung und Zeitbezug in Grundform („muss nicht prüfen (geplant)“,
+  „prüfen (früher)“), „gilt“ nie. Hat kein Beleg eine Grundform (nur die gebeugte Form aus dem Text), entfallen
+  Modalverb und „nicht“ im Wortlaut (kein „muss nicht prüft“); der Zeitbezug bleibt, die Verneinung zeigt der Strich. Veraltete Belege werden mit denselben Merkmalen gezählt.
+- Kappung: Die seitenweite Sicht zählt je Knoten alle Belege seiner Kanten (unverändert, Teilen ändert die Summe
+  nicht). Die Begriffsgruppe (`group`, für W6) ordnet Partner jetzt nach allen Belegen zwischen Gruppe und Partner,
+  nicht nach der stärksten Einzelkante; die Umgebung (`around`) nimmt Knoten wie bisher in Reihenfolge der Kanten.
+- „Nur geprüft“ wirkt je Aussage: Eine verneinte Aussage mit geprüftem Beleg bleibt, die bejahte ohne fällt weg.
+- App: Beschriftung „nicht prüfen · 2“, Tooltip „Plan – nicht prüfen – Ziel · 2 Belege“ (ohne Legende, ohne
+  Hinweis). Linienart nach Vertrauen wie W2; Verneinung als schräger Querstrich (14 px, etwa 60° zur Linie, in
+  Linienfarbe, mindestens 2 px stark) 8 px vor der Beschriftung auf der Seite des Startknotens, obenauf; auf
+  gestrichelter oder gepunkteter Linie ist die Linie 12 px um ihn durchgezogen; „früher“ und „verworfen“ blasser (Linie und Schrift), nie farbig.
+- Mehrere Aussagen eines Knotenpaars liegen nebeneinander gebogen, jede Beschriftung auf ihrem Bogen; der Abstand der
+  Scheitel richtet sich nach der Lage des Paars (steil: Breite der Beschriftung, flach: ihre Höhe). Je Paar und
+  Richtung höchstens drei Bögen (`GraphSource.MAX_ARCS`): Gibt es mehr, zeigen die zwei mit den meisten Belegen ihre
+  Kante, der dritte Bogen heißt „+ n weitere“. Läge die gerade Verbindung zweier äußerer Knoten über der Mitte, biegen alle Bögen des Paars nach außen, weg
+  von der Mitte. Diese Bögen nehmen keinen Umweg (er legte sie auf die Nachbarn); das
+  Layout-Budget aus W4b bleibt unverändert und zählt sie wie jede Kante.
+- Overlay „Belege“: Bei mehreren Aussagen des Paars in dieser Richtung je Aussage eine Überschrift mit Zahl und Stufe,
+  nach Belegen geordnet, die geklickte oben und als einzige aufgeklappt (bei „+ n weitere“ die, für die er steht),
+  die übrigen zugeklappt (Abschnittskopf `SectionHeader`); kein
+  „dafür/dagegen“. Eine Aussage allein zeigt das Overlay wie bisher, Kopf „Plan – prüfen – Ziel“.
+- Die Statuszeile zählt jede Aussage als Verbindung, auch die hinter „+ n weitere“.
+- Verbraucher der Kante: nur Fachsicht (Übersicht und Reiter „Graph“), Overlay und Begriffswissen (W6: Verb und Merkmale je
+  Aussage, den Wortlaut setzt der Chat selbst). Verben-Reiter, Glossar und Stand lesen `DomainTermGraph.Edge` nicht; der Export des
+  Bestandsgraphen bleibt unberührt. Andere Listen oder Tabellen der Fachsicht gibt es nicht.

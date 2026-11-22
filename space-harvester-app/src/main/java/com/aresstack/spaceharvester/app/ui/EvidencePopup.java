@@ -334,6 +334,7 @@ public final class EvidencePopup extends JPopupMenu {
         shown.clear();
         texts.clear();
         otherTexts.clear();
+        sections.clear();
         hideStatus();
         lastWrite.clear();
         for (DomainTermGraph.Evidence item : evidence) {
@@ -347,6 +348,107 @@ public final class EvidencePopup extends JPopupMenu {
             loadReviews(mine);
         }
         return this;
+    }
+
+    /**
+     * Eine Aussage im Overlay (UX W9): Wortlaut wie an der Kante, etwa „nicht prüfen“, Zahl der Belege, Stufe der
+     * Kante und ihre Belege.
+     */
+    public record Statement(String heading, int total, String stage, List<DomainTermGraph.Evidence> evidence) {
+        public Statement {
+            Objects.requireNonNull(heading, "heading");
+            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        }
+    }
+
+    /**
+     * Füllt das Overlay mit den Aussagen eines Knotenpaars (UX W9). Eine Aussage allein zeigt es wie {@link #fill};
+     * mehrere stehen je unter eigener Überschrift mit Zahl und Stufe in der gegebenen Reihenfolge, nur die erste
+     * aufgeklappt; ein Klick auf eine Überschrift (oder Enter/Leertaste) klappt sie auf oder zu.
+     */
+    public EvidencePopup fillStatements(String title, int total, List<Statement> statements,
+                                        Map<String, SentenceText> sentences, boolean failed) {
+        if (statements.size() == 1) {
+            return fill(title, total, statements.getFirst().evidence(), sentences, failed);
+        }
+        int mine = ++generation;
+        heading.setText(title);
+        count.count(total);
+        rows.removeAll();
+        shown.clear();
+        texts.clear();
+        otherTexts.clear();
+        sections.clear();
+        hideStatus();
+        lastWrite.clear();
+        for (Statement statement : statements) {
+            Section section = new Section(statement, sections.isEmpty());
+            sections.add(section);
+            rows.add(section.head);
+            rows.add(Box.createVerticalStrut(6));
+            for (DomainTermGraph.Evidence item : statement.evidence()) {
+                Row row = new Row(item, sentences.get(item.statement().id()), failed, mine);
+                shown.add(row);
+                section.body.add(row.panel);
+                section.body.add(Box.createVerticalStrut(10));
+            }
+            section.body.setVisible(section.expanded());
+            rows.add(section.body);
+            rows.add(Box.createVerticalStrut(8));
+        }
+        relayout();
+        if (reviewing != null && !shown.isEmpty()) {
+            loadReviews(mine);
+        }
+        return this;
+    }
+
+    /** Die Überschriften der Aussagen; leer, wenn das Overlay nur eine zeigt. */
+    private final List<Section> sections = new ArrayList<>();
+
+    /** Überschrift einer Aussage samt ihren Belegen (UX W9). */
+    private final class Section {
+        final Statement statement;
+        final JPanel head = new JPanel();
+        /** Aufklappbare Überschrift der Bibliothek: Fokusring, Maus, Leertaste/Enter, zugänglicher Name. */
+        final com.aresstack.spaceharvester.app.ui.controls.SectionHeader header;
+        final JPanel body = new JPanel();
+
+        Section(Statement statement, boolean expanded) {
+            this.statement = statement;
+            header = new com.aresstack.spaceharvester.app.ui.controls.SectionHeader(statement.heading(), expanded,
+                    this::toggled);
+            head.setOpaque(false);
+            head.setAlignmentX(LEFT_ALIGNMENT);
+            head.setLayout(new BoxLayout(head, BoxLayout.X_AXIS));
+            header.setMaximumSize(header.getPreferredSize());
+            head.add(header);
+            head.add(Box.createHorizontalStrut(8));
+            CountChip number = new CountChip("Belege", Comic.MUTED);
+            number.setFocusable(false);
+            number.count(statement.total());
+            head.add(number);
+            if (statement.stage() != null && !statement.stage().isBlank()) {
+                head.add(Box.createHorizontalStrut(6));
+                CountChip stage = CountChip.tag(statement.stage(), Comic.MUTED, "Stufe der Aussage");
+                stage.setFocusable(false);
+                head.add(stage);
+            }
+            head.add(Box.createHorizontalGlue());
+            body.setOpaque(false);
+            body.setAlignmentX(LEFT_ALIGNMENT);
+            body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+            body.setBorder(BorderFactory.createEmptyBorder(0, 14, 0, 0));
+        }
+
+        boolean expanded() {
+            return header.isOpen();
+        }
+
+        private void toggled() {
+            body.setVisible(header.isOpen());
+            relayout();
+        }
     }
 
     /** Zeigt das Overlay an der Mausposition; der erste Link bekommt den Fokus. */
@@ -1104,12 +1206,23 @@ public final class EvidencePopup extends JPopupMenu {
 
     // ---- für Tests
 
+    /** Die Überschriften der Aussagen, davor „auf: “ (aufgeklappt) oder „zu: “; leer bei nur einer Aussage. */
+    public List<String> statementHeadings() {
+        return sections.stream().map(section -> (section.expanded() ? "auf: " : "zu: ") + section.header.title())
+                .toList();
+    }
+
+    /** Ein Klick auf die Überschrift der Aussage {@code index}. */
+    void clickStatement(int index) {
+        sections.get(index).header.toggle();
+    }
+
     /** Die Überschrift (auch für Tests der Reiter in anderen Paketen). */
     public String headingText() {
         return heading.getText();
     }
 
-    int countValue() {
+    public int countValue() {
         return count.count();
     }
 
