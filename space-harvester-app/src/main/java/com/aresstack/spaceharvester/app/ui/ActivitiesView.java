@@ -103,6 +103,9 @@ public final class ActivitiesView implements View {
     final IconButton moreJobs = new IconButton(new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(),
             MORE_JOB_ACTIONS);
     static final String DELETE_FINISHED = "Abgeschlossene Aufträge löschen";
+    static final String PARALLEL_PREPARATIONS = "Parallele Vorbereitungen";
+    static final String PARALLEL_DOWNLOADS = "Parallele Downloads";
+    static final String CONNECTIONS = "Verbindungen";
     static final String DELETE_ALL = "Alle Aufträge löschen";
     static final String MORE_JOB_ACTIONS = "Weitere Aktionen zu den Aufträgen";
     /** Links neben den Auswahlen (Angelo 11.11.2026): alle Bilder- und Anhänge-Unterzeilen auf- bzw. zuklappen. */
@@ -276,7 +279,7 @@ public final class ActivitiesView implements View {
         RowActions.install(table, JobsModel.ACTIONS, SLOTS, this::rowActions);
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setBackground(Comic.SURFACE);
-        list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
+        list.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
         HelpButton hint = new HelpButton(24, "Aufträge", HELP);
         tabs.segment(JOBS_TAB).segment(BACKGROUND_TAB);
         tabs.button(JOBS_TAB).setToolTipText("Aufträge, die du gestartet hast");
@@ -291,23 +294,16 @@ public final class ActivitiesView implements View {
         JPanel listTitle = new JPanel(new java.awt.GridBagLayout());
         listTitle.setOpaque(false);
         listTitle.add(tabs);
-        JLabel downloadsLabel = new JLabel("Downloads");
-        downloadsLabel.setToolTipText(downloads.box().getToolTipText());
-        JLabel preparationsLabel = new JLabel("Vorbereitung");
-        preparationsLabel.setToolTipText(preparations.box().getToolTipText());
-        JLabel connectionsLabel = new JLabel("Verbindungen");
-        connectionsLabel.setToolTipText(connections.box().getToolTipText());
-        connectionsLabel.setLabelFor(connections.box());
-        for (JLabel label : List.of(downloadsLabel, preparationsLabel, connectionsLabel)) {
-            label.setFont(Comic.regular(12f));
-            label.setForeground(Comic.INK);
+        // Die drei Grenzen der Parallelität stehen im Menü hinter dem Dreieck (Angelo 22.11.2026), damit die
+        // Kopfzeile auch in der Seitenleiste Platz hat.
+        for (ParallelChoice choice : List.of(preparations, downloads, connections)) {
+            choice.ask = current -> Dialogs.askNumber(root, "Benutzerdefiniert", choice.box().getToolTipText(),
+                    choice.min(), choice.max(), current);
         }
-        downloadsLabel.setLabelFor(downloads.box());
-        preparationsLabel.setLabelFor(preparations.box());
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
-        JPanel listTools = Comic.row(preparationsLabel, preparations.box(), downloadsLabel,
-                downloads.box(), connectionsLabel, connections.box(), hint, deleteFinished, moreJobs);
+        enlarge.addActionListener(e -> enlargeAction.run());
+        JPanel listTools = Comic.row(hint, deleteFinished, enlarge, moreJobs);
         // „Alle anhalten“ und „Alle abbrechen“ sind Aktionen und stehen mittig in der Werkzeugleiste unten
         // (tools(), Angelo 22.11.2026); oben bleibt Platz für die Wippe.
         pauseAll.addActionListener(e -> pauseOrResumeAll());
@@ -325,21 +321,46 @@ public final class ActivitiesView implements View {
         globalRow.add(folding);
         globalRow.add(global);
         tools = globalRow;
-        // Wird die Kopfzeile zu schmal für Wippe und Werkzeuge, weichen die drei Beschriftungen der Auswahlfelder
-        // (ihre Tooltips nennen sie weiter), statt dass die Wippe umbricht oder Knöpfe abgeschnitten werden.
-        List<JLabel> headLabels = List.of(preparationsLabel, downloadsLabel, connectionsLabel);
-        int labelsWidth = headLabels.stream().mapToInt(label -> label.getPreferredSize().width + 6).sum();
         JPanel listHead = new JPanel();
-        listHead.setLayout(new HeadLayout(listTitle, listTools, labelsWidth, narrow -> {
-            for (JLabel label : headLabels) {
-                label.setVisible(!narrow);
-            }
+        // Reicht die Breite nicht (Leiste an ihrer Mindestbreite), weichen Hilfe und Besen; „Fertige löschen“ steht
+        // dann im Menü hinter dem Dreieck.
+        int fullTools = listTools.getPreferredSize().width;
+        hint.setVisible(false);
+        deleteFinished.setVisible(false);
+        int saved = fullTools - listTools.getPreferredSize().width;
+        hint.setVisible(true);
+        deleteFinished.setVisible(true);
+        listHead.setLayout(new HeadLayout(listTitle, listTools, saved, tight -> {
+            hint.setVisible(!tight);
+            deleteFinished.setVisible(!tight);
         }));
         listHead.setOpaque(false);
+        // Dieselbe Kopfzeile wie der Chat und die Seitenansicht: gleiche Höhe, Linie darunter (Angelo 22.11.2026).
+        listHead.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(0, 10, 0, 6)));
+        listHead.setPreferredSize(new java.awt.Dimension(0,
+                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.HEAD_HEIGHT));
         listHead.add(listTitle);
         listHead.add(listTools);
         updateGlobalButtons(List.of());
         model.addTableModelListener(e -> layoutBands());
+        // Schmal (Seitenleiste) stehen die Aktionen der gewählten Zeile in der Fußzeile neben der Lupe statt in
+        // jeder Zeile, ohne zweite Kopfzeile (Angelo 22.11.2026); „Alle anhalten“ und „Alle abbrechen“ rücken dann
+        // ins Menü hinter dem Dreieck. Die Knöpfe stehen immer da, ohne Auswahl blass, damit nichts springt.
+        selectedRow.setOpaque(false);
+        for (int i = 0; i < SELECTED_SLOTS; i++) {
+            int slot = i;
+            IconButton button = new IconButton(idleSelectedIcon(i), NO_JOB_SELECTED);
+            button.setName("activities.selected." + i);
+            button.addActionListener(e -> selectedRuns.get(slot).run());
+            selectedButtons.add(button);
+            selectedRuns.add(() -> { });
+            selectedRow.add(button);
+        }
+        this.global = global;
+        model.addTableModelListener(e -> javax.swing.SwingUtilities.invokeLater(this::updateSelectedActions));
+        table.getSelectionModel().addListSelectionListener(e -> updateSelectedActions());
+        updateSelectedActions();
         list.add(listHead, BorderLayout.NORTH);
         javax.swing.JScrollPane listScroll = Comic.scroll(table);
         // Ein Klick in die leere Fläche unter den Zeilen hebt die Auswahl auf (Angelo 22.11.2026).
@@ -351,7 +372,11 @@ public final class ActivitiesView implements View {
                 }
             }
         });
-        list.add(listScroll, BorderLayout.CENTER);
+        JPanel listBody = new JPanel(new BorderLayout());
+        listBody.setOpaque(false);
+        listBody.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 12));
+        listBody.add(listScroll, BorderLayout.CENTER);
+        list.add(listBody, BorderLayout.CENTER);
 
         title.setFont(Comic.semiBold(17f));
         title.setForeground(Comic.INK);
@@ -405,6 +430,15 @@ public final class ActivitiesView implements View {
         showDetails(false);
         split.setContinuousLayout(true);
         root.add(split, BorderLayout.CENTER);
+        // Die Aufträge stehen in der rechten Seitenleiste (Angelo 22.11.2026) und bringen ihre Leiste mit der Lupe
+        // selbst mit: Suche in der Liste, Auf- und Zuklappen, „Alle anhalten“ und „Alle abbrechen“.
+        findBar = new FindBar(() -> split);
+        findBar.tools(tools);
+        root.add(findBar, BorderLayout.SOUTH);
+        root.setMinimumSize(new java.awt.Dimension(
+                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH, 0));
+        root.setPreferredSize(new java.awt.Dimension(
+                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH, 0));
 
         updateButtons();
         context.onChange(ignored -> poll());
@@ -426,6 +460,121 @@ public final class ActivitiesView implements View {
         c.weighty = 1;
         stack.add(Box.createVerticalGlue(), c);
         return stack;
+    }
+
+    // --- Seitenleiste -------------------------------------------------------------------------------------------
+
+    static final String NO_JOB_SELECTED = "Erst einen Auftrag in der Liste wählen";
+    /** Diagnose, Inhalte und die vier Zustandsplätze. */
+    static final int SELECTED_SLOTS = 2 + Slot.values().length;
+    /** Die Leiste mit Lupe unter der Liste. */
+    private final FindBar findBar;
+    /** Mitte der Fußzeile: breit „Alle anhalten“ und „Alle abbrechen“, schmal die Aktionen der gewählten Zeile. */
+    private final JPanel global;
+    private final JPanel selectedRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
+    private final List<IconButton> selectedButtons = new ArrayList<>();
+    private final List<Runnable> selectedRuns = new ArrayList<>();
+    /** „Groß anzeigen“ neben dem Dreieck; was es tut, bestimmt das Hauptfenster. */
+    final IconButton enlarge = new IconButton(
+            com.aresstack.spaceharvester.app.ui.content.ChatSidebar.enlargeIcon(false),
+            com.aresstack.spaceharvester.app.ui.content.ChatSidebar.ENLARGE);
+    private Runnable enlargeAction = () -> { };
+    private Runnable collapseAction = () -> { };
+
+    /** Was „Groß anzeigen“ und „Seitenleiste einklappen“ tun; das bestimmt das Hauptfenster. */
+    void sidebar(Runnable enlargeAction, Runnable collapseAction) {
+        this.enlargeAction = Objects.requireNonNull(enlargeAction, "enlargeAction");
+        this.collapseAction = Objects.requireNonNull(collapseAction, "collapseAction");
+    }
+
+    /** Zeigt am Knopf, ob die Leiste gerade groß ist: Symbol und Tooltip wechseln. */
+    void large(boolean large) {
+        enlarge.setIcon(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.enlargeIcon(large));
+        String tip = large ? com.aresstack.spaceharvester.app.ui.content.ChatSidebar.SHRINK
+                : com.aresstack.spaceharvester.app.ui.content.ChatSidebar.ENLARGE;
+        enlarge.setToolTipText(tip);
+        enlarge.getAccessibleContext().setAccessibleName(tip);
+    }
+
+    /** Zugeklappt ist der Inhalt unsichtbar, damit die Tabulatortaste nicht in verdeckte Felder läuft. */
+    void sidebarShown(boolean shown) {
+        for (Component child : root.getComponents()) {
+            child.setVisible(shown);
+        }
+    }
+
+    FindBar findBar() {
+        return findBar;
+    }
+
+    /** Die Aktionen der gewählten Zeile in der Fußzeile der schmalen Liste (für Tests). */
+    JComponent selectedRow() {
+        return selectedRow;
+    }
+
+    List<IconButton> selectedButtons() {
+        return selectedButtons;
+    }
+
+    private static javax.swing.Icon idleSelectedIcon(int slot) {
+        return switch (slot) {
+            case 0 -> DIAGNOSIS;
+            case 1 -> CONTENT;
+            case 2 -> RETRY_FAILED;
+            case 3 -> RESUME;
+            case 4 -> FORCE_REFRESH;
+            default -> Glyph.TRASH;
+        };
+    }
+
+    /** Legt auf die Knöpfe der Fußzeile, was die gewählte Zeile anbietet; ohne Auswahl sind sie blass. */
+    private void updateSelectedActions() {
+        int row = table.getSelectedRow();
+        showSelectedActions(row < 0 || row >= model.rows.size() ? -1 : table.convertRowIndexToModel(row));
+    }
+
+    /** Legt die Aktionen der Zeile {@code index} auf die Knöpfe der Fußzeile; {@code -1} sperrt sie. */
+    void showSelectedActions(int index) {
+        List<RowActions.Action> actions = index < 0 ? List.of() : fullRowActions(index);
+        int first = PROGRESS_SLOTS + 1;
+        for (int i = 0; i < SELECTED_SLOTS; i++) {
+            IconButton button = selectedButtons.get(i);
+            RowActions.Action action = first + i < actions.size() ? actions.get(first + i) : null;
+            javax.swing.Icon icon = action == null ? idleSelectedIcon(i) : action.icon();
+            boolean enabled = action != null && action.enabled();
+            button.setIcon(enabled ? icon : new Faded(icon));
+            button.setDisabledIcon(new Faded(icon));
+            button.setEnabled(enabled);
+            String tip = action == null ? NO_JOB_SELECTED : action.tooltip();
+            button.setToolTipText(tip);
+            button.getAccessibleContext().setAccessibleName(tip);
+            selectedRuns.set(i, enabled ? action.run() : () -> { });
+        }
+    }
+
+    /** Ein Symbol blass, wie die gesperrten Plätze der Zeilen ({@link RowActions}). */
+    private record Faded(javax.swing.Icon icon) implements javax.swing.Icon {
+        @Override
+        public void paintIcon(Component c, java.awt.Graphics graphics, int x, int y) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.3f));
+                g.setColor(Comic.INK);
+                icon.paintIcon(c, g, x, y);
+            } finally {
+                g.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return icon.getIconWidth();
+        }
+
+        @Override
+        public int getIconHeight() {
+            return icon.getIconHeight();
+        }
     }
 
     /** Die Wippe „Aufträge / Hintergrund“ für die Mitte der Werkzeugleiste. */
@@ -1196,6 +1345,12 @@ public final class ActivitiesView implements View {
      * Inhalte, dann die Zustandsplätze. Die Belegung kommt allein vom Zustand im Core ({@link #actionFor}).
      */
     private List<RowActions.Action> rowActions(int index) {
+        List<RowActions.Action> full = fullRowActions(index);
+        // Schmal (Seitenleiste) bleibt je Zeile nur der Balken; die Aktionen stehen in der Fußzeile.
+        return narrow && full.size() > PROGRESS_SLOTS ? full.subList(0, PROGRESS_SLOTS) : full;
+    }
+
+    private List<RowActions.Action> fullRowActions(int index) {
         if (index < 0 || index >= model.rows.size()) {
             return List.of();
         }
@@ -1955,7 +2110,8 @@ public final class ActivitiesView implements View {
 
     /**
      * Das Menü hinter dem Dreieck neben dem Besen: oben „Suchqualität messen …“ (Angelo 21.11.2026, Q1b), Trenner, dann
-     * „Alle Aufträge löschen“.
+     * „Alle Aufträge löschen“, Trenner und die drei Grenzen der Parallelität als Untermenüs
+     * ({@link ParallelChoice#menu}).
      */
     javax.swing.JPopupMenu moreJobsMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
@@ -1969,6 +2125,14 @@ public final class ActivitiesView implements View {
                 feedback::problem));
         menu.add(quality);
         menu.addSeparator();
+        if (!deleteFinished.isVisible()) {
+            javax.swing.JMenuItem finished = new javax.swing.JMenuItem(DELETE_FINISHED, Glyph.BROOM);
+            finished.setDisabledIcon(Glyph.BROOM);
+            finished.setFont(Comic.regular(13f));
+            finished.setEnabled(deleteFinished.isEnabled());
+            finished.addActionListener(e -> deleteFinished());
+            menu.add(finished);
+        }
         javax.swing.JMenuItem all = new javax.swing.JMenuItem(DELETE_ALL, Glyph.TRASH);
         all.setDisabledIcon(Glyph.TRASH);
         all.setFont(Comic.regular(13f));
@@ -1976,6 +2140,28 @@ public final class ActivitiesView implements View {
         all.setEnabled(!model.rows.isEmpty());
         all.addActionListener(e -> deleteAll());
         menu.add(all);
+        menu.addSeparator();
+        menu.add(preparations.menu(PARALLEL_PREPARATIONS));
+        menu.add(downloads.menu(PARALLEL_DOWNLOADS));
+        menu.add(connections.menu(CONNECTIONS));
+        if (narrow) {
+            menu.addSeparator();
+            for (javax.swing.AbstractButton button : List.of(pauseAll, cancelAll)) {
+                javax.swing.JMenuItem item = new javax.swing.JMenuItem(button.getText());
+                item.setFont(Comic.regular(13f));
+                item.setEnabled(button.isEnabled());
+                item.setToolTipText(button.getToolTipText());
+                item.addActionListener(e -> button.doClick(0));
+                menu.add(item);
+            }
+        }
+        menu.addSeparator();
+        javax.swing.JMenuItem collapse = new javax.swing.JMenuItem(
+                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.COLLAPSE,
+                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.collapseIcon());
+        collapse.setFont(Comic.regular(13f));
+        collapse.addActionListener(e -> collapseAction.run());
+        menu.add(collapse);
         return menu;
     }
 
@@ -2254,9 +2440,12 @@ public final class ActivitiesView implements View {
                 isNarrow = now;
                 narrow.accept(now);
             }
-            int eastWidth = Math.min(east.getPreferredSize().width, Math.max(0, right - left - westWidth - GAP));
-            west.setBounds(left, top, Math.min(westWidth, right - left), height);
-            east.setBounds(right - eastWidth, top, eastWidth, height);
+            // Die Werkzeuge rechts bleiben immer ganz erreichbar; wird es selbst ohne Beiwerk zu eng, gibt die Wippe
+            // die fehlenden Pixel her.
+            int eastWidth = Math.min(east.getPreferredSize().width, Math.max(0, right - left));
+            int eastHeight = Math.min(height, east.getPreferredSize().height);
+            west.setBounds(left, top, Math.max(0, Math.min(westWidth, right - left - GAP - eastWidth)), height);
+            east.setBounds(right - eastWidth, top + (height - eastHeight) / 2, eastWidth, eastHeight);
         }
 
         @Override
@@ -2837,6 +3026,21 @@ public final class ActivitiesView implements View {
         space.setMinWidth(value ? 0 : 15);
         space.setMaxWidth(value ? 0 : Integer.MAX_VALUE);
         space.setPreferredWidth(value ? 0 : 170);
+        javax.swing.table.TableColumn actions = table.getColumnModel().getColumn(JobsModel.ACTIONS);
+        int width = (value ? PROGRESS_SLOTS : SLOTS) * RowActions.SLOT + 8;
+        actions.setMinWidth(0);
+        actions.setMaxWidth(width);
+        actions.setMinWidth(width);
+        actions.setPreferredWidth(width);
+        global.removeAll();
+        if (value) {
+            global.add(selectedRow);
+        } else {
+            global.add(pauseAll);
+            global.add(cancelAll);
+        }
+        global.revalidate();
+        root.repaint();
     }
 
     /** Für Tests: ob die Liste schmal dargestellt wird. */

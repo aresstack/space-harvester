@@ -180,7 +180,11 @@ class MainWindowTest {
         assertThat(window[0].current()).isEqualTo(AppContext.Section.CONTENT);
         assertThat(tabs).filteredOn(AbstractButton::isSelected)
                 .extracting(b -> b.getAccessibleContext().getAccessibleName()).containsExactly("Text");
+        // Die Aufträge sind kein Bereich der Mitte mehr: sie öffnen die Seitenleiste, die Mitte bleibt bei „Text“.
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.ACTIVITIES));
+        assertThat(window[0].current()).isEqualTo(AppContext.Section.CONTENT);
+        assertThat(window[0].jobsOpen()).isTrue();
+        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.SOURCES));
         assertThat(tabs).noneMatch(AbstractButton::isSelected);
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.CONTENT));
         assertThat(tabs).filteredOn(AbstractButton::isSelected)
@@ -377,7 +381,7 @@ class MainWindowTest {
                     for (java.awt.Container up = divider.getParent(); up != null; up = up.getParent()) {
                         assertThat(up.isEnabled()).as(where + " in " + up.getClass().getSimpleName()).isTrue();
                     }
-                    int expected = pane == window.chatSplit() ? java.awt.Cursor.DEFAULT_CURSOR
+                    int expected = pane == window.chatSplit() && !window.jobsOpen() ? java.awt.Cursor.DEFAULT_CURSOR
                             : pane.getOrientation() == javax.swing.JSplitPane.VERTICAL_SPLIT
                                     ? java.awt.Cursor.S_RESIZE_CURSOR : java.awt.Cursor.E_RESIZE_CURSOR;
                     assertThat(divider.getCursor().getType()).as(where).isEqualTo(expected);
@@ -484,8 +488,10 @@ class MainWindowTest {
                 window.chatOpen(false);
                 layoutAll(surface);
                 javax.swing.JSplitPane chatSplit = window.chatSplit();
-                Component sidebar = chatSplit.getRightComponent();
-                assertThat(sidebar).isInstanceOf(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class);
+                // Rechts steht der Stapel aus Chat und Aufträgen; hier zählt die Chat-Leiste darin.
+                Component sideDeck = chatSplit.getRightComponent();
+                Component sidebar = find((java.awt.Container) sideDeck,
+                        com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class).get(0);
                 assertThat(SwingUtilities.isDescendingFrom(window.deck(), chatSplit.getLeftComponent())).isTrue();
                 assertThat(window.split().getRightComponent()).isSameAs(chatSplit);
                 // Zu: kein Platz für die Leiste, nur der schmale Teiler; der Knopf ist hell.
@@ -511,15 +517,37 @@ class MainWindowTest {
                 for (AppContext.Section section : AppContext.Section.values()) {
                     window.show(section);
                     layoutAll(surface);
-                    assertThat(sidebar.getWidth()).as(section.name()).isEqualTo(width);
+                    assertThat(sideDeck.getWidth()).as(section.name()).isEqualTo(width);
                 }
+                // „Aufträge“ hat die Leiste auf die Aufträge umgeschaltet, die Mitte blieb; der Chat-Knopf holt den
+                // Chat zurück, ein zweiter Klick auf den aktiven Knopf klappt zu.
+                assertThat(window.jobsOpen()).isTrue();
+                assertThat(window.chatOpen()).isFalse();
+                assertThat(window.chatToggle().isSelected()).isFalse();
+                assertThat(window.current()).isNotEqualTo(AppContext.Section.ACTIVITIES);
+                assertThat(WindowSizes.recallInt(MainWindow.SIDE_JOBS_KEY, -1)).isEqualTo(1);
+                // Strg+F sucht groß gezeigt in den Aufträgen, sonst (Fokus in der Mitte) in der Mitte.
+                assertThat(window.findTarget()).isSameAs(window.findBar());
+                window.chatLarge(true);
+                assertThat(window.findTarget()).isSameAs(window.activities().findBar());
+                window.chatLarge(false);
+                window.jobsOpen(false);
+                assertThat(window.jobsOpen()).isFalse();
+                assertThat(window.findTarget()).isSameAs(window.findBar());
+                window.jobsOpen(true);
+                window.chatToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.chatOpen()).isTrue();
+                assertThat(window.jobsOpen()).isFalse();
+                assertThat(sidebar.getWidth()).isEqualTo(width);
                 // Ziehen am Teiler ändert die Breite, sie wird gemerkt und nach Zu/Auf wiederhergestellt.
                 chatSplit.setDividerLocation(chatSplit.getDividerLocation() - 60);
                 layoutAll(surface);
                 assertThat(sidebar.getWidth()).isEqualTo(width + 60);
                 assertThat(WindowSizes.recallInt(MainWindow.CHAT_WIDTH_KEY, -1)).isEqualTo(width + 60);
                 assertThat(WindowSizes.recallInt(MainWindow.CHAT_OPEN_KEY, -1)).isEqualTo(1);
-                ((com.aresstack.spaceharvester.app.ui.content.ChatSidebar) sidebar).collapseButton().doClick();
+                ((javax.swing.JMenuItem) ((com.aresstack.spaceharvester.app.ui.content.ChatSidebar) sidebar).moreMenu()
+                        .getComponent(0)).doClick(0);
                 layoutAll(surface);
                 assertThat(window.chatOpen()).isFalse();
                 assertThat(window.chatToggle().isSelected()).isFalse();

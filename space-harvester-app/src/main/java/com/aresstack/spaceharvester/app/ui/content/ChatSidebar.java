@@ -13,33 +13,48 @@ import java.awt.Graphics2D;
 
 /**
  * Der Chat als Seitenleiste rechts neben der Arbeitsfläche (Angelo, 21.11.2026): oben „Chat: ‹Name› ▾“, rechts davon
- * Neuer Chat, Chat löschen und Einklappen, darunter Verlauf und Eingabe des {@link ChatPanel}. Die Leiste ersetzt den
+ * Neuer Chat, Chat löschen, Groß anzeigen und das Dreieck mit „Seitenleiste einklappen“, darunter Verlauf und Eingabe des {@link ChatPanel}. Die Leiste ersetzt den
  * früheren Reiter „Chat“; das Hauptfenster stellt sie neben die Arbeitsfläche und klappt sie auf und zu.
  */
 public final class ChatSidebar extends JPanel {
 
     public static final String TITLE = "Chat";
-    public static final String COLLAPSE = "Chat einklappen";
+    public static final String COLLAPSE = "Seitenleiste einklappen";
+    public static final String MORE = "Weitere Aktionen zum Chat";
     public static final String ENLARGE = "Groß anzeigen";
     public static final String SHRINK = "Wieder als Leiste anzeigen (Esc)";
     /** Breite beim ersten Aufklappen. */
     public static final int DEFAULT_WIDTH = 420;
     /** Schmaler wird die offene Leiste nicht: darunter passt die Eingabe nicht mehr. */
     public static final int MIN_WIDTH = 320;
+    /** Höhe der Kopfzeile samt Linie: dieselbe wie die Kopfzeile der Seitenansicht daneben. */
+    public static final int HEAD_HEIGHT = 35;
 
     private final ChatPanel chat;
-    private final IconButton collapse = new IconButton(collapseIcon(), COLLAPSE).compact();
+    /**
+     * Das Dreieck rechts in der Kopfzeile (Angelo 22.11.2026): Es ersetzt den Knopf „Chat einklappen“; zum Einklappen
+     * genügt ein Klick auf den aktiven Knopf oben rechts, der Eintrag im Menü bleibt für alle, die ihn hier suchen.
+     */
+    private final IconButton more = new IconButton(
+            new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), MORE).compact();
     private final IconButton enlarge = new IconButton(enlargeIcon(false), ENLARGE).compact();
+    private Runnable collapse = () -> { };
 
     ChatSidebar(ChatPanel chat) {
         super(new BorderLayout());
         this.chat = chat;
         setBackground(Comic.SURFACE);
-        JPanel actions = Comic.row(chat.headerActions(), enlarge, collapse);
+        JPanel actions = Comic.row(chat.headerActions(), enlarge, more);
+        more.addActionListener(e -> {
+            javax.swing.JPopupMenu menu = com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
+                    moreMenu(), more);
+            menu.show(more, more.getWidth() - menu.getPreferredSize().width, more.getHeight());
+        });
         JPanel head = new JPanel(new BorderLayout(8, 0));
         head.setOpaque(false);
         head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 12, 6, 8)));
+                BorderFactory.createEmptyBorder(0, 12, 0, 8)));
+        head.setPreferredSize(new java.awt.Dimension(0, HEAD_HEIGHT));
         head.add(chat.header(), BorderLayout.CENTER);
         head.add(actions, BorderLayout.EAST);
         add(head, BorderLayout.NORTH);
@@ -62,9 +77,24 @@ public final class ChatSidebar extends JPanel {
         return chat;
     }
 
-    /** Der Knopf „Chat einklappen“ rechts in der Kopfzeile; was er tut, bestimmt das Hauptfenster. */
-    public IconButton collapseButton() {
-        return collapse;
+    /** Was „Seitenleiste einklappen“ im Menü tut; das bestimmt das Hauptfenster. */
+    public void onCollapse(Runnable action) {
+        collapse = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Das Dreieck rechts in der Kopfzeile. */
+    public IconButton moreButton() {
+        return more;
+    }
+
+    /** Das Menü hinter dem Dreieck: „Seitenleiste einklappen“. */
+    public javax.swing.JPopupMenu moreMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem item = new javax.swing.JMenuItem(COLLAPSE, collapseIcon());
+        item.setFont(Comic.regular(13f));
+        item.addActionListener(e -> collapse.run());
+        menu.add(item);
+        return menu;
     }
 
     /**
@@ -83,7 +113,7 @@ public final class ChatSidebar extends JPanel {
     }
 
     /** Groß anzeigen: zwei Pfeile in die Ecken; in der großen Ansicht zeigen sie nach innen. */
-    private static Icon enlargeIcon(boolean large) {
+    public static Icon enlargeIcon(boolean large) {
         return new StrokeIcon() {
             @Override
             protected void paint(Graphics2D g2) {
@@ -139,7 +169,7 @@ public final class ChatSidebar extends JPanel {
     }
 
     /** Einklappen: zwei Winkel nach rechts, wohin die Leiste verschwindet. */
-    private static Icon collapseIcon() {
+    public static Icon collapseIcon() {
         return new StrokeIcon() {
             @Override
             protected void paint(Graphics2D g2) {

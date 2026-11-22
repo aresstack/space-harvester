@@ -206,6 +206,61 @@ class ActivitiesBackgroundTabTest {
     }
 
     @Test
+    void inTheSidebarTheActionsOfTheSelectedRowStandInTheFootAndTheHeadKeepsItsMenu() throws Exception {
+        Path home = Files.createTempDirectory("bgtab320");
+        AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home),
+                home.resolve("app.yml"), "test");
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                ActivitiesView view = new ActivitiesView(context, null);
+                view.tabs.select(ActivitiesView.BACKGROUND_TAB);
+                view.showJobsForTest(sample());
+                javax.swing.JComponent root = view.component();
+                root.setSize(320, 520);
+                layout(root);
+                layout(root);
+                assertThat(view.narrow()).isTrue();
+                // Fußzeile: Lupe, Auf-/Zuklappen und die Aktionen der gewählten Zeile; ohne Auswahl gesperrt.
+                assertThat(SwingUtilities.isDescendingFrom(view.selectedRow(), view.findBar())).isTrue();
+                assertThat(view.selectedButtons()).hasSize(ActivitiesView.SELECTED_SLOTS)
+                        .noneMatch(java.awt.Component::isEnabled)
+                        .allMatch(button -> ActivitiesView.NO_JOB_SELECTED.equals(button.getToolTipText()));
+                java.awt.Rectangle visible = new java.awt.Rectangle(0, 0, 320, 520);
+                for (javax.swing.JComponent part : view.selectedButtons()) {
+                    assertThat(visible.contains(SwingUtilities.convertRectangle(part.getParent(), part.getBounds(),
+                            root))).as("Knopf in der Fußzeile sichtbar").isTrue();
+                }
+                // „Alle anhalten“ und „Alle abbrechen“ stehen schmal im Menü, ebenso „Seitenleiste einklappen“.
+                assertThat(SwingUtilities.isDescendingFrom(view.pauseAll, root)).isFalse();
+                List<String> menu = new java.util.ArrayList<>();
+                for (java.awt.Component item : view.moreJobsMenu().getComponents()) {
+                    if (item instanceof javax.swing.JMenuItem entry) {
+                        menu.add(entry.getText());
+                    }
+                }
+                assertThat(menu).contains(view.pauseAll.getText(), view.cancelAll.getText(),
+                        ActivitiesView.DELETE_FINISHED,
+                        com.aresstack.spaceharvester.app.ui.content.ChatSidebar.COLLAPSE);
+                // Kopfzeile: an der Mindestbreite bleiben Vergrößern und das Dreieck ganz sichtbar.
+                for (javax.swing.JComponent part : List.<javax.swing.JComponent>of(view.enlarge, view.moreJobs)) {
+                    assertThat(visible.contains(SwingUtilities.convertRectangle(part.getParent(), part.getBounds(),
+                            root))).as("Werkzeug in der Kopfzeile sichtbar").isTrue();
+                    assertThat(part.getWidth()).isGreaterThanOrEqualTo(part.getPreferredSize().width);
+                }
+                assertThat(view.deleteFinished.isVisible()).isFalse();
+                // Eine gewählte Zeile schaltet ihre Aktionen frei.
+                // Eine Zeile schaltet ihre Aktionen frei (ohne laufenden Dienst leert die Auswahl selbst die Liste).
+                view.showSelectedActions(1);
+                assertThat(view.selectedButtons()).anyMatch(java.awt.Component::isEnabled)
+                        .noneMatch(button -> ActivitiesView.NO_JOB_SELECTED.equals(button.getToolTipText()));
+                view.tabs.select(ActivitiesView.JOBS_TAB);
+            });
+        } finally {
+            context.shutdown();
+        }
+    }
+
+    @Test
     void at900PixelsTheTabsWithTheirCountAndEveryToolStayVisible() throws Exception {
         Path home = Files.createTempDirectory("bgtab900");
         AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home),
@@ -221,8 +276,7 @@ class ActivitiesBackgroundTabTest {
                 java.awt.Rectangle visible = new java.awt.Rectangle(0, 0, 900, 520);
                 for (javax.swing.JComponent part : List.<javax.swing.JComponent>of(
                         view.tabs.button(ActivitiesView.JOBS_TAB), view.tabs.button(ActivitiesView.BACKGROUND_TAB),
-                        view.preparations.box(), view.downloads.box(),
-                        view.connections.box(), view.deleteFinished, view.moreJobs)) {
+                        view.deleteFinished, view.moreJobs)) {
                     java.awt.Rectangle bounds = SwingUtilities.convertRectangle(part.getParent(), part.getBounds(),
                             root);
                     assertThat(part.isShowing() || part.isVisible()).isTrue();
@@ -243,7 +297,8 @@ class ActivitiesBackgroundTabTest {
                 javax.swing.JComponent tools = view.tools();
                 for (javax.swing.JComponent part : List.<javax.swing.JComponent>of(view.expandAll, view.collapseAll,
                         view.pauseAll, view.cancelAll)) {
-                    assertThat(SwingUtilities.isDescendingFrom(part, root)).isFalse();
+                    // Die Aufträge bringen ihre Fußzeile mit der Lupe selbst mit (Seitenleiste).
+                    assertThat(SwingUtilities.isDescendingFrom(part, view.findBar())).isTrue();
                     assertThat(SwingUtilities.isDescendingFrom(part, tools)).isTrue();
                 }
                 tools.setSize(600, 30);

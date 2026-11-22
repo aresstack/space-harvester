@@ -546,8 +546,9 @@ class ContentViewTest {
                 && javax.swing.SwingUtilities.isDescendingFrom(chat.header(), sidebar)
                 && javax.swing.SwingUtilities.isDescendingFrom(chat.headerActions(), sidebar)
                 && !javax.swing.SwingUtilities.isDescendingFrom(chat, detail)
-                && sidebar.collapseButton().getParent() == chat.headerActions().getParent()
-                && ChatSidebar.COLLAPSE.equals(sidebar.collapseButton().getToolTipText()))).isTrue();
+                && sidebar.moreButton().getParent() == chat.headerActions().getParent()
+                && ChatSidebar.COLLAPSE.equals(((javax.swing.JMenuItem) sidebar.moreMenu().getComponent(0))
+                        .getText()))).isTrue();
         assertThat(onEdt(() -> sidebar.getMinimumSize().width)).isEqualTo(ChatSidebar.MIN_WIDTH);
         List<String> actions = onEdt(() -> find((java.awt.Container) chat.headerActions(),
                 javax.swing.AbstractButton.class).stream()

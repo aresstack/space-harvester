@@ -273,6 +273,56 @@ public final class Dialogs {
     }
 
     /**
+     * Fragt eine ganze Zahl in festen Grenzen ab, etwa die parallelen Downloads („Benutzerdefiniert …“). Nur Ziffern;
+     * „Übernehmen“ geht erst mit einer Zahl in den Grenzen.
+     *
+     * @return die Zahl oder {@code null}, wenn abgebrochen wurde
+     */
+    public static Integer askNumber(Component parent, String title, String text, int min, int max, int current) {
+        Integer[] result = {null};
+        JDialog dialog = dialog(parent, title);
+        javax.swing.JTextField field = new javax.swing.JTextField(Integer.toString(current), 6);
+        Comic.style(field);
+        ComposerButton ok = Comic.primary("Übernehmen", null);
+        ComposerButton cancel = Comic.button("Abbrechen", null);
+        Runnable check = () -> ok.setEnabled(ParallelChoice.parse(field.getText(), min, max) != null);
+        field.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent event) {
+                check.run();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent event) {
+                check.run();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent event) {
+                check.run();
+            }
+        });
+        ok.addActionListener(e -> {
+            result[0] = ParallelChoice.parse(field.getText(), min, max);
+            if (result[0] != null) {
+                dialog.dispose();
+            }
+        });
+        field.addActionListener(e -> ok.doClick());
+        cancel.addActionListener(e -> dialog.dispose());
+        JPanel body = new JPanel(new BorderLayout(0, 8));
+        body.setOpaque(false);
+        body.add(Comic.note(text + " (" + min + " bis " + max + ")"), BorderLayout.NORTH);
+        body.add(field, BorderLayout.CENTER);
+        SwingUtilities.invokeLater(() -> {
+            field.requestFocusInWindow();
+            field.selectAll();
+        });
+        show(dialog, title, body, cancel, ok);
+        return result[0];
+    }
+
+    /**
      * Ein rahmenloses modales Comic-Fenster wie das Hauptfenster: keine Titelleiste des Systems, Schiff als Symbol,
      * Escape schließt. Den Inhalt setzt {@link #frame}.
      */
