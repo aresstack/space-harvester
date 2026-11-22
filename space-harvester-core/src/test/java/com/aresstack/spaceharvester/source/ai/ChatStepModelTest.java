@@ -160,4 +160,15 @@ class ChatStepModelTest {
         assertThat(parts.version()).contains(":teile-modell@");
         assertThat(plan.version()).contains(":plan-modell@");
     }
+
+    @Test
+    void aSummaryModelAloneIsEnoughWithoutATextModel() {
+        AiServiceSettings onlySummary = new AiServiceSettings(URI.create("https://ai.example.org/v1"), "key", null,
+                null, null, null, null, Set.of()).withUses(new AiServiceSettings.ModelUse("teile-modell", null, null),
+                null);
+        ChatUpdateSummaryModel parts = new ChatUpdateSummaryModel(() -> onlySummary, settings -> {
+            throw new AssertionError("kein Aufruf");
+        });
+        assertThat(parts.available()).isTrue();
+    }
 }

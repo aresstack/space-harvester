@@ -91,7 +91,7 @@ public final class ChatUpdateSummaryModel implements SummaryModel {
 
     @Override
     public boolean available() {
-        AiServiceSettings current = settings.get();
+        AiServiceSettings current = effective();
         return current != null && current.chat();
     }
 
