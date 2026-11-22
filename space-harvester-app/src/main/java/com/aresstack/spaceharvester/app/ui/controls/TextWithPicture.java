@@ -36,6 +36,8 @@ public final class TextWithPicture extends JPanel {
     /** Abstand zwischen Text und Bild. */
     static final int GAP = 12;
     static final String OPEN_TIP = "Vergrößern";
+    /** Abstand zwischen Text und Fuß. */
+    static final int FOOTER_GAP = 2;
 
     private final String text;
     private final WrappedText beside;
@@ -48,6 +50,7 @@ public final class TextWithPicture extends JPanel {
      */
     private final javax.swing.JTextArea ruler = new javax.swing.JTextArea();
     private BufferedImage image;
+    private JComponent footer;
     /** Aus welchem Bild das gezeigte verkleinert ist (nur neu skalieren, wenn sich etwas ändert). */
     private BufferedImage scaledFrom;
     private Runnable onOpen = () -> { };
@@ -103,6 +106,27 @@ public final class TextWithPicture extends JPanel {
         splitWidth = -1;
         revalidate();
         repaint();
+    }
+
+    /**
+     * Was unter dem Text steht (etwa die Seitenverweise einer Meldung): direkt unter dem Text, auch neben dem Bild,
+     * solange der Text daneben passt; {@code null} nimmt ihn weg.
+     */
+    public void footer(JComponent footer) {
+        if (this.footer != null) {
+            remove(this.footer);
+        }
+        this.footer = footer;
+        if (footer != null) {
+            add(footer);
+        }
+        revalidate();
+        repaint();
+    }
+
+    /** Der Fuß unter dem Text, {@code null} ohne. */
+    public JComponent footer() {
+        return footer;
     }
 
     /** Was ein Klick auf das Bild tut. */
@@ -229,10 +253,12 @@ public final class TextWithPicture extends JPanel {
         int w = Math.max(1, width - in.left - in.right);
         if (image == null) {
             int h = measure(text, beside, w);
+            int fh = footerHeight(w);
             if (apply) {
                 beside.setBounds(in.left, in.top, w, h);
+                placeFooter(in.left, in.top + h + FOOTER_GAP, w, fh);
             }
-            return in.top + h + in.bottom;
+            return in.top + h + (fh > 0 ? FOOTER_GAP + fh : 0) + in.bottom;
         }
         boolean narrow = w < NARROW;
         int pw = narrow ? w : Math.min(MAX_PICTURE_WIDTH, w / 3);
@@ -241,16 +267,18 @@ public final class TextWithPicture extends JPanel {
         int block = ph + (ch > 0 ? 4 + ch : 0);
         if (narrow) {
             int th = measure(text, beside, w);
+            int fh = footerHeight(w);
             if (apply) {
                 place(in.left, in.top, pw, ph, ch);
                 boolean changed = setText(beside, text) | below.isVisible();
                 below.setVisible(false);
                 beside.setBounds(in.left, in.top + block + 8, w, th);
+                placeFooter(in.left, in.top + block + 8 + th + FOOTER_GAP, w, fh);
                 if (changed) {
                     remark();
                 }
             }
-            return in.top + block + 8 + th + in.bottom;
+            return in.top + block + 8 + th + (fh > 0 ? FOOTER_GAP + fh : 0) + in.bottom;
         }
         int tw = Math.max(1, w - pw - GAP);
         int cut = split(tw, block);
@@ -258,18 +286,47 @@ public final class TextWithPicture extends JPanel {
         String rest = text.substring(cut).strip();
         int topHeight = measure(top, beside, tw);
         int restHeight = measure(rest, beside, w);
-        int besideHeight = Math.max(block, topHeight);
+        // Passt der ganze Text neben das Bild, steht der Fuß (die Seitenverweise) direkt darunter in der linken
+        // Spalte, nicht erst unter dem Bild (UX-Manager 22.11.2026); sonst am Ende in voller Breite.
+        boolean footBeside = rest.isEmpty();
+        int fh = footerHeight(footBeside ? tw : w);
+        int left = topHeight + (footBeside && fh > 0 ? FOOTER_GAP + fh : 0);
+        int besideHeight = Math.max(block, left);
+        int total = besideHeight + (rest.isEmpty() ? 0 : 4 + restHeight)
+                + (!footBeside && fh > 0 ? FOOTER_GAP + fh : 0);
         if (apply) {
             place(in.left + w - pw, in.top, pw, ph, ch);
             boolean changed = setText(beside, top) | setText(below, rest) | below.isVisible() == rest.isEmpty();
             beside.setBounds(in.left, in.top, tw, topHeight);
             below.setVisible(!rest.isEmpty());
             below.setBounds(in.left, in.top + besideHeight + 4, w, restHeight);
+            if (footBeside) {
+                placeFooter(in.left, in.top + topHeight + FOOTER_GAP, tw, fh);
+            } else {
+                placeFooter(in.left, in.top + besideHeight + 4 + restHeight + FOOTER_GAP, w, fh);
+            }
             if (changed) {
                 remark();
             }
         }
-        return in.top + besideHeight + (rest.isEmpty() ? 0 : 4 + restHeight) + in.bottom;
+        return in.top + total + in.bottom;
+    }
+
+    /** Wie hoch der Fuß auf {@code width} Pixel ist; 0 ohne. */
+    private int footerHeight(int width) {
+        if (footer == null || !footer.isVisible()) {
+            return 0;
+        }
+        if (footer.getWidth() != width) {
+            footer.setSize(width, Math.max(1, footer.getHeight()));
+        }
+        return footer.getPreferredSize().height;
+    }
+
+    private void placeFooter(int x, int y, int width, int height) {
+        if (footer != null) {
+            footer.setBounds(x, y, width, height);
+        }
     }
 
     private void place(int x, int y, int pw, int ph, int ch) {

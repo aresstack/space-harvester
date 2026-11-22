@@ -107,6 +107,43 @@ class TextWithPictureTest {
     }
 
     @Test
+    void thePageLinksStandRightUnderTheTextBesideThePictureNotUnderThePicture() {
+        TextWithPicture body = new TextWithPicture("Die Suche findet jetzt auch Anhänge.", Color.BLACK, 13.5f);
+        javax.swing.JLabel link = new javax.swing.JLabel("→ Suche in Anhängen");
+        body.footer(link);
+        body.picture(new BufferedImage(160, 90, BufferedImage.TYPE_INT_RGB), "Suchmaske");
+        laidOut(body, 900);
+
+        WrappedText text = body.texts().get(0);
+        Rectangle picture = body.pictureBounds();
+        assertThat(link.getX()).isZero();
+        assertThat(link.getY()).as("direkt unter dem Text").isEqualTo(text.getY() + text.getHeight()
+                + TextWithPicture.FOOTER_GAP);
+        assertThat(link.getWidth()).as("in der linken Spalte").isEqualTo(900 - 280 - TextWithPicture.GAP);
+        assertThat(link.getY() + link.getHeight()).isLessThan(picture.y + picture.height);
+        assertThat(body.getHeight()).as("das Größere aus Text + Verweis und Bild + Unterschrift")
+                .isEqualTo(findCaption(body).getY() + findCaption(body).getHeight());
+
+        // ein langer Text läuft unter dem Bild weiter, der Verweis steht am Ende
+        TextWithPicture longer = new TextWithPicture(LONG, Color.BLACK, 13.5f);
+        javax.swing.JLabel end = new javax.swing.JLabel("→ Umstellung");
+        longer.footer(end);
+        longer.picture(new BufferedImage(160, 90, BufferedImage.TYPE_INT_RGB), "Bild");
+        laidOut(longer, 900);
+        WrappedText below = longer.texts().get(1);
+        assertThat(end.getY()).isEqualTo(below.getY() + below.getHeight() + TextWithPicture.FOOTER_GAP);
+        assertThat(end.getWidth()).isEqualTo(900);
+        assertThat(longer.getHeight()).isEqualTo(end.getY() + end.getHeight());
+
+        // ohne Bild: Text, darunter der Verweis
+        TextWithPicture plain = new TextWithPicture("Kurz.", Color.BLACK, 13.5f);
+        javax.swing.JLabel plainLink = new javax.swing.JLabel("→ Seite");
+        plain.footer(plainLink);
+        laidOut(plain, 900);
+        assertThat(plainLink.getY()).isEqualTo(plain.texts().get(0).getHeight() + TextWithPicture.FOOTER_GAP);
+    }
+
+    @Test
     void wordsEndWhereTheWhitespaceBegins() {
         assertThat(TextWithPicture.wordEnds("Ein  neues Format")).containsExactly(3, 10, 17);
         assertThat(TextWithPicture.wordEnds("")).isEmpty();

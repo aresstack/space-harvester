@@ -1635,11 +1635,9 @@ final class SourceUpdatesView extends JPanel {
         for (SummaryPage page : statement.pages()) {
             links.add(pageLink(page, found));
         }
-        if (statement.pages().size() <= OPEN_LINKS) {
-            add(reportBody, links);
-        } else {
-            add(reportBody, toggle(pages(statement.pages().size()), links, false));
-        }
+        // Die Verweise stehen direkt unter dem Text der Meldung, auch neben ihrem Bild (UX-Manager 22.11.2026).
+        body.footer(statement.pages().size() <= OPEN_LINKS ? links
+                : toggle(pages(statement.pages().size()), links, false));
     }
 
     static final String DETAILS_TIP = "Ausführliche KI-Zusammenfassung dieses Themas";
@@ -2447,6 +2445,9 @@ final class SourceUpdatesView extends JPanel {
             texts.add(body.text());
             if (!body.caption().isEmpty()) {
                 texts.add(body.caption());
+            }
+            if (body.footer() != null) {
+                collect(body.footer(), texts);
             }
         } else if (component instanceof JLabel label) {
             texts.add(label.getText());
