@@ -381,6 +381,10 @@ wird automatisch verwaltet.
    dem Neustart von vorn fort; Aktuelles kostet dann nur den Blick in die Ablage. Grenzen: Mit nur einem Platz für
    Vorbereitungen laufen sie nicht und warten gelb (wie jeder Hintergrundauftrag); länger als die Laufzeitgrenze
    eines Auftrags (`JobLimits#maxRunTime`) endet ein Teil mit Zeitüberschreitung und lässt sich fortsetzen.
+   Die Laufzeitgrenze meldet ihr Ablaufen selbst (Architekt 22.11.2026): `Jobs` plant je Lauf einen einmaligen
+   Zeitgeber und meldet ihn beim Ende des Laufs ab, kein Takt (ADR 0027). Beim Ablauf weckt er über
+   `JobContext#whenStopRequested`, wer an einer Sperre wartet (Verbindungsbudget, Anmeldung); der endet sofort mit
+   `TIMEOUT`, auch mitten im Warten auf die Anmeldung.
    Prozessoren, die über das Netz rechnen, reiht ein Teil wie bisher in die Warteschlange der Anreicherung ein
    (`Enrichments#recomputeInBackground`); fertig heißt hier: alle Seiten geprüft und eingereiht. Diese Warteschlange
    wird als eigene Art „KI-Anreicherung“ sichtbar (nächster Schritt). Beim Beenden wartet jede Komponente

@@ -786,6 +786,15 @@ public final class ChangeLog implements AutoCloseable {
             } catch (Exception e) {
                 throw new IllegalStateException(e);
             }
+            // Vor den Fehlern der Teile: Abbrechen, Anhalten und die abgelaufene Laufzeitgrenze gehen vor. Der Zeitgeber
+            // der Grenze weckt über whenStopRequested und bricht dabei die Teile ab; der Oberauftrag endet dann TIMEOUT,
+            // nicht abgebrochen oder mit dem Fehler eines Teils (Abnahme #1133).
+            try {
+                context.checkpoint();
+            } catch (RuntimeException stopped) {
+                cancelAll(children);
+                throw stopped;
+            }
             for (java.util.concurrent.CompletableFuture<R> result : results) {
                 if (result.isCompletedExceptionally()) {
                     cancelAll(children);

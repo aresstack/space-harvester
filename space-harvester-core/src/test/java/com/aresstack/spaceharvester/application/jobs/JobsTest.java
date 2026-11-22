@@ -645,6 +645,57 @@ class JobsTest {
     }
 
     @Test
+    void theRunTimeLimitWakesWaitersOnceWhenItExpiresAndIsWithdrawnWhenTheRunEnds() {
+        // Architekt 22.11.2026: einmaliger Zeitgeber je Lauf, kein Takt; wer an einer Sperre wartet, endet sofort.
+        Jobs jobs = new Jobs(store, executor, new JobLimits(1, 5, Duration.ofMinutes(10)), clock);
+        java.util.List<Duration> planned = new java.util.ArrayList<>();
+        java.util.concurrent.atomic.AtomicReference<Runnable> expiry = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger withdrawn = new java.util.concurrent.atomic.AtomicInteger();
+        jobs.deadlineTimer((delay, task) -> {
+            planned.add(delay);
+            expiry.set(task);
+            return withdrawn::incrementAndGet;
+        });
+        java.util.concurrent.atomic.AtomicBoolean woke = new java.util.concurrent.atomic.AtomicBoolean();
+        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> {
+            try (AutoCloseable waiting = context.whenStopRequested(() -> woke.set(true))) {
+                // Die Uhr steht: nur der Zeitgeber meldet den Ablauf.
+                expiry.get().run();
+                assertThat(woke).isTrue();
+                context.checkpoint();
+            }
+            throw new AssertionError("nicht erreicht");
+        }));
+
+        executor.runNext();
+
+        JobStatus status = jobs.status(job.id());
+        assertThat(status.state()).isEqualTo(JobState.FAILED);
+        assertThat(status.error().code()).isEqualTo("TIMEOUT");
+        assertThat(planned).containsExactly(Duration.ofMinutes(10));
+        assertThat(withdrawn).hasValue(1);
+    }
+
+    @Test
+    void aRunEndingInTimeWithdrawsItsRunTimeWake() {
+        Jobs jobs = new Jobs(store, executor, new JobLimits(1, 5, Duration.ofMinutes(10)), clock);
+        java.util.concurrent.atomic.AtomicReference<Runnable> expiry = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger withdrawn = new java.util.concurrent.atomic.AtomicInteger();
+        jobs.deadlineTimer((delay, task) -> {
+            expiry.set(task);
+            return withdrawn::incrementAndGet;
+        });
+        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+
+        executor.runNext();
+        // Ein verspätetes Wecken für den beendeten Lauf bleibt wirkungslos.
+        expiry.get().run();
+
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(withdrawn).hasValue(1);
+    }
+
+    @Test
     void exceedingTheRunTimeFailsWithTimeoutAtTheNextCheckpoint() {
         Jobs jobs = new Jobs(store, executor, new JobLimits(1, 5, Duration.ofMinutes(10)), clock);
         JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> {

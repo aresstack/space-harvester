@@ -176,6 +176,11 @@ class UpdateSummaryTest {
             int now = running.incrementAndGet();
             mostAtOnce.accumulateAndGet(now, Math::max);
             try {
+                java.util.concurrent.CountDownLatch hold = holdUntil;
+                if (hold != null) {
+                    entered.countDown();
+                    hold.await();
+                }
                 if (delayMillis > 0) {
                     Thread.sleep(delayMillis);
                 }
@@ -194,6 +199,9 @@ class UpdateSummaryTest {
     private volatile java.util.function.Predicate<String> truncateIf;
     private final java.util.concurrent.atomic.AtomicInteger failFirst = new java.util.concurrent.atomic.AtomicInteger();
     private long delayMillis;
+    /** Hält jeden Aufruf des Dienstes an, bis der Test ihn freigibt; {@code null} ohne Halt. */
+    private volatile java.util.concurrent.CountDownLatch holdUntil;
+    private final java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
     private final java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger mostAtOnce =
             new java.util.concurrent.atomic.AtomicInteger();
@@ -916,6 +924,68 @@ class UpdateSummaryTest {
             assertThat(mostAtOnce.get()).as("gleichzeitig, nie mehr als ai.parallel").isBetween(2, 3);
         } finally {
             failWhen = null;
+            UpdateSummarizer.backoffMillis = backoff;
+            parentLog.close();
+            wide.close();
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * Architekt, Abnahme #1133: Läuft die Laufzeitgrenze des Oberauftrags ab, bricht ihr Weckruf die Teile ab; die
+     * Zusammenfassung endet trotzdem FAILED mit TIMEOUT, nicht abgebrochen oder mit dem Fehler eines Teils.
+     */
+    @Test
+    void aSummaryExceedingItsRunTimeLimitEndsFailedWithTimeout() throws Exception {
+        long backoff = UpdateSummarizer.backoffMillis;
+        UpdateSummarizer.backoffMillis = 1;
+        parallel = 3;
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        holdUntil = release;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
+        Jobs wide = new Jobs(new InMemoryJobStore(), pool, new JobLimits(6, 50, Duration.ofHours(1)),
+                Clock.fixed(T0.plusSeconds(3600), ZoneOffset.UTC));
+        // Die Uhr steht; nur der Zeitgeber meldet den Ablauf, der erste geplante gehört zum Oberauftrag.
+        List<Runnable> expiries = new java.util.concurrent.CopyOnWriteArrayList<>();
+        wide.deadlineTimer((delay, task) -> {
+            expiries.add(task);
+            return () -> { };
+        });
+        ChangeLog parentLog = new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)),
+                () -> List.of("wiki"), new ChangeLog.Summaries(wide, model,
+                key -> released.contains(key.pageId()), Clock.fixed(T0.plusSeconds(7200), ZoneOffset.UTC), material));
+        try {
+            row(1, "1", "DEV", ChangeKind.NEW, "Start");
+            mark(10, true);
+            String paragraph = "Absatz mit Inhalt. ".repeat(25);
+            for (int i = 0; i < 24; i++) {
+                String pageId = "p" + i;
+                row(1, pageId, "DEV", ChangeKind.NEW, "Seite " + i);
+                row(12, pageId, "DEV", ChangeKind.CONTENT_CHANGED, "Seite " + i);
+                ParagraphChange[] changes = new ParagraphChange[12];
+                for (int j = 0; j < changes.length; j++) {
+                    changes[j] = new ParagraphChange(ParagraphChange.Kind.CHANGED, paragraph + j, paragraph + "neu " + j);
+                }
+                diff(12, pageId, "1", "2", false, changes);
+                released.add(pageId);
+            }
+            answer = """
+                    {"zusammenfassung": "Überblick.", "themen": [{"titel": "Seiten", "text": "Inhalt.", "seiten": ["p0"]}]}""";
+            JobStatus parent = parentLog.summarize(CALLER, "wiki", ChangeUpdate.OPEN);
+            assertThat(entered.await(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            try {
+                expiries.getFirst().run();
+            } finally {
+                release.countDown();
+            }
+            JobStatus done = wide.await(parent.id(), CALLER.jobOwner(), Duration.ofSeconds(60));
+
+            assertThat(done.state()).isEqualTo(JobState.FAILED);
+            assertThat(done.error().code()).isEqualTo("TIMEOUT");
+        } finally {
+            release.countDown();
+            holdUntil = null;
             UpdateSummarizer.backoffMillis = backoff;
             parentLog.close();
             wide.close();

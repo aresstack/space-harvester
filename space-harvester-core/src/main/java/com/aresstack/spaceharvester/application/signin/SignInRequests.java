@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.signin;
 
+import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.sources.SignInChallenge;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Clock;
@@ -16,6 +17,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Zusätzliche Anmeldung während eines Auftrags (ADR 0018, #185). Nach dem Vorbild des Enterprise AI Client
@@ -41,7 +44,6 @@ public class SignInRequests {
     public static final Duration DEFAULT_WAIT = Duration.ofMinutes(15);
     /** Eine Freischaltung so kurz vor dem Fehlschlag gilt schon für ihn (Anfrage lief noch ohne Sitzung). */
     private static final Duration RECENT = Duration.ofSeconds(30);
-    private static final long POLL_MILLIS = 250;
 
     /** Wie ein Warten endet. */
     public enum Outcome {
@@ -58,6 +60,10 @@ public class SignInRequests {
     /** Zählt je Quelle, wie oft eine Anforderung erledigt wurde (Code angenommen oder abgelehnt). */
     private final Map<String, Long> settled = new HashMap<>();
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
+    /** Schützt alle Felder; Wartende ({@link #await}) geben es frei, statt einen Monitor zu halten. */
+    private final ReentrantLock lock = new ReentrantLock();
+    /** Signalisiert, wenn eine Anforderung erledigt ist (Code angenommen, abgelehnt) oder entfernt wurde. */
+    private final Condition stateChanged = lock.newCondition();
 
     /** @param wait wie lange ein Auftrag höchstens auf den Code wartet; {@link Duration#ZERO}: nie */
     public SignInRequests(Duration wait, Clock clock) {
@@ -100,7 +106,8 @@ public class SignInRequests {
         }
         SignInRequest view;
         boolean changed;
-        synchronized (this) {
+        lock.lock();
+        try {
             purge();
             Pending pending = bySource.get(sourceId);
             boolean newer = false;
@@ -117,6 +124,8 @@ public class SignInRequests {
                 pending.until = until;
             }
             view = pending.view();
+        } finally {
+            lock.unlock();
         }
         if (changed) {
             changed();
@@ -130,7 +139,7 @@ public class SignInRequests {
      * danach in der gemeinsamen Sitzung, und ihr Code ist der zuletzt verschickte. Gesendet wird daher immer mit der
      * neuesten Seite. Nicht ersetzt wird, solange ein Code oder eine neue Anforderung für sie unterwegs ist
      * ({@link #submit}, {@link #resend}), und nie durch eine Seite, die schon einmal galt (etwa die aus
-     * {@link #pendingChallenge}, die ein Leser zurückbringt). Unter dem Sperrobjekt.
+     * {@link #pendingChallenge}, die ein Leser zurückbringt). Unter {@link #lock}.
      *
      * @return ob sich die sichtbare Anforderung geändert hat
      */
@@ -146,23 +155,38 @@ public class SignInRequests {
     }
 
     /** Senden oder Anfordern mit der Seite von {@code pending} ist vorbei; ab jetzt darf eine neuere sie ersetzen. */
-    private synchronized void sent(Pending pending) {
-        pending.sendingNow = false;
+    private void sent(Pending pending) {
+        lock.lock();
+        try {
+            pending.sendingNow = false;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Ob {@code owner} die offene Anforderung {@code requestId} über {@link #open} hält. */
-    public synchronized boolean ownedBy(String requestId, String owner) {
-        purge();
-        return owner != null && find(requestId).map(pending -> pending.owners.contains(owner)).orElse(false);
+    public boolean ownedBy(String requestId, String owner) {
+        lock.lock();
+        try {
+            purge();
+            return owner != null && find(requestId).map(pending -> pending.owners.contains(owner)).orElse(false);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
      * Ob die Quelle seit kurz vor {@code since} freigeschaltet wurde; dann lohnt ein neuer Versuch statt einer neuen
      * Anforderung.
      */
-    public synchronized boolean unlockedSince(String sourceId, Instant since) {
-        Instant unlocked = unlockedAt.get(sourceId);
-        return unlocked != null && since != null && !unlocked.isBefore(since.minus(RECENT));
+    public boolean unlockedSince(String sourceId, Instant since) {
+        lock.lock();
+        try {
+            Instant unlocked = unlockedAt.get(sourceId);
+            return unlocked != null && since != null && !unlocked.isBefore(since.minus(RECENT));
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -170,23 +194,34 @@ public class SignInRequests {
      * nicht, gilt eine zuletzt gesehene Zwei-Faktor-Seite der Quelle weiter (#571); danach fragt ein Abruf die Quelle
      * wieder.
      */
-    public synchronized long settlements(String sourceId) {
-        return settled.getOrDefault(sourceId, 0L);
+    public long settlements(String sourceId) {
+        lock.lock();
+        try {
+            return settled.getOrDefault(sourceId, 0L);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
-     * Wartet, bis die Quelle freigeschaltet ist. Blockiert; ruft dabei regelmäßig {@code checkpoint} auf, das mit einer
-     * Ausnahme abbricht (Abbruch des Auftrags) und die Anforderung für diesen Auftrag zurückzieht.
+     * Wartet, bis die Quelle freigeschaltet ist. Blockiert ohne Takt (ADR 0027): geweckt wird nur durch Freischalten,
+     * Ablehnen, das Ende der Wartezeit und über {@link JobContext#whenStopRequested}: Abbrechen, Anhalten und den
+     * Ablauf der Laufzeitgrenze, den {@code Jobs} mit einem einmaligen Zeitgeber je Lauf meldet. Dann ruft es
+     * {@link JobContext#checkpoint()} auf, das mit einer Ausnahme abbricht und die Anforderung für diesen Auftrag
+     * zurückzieht. Der Thread hält beim Warten keinen Monitor, ein virtueller Thread gibt seinen Träger frei. Läuft die
+     * Laufzeitgrenze während des Wartens ab, endet der Auftrag sofort mit {@code TIMEOUT}, nicht erst nach der
+     * Anmelde-Wartezeit (Architekt 22.11.2026, ersetzt „erst nach dem Aufwachen“).
      *
-     * @param failedAt  wann die Anfrage begann, die den Code verlangt hat; eine Freischaltung danach gilt schon
-     * @param checkpoint wird beim Warten aufgerufen und darf mit einer Ausnahme abbrechen
+     * @param failedAt wann die Anfrage begann, die den Code verlangt hat; eine Freischaltung danach gilt schon
+     * @param context  der wartende Auftrag oder {@code null} (dann weckt nur die Anforderung selbst)
      */
     public Outcome await(String sourceId, String jobId, SignInChallenge challenge, Instant failedAt,
-                         Runnable checkpoint) {
+                         JobContext context) {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(challenge, "challenge");
         Pending pending;
-        synchronized (this) {
+        lock.lock();
+        try {
             Instant unlocked = unlockedAt.get(sourceId);
             if (unlocked != null && failedAt != null && !unlocked.isBefore(failedAt.minus(RECENT))) {
                 return Outcome.UNLOCKED;
@@ -203,40 +238,76 @@ public class SignInRequests {
                 newer(pending, challenge);
             }
             pending.jobs.add(jobId == null ? "" : jobId);
+        } finally {
+            lock.unlock();
         }
         changed();
         Instant deadline = clock.instant().plus(wait);
+        boolean[] stop = new boolean[1];
+        AutoCloseable registration = context == null ? null : context.whenStopRequested(() -> {
+            lock.lock();
+            try {
+                stop[0] = true;
+                stateChanged.signalAll();
+            } finally {
+                lock.unlock();
+            }
+        });
         try {
             while (true) {
-                synchronized (this) {
-                    if (pending.state == State.UNLOCKED) {
-                        return Outcome.UNLOCKED;
+                Outcome outcome = null;
+                lock.lock();
+                try {
+                    while (!stop[0] && outcome == null) {
+                        if (pending.state == State.UNLOCKED) {
+                            outcome = Outcome.UNLOCKED;
+                        } else if (pending.state == State.DECLINED) {
+                            outcome = Outcome.DECLINED;
+                        } else {
+                            Duration left = Duration.between(clock.instant(), deadline);
+                            if (left.isZero() || left.isNegative()) {
+                                outcome = Outcome.DECLINED;
+                            } else {
+                                try {
+                                    stateChanged.awaitNanos(left.toNanos());
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    outcome = Outcome.DECLINED;
+                                }
+                            }
+                        }
                     }
-                    if (pending.state == State.DECLINED) {
-                        return Outcome.DECLINED;
-                    }
-                    if (!clock.instant().isBefore(deadline)) {
-                        return Outcome.DECLINED;
-                    }
-                    try {
-                        wait(POLL_MILLIS);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return Outcome.DECLINED;
-                    }
+                    // Jeder Zuhörer läuft höchstens einmal. Bricht der Prüfpunkt nicht ab (abgekoppelte Arbeit),
+                    // wartet der Auftrag ohne ihn weiter, bis die Anforderung endet oder die Wartezeit abläuft.
+                    stop[0] = false;
+                } finally {
+                    lock.unlock();
                 }
-                if (checkpoint != null) {
-                    checkpoint.run();
+                // Direkt nach jedem Aufwachen: Abbruch, Anhalten und die abgelaufene Laufzeitgrenze (TIMEOUT) greifen sofort.
+                if (context != null) {
+                    context.checkpoint();
+                }
+                if (outcome != null) {
+                    return outcome;
                 }
             }
         } finally {
+            if (registration != null) {
+                try {
+                    registration.close();
+                } catch (Exception e) {
+                    LOG.log(System.Logger.Level.WARNING, "Abmelden vom Auftrag gescheitert ({0})",
+                            e.getClass().getName());
+                }
+            }
             leave(pending, jobId == null ? "" : jobId);
         }
     }
 
     private void leave(Pending pending, String jobId) {
         boolean changed = false;
-        synchronized (this) {
+        lock.lock();
+        try {
             pending.jobs.remove(jobId);
             if (pending.jobs.isEmpty() && !held(pending) && bySource.get(pending.sourceId) == pending) {
                 bySource.remove(pending.sourceId);
@@ -244,6 +315,8 @@ public class SignInRequests {
             } else if (pending.state == State.OPEN) {
                 changed = true;
             }
+        } finally {
+            lock.unlock();
         }
         if (changed) {
             changed();
@@ -251,20 +324,30 @@ public class SignInRequests {
     }
 
     /** Offene Anforderungen, älteste zuerst. */
-    public synchronized List<SignInRequest> pending() {
-        purge();
-        List<SignInRequest> list = new ArrayList<>();
-        for (Pending pending : bySource.values()) {
-            list.add(pending.view());
+    public List<SignInRequest> pending() {
+        lock.lock();
+        try {
+            purge();
+            List<SignInRequest> list = new ArrayList<>();
+            for (Pending pending : bySource.values()) {
+                list.add(pending.view());
+            }
+            list.sort((a, b) -> a.since().compareTo(b.since()));
+            return list;
+        } finally {
+            lock.unlock();
         }
-        list.sort((a, b) -> a.since().compareTo(b.since()));
-        return list;
     }
 
     /** Die offene Anforderung einer Quelle. */
-    public synchronized Optional<SignInRequest> pendingFor(String sourceId) {
-        purge();
-        return Optional.ofNullable(bySource.get(sourceId)).map(Pending::view);
+    public Optional<SignInRequest> pendingFor(String sourceId) {
+        lock.lock();
+        try {
+            purge();
+            return Optional.ofNullable(bySource.get(sourceId)).map(Pending::view);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -275,22 +358,37 @@ public class SignInRequests {
      * Wer lesen will, schließt sich mit dieser Seite der offenen Anforderung an ({@link #open}, {@link #await}); sie
      * ersetzt dort nichts.
      */
-    public synchronized Optional<SignInChallenge> pendingChallenge(String sourceId) {
-        purge();
-        return Optional.ofNullable(bySource.get(sourceId)).filter(pending -> pending.state == State.OPEN)
-                .map(pending -> pending.challenge);
+    public Optional<SignInChallenge> pendingChallenge(String sourceId) {
+        lock.lock();
+        try {
+            purge();
+            return Optional.ofNullable(bySource.get(sourceId)).filter(pending -> pending.state == State.OPEN)
+                    .map(pending -> pending.challenge);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Die Anforderung, auf die ein Auftrag gerade wartet („Wartet auf Anmeldung“). */
-    public synchronized Optional<SignInRequest> waiting(String jobId) {
-        return bySource.values().stream().filter(pending -> pending.jobs.contains(jobId)).findFirst()
-                .map(Pending::view);
+    public Optional<SignInRequest> waiting(String jobId) {
+        lock.lock();
+        try {
+            return bySource.values().stream().filter(pending -> pending.jobs.contains(jobId)).findFirst()
+                    .map(Pending::view);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Die offene Anforderung mit dieser Kennung. */
-    public synchronized Optional<SignInRequest> request(String requestId) {
-        purge();
-        return find(requestId).map(Pending::view);
+    public Optional<SignInRequest> request(String requestId) {
+        lock.lock();
+        try {
+            purge();
+            return find(requestId).map(Pending::view);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -327,8 +425,11 @@ public class SignInRequests {
         boolean loginOnly = code.length == 0 && username != null && password != null;
         try {
             Pending pending;
-            synchronized (this) {
+            lock.lock();
+            try {
                 pending = find(requestId).orElse(null);
+            } finally {
+                lock.unlock();
             }
             if (pending == null) {
                 return SignInRequest.Answer.GONE;
@@ -340,15 +441,19 @@ public class SignInRequests {
                 LOG.log(System.Logger.Level.INFO, "Einmalcode für Quelle {0} wird gesendet{1}", pending.sourceId,
                         username == null || password == null ? "" : " (mit Benutzeranmeldung)");
             }
-            synchronized (pending.sending) {
+            pending.sending.lock();
+            try {
                 SignInChallenge challenge;
-                synchronized (this) {
+                lock.lock();
+                try {
                     if (pending.state != State.OPEN) {
                         return pending.state == State.UNLOCKED ? SignInRequest.Answer.ACCEPTED
                                 : SignInRequest.Answer.GONE;
                     }
                     challenge = pending.challenge;
                     pending.sendingNow = true;
+                } finally {
+                    lock.unlock();
                 }
                 SignInChallenge next;
                 try {
@@ -362,7 +467,8 @@ public class SignInRequests {
                     sent(pending);
                     throw e;
                 }
-                synchronized (this) {
+                lock.lock();
+                try {
                     pending.sendingNow = false;
                     pending.failure = "";
                     if (next == null) {
@@ -372,11 +478,13 @@ public class SignInRequests {
                         if (bySource.get(pending.sourceId) == pending) {
                             bySource.remove(pending.sourceId);
                         }
-                        notifyAll();
+                        stateChanged.signalAll();
                     } else {
                         pending.superseded.add(challenge);
                         pending.challenge = next;
                     }
+                } finally {
+                    lock.unlock();
                 }
                 if (loginOnly) {
                     LOG.log(System.Logger.Level.INFO, "Web-Anmeldung für Quelle {0}: {1}", pending.sourceId,
@@ -388,6 +496,8 @@ public class SignInRequests {
                 changed();
                 return next == null ? SignInRequest.Answer.ACCEPTED
                         : loginOnly ? SignInRequest.Answer.NEXT_STEP : SignInRequest.Answer.REJECTED;
+            } finally {
+                pending.sending.unlock();
             }
         } finally {
             Arrays.fill(code, '\0');
@@ -406,20 +516,27 @@ public class SignInRequests {
      */
     public Optional<SignInRequest> resend(String requestId) {
         Pending pending;
-        synchronized (this) {
+        lock.lock();
+        try {
             pending = find(requestId).orElse(null);
+        } finally {
+            lock.unlock();
         }
         if (pending == null) {
             return Optional.empty();
         }
-        synchronized (pending.sending) {
+        pending.sending.lock();
+        try {
             SignInChallenge challenge;
-            synchronized (this) {
+            lock.lock();
+            try {
                 if (pending.state != State.OPEN) {
                     return Optional.empty();
                 }
                 challenge = pending.challenge;
                 pending.sendingNow = true;
+            } finally {
+                lock.unlock();
             }
             SignInChallenge next;
             try {
@@ -432,14 +549,19 @@ public class SignInRequests {
                 sent(pending);
                 throw e;
             }
-            synchronized (this) {
+            lock.lock();
+            try {
                 pending.sendingNow = false;
                 pending.failure = "";
                 if (next != null && next != challenge) {
                     pending.superseded.add(challenge);
                     pending.challenge = next;
                 }
+            } finally {
+                lock.unlock();
             }
+        } finally {
+            pending.sending.unlock();
         }
         changed();
         return request(requestId);
@@ -458,15 +580,19 @@ public class SignInRequests {
                 challenge.service()), code), password);
         LOG.log(System.Logger.Level.WARNING, "{0} für Quelle {1} nicht gesendet ({2}, {3})", what, pending.sourceId,
                 e.reason(), SignInFailures.rootType(e));
-        synchronized (this) {
+        lock.lock();
+        try {
             pending.failure = failure;
+        } finally {
+            lock.unlock();
         }
         changed();
     }
 
     /** Lehnt ab: die wartenden Aufträge laden ohne diese Dateien weiter, sie fehlen mit Grund. */
     public boolean decline(String requestId) {
-        synchronized (this) {
+        lock.lock();
+        try {
             Pending pending = find(requestId).orElse(null);
             if (pending == null) {
                 return false;
@@ -474,7 +600,9 @@ public class SignInRequests {
             pending.state = State.DECLINED;
             bySource.remove(pending.sourceId);
             settled.merge(pending.sourceId, 1L, Long::sum);
-            notifyAll();
+            stateChanged.signalAll();
+        } finally {
+            lock.unlock();
         }
         changed();
         return true;
@@ -511,7 +639,7 @@ public class SignInRequests {
     private void purge() {
         boolean removed = bySource.values().removeIf(pending -> pending.jobs.isEmpty() && !held(pending));
         if (removed) {
-            notifyAll();
+            stateChanged.signalAll();
         }
     }
 
@@ -533,8 +661,8 @@ public class SignInRequests {
         final Set<String> owners = new LinkedHashSet<>();
         /** Bis wann die Halter sie offen halten; {@code null} ohne Halter. */
         Instant until;
-        final Object sending = new Object();
-        /** Ob gerade ein Code oder eine neue Anforderung mit {@link #challenge} unterwegs ist (unter dem Sperrobjekt). */
+        final ReentrantLock sending = new ReentrantLock();
+        /** Ob gerade ein Code oder eine neue Anforderung mit {@link #challenge} unterwegs ist (unter {@link SignInRequests#lock}). */
         boolean sendingNow;
         /** Seiten, die schon einmal galten; sie ersetzen die aktuelle nie wieder ({@link SignInRequests#newer}). */
         final Set<SignInChallenge> superseded = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());

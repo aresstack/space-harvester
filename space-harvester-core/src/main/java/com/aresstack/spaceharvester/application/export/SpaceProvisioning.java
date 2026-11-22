@@ -52,6 +52,11 @@ public interface SpaceProvisioning {
             }
 
             @Override
+            public AutoCloseable whenStopRequested(Runnable listener) {
+                return context.whenStopRequested(listener);
+            }
+
+            @Override
             public boolean cancelRequested() {
                 return context.cancelRequested();
             }

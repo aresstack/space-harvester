@@ -3,6 +3,11 @@ package com.aresstack.spaceharvester.application.assets;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
+import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -11,7 +16,38 @@ import org.junit.jupiter.api.Test;
 /** Gesamtbudget der Verbindungen für Bilder und Anhänge, nach Restzeit verteilt (Angelo 11.11.2026). */
 class ConnectionBudgetTest {
 
-    private static final Runnable NOTHING = () -> { };
+    private static final JobContext NOTHING = new StopContext();
+
+    @Test
+    void manyJobsWaitingForConnectionsOnVirtualThreadsNeverHoldTheirCarriers() throws Exception {
+        // Architekt 22.11.2026: Mit synchronized und wait() hielte jeder Wartende seinen Träger fest.
+        int waiters = 400;
+        ConnectionBudget budget = new ConnectionBudget(0);
+        CountDownLatch entered = new CountDownLatch(waiters);
+        java.util.List<java.util.concurrent.Future<?>> waiting = new java.util.ArrayList<>();
+        try (java.util.concurrent.ExecutorService virtual =
+                     java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < waiters; i++) {
+                waiting.add(virtual.submit(() -> {
+                    entered.countDown();
+                    budget.awaitAvailable(NOTHING);
+                    return null;
+                }));
+            }
+            try {
+                assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                assertThat(virtual.submit(() -> "frei").get(10, TimeUnit.SECONDS)).isEqualTo("frei");
+
+                budget.total(4);
+                for (java.util.concurrent.Future<?> each : waiting) {
+                    each.get(10, TimeUnit.SECONDS);
+                }
+            } finally {
+                // Scheitert eine Frist, wartet close() sonst ewig auf die Wartenden.
+                budget.total(4);
+            }
+        }
+    }
 
     @Test
     void aSingleDownloadGetsTheWholeBudget() {
@@ -90,12 +126,301 @@ class ConnectionBudgetTest {
     }
 
     @Test
+    void aLeaseRegistersOneListenerForAllItsAcquiresAndDropsItOnClose() {
+        // Architekt, Abnahme #1133: ein Zuhörer je Lease statt je acquire, sonst kopiert jedes acquire die Liste.
+        ConnectionBudget budget = new ConnectionBudget(4);
+        StopContext job = new StopContext();
+        ConnectionBudget.Lease lease = budget.register(() -> 1);
+        for (int i = 0; i < 50; i++) {
+            lease.acquire(job);
+            lease.release();
+        }
+        assertThat(job.listeners).hasSize(1);
+        assertThat(job.registrations).hasValue(1);
+
+        lease.close();
+
+        assertThat(job.listeners).isEmpty();
+    }
+
+    @Test
+    void manyWaitersInDifferentWrappersOfOneJobShareOneListenerAndAStopWakesThemAll() throws Exception {
+        // Architekt, Abnahme #1133: ExportAssetCollection hüllt den Auftrag je Seite neu ein; verglichen wird der
+        // Auftrag, nicht die Hülle. Ein Stopp weckt alle Wartenden, auch die über eine andere Hülle.
+        int waiters = 200;
+        ConnectionBudget budget = new ConnectionBudget(1, java.time.Duration.ofHours(1));
+        StopContext job = new StopContext();
+        ConnectionBudget.Lease lease = budget.register(() -> 1);
+        lease.acquire(new Wrapper(job));
+        List<java.util.concurrent.Future<?>> waiting = new java.util.ArrayList<>();
+        List<Thread> threads = new CopyOnWriteArrayList<>();
+        try (java.util.concurrent.ExecutorService virtual =
+                     java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            try {
+                for (int i = 0; i < waiters; i++) {
+                    waiting.add(virtual.submit(() -> {
+                        threads.add(Thread.currentThread());
+                        lease.acquire(new Wrapper(job));
+                        return null;
+                    }));
+                }
+                long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                while ((threads.size() < waiters || !threads.stream().allMatch(thread ->
+                        thread.getState() == Thread.State.WAITING || thread.getState() == Thread.State.TIMED_WAITING))
+                        && System.nanoTime() < until) {
+                    Thread.onSpinWait();
+                }
+                assertThat(threads).hasSize(waiters);
+                assertThat(job.registrations).hasValue(1);
+
+                job.cancel();
+
+                for (java.util.concurrent.Future<?> each : waiting) {
+                    assertThat(each).failsWithin(10, TimeUnit.SECONDS).withThrowableThat().havingCause()
+                            .isInstanceOf(JobCancelledException.class);
+                }
+            } finally {
+                job.cancel();
+            }
+        }
+        lease.release();
+        lease.close();
+        assertThat(job.listeners).isEmpty();
+    }
+
+    @Test
+    void anAcquireAfterCloseFailsInsteadOfRegisteringAListenerNobodyCloses() {
+        ConnectionBudget budget = new ConnectionBudget(4);
+        StopContext job = new StopContext();
+        ConnectionBudget.Lease lease = budget.register(() -> 1);
+        lease.close();
+
+        assertThatThrownBy(() -> lease.acquire(job)).isInstanceOf(IllegalStateException.class);
+        assertThat(job.listeners).isEmpty();
+    }
+
+    @Test
+    void aFiredListenerIsRegisteredAgainForTheNextAcquire() {
+        // Der Zuhörer läuft höchstens einmal; danach braucht ein weiteres acquire einen neuen.
+        ConnectionBudget budget = new ConnectionBudget(4);
+        StopContext job = new StopContext();
+        ConnectionBudget.Lease lease = budget.register(() -> 1);
+        lease.acquire(job);
+        lease.release();
+        job.wakeWithoutStopping();
+        assertThat(job.listeners).isEmpty();
+
+        lease.acquire(job);
+        lease.release();
+
+        assertThat(job.listeners).hasSize(1);
+        assertThat(job.registrations).hasValue(2);
+        lease.close();
+    }
+
+    @Test
     void theCheckpointEndsAWait() {
         ConnectionBudget budget = new ConnectionBudget(0);
+        StopContext paused = new StopContext();
+        paused.cancel();
 
-        assertThatThrownBy(() -> budget.awaitAvailable(() -> {
-            throw new IllegalStateException("angehalten");
-        })).hasMessage("angehalten");
+        assertThatThrownBy(() -> budget.awaitAvailable(paused)).isInstanceOf(JobCancelledException.class);
         assertThatThrownBy(() -> new ConnectionBudget(65)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theRuntimeLimitWakesAWaitForTheBudgetAtOnce() {
+        // Codex-Review #1133: Bei Budget 0 hielte der Auftrag sonst ewig seinen Download-Platz. Die Laufzeitgrenze
+        // meldet sich wie in Jobs über whenStopRequested; die Frist ist eine Stunde, also weckt nur die Meldung.
+        ConnectionBudget budget = new ConnectionBudget(0, java.time.Duration.ofHours(1));
+        StopContext limited = new StopContext();
+        java.util.concurrent.CompletableFuture<Void> waiter = java.util.concurrent.CompletableFuture.runAsync(
+                () -> budget.awaitAvailable(limited));
+        while (limited.listeners.isEmpty()) {
+            Thread.onSpinWait();
+        }
+
+        limited.expire();
+
+        assertThat(waiter).failsWithin(5, TimeUnit.SECONDS).withThrowableThat().havingCause()
+                .isInstanceOfSatisfying(JobFailedException.class, e -> assertThat(e.code()).isEqualTo("TIMEOUT"));
+        assertThat(limited.listeners).isEmpty();
+    }
+
+    @Test
+    void stoppingWakesWaitersAtOnceWithoutATick() throws Exception {
+        // ADR 0027: Anhalten oder Abbrechen weckt; das Budget bleibt 0, und kein Takt sieht nach.
+        ConnectionBudget budget = new ConnectionBudget(0);
+        StopContext waiting = new StopContext();
+        java.util.concurrent.CompletableFuture<Void> waiter = java.util.concurrent.CompletableFuture.runAsync(
+                () -> budget.awaitAvailable(waiting));
+        while (waiting.listeners.isEmpty()) {
+            Thread.onSpinWait();
+        }
+
+        waiting.cancel();
+
+        assertThat(waiter).failsWithin(5, TimeUnit.SECONDS).withThrowableThat().havingCause()
+                .isInstanceOf(JobCancelledException.class);
+        assertThat(waiting.listeners).isEmpty();
+    }
+
+    @Test
+    void releasingAConnectionLetsTheNextDownloadStartAtOnce() throws Exception {
+        // Freigeben signalisiert: der Wartende läuft weiter, ohne auf die Frist der Anteile zu warten. Die Frist ist
+        // hier eine Stunde, also weckt ihn nur das Signal; keine Zeitmessung.
+        ConnectionBudget budget = new ConnectionBudget(1, java.time.Duration.ofHours(1));
+        ConnectionBudget.Lease lease = budget.register(() -> 1);
+        lease.acquire(NOTHING);
+        CountDownLatch waiting = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
+        Thread second = new Thread(() -> {
+            waiting.countDown();
+            lease.acquire(NOTHING);
+            started.set(true);
+        });
+        second.setDaemon(true);
+        second.start();
+        assertThat(waiting.await(5, TimeUnit.SECONDS)).isTrue();
+        while (second.getState() != Thread.State.TIMED_WAITING) {
+            Thread.onSpinWait();
+        }
+
+        lease.release();
+        second.join(5_000);
+
+        assertThat(started).isTrue();
+        lease.release();
+        lease.close();
+    }
+
+    private static final class StopContext implements JobContext {
+
+        final List<Runnable> listeners = new CopyOnWriteArrayList<>();
+        private volatile boolean cancelled;
+        /** Laufzeitgrenze abgelaufen. */
+        volatile boolean expired;
+
+        /** Wie der Zeitgeber der Laufzeitgrenze in {@code Jobs}: überfällig, dann die Wartenden wecken. */
+        void expire() {
+            expired = true;
+            for (Runnable listener : listeners) {
+                if (listeners.remove(listener)) {
+                    listener.run();
+                }
+            }
+        }
+
+        void cancel() {
+            cancelled = true;
+            for (Runnable listener : listeners) {
+                if (listeners.remove(listener)) {
+                    listener.run();
+                }
+            }
+        }
+
+        /** Weckt alle Zuhörer, ohne anzuhalten (wie ein Anhalten, das gleich wieder fortsetzt). */
+        void wakeWithoutStopping() {
+            for (Runnable listener : listeners) {
+                if (listeners.remove(listener)) {
+                    listener.run();
+                }
+            }
+        }
+
+        final AtomicLong registrations = new AtomicLong();
+
+        @Override
+        public AutoCloseable whenStopRequested(Runnable listener) {
+            registrations.incrementAndGet();
+            listeners.add(listener);
+            if ((cancelled || expired) && listeners.remove(listener)) {
+                listener.run();
+            }
+            return () -> listeners.remove(listener);
+        }
+
+        @Override
+        public String jobId() {
+            return "job-1";
+        }
+
+        @Override
+        public void checkpoint() {
+            if (cancelled) {
+                throw new JobCancelledException("job-1");
+            }
+            if (expired) {
+                throw new JobFailedException("TIMEOUT", "Laufzeitgrenze überschritten");
+            }
+        }
+
+        @Override
+        public boolean cancelRequested() {
+            return cancelled;
+        }
+
+        @Override
+        public void discovered(long pages) {
+        }
+
+        @Override
+        public void processed(long pages) {
+        }
+
+        @Override
+        public void written(long pages) {
+        }
+
+        @Override
+        public void failed(long pages) {
+        }
+    }
+
+    /** Eine Hülle um den Auftrag wie {@code ExportAssetCollection.Tally}: anderes Objekt, derselbe Auftrag. */
+    private static final class Wrapper implements JobContext {
+
+        private final JobContext job;
+
+        Wrapper(JobContext job) {
+            this.job = job;
+        }
+
+        @Override
+        public AutoCloseable whenStopRequested(Runnable listener) {
+            return job.whenStopRequested(listener);
+        }
+
+        @Override
+        public String jobId() {
+            return job.jobId();
+        }
+
+        @Override
+        public void checkpoint() {
+            job.checkpoint();
+        }
+
+        @Override
+        public boolean cancelRequested() {
+            return job.cancelRequested();
+        }
+
+        @Override
+        public void discovered(long pages) {
+        }
+
+        @Override
+        public void processed(long pages) {
+        }
+
+        @Override
+        public void written(long pages) {
+        }
+
+        @Override
+        public void failed(long pages) {
+        }
     }
 }

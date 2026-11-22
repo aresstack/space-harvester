@@ -26,7 +26,8 @@ class PageLoadsTest {
     private final Set<PageKey> cache = ConcurrentHashMap.newKeySet();
     private final Map<String, String> spaces = Map.of("1", "ALPHA", "2", "ALPHA", "3", "BETA", "4", "BETA");
     private final BackgroundJobsTest.Steps executor = new BackgroundJobsTest.Steps();
-    private final Jobs jobs = new Jobs(new InMemoryJobStore(), executor, new JobLimits(4, 10, Duration.ofHours(1)),
+    private final CountingStore store = new CountingStore();
+    private final Jobs jobs = new Jobs(store, executor, new JobLimits(4, 10, Duration.ofHours(1)),
             new BackgroundJobsTest.Ticking());
     private final AcquisitionScheduler scheduler = new AcquisitionScheduler((caller, key) -> {
         if (key.pageId().equals("4")) {
@@ -65,13 +66,19 @@ class PageLoadsTest {
                     return null;
                 }));
             }
-            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            // Während alle warten, läuft noch Arbeit auf einem virtuellen Thread.
-            assertThat(virtual.submit(() -> "frei").get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo("frei");
+            try {
+                assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                // Während alle warten, läuft noch Arbeit auf einem virtuellen Thread.
+                assertThat(virtual.submit(() -> "frei").get(10, java.util.concurrent.TimeUnit.SECONDS))
+                        .isEqualTo("frei");
 
-            wake.ring();
-            for (java.util.concurrent.Future<?> each : waiting) {
-                each.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                wake.ring();
+                for (java.util.concurrent.Future<?> each : waiting) {
+                    each.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                }
+            } finally {
+                // Scheitert eine Frist, wartet close() sonst ewig auf die Wartenden (Codex-Review #1132).
+                wake.ring();
             }
         }
     }
@@ -243,14 +250,23 @@ class PageLoadsTest {
     }
 
     @Test
-    void aRefreshDoesNotJoinAPausedRefreshPartThatWouldNeverLoad() {
+    void aRefreshDoesNotJoinAPausedRefreshPartThatWouldNeverLoad() throws Exception {
         // Abnahme #1080: etwa nach abgelaufener Anmeldung angehalten; die veralteten Seiten kämen nie.
         BackgroundGroup paused = loads.join(AccessContext.technicalClient("app"), "Veraltete Treffer nachladen",
                 pages("1"), true).started().orElseThrow();
+        // PageLoads führt die offenen Teile als Abbild der Auftragsmeldungen (Abnahme #1132); die Meldung kommt
+        // gebündelt. Dieser Zuhörer meldet sich nach dem von PageLoads, denn er kam später dazu.
+        java.util.concurrent.CountDownLatch reported = new java.util.concurrent.CountDownLatch(1);
+        background.subscribe(PageLoads.KIND, status -> {
+            if (status.state() == JobState.PAUSED) {
+                reported.countDown();
+            }
+        }, last -> { });
         background.pause(paused.groupId());
         executor.runAll();
         assertThat(background.group(paused.groupId()).orElseThrow().parts()).extracting(JobStatus::state)
                 .containsOnly(JobState.PAUSED);
+        assertThat(reported.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
 
         PageLoads.Joined again = loads.join(AccessContext.technicalClient("app"), "Veraltete Treffer nachladen",
                 pages("1"), true);
@@ -432,6 +448,55 @@ class PageLoadsTest {
     }
 
     @Test
+    void joiningNeverReadsTheJobStoreButAnImageOfTheJobReports() {
+        // Architekt (Abnahme #1132): kein Speicher-Scan auf dem Weg der Suchtreffer.
+        BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("1", "3")).orElseThrow();
+        long before = store.reads();
+
+        PageLoads.Joined again = loads.join(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("1", "3"));
+
+        assertThat(again.started()).isEmpty();
+        assertThat(again.joined()).containsExactly(first.groupId());
+        assertThat(store.reads()).isEqualTo(before);
+    }
+
+    @Test
+    void aPartRunningAgainInItsEntryIsInTheImageAtOnce() throws Exception {
+        // Abnahme #1133: Ein Teil, der aus FAILED neu läuft, steht sofort im Abbild, nicht erst mit der Meldung.
+        BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("4")).orElseThrow();
+        String partId = first.parts().get(0).id();
+        java.util.concurrent.CountDownLatch failed = new java.util.concurrent.CountDownLatch(1);
+        background.subscribe(PageLoads.KIND, status -> {
+            if (status.id().equals(partId) && status.state() == JobState.FAILED) {
+                failed.countDown();
+            }
+        }, last -> { });
+        executor.runAll();
+        assertThat(failed.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        background.resumeWithoutCaller(partId);
+        PageLoads.Joined again = loads.join(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("4"));
+
+        assertThat(again.started()).isEmpty();
+        assertThat(again.joined()).containsExactly(first.groupId());
+    }
+
+    @Test
+    void afterARestartTheImageStartsWithThePartsLeftOpen() {
+        BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                pages("1")).orElseThrow();
+        BackgroundJobs restarted = new BackgroundJobs(jobs, "app");
+        PageLoads again = new PageLoads(restarted, scheduler, AccessContext.technicalClient("app"), cache::contains,
+                key -> Optional.ofNullable(spaces.get(key.pageId())));
+
+        assertThat(again.join(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("1")).joined())
+                .containsExactly(first.groupId());
+    }
+
+    @Test
     void pagesThatAnOpenPartAlreadyLoadsStartNoSecondGroup() {
         BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
                 pages("1", "3")).orElseThrow();
@@ -515,5 +580,27 @@ class PageLoadsTest {
         waiter.join(10_000);
         assertThat(result.get()).isTrue();
         assertThat(checkpoints.get()).isEqualTo(3);
+    }
+
+    /**
+     * Zählt, wie oft der Testthread den ganzen Speicher liest; Zustellungen auf anderen Threads (etwa ein watch, der
+     * group() liest) zählen nicht (Abnahme #1133).
+     */
+    private static final class CountingStore extends InMemoryJobStore {
+
+        private final java.util.concurrent.atomic.AtomicLong reads = new java.util.concurrent.atomic.AtomicLong();
+        private final Thread counted = Thread.currentThread();
+
+        long reads() {
+            return reads.get();
+        }
+
+        @Override
+        public List<JobStatus> all() {
+            if (Thread.currentThread() == counted) {
+                reads.incrementAndGet();
+            }
+            return super.all();
+        }
     }
 }
