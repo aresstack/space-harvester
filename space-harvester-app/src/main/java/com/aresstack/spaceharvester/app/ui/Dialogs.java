@@ -91,6 +91,26 @@ public final class Dialogs {
         return result[0];
     }
 
+    /**
+     * Eingabe als Overlay wie {@link #confirmOverlay}: {@code title} als Überschrift neben dem Esc-Kreis, darunter
+     * {@code body} und rechtsbündig eine Pille {@code action}; Enter löst sie aus, Esc und der Kreis brechen ab.
+     *
+     * @return {@code true} nur nach {@code action}
+     */
+    public static boolean formOverlay(Component parent, String title, JComponent body, String action) {
+        boolean[] result = {false};
+        JDialog dialog = dialog(parent, title);
+        ComposerButton accept = Comic.primary(action, null);
+        accept.addActionListener(e -> {
+            result[0] = true;
+            dialog.dispose();
+        });
+        escFrame(dialog, title, confirmStack(body, accept), dialog::dispose);
+        dialog.getRootPane().setDefaultButton(accept);
+        present(dialog, new Dimension(440, 0));
+        return result[0];
+    }
+
     /** Inhalt von {@link #confirmOverlay} ohne Fenster: {@code body}, darunter rechtsbündig die Knöpfe. */
     static JPanel confirmStack(JComponent body, ComposerButton... buttons) {
         JPanel stack = new JPanel(new BorderLayout(0, 14));

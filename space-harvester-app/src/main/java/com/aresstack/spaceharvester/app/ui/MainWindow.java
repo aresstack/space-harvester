@@ -211,9 +211,11 @@ public final class MainWindow implements AppContext.Navigator {
     public MainWindow(AppContext context) {
         this.context = context;
         context.setNavigator(this);
-        // Server des Command Deck aus KeePass, über dieselbe Kopplung wie die Wissensquellen.
+        // Server des Command Deck aus KeePass, über dieselbe Kopplung wie die Wissensquellen; BetaView zusätzlich
+        // über den Netzweg der App (Proxy, Zertifikate).
         commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
-                new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass));
+                new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
+                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());
