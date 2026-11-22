@@ -32,6 +32,7 @@ public final class ChatStepModel implements StepModel {
     private final Supplier<AiServiceSettings> settings;
     private final Supplier<String> stepModel;
     private final Supplier<Integer> maxTokens;
+    private final Supplier<String> thinking;
     private final Function<AiServiceSettings, RemoteAi> remote;
 
     /**
@@ -50,7 +51,19 @@ public final class ChatStepModel implements StepModel {
     public ChatStepModel(String id, Supplier<AiServiceSettings> settings, Supplier<String> stepModel,
                          Supplier<Integer> maxTokens, ConfiguredSourceCatalog catalog, TrustBundles trustBundles,
                          String userAgent) {
-        this(id, settings, stepModel, maxTokens, current -> RemoteAi.of(current, catalog, trustBundles, userAgent));
+        this(id, settings, stepModel, maxTokens, () -> null, catalog, trustBundles, userAgent);
+    }
+
+    /**
+     * Mit eigener Tokenlänge und eigenem Nachdenken des Schritts: {@code thinking} ({@code none}, {@code low},
+     * {@code medium}, {@code high}) geht bei jeder Anfrage mit; {@code null} heißt wie das Text-Modell
+     * ({@code ai.step-thinking}).
+     */
+    public ChatStepModel(String id, Supplier<AiServiceSettings> settings, Supplier<String> stepModel,
+                         Supplier<Integer> maxTokens, Supplier<String> thinking, ConfiguredSourceCatalog catalog,
+                         TrustBundles trustBundles, String userAgent) {
+        this(id, settings, stepModel, maxTokens, thinking,
+                current -> RemoteAi.of(current, catalog, trustBundles, userAgent));
         Objects.requireNonNull(catalog, "catalog");
         Objects.requireNonNull(trustBundles, "trustBundles");
         Objects.requireNonNull(userAgent, "userAgent");
@@ -63,6 +76,12 @@ public final class ChatStepModel implements StepModel {
 
     ChatStepModel(String id, Supplier<AiServiceSettings> settings, Supplier<String> stepModel,
                   Supplier<Integer> maxTokens, Function<AiServiceSettings, RemoteAi> remote) {
+        this(id, settings, stepModel, maxTokens, () -> null, remote);
+    }
+
+    ChatStepModel(String id, Supplier<AiServiceSettings> settings, Supplier<String> stepModel,
+                  Supplier<Integer> maxTokens, Supplier<String> thinking, Function<AiServiceSettings, RemoteAi> remote) {
+        this.thinking = Objects.requireNonNull(thinking, "thinking");
         this.maxTokens = Objects.requireNonNull(maxTokens, "maxTokens");
         this.id = Objects.requireNonNull(id, "id");
         this.settings = Objects.requireNonNull(settings, "settings");
@@ -81,10 +100,11 @@ public final class ChatStepModel implements StepModel {
         }
         String step = stepModel.get();
         Integer limit = maxTokens.get();
-        if ((step == null || step.isBlank()) && limit == null) {
+        String think = thinking.get();
+        if ((step == null || step.isBlank()) && limit == null && (think == null || think.isBlank())) {
             return current;
         }
-        return current.forChat(step, limit);
+        return current.forChat(step, limit, think);
     }
 
     /** Verfahren, Modell und ein Fingerabdruck der Dienstadresse; nie die Adresse selbst. */

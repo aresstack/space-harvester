@@ -712,9 +712,9 @@ public final class RemoteAi {
         return response.content();
     }
 
-    /** Optionen eines eigenen Bild-Prompts: Nachdenken wie {@link #termCompletions()} ({@code ai.step-thinking}). */
+    /** Optionen eines eigenen Bild-Prompts: Nachdenken des Vision-Modells ({@code ai.vision-thinking}). */
     private ChatOptions visionOptions() {
-        String thinking = settings.stepThinking();
+        String thinking = settings.visionThinkingLevel();
         ChatOptions.Builder builder = ChatOptions.builder().model(settings.visionModel());
         if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {
             builder.reasoningEffort(thinking);
@@ -731,10 +731,10 @@ public final class RemoteAi {
     private ChatCompletionPort visionPort(int timeoutMillis) {
         if (settings.provider() == AiProvider.OLLAMA) {
             return limited(new OllamaChatAdapter(ollama(timeoutMillis), settings.visionModel(),
-                    settings.contextTokens(), settings.stepThinking()), settings.visionMaxTokens());
+                    settings.contextTokens(), settings.visionThinkingLevel()), settings.visionMaxTokens());
         }
         return limited(new OpenAiCompatibleChatAdapter(chatConfig(settings.visionModel(), timeoutMillis)),
-                settings.visionMaxTokens());
+                settings.visionMaxTokens(), settings.visionThinkingLevel());
     }
 
     /**
@@ -743,10 +743,11 @@ public final class RemoteAi {
      */
     private ChatCompletionPort chatPort(String model, int timeoutMillis) {
         if (settings.provider() == AiProvider.OLLAMA) {
-            return limited(new OllamaChatAdapter(ollama(timeoutMillis), model, settings.contextTokens()),
-                    settings.chatMaxTokens());
+            return limited(new OllamaChatAdapter(ollama(timeoutMillis), model, settings.contextTokens(),
+                    settings.stepThinking()), settings.chatMaxTokens());
         }
-        return limited(new OpenAiCompatibleChatAdapter(chatConfig(model, timeoutMillis)), settings.chatMaxTokens());
+        return limited(new OpenAiCompatibleChatAdapter(chatConfig(model, timeoutMillis)), settings.chatMaxTokens(),
+                settings.stepThinking());
     }
 
     /**
@@ -756,25 +757,46 @@ public final class RemoteAi {
      * Antworten wie SVG-Schaubilder brechen ab. Ein Schritt mit eigenem Limit behält es.
      */
     static ChatCompletionPort limited(ChatCompletionPort port, int maxTokens) {
+        return limited(port, maxTokens, null);
+    }
+
+    /**
+     * Wie {@link #limited(ChatCompletionPort, int)}, dazu das Nachdenken (Angelo 22.11.2026: „überall das Nachdenken
+     * einstellbar, sonst nimmt er irgendwas Standardmäßiges“): Eine Anfrage ohne eigenes {@code reasoningEffort}
+     * bekommt {@code thinking}. Legt ein Aufruf das Nachdenken aus gutem Grund selbst fest, bleibt es. Für einen
+     * OpenAI-kompatiblen Dienst; {@code none} geht dort nicht mit, weil viele Dienste den Wert ablehnen (bei Ollama
+     * schickt {@link OllamaChatAdapter} {@code think: false}).
+     */
+    static ChatCompletionPort limited(ChatCompletionPort port, int maxTokens, String thinking) {
+        String effort = thinking == null || "none".equals(thinking) ? null : thinking;
         return new ChatCompletionPort() {
             @Override
             public ChatResponse complete(ChatRequest request) {
-                return port.complete(withLimit(request, maxTokens));
+                return port.complete(withLimit(request, maxTokens, effort));
             }
 
             @Override
             public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
-                return port.stream(withLimit(request, maxTokens), listener);
+                return port.stream(withLimit(request, maxTokens, effort), listener);
             }
         };
     }
 
-    private static ChatRequest withLimit(ChatRequest request, int maxTokens) {
+    private static ChatRequest withLimit(ChatRequest request, int maxTokens, String effort) {
         ChatOptions options = request.options() == null ? ChatOptions.defaults() : request.options();
-        if (options.maxTokens() != null) {
+        boolean limit = options.maxTokens() == null;
+        boolean think = effort != null && options.reasoningEffort() == null;
+        if (!limit && !think) {
             return request;
         }
-        return new ChatRequest(request.messages(), options.toBuilder().maxTokens(maxTokens).build(), request.tools());
+        ChatOptions.Builder builder = options.toBuilder();
+        if (limit) {
+            builder.maxTokens(maxTokens);
+        }
+        if (think) {
+            builder.reasoningEffort(effort);
+        }
+        return new ChatRequest(request.messages(), builder.build(), request.tools());
     }
 
     /** Verbindungen zum Ollama-Server mit Route, TLS und Frist wie die übrigen Aufrufe. */

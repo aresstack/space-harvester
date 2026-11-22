@@ -1096,14 +1096,15 @@ public final class Harvester implements AutoCloseable {
             this.simplifications = new Simplifications(new ChatStepModel(ChatStepModel.SIMPLIFICATION,
                     () -> liveAi ? this.settings.ai() : startAi,
                     () -> this.settings.simplification().model(), () -> this.settings.simplification().maxTokens(),
-                    catalog, trustBundles, builder.userAgent),
+                    () -> this.settings.simplification().thinking(), catalog, trustBundles, builder.userAgent),
                     new SimplificationStore(enrichmentStore, clock), withdrawn::mayProcess);
             Simplifications simplified = this.simplifications;
             // ADR 0032, FL4: Prüfschritt nur auf Auftrag, gleicher Modellweg wie die Vorstufe (Temperatur 0, abgeschnitten
             // = Fehler), an das Modell nur Seiten mit KI-Freigabe; seine Ablage zählt als Seiteninhalt.
             this.statementChecks = new StatementChecks(new ChatStepModel(ChatStepModel.CHECK,
                     () -> liveAi ? this.settings.ai() : startAi,
-                    () -> this.settings.check().model(), () -> this.settings.check().maxTokens(), catalog,
+                    () -> this.settings.check().model(), () -> this.settings.check().maxTokens(),
+                    () -> this.settings.check().thinking(), catalog,
                     trustBundles, builder.userAgent),
                     new StatementCheckStore(enrichmentStore, clock), withdrawn::mayProcess,
                     StatementChecks.pageAccess(access, page -> cache.find(page).map(PageSnapshot::spaceKey)));
@@ -1184,7 +1185,8 @@ public final class Harvester implements AutoCloseable {
             StatementAnalyzer modelAnalyzer = new ModelStatementAnalyzer(new ChatStepModel(ModelStatementAnalyzer.STEP,
                     () -> liveAi ? this.settings.ai() : startAi,
                     () -> this.settings == null ? null : this.settings.analyzer().model(),
-                    () -> this.settings == null ? null : this.settings.analyzer().maxTokens(), catalog, trustBundles,
+                    () -> this.settings == null ? null : this.settings.analyzer().maxTokens(),
+                    () -> this.settings == null ? null : this.settings.analyzer().thinking(), catalog, trustBundles,
                     builder.userAgent), sentences);
             java.util.function.Function<PageSnapshot, Optional<PageText>> readerText = snapshot -> {
                 try {

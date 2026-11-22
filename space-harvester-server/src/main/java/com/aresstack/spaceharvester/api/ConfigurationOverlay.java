@@ -45,6 +45,7 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.RERANK_MODEL, "ai." + AiServiceSettings.VISION_MODEL,
             "ai." + AiServiceSettings.CHAT_MAX_TOKENS, "ai." + AiServiceSettings.VISION_MAX_TOKENS,
             "ai." + AiServiceSettings.IMAGE_MODEL, "ai." + AiServiceSettings.IMAGE_MAX_TOKENS,
+            "ai." + AiServiceSettings.VISION_THINKING, "ai." + AiServiceSettings.IMAGE_THINKING,
             SearchSettings.SEMANTIC, SearchSettings.RERANK, SearchSettings.PREFETCH_HITS,
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
@@ -61,7 +62,8 @@ public final class ConfigurationOverlay {
             StandingSettings.OUTDATED_WORDS, StandingSettings.DRAFT_WORDS, CheckSettings.SCOPE, CheckSettings.PARALLEL,
             CheckSettings.MODEL, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN, AnalyzerSettings.ANALYZER,
             AnalyzerSettings.MODEL, SimplificationSettings.MAX_TOKENS, CheckSettings.MAX_TOKENS,
-            AnalyzerSettings.MAX_TOKENS));
+            AnalyzerSettings.MAX_TOKENS, SimplificationSettings.THINKING, CheckSettings.THINKING,
+            AnalyzerSettings.THINKING));
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
     private static final Set<String> LISTS = withGlossaryRules(false, Set.of(
@@ -116,6 +118,8 @@ public final class ConfigurationOverlay {
         put(properties, "ai." + AiServiceSettings.VISION_MAX_TOKENS, ai.visionMaxTokens());
         put(properties, "ai." + AiServiceSettings.IMAGE_MODEL, ai.imageModel());
         put(properties, "ai." + AiServiceSettings.IMAGE_MAX_TOKENS, ai.imageMaxTokens());
+        put(properties, "ai." + AiServiceSettings.VISION_THINKING, ai.visionThinking());
+        put(properties, "ai." + AiServiceSettings.IMAGE_THINKING, ai.imageThinking());
         SearchSettings search = configuration.search();
         put(properties, SearchSettings.SEMANTIC, search.semantic());
         put(properties, SearchSettings.RERANK, search.rerank());
@@ -176,6 +180,9 @@ public final class ConfigurationOverlay {
         put(properties, SimplificationSettings.MAX_TOKENS, configuration.simplification().maxTokens());
         put(properties, CheckSettings.MAX_TOKENS, configuration.check().maxTokens());
         put(properties, AnalyzerSettings.MAX_TOKENS, configuration.analyzer().maxTokens());
+        put(properties, SimplificationSettings.THINKING, configuration.simplification().thinking());
+        put(properties, CheckSettings.THINKING, configuration.check().thinking());
+        put(properties, AnalyzerSettings.THINKING, configuration.analyzer().thinking());
         GlossaryRuleSettings rules = configuration.terms().glossaryRules();
         put(properties, GlossaryRuleSettings.MAX_TERMS, rules.maxTerms());
         for (GlossaryRuleSettings.Kind kind : GlossaryRuleSettings.Kind.values()) {

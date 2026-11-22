@@ -484,6 +484,11 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(SimplificationSettings.MAX_TOKENS, e.getMessage()));
         }
+        try {
+            simplification = simplification.withThinking(read.value(SimplificationSettings.THINKING));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(SimplificationSettings.THINKING, e.getMessage()));
+        }
         StandingSettings standing = StandingSettings.DEFAULT;
         try {
             standing = new StandingSettings(words(read, StandingSettings.OUTDATED_WORDS,
@@ -511,6 +516,11 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(CheckSettings.MAX_TOKENS, e.getMessage()));
         }
+        try {
+            check = check.withThinking(read.value(CheckSettings.THINKING));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(CheckSettings.THINKING, e.getMessage()));
+        }
         AnalyzerSettings analyzer = AnalyzerSettings.DEFAULT;
         try {
             analyzer = new AnalyzerSettings(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.parse(
@@ -522,6 +532,11 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             analyzer = analyzer.withMaxTokens(optionalInteger(read.value(AnalyzerSettings.MAX_TOKENS)));
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(AnalyzerSettings.MAX_TOKENS, e.getMessage()));
+        }
+        try {
+            analyzer = analyzer.withThinking(read.value(AnalyzerSettings.THINKING));
+        } catch (IllegalArgumentException e) {
+            problems.add(new ConfigurationProblem(AnalyzerSettings.THINKING, e.getMessage()));
         }
         ImageSettings images = ImageSettings.DEFAULT;
         try {

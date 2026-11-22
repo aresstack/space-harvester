@@ -457,6 +457,14 @@ class SetupWizardTest {
             assertThat(SwingUtilities.isDescendingFrom(panel.chatMaxTokens, chatRow)).isTrue();
             assertThat(SwingUtilities.isDescendingFrom(panel.imageMaxTokens, panel.imageModel.getParent().getParent()))
                     .as("Bildgenerierung: Modell und Tokenlänge in einer Zeile").isTrue();
+            // Nachdenken je Modell ganz rechts in derselben Zeile (Angelo 22.11.2026).
+            assertThat(SwingUtilities.isDescendingFrom(panel.stepThinking, chatRow)).isTrue();
+            assertThat(SwingUtilities.isDescendingFrom(panel.visionThinking, panel.visionModel.getParent().getParent()))
+                    .isTrue();
+            assertThat(SwingUtilities.isDescendingFrom(panel.imageThinking, panel.imageModel.getParent().getParent()))
+                    .isTrue();
+            assertThat(SwingUtilities.isDescendingFrom(panel.checkThinking, panel.checkModel.getParent().getParent()))
+                    .isTrue();
             assertThat(javax.swing.SwingUtilities.convertPoint(panel.dimensions, panel.dimensions.getWidth(), 0,
                     models).x).as("gleiche rechte Kante wie Feld mit ▾").isEqualTo(right);
             assertThat(javax.swing.SwingUtilities.convertPoint(panel.advanced, 0, 0, models).x)

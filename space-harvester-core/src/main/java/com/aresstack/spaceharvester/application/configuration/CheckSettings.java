@@ -13,15 +13,16 @@ import com.aresstack.spaceharvester.application.check.CheckScope;
  * @param model    eigenes Chat-Modell für diesen Schritt oder {@code null} für {@code ai.chat-model}
  * @param maxTokens Tokenlänge (Ausgabelimit) dieses Schritts oder {@code null} für {@code ai.chat-max-tokens}
  */
-public record CheckSettings(CheckScope scope, int parallel, String model, Integer maxTokens) {
+public record CheckSettings(CheckScope scope, int parallel, String model, Integer maxTokens, String thinking) {
 
     public static final String SCOPE = "statements.check.scope";
     public static final String PARALLEL = "statements.check.parallel";
     public static final String MODEL = "statements.check.model";
     public static final String MAX_TOKENS = "statements.check.max-tokens";
+    public static final String THINKING = "statements.check.thinking";
     public static final int DEFAULT_PARALLEL = 2;
     public static final CheckSettings DEFAULT = new CheckSettings(CheckScope.UNCERTAIN_AND_STAGE, DEFAULT_PARALLEL,
-            null, null);
+            null, null, null);
 
     public CheckSettings {
         scope = scope == null ? CheckScope.UNCERTAIN_AND_STAGE : scope;
@@ -32,6 +33,7 @@ public record CheckSettings(CheckScope scope, int parallel, String model, Intege
         if (maxTokens != null && (maxTokens < 1 || maxTokens > 1_000_000)) {
             throw new IllegalArgumentException("Tokenlänge zwischen 1 und 1000000");
         }
+        thinking = StepThinking.normalize(thinking);
     }
 
     /** Ohne eigene Tokenlänge. */
@@ -39,8 +41,18 @@ public record CheckSettings(CheckScope scope, int parallel, String model, Intege
         this(scope, parallel, model, null);
     }
 
+    /** Ohne eigenes Nachdenken (wie das Text-Modell). */
+    public CheckSettings(CheckScope scope, int parallel, String model, Integer maxTokens) {
+        this(scope, parallel, model, maxTokens, null);
+    }
+
+    /** Dieselben Einstellungen mit anderem Nachdenken; {@code null} heißt wie das Text-Modell. */
+    public CheckSettings withThinking(String value) {
+        return new CheckSettings(scope, parallel, model, maxTokens, value);
+    }
+
     /** Dieselben Einstellungen mit anderer Tokenlänge; {@code null} heißt {@code ai.chat-max-tokens}. */
     public CheckSettings withMaxTokens(Integer value) {
-        return new CheckSettings(scope, parallel, model, value);
+        return new CheckSettings(scope, parallel, model, value, thinking);
     }
 }

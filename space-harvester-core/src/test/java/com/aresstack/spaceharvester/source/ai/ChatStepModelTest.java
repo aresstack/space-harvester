@@ -71,4 +71,31 @@ class ChatStepModelTest {
         assertThat(model.effective().chatMaxTokens()).isEqualTo(65536);
         assertThat(own.chatMaxTokens()).isEqualTo(AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS);
     }
+
+    @Test
+    void theStepThinkingReplacesTheThinkingOfTheTextModelOnlyWhenSet() {
+        ChatStepModel inherits = new ChatStepModel("check", () -> AI.withStepThinking("low"), () -> null,
+                () -> null, () -> null, settings -> {
+                    throw new AssertionError("kein Aufruf");
+                });
+        ChatStepModel own = new ChatStepModel("check", () -> AI, () -> null, () -> null, () -> "high", settings -> {
+            throw new AssertionError("kein Aufruf");
+        });
+
+        assertThat(inherits.effective().stepThinking()).isEqualTo("low");
+        assertThat(own.effective().stepThinking()).isEqualTo("high");
+        assertThat(AI.stepThinking()).isEqualTo(AiServiceSettings.DEFAULT_STEP_THINKING).isEqualTo("none");
+    }
+
+    @Test
+    void visionAndImageGenerationThinkLikeTheTextModelUntilTheyHaveTheirOwn() {
+        AiServiceSettings text = AI.withStepThinking("medium");
+        assertThat(text.visionThinkingLevel()).isEqualTo("medium");
+        assertThat(text.imageGeneration().stepThinking()).isEqualTo("medium");
+
+        AiServiceSettings own = text.withThinking("none", "HIGH");
+        assertThat(own.visionThinkingLevel()).isEqualTo("none");
+        assertThat(own.imageGeneration().stepThinking()).isEqualTo("high");
+        assertThat(own.stepThinking()).isEqualTo("medium");
+    }
 }

@@ -567,7 +567,9 @@ public final class ConfigFileEditor {
                     + inner + "parallel: " + simplification.parallel() + "\n"
                     + (simplification.model() == null ? "" : inner + "model: " + quoted(simplification.model()) + "\n")
                     + (simplification.maxTokens() == null ? ""
-                            : inner + "max-tokens: " + simplification.maxTokens() + "\n");
+                            : inner + "max-tokens: " + simplification.maxTokens() + "\n")
+                    + (simplification.thinking() == null ? ""
+                            : inner + "thinking: " + simplification.thinking() + "\n");
         });
         AppSettings settings = loader.read(file, text);
         List<String> before = loader.read(file, base.text()).problems();
@@ -615,7 +617,8 @@ public final class ConfigFileEditor {
                     + inner + "scope: " + check.scope().value() + "\n"
                     + inner + "parallel: " + check.parallel() + "\n"
                     + (check.model() == null ? "" : inner + "model: " + quoted(check.model()) + "\n")
-                    + (check.maxTokens() == null ? "" : inner + "max-tokens: " + check.maxTokens() + "\n");
+                    + (check.maxTokens() == null ? "" : inner + "max-tokens: " + check.maxTokens() + "\n")
+                    + (check.thinking() == null ? "" : inner + "thinking: " + check.thinking() + "\n");
         });
         AppSettings settings = loader.read(file, text);
         List<String> before = loader.read(file, base.text()).problems();
@@ -642,6 +645,8 @@ public final class ConfigFileEditor {
                 : indent + "analyzer-model: " + quoted(analyzer.model()) + "\n");
         text = nested(text, "statements", "analyzer-max-tokens", indent -> analyzer.maxTokens() == null ? ""
                 : indent + "analyzer-max-tokens: " + analyzer.maxTokens() + "\n");
+        text = nested(text, "statements", "analyzer-thinking", indent -> analyzer.thinking() == null ? ""
+                : indent + "analyzer-thinking: " + analyzer.thinking() + "\n");
         AppSettings settings = loader.read(file, text);
         List<String> before = loader.read(file, base.text()).problems();
         boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));

@@ -1118,6 +1118,43 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theThinkingOfEachModelGoesNextToItsTokenLength() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("https://ki.firma.de/v1", "text-modell", null, null, null, java.util.List.of())
+                .withVisionModel("bild-modell").withThinking("high", "low");
+        var check = new com.aresstack.spaceharvester.application.configuration.CheckSettings(
+                com.aresstack.spaceharvester.application.check.CheckScope.ALL, 2, null, null, "medium");
+        var simplification = new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
+                com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 2, null,
+                null, "none");
+        var analyzer = new com.aresstack.spaceharvester.application.configuration.AnalyzerSettings(
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, null, null, "high");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+        editor.save(file, editor.withCheck(file, new ConfigFileEditor.Draft(Files.readString(file), null), check));
+        editor.save(file, editor.withSimplification(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                simplification));
+        editor.save(file, editor.withAnalyzer(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                analyzer));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("vision-thinking: high", "image-thinking: low", "      thinking: medium\n",
+                "      thinking: none\n", "    analyzer-thinking: high\n");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.ai().visionThinking()).isEqualTo("high");
+        assertThat(settings.ai().imageThinking()).isEqualTo("low");
+        assertThat(settings.check()).isEqualTo(check);
+        assertThat(settings.simplification()).isEqualTo(simplification);
+        assertThat(settings.analyzer()).isEqualTo(analyzer);
+        assertThat(ai.withThinking("gründlich", null).problems()).anyMatch(p -> p.contains("Vision-Modells"));
+        Files.writeString(file, "space-harvester:\n  statements:\n    check:\n      thinking: gründlich\n");
+        assertThat(loader.load(file).problems()).anyMatch(p -> p.contains("statements.check.thinking"));
+        assertThat(loader.load(file).check().thinking()).isNull();
+    }
+
+    @Test
     void rerankModelAndChunkingGoIntoTheAiBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sources: []\n");

@@ -32,6 +32,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param visionMaxTokens     Ausgabelimit einer Antwort des Vision-Modells in Tokens; leer: 8192
  * @param imageModel          Modell der Bildgenerierung (SVG-Schaubilder); leer: das Chat-Modell
  * @param imageMaxTokens      Ausgabelimit einer Bildgenerierung in Tokens; leer: 16384
+ * @param visionThinking      Nachdenken des Vision-Modells (none, low, medium, high); leer: wie step-thinking
+ * @param imageThinking       Nachdenken der Bildgenerierung; leer: wie step-thinking
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -43,13 +45,15 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            @DefaultValue("8192") int chatMaxTokens, String provider,
                            Integer contextTokens, Duration loadTimeout, Integer retries,
                            Duration loadPollInterval, String stepThinking, Integer parallel,
-                           Integer visionMaxTokens, String imageModel, Integer imageMaxTokens) {
+                           Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
+                           String visionThinking, String imageThinking) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
                 trustBundle, externalProcessingSources, rerankModel, visionModel, chatMaxTokens,
                 AiProvider.fromKey(provider), contextTokens, loadTimeout, retries,
-                loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens);
+                loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
+                visionThinking, imageThinking);
     }
 
     /** Ohne API-Key. */
