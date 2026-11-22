@@ -2,6 +2,9 @@ package com.aresstack.spaceharvester.app.ui.deck.betaview;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.deck.access.ServerAccount;
+import com.aresstack.spaceharvester.deck.access.ServerAccounts;
+import com.aresstack.spaceharvester.deck.access.ServerCredentials;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSession;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
 import com.aresstack.spaceharvester.deck.betaview.ConnectionState;
@@ -12,7 +15,6 @@ import com.aresstack.spaceharvester.deck.betaview.InfoLine;
 import com.aresstack.spaceharvester.deck.betaview.NameAndDescription;
 import com.aresstack.spaceharvester.deck.betaview.http.FakeBetaViewServer;
 import com.aresstack.spaceharvester.deck.betaview.http.HttpBetaViewServer;
-import com.aresstack.spaceharvester.deck.betaview.http.HttpClientFactory;
 import java.awt.Component;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -49,7 +51,7 @@ class BetaViewWorkspaceTest {
     void nothingIsRequestedBeforeLoginAndManualLoginSearchesReadsAndDownloads() throws Exception {
         try (FakeBetaViewServer server = new FakeBetaViewServer()) {
             Path target = folder.resolve("Tagesabschluss.txt");
-            build(BetaViewAccess.direct(), new FakePrompts(target));
+            build(ServerAccounts.NONE, new FakePrompts(target));
             assertThat(server.requests()).as("Öffnen des Reiters fragt den Server nicht").isEmpty();
 
             SwingUtilities.invokeAndWait(() -> {
@@ -89,38 +91,34 @@ class BetaViewWorkspaceTest {
     }
 
     @Test
-    void keePassEntryLogsIn() throws Exception {
+    void theSharedKeePassAccountsLogIn() throws Exception {
         try (FakeBetaViewServer server = new FakeBetaViewServer()) {
             AtomicReference<String> asked = new AtomicReference<>();
-            BetaViewAccess keePass = new BetaViewAccess() {
+            ServerAccount account = new ServerAccount("BetaView Test", server.address().toString(),
+                    FakeBetaViewServer.USER);
+            // Dieselben Host-Zugänge wie Terminal, FTP und NDV (im Betrieb KeePassServerAccounts).
+            ServerAccounts shared = new ServerAccounts() {
                 @Override
-                public HttpClientFactory http() {
-                    return HttpClientFactory.direct();
+                public List<ServerAccount> accounts() {
+                    return List.of(account);
                 }
 
                 @Override
-                public boolean keePassPaired() {
-                    return true;
-                }
-
-                @Override
-                public List<String> keePassTitles() {
-                    return List.of("BetaView Test");
-                }
-
-                @Override
-                public Login keePassLogin(String title) {
-                    asked.set(title);
-                    return new Login(FakeBetaViewServer.USER, FakeBetaViewServer.PASSWORD.toCharArray(),
-                            server.address().toString());
+                public ServerCredentials credentials(String entry) {
+                    asked.set(entry);
+                    return new ServerCredentials(account, FakeBetaViewServer.PASSWORD.toCharArray());
                 }
             };
-            build(keePass, new FakePrompts(folder.resolve("x")));
+            build(shared, new FakePrompts(folder.resolve("x")));
             SwingUtilities.invokeAndWait(() -> {
                 BetaViewConnectForm form = workspace.form();
                 form.login.select(BetaViewConnectForm.KEEPASS);
                 form.address.setText("");
-                form.entries(List.of("BetaView Test"));
+                form.loadEntries();
+            });
+            await(() -> workspace.form().entry.getItemCount() == 1, "Eintrag aus den gemeinsamen Zugängen");
+            SwingUtilities.invokeAndWait(() -> {
+                BetaViewConnectForm form = workspace.form();
                 form.entry.setSelectedItem("BetaView Test");
                 form.submit();
             });
@@ -139,9 +137,9 @@ class BetaViewWorkspaceTest {
         assertThat(DocumentPane.shortLabel(longTitle)).hasSizeLessThanOrEqualTo(DocumentPane.MAX_PILL).endsWith("…");
     }
 
-    private void build(BetaViewAccess access, Prompts prompts) throws Exception {
-        SwingUtilities.invokeAndWait(() -> workspace = new BetaViewWorkspace(
-                new BetaViewSessions(new HttpBetaViewServer(access.http()), background), access, prompts));
+    private void build(ServerAccounts accounts, Prompts prompts) throws Exception {
+        SwingUtilities.invokeAndWait(() -> workspace = new BetaViewWorkspace(new BetaViewSessions(
+                new HttpBetaViewServer(BetaViewAccess.direct().http()), background), accounts, prompts));
     }
 
     private BetaViewSession connected() throws Exception {

@@ -6,6 +6,8 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.controls.PasswordReveal;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
+import com.aresstack.spaceharvester.deck.access.ServerAccount;
+import com.aresstack.spaceharvester.deck.access.ServerAccounts;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewProfile;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
 import java.awt.BorderLayout;
@@ -48,17 +50,18 @@ final class BetaViewConnectForm extends JPanel {
     private final JLabel problem = new JLabel(" ");
     private final JPanel keePassRows = Prompts.form();
     private final JPanel manualRows = Prompts.form();
-    private final BetaViewAccess access;
+    private final ServerAccounts accounts;
     private final BiConsumer<BetaViewProfile, char[]> connect;
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton submit;
     private boolean entriesLoaded;
 
     /**
-     * @param connect meldet mit Profil und Kennwort an (auf dem EDT); das Kennwort gehört danach dem Empfänger
+     * @param accounts die gemeinsamen Host-Zugänge des Command Deck (dieselbe KeePass-Kopplung wie Terminal, FTP, NDV)
+     * @param connect  meldet mit Profil und Kennwort an (auf dem EDT); das Kennwort gehört danach dem Empfänger
      */
-    BetaViewConnectForm(BetaViewAccess access, BiConsumer<BetaViewProfile, char[]> connect) {
+    BetaViewConnectForm(ServerAccounts accounts, BiConsumer<BetaViewProfile, char[]> connect) {
         super(new BorderLayout());
-        this.access = access;
+        this.accounts = accounts;
         this.connect = connect;
         setOpaque(false);
         entry.setEditable(true);
@@ -75,11 +78,11 @@ final class BetaViewConnectForm extends JPanel {
         loadEntries.setFont(Comic.regular(12.5f));
         loadEntries.setForeground(Comic.BLUE);
         loadEntries.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        loadEntries.setToolTipText("Einträge aus KeePass lesen (koppelt bei Bedarf)");
+        loadEntries.setToolTipText("Einträge neu aus KeePass lesen");
         loadEntries.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseClicked(java.awt.event.MouseEvent event) {
-                loadEntries(true);
+                loadEntries();
             }
         });
         hintRow.add(loadEntries, BorderLayout.EAST);
@@ -97,7 +100,7 @@ final class BetaViewConnectForm extends JPanel {
         login.onSelect(choice -> {
             updateLogin();
             if (KEEPASS.equals(choice)) {
-                loadEntries(false);
+                loadEntries();
             }
         });
 
@@ -116,7 +119,7 @@ final class BetaViewConnectForm extends JPanel {
             if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()
                     && !entriesLoaded && KEEPASS.equals(login.selected())) {
                 entriesLoaded = true;
-                loadEntries(false);
+                loadEntries();
             }
         });
         getAccessibleContext().setAccessibleName("Neue BetaView-Anmeldung");
@@ -126,30 +129,28 @@ final class BetaViewConnectForm extends JPanel {
         boolean keePass = KEEPASS.equals(login.selected());
         keePassRows.setVisible(keePass);
         manualRows.setVisible(!keePass);
-        if (keePass) {
-            keePassHint.setText(access.keePassPaired() ? "Benutzer und Kennwort kommen aus KeePass"
-                    : "Nicht gekoppelt – beim Anmelden fragt KeePass nach dem Einmal-Passwort");
-        }
         revalidate();
         repaint();
     }
 
-    /** Liest die Titel der KeePass-Einträge; koppelt nur, wenn {@code mayPair}, sonst gilt die bestehende Kopplung. */
-    void loadEntries(boolean mayPair) {
-        if (!mayPair && !access.keePassPaired()) {
-            return;
-        }
+    /**
+     * Liest die Einträge aus den gemeinsamen Host-Zugängen (stiller KeePass-Zugang wie Terminal, FTP und NDV; ohne
+     * Kopplung steht der Grund mit dem Weg zu den Einstellungen im Hinweis).
+     */
+    void loadEntries() {
         String keep = entryTitle();
-        keePassHint.setText("Verbinde mit KeePass …");
-        Background.run(access::keePassTitles, titles -> {
+        keePassHint.setText("Lese KeePass …");
+        Background.run(accounts::accounts, found -> {
+            List<String> titles = found.stream().map(ServerAccount::entry).toList();
             entry.removeAllItems();
             titles.forEach(entry::addItem);
             if (!keep.isEmpty() && !titles.contains(keep)) {
                 entry.addItem(keep);
             }
             entry.setSelectedItem(keep.isEmpty() ? null : keep);
-            keePassHint.setText("Gekoppelt · " + titles.size() + (titles.size() == 1 ? " Eintrag" : " Einträge"));
-        }, error -> keePassHint.setText("KeePass: " + BetaViewSessions.describe(error)));
+            keePassHint.setText(titles.size() + (titles.size() == 1 ? " Eintrag" : " Einträge")
+                    + " · gemeinsam mit Terminal, FTP und NDV");
+        }, error -> keePassHint.setText(BetaViewSessions.describe(error)));
     }
 
     String entryTitle() {
@@ -172,19 +173,20 @@ final class BetaViewConnectForm extends JPanel {
             }
             submit.setEnabled(false);
             keePassHint.setText("Lese den Eintrag aus KeePass …");
-            Background.run(() -> access.keePassLogin(title), read -> {
+            Background.run(() -> accounts.credentials(title), read -> {
                 submit.setEnabled(true);
-                updateLogin();
-                String where = typedAddress.isEmpty() ? read.location() : typedAddress;
-                if (where.isEmpty()) {
-                    Arrays.fill(read.password(), '\0');
-                    problem.setText("Adresse fehlt (auch im KeePass-Eintrag steht keine)");
-                    return;
+                keePassHint.setText(" ");
+                try (read) {
+                    String where = typedAddress.isEmpty() ? read.account().location() : typedAddress;
+                    if (where.isEmpty()) {
+                        problem.setText("Adresse fehlt (auch im KeePass-Eintrag steht keine)");
+                        return;
+                    }
+                    start(where, read.user(), read.copyPassword(), Map.of(ENTRY_KEY, title));
                 }
-                start(where, read.user(), read.password(), Map.of(ENTRY_KEY, title));
             }, error -> {
                 submit.setEnabled(true);
-                updateLogin();
+                keePassHint.setText(" ");
                 problem.setText("KeePass: " + BetaViewSessions.describe(error));
             });
             return;

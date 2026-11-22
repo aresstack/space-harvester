@@ -75,12 +75,12 @@ public final class CommandDeck {
 
     /**
      * @param accounts       Host-Zugänge (KeePass), gemeinsam für Terminal, NDV und später FTP
-     * @param betaViewAccess Netzweg (Proxy, Zertifikate) und KeePass-Kopplung der App für BetaView
+     * @param betaViewAccess Netzweg (Proxy, Zertifikate) der App für BetaView; Zugangsdaten kommen aus {@code accounts}
      */
     public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess) {
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
-                connecting), betaViewAccess);
+                connecting), accounts);
         files = new FilesWorkspace(new com.aresstack.spaceharvester.deck.files.FileBrowser(
                 new com.aresstack.spaceharvester.deck.files.local.LocalFileSource(() -> sharedFolders.get()),
                 connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore());

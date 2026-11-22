@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.deck.access.ServerAccounts;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSession;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
 import com.aresstack.spaceharvester.deck.betaview.ConnectionState;
@@ -46,16 +47,19 @@ public final class BetaViewWorkspace extends JPanel {
     private final BetaViewConnectForm form;
     private BetaViewSession selected;
 
-    public BetaViewWorkspace(BetaViewSessions sessions, BetaViewAccess access) {
-        this(sessions, access, Prompts.dialogs());
+    /**
+     * @param accounts die gemeinsamen Host-Zugänge des Command Deck (KeePass), dieselben wie Terminal, FTP und NDV
+     */
+    public BetaViewWorkspace(BetaViewSessions sessions, ServerAccounts accounts) {
+        this(sessions, accounts, Prompts.dialogs());
     }
 
-    BetaViewWorkspace(BetaViewSessions sessions, BetaViewAccess access, Prompts prompts) {
+    BetaViewWorkspace(BetaViewSessions sessions, ServerAccounts accounts, Prompts prompts) {
         super(new BorderLayout());
         this.sessions = sessions;
         this.prompts = prompts;
         setBackground(Comic.SURFACE);
-        form = new BetaViewConnectForm(access, sessions::open);
+        form = new BetaViewConnectForm(accounts, sessions::open);
 
         pills.setOpaque(false);
         newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neue Anmeldung",
