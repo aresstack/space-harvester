@@ -55,6 +55,12 @@ import java.util.function.Predicate;
  */
 public class SpaceSyncJobs implements SpaceProvisioning {
 
+    /**
+     * Angabe eines Abgleichs: die Sammlung, mit der er zusammen gestartet wurde (Abgleich einer ganzen Quelle, Angelo
+     * 22.11.2026). Die Auftragsliste zeigt eine Sammlung als aufklappbare Zeile über ihren Abgleichen je Space.
+     */
+    public static final String GROUP = "sync.group";
+
     static final String INCOMPLETE = "SYNC_INCOMPLETE";
     static final String CONFLICT = "SYNC_CONFLICT";
     static final String PARTIAL = JobLifecycleState.SYNC_PARTIAL;
@@ -409,12 +415,27 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     /** Wie {@link #catchUp(String, String, String, Instant, SyncMode)}, mit dem Auslöser {@code trigger} (ADR 0030). */
     public synchronized JobStatus catchUp(String sourceId, String spaceKey, String owner, Instant since,
                                           SyncMode mode, ChangeTrigger trigger) {
+        return catchUp(sourceId, spaceKey, owner, since, mode, trigger, null);
+    }
+
+    /**
+     * Wie {@link #catchUp(String, String, String, Instant, SyncMode, ChangeTrigger)}, als Teil der Sammlung
+     * {@code group} ({@link #GROUP}): Abgleiche, die zusammen gestartet wurden, etwa alle Spaces einer Quelle. Die
+     * Kennung bleibt beim Fortsetzen und Wiederholen erhalten.
+     *
+     * @param group Kennung der Sammlung, oder {@code null} für einen einzelnen Abgleich
+     */
+    public synchronized JobStatus catchUp(String sourceId, String spaceKey, String owner, Instant since,
+                                          SyncMode mode, ChangeTrigger trigger, String group) {
         Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(trigger, "trigger");
         Map<String, String> parameters = new java.util.TreeMap<>(Map.of(MODE, mode.name(), LISTING, "changes",
                 ChangeTrigger.PARAMETER, trigger.name()));
         if (since != null) {
             parameters.put(SINCE, since.toString());
+        }
+        if (group != null && !group.isBlank()) {
+            parameters.put(GROUP, group);
         }
         return submit(sourceId, spaceKey, owner, parameters, changes(sourceId, spaceKey, since, mode));
     }

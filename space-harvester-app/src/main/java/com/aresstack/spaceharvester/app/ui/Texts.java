@@ -199,6 +199,11 @@ public final class Texts {
                         .TASK_PARAMETER))) {
             return "Synonyme erkennen";
         }
+        if (status.type() == JobType.SYNC && status.partitionKey() == null && status.parameters() != null
+                && status.parameters().get(com.aresstack.spaceharvester.application.sync.SpaceSyncJobs.GROUP) != null) {
+            // Die Zeile über den Abgleichen einer ganzen Quelle (Angelo 22.11.2026); ihre Zeilen tragen je einen Space.
+            return "Abgleich der Quelle";
+        }
         if (status.type() == JobType.BACKGROUND) {
             // Hintergrundaufträge (ADR 0025 Nachtrag): der Titel ihrer Gruppe, etwa „Nachbarseiten laden“.
             String title = status.parameters().get(

@@ -2020,11 +2020,41 @@ public final class Workspace {
 
     /** Wie {@link #catchUp(String, String)}, in der Betriebsart {@code mode} (etwa der wirksamen der Quelle). */
     public JobStatus catchUp(String sourceId, String spaceKey, SyncMode mode) {
+        return catchUp(sourceId, spaceKey, mode, null);
+    }
+
+    /**
+     * Wie {@link #catchUp(String, String, SyncMode)}, als Teil der Sammlung {@code group} ({@link SpaceSyncJobs#GROUP}):
+     * Der Abgleich einer ganzen Quelle steht in der Auftragsliste als eine aufklappbare Zeile über seinen Spaces.
+     *
+     * @param group Kennung der Sammlung, oder {@code null} für einen einzelnen Abgleich
+     */
+    public JobStatus catchUp(String sourceId, String spaceKey, SyncMode mode, String group) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         harvester.spaceKeys().requireExisting(sourceId, spaceKey);
-        JobStatus status = harvester.syncs().catchUp(sourceId, spaceKey, Harvester.OWNER, null, mode);
+        JobStatus status = harvester.syncs().catchUp(sourceId, spaceKey, Harvester.OWNER, null, mode,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.MANUAL, group);
         activities.remember(status.id());
         return status;
+    }
+
+    /**
+     * Eine Zustandsaktion für alle Abgleiche einer Sammlung ({@link SpaceSyncJobs#GROUP}), etwa ■ auf der Zeile „Abgleich
+     * der Quelle“: wie {@link #performBackgroundGroupAction}, über denselben Weg wie je Zeile ({@link #performJobAction}).
+     * Nie auf dem EDT.
+     */
+    public AllJobs.Outcome performSyncGroupAction(String group, JobAction action) {
+        List<JobStatus> parts = jobs().stream().filter(job -> job.type() == JobType.SYNC
+                && group.equals(job.parameter(SpaceSyncJobs.GROUP))).toList();
+        return switch (action) {
+            case PAUSE -> AllJobs.apply(AllJobs.toPause(parts), job -> pauseJob(job.id()));
+            case RESUME -> AllJobs.apply(parts.stream().filter(job -> job.lifecycle().allows(JobAction.RESUME))
+                    .toList(), job -> performJobAction(job.id(), JobAction.RESUME));
+            case CANCEL -> AllJobs.apply(AllJobs.toCancel(parts), job -> performJobAction(job.id(), JobAction.CANCEL));
+            case START_NOW, DELETE, RETRY_FAILED -> AllJobs.apply(parts.stream()
+                    .filter(job -> job.lifecycle().allows(action)).toList(), job -> performJobAction(job.id(), action));
+            default -> new AllJobs.Outcome(0, 0, null);
+        };
     }
 
     /**
