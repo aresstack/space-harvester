@@ -136,10 +136,10 @@ class ConnectionBudgetTest {
     }
 
     @Test
-    void theRuntimeLimitEndsAWaitForTheBudgetEvenThoughNobodySignals() {
-        // Codex-Review #1133: Die Laufzeitgrenze meldet sich nicht; ohne Frist hielte der Auftrag bei Budget 0 ewig
-        // seinen Download-Platz.
-        ConnectionBudget budget = new ConnectionBudget(0, java.time.Duration.ofMillis(20));
+    void theRuntimeLimitWakesAWaitForTheBudgetAtOnce() {
+        // Codex-Review #1133: Bei Budget 0 hielte der Auftrag sonst ewig seinen Download-Platz. Die Laufzeitgrenze
+        // meldet sich wie in Jobs über whenStopRequested; die Frist ist eine Stunde, also weckt nur die Meldung.
+        ConnectionBudget budget = new ConnectionBudget(0, java.time.Duration.ofHours(1));
         StopContext limited = new StopContext();
         java.util.concurrent.CompletableFuture<Void> waiter = java.util.concurrent.CompletableFuture.runAsync(
                 () -> budget.awaitAvailable(limited));
@@ -147,7 +147,7 @@ class ConnectionBudgetTest {
             Thread.onSpinWait();
         }
 
-        limited.expired = true;
+        limited.expire();
 
         assertThat(waiter).failsWithin(5, TimeUnit.SECONDS).withThrowableThat().havingCause()
                 .isInstanceOfSatisfying(JobFailedException.class, e -> assertThat(e.code()).isEqualTo("TIMEOUT"));
@@ -205,8 +205,18 @@ class ConnectionBudgetTest {
 
         final List<Runnable> listeners = new CopyOnWriteArrayList<>();
         private volatile boolean cancelled;
-        /** Laufzeitgrenze abgelaufen, wie in {@code Jobs}: still, ohne Zuhörer zu wecken. */
+        /** Laufzeitgrenze abgelaufen. */
         volatile boolean expired;
+
+        /** Wie der Zeitgeber der Laufzeitgrenze in {@code Jobs}: überfällig, dann die Wartenden wecken. */
+        void expire() {
+            expired = true;
+            for (Runnable listener : listeners) {
+                if (listeners.remove(listener)) {
+                    listener.run();
+                }
+            }
+        }
 
         void cancel() {
             cancelled = true;

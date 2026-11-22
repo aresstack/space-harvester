@@ -122,6 +122,19 @@ public class Jobs implements AutoCloseable {
     static final Duration RETRY_DEBOUNCE = Duration.ofSeconds(5);
     private JobTimer timer;
     private java.util.concurrent.ScheduledExecutorService ownTimer;
+    /**
+     * Weckt einen Lauf, sobald seine Laufzeitgrenze abläuft (Architekt 22.11.2026, Abnahme #1133): einmal je Lauf
+     * geplant, beim Ende des Laufs abgemeldet, kein Takt. Die Grenze meldet sich sonst nicht, und wer an einer Sperre
+     * wartet ({@link JobContext#whenStopRequested}), sähe sie erst beim nächsten Aufwachen.
+     */
+    private DeadlineTimer deadlines;
+    private java.util.concurrent.ScheduledThreadPoolExecutor ownDeadlines;
+
+    /** Plant eine einmalige Aufgabe; das Ergebnis meldet sie wieder ab. In Tests von Hand. */
+    @FunctionalInterface
+    interface DeadlineTimer {
+        AutoCloseable at(Duration delay, Runnable task);
+    }
     /** Geplante Wiederanläufe je Auftrag; nur der zuletzt geplante zählt ({@link Reconnect#token}). */
     private final Map<String, Reconnect> reconnects = new HashMap<>();
     /** Nummer des nächsten Wiederanlaufs je Auftrag, ab 0. */
@@ -1655,6 +1668,9 @@ public class Jobs implements AutoCloseable {
                 store.save(job.snapshot());
             }
             reconnects.clear();
+            if (ownDeadlines != null) {
+                ownDeadlines.shutdownNow();
+            }
             if (ownTimer != null) {
                 ownTimer.shutdownNow();
             }
@@ -1832,6 +1848,7 @@ public class Jobs implements AutoCloseable {
                 // Bilder und Anhänge: die Laufzeitgrenze gilt erst ab dem Download-Platz (grantDownloads), nicht für
                 // Vorbereitung und Warten.
                 job.deadline = job.type.download() || ownLane(job) ? null : job.startedAt.plus(limits.maxRunTime());
+                job.armDeadline();
                 store.save(job.snapshot());
                 toStart.add(job);
             }
@@ -2148,6 +2165,7 @@ public class Jobs implements AutoCloseable {
             job.stage = JobStage.DOWNLOADING;
             // Die Laufzeitgrenze gilt ab dem Download: Warten auf einen Platz zählt nicht.
             job.deadline = clock.instant().plus(limits.maxRunTime());
+            job.armDeadline();
             store.save(job.snapshot());
             job.slot.complete(null);
         }
@@ -2498,6 +2516,44 @@ public class Jobs implements AutoCloseable {
         }
     }
 
+    /** Nur für Tests: plant das Wecken bei Ablauf der Laufzeitgrenze von Hand. */
+    void deadlineTimer(DeadlineTimer timer) {
+        lock.lock();
+        try {
+            deadlines = java.util.Objects.requireNonNull(timer, "timer");
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Unter dem Sperrobjekt: das Wecken bei Ablauf der Laufzeitgrenze, ohne eigenes ein Daemon-Thread. */
+    private DeadlineTimer deadlines() {
+        if (deadlines != null) {
+            return deadlines;
+        }
+        if (ownDeadlines == null) {
+            ownDeadlines = new java.util.concurrent.ScheduledThreadPoolExecutor(1, task -> {
+                Thread thread = new Thread(task, "harvester-job-deadline");
+                thread.setDaemon(true);
+                return thread;
+            });
+            // Abgemeldete Läufe verlassen die Warteschlange sofort, nicht erst bei ihrer Frist.
+            ownDeadlines.setRemoveOnCancelPolicy(true);
+        }
+        java.util.concurrent.ScheduledThreadPoolExecutor scheduler = ownDeadlines;
+        deadlines = (delay, task) -> {
+            try {
+                java.util.concurrent.ScheduledFuture<?> planned =
+                        scheduler.schedule(task, Math.max(0, delay.toNanos()), TimeUnit.NANOSECONDS);
+                return () -> planned.cancel(false);
+            } catch (RejectedExecutionException e) {
+                // Der Dienst wird beendet.
+                return () -> { };
+            }
+        };
+        return deadlines;
+    }
+
     /** Unter dem Sperrobjekt: die Zeitsteuerung, ohne eigene ein Daemon-Thread. */
     private JobTimer timer() {
         if (timer != null) {
@@ -2717,6 +2773,10 @@ public class Jobs implements AutoCloseable {
         CompletableFuture<Void> slot = new CompletableFuture<>();
         volatile Instant startedAt;
         volatile Instant deadline;
+        /** Die Laufzeitgrenze dieses Laufs ist abgelaufen ({@link #armDeadline}); {@link #checkpoint()} endet TIMEOUT. */
+        volatile boolean overdue;
+        /** Meldet das Wecken bei Ablauf der Grenze ab; nur unter dem Sperrobjekt. */
+        private AutoCloseable deadlineWake;
         Instant finishedAt;
         JobError error;
         final AtomicLong sequence = new AtomicLong();
@@ -2738,6 +2798,7 @@ public class Jobs implements AutoCloseable {
         }
 
         void finish(JobState end, JobError failure, Instant at) {
+            disarmDeadline();
             if (pauseReason == PauseReason.RETRY) {
                 // Angehalten und abgelegt ist es ein gewöhnliches Anhalten: bleibt der Neustart aus, setzt ▶ fort.
                 pauseReason = PauseReason.USER;
@@ -2754,6 +2815,8 @@ public class Jobs implements AutoCloseable {
             finishedAt = null;
             startedAt = null;
             deadline = null;
+            disarmDeadline();
+            overdue = false;
             cancelRequested = false;
             pauseRequested = false;
             stopRequestedAt = null;
@@ -2868,7 +2931,7 @@ public class Jobs implements AutoCloseable {
                 throw new JobCancelledException(id);
             }
             Instant limit = deadline;
-            if (limit != null && clock.instant().isAfter(limit)) {
+            if (limit != null && (overdue || clock.instant().isAfter(limit))) {
                 throw new JobFailedException(TIMEOUT, "Laufzeitgrenze von " + limits.maxRunTime()
                         + " überschritten");
             }
@@ -2982,6 +3045,41 @@ public class Jobs implements AutoCloseable {
             stopRequested();
         }
 
+        /**
+         * Unter dem Sperrobjekt, nachdem {@link #deadline} für einen neuen Lauf gesetzt ist: plant genau ein Wecken zu
+         * ihrem Ablauf. Dann gilt der Lauf als überfällig und weckt die Wartenden ({@link #stopRequested()}); jede
+         * Sperre sieht die Grenze so sofort, nicht erst beim nächsten Aufwachen. Ein späterer Lauf hat eine neue Grenze;
+         * ein Wecken für eine alte bleibt wirkungslos.
+         */
+        void armDeadline() {
+            disarmDeadline();
+            overdue = false;
+            Instant limit = deadline;
+            if (limit == null) {
+                return;
+            }
+            deadlineWake = deadlines().at(Duration.between(clock.instant(), limit), () -> {
+                if (deadline == limit) {
+                    overdue = true;
+                    stopRequested();
+                }
+            });
+        }
+
+        /** Unter dem Sperrobjekt: meldet das Wecken des Laufs ab (Lauf beendet, angehalten oder neu angenommen). */
+        void disarmDeadline() {
+            AutoCloseable wake = deadlineWake;
+            deadlineWake = null;
+            if (wake != null) {
+                try {
+                    wake.close();
+                } catch (Exception e) {
+                    LOG.log(System.Logger.Level.DEBUG, "Wecken der Laufzeitgrenze nicht abgemeldet ({0})",
+                            e.getClass().getName());
+                }
+            }
+        }
+
         /** Wer an einer Sperre wartet und bei Abbruch, Anhalten oder Abkoppeln geweckt werden will. */
         private final java.util.List<Runnable> stopListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
@@ -2998,7 +3096,7 @@ public class Jobs implements AutoCloseable {
         public AutoCloseable whenStopRequested(Runnable listener) {
             java.util.Objects.requireNonNull(listener, "listener");
             stopListeners.add(listener);
-            if ((cancelRequested || detached) && stopListeners.remove(listener)) {
+            if ((cancelRequested || detached || overdue) && stopListeners.remove(listener)) {
                 listener.run();
             }
             return () -> stopListeners.remove(listener);

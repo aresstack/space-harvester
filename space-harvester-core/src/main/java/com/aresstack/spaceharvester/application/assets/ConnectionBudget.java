@@ -67,10 +67,9 @@ public final class ConnectionBudget {
     }
 
     /**
-     * Wartet, bis das Budget wieder Verbindungen hat: geweckt wird durch eine Änderung des Budgets und eine Anforderung
-     * zum Anhalten oder Abbrechen ({@link JobContext#whenStopRequested}); danach prüft {@link JobContext#checkpoint()}.
-     * Die Frist des Rückfallnetzes bleibt nur für die Laufzeitgrenze (Codex-Review #1133): Sie gilt ab dem Download-Platz
-     * und meldet sich nicht, ohne Frist hielte ein Auftrag bei Budget 0 seinen Platz ewig.
+     * Wartet ohne Takt (ADR 0027), bis das Budget wieder Verbindungen hat: geweckt wird nur durch eine Änderung des
+     * Budgets und über {@link JobContext#whenStopRequested} (Anhalten, Abbrechen und der Ablauf der Laufzeitgrenze,
+     * den {@code Jobs} mit einem einmaligen Zeitgeber meldet); danach prüft {@link JobContext#checkpoint()}.
      */
     public void awaitAvailable(JobContext context) {
         try (Wake wake = new Wake(context)) {
@@ -82,9 +81,7 @@ public final class ConnectionBudget {
                         return;
                     }
                     try {
-                        // Rückfallnetz, kein Takt (ADR 0027): Budget und Anhalten oder Abbrechen wecken sofort; die
-                        // Frist greift nur für die Laufzeitgrenze, die sich nicht meldet.
-                        changed.awaitNanos(fallbackNanos);
+                        changed.await();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         throw new IllegalStateException("Warten auf eine Verbindung unterbrochen", e);
@@ -178,8 +175,8 @@ public final class ConnectionBudget {
                             break;
                         }
                         try {
-                            // Rückfallnetz, kein Takt (ADR 0027): Freigeben, Zuteilen (An- und Abmelden, Budget) und
-                            // Anhalten oder Abbrechen wecken sofort per signalAll. Die Frist greift nur für die
+                            // Rückfallnetz, kein Takt (ADR 0027): Freigeben, Zuteilen (An- und Abmelden, Budget),
+                            // Anhalten, Abbrechen und die Laufzeitgrenze wecken sofort. Die Frist greift nur für die
                             // Verschiebung der Anteile nach Restzeit: die Schätzungen der Aufträge ändern sich ohne
                             // Meldung.
                             changed.awaitNanos(fallbackNanos);
