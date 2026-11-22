@@ -88,9 +88,12 @@ final class PodcastProduction {
                     : Optional.empty();
         }
         List<Podcast.Part> parts = new ArrayList<>();
+        boolean pending = false;
         for (int t = 0; t < plan.get().topics().size(); t++) {
             String topicTitle = plan.get().topics().get(t).title();
-            Podcast.Picture picture = PodcastPictures.stored(store, key, t)
+            Optional<PodcastPictures.Picture> decided = PodcastPictures.stored(store, key, t);
+            pending |= decided.isEmpty();
+            Podcast.Picture picture = decided
                     .filter(found -> found.file() != null)
                     .map(found -> new Podcast.Picture(found.file(), found.mediaType(), found.caption()))
                     .orElse(null);
@@ -104,7 +107,10 @@ final class PodcastProduction {
                         store.audio(key, t, s).orElse(null), picture));
             }
         }
-        return Optional.of(new Podcast(key, plan.get().title(), parts, running));
+        // Fehlen noch Bilder, ist der Podcast nicht fertig: Ein neuer Lauf zeichnet nur sie (Audio bleibt).
+        Pictures configured = pictures;
+        boolean picturesPending = pending && configured != null && configured.drawer().available();
+        return Optional.of(new Podcast(key, plan.get().title(), parts, running, picturesPending));
     }
 
     /**
