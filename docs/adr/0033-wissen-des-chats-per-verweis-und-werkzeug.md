@@ -48,8 +48,12 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
 8. **KI-Freigabe: nur, was an das Modell geht** (Fortschreibung von ADR 0028, Festlegung Architekt 21.11.2026, die
    vorsichtigere, umkehrbare Variante). Mit Werkzeugen trägt der Chat ein: beim Senden die offene Seite; im Moment
    der Lieferung jede Seite, die `seite_lesen` liefert, jede Seite, deren Auszug `im_bereich_suchen` liefert, und
-   jede Belegseite, deren Aussagen `begriff_nachschlagen` liefert (vor der Antwort; scheitert die Meldung, geht
-   keine Antwort hinaus).
+   jede Belegseite, deren Aussagen `begriff_nachschlagen` liefert. Eingetragen wird für alle Werkzeuge und die
+   offene Seite VOR der Lieferung; scheitert der Eintrag, geht der Inhalt nicht an das Modell, und das
+   Werkzeugergebnis nennt den Grund (Nachtrag W7). `begriff_nachschlagen` nennt Belegzahl und Stufe einer Aussage
+   über alle ihre Belege, auch über die drei genannten Belegseiten hinaus: Das ist nur ein Metadatum ohne Wortlaut
+   und braucht keinen Eintrag. Ähnliche Fachbegriffe und Synonyme gibt das Werkzeug nicht aus, solange sie aus dem
+   ganzen Glossar statt aus dem Bereich kommen.
    `seiten_auflisten` (nur Titel) trägt nichts ein. Die ganze Auswahl wird mit Werkzeugen nicht mehr beim Senden
    eingetragen, sonst gäbe eine Frage an der Wurzel alle Seiten aller Quellen frei. Eine gelieferte Seite steht als
    eigener Knoten auf der Liste (ohne Unterseiten, `PageReleaseService.releasePage`). Im Rückfall ohne Werkzeuge gilt
