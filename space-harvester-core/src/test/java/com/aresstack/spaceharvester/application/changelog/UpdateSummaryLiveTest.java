@@ -86,8 +86,9 @@ class UpdateSummaryLiveTest {
                 "BMS", "Betrieb Musterstadt");
 
         String model = System.getProperty("summary.live.model", "gemma4:12b");
-        UpdateSummarizer.Result result = new UpdateSummarizer(new Ollama(System.getProperty("summary.live.ollama"),
-                model), key -> true).summarize(report, page -> paths.getOrDefault(page.pageId(), List.of()),
+        UpdateSummarizer.Result result = new UpdateSummarizer(
+                com.aresstack.spaceharvester.source.ai.LiveSummaryModel.ollama(
+                        System.getProperty("summary.live.ollama"), model), key -> true).summarize(report, page -> paths.getOrDefault(page.pageId(), List.of()),
                 page -> Optional.ofNullable(texts.get(page.pageId())), names, context());
 
         StringBuilder out = new StringBuilder("# Update-Zusammenfassung (Echttest, ").append(model).append(")\n\n")
