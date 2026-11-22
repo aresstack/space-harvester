@@ -145,7 +145,8 @@ class BackgroundJobsTest {
 
         assertThat(background.group(group.groupId()).orElseThrow().paused()).isTrue();
         assertThat(background.waiting("demo", "wiki", "ALPHA")).isPresent();
-        assertThat(background.running("demo", "wiki", "ALPHA")).isPresent();
+        assertThat(background.open("demo", "wiki", "ALPHA")).isPresent();
+        assertThat(background.running("demo", "wiki", "ALPHA")).as("für den Planer kein Vorgänger").isEmpty();
         assertThat(background.startUnlessWaiting("demo", "Demo", alpha)).as("der angehaltene nimmt es mit").isEmpty();
         assertThat(background.startUnlessRunning("demo", "Demo", alpha)).as("der angehaltene holt es sich").isEmpty();
         assertThat(background.groups()).extracting(BackgroundGroup::groupId).containsExactly(group.groupId());
@@ -352,9 +353,58 @@ class BackgroundJobsTest {
 
         assertThat(resumed).extracting(JobStatus::id).as("der jüngste nimmt die Arbeit des älteren mit")
                 .containsExactlyInAnyOrder(younger, beta);
-        assertThat(restarted.status(older).state()).isEqualTo(JobState.FAILED);
+        assertThat(restarted.status(older).state()).as("abgeschlossen statt unterbrochen liegen gelassen")
+                .isEqualTo(JobState.CANCELLED);
+        assertThat(restarted.events(older)).filteredOn(event -> Jobs.RETIRED.equals(event.code())).singleElement()
+                .satisfies(event -> assertThat(event.message()).isEqualTo(BackgroundJobs.SUPERSEDED_BY_YOUNGER));
         assertThat(restarted.status(younger).state()).isEqualTo(JobState.COMPLETED);
         assertThat(restarted.status(beta).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
+    void anOlderInterruptedPartDoesNotRunAfterALaterRestartWhenTheYoungerWasCancelled() {
+        // Nachprüfung #1052: Der ältere bliebe sonst unterbrochen stehen und liefe beim zweiten Neustart von selbst los.
+        BackgroundJobs before = exclusive(jobs(new Steps()));
+        String older = before.start("solo", "Solo", List.of(new BackgroundPart.Draft("wiki", "ALPHA")))
+                .parts().getFirst().id();
+        String younger = before.start("solo", "Solo", List.of(new BackgroundPart.Draft("wiki", "ALPHA")))
+                .parts().getFirst().id();
+
+        Steps firstSteps = new Steps();
+        Jobs firstRestart = jobs(firstSteps);
+        assertThat(exclusive(firstRestart).resumeInterrupted()).extracting(JobStatus::id).containsExactly(younger);
+        firstRestart.cancel(younger, OWNER);
+        firstSteps.runAll();
+        assertThat(firstRestart.status(younger).state()).isEqualTo(JobState.CANCELLED);
+
+        Jobs secondRestart = jobs(executor);
+        List<JobStatus> resumed = exclusive(secondRestart).resumeInterrupted();
+        executor.runAll();
+
+        assertThat(resumed).as("der Benutzer hat abgebrochen: nichts läuft von selbst").isEmpty();
+        assertThat(secondRestart.status(older).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(secondRestart.status(younger).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(seen).isEmpty();
+    }
+
+    @Test
+    void interruptedPartsNextToAnotherOpenPartOfAnExclusiveKindAreClosed() {
+        BackgroundJobs before = exclusive(jobs(new Steps()));
+        String interrupted = before.start("solo", "Solo", List.of(new BackgroundPart.Draft("wiki", "ALPHA")))
+                .parts().getFirst().id();
+
+        Jobs restarted = jobs(executor);
+        BackgroundJobs after = exclusive(restarted);
+        String open = after.start("solo", "Solo", List.of(new BackgroundPart.Draft("wiki", "ALPHA")))
+                .parts().getFirst().id();
+        assertThat(after.resumeInterrupted()).as("der offene nimmt die Arbeit mit").isEmpty();
+        executor.runAll();
+
+        assertThat(restarted.status(interrupted).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(restarted.events(interrupted)).filteredOn(event -> Jobs.RETIRED.equals(event.code()))
+                .singleElement().satisfies(event -> assertThat(event.message())
+                        .isEqualTo(BackgroundJobs.SUPERSEDED_BY_OPEN));
+        assertThat(restarted.status(open).state()).isEqualTo(JobState.COMPLETED);
     }
 
     /** Führt Arbeit erst auf Anforderung aus. */

@@ -556,36 +556,89 @@ class DocumentEnrichmentsTest {
     }
 
     @Test
-    void aCancelledPartDoesNotComeBackForReportsFromItsRun() throws InterruptedException {
-        // Abnahme #1052, Punkt 4: Abbrechen heißt diese Arbeit nicht; erst ein neuer Anlass startet wieder.
+    void aCancelledPartDropsTheWorkNotedForItsSpaceAndTheEndOfTheSyncStartsNothing() throws InterruptedException {
+        // Abnahme #1052, Punkt 4: Abbrechen heißt diese Arbeit nicht. Der Vermerk, den ein laufender Abgleich
+        // zurückstellt, startete sonst mit dessen Ende einen neuen Teil; erst ein neuer Anlass startet wieder.
+        // Ein Platz: der Teil wartet, der Abgleich läuft.
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)),
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        DocumentEnrichments documents = hosted(true, jobs, background);
+        Asset asset = inStock(stored("teile.zip", Map.of("eins.txt", "Erster Teil.")));
+        documents.indexed(list(), asset, extractions);
+        String part = background.groups().getFirst().parts().getFirst().id();
+        assertThat(jobs.status(part).state()).isEqualTo(JobState.QUEUED);
+        CompletableFuture<Void> sync = new CompletableFuture<>();
+        jobs.submit(JobType.SYNC, "wiki", "DEV", null, context -> sync);
+        documents.indexed(list(), asset, extractions);
+
+        CountDownLatch cancelled = cancelledDelivered(jobs);
+        jobs.cancel(part);
+        assertThat(cancelled.await(10, TimeUnit.SECONDS)).isTrue();
+        jobs.parallelPreparations(2);
+        CountDownLatch synced = syncEndDelivered(jobs);
+        sync.complete(null);
+        assertThat(synced.await(10, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("das Ende des Abgleichs startet nichts").singleElement()
+                .extracting(JobStatus::state).isEqualTo(JobState.CANCELLED);
+        assertThat(recording.inputs).isEmpty();
+
+        documents.indexed(list(), asset, extractions);
+
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("ein neuer Anlass startet wieder").hasSize(2);
+        assertThat(recording.inputs).containsExactly("Erster Teil.");
+    }
+
+    @Test
+    void aReportAfterARunningPartWasDeletedStillGetsAPart() throws InterruptedException {
+        // Nachprüfung #1052, Punkt 2: Das Ende der abgekoppelten Arbeit eines gelöschten Teils verwirft nicht noch
+        // einmal; was erst nach dem Löschen gemeldet wurde, bekommt einen neuen Teil.
         Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(4, 5, Duration.ofHours(1)),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         BackgroundJobs background = new BackgroundJobs(jobs, "app");
         DocumentEnrichments documents = hosted(true, jobs, background);
         Asset first = inStock(stored("a1", "eins.zip", Map.of("eins.txt", "Erster Teil.")));
-        Asset second = inStock(stored("a2", "zwei.zip", Map.of("zwei.txt", "Zweiter Teil.")));
-        CountDownLatch delivered = cancelledDelivered(jobs);
+        inStock(stored("a3", "drei.zip", Map.of("drei.txt", "Dritter Teil.")));
+        Asset second = stored("a2", "zwei.zip", Map.of("zwei.txt", "Zweiter Teil."));
+        CountDownLatch removed = new CountDownLatch(1);
+        jobs.subscribeAll(new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+            }
+
+            @Override
+            public void removed(JobStatus last) {
+                if (last.type() == JobType.BACKGROUND) {
+                    removed.countDown();
+                }
+            }
+        });
         AtomicBoolean once = new AtomicBoolean();
+        AtomicBoolean removalSeen = new AtomicBoolean();
         recording.onInput = () -> {
             if (once.compareAndSet(false, true)) {
-                // Mitten in der Runde (der zweite Anhang steht noch aus) kommt eine Meldung; dann bricht der Benutzer
-                // ab. Der Vermerk steht beim Abbruch also noch.
+                // Der Benutzer löscht den laufenden Teil; die Löschung kommt an, solange seine Arbeit noch rechnet.
+                // Danach legt ein Abruf einen neuen Anhang ab.
+                jobs.delete(background.groups().getFirst().parts().getFirst().id(), "app");
+                try {
+                    removalSeen.set(removed.await(10, TimeUnit.SECONDS));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                inStock(second);
                 documents.indexed(list(), second, extractions);
-                background.cancel(background.groups().getFirst().groupId());
             }
         };
 
         documents.indexed(list(), first, extractions);
 
-        assertThat(delivered.await(10, TimeUnit.SECONDS)).isTrue();
-        assertThat(jobs.list("app", JobType.BACKGROUND)).as("Abbrechen startet nicht neu").singleElement()
-                .extracting(JobStatus::state).isEqualTo(JobState.CANCELLED);
-        assertThat(recording.inputs).containsExactly("Erster Teil.");
-
-        documents.indexed(list(), second, extractions);
-
-        assertThat(jobs.list("app", JobType.BACKGROUND)).as("ein neuer Anlass startet wieder").hasSize(2);
-        assertThat(recording.inputs).containsExactly("Erster Teil.", "Zweiter Teil.");
+        assertThat(removalSeen).isTrue();
+        awaitUntil(new ConcurrentLinkedQueue<>(), () -> recording.inputs.contains("Zweiter Teil.")
+                && jobs.list("app", JobType.BACKGROUND).stream().allMatch(part -> part.state().terminal()));
+        assertThat(jobs.list("app", JobType.BACKGROUND)).as("ein neuer Teil für die spätere Meldung").singleElement()
+                .extracting(JobStatus::state).isEqualTo(JobState.COMPLETED);
+        assertThat(recording.inputs).startsWith("Erster Teil.").contains("Zweiter Teil.", "Dritter Teil.");
     }
 
     @Test
@@ -843,6 +896,20 @@ class DocumentEnrichmentsTest {
             @Override
             public void changed(JobStatus status) {
                 if (status.type() == JobType.BACKGROUND && status.state() == JobState.CANCELLED) {
+                    delivered.countDown();
+                }
+            }
+        });
+        return delivered;
+    }
+
+    /** Wie {@link #cancelledDelivered}, für das Ende eines Abgleichs. */
+    private static CountDownLatch syncEndDelivered(Jobs jobs) {
+        CountDownLatch delivered = new CountDownLatch(1);
+        jobs.subscribeAll(new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+                if (status.type() == JobType.SYNC && status.state().terminal()) {
                     delivered.countDown();
                 }
             }

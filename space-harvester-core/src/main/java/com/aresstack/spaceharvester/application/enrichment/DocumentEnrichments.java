@@ -138,9 +138,15 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Abgebrochene Teile, deren Vermerke schon verworfen sind; bewacht von {@code this}. Die Auftragsverwaltung meldet
      * einen beendeten Auftrag erneut, etwa nach {@link Jobs#STOP_GRACE} oder bei jedem Zähler einer abgekoppelten
      * Arbeit: Verworfen wird nur beim ersten Mal, sonst gingen Vermerke neuer Anlässe verloren. Ein Fortsetzen oder
-     * Löschen trägt den Teil wieder aus.
+     * Löschen trägt den Teil wieder aus, ein Löschen während seiner Arbeit erst deren Ende ({@link #goneWhileComputing}).
      */
     private final Set<String> discarded = new HashSet<>();
+    /**
+     * Gelöschte Teile, deren abgekoppelte Arbeit noch rechnet (Nachprüfung #1052); bewacht von {@code this}. Sie bleiben
+     * bis zum Ende dieser Arbeit in {@link #discarded}, damit deren {@code finally} keinen Vermerk verwirft, der erst
+     * nach dem Löschen kam.
+     */
+    private final Set<String> goneWhileComputing = new HashSet<>();
 
     /** Quelle und Space eines Hintergrundteils; der Space kann fehlen. */
     private record Partition(String sourceId, String spaceKey) {
@@ -233,13 +239,18 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                     if (INDEXING.contains(last.type())) {
                         wake(last.sourceId(), last.partitionKey());
                     } else if (ownPart(last)) {
-                        // Ein gelöschter, noch nicht fertiger Teil ist abgebrochen; seine Abbruchmeldung kommt nie.
-                        if (last.state() == JobState.CANCELLED || !last.state().terminal()) {
-                            ended(last.id(), new Partition(last.sourceId(), last.partitionKey()),
-                                    JobState.CANCELLED);
-                        }
                         synchronized (DocumentEnrichments.this) {
-                            discarded.remove(last.id());
+                            // Ein gelöschter, noch nicht fertiger Teil ist abgebrochen; seine Abbruchmeldung kommt nie.
+                            if (last.state() == JobState.CANCELLED || !last.state().terminal()) {
+                                ended(last.id(), new Partition(last.sourceId(), last.partitionKey()),
+                                        JobState.CANCELLED);
+                            }
+                            // Rechnet seine Arbeit noch, trägt erst deren Ende ihn aus (analyse, finally).
+                            if (active.containsKey(last.id())) {
+                                goneWhileComputing.add(last.id());
+                            } else {
+                                discarded.remove(last.id());
+                            }
                         }
                     }
                 }
@@ -545,13 +556,18 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 }
             }
         } finally {
+            // Abgekoppelt abgebrochen oder gelöscht: Die Meldung darüber kann noch ausstehen, verworfen wird jetzt
+            // (einmal, ended); sonst plante dieser Teil gleich wieder für Vermerke aus seiner eigenen Laufzeit. Kam
+            // die Löschung schon an, ist längst verworfen, und was seither vermerkt ist, bleibt.
+            boolean cancelled = cancelledOrGone(jobId);
             synchronized (this) {
                 active.remove(jobId);
-            }
-            // Abgekoppelt abgebrochen oder gelöscht: Die Meldung darüber kann noch ausstehen, verworfen wird jetzt
-            // (einmal, ended); sonst plante dieser Teil gleich wieder für Vermerke aus seiner eigenen Laufzeit.
-            if (cancelledOrGone(jobId)) {
-                ended(jobId, partition, JobState.CANCELLED);
+                if (cancelled) {
+                    ended(jobId, partition, JobState.CANCELLED);
+                }
+                if (goneWhileComputing.remove(jobId)) {
+                    discarded.remove(jobId);
+                }
             }
             boolean due;
             synchronized (this) {
@@ -562,7 +578,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             // Fortsetzen.
             BackgroundJobs hosted = background;
             if (due && hosted != null
-                    && hosted.running(BACKGROUND_KIND, partition.sourceId(), partition.spaceKey()).isEmpty()) {
+                    && hosted.open(BACKGROUND_KIND, partition.sourceId(), partition.spaceKey()).isEmpty()) {
                 schedule(partition);
             }
         }

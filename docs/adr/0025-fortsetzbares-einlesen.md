@@ -300,21 +300,28 @@ wird automatisch verwaltet.
      ein `Coalescer` die Meldungen zehn Sekunden lang. So geben die Anhänge eines Abgleichs eine einzige Gruppe. Nur
      ein fertiger Teil plant für Vermerke aus seiner Laufzeit einen neuen; ein abgebrochener (auch ein laufend
      gelöschter) verwirft sie einmal, erst ein neuer Anlass startet wieder. Wiederholte Meldungen desselben beendeten
-     Teils verwerfen nichts mehr. Rechnet beim Start eines Teils noch die abgekoppelte Arbeit eines anderen desselben
+     Teils verwerfen nichts mehr, ebenso wenig das Ende der noch rechnenden Arbeit eines gelöschten Teils: Was nach
+     dem Löschen gemeldet wurde, bekommt einen neuen Teil. Rechnet beim Start eines Teils noch die abgekoppelte Arbeit eines anderen desselben
      Space, endet er sofort und vermerkt; deren Ende plant. Endet die Arbeit eines nach `STOP_GRACE` abgekoppelten Teils, plant sie selbst,
      falls seither etwas vermerkt ist und kein Teil des Space mehr offen ist.
 
    Höchstens ein offener Teil je Quelle und Space (`BackgroundKind#exclusive`, Abnahme #1052): `resumeJob` lehnt
    unter dem Startriegel der Art ab, solange ein anderer Teil wartet, angehalten ist oder läuft
    (`BackgroundPartOpenException`, in der App gelb „Läuft schon“), und `resumeInterrupted` setzt je Art, Quelle und
-   Space nur den jüngsten unterbrochenen fort; dessen Arbeit aus dem Bestand deckt die der älteren. Nur für Arten,
+   Space nur den jüngsten unterbrochenen fort; dessen Arbeit aus dem Bestand deckt die der älteren. Die älteren
+   schließt es als abgebrochen ab (`Jobs#retire`, Info „Durch jüngeren Teil ersetzt“), damit sie nach einem späteren
+   Neustart nicht von selbst loslaufen, auch wenn der Benutzer den jüngeren inzwischen abgebrochen hat; ist schon ein
+   anderer Teil offen, schließt es alle unterbrochenen so ab. Diese Prüfungen zählen einen angehaltenen Teil als offen
+   (`BackgroundJobs#open`); `BackgroundJobs#running` zählt ihn nicht, denn der Planer nimmt einen solchen Teil als
+   Vorgänger, und ein angehaltener Teil einer fremden Gruppe ließe sein Ziel warten. Nur für Arten,
    die neue Teile mit `startUnlessRunning` starten: Bei `startUnlessWaiting` (etwa `synonyms`) dürfen ein laufender
    und ein wartender Teil nebeneinander stehen, und nach „Alle anhalten“ sperrten sie sich beim Fortsetzen
    gegenseitig.
 
    Grenzen: Vermerke, aus denen noch kein Teil wurde (die zehn Sekunden Bündelung, ein noch laufender Abgleich),
    liegen nur im Speicher. Beim Beenden des Dienstes gehen sie verloren; der nächste Abgleich des Space holt sie über
-   die Anreicherung nach. Ebenso ein Vermerk, der in den Augenblick zwischen Abbrechen und dessen Meldung fällt. Nach
+   die Anreicherung nach. Ebenso ein Vermerk, der nach einem Abbruch eintrifft, solange die Arbeit des abgebrochenen
+   Teils noch bis zu ihrem nächsten Prüfpunkt rechnet, höchstens `Jobs#STOP_GRACE` lang: Ihr Ende verwirft ihn mit. Nach
    einem Neustart setzt nur ein schon angelegter, unterbrochener Teil von selbst fort (nur bei
    `enrichment.documents.enabled`). Die Ablage der Anhänge kennt keinen Space: Ein Teil liest die Anhangseinträge der
    ganzen Quelle und behält die der Seiten seines Space.
