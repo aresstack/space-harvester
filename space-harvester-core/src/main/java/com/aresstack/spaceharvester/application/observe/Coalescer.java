@@ -8,9 +8,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
@@ -30,14 +30,22 @@ public final class Coalescer<K, V> implements AutoCloseable {
     /** Höchstens eine Zustellung je Schlüssel in diesem Abstand. */
     public static final Duration INTERVAL = Duration.ofMillis(250);
 
+    /**
+     * So lange wartet {@link #close()} höchstens auf eine gerade laufende Zustellung. Sie wird nicht unterbrochen: Ein
+     * Unterbrechen mitten in einem Lucene-Schreibvorgang schließt dessen Dateikanal und damit den ganzen Index
+     * ({@code ClosedByInterruptException}).
+     */
+    static final Duration CLOSE_WAIT = Duration.ofSeconds(5);
+
     private static final System.Logger LOG = System.getLogger(Coalescer.class.getName());
 
     private final String name;
     private final long intervalNanos;
     private final BiConsumer<K, Set<V>> delivery;
     private final Map<K, Set<V>> pending = new ConcurrentHashMap<>();
-    private ScheduledExecutorService thread;
-    private boolean closed;
+    private ScheduledThreadPoolExecutor thread;
+    private Thread worker;
+    private volatile boolean closed;
 
     /**
      * @param name     Name des Threads und des Beobachters für das Protokoll
@@ -116,16 +124,25 @@ public final class Coalescer<K, V> implements AutoCloseable {
             return null;
         }
         if (thread == null) {
-            thread = Executors.newSingleThreadScheduledExecutor(task -> {
-                Thread worker = new Thread(task, "space-harvester-observe-" + name);
-                worker.setDaemon(true);
-                return worker;
+            thread = new ScheduledThreadPoolExecutor(1, task -> {
+                Thread created = new Thread(task, "space-harvester-observe-" + name);
+                created.setDaemon(true);
+                synchronized (this) {
+                    worker = created;
+                }
+                return created;
             });
+            // Nach close() entfallen noch geplante Zustellungen, ohne den Thread zu unterbrechen.
+            thread.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+            thread.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
         }
         return thread;
     }
 
     private void deliver(K key) {
+        if (closed) {
+            return;
+        }
         Set<V> values = pending.remove(key);
         if (values == null) {
             return;
@@ -150,6 +167,9 @@ public final class Coalescer<K, V> implements AutoCloseable {
         }
         try {
             executor.execute(() -> {
+                if (closed) {
+                    return;
+                }
                 try {
                     task.run();
                 } catch (RuntimeException e) {
@@ -162,18 +182,37 @@ public final class Coalescer<K, V> implements AutoCloseable {
         }
     }
 
-    /** Beendet den Thread; noch geplante Zustellungen entfallen. */
+    /**
+     * Beendet den Thread; noch geplante Zustellungen entfallen. Eine gerade laufende Zustellung wird nicht unterbrochen,
+     * sondern höchstens {@link #CLOSE_WAIT} lang abgewartet (außer beim Aufruf aus einer Zustellung selbst).
+     */
     @Override
     public void close() {
-        ScheduledExecutorService executor;
+        ScheduledThreadPoolExecutor executor;
+        Thread running;
         synchronized (this) {
             closed = true;
             executor = thread;
+            running = worker;
             thread = null;
-        }
-        if (executor != null) {
-            executor.shutdownNow();
+            worker = null;
         }
         pending.clear();
+        if (executor == null) {
+            return;
+        }
+        executor.shutdown();
+        executor.getQueue().clear();
+        if (Thread.currentThread() == running) {
+            return;
+        }
+        try {
+            if (!executor.awaitTermination(CLOSE_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                LOG.log(System.Logger.Level.WARNING, "Zustellung des Beobachters {0} endet nicht; Thread bleibt",
+                        name);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }
