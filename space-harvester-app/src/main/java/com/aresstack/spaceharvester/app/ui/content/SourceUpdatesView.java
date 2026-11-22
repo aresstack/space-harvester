@@ -190,6 +190,10 @@ final class SourceUpdatesView extends JPanel {
     private final Mode mode;
     /** Der Podcast der Zusammenfassung: Knopf oben rechts im Himmel, nur in der Leseansicht. */
     private final PodcastControl<UpdateSummary> podcast;
+    /** Die Teile jedes gezeigten Themas der Zusammenfassung (Nummer in {@link UpdateSummary#statements()}). */
+    private final Map<Integer, List<JComponent>> topicParts = new java.util.HashMap<>();
+    /** Nimmt die gelbe Markierung des Themas zurück, dem der Podcast gerade folgt. */
+    private final List<Runnable> unmark = new ArrayList<>();
     private Consumer<String> onSelected = id -> { };
 
     SourceUpdatesView(Supplier<Workspace> workspace, Mode mode) {
@@ -210,6 +214,7 @@ final class SourceUpdatesView extends JPanel {
             Actions current = actions.get();
             return current == null ? null : current.podcasts();
         }, runner);
+        podcast.follow(this::followPodcast);
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
         // Keine Hinweistexte in der Ansicht: die Erklärung steht hinter dem ?-Knopf oben rechts.
@@ -950,6 +955,8 @@ final class SourceUpdatesView extends JPanel {
     private void renderReport(ChangeReport found) {
         reportRenders++;
         reportBody.removeAll();
+        topicParts.clear();
+        unmark.clear();
         ChangeUpdate update = found.update();
         // Eine Zeile für den Zeitraum (Angelo, 21.11.2026): „von bis“ statt Datum und darunter derselbe Zeitraum.
         boolean span = !update.open() && update.from() != null;
@@ -1289,6 +1296,8 @@ final class SourceUpdatesView extends JPanel {
             renderTopics(found, summary);
         } catch (RuntimeException e) {
             // Nie eine leere Seite: was an der Darstellung scheitert, fällt auf den reinen Text zurück.
+            topicParts.clear();
+            unmark.clear();
             while (reportBody.getComponentCount() > before) {
                 reportBody.remove(reportBody.getComponentCount() - 1);
             }
@@ -1326,6 +1335,10 @@ final class SourceUpdatesView extends JPanel {
         found.pages().forEach(page -> bySpace.computeIfAbsent(page.spaceKey(), ignored -> new ArrayList<>())
                 .add(page));
         Map<String, List<SummaryStatement>> topics = topicsBySpace(summary.statements());
+        Map<SummaryStatement, Integer> numbering = new java.util.IdentityHashMap<>();
+        for (int i = 0; i < summary.statements().size(); i++) {
+            numbering.put(summary.statements().get(i), i);
+        }
         // Spaces mit Themen, die mit den meisten Seiten zuerst; danach was mehrere Spaces betrifft.
         List<String> spaces = new ArrayList<>(topics.keySet());
         spaces.remove(ACROSS_SPACES);
@@ -1348,7 +1361,7 @@ final class SourceUpdatesView extends JPanel {
                 }
             }
             for (SummaryStatement statement : topics.get(space)) {
-                renderTopic(statement, found, ACROSS_SPACES.equals(space));
+                renderTopic(statement, found, ACROSS_SPACES.equals(space), numbering.get(statement));
             }
         }
         List<String> rest = bySpace.keySet().stream().filter(key -> key != null && !topics.containsKey(key))
@@ -1433,9 +1446,81 @@ final class SourceUpdatesView extends JPanel {
         return String.join(" · ", parts);
     }
 
+    /** Gelb wie die Treffer der Suche (ReaderFind). */
+    static final java.awt.Color PODCAST_MARK = new java.awt.Color(0xFFF59D);
+
+    /**
+     * Folgt dem Podcast (Angelo 22.11.2026): rollt zum ersten Thema, von dem er gerade erzählt, und hinterlegt alle
+     * diese Themen gelb wie die Suche; die vorige Markierung verschwindet. Leer = nur die Markierung weg.
+     */
+    void followPodcast(List<Integer> statements) {
+        unmark.forEach(Runnable::run);
+        unmark.clear();
+        JComponent first = null;
+        for (Integer number : statements) {
+            for (JComponent part : topicParts.getOrDefault(number, List.of())) {
+                first = first == null ? part : first;
+                mark(part);
+            }
+        }
+        if (first != null && reportScroll instanceof javax.swing.JScrollPane pane) {
+            report.validate();
+            javax.swing.JViewport port = pane.getViewport();
+            java.awt.Rectangle at = javax.swing.SwingUtilities.convertRectangle(first.getParent(), first.getBounds(),
+                    report);
+            // ein Fünftel der Höhe Luft darüber, damit Überschrift und Kontext darüber sichtbar bleiben
+            int y = Math.max(0, Math.min(at.y - port.getExtentSize().height / 5,
+                    report.getHeight() - port.getExtentSize().height));
+            port.setViewPosition(new java.awt.Point(port.getViewPosition().x, y));
+        }
+    }
+
+    private void mark(JComponent part) {
+        if (part instanceof javax.swing.text.JTextComponent text) {
+            try {
+                Object tag = text.getHighlighter().addHighlight(0, text.getDocument().getLength(),
+                        new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(PODCAST_MARK));
+                unmark.add(() -> text.getHighlighter().removeHighlight(tag));
+            } catch (javax.swing.text.BadLocationException e) {
+                // ein leerer Text braucht keine Markierung
+            }
+            return;
+        }
+        boolean opaque = part.isOpaque();
+        java.awt.Color background = part.getBackground();
+        part.setOpaque(true);
+        part.setBackground(PODCAST_MARK);
+        part.repaint();
+        unmark.add(() -> {
+            part.setOpaque(opaque);
+            part.setBackground(background);
+            part.repaint();
+        });
+    }
+
+    /** Gelb markierte Teile (für Tests). */
+    List<String> podcastMarked() {
+        List<String> marked = new ArrayList<>();
+        for (List<JComponent> parts : topicParts.values()) {
+            for (JComponent part : parts) {
+                if (part instanceof javax.swing.text.JTextComponent text
+                        && text.getHighlighter().getHighlights().length > 0) {
+                    marked.add(text.getText());
+                } else if (part.isOpaque() && PODCAST_MARK.equals(part.getBackground())) {
+                    marked.add(((JLabel) part.getComponent(0)).getText());
+                }
+            }
+        }
+        return marked;
+    }
+
     /** Ein Thema: Titel mit Details-Knopf, kurzer Text, Seiten. */
-    private void renderTopic(SummaryStatement statement, ChangeReport found, boolean across) {
+    private void renderTopic(SummaryStatement statement, ChangeReport found, boolean across, Integer number) {
         reportBody.add(Box.createVerticalStrut(6));
+        List<JComponent> parts = new ArrayList<>();
+        if (number != null) {
+            topicParts.put(number, parts);
+        }
         if (statement.title() != null && !statement.title().isBlank()) {
             JPanel head = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
             head.setOpaque(false);
@@ -1456,6 +1541,7 @@ final class SourceUpdatesView extends JPanel {
             }
             head.setMaximumSize(new Dimension(Integer.MAX_VALUE, head.getPreferredSize().height));
             add(reportBody, head);
+            parts.add(head);
         }
         String text = statement.text();
         if (across) {
@@ -1466,7 +1552,9 @@ final class SourceUpdatesView extends JPanel {
                 text += " (" + String.join(", ", names) + ")";
             }
         }
-        add(reportBody, Comic.wrapped(text, Comic.TEXT, 13.5f));
+        com.aresstack.spaceharvester.app.ui.controls.WrappedText body = Comic.wrapped(text, Comic.TEXT, 13.5f);
+        add(reportBody, body);
+        parts.add(body);
         if (statement.pages().isEmpty()) {
             return;
         }
@@ -1742,6 +1830,8 @@ final class SourceUpdatesView extends JPanel {
 
     private void message(String text) {
         reportBody.removeAll();
+        topicParts.clear();
+        unmark.clear();
         add(reportBody, Comic.wrapped(text, Comic.MUTED, 13.5f));
         reportBody.revalidate();
         reportBody.repaint();
@@ -1953,6 +2043,11 @@ final class SourceUpdatesView extends JPanel {
                         @Override
                         public Subscription subscribe(String key, Runnable listener) {
                             return workspace.subscribePodcast(key, listener);
+                        }
+
+                        @Override
+                        public List<Integer> focus(UpdateSummary summary, int topic) {
+                            return workspace.podcastStatements(summary, topic);
                         }
 
                         @Override

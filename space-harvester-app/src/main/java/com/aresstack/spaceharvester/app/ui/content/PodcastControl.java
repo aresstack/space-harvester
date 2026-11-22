@@ -72,6 +72,14 @@ final class PodcastControl<S> {
 
         Subscription subscribeJobs(JobListener listener);
 
+        /**
+         * Wovon Thema {@code topic} des Podcasts erzählt, als Nummern der Stellen in der Ansicht; leer, wenn es keine
+         * bestimmte Stelle gibt. Liest Dateien, nie auf dem EDT.
+         */
+        default List<Integer> focus(S subject, int topic) {
+            return List.of();
+        }
+
         /** Ohne Laufzeit: der Knopf bleibt aus. */
         @SuppressWarnings("unchecked")
         static <S> Source<S> none() {
@@ -143,6 +151,10 @@ final class PodcastControl<S> {
     private boolean stageShown;
     private boolean pictures = WindowSizes.recallInt(PICTURES_KEY, 1) == 1;
     private Consumer<ApplicationEvent<?>> events = event -> { };
+    /** Bekommt die Stellen des laufenden Themas, leer ohne Thema oder nach dem Abspielen (Angelo 22.11.2026). */
+    private Consumer<List<Integer>> follower = statements -> { };
+    /** Das Thema, dem die Ansicht gerade folgt; -1 = keinem. */
+    private int followedTopic = -1;
 
     private Source<S> source = Source.none();
     private S summary;
@@ -266,6 +278,42 @@ final class PodcastControl<S> {
             runningPicture = next;
             showPicture();
         }
+    }
+
+    /**
+     * Wer der Wiedergabe folgt: Die Leseansicht rollt zur Stelle, von der das laufende Thema erzählt, und markiert sie
+     * gelb wie die Suche (Angelo 22.11.2026: „dass einem dieser Podcast quasi den Bericht vorliest“).
+     */
+    void follow(Consumer<List<Integer>> follower) {
+        this.follower = Objects.requireNonNull(follower, "follower");
+    }
+
+    private void followAt(long millis) {
+        followTrack(player.trackAt(millis));
+    }
+
+    /** Meldet die Stellen des Themas von Abschnitt {@code track}, sobald das Thema wechselt. */
+    void followTrack(int track) {
+        Podcast podcast = last;
+        int topic = podcast == null || !timelineShown || track < 0 || track >= podcast.parts().size() ? -1
+                : podcast.parts().get(track).topic();
+        if (topic == followedTopic) {
+            return;
+        }
+        followedTopic = topic;
+        if (topic < 0) {
+            follower.accept(List.of());
+            return;
+        }
+        int mine = generation;
+        Source<S> current = source;
+        S shown = summary;
+        runner.run(() -> current.focus(shown, topic), statements -> {
+            if (mine == generation && followedTopic == topic) {
+                follower.accept(statements);
+            }
+        }, failure -> LOG.log(System.Logger.Level.INFO, "Podcast-Stelle nicht gelesen ({0})",
+                failure.getClass().getName()));
     }
 
     /** Zeigt das Bild des laufenden Abschnitts auf der Bühne oder nimmt die Bühne weg; lädt es bei Bedarf. */
@@ -542,6 +590,7 @@ final class PodcastControl<S> {
         timeline.slides(player.topicStarts());
         // Ein Bild, das erst jetzt fertig wurde, erscheint zum laufenden Thema.
         pictureAt(player.position());
+        followAt(player.position());
         if (!player.playing() || player.total() > 0 && !timeline.isDragging()) {
             timeline.update(player.position(), player.total());
         }
@@ -568,6 +617,7 @@ final class PodcastControl<S> {
         if (!show) {
             runningPicture = null;
             showStage(false);
+            followTrack(-1);
         }
     }
 
@@ -586,6 +636,7 @@ final class PodcastControl<S> {
                 }
                 resumeAt = millis;
                 pictureAt(millis);
+                followAt(millis);
                 if (retrying) {
                     // Das Wiederholen hat geklappt: wieder blau.
                     retrying = false;
