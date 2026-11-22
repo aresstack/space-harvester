@@ -50,6 +50,8 @@ public final class VersionRecomputation implements AutoCloseable {
     private final ExecutorService runs = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("enrichment-versions-", 0).factory());
     private volatile boolean closed;
+    /** Laufende Hintergrundteile; {@link #close} wartet auf sie. */
+    private final ActiveParts parts = new ActiveParts();
     /** Hintergrundaufträge; ohne sie im eigenen Thread (Dienst). */
     private volatile BackgroundJobs background;
     /** Anzahl der bekannten Seiten einer Quelle, für den Fortschritt eines Teils. */
@@ -73,7 +75,11 @@ public final class VersionRecomputation implements AutoCloseable {
         this.pageCount = Objects.requireNonNull(pageCount, "pageCount");
         // Höchstens ein offener Teil je Quelle: Er bestimmt seine Arbeit allein aus dem Cache.
         background.register(BackgroundKind.exclusive(BACKGROUND_KIND,
-                part -> JobTask.blocking(context -> run(part.sourceId(), context)), () -> true));
+                part -> JobTask.blocking(context -> parts.run(() -> closed,
+                        () -> {
+                            throw new JobCancelledException(context.jobId());
+                        },
+                        () -> run(part.sourceId(), context))), () -> true));
         this.background = background;
     }
 
@@ -186,6 +192,9 @@ public final class VersionRecomputation implements AutoCloseable {
         runs.shutdown();
         if (!runs.awaitTermination(CLOSE_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
             runs.shutdownNow();
+        }
+        if (!parts.await(CLOSE_WAIT)) {
+            LOG.log(System.Logger.Level.WARNING, "Abgleich der Prozessorversionen beim Beenden nicht rechtzeitig fertig");
         }
     }
 }

@@ -348,7 +348,12 @@ wird automatisch verwaltet.
    Quelle als Fortschritt. Ein Teil, den das Beenden des Dienstes unterbricht, gilt nicht als fertig und setzt nach
    dem Neustart von vorn fort; Aktuelles kostet dann nur den Blick in die Ablage. Grenzen: Mit nur einem Platz für
    Vorbereitungen laufen sie nicht und warten gelb (wie jeder Hintergrundauftrag); länger als die Laufzeitgrenze
-   eines Auftrags (`JobLimits#maxRunTime`) endet ein Teil mit Zeitüberschreitung und lässt sich fortsetzen. Das
+   eines Auftrags (`JobLimits#maxRunTime`) endet ein Teil mit Zeitüberschreitung und lässt sich fortsetzen.
+   Prozessoren, die über das Netz rechnen, reiht ein Teil wie bisher in die Warteschlange der Anreicherung ein
+   (`Enrichments#recomputeInBackground`); fertig heißt hier: alle Seiten geprüft und eingereiht. Diese Warteschlange
+   wird als eigene Art „KI-Anreicherung“ sichtbar (nächster Schritt). Beim Beenden wartet jede Komponente
+   (`close()`) bis zu zehn Sekunden auf ihre laufenden Teile, bevor die Ablage schließt. Ein fortgesetzter Teil nach
+   einem Wechsel der Freigabe gleicht gegen die Freigabe von jetzt ab, denn er ersetzt den Abgleich beim Start. Das
    Aufräumen des Änderungsprotokolls und das Nachtragen der Update-Marken beim Start bleiben ohne Auftrag: kurze
    Arbeit in der eigenen Ablage, ohne Netz und ohne Modell.
 

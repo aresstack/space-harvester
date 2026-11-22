@@ -124,6 +124,68 @@ class VersionRecomputationTest {
                 });
     }
 
+    @Test
+    void closingWaitsForARunningBackgroundPartBeforeTheStoreCloses() throws Exception {
+        // Codex-Befund #1073: Der Teil läuft auf den Threads der Auftragsverwaltung, die erst nach der Ablage schließt.
+        Counting terms = new Counting("terms", false, true);
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(terms), store, CLOCK);
+        PageSnapshot page = text("wiki", "p1", "1", "Eins");
+        java.util.concurrent.CountDownLatch reading = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.Iterator<PageSnapshot> blocking = new java.util.Iterator<>() {
+            private boolean given;
+
+            @Override
+            public boolean hasNext() {
+                if (!given) {
+                    reading.countDown();
+                    try {
+                        release.await(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return !given;
+            }
+
+            @Override
+            public PageSnapshot next() {
+                given = true;
+                return page;
+            }
+        };
+        java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors.newSingleThreadExecutor();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), worker,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        VersionRecomputation versions = new VersionRecomputation(enrichments, sourceId -> blocking);
+        versions.background(background, sourceId -> 1);
+        try {
+            versions.reconcileOnStart(List.of("wiki"));
+            assertThat(reading.await(5, TimeUnit.SECONDS)).isTrue();
+
+            Thread closer = new Thread(() -> {
+                try {
+                    versions.close();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            closer.start();
+            closer.join(300);
+            assertThat(closer.isAlive()).as("wartet auf den laufenden Teil").isTrue();
+            release.countDown();
+            closer.join(5_000);
+            assertThat(closer.isAlive()).isFalse();
+        } finally {
+            release.countDown();
+            worker.shutdownNow();
+        }
+    }
+
     private static void runAll(java.util.Queue<Runnable> held) {
         Runnable next;
         while ((next = held.poll()) != null) {

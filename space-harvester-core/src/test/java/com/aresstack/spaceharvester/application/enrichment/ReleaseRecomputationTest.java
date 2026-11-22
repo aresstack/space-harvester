@@ -259,6 +259,44 @@ class ReleaseRecomputationTest {
     }
 
     @Test
+    void aResumedWithdrawalWhoseSourceWasReleasedMeanwhileReconcilesAgainstTheReleaseOfNow() throws Exception {
+        // Codex-Befund #1073: Die Freigabe wechselte, während der Dienst stand; der fortgesetzte Teil ersetzt den
+        // Abgleich beim Start, den sein offener Eintrag ausließ, und nimmt nichts zurück.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = List.of(text("wiki", "p1", "1", "Eins"), text("wiki", "p2", "1", "Zwei"));
+        enrichments.recompute(pages.get(0), null);
+        navigation.calls.clear();
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        // Ein Platz: der Teil wartet und lässt sich anhalten, bevor er läuft.
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(1, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> true, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 2);
+            String groupId = background.start(ReleaseRecomputation.BACKGROUND_KIND, ReleaseRecomputation.CHANGE_TITLE,
+                    List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", null,
+                            Map.of(ReleaseRecomputation.MODE, ReleaseRecomputation.WITHDRAW)))).groupId();
+            background.pause(groupId);
+            assertThat(background.group(groupId).orElseThrow().paused()).isTrue();
+
+            jobs.parallelPreparations(2);
+            background.resume(groupId);
+            awaitUntil(() -> navigation.count("p2") > 0
+                    && background.group(groupId).orElseThrow().finished());
+        }
+
+        assertThat(navigation.calls).as("nur, was zur Freigabe von jetzt fehlt").containsOnlyKeys("p2");
+        assertThat(withdrawn).as("freigegeben: nichts zurückgenommen").isEmpty();
+    }
+
+    @Test
     void withBackgroundJobsChangedPagesOfTheReleaseListTravelAsParametersAndNoEmptyRemovedOne() throws Exception {
         Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
         Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);

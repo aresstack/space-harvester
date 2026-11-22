@@ -80,6 +80,8 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     private final ExecutorService runs = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("enrichment-release-", 0).factory());
     private volatile boolean closed;
+    /** Laufende Hintergrundteile; {@link #close} wartet auf sie. */
+    private final ActiveParts parts = new ActiveParts();
     private volatile Withdrawal withdrawal = pages -> {
     };
     /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
@@ -187,10 +189,10 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         this.model = Objects.requireNonNull(model, "model");
         this.notApproved = Objects.requireNonNull(notApproved, "notApproved");
         this.pageCount = Objects.requireNonNull(pageCount, "pageCount");
-        background.register(new BackgroundKind(BACKGROUND_KIND,
-                part -> JobTask.blocking(context -> sourcePart(part, context))));
-        background.register(new BackgroundKind(PAGES_KIND,
-                part -> JobTask.blocking(context -> pagesPart(part, context))));
+        background.register(new BackgroundKind(BACKGROUND_KIND, part -> JobTask.blocking(context ->
+                parts.run(() -> closed, () -> interrupted(context), () -> sourcePart(part, context)))));
+        background.register(new BackgroundKind(PAGES_KIND, part -> JobTask.blocking(context ->
+                parts.run(() -> closed, () -> interrupted(context), () -> pagesPart(part, context)))));
         this.background = background;
     }
 
@@ -499,21 +501,25 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
 
     /**
      * Ein Teil der Art {@value #BACKGROUND_KIND}. Zum ersten Mal wie bisher; fortgesetzt nur noch, was nicht zur
-     * Freigabe passt (wie der Abgleich beim Start), nach einem Entzug samt erneuter {@link Withdrawal}.
+     * Freigabe passt (wie der Abgleich beim Start), gegen die Freigabe von jetzt: Wechselte sie, während der Dienst
+     * stand, ersetzt der fortgesetzte Teil den Abgleich beim Start, den sein offener Eintrag ausließ (Codex-Befund
+     * #1073). Nach einem Entzug, der noch gilt, samt erneuter {@link Withdrawal}.
      */
     private void sourcePart(BackgroundPart part, JobContext context) {
         String sourceId = part.sourceId();
         String mode = Objects.requireNonNullElse(part.parameter(MODE), CHECK);
+        if (part.resumed() && (GRANT.equals(mode) || WITHDRAW.equals(mode))) {
+            boolean release = released.test(sourceId);
+            boolean withdrawing = !release && WITHDRAW.equals(mode);
+            if (withdrawing || model.getAsBoolean()) {
+                run(sourceId, release, notApproved, withdrawing, context);
+            }
+            return;
+        }
         switch (mode) {
             case IMAGES -> withdrawAll(sourceId, context);
-            case WITHDRAW -> run(sourceId, false, part.resumed() ? notApproved : null, true, context);
-            case GRANT -> {
-                if (!part.resumed()) {
-                    run(sourceId, true, null, false, context);
-                } else if (model.getAsBoolean()) {
-                    run(sourceId, true, notApproved, false, context);
-                }
-            }
+            case WITHDRAW -> run(sourceId, false, null, true, context);
+            case GRANT -> run(sourceId, true, null, false, context);
             default -> {
                 if (model.getAsBoolean()) {
                     run(sourceId, released.test(sourceId), notApproved, false, context);
@@ -711,6 +717,9 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         runs.shutdown();
         if (!runs.awaitTermination(CLOSE_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
             runs.shutdownNow();
+        }
+        if (!parts.await(CLOSE_WAIT)) {
+            LOG.log(System.Logger.Level.WARNING, "Läufe der KI-Freigabe beim Beenden nicht rechtzeitig fertig");
         }
     }
 }
