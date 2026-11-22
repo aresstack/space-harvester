@@ -147,6 +147,46 @@ public final class EvidencePopup extends JPopupMenu {
         }
     }
 
+    /**
+     * Ein Schreiben scheiterte, nachdem das Overlay schon zu (oder neu gefüllt) war (AT W3: nichts scheitert still).
+     * Die Statuszeile des Reiters zeigt {@link #note}: rot mit Kreispfeil, der dasselbe Schreiben wiederholt; bei einem
+     * Konflikt beim Zurücknehmen gelb und ohne Wiederholen.
+     *
+     * @param brief    die Aussage kurz, etwa „„Der Plan beschreibt …““
+     * @param conflict ob sich die Entscheidung inzwischen geändert hat (Zurücknehmen mit überholter Revision)
+     * @param retry    wiederholt dasselbe Schreiben (derselbe Wert, beim Zurücknehmen dieselbe Revision); {@code null}
+     *                 bei einem Konflikt
+     */
+    public record ClosedFailure(String brief, boolean conflict, Runnable retry) {
+
+        public ClosedFailure {
+            Objects.requireNonNull(brief, "brief");
+        }
+
+        /** Der Text der Statuszeile. */
+        public String text() {
+            return "Entscheidung zu " + brief + (conflict ? " " + CHANGED : " nicht gespeichert");
+        }
+
+        /**
+         * Die Meldung für die Statuszeile: gelb bei Konflikt, sonst rot mit Kreispfeil; ein Klick darauf ruft erst
+         * {@code beforeRetry} (etwa die Meldung entfernen), dann {@link #retry}.
+         */
+        public StatusNote note(Runnable beforeRetry) {
+            Objects.requireNonNull(beforeRetry, "beforeRetry");
+            String text = text();
+            StatusNote note = new StatusNote(text, conflict ? StatusNote.Tone.WARNING : StatusNote.Tone.ERROR, null,
+                    null);
+            return retry == null ? note : note.withIcon(new StatusNote.IconLink(Glyph.REFRESH, text, RETRY_TIP, () -> {
+                beforeRetry.run();
+                retry.run();
+            }));
+        }
+    }
+
+    /** Tooltip des Kreispfeils hinter einer gescheiterten Entscheidung. */
+    public static final String RETRY_TIP = "Entscheidung erneut speichern";
+
     /** Führt Arbeit abseits des EDT aus und meldet auf dem EDT zurück (Tests: sofort). */
     public interface Runner {
         <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure);
@@ -166,6 +206,11 @@ public final class EvidencePopup extends JPopupMenu {
     private final List<WrappedText> texts = new ArrayList<>();
     private final List<String> otherTexts = new ArrayList<>();
     private Consumer<Target> onOpen = target -> { };
+    /** Wohin ein Fehler nach dem Schließen geht (Statuszeile des Reiters); ohne Besitzer nur ins Log. */
+    private Consumer<ClosedFailure> onClosedFailure = failure -> LOG.log(System.Logger.Level.WARNING,
+            "Entscheidung nach dem Schließen nicht gespeichert, keine Statuszeile angemeldet");
+    /** Ob das Overlay offen ist; Tests setzen es fest. */
+    private java.util.function.BooleanSupplier open = this::isVisible;
     private Reviewing reviewing;
     private Runner runner;
     /** Zählt {@link #fill}: Antworten für eine frühere Füllung ändern nichts mehr. */
@@ -240,6 +285,15 @@ public final class EvidencePopup extends JPopupMenu {
      * Prüfen von Hand (W3): ✓ und ✕ je Zeile, gelesen und gespeichert über {@code reviewing} mit {@code runner}. Ohne
      * diesen Aufruf zeigt das Overlay keine Knöpfe. Gilt ab der nächsten Füllung.
      */
+    /**
+     * {@code listener} zeigt ein Schreiben, das erst nach dem Schließen (oder neuen Füllen) scheiterte, in der
+     * Statuszeile des Reiters ({@link ClosedFailure#note}). Auf dem EDT.
+     */
+    public EvidencePopup onClosedFailure(Consumer<ClosedFailure> listener) {
+        onClosedFailure = Objects.requireNonNull(listener, "listener");
+        return this;
+    }
+
     public EvidencePopup reviewing(Reviewing reviewing, Runner runner) {
         this.reviewing = Objects.requireNonNull(reviewing, "reviewing");
         this.runner = Objects.requireNonNull(runner, "runner");
@@ -414,6 +468,53 @@ public final class EvidencePopup extends JPopupMenu {
         return "nur " + (name == null ? "Analysator" : name);
     }
 
+    /** Ob die Meldung zu einer Zeile noch im Overlay erscheinen kann: offen und mit dieser Füllung. */
+    private boolean showing(int mine) {
+        return mine == generation && open.getAsBoolean();
+    }
+
+    /**
+     * Meldet ein gescheitertes Schreiben an den Reiter; der Kreispfeil wiederholt es mit demselben Wert ({@code review})
+     * bzw. beim Zurücknehmen ({@code review == null}) mit derselben Revision.
+     */
+    private void closedFailure(PageKey page, String id, String brief, ParsedStatements.Review review, long expected,
+                               Throwable failure) {
+        LOG.log(System.Logger.Level.WARNING, "Entscheidung nach dem Schließen nicht gespeichert: {0}",
+                failure.getClass().getName());
+        boolean conflict = review == null && failure instanceof StandingConflictException;
+        onClosedFailure.accept(new ClosedFailure(brief, conflict, conflict ? null
+                : () -> retry(page, id, brief, review, expected)));
+    }
+
+    /** Wiederholt ein Schreiben aus der Statuszeile; zeigt das Overlay die Aussage gerade, zieht die Zeile mit. */
+    private void retry(PageKey page, String id, String brief, ParsedStatements.Review review, long expected) {
+        Reviewing current = reviewing;
+        String key = key(page, id);
+        if (current == null || writing.contains(key)) {
+            return;
+        }
+        writing.add(key);
+        runner.run(() -> review == null ? current.withdraw(page, id, expected) : current.review(page, id, review),
+                result -> {
+                    writing.remove(key);
+                    Long kept = result instanceof StandingDecision decision ? decision.revision() : null;
+                    lastWrite.put(key, ++writes);
+                    for (Row row : shown) {
+                        if (row.key().equals(key) && !row.pending) {
+                            row.revision = kept;
+                            row.show(review == null ? ReviewToggle.State.OPEN : stateOf(review));
+                        }
+                    }
+                }, failure -> {
+                    writing.remove(key);
+                    closedFailure(page, id, brief, review, expected, failure);
+                });
+    }
+
+    private static String key(PageKey page, String statementId) {
+        return page.sourceId() + '\u0000' + page.pageId() + '\u0000' + statementId;
+    }
+
     /** Der Satz kurz für eine Meldung, sonst die Seite. */
     static String brief(String sentence, String pageTitle) {
         if (sentence == null || sentence.isBlank()) {
@@ -530,7 +631,7 @@ public final class EvidencePopup extends JPopupMenu {
         }
 
         String key() {
-            return page().sourceId() + '\u0000' + page().pageId() + '\u0000' + statementId();
+            return EvidencePopup.key(page(), statementId());
         }
 
         /**
@@ -610,7 +711,13 @@ public final class EvidencePopup extends JPopupMenu {
                 // Danach steht der Eintrag mit neuer Revision (Stand von Hand) oder fehlt; ✓/✕ prüfen sie nicht.
                 runner.run(() -> current.withdraw(page, id, expected),
                         withdrawn -> finished(ReviewToggle.State.OPEN, null), failure -> {
-                    if (failure instanceof StandingConflictException) {
+                    if (!showing(mine)) {
+                        // Das Overlay ist zu: nicht still scheitern, sondern in der Statuszeile des Reiters.
+                        writing.remove(key());
+                        pending = false;
+                        show(from);
+                        closedFailure(page, id, brief, null, expected, failure);
+                    } else if (failure instanceof StandingConflictException) {
                         changedMeanwhile();
                     } else {
                         refused(from, to, failure);
@@ -620,8 +727,16 @@ public final class EvidencePopup extends JPopupMenu {
                 ParsedStatements.Review review = to == ReviewToggle.State.CONFIRMED ? ParsedStatements.Review.CONFIRMED
                         : ParsedStatements.Review.REJECTED;
                 runner.run(() -> current.review(page, id, review),
-                        decision -> finished(to, decision == null ? null : decision.revision()),
-                        failure -> refused(from, to, failure));
+                        decision -> finished(to, decision == null ? null : decision.revision()), failure -> {
+                    if (!showing(mine)) {
+                        writing.remove(key());
+                        pending = false;
+                        show(from);
+                        closedFailure(page, id, brief, review, 0L, failure);
+                    } else {
+                        refused(from, to, failure);
+                    }
+                });
             }
         }
 
@@ -694,17 +809,56 @@ public final class EvidencePopup extends JPopupMenu {
             setFocusable(true);
             setToolTipText(OPEN_TIP);
             getAccessibleContext().setAccessibleName(full);
+            // Platz für den Fokusring; der Link bleibt immer blau (UX W3).
+            setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
             addFocusListener(new FocusAdapter() {
                 @Override
                 public void focusGained(FocusEvent e) {
-                    setForeground(Comic.INK);
+                    // Wie KeyboardFocusRing: nur über die Tastatur (Tab), nicht beim ersten Fokus des Overlays.
+                    keyboard = switch (e.getCause()) {
+                        case TRAVERSAL, TRAVERSAL_FORWARD, TRAVERSAL_BACKWARD, TRAVERSAL_UP, TRAVERSAL_DOWN -> true;
+                        default -> false;
+                    };
+                    repaint();
                 }
 
                 @Override
                 public void focusLost(FocusEvent e) {
-                    setForeground(Comic.BLUE);
+                    keyboard = false;
+                    repaint();
                 }
             });
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    keyboard = false;
+                    repaint();
+                }
+            });
+        }
+
+        /** Ob der Fokus zuletzt über die Tastatur kam; dann steht der gelbe Ring um den Link (für Tests). */
+        private boolean keyboard;
+
+        boolean showsKeyboardFocus() {
+            return keyboard;
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics graphics) {
+            super.paintComponent(graphics);
+            if (keyboard && hasFocus()) {
+                java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+                try {
+                    g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                            java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                    g.setColor(Comic.YELLOW);
+                    g.setStroke(new java.awt.BasicStroke(2f));
+                    g.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 8, 8);
+                } finally {
+                    g.dispose();
+                }
+            }
         }
 
         /** Der ganze Titel, auch wenn er gekürzt gezeigt wird. */
@@ -868,8 +1022,8 @@ public final class EvidencePopup extends JPopupMenu {
         }
     }
 
-    /** ✓/✕ der Zeile {@code index}. */
-    ReviewToggle toggle(int index) {
+    /** ✓/✕ der Zeile {@code index} (auch für Tests der Reiter in anderen Paketen). */
+    public ReviewToggle toggle(int index) {
         return shown.get(index).toggle;
     }
 
@@ -901,6 +1055,16 @@ public final class EvidencePopup extends JPopupMenu {
     /** Ton der Meldung im Statusbereich. */
     StatusNote.Tone statusTone() {
         return status.isVisible() ? statusTone : StatusNote.Tone.PLAIN;
+    }
+
+    /** Ob das Overlay als offen gilt (Tests ohne Bildschirm). */
+    void openForTests(boolean value) {
+        open = () -> value;
+    }
+
+    /** Der Link der Zeile als {@link TitleLink}. */
+    TitleLink titleLink(int index) {
+        return shown.get(index).link;
     }
 
     /** Ein Klick auf das ✕ des Statusbereichs. */

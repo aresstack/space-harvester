@@ -325,6 +325,11 @@ final class KnowledgeGraphTab extends JPanel {
     private PageSet detachedPages = PageSet.EMPTY;
     /** Was die Statuszeile zu „Wissensgraph erzeugen“ sagt, vor dem Stand des Graphen; {@code null} ohne. */
     private StatusNote generateNote;
+    /**
+     * Eine Entscheidung (✓/✕ im Overlay „Belege“), die erst nach dem Schließen scheiterte (AT W3): rot mit Kreispfeil,
+     * der dasselbe Schreiben wiederholt, oder gelb „inzwischen geändert“; steht vor allem anderen in der Statuszeile.
+     */
+    private StatusNote reviewNote;
     private Consumer<StatusNote> onNote;
     /** Führt etwas einmal nach {@link #COMPLETE_MILLIS} aus (ein einmaliger Swing-Timer); Tests führen von Hand aus. */
     private Consumer<Runnable> clearSoon = run -> {
@@ -473,10 +478,15 @@ final class KnowledgeGraphTab extends JPanel {
                 return actionsOrThrow().withdrawStatementReview(key, statementId, expectedRevision);
             }
         }, runner::run);
+        evidence.onClosedFailure(failure -> reviewNote(failure.note(() -> reviewNote(null))));
         // Eine Meldung des Core, solange das Overlay offen war: erst jetzt nachziehen, damit seine Zeilen stehen blieben.
         evidence.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
             @Override
             public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+                // „inzwischen geändert“ ist gesehen, sobald man wieder prüft; ein Fehler mit Kreispfeil bleibt stehen.
+                if (reviewNote != null && reviewNote.icon() == null) {
+                    reviewNote(null);
+                }
             }
 
             @Override
@@ -640,6 +650,11 @@ final class KnowledgeGraphTab extends JPanel {
         // Der Stand des Graphen hinter der Meldung von „Wissensgraph erzeugen“ bleibt grau, auch wenn sie gelb oder rot ist.
         StatusNote note = generateNote == null ? StatusNote.plain(line)
                 : line.isBlank() ? generateNote : generateNote.plus(" · " + line);
+        if (reviewNote != null) {
+            // Nichts scheitert still: die gescheiterte Entscheidung zuerst, der Rest grau dahinter.
+            String rest = note.text().isBlank() ? "" : " · " + note.text();
+            note = rest.isEmpty() ? reviewNote : reviewNote.plus(rest);
+        }
         onStatus.accept(note.text());
         if (onNote != null) {
             onNote.accept(note);
@@ -649,6 +664,21 @@ final class KnowledgeGraphTab extends JPanel {
     private void generateNote(StatusNote note) {
         generateNote = note;
         pushStatus();
+    }
+
+    private void reviewNote(StatusNote note) {
+        reviewNote = note;
+        pushStatus();
+    }
+
+    /** Die Meldung einer nach dem Schließen gescheiterten Entscheidung, sonst {@code null} (für Tests). */
+    StatusNote reviewNote() {
+        return reviewNote;
+    }
+
+    /** Das Overlay „Belege“ (für Tests). */
+    EvidencePopup evidencePopup() {
+        return evidence;
     }
 
     /** Der Inhalt als Text für die Zwischenablage: die Tabellenzeilen (Knoten und Kanten), tabulatorgetrennt. */

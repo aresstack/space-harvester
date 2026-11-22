@@ -309,3 +309,8 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   Geschrieben wird abseits des EDT; die Zeilen springen nicht, solange das Overlay offen ist (verworfen: Satz gedämpft,
   Pille „verworfen“ dunkel; bestätigt: „von Hand bestätigt“; zurückgenommen: die vorherige Stufe). Der Graph zieht über
   den Beobachter nach, sobald das Overlay zu ist. Der Analysator kommt aus der Analyse, in der die Aussage steht.
+  Nichts scheitert still: Scheitert ein Schreiben erst, nachdem das Overlay zu (oder neu gefüllt) ist, meldet
+  `EvidencePopup#onClosedFailure` es dem Reiter; dessen Statuszeile zeigt rot „Entscheidung zu „…“ nicht gespeichert“
+  mit Kreispfeil, der dasselbe Schreiben wiederholt (derselbe Wert, beim Zurücknehmen dieselbe Revision), bei einem
+  Konflikt beim Zurücknehmen gelb „… inzwischen geändert“ ohne Wiederholen. Der Seitenlink bleibt blau; Tastaturfokus
+  zeigt der gelbe Ring wie bei den übrigen Knöpfen, der erste Fokus beim Öffnen nicht.

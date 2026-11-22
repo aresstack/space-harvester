@@ -267,6 +267,144 @@ class EvidencePopupTest {
     }
 
     @Test
+    void aWriteThatFailsAfterClosingGoesToTheTabAndItsRetryRepeatsTheSameReview() throws Exception {
+        Core core = new Core();
+        List<Runnable> later = new ArrayList<>();
+        List<EvidencePopup.ClosedFailure> failures = new ArrayList<>();
+        List<Object> seen = new ArrayList<>();
+        int[] cleared = {0};
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = new EvidencePopup().reviewing(core, deferred(later)).onClosedFailure(failures::add);
+            popup.openForTests(true);
+            popup.fill("Plan startet Nachtlauf", 1, List.of(evidence(PLAN, "Plan", false)), sentences(), false);
+            later.removeFirst().run();
+            popup.toggle(0).clickReject();
+            // Das Overlay geht zu, bevor das Speichern scheitert.
+            popup.openForTests(false);
+            core.refuse = new IllegalStateException("kaputt");
+            later.removeFirst().run();
+            seen.add(popup.statusText());
+            seen.add(failures.size());
+            EvidencePopup.ClosedFailure failure = failures.getFirst();
+            StatusNote note = failure.note(() -> cleared[0]++);
+            seen.add(note.text());
+            seen.add(note.tone());
+            seen.add(note.icon().glyph());
+            seen.add(note.icon().tooltip());
+            // Der Kreispfeil wiederholt dasselbe Schreiben (derselbe Wert), wieder abseits des EDT.
+            core.refuse = null;
+            note.icon().action().run();
+            seen.add(cleared[0]);
+            later.removeFirst().run();
+            seen.add(failures.size());
+        });
+        assertThat(seen).containsExactly("", 1, "Entscheidung zu „Der Plan beschreibt den Start des Nachtlaufs und …“"
+                        + " nicht gespeichert", StatusNote.Tone.ERROR, Glyph.REFRESH, EvidencePopup.RETRY_TIP, 1, 1);
+        assertThat(core.calls).containsExactly("reviews 1", "review " + id(PLAN) + " REJECTED",
+                "review " + id(PLAN) + " REJECTED");
+        assertThat(core.decisions.get(id(PLAN)).review()).isEqualTo(ParsedStatements.Review.REJECTED);
+    }
+
+    @Test
+    void aWithdrawThatFailsAfterClosingRetriesWithTheSameRevisionAndAConflictTurnsYellow() throws Exception {
+        Core core = new Core();
+        core.decisions.put(id(PLAN), decision(PLAN, ParsedStatements.Review.CONFIRMED, 3));
+        List<Runnable> later = new ArrayList<>();
+        List<EvidencePopup.ClosedFailure> failures = new ArrayList<>();
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = new EvidencePopup().reviewing(core, deferred(later)).onClosedFailure(failures::add);
+            popup.openForTests(true);
+            popup.fill("Plan startet Nachtlauf", 1, List.of(evidence(PLAN, "Plan", false)), sentences(), false);
+            later.removeFirst().run();
+            popup.toggle(0).clickConfirm(); // bestätigt → zurücknehmen
+            popup.openForTests(false);
+            core.refuse = new IllegalStateException("kaputt");
+            later.removeFirst().run();
+            seen.add(failures.getLast().text());
+            seen.add(failures.getLast().conflict());
+            // Inzwischen hat jemand anderes entschieden: die Wiederholung mit Revision 3 trifft auf Revision 4.
+            core.refuse = null;
+            core.decisions.put(id(PLAN), decision(PLAN, ParsedStatements.Review.REJECTED, 4));
+            failures.getLast().note(() -> { }).icon().action().run();
+            later.removeFirst().run();
+            EvidencePopup.ClosedFailure conflict = failures.getLast();
+            seen.add(failures.size());
+            seen.add(conflict.text());
+            seen.add(conflict.note(() -> { }).tone());
+            seen.add(conflict.note(() -> { }).icon());
+            seen.add(conflict.retry());
+        });
+        assertThat(seen).containsExactly("Entscheidung zu „Der Plan beschreibt den Start des Nachtlaufs und …“"
+                        + " nicht gespeichert", false, 2, "Entscheidung zu „Der Plan beschreibt den Start des "
+                        + "Nachtlaufs und …“ inzwischen geändert", StatusNote.Tone.WARNING, null, null);
+        assertThat(core.calls).containsExactly("reviews 1", "withdraw " + id(PLAN) + " 3",
+                "withdraw " + id(PLAN) + " 3");
+    }
+
+    @Test
+    void aWithdrawConflictAfterClosingIsYellowWithoutRetryAndNothingReachesTheClosedOverlay() throws Exception {
+        Core core = new Core();
+        core.decisions.put(id(PLAN), decision(PLAN, ParsedStatements.Review.CONFIRMED, 3));
+        List<Runnable> later = new ArrayList<>();
+        List<EvidencePopup.ClosedFailure> failures = new ArrayList<>();
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = new EvidencePopup().reviewing(core, deferred(later)).onClosedFailure(failures::add);
+            popup.openForTests(true);
+            popup.fill("Plan startet Nachtlauf", 1, List.of(evidence(PLAN, "Plan", false)), sentences(), false);
+            later.removeFirst().run();
+            popup.toggle(0).clickConfirm();
+            core.decisions.put(id(PLAN), decision(PLAN, ParsedStatements.Review.REJECTED, 4));
+            popup.openForTests(false);
+            later.removeFirst().run();
+            seen.add(later.isEmpty());
+            seen.add(failures.size());
+            seen.add(failures.getFirst().conflict());
+            seen.add(failures.getFirst().text());
+            seen.add(popup.statusText());
+        });
+        assertThat(seen).containsExactly(true, 1, true, "Entscheidung zu „Der Plan beschreibt den Start des "
+                + "Nachtlaufs und …“ inzwischen geändert", "");
+        assertThat(core.calls).as("kein erneutes Lesen für ein geschlossenes Overlay")
+                .containsExactly("reviews 1", "withdraw " + id(PLAN) + " 3");
+    }
+
+    @Test
+    void theTitleLinkStaysBlueAndShowsTheYellowRingOnlyForKeyboardFocus() throws Exception {
+        Core core = new Core();
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = popup(core);
+            EvidencePopup.TitleLink link = popup.titleLink(0);
+            seen.add(link.getForeground());
+            // Erster Fokus beim Öffnen (nicht über die Tastatur): blau, kein Ring.
+            focus(link, java.awt.event.FocusEvent.FOCUS_GAINED, java.awt.event.FocusEvent.Cause.ACTIVATION);
+            seen.add(link.getForeground());
+            seen.add(link.showsKeyboardFocus());
+            // Mit Tab erreicht: blau, gelber Ring.
+            focus(link, java.awt.event.FocusEvent.FOCUS_GAINED, java.awt.event.FocusEvent.Cause.TRAVERSAL_FORWARD);
+            seen.add(link.getForeground());
+            seen.add(link.showsKeyboardFocus());
+            focus(link, java.awt.event.FocusEvent.FOCUS_LOST, java.awt.event.FocusEvent.Cause.TRAVERSAL_FORWARD);
+            seen.add(link.getForeground());
+            seen.add(link.showsKeyboardFocus());
+        });
+        assertThat(seen).containsExactly(Comic.BLUE, Comic.BLUE, false, Comic.BLUE, true, Comic.BLUE, false);
+    }
+
+    private static void focus(javax.swing.JComponent component, int id, java.awt.event.FocusEvent.Cause cause) {
+        java.awt.event.FocusEvent event = new java.awt.event.FocusEvent(component, id, false, null, cause);
+        for (java.awt.event.FocusListener listener : component.getFocusListeners()) {
+            if (id == java.awt.event.FocusEvent.FOCUS_GAINED) {
+                listener.focusGained(event);
+            } else {
+                listener.focusLost(event);
+            }
+        }
+    }
+
+    @Test
     void aMessageNamesTheSentenceBrieflyOrElseThePage() {
         assertThat(EvidencePopup.brief("Kurz.", "Plan")).isEqualTo("„Kurz.“");
         assertThat(EvidencePopup.brief("Der Plan beschreibt den Start des Nachtlaufs und das Ziel der Sicherung.",
@@ -290,6 +428,7 @@ class EvidencePopupTest {
                 onSuccess.accept(result);
             }
         });
+        popup.openForTests(true);
         popup.fill("Plan startet Nachtlauf", 3, List.of(evidence(PLAN, "Plan", false),
                 checkedEvidence(ZIEL, "Ziel"), evidence(NACHTLAUF, "Nachtlauf", true)), sentences(), false);
         return popup;

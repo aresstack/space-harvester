@@ -42,6 +42,56 @@ class TermGraphViewTest {
             .toList());
 
     @Test
+    void aDecisionThatFailsAfterTheOverlayClosedShowsRedWithRetryInTheStatusLine() throws Exception {
+        EvidencePopupTest.Core core = new EvidencePopupTest.Core();
+        PageKey plan = new PageKey("wiki", "1");
+        List<Runnable> later = new ArrayList<>();
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView view = new TermGraphView(null);
+            EvidencePopup evidence = view.evidence().reviewing(core, new EvidencePopup.Runner() {
+                @Override
+                public <T> void run(java.util.concurrent.Callable<T> work, java.util.function.Consumer<T> onSuccess,
+                                    java.util.function.Consumer<Throwable> onFailure) {
+                    later.add(() -> {
+                        T result;
+                        try {
+                            result = work.call();
+                        } catch (Exception e) {
+                            onFailure.accept(e);
+                            return;
+                        }
+                        onSuccess.accept(result);
+                    });
+                }
+            });
+            seen.add(view.reviewNote());
+            evidence.fill("Plan startet Nachtlauf", 1, List.of(EvidencePopupTest.evidence(plan, "Plan", false)),
+                    EvidencePopupTest.sentences(), false);
+            later.removeFirst().run();
+            evidence.toggle(0).clickConfirm();
+            // Das Overlay ist zu (hier nie sichtbar), als das Speichern scheitert.
+            core.refuse = new IllegalStateException("kaputt");
+            later.removeFirst().run();
+            com.aresstack.spaceharvester.app.ui.controls.StatusNote note = view.reviewNote();
+            seen.add(note.text());
+            seen.add(note.tone());
+            seen.add(note.icon().glyph());
+            // Kreispfeil: die Meldung geht, dasselbe Schreiben läuft erneut und gelingt.
+            core.refuse = null;
+            note.icon().action().run();
+            seen.add(view.reviewNote());
+            later.removeFirst().run();
+            seen.add(view.reviewNote());
+        });
+        assertThat(seen).containsExactly(null, "Entscheidung zu „Der Plan beschreibt den Start des Nachtlaufs und …“"
+                + " nicht gespeichert", com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR,
+                Glyph.REFRESH, null, null);
+        assertThat(core.calls).containsExactly("reviews 1", "review " + EvidencePopupTest.id(plan) + " CONFIRMED",
+                "review " + EvidencePopupTest.id(plan) + " CONFIRMED");
+    }
+
+    @Test
     void depthOneShowsConfirmedNeighboursAndDepthTwoTheirNeighbours() throws Exception {
         GraphSource.Graph one = SOURCE.around("api", 1, false);
         assertThat(one.nodes()).extracting(GraphSource.Node::label)

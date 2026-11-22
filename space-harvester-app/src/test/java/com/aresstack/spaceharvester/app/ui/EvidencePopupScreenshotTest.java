@@ -85,6 +85,7 @@ class EvidencePopupScreenshotTest {
                     onSuccess.accept(result);
                 }
             });
+            popup[0].openForTests(true);
             List<DomainTermGraph.Evidence> evidence = List.of(
                     EvidencePopupTest.evidence(PLAN, longTitle ? LONG_TITLE : "Plan", false),
                     EvidencePopupTest.checkedEvidence(ZIEL, "Ziel"),

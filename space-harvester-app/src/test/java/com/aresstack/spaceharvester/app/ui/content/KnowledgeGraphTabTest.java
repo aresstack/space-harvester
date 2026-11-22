@@ -2497,6 +2497,71 @@ class KnowledgeGraphTabTest {
     }
 
     @Test
+    void aDecisionThatFailsAfterTheOverlayClosedStandsRedInTheStatusLineAndItsRetryRepeatsTheWrite() {
+        tab.page(WIKI);
+        List<StatusNote> notes = new ArrayList<>();
+        tab.onNote(notes::add);
+        com.aresstack.spaceharvester.app.ui.EvidencePopup evidence = tab.evidencePopup();
+        evidence.fill("Plan startet Nachtlauf", 1, List.of(evidence(new PageKey("wiki", "1"), "Plan")),
+                Map.of(), false);
+        runner.runAll();
+        evidence.toggle(0).clickConfirm();
+        // Das Overlay ist zu (im Test nie sichtbar), als das Speichern scheitert.
+        actions.reviewFailure = new IllegalStateException("kaputt");
+        runner.runAll();
+
+        StatusNote note = tab.reviewNote();
+        assertThat(note.text()).isEqualTo("Entscheidung zu Aussage auf „Plan“ nicht gespeichert");
+        assertThat(note.tone()).isEqualTo(StatusNote.Tone.ERROR);
+        assertThat(note.icon().glyph()).isEqualTo(com.aresstack.spaceharvester.app.ui.Glyph.REFRESH);
+        assertThat(notes.getLast().text()).startsWith("Entscheidung zu Aussage auf „Plan“ nicht gespeichert");
+        assertThat(notes.getLast().icon()).isEqualTo(note.icon());
+
+        // Der Kreispfeil nimmt die Meldung weg und wiederholt dasselbe Schreiben.
+        actions.reviewFailure = null;
+        notes.getLast().icon().action().run();
+        assertThat(tab.reviewNote()).isNull();
+        runner.runAll();
+        assertThat(tab.reviewNote()).isNull();
+        assertThat(actions.reviewCalls).containsExactly("reviews", "review CONFIRMED", "review CONFIRMED");
+    }
+
+    @Test
+    void aWithdrawConflictAfterTheOverlayClosedStandsYellowWithoutRetry() {
+        tab.page(WIKI);
+        actions.reviewRevision = 2;
+        com.aresstack.spaceharvester.app.ui.EvidencePopup evidence = tab.evidencePopup();
+        evidence.fill("Plan startet Nachtlauf", 1, List.of(evidence(new PageKey("wiki", "1"), "Plan")),
+                Map.of(), false);
+        runner.runAll();
+        evidence.toggle(0).clickReject();
+        runner.runAll(); // gespeichert mit Revision 3
+        evidence.toggle(0).clickReject(); // zurücknehmen mit Revision 3 …
+        actions.reviewRevision = 4; // … aber inzwischen hat jemand anderes entschieden
+        runner.runAll();
+
+        StatusNote note = tab.reviewNote();
+        assertThat(note.text()).isEqualTo("Entscheidung zu Aussage auf „Plan“ inzwischen geändert");
+        assertThat(note.tone()).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(note.icon()).isNull();
+        assertThat(actions.reviewCalls).containsExactly("reviews", "review REJECTED", "withdraw 3");
+    }
+
+    private static DomainTermGraph.Evidence evidence(PageKey page, String title) {
+        com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Statement statement =
+                new com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Statement(
+                        page.sourceId() + "/" + page.pageId() + "@x#s0.v1", 0, 4, 10, "startet", "starten",
+                        com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Voice.ACTIVE,
+                        com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Clause.MAIN, true,
+                        List.of(), java.util.Set.of(), 0,
+                        com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Quality.PLAUSIBLE,
+                        List.of(), com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review.UNREVIEWED);
+        return new DomainTermGraph.Evidence(new KnowledgeGraph.PageRef(page, "DEV", title,
+                PageStatements.State.CURRENT, null), statement, "maltparser-de", "Plan", "Nachtlauf",
+                DomainTermGraph.Trust.UNGEPRUEFT);
+    }
+
+    @Test
     void aChangedReviewReloadsOnlyTheShownDomainViewWithItsCentre() {
         tab.page(WIKI);
         tab.showingForTests(true);
@@ -2963,6 +3028,46 @@ class KnowledgeGraphTabTest {
             retried.add(groupId + " " + jobIds);
             return retryOutcome != null ? retryOutcome
                     : new com.aresstack.spaceharvester.app.runtime.AllJobs.Outcome(jobIds.size(), 0, null);
+        }
+
+        /** ✓/✕ im Overlay „Belege“: was der Core speichert, welche Revision er führt und ob er ablehnt. */
+        final List<String> reviewCalls = new ArrayList<>();
+        RuntimeException reviewFailure;
+        long reviewRevision;
+
+        @Override
+        public Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews> statementReviews(
+                Map<PageKey, List<String>> statements) {
+            reviewCalls.add("reviews");
+            Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews> result =
+                    new java.util.LinkedHashMap<>();
+            statements.keySet().forEach(key -> result.put(key,
+                    new com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews(true, Map.of())));
+            return result;
+        }
+
+        @Override
+        public com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey key,
+                String statementId, com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review review) {
+            reviewCalls.add("review " + review);
+            if (reviewFailure != null) {
+                throw reviewFailure;
+            }
+            return new com.aresstack.spaceharvester.application.standing.StandingDecision(key, statementId,
+                    AnalyzerChoice.PARSER, null, review, ++reviewRevision, "kollegin", Instant.EPOCH, "kollegin",
+                    Instant.EPOCH);
+        }
+
+        @Override
+        public boolean withdrawStatementReview(PageKey key, String statementId, long expectedRevision) {
+            reviewCalls.add("withdraw " + expectedRevision);
+            if (reviewFailure != null) {
+                throw reviewFailure;
+            }
+            if (expectedRevision != reviewRevision) {
+                throw new com.aresstack.spaceharvester.application.standing.StandingConflictException(reviewRevision);
+            }
+            return true;
         }
 
         @Override
