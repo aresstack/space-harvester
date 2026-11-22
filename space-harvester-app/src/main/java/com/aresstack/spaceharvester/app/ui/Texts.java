@@ -103,6 +103,7 @@ public final class Texts {
             case "INTERRUPTED" -> "Unterbrochen";
             case "PAUSED_SIGN_IN_REQUIRED" -> "Angehalten – wartet auf Anmeldung";
             case "PAUSED_CONNECTION_LOST" -> "Angehalten – Verbindung unterbrochen";
+            case "PAUSED_RESUME_BY_HAND" -> "Angehalten – von Hand fortsetzen";
             case "PREPARING" -> "Vorbereitung";
             case "PREPARED" -> "Vorbereitet";
             case "AWAITING_EXPORT" -> "Wartet auf Text";
@@ -113,7 +114,8 @@ public final class Texts {
     /** Farbe zum Zustandsobjekt ({@link #state(JobStatus)}): unvollständig und selbst angehalten als Warnung. */
     public static Comic.Tone tone(JobStatus status) {
         return switch (status.lifecycle().key()) {
-            case "COMPLETED_WITH_ERRORS", "PAUSED_SIGN_IN_REQUIRED", "PAUSED_CONNECTION_LOST", "INTERRUPTED" ->
+            case "COMPLETED_WITH_ERRORS", "PAUSED_SIGN_IN_REQUIRED", "PAUSED_CONNECTION_LOST", "PAUSED_RESUME_BY_HAND",
+                 "INTERRUPTED" ->
                     Comic.Tone.WARNING;
             case "PREPARING" -> Comic.Tone.RUNNING;
             // Vorbereitet und wartend tun gerade nichts: ruhig wie „Angehalten“, bis ein Platz frei ist.
@@ -160,6 +162,16 @@ public final class Texts {
             case UPDATE_PODCAST -> "Podcast erzeugen";
             case BACKGROUND -> "Hintergrund";
         };
+    }
+
+    /**
+     * Die Art, nach der Zähler, Fortschritt und Neuladen einen Auftrag behandeln: ein Unterauftrag der Hintergrundart
+     * „Aussagen analysieren“ (Fahrplan D3) wie {@link JobType#STATEMENT_ANALYSIS}, sonst sein Typ.
+     */
+    public static JobType kind(JobStatus status) {
+        return status.type() == JobType.BACKGROUND
+                && com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.isAnalysis(status)
+                ? JobType.STATEMENT_ANALYSIS : status.type();
     }
 
     /**

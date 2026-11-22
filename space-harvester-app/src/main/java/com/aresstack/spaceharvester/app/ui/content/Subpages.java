@@ -133,6 +133,11 @@ final class Subpages {
         return box.isSelected() && box.isEnabled() ? below : null;
     }
 
+    /** Ob „mit Unterseiten“ angehakt und wählbar ist (für „Analysieren“ im Reiter Aussagen). */
+    boolean active() {
+        return box.isSelected() && box.isEnabled();
+    }
+
     /** Ob die Checkbox angehakt ist, auch wenn sie gerade gesperrt ist. */
     boolean checked() {
         return box.isSelected();

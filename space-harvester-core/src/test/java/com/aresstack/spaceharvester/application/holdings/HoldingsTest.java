@@ -57,6 +57,8 @@ class HoldingsTest {
     };
 
     private final Map<String, Stock> stocks = new HashMap<>();
+    /** Seiten ohne gespeicherten Kopf (gelistet, erster Abruf gescheitert): {@code spaceOf} kennt sie nicht. */
+    private final Set<String> headerless = new java.util.HashSet<>();
     private final HoldingsCatalog catalog = new HoldingsCatalog() {
         @Override
         public Optional<Stock> stock(String sourceId, String spaceKey) {
@@ -72,6 +74,9 @@ class HoldingsTest {
         @Override
         public Optional<String> spaceOf(String sourceId, String pageId) {
             spaceLookups++;
+            if (headerless.contains(pageId)) {
+                return Optional.empty();
+            }
             return stocks.entrySet().stream().filter(entry -> entry.getKey().startsWith(sourceId + "/"))
                     .filter(entry -> entry.getValue().pages().stream().anyMatch(page -> page.pageId().equals(pageId)))
                     .map(entry -> entry.getKey().substring(sourceId.length() + 1)).findFirst();
@@ -103,6 +108,40 @@ class HoldingsTest {
         Holdings holdings = new Holdings(SOURCES, catalog, new AccessGuard(policy), maxTreeNodes, Duration.ofMillis(30));
         opened.add(holdings);
         return holdings;
+    }
+
+    @Test
+    void locateNamesSpaceAndStateOfEachVisiblePageWithoutTheSource() {
+        dev();
+        AccessPolicy withoutThree = (context, scope, kind) -> "3".equals(scope.pageId()) ? AccessDecision.DENY
+                : AccessDecision.ALLOW;
+        com.aresstack.spaceharvester.application.snapshot.PageSet pages = com.aresstack.spaceharvester.application
+                .snapshot.PageSet.of(Map.of("wiki", List.of("1", "2", "3", "4", "unbekannt")));
+
+        Map<com.aresstack.spaceharvester.application.snapshot.PageKey, Holdings.Located> located =
+                holdings(withoutThree, 100).locate(CALLER, pages);
+
+        assertThat(located).extractingFromEntries(entry -> entry.getKey().pageId() + ":"
+                + entry.getValue().spaceKey() + ":" + entry.getValue().state())
+                .containsExactlyInAnyOrder("1:DEV:LOCAL", "2:DEV:REMOTE", "4:DEV:OUTDATED");
+    }
+
+    /** Codex zu #1059: Gelistete Seiten ohne Kopf stehen im Bestand und zählen für „erst laden“. */
+    @Test
+    void locateFindsListedPagesWithoutAStoredHeaderInTheStocksOfTheSource() {
+        dev();
+        stocks.put("wiki/OPS", new Stock(CONFIRMED, List.of(new CatalogPage("8", null, false, null, null)), Set.of(),
+                List.of()));
+        headerless.addAll(List.of("2", "8"));
+        com.aresstack.spaceharvester.application.snapshot.PageSet pages = com.aresstack.spaceharvester.application
+                .snapshot.PageSet.of(Map.of("wiki", List.of("1", "2", "8", "unbekannt")));
+
+        Map<com.aresstack.spaceharvester.application.snapshot.PageKey, Holdings.Located> located =
+                holdings(ALLOW_ALL, 100).locate(CALLER, pages);
+
+        assertThat(located).extractingFromEntries(entry -> entry.getKey().pageId() + ":"
+                + entry.getValue().spaceKey() + ":" + entry.getValue().state())
+                .containsExactlyInAnyOrder("1:DEV:LOCAL", "2:DEV:REMOTE", "8:OPS:REMOTE");
     }
 
     @Test
