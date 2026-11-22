@@ -25,6 +25,8 @@ dependencies {
     implementation libs.jsoup
     // JSON-Antworten (offene Reiter, Seitentext) mit einem echten Parser statt Klammersuche
     implementation libs.jackson.jr.objects
+    // FTP und JES wie in MainframeMate (Apache Commons Net, reines Java)
+    implementation libs.commons.net
     // NDV (#1142): PAL-Protokoll (NATSPOD) aus MainframeMate, in derselben Kopie, die auch die NDV-Quelle nutzt;
     // nur der Adapter deck.ndv.pal spricht damit
     implementation project(':enterprise-ai-sources')
