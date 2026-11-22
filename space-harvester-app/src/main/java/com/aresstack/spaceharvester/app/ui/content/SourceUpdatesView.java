@@ -2133,6 +2133,11 @@ final class SourceUpdatesView extends JPanel {
         }
     }
 
+    /** Ob eine Zusammenfassung gezeigt wird, die man speichern kann. */
+    boolean hasSummary() {
+        return mode == Mode.SUMMARY && shown != null && summary != null;
+    }
+
     /** Der gezeigte Bericht als Text für die Zwischenablage. */
     String copyText() {
         if (shown == null) {
@@ -2332,6 +2337,11 @@ final class SourceUpdatesView extends JPanel {
                         @Override
                         public List<Integer> focus(UpdateSummary summary, int topic) {
                             return workspace.podcastStatements(summary, topic);
+                        }
+
+                        @Override
+                        public java.util.Optional<String> transcript(UpdateSummary summary) {
+                            return workspace.podcastTranscript(summary);
                         }
 
                         @Override
