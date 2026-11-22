@@ -529,6 +529,11 @@ wird automatisch verwaltet.
       Start nachgemeldet.
     - Bei nur einem Platz unter „Vorbereitung“ bleibt die Füllung unsichtbar wie bisher.
 
+15. **Automatische Abgleiche in der Auftragsliste** (Angelo 21.11.2026, Fundstelle 4). Die Auftragsliste der App
+    liest alle Aufträge ihrer Eigentümer aus der Auftragsablage, jeder Art, nicht nur die gemerkten. So stehen auch
+    Abgleiche und Neueinlesen dort, die der Core selbst anstößt: Nachholen beim Start, Abgleich vor der Suche,
+    Inventur, Wiederaufnahme und Neueinlesen nach einem Versionswechsel. Löschen entfernt sie aus der Ablage.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel
