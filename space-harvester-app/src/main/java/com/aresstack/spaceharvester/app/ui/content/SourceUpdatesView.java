@@ -1510,18 +1510,20 @@ final class SourceUpdatesView extends JPanel {
         JPanel box = new JPanel();
         box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
         box.setOpaque(false);
-        JLabel head = new JLabel((open ? "▾ " : "▸ ") + label);
+        // Pfeil gezeichnet wie bei „Erweitert“ (Comic.disclosure): die Schrift hat ▸/▾ nicht und zeigte ein Kästchen.
+        javax.swing.JButton head = Comic.disclosure(label, "Auf- oder zuklappen");
         head.setName("summary-toggle");
-        head.setFont(Comic.semiBold(12.5f));
         head.setForeground(Comic.BLUE);
+        head.setAlignmentX(LEFT_ALIGNMENT);
+        Comic.disclose(head, open);
         content.setVisible(open);
         content.setAlignmentX(LEFT_ALIGNMENT);
-        clickable(() -> {
+        head.addActionListener(e -> {
             content.setVisible(!content.isVisible());
-            head.setText((content.isVisible() ? "▾ " : "▸ ") + label);
+            Comic.disclose(head, content.isVisible());
             box.revalidate();
             box.repaint();
-        }, "Auf- oder zuklappen", head);
+        });
         add(box, head);
         add(box, content);
         return box;
