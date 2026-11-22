@@ -487,6 +487,67 @@ class EnrichmentsBackgroundJobsTest {
         }
     }
 
+    @Test
+    void anOrdinaryResumeStillCountsTheEarlierFailureSoRetryStaysOffered() throws Exception {
+        // Codex #1109: Fortsetzen beginnt bei null; das Gescheiterte von vorher bliebe sonst unsichtbar.
+        Remote remote = new Remote();
+        remote.failing.add("wiki/1");
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.refresh(page("wiki", "1", "Eins"));
+            enrichments.refresh(page("wiki", "2", "Zwei"));
+            String groupId = part(background, "wiki").parameter(BackgroundJobs.GROUP);
+            remote.during.put("wiki/1", () -> background.pause(groupId));
+            runAll(held);
+            assertThat(part(background, "wiki").state()).isEqualTo(JobState.PAUSED);
+
+            background.resume(groupId);
+            runAll(held);
+
+            JobStatus done = part(background, "wiki");
+            assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(remote.calls).containsOnlyKeys("wiki/1", "wiki/2");
+            assertThat(done.progress().failed()).isEqualTo(1);
+            assertThat(done.lifecycle().allows(com.aresstack.spaceharvester.application.jobs.JobAction.RETRY_FAILED))
+                    .isTrue();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void retryingAnOlderPartWaitsBehindTheOpenPartsOfTheQueue() throws Exception {
+        // Codex #1109: Die Teile laufen hintereinander, auch ein wiederholter älterer.
+        Remote remote = new Remote();
+        remote.failing.add("wiki/1");
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.refresh(page("wiki", "1", "Eins"));
+            runAll(held);
+            JobStatus older = part(background, "wiki");
+            enrichments.refresh(page("ops", "1", "Drei"));
+            JobStatus newer = part(background, "ops");
+            remote.failing.clear();
+
+            background.retryFailed(older.id());
+
+            assertThat(background.part(older.id()).orElseThrow().parameter(Jobs.AFTER)).isEqualTo(newer.id());
+            runAll(held);
+            assertThat(remote.order).containsExactly("wiki/1", "ops/1", "wiki/1");
+            assertThat(background.part(older.id()).orElseThrow().state()).isEqualTo(JobState.COMPLETED);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     private Enrichments enrichments(Remote remote, ExecutorService executor, BackgroundJobs background) {
         Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
         enrichments.background(background, key -> Optional.ofNullable(cache.get(key)));

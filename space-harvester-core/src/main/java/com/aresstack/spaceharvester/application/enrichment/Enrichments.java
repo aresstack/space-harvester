@@ -743,7 +743,7 @@ public class Enrichments {
         /** Was {@link #prepare} bereitlegte, bis der erneute Lauf angenommen ist; unter {@link #pendingLock}. */
         private final Map<String, Prepared> prepared = new HashMap<>();
 
-        private record Prepared(Failed work, List<Work> retry, boolean created) {
+        private record Prepared(Failed work, List<Work> retry, boolean created, Pending queue) {
         }
 
         RetryFailed(BackgroundJobs jobs) {
@@ -764,7 +764,7 @@ public class Enrichments {
                 if (existing != null) {
                     // Angehalten mit Rest: Das Gescheiterte kommt zum Rest, beides läuft im selben Eintrag weiter.
                     retry.forEach(existing::add);
-                    prepared.put(part.groupId(), new Prepared(previous, retry, false));
+                    prepared.put(part.groupId(), new Prepared(previous, retry, false, existing));
                     return true;
                 }
                 Pending again = new Pending(part.groupId(), previous.sourceId);
@@ -773,7 +773,7 @@ public class Enrichments {
                 again.partId = part.jobId();
                 again.work.addAll(retry);
                 groups.put(part.groupId(), again);
-                prepared.put(part.groupId(), new Prepared(previous, retry, true));
+                prepared.put(part.groupId(), new Prepared(previous, retry, true, again));
                 return true;
             }
         }
@@ -790,9 +790,11 @@ public class Enrichments {
                 return;
             }
             Subscription[] subscription = new Subscription[1];
-            subscription[0] = jobs.watch(groupId, group -> ended(part.sourceId(), groupId, group, subscription));
+            Pending queue = done.queue();
+            subscription[0] = jobs.watch(groupId, group -> ended(part.sourceId(), groupId, queue, group,
+                    subscription));
             // Was schon vor dem Anmelden endete, meldet sich nicht mehr von selbst.
-            ended(part.sourceId(), groupId, jobs.group(groupId).orElse(new BackgroundGroup(groupId, null, null,
+            ended(part.sourceId(), groupId, queue, jobs.group(groupId).orElse(new BackgroundGroup(groupId, null, null,
                     List.of())), subscription);
         }
 
@@ -804,7 +806,7 @@ public class Enrichments {
                     return;
                 }
                 if (undone.created()) {
-                    groups.remove(part.groupId());
+                    groups.remove(part.groupId(), undone.queue());
                 } else {
                     Pending existing = groups.get(part.groupId());
                     if (existing != null) {
@@ -936,17 +938,18 @@ public class Enrichments {
         try {
             BackgroundGroup started = jobs.startBehindOpen(groupId, BACKGROUND_KIND, BACKGROUND_TITLE,
                     new BackgroundPart.Draft(sourceId, null, Map.of(Jobs.CANCEL_NOTE, CANCEL_NOTE)));
+            Pending queue;
             synchronized (pendingLock) {
-                Pending current = groups.get(groupId);
-                if (current != null) {
-                    current.partId = started.parts().getFirst().id();
+                queue = groups.get(groupId);
+                if (queue != null) {
+                    queue.partId = started.parts().getFirst().id();
                 }
             }
             Subscription[] subscription = new Subscription[1];
-            subscription[0] = jobs.watch(groupId, group -> ended(sourceId, groupId, group, subscription));
+            subscription[0] = jobs.watch(groupId, group -> ended(sourceId, groupId, queue, group, subscription));
             // Was schon vor dem Anmelden endete, meldet sich nicht mehr von selbst.
-            ended(sourceId, groupId, jobs.group(groupId).orElse(new BackgroundGroup(groupId, null, null, List.of())),
-                    subscription);
+            ended(sourceId, groupId, queue, jobs.group(groupId).orElse(new BackgroundGroup(groupId, null, null,
+                    List.of())), subscription);
         } catch (RuntimeException e) {
             // Voll, beendet oder unerwartet (Abnahme #1077): nie eine Quelle ohne Teil zurücklassen.
             List<Work> left = release(sourceId, groupId);
@@ -961,13 +964,16 @@ public class Enrichments {
      * Nach jeder Änderung der Gruppe: Endet ihr Teil (abgebrochen, gescheitert, fertig, nicht angehalten), holt er die
      * Quelle nicht mehr ab. Was ein gescheiterter liegen ließ, übernimmt ein neuer Teil.
      */
-    private void ended(String sourceId, String groupId, BackgroundGroup group, Subscription[] subscription) {
+    private void ended(String sourceId, String groupId, Pending queue, BackgroundGroup group,
+                       Subscription[] subscription) {
         if (!group.parts().isEmpty() && (!group.finished() || group.paused())) {
             return;
         }
         // Ohne Teil: gelöscht, wie abgebrochen.
         JobState state = group.parts().isEmpty() ? JobState.CANCELLED : group.parts().getFirst().state();
-        List<Work> left = release(sourceId, groupId);
+        // Nur die eigene Warteschlange (Codex #1109): Eine verspätete Meldung des vorigen Laufs gibt nie die
+        // Warteschlange frei, die ↻ inzwischen bereitgelegt hat.
+        List<Work> left = release(sourceId, groupId, queue);
         if (subscription[0] != null) {
             subscription[0].close();
         }
@@ -992,7 +998,8 @@ public class Enrichments {
         if (part.isPresent() && BackgroundJobs.open(part.get())) {
             return;
         }
-        settle(sourceId, part.map(JobStatus::state).orElse(JobState.CANCELLED), release(sourceId, existing.groupId));
+        settle(sourceId, part.map(JobStatus::state).orElse(JobState.CANCELLED),
+                release(sourceId, existing.groupId, existing));
     }
 
     /** Was ein beendeter Teil liegen ließ: nach einem Fehler übernimmt ein neuer Teil, sonst entfällt es. */
@@ -1016,11 +1023,17 @@ public class Enrichments {
 
     /** Löst die Gruppe von ihren wartenden Berechnungen, wenn sie noch welche hat; liefert, was noch wartete. */
     private List<Work> release(String sourceId, String groupId) {
+        return release(sourceId, groupId, null);
+    }
+
+    /** Wie oben, nur wenn die Gruppe noch {@code queue} hält ({@code null}: jede). */
+    private List<Work> release(String sourceId, String groupId, Pending queue) {
         synchronized (pendingLock) {
-            Pending current = groups.remove(groupId);
-            if (current == null) {
+            Pending current = groups.get(groupId);
+            if (current == null || queue != null && current != queue) {
                 return List.of();
             }
+            groups.remove(groupId);
             pending.remove(sourceId, current);
             return List.copyOf(current.work);
         }
@@ -1034,6 +1047,7 @@ public class Enrichments {
         String groupId = part.groupId();
         Pending mine;
         int waitingAtStart;
+        int carried;
         synchronized (pendingLock) {
             mine = groups.get(groupId);
             if (mine == null) {
@@ -1044,8 +1058,16 @@ public class Enrichments {
                 pending.remove(mine.sourceId, mine);
             }
             waitingAtStart = mine.work.size();
+            Failed before = failed.get(groupId);
+            carried = before == null ? 0 : before.work.size();
         }
-        context.discovered(waitingAtStart);
+        // Jeder Lauf beginnt bei null (Jobs#rerun): Was vorher scheiterte und noch nicht wiederholt ist, zählt weiter als
+        // Fehler, damit ↻ auch nach gewöhnlichem Fortsetzen angeboten wird (Codex #1109).
+        context.discovered(waitingAtStart + carried);
+        if (carried > 0) {
+            context.processed(carried);
+            context.failed(carried);
+        }
         while (true) {
             if (closed) {
                 // Beim Beenden des Dienstes unterbrochen, nicht fertig.

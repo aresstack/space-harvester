@@ -211,7 +211,20 @@ public final class BackgroundJobs {
             }
             JobStatus rerun;
             try {
-                rerun = jobs.rerun(jobId, owner, task(true, false));
+                // Hinter die offenen Teile der Art, wie beim ersten Lauf (startBehindOpen, Codex #1109); nie hinter einen,
+                // der selbst auf diesen wartet, sonst warteten beide aufeinander.
+                List<String> before = openBefore(kind, jobId);
+                Map<String, String> parameters = new HashMap<>(current.parameters());
+                parameters.remove(Jobs.AFTER);
+                parameters.remove(Jobs.AFTER_TITLES);
+                if (!before.isEmpty()) {
+                    parameters.put(Jobs.AFTER, String.join(",", before));
+                    String title = current.parameter(TITLE);
+                    if (title != null) {
+                        parameters.put(Jobs.AFTER_TITLES, title);
+                    }
+                }
+                rerun = jobs.rerun(jobId, owner, parameters, task(true, false));
             } catch (RuntimeException e) {
                 retry.abandoned(part);
                 throw e;
@@ -219,6 +232,26 @@ public final class BackgroundJobs {
             retry.started(part);
             return rerun;
         }
+    }
+
+    /** Die offenen Teile der Art außer {@code jobId} und denen, die (auch über andere) auf ihn warten. */
+    private List<String> openBefore(String kind, String jobId) {
+        List<JobStatus> open = openParts(kind).filter(part -> !part.id().equals(jobId)).toList();
+        Set<String> waiting = new HashSet<>();
+        waiting.add(jobId);
+        boolean grew = true;
+        while (grew) {
+            grew = false;
+            for (JobStatus part : open) {
+                String after = part.parameter(Jobs.AFTER);
+                if (after != null && !waiting.contains(part.id())
+                        && java.util.Arrays.stream(after.split(",")).anyMatch(waiting::contains)) {
+                    waiting.add(part.id());
+                    grew = true;
+                }
+            }
+        }
+        return open.stream().map(JobStatus::id).filter(id -> !waiting.contains(id)).toList();
     }
 
     /** Ob eine Art angemeldet ist. */
