@@ -459,12 +459,19 @@ wird automatisch verwaltet.
       Seiten-ID und Version in den Angaben (`pages`), der technische Aufrufer als Kennung (`finder`) und der Anlass im
       Änderungsprotokoll (`change-trigger`). So setzt ein Teil auch nach einem Neustart mit denselben Rechten fort.
     - Höchstens ein wartender Teil je Quelle, Aufrufer und Anlass: Ein neues Angebot ersetzt ihn und nimmt seine Funde
-      hinter den eigenen mit (höchstens 1000). Funde, die ein wartender oder laufender Teil schon katalogisiert, und
-      eben geprüfte (`RECHECK`, zehn Minuten) fallen vorher heraus; bleibt nichts Neues, entsteht kein Teil. Funde von
-      Endnutzern und delegierten Aufrufern fallen wie bisher still weg.
+      hinter den eigenen mit. Erst entsteht der Ersatz, dann wird der alte abgebrochen; scheitert das Anlegen, bleiben
+      der alte Teil und die angenommenen Funde stehen und gehen mit dem nächsten Angebot mit (Abnahme #1082).
+    - Angenommenes fällt nie weg: Ein Teil fasst höchstens 1000 Funde; ist er voll, nimmt er vom neuen Angebot nur, was
+      passt. `FindingCatalog#accept` nennt die angenommenen Seiten; dazu zählen auch eben geprüfte (`RECHECK`, zehn
+      Minuten) und solche, die ein offener Teil noch in derselben Fassung katalogisiert. Erledigte Seiten eines Teils
+      zählen nicht mehr als offen; eine neue Fassung ist ein neuer Fund. Funde von Endnutzern und delegierten Aufrufern
+      zählen wie bisher nicht.
+    - `accept` kehrt sofort zurück: Die Teile legt ein eigener Arbeiter (`Coalescer`, gebündelt je Schlüssel) an. Die
+      offenen Teile führt `FindingCataloging` im Speicher, gepflegt über Anlegen, Arbeit und die Auftragsmeldungen der
+      Art (`BackgroundJobs#subscribe(kind, …)`); den ganzen Auftragsspeicher liest es nur einmal beim Start.
     - Die Trefferliste sortiert denselben Stapel bei jedem Ladefortschritt neu (`SearchView#refresh`). Sie nennt dabei
-      ihre Suche (`KeywordSearch#search(…, searchId)`), und die Suche bietet nur Funde an, die sie in dieser Suche noch
-      nicht angeboten hat: Neusortieren allein erzeugt keinen Teil.
+      ihre Suche (`KeywordSearch#search(…, searchId)`), und die Suche bietet nur Funde an, die in dieser Suche noch nicht
+      angenommen sind: Neusortieren allein erzeugt keinen Teil, holt aber Abgewiesenes nach.
     - Bei nur einem Platz unter „Vorbereitung“ bleibt es beim bisherigen Weg im Speicher.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)

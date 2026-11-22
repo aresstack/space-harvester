@@ -770,6 +770,31 @@ public final class BackgroundJobs {
     }
 
     /**
+     * Meldet jede Änderung und Löschung eines Unterauftrags dieser Art (ADR 0027), ohne Abfragen: etwa für eine Karte
+     * der offenen Teile, die nie den ganzen Auftragsspeicher liest.
+     */
+    public Subscription subscribe(String kind, Consumer<JobStatus> changed, Consumer<JobStatus> removed) {
+        Objects.requireNonNull(kind, "kind");
+        Objects.requireNonNull(changed, "changed");
+        Objects.requireNonNull(removed, "removed");
+        return jobs.subscribe(owner, new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+                if (status != null && kind.equals(status.parameter(KIND))) {
+                    changed.accept(status);
+                }
+            }
+
+            @Override
+            public void removed(JobStatus last) {
+                if (last != null && kind.equals(last.parameter(KIND))) {
+                    removed.accept(last);
+                }
+            }
+        });
+    }
+
+    /**
      * Meldet jede Änderung der Gruppe (Zustand, Zähler, Löschung eines Unterauftrags), höchstens so oft wie die
      * Auftragsmeldungen; am Ende ist {@link BackgroundGroup#finished()} wahr. Ohne Abfragen (ADR 0027).
      */

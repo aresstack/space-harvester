@@ -117,6 +117,34 @@ class KeywordSearchDiscoveryTest {
     }
 
     @Test
+    void whatTheCatalogDidNotAcceptIsOfferedAgainOnReSorting() {
+        // Abnahme #1082, Punkt 1: Nur Angenommenes gilt als angeboten; Neusortieren holt den Rest nach.
+        wiki.results("Wolkenpegel", "1", "2");
+        List<List<String>> offered = Collections.synchronizedList(new ArrayList<>());
+        FindingCatalog full = new FindingCatalog() {
+            @Override
+            public void offer(AccessContext finder, String sourceId, List<Finding> findings) {
+                accept(finder, sourceId, findings);
+            }
+
+            @Override
+            public Set<String> accept(AccessContext finder, String sourceId, List<Finding> findings) {
+                offered.add(findings.stream().map(Finding::pageId).toList());
+                // Beim ersten Mal ist nur für eine Seite Platz.
+                return offered.size() == 1 ? Set.of(findings.getFirst().pageId()) : Set.of();
+            }
+        };
+        KeywordSearch search = new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.topN(KeywordSearch.MAX_LIMIT), SearchRunLog.NONE, full);
+        KeywordSearch.Query query = KeywordSearch.Query.of("Wolkenpegel");
+
+        search.search(APP, query, null, 50, null, null, "suche-1");
+        search.search(APP, query, null, 50, null, null, "suche-1");
+
+        assertThat(offered).containsExactly(List.of("1", "2"), List.of("2"));
+    }
+
+    @Test
     void confirmedRelationsAddQueriesPerSourceAndInTheCache() {
         // #336, Teil 4: „RSL“ fragt die Quelle auch nach „Rückmeldeschlüssel“; die Erweiterung sieht Quelle und Space.
         List<String> scopes = Collections.synchronizedList(new ArrayList<>());

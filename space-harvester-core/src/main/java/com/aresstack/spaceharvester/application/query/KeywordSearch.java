@@ -918,12 +918,16 @@ public class KeywordSearch {
                 List<FindingCatalog.Finding> fresh = matches.stream()
                         .filter(match -> query.admits(sourceId, match.pageId()))
                         // Fundstelle 23: in dieser Suche nur, was sie noch nicht angeboten hat.
-                        .filter(match -> offered == null || offered.add(new PageKey(sourceId, match.pageId())))
+                        .filter(match -> offered == null || !offered.contains(new PageKey(sourceId, match.pageId())))
                         .map(match -> new FindingCatalog.Finding(match.pageId(), match.version())).toList();
                 if (fresh.isEmpty()) {
                     return;
                 }
-                findings.offer(caller, sourceId, fresh);
+                // Abnahme #1082: Nur Angenommenes gilt als angeboten; den Rest holt ein Neusortieren nach.
+                Set<String> accepted = findings.accept(caller, sourceId, fresh);
+                if (offered != null && accepted != null) {
+                    accepted.forEach(pageId -> offered.add(new PageKey(sourceId, pageId)));
+                }
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Funde aus {0} nicht katalogisiert ({1})", sourceId,
                         e.getClass().getName());
