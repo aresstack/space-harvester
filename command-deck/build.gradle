@@ -1,5 +1,6 @@
 // Command Deck (#1142): interaktive Host-Systeme, zuerst TN3270. Fachmodell und Anwendungsfälle in
-// com.aresstack.spaceharvester.deck.terminal (ohne Swing, ohne OpenTerm), der OpenTerm-Adapter in ...terminal.openterm.
+// com.aresstack.spaceharvester.deck.terminal (ohne Swing, ohne OpenTerm), der OpenTerm-Adapter in ...terminal.openterm;
+// NDV ebenso: deck.ndv (Fachmodell) und der PAL-Adapter deck.ndv.pal.
 // Gehört nur zur Desktop-App: Eine Terminal-Sitzung ist keine indizierbare Quelle, deshalb nie im Core oder Dienst.
 // Aufbau nach dem Muster von aresstack/corenth (Ports und Adapter; UI -> Anwendungsfall -> Fachmodell <- Adapter).
 plugins {
@@ -19,6 +20,9 @@ java {
 dependencies {
     // TN3270-Emulation wie in MainframeMate (reines Java, LGPL, keine nativen Teile)
     implementation libs.openterm
+    // NDV (#1142): PAL-Protokoll (NATSPOD) aus MainframeMate, in derselben Kopie, die auch die NDV-Quelle nutzt;
+    // nur der Adapter deck.ndv.pal spricht damit
+    implementation project(':enterprise-ai-sources')
 
     testImplementation platform(libs.junit.bom)
     testImplementation 'org.junit.jupiter:junit-jupiter'
