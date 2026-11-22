@@ -224,4 +224,25 @@ class JobLifecycleStateTest {
         assertThat(status(JobType.METADATA_EXPORT, JobState.FAILED, 0, false, false, false).lifecycle().key())
                 .isEqualTo("FAILED");
     }
+
+    @Test
+    void aBackgroundPartWhoseKindRetriesOffersRetryOnlyOnceItStands() {
+        Map<String, String> retryable = Map.of(JobLifecycleState.RETRYABLE, "true");
+        java.util.function.BiFunction<JobState, Map<String, String>, JobStatus> part = (state, parameters) ->
+                new JobStatus("j", JobType.BACKGROUND, "confluence", null, "client-a", state,
+                        new JobProgress(398, 398, 397, 1), null, false, T0, null, null, null, null, parameters, false,
+                        false, null);
+
+        // Angelo 22.11.2026: „Fertig, unvollständig“ bietet ↻ an, wie im Vordergrund.
+        assertThat(JobLifecycleState.of(part.apply(JobState.COMPLETED, retryable)).actions())
+                .containsExactly(JobAction.RETRY_FAILED, JobAction.DELETE);
+        assertThat(JobLifecycleState.of(part.apply(JobState.PAUSED, retryable)).allows(JobAction.RETRY_FAILED))
+                .isTrue();
+        assertThat(JobLifecycleState.of(part.apply(JobState.CANCELLED, retryable)).allows(JobAction.RETRY_FAILED))
+                .isTrue();
+        assertThat(JobLifecycleState.of(part.apply(JobState.RUNNING, retryable)).allows(JobAction.RETRY_FAILED))
+                .as("nicht während des Laufs").isFalse();
+        assertThat(JobLifecycleState.of(part.apply(JobState.COMPLETED, Map.of())).allows(JobAction.RETRY_FAILED))
+                .as("eine Art ohne Wiederholung").isFalse();
+    }
 }

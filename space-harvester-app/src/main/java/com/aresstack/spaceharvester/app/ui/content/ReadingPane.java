@@ -5,8 +5,8 @@ import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
+import com.aresstack.spaceharvester.app.ui.controls.ViewerPopup;
 import com.aresstack.spaceharvester.app.ui.controls.MessagePlate;
-import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.diagrams.VectorDiagram;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
@@ -986,20 +986,67 @@ final class ReadingPane extends JPanel {
 
     /**
      * Bildergalerie im Bildbetrachter des EAC ({@link ImageViewer}): das Bild {@code index} eingepasst, Zoom,
-     * Speichern und Blättern als Knöpfe im Bild. Das Fenster merkt sich die zuletzt gezogene Größe, begrenzt auf den
-     * aktuellen Bildschirm.
+     * Speichern und Blättern als Knöpfe im Bild. Er öffnet ohne Fensterrahmen ({@link ViewerPopup}): wächst von der
+     * Stelle des Bilds im Text auf und schrumpft dorthin zurück; ein Klick außerhalb oder Esc schließt ihn.
      */
     private void enlarge(int index) {
-        if (index < 0 || originals.isEmpty()) {
-            return;
+        openPicture(index);
+    }
+
+    /**
+     * Öffnet das Bild {@code index} der Seite (Reihenfolge im Text) im Betrachter, auch per Programm: Der Podcast
+     * zeigt so das Bild eines Kapitels und schließt es mit {@link #closePicture()} oder {@link ViewerPopup#close()}.
+     *
+     * @return der offene Betrachter; leer, wenn es das Bild nicht gibt oder die Ansicht in keinem Fenster hängt
+     */
+    public Optional<ViewerPopup> openPicture(int index) {
+        if (index < 0 || index >= originals.size() || javax.swing.SwingUtilities.getRootPane(this) == null) {
+            return Optional.empty();
         }
         Map<String, String> labels = labels();
-        List<ImageViewer.Picture> pictures = originals.entrySet().stream()
-                .map(entry -> new ImageViewer.Picture(entry.getValue(), labels.get(entry.getKey()),
-                        vectors.get(entry.getKey())))
+        List<String> sources = List.copyOf(originals.keySet());
+        List<ImageViewer.Picture> pictures = sources.stream()
+                .map(src -> new ImageViewer.Picture(originals.get(src), labels.get(src), vectors.get(src)))
                 .toList();
-        Dialogs.viewSized(this, "Bilder der Seite", new ImageViewer(pictures, index, viewerLook.get()),
-                "reading.images", 0.8);
+        ImageViewer viewer = new ImageViewer(pictures, index, viewerLook.get());
+        // Geschlossen wird zu dem Bild hin, das zuletzt gezeigt war, nicht zu dem, das geöffnet wurde.
+        return Optional.of(ViewerPopup.open(this, viewer, () -> pictureBounds(sources.get(viewer.index()))));
+    }
+
+    /** Schließt den Betrachter dieser Ansicht, falls er offen ist. */
+    public void closePicture() {
+        ViewerPopup.current(this).ifPresent(ViewerPopup::close);
+    }
+
+    /** Wo das Bild {@code src} im Text gerade steht, in den Koordinaten dieser Ansicht; {@code null} ohne Stelle. */
+    java.awt.Rectangle pictureBounds(String src) {
+        if (!(pane.getDocument() instanceof HTMLDocument document)) {
+            return null;
+        }
+        javax.swing.text.ElementIterator elements = new javax.swing.text.ElementIterator(document);
+        for (javax.swing.text.Element element = elements.next(); element != null; element = elements.next()) {
+            AttributeSet attributes = element.getAttributes();
+            if (attributes.getAttribute(javax.swing.text.StyleConstants.NameAttribute) != HTML.Tag.IMG
+                    || !src.equals(String.valueOf(attributes.getAttribute(HTML.Attribute.SRC)))) {
+                continue;
+            }
+            try {
+                java.awt.geom.Rectangle2D from = pane.getUI().modelToView2D(pane, element.getStartOffset(),
+                        javax.swing.text.Position.Bias.Forward);
+                java.awt.geom.Rectangle2D to = pane.getUI().modelToView2D(pane, element.getEndOffset(),
+                        javax.swing.text.Position.Bias.Backward);
+                if (from == null || to == null) {
+                    return null;
+                }
+                java.awt.Rectangle bounds = from.createUnion(to).getBounds();
+                // Nur der sichtbare Teil: Ein weggerolltes Bild schrumpft zum Rand des Textes, nicht ins Leere.
+                bounds = bounds.intersection(pane.getVisibleRect());
+                return bounds.isEmpty() ? null : javax.swing.SwingUtilities.convertRectangle(pane, bounds, this);
+            } catch (javax.swing.text.BadLocationException e) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /** Woher der Bildbetrachter seine Farben nimmt; gelesen bei jedem Öffnen, damit die Einstellung sofort gilt. */

@@ -24,6 +24,12 @@ class JobStepTest {
                 .isEqualTo("21/23 · 2 Fehler");
         assertThat(ActivitiesView.progressText(running(JobType.SYNC, new JobProgress(100, 37, 30, 0))))
                 .isEqualTo("37/100");
+        // Andere Arten: verarbeitet ohne die gescheiterten (Angelo 22.11.2026: nicht „398/398 · 1 Fehler“).
+        assertThat(ActivitiesView.progressText(finished(JobType.BACKGROUND, new JobProgress(398, 398, 397, 1))))
+                .isEqualTo("397/398 · 1 Fehler");
+        // Eine Anreicherung zählt Abschnitte als erledigt, Fehlschläge je Prozessor: nichts abziehen (Codex #1103).
+        assertThat(ActivitiesView.progressText(running(JobType.ENRICHMENT, new JobProgress(10, 10, 9, 2))))
+                .isEqualTo("10/10 · 2 Fehler");
         // Beendet ohne eine exportierte Seite (alle fehlten): die exportierten, nicht die geprüften.
         assertThat(ActivitiesView.progressText(finished(JobType.EXPORT, new JobProgress(5, 5, 0, 5))))
                 .isEqualTo("0/5 · 5 Fehler");

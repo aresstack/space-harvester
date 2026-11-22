@@ -1371,7 +1371,9 @@ public final class ActivitiesView implements View {
                         : "Fortsetzen · holt nur, was noch fehlt";
             }
             case CANCEL -> job.pauseRequested() ? "Abbrechen · statt nur anzuhalten" : "Abbrechen";
-            case RETRY_FAILED -> "Nur Fehler neu versuchen · die gescheiterten Seiten gezielt nachladen, "
+            case RETRY_FAILED -> job.type() == JobType.BACKGROUND
+                    ? "Nur Fehler neu versuchen · das Gescheiterte noch einmal, im selben Eintrag"
+                    : "Nur Fehler neu versuchen · die gescheiterten Seiten gezielt nachladen, "
                     + "ohne neue Inventur, im selben Eintrag";
             case FORCE_REFRESH -> "Neu erzwingen · alles neu von der Quelle abrufen, auch Unverändertes; "
                     + "der bisherige Stand bleibt, bis der neue fertig ist";
@@ -1454,7 +1456,11 @@ public final class ActivitiesView implements View {
             }
             poll();
         }, error -> {
-            if (error instanceof com.aresstack.spaceharvester.application.background.BackgroundPartOpenException) {
+            if (error instanceof com.aresstack.spaceharvester.application.background.NothingToRetryException) {
+                // Kein Fehler: Das Gescheiterte ist schon wiederholt oder weggefallen.
+                feedback.warning("Nichts zu wiederholen",
+                        "Für diesen Auftrag ist nichts Gescheitertes mehr offen.");
+            } else if (error instanceof com.aresstack.spaceharvester.application.background.BackgroundPartOpenException) {
                 // Abnahme #1052: Ein anderer Teil für diesen Space erledigt die Arbeit mit, das ist kein Fehler.
                 feedback.warning("Läuft schon",
                         com.aresstack.spaceharvester.application.background.BackgroundPartOpenException.REASON);
@@ -1767,12 +1773,17 @@ public final class ActivitiesView implements View {
      * Abrufen die geladenen oder geprüften Seiten und erst beim Exportieren die exportierten (vorher stünde dort
      * 0 von N, obwohl die Statuszeile längst hochzählt); die Zeile kennt keine Phase, aber exportiert ist erst, wenn
      * das Abrufen durch ist. Ein beendeter Download zeigt immer die exportierten Seiten, auch 0 von N, wenn alle
-     * fehlten. Alle anderen Arten zählen verarbeitete Seiten.
+     * fehlten. Alle anderen Arten zählen verarbeitete Seiten ohne die gescheiterten (Angelo 22.11.2026: ein Fehler
+     * soll nicht als „398/398“ erscheinen); die stehen dahinter.
      */
     static String progressText(JobStatus status) {
         JobProgress p = status.progress();
         boolean fetching = status.type() == JobType.EXPORT && !status.state().terminal() && p.written() == 0;
-        long done = status.type() == JobType.EXPORT && !fetching ? p.written() : p.processed();
+        // Gescheitertes zählt nicht als erledigt, aber nur, wo beide Zähler dieselbe Einheit zählen (Codex #1103): Eine
+        // Anreicherung zählt Abschnitte als erledigt, Fehlschläge aber je Prozessor.
+        boolean sameUnit = status.type() != JobType.EXPORT && status.type() != JobType.ENRICHMENT;
+        long done = status.type() == JobType.EXPORT && !fetching ? p.written()
+                : Math.max(0, p.processed() - (sameUnit ? p.failed() : 0));
         long skipped = skipped(status);
         return done + "/" + p.discovered() + (skipped > 0 ? " · " + skipped + " ausgelassen" : "")
                 + (p.failed() > 0 ? " · " + p.failed() + " Fehler" : "");
@@ -2615,7 +2626,9 @@ public final class ActivitiesView implements View {
             Component cell = super.prepareRenderer(renderer, row, column);
             if (cell instanceof JComponent component) {
                 // Derselbe Renderer zeichnet alle Zeilen: für jede Zelle neu festlegen.
-                component.setOpaque((bands == null || bandAt(row) == null) && !toned(row));
+                // Ein Suchtreffer (Leiste unten) bleibt deckend, sonst verschwände seine Markierung im Band.
+                component.setOpaque(ReaderFind.marked(this, row, column)
+                        || (bands == null || bandAt(row) == null) && !toned(row));
             }
             return cell;
         }

@@ -286,8 +286,13 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
 - Vorrang: Die Prüfung aus der Entscheidung gilt; ohne sie bleibt der gespeicherte Wert der Aussage (in der Regel
   `UNREVIEWED`). Daraus folgen `CountedStatements` (verworfene zählen nicht), die Herkunftsanzeige und der JSON-LD-Wert
   `sh:verificationStatus`.
-- Rechte wie beim Stand: sehen wie die Seite, setzen und zurücknehmen mit `sync`; eine gesperrte Seite kann nicht
-  geprüft werden. Stand und Prüfung teilen sich die Revision des Eintrags (ein Zähler, ein Konflikt).
+- Rechte wie beim Stand: sehen wie die Seite, setzen und zurücknehmen mit `sync`; eine im Bestand gesperrte Seite
+  (ADR 0014, `HoldingState.LOCKED`) kann weder geprüft werden noch Stand annehmen: `review`, `withdrawReview`,
+  `decide` und `clear` (Aussage wie Seite) lehnen mit `LockedPageException` ab, ihre Analyse und ihre Entscheidungen
+  bleiben lesbar. Die Sicht nennt gesperrte Seiten (`StatusQuoView#lockedPages`), der Reiter „Stand“ sperrt Pillen und
+  Löschen vorab („Seite ist gesperrt; der Stand lässt sich nicht ändern“); lehnt der Core ab, liest er neu und sagt „Stand
+  nicht gesetzt: Die Seite ist gesperrt.“ Stand und Prüfung teilen sich die Revision des Eintrags (ein Zähler, ein
+  Konflikt).
 - Protokoll: Setzen ist `review`, Zurücknehmen eine eigene Zeile `unreview`, beide mit dem Wert der Prüfung; `remove`
   (Stand gelöscht, Quelle entfernt) trägt die zuletzt gültige Prüfung mit.
 - Beobachter: Jede Änderung meldet `StatusQuo#subscribe` (ADR 0027, kein Polling). Gesetzte, zurückgenommene oder mit

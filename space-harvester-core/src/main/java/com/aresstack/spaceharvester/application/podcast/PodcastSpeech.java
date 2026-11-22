@@ -30,6 +30,14 @@ public interface PodcastSpeech {
      */
     List<byte[]> speak(String model, String voice, String text, boolean sentences) throws IOException;
 
+    /**
+     * Wie viele Anfragen ein einziger {@link #speak}-Aufruf höchstens gleichzeitig an den Dienst stellt; der Podcast
+     * spricht nur so viele Abschnitte zugleich, dass zusammen {@code ai.parallel} nicht überschritten wird.
+     */
+    default int workers() {
+        return 1;
+    }
+
     /** Keine Sprachausgabe. */
     PodcastSpeech NONE = new PodcastSpeech() {
         @Override

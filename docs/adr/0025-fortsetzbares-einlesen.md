@@ -407,8 +407,16 @@ wird automatisch verwaltet.
       Reihe wegen wartet). Abbrechen verwirft die wartenden Berechnungen des Teils, das Ereignis des Abbruchs sagt es
       (`Jobs#CANCEL_NOTE`): Fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach, erzwungene
       Neuberechnungen nach einer Freigabe oder einem Update erst der Abgleich beim nächsten Start. Scheitert eine
-      Berechnung (auch beim Lesen des Snapshots), meldet der Teil das gelb mit Quelle und Exception-Klasse und macht
-      mit der nächsten weiter. Scheitert ein Teil (etwa Laufzeitgrenze), übernimmt ein neuer Teil, was liegen blieb.
+      Berechnung (auch beim Lesen des Snapshots oder im Prozessor selbst), meldet der Teil das rot mit Quelle, Seite
+      als Verweis, Prozessor, Exception-Klassen und den Befunden der Kette (Bereich, HTTP, TLS, Stelle;
+      `Enrichments#failure`), nie mit Meldungstexten, und macht mit der nächsten weiter (Angelo 22.11.2026). Die
+      Fortschrittsspalte zählt bei allen Arten außer Downloads die gescheiterten nicht als erledigt
+      („397/398 · 1 Fehler“).
+    - „Nur Fehler neu versuchen“ (↻, Angelo 22.11.2026): Der Teil merkt sich seine gescheiterten Berechnungen, bis er
+      gelöscht wird. ↻ an einem beendeten, abgebrochenen oder angehaltenen Teil (nicht während des Laufs) macht sie
+      erzwungen zu seiner neuen Warteschlange und lässt ihn im selben Eintrag neu laufen (`BackgroundJobs#retryFailed`,
+      `BackgroundJobs.Retry`, Angabe `background.retryable`); gerechnet wird wie beim ersten Lauf, mit der KI-Freigabe
+      je Seite bei der Ausführung. Ohne Gescheitertes meldet ↻ gelb „Nichts zu wiederholen“. Scheitert ein Teil (etwa Laufzeitgrenze), übernimmt ein neuer Teil, was liegen blieb.
     - Erzwungene Neuberechnungen (`recomputeInBackground`) warten nicht mehr auf einen der 50 Plätze: Ein Teil wie
       „KI-Freigabe nachziehen“, der dort wartete, hielte einen Platz des Hintergrunds, den die KI-Anreicherung zum
       Freigeben braucht.

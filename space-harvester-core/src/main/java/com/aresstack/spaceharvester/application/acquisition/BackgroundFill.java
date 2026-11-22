@@ -311,13 +311,17 @@ public final class BackgroundFill implements AutoCloseable {
         this.enabled = enabled;
     }
 
-    /** Startet die Füllung auf einem eigenen virtuellen Thread; ein zweiter Aufruf tut nichts. */
+    /**
+     * Startet die Füllung auf einem eigenen Plattform-Thread (Daemon); ein zweiter Aufruf tut nichts. Kein virtueller:
+     * Der Arbeiter wartet in {@code monitor.wait()} unter {@code synchronized} und hielte damit unter Java 21 seinen
+     * Träger fest, ebenso jeder Weck-Thread (CI #1101).
+     */
     public BackgroundFill start() {
         ensureMirrored();
         synchronized (monitor) {
             if (worker == null && !closed) {
                 observePlanner();
-                worker = Thread.ofVirtual().name("background-fill").start(this::loop);
+                worker = Thread.ofPlatform().daemon().name("background-fill").start(this::loop);
             }
         }
         return this;
@@ -431,7 +435,9 @@ public final class BackgroundFill implements AutoCloseable {
             return;
         }
         scanPending.add(where);
-        Thread.ofVirtual().name("background-fill-scan").start(this::signal);
+        // Ohne die Sperre des Aufrufers (etwa der Aufträge) zu halten: ein kurzer eigener Thread, kein virtueller, der
+        // auf einen Träger warten müsste (CI #1101).
+        Thread.ofPlatform().daemon().name("background-fill-scan").start(this::signal);
     }
 
     /**
