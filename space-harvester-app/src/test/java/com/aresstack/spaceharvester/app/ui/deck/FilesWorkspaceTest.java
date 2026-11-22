@@ -1,0 +1,213 @@
+package com.aresstack.spaceharvester.app.ui.deck;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.aresstack.spaceharvester.app.ui.AppState;
+import com.aresstack.spaceharvester.deck.editor.EditorSession;
+import com.aresstack.spaceharvester.deck.editor.EditorSessions;
+import com.aresstack.spaceharvester.deck.files.FileBrowser;
+import com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore;
+import com.aresstack.spaceharvester.deck.files.local.LocalFileSource;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
+import javax.swing.SwingUtilities;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+
+/** Arbeitsbereich Dateien (#1142): Liste, Filter, Anlegen, Editor mit Speichern – gegen echte Dateien. */
+class FilesWorkspaceTest {
+
+    private static final Executor NOW = Runnable::run;
+
+    @TempDir
+    Path root;
+
+    private FilesWorkspace workspace;
+    private EditorSessions editors;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        Files.createDirectory(root.resolve("Berichte"));
+        Files.writeString(root.resolve("notiz.txt"), "Grüße an Bord\n");
+        Files.writeString(root.resolve("job.jcl"), "//JOB1 JOB\n");
+        Files.writeString(root.resolve("daten.json"), "{\"a\": 1}\n");
+        AppState.shared().put(FilesWorkspace.LOCATION_KEY, root.toString());
+        AppState.shared().put(FilesWorkspace.SORT_KEY, "NAME_ASC");
+        editors = new EditorSessions(NOW);
+        SwingUtilities.invokeAndWait(() -> workspace = new FilesWorkspace(
+                new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
+                new LocalDocumentStore()));
+        flush();
+    }
+
+    @Test
+    void readsNothingUntilShownThenListsTheLastFolder() throws Exception {
+        assertThat(workspace.browser().location()).as("Öffnen der Perspektive liest keine Dateien").isEmpty();
+
+        start();
+
+        assertThat(names()).containsExactly("Berichte", "daten.json", "job.jcl", "notiz.txt");
+        assertThat(workspace.pathField().getText()).isEqualTo(root.toString());
+        assertThat(workspace.statusText()).isEqualTo("4 Einträge");
+        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen");
+    }
+
+    @Test
+    void filtersAndOpensFolders() throws Exception {
+        start();
+
+        SwingUtilities.invokeAndWait(() -> workspace.filterField().setText("\\.jcl$"));
+        flush();
+        assertThat(names()).containsExactly("job.jcl");
+        assertThat(workspace.statusText()).isEqualTo("4 Einträge · 1 passen zum Filter");
+
+        SwingUtilities.invokeAndWait(() -> workspace.filterField().setText(""));
+        flush();
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(0));
+        flush();
+        assertThat(workspace.pathField().getText()).isEqualTo(root.resolve("Berichte").toString());
+        assertThat(workspace.statusText()).isEqualTo("0 Einträge");
+    }
+
+    @Test
+    void createsAFolderFromTheNameRow() throws Exception {
+        start();
+
+        SwingUtilities.invokeAndWait(() -> {
+            workspace.newFolder();
+            assertThat(workspace.nameRowShown()).isTrue();
+            workspace.nameField().setText("Neu");
+            workspace.confirmName();
+        });
+        flush();
+
+        assertThat(Files.isDirectory(root.resolve("Neu"))).isTrue();
+        assertThat(workspace.nameRowShown()).isFalse();
+        assertThat(names()).contains("Neu");
+        assertThat(workspace.statusText()).isEqualTo("Ordner „Neu“ angelegt.");
+    }
+
+    @Test
+    void anInvalidNameKeepsTheRowOpenAndSaysWhy() throws Exception {
+        start();
+
+        SwingUtilities.invokeAndWait(() -> {
+            workspace.newFile();
+            workspace.nameField().setText("a/b");
+            workspace.confirmName();
+        });
+        flush();
+
+        assertThat(workspace.nameRowShown()).isTrue();
+        assertThat(workspace.statusText()).startsWith("Der Name darf keines dieser Zeichen enthalten");
+    }
+
+    @Test
+    void opensATextFileInTheSharedEditorAndSavesIt() throws Exception {
+        start();
+        int row = names().indexOf("job.jcl");
+
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
+        flush();
+
+        EditorSession session = workspace.selected();
+        assertThat(session).isNotNull();
+        assertThat(editors.all()).containsExactly(session);
+        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "job.jcl");
+        assertThat(workspace.editor(session).text()).isEqualTo("//JOB1 JOB\n");
+
+        SwingUtilities.invokeAndWait(() -> workspace.editor(session).type("//* Kommentar\n"));
+        flush();
+        assertThat(session.dirty()).isTrue();
+        assertThat(workspace.statusText()).contains("ungespeicherte Änderungen");
+
+        session.save();
+        flush();
+        assertThat(Files.readString(root.resolve("job.jcl"))).isEqualTo("//* Kommentar\n//JOB1 JOB\n");
+        assertThat(workspace.statusText()).contains("Gespeichert");
+
+        // Ein zweites Öffnen derselben Datei holt den offenen Reiter nach vorn.
+        SwingUtilities.invokeAndWait(() -> workspace.select(null));
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
+        flush();
+        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "job.jcl");
+        assertThat(workspace.selected()).isSameAs(session);
+    }
+
+    @Test
+    void showsAConflictAndOverwritesOnlyWhenAsked() throws Exception {
+        start();
+        int row = names().indexOf("notiz.txt");
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
+        flush();
+        EditorSession session = workspace.selected();
+        Files.writeString(root.resolve("notiz.txt"), "von außen geändert\n");
+
+        SwingUtilities.invokeAndWait(() -> workspace.editor(session).type("Neu: "));
+        flush();
+        session.save();
+        flush();
+
+        assertThat(session.state()).isEqualTo(EditorSession.State.CONFLICT);
+        assertThat(workspace.editor(session).plateSentence()).startsWith("Die Datei wurde seit dem Öffnen geändert.");
+        assertThat(Files.readString(root.resolve("notiz.txt"))).isEqualTo("von außen geändert\n");
+
+        SwingUtilities.invokeAndWait(() -> workspace.editor(session).clickPlateAction());
+        flush();
+        assertThat(Files.readString(root.resolve("notiz.txt"))).isEqualTo("Neu: Grüße an Bord\n");
+    }
+
+    @Test
+    void picksTheSyntaxByExtension() throws Exception {
+        start();
+        int row = names().indexOf("daten.json");
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
+        flush();
+
+        assertThat(workspace.editor(workspace.selected()).syntaxStyle()).isEqualTo(SyntaxConstants.SYNTAX_STYLE_JSON);
+    }
+
+    @Test
+    void commandDeckShowsTheFilesAreaAndSharesTheEditor() throws Exception {
+        AtomicReference<CommandDeck> deck = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            deck.set(new CommandDeck());
+            deck.get().show(DeckArea.FILES);
+            assertThat(deck.get().area()).isEqualTo(DeckArea.FILES);
+            assertThat(DeckArea.FILES.ready()).isTrue();
+            assertThat(deck.get().files()).isNotNull();
+            assertThat(deck.get().editors().all()).isEmpty();
+        });
+        deck.get().shutdown();
+    }
+
+    private void start() throws Exception {
+        SwingUtilities.invokeAndWait(workspace::start);
+        flush();
+    }
+
+    private List<String> names() throws Exception {
+        AtomicReference<List<String>> names = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            java.util.ArrayList<String> list = new java.util.ArrayList<>();
+            for (int row = 0; row < workspace.table().getRowCount(); row++) {
+                list.add(((com.aresstack.spaceharvester.deck.files.FileEntry) workspace.table().getValueAt(row, 0))
+                        .name());
+            }
+            names.set(list);
+        });
+        return names.get();
+    }
+
+    /** Wartet, bis alle Meldungen an den EDT abgearbeitet sind (zweimal, weil Meldungen weitere auslösen). */
+    private static void flush() throws Exception {
+        SwingUtilities.invokeAndWait(() -> { });
+        SwingUtilities.invokeAndWait(() -> { });
+    }
+}

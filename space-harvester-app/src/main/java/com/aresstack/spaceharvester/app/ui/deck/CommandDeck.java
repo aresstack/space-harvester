@@ -36,6 +36,12 @@ public final class CommandDeck {
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
     private final TerminalWorkspace terminal;
+    /** Gemeinsamer Editor aller Bereiche (Dateien, später FTP und NDV); die Dokumente überleben jeden Wechsel. */
+    private final com.aresstack.spaceharvester.deck.editor.EditorSessions editors =
+            new com.aresstack.spaceharvester.deck.editor.EditorSessions(connecting);
+    private final FilesWorkspace files;
+    /** Freigegebene Ordner aus Einstellungen › Dateizugriff, als Orte im Bereich Dateien. */
+    private volatile java.util.function.Supplier<java.util.List<java.nio.file.Path>> sharedFolders = java.util.List::of;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
 
@@ -49,6 +55,9 @@ public final class CommandDeck {
      */
     public CommandDeck(com.aresstack.spaceharvester.deck.access.ServerAccounts accounts) {
         terminal = new TerminalWorkspace(sessions, accounts);
+        files = new FilesWorkspace(new com.aresstack.spaceharvester.deck.files.FileBrowser(
+                new com.aresstack.spaceharvester.deck.files.local.LocalFileSource(() -> sharedFolders.get()),
+                connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore());
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
@@ -63,7 +72,11 @@ public final class CommandDeck {
             group.add(button);
             buttons.put(candidate, button);
             navigation.add(button);
-            workspace.add(candidate == DeckArea.TERMINAL ? terminal : placeholder(candidate), candidate.name());
+            workspace.add(switch (candidate) {
+                case TERMINAL -> terminal;
+                case FILES -> files;
+                default -> placeholder(candidate);
+            }, candidate.name());
         }
         show(DeckArea.TERMINAL);
         perspective = Perspective.of(Perspectives.COMMAND_DECK, "Command Deck",
@@ -94,6 +107,20 @@ public final class CommandDeck {
     public void shutdown() {
         sessions.closeAll();
         connecting.shutdownNow();
+    }
+
+    /** Der gemeinsame Editor: FTP und NDV öffnen ihre Dokumente hier mit einer eigenen Ablage. */
+    public com.aresstack.spaceharvester.deck.editor.EditorSessions editors() {
+        return editors;
+    }
+
+    /** Woher der Bereich Dateien die freigegebenen Ordner (Einstellungen › Dateizugriff) als Orte nimmt. */
+    public void sharedFolders(java.util.function.Supplier<java.util.List<java.nio.file.Path>> folders) {
+        sharedFolders = folders == null ? java.util.List::of : folders;
+    }
+
+    FilesWorkspace files() {
+        return files;
     }
 
     TerminalWorkspace terminal() {
