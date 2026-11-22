@@ -276,6 +276,30 @@ class PageLoadsTest {
     }
 
     @Test
+    void aRefreshRightAfterResumingAPausedRefreshPartJoinsItInsteadOfStartingASecondGroup() throws Exception {
+        // Codex-Befund nach #1140: Fortgesetzt läuft der Teil wieder; das Abbild darf ihn nicht bis zur gebündelten
+        // Meldung als angehalten führen, sonst startet ein Refresh in diesem Fenster eine doppelte Gruppe.
+        BackgroundGroup paused = loads.join(AccessContext.technicalClient("app"), "Veraltete Treffer nachladen",
+                pages("1"), true).started().orElseThrow();
+        java.util.concurrent.CountDownLatch reported = new java.util.concurrent.CountDownLatch(1);
+        background.subscribe(PageLoads.KIND, status -> {
+            if (status.state() == JobState.PAUSED) {
+                reported.countDown();
+            }
+        }, last -> { });
+        background.pause(paused.groupId());
+        executor.runAll();
+        assertThat(reported.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        background.resumeWithoutCaller(paused.parts().get(0).id());
+        PageLoads.Joined again = loads.join(AccessContext.technicalClient("app"), "Veraltete Treffer nachladen",
+                pages("1"), true);
+
+        assertThat(again.started()).isEmpty();
+        assertThat(again.joined()).containsExactly(paused.groupId());
+    }
+
+    @Test
     void theCallerOfAnOpenPartStaysHowEverManyGroupsFollowAndGoesWhenItEnds() throws Exception {
         // Abnahme #1080: kein falsches „nicht fortgesetzt“ ohne Neustart, weil ein Aufrufer aus einer Zuordnung fiel.
         AccessContext delegated = AccessContext.endUser("erfunden", "app",

@@ -90,8 +90,8 @@ public final class PageLoads {
      */
     private final Map<String, com.aresstack.spaceharvester.application.jobs.JobStatus> open = new java.util.HashMap<>();
     /**
-     * Sperre des Abbilds ({@link #open}, {@link #gone}, {@link #starting}, {@link #rerunning}, {@link #seeding}); nie
-     * über Ein- und Ausgabe gehalten, nur über Kartenzugriffe.
+     * Sperre des Abbilds ({@link #open}, {@link #gone}, {@link #starting}, {@link #rerunning}, {@link #beforeRerun},
+     * {@link #seeding}); nie über Ein- und Ausgabe gehalten, nur über Kartenzugriffe.
      */
     private final java.util.concurrent.locks.ReentrantLock image = new java.util.concurrent.locks.ReentrantLock();
     /** Gruppen, die {@link #join} gerade startet, bis ihre Teile im Abbild stehen. */
@@ -102,6 +102,13 @@ public final class PageLoads {
      * Doppelklick auf Fortsetzen; der gescheiterte darf {@link #gone} nicht räumen, solange der andere noch läuft.
      */
     private final Map<String, Integer> rerunning = new java.util.HashMap<>();
+    /**
+     * Je neu startendem Teil sein Eintrag in {@link #open} beim ersten {@code before()} (auch {@code null}): Steht nach
+     * dem Neustart noch genau dieser Eintrag da, kam keine Meldung dazwischen, und der Stand des Neustarts ist der
+     * jüngere. Sonst gilt die Meldung; las sie noch den alten Stand, folgt die des Neustarts.
+     */
+    private final Map<String, com.aresstack.spaceharvester.application.jobs.JobStatus> beforeRerun =
+            new java.util.HashMap<>();
     /**
      * Teile, deren Ende gemeldet wurde, während sie starteten, neu starteten oder das Abbild gefüllt wurde, mit dem Anlass
      * (Gruppe oder Teil): Der ältere Stand aus {@code start()}, dem Neustart oder dem Speicher bringt sie nicht als offen
@@ -148,7 +155,11 @@ public final class PageLoads {
     final BackgroundJobs.Reruns rerunWatch = new BackgroundJobs.Reruns() {
         @Override
         public void before(String partId) {
-            guard(() -> rerunning.merge(partId, 1, Integer::sum));
+            guard(() -> {
+                if (rerunning.merge(partId, 1, Integer::sum) == 1) {
+                    beforeRerun.put(partId, open.get(partId));
+                }
+            });
         }
 
         @Override
@@ -158,10 +169,18 @@ public final class PageLoads {
                 // zurück, und die Marke bleibt für die übrigen überlappenden stehen; erst der letzte räumt sie.
                 if (rerun != null && KIND.equals(rerun.parameter(BackgroundJobs.KIND))
                         && !gone.containsKey(partId) && !gone.containsKey(rerun.id())) {
-                    adopt(rerun);
+                    com.aresstack.spaceharvester.application.jobs.JobStatus now = open.get(rerun.id());
+                    if (now != null && now == beforeRerun.get(partId) && loading(rerun.state())) {
+                        // Ein fortgesetzter angehaltener Teil stand noch als angehalten da (Codex-Befund nach #1140):
+                        // Ohne Ersatz startete ein Refresh bis zur gebündelten Meldung eine doppelte Gruppe.
+                        open.put(rerun.id(), rerun);
+                    } else {
+                        adopt(rerun);
+                    }
                 }
                 if (rerunning.merge(partId, -1, Integer::sum) <= 0) {
                     rerunning.remove(partId);
+                    beforeRerun.remove(partId);
                     gone.values().removeIf(partId::equals);
                 }
             });
