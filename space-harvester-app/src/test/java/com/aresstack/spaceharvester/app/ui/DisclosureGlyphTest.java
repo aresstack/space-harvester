@@ -38,7 +38,9 @@ class DisclosureGlyphTest {
                     return Files.readAllLines(file, StandardCharsets.UTF_8).stream()
                             .filter(line -> !line.strip().startsWith("*") && !line.strip().startsWith("//"))
                             .filter(line -> line.contains("über ▾") || line.contains("▸ Erweitert")
-                                    || line.contains("▾ Erweitert"))
+                                    || line.contains("▾ Erweitert")
+                                    // Aufklapp-Pfeil als Textzeichen vor einer Beschriftung (Update-Zusammenfassung)
+                                    || line.contains("\"▸ ") || line.contains("\"▾ "))
                             .map(line -> file.getFileName() + ": " + line.strip());
                 } catch (IOException e) {
                     throw new java.io.UncheckedIOException(e);

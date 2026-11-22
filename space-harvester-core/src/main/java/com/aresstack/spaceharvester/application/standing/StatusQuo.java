@@ -43,6 +43,8 @@ import java.util.function.Supplier;
  * <p>Rechte: Sichtbar ist nur, was der Aufrufer im Knowledge Graph sieht (Leserecht auf die Seite). Eine Entscheidung
  * zu treffen oder zu löschen braucht zusätzlich {@link AccessKind#SYNC} auf die Seite wie bei geprüften Fakten; das
  * gilt ebenso für die Prüfung einer Aussage durch Menschen ({@link #review}, {@link #withdrawReview}, ADR 0032 W3).
+ * Eine im Bestand gesperrte Seite (ADR 0014) bleibt lesbar, nimmt aber weder Stand noch Prüfung an
+ * ({@link LockedPageException}); die Sicht nennt sie ({@link StatusQuoView#lockedPages()}).
  *
  * <p>Stand und Prüfung liegen im selben Eintrag ({@link StandingDecision}) und teilen sich dessen Revision; sie werden
  * unabhängig gesetzt und zurückgenommen, ein Eintrag ohne beides wird gelöscht. Eine Entscheidung zu einer Aussage
@@ -250,8 +252,10 @@ public final class StatusQuo {
                 .thenComparing(StandingDecision::statementId);
         staleDecisions.sort(byTarget);
         rejectedDecisions.sort(byTarget);
+        // Ein Blick in den Bestand für alle Seiten der Sicht: gesperrte nehmen keinen Stand an (die Oberfläche sperrt).
+        Set<PageKey> locked = statementIds.isEmpty() ? Set.of() : lockedPages.locked(caller, statementIds.keySet());
         return new StatusQuoView(entries, states(current), pageStandings, counts, certain, staleDecisions,
-                entries.size() - current.size(), rejectedDecisions);
+                entries.size() - current.size(), rejectedDecisions, locked);
     }
 
     /**
@@ -262,6 +266,7 @@ public final class StatusQuo {
      * @param expectedRevision die zuletzt gelesene Revision (0 ohne Entscheidung) oder {@code null} ohne Prüfung
      * @throws UnknownStandingTargetException wenn Seite oder Aussage für den Aufrufer nicht analysiert sichtbar ist
      * @throws StandingConflictException      wenn die Revision nicht passt
+     * @throws LockedPageException            wenn die Seite im Bestand gesperrt ist
      */
     public StandingDecision decide(AccessContext caller, PageKey page, String statementId, Standing standing,
                                    Long expectedRevision) {
@@ -290,6 +295,7 @@ public final class StatusQuo {
      *
      * @return ob es einen Stand von Hand gab
      * @throws StandingConflictException wenn die Revision nicht passt
+     * @throws LockedPageException       wenn die Seite im Bestand gesperrt ist
      */
     public boolean clear(AccessContext caller, PageKey page, String statementId, Long expectedRevision) {
         StandingDecision.Target target = requireWritable(caller, page, statementId, false);
@@ -611,14 +617,22 @@ public final class StatusQuo {
             String spaceKey = visible.getFirst().page().spaceKey();
             access.require(caller, spaceKey == null ? ResourceScope.source(page.sourceId())
                     : ResourceScope.page(page.sourceId(), spaceKey, page.pageId()), AccessKind.SYNC);
-        }
-        if (lockedPages.locked(caller, List.of(page)).contains(page)) {
-            throw new LockedPageException();
+            requireUnlocked(caller, page);
         }
         return target;
     }
 
-    /** Prüft Sichtbarkeit und {@link AccessKind#SYNC} und gibt das Ziel samt Analysator zurück. */
+    /** Eine im Bestand gesperrte Seite nimmt weder Stand noch Prüfung an. */
+    private void requireUnlocked(AccessContext caller, PageKey page) {
+        if (lockedPages.locked(caller, List.of(page)).contains(page)) {
+            throw new LockedPageException();
+        }
+    }
+
+    /**
+     * Prüft Sichtbarkeit, {@link AccessKind#SYNC} und dass die Seite nicht gesperrt ist, und gibt das Ziel samt
+     * Analysator zurück (Stand und Prüfung).
+     */
     private StandingDecision.Target requireWritable(AccessContext caller, PageKey page, String statementId,
                                                     boolean mustExist) {
         List<KnowledgeGraph.AnalysedPage> visible = visible(caller, page);
@@ -626,6 +640,7 @@ public final class StatusQuo {
         String spaceKey = visible.getFirst().page().spaceKey();
         access.require(caller, spaceKey == null ? ResourceScope.source(page.sourceId())
                 : ResourceScope.page(page.sourceId(), spaceKey, page.pageId()), AccessKind.SYNC);
+        requireUnlocked(caller, page);
         return target;
     }
 
