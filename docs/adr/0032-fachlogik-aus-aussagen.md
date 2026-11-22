@@ -361,3 +361,32 @@ Tests; den Chat-Anschluss (Werkzeug, System-Prompt) baut der Chat-Strang, die zu
   Graph nicht mehr, an einer Stelle für alle Leser (`Harvester#analysedSources` als `activeSources`): Graph, Fachsicht,
   Begriffswissen, Chat und Suche. Damit meldet auch die `Delivery` keine solche Seite.
 - Zugang: `Harvester#termKnowledge`, `Workspace#termKnowledge`.
+
+## Umsetzung W9: eine Kante je Aussage in der Fachsicht (Core und App)
+
+Auftrag des Architekten, Form A des UX-Managers.
+
+- Core: `DomainTermGraph#collect` trennt Verb-Kanten nach Verneinung, Modalverb und Zeitbezug
+  (`DomainTermGraph.Qualifiers`); „prüfen“ und „nicht prüfen“ sind zwei Kanten mit eigenen Belegen und eigener Stufe,
+  ein Beleg zählt nie für die Gegenaussage. „Nicht bestimmt“ zählt wie schlicht (gilt, ohne Modalverb). Der
+  Wortlaut (`Edge#phrase`) nennt Modalverb, Verneinung und Zeitbezug in Grundform („muss nicht prüfen (geplant)“,
+  „prüfen (früher)“), „gilt“ nie. Veraltete Belege werden mit denselben Merkmalen gezählt.
+- Kappung: Die seitenweite Sicht zählt je Knoten alle Belege seiner Kanten (unverändert, Teilen ändert die Summe
+  nicht). Die Begriffsgruppe (`group`, für W6) ordnet Partner jetzt nach allen Belegen zwischen Gruppe und Partner,
+  nicht nach der stärksten Einzelkante; die Umgebung (`around`) nimmt Knoten wie bisher in Reihenfolge der Kanten.
+- „Nur geprüft“ wirkt je Aussage: Eine verneinte Aussage mit geprüftem Beleg bleibt, die bejahte ohne fällt weg.
+- App: Beschriftung „nicht prüfen · 2“, Tooltip „Plan – nicht prüfen – Ziel · 2 Belege“ (ohne Legende, ohne
+  Hinweis). Linienart nach Vertrauen wie W2; Verneinung als kurzer schräger Querstrich in Linienfarbe und -stärke
+  unmittelbar vor der Beschriftung; „früher“ und „verworfen“ blasser (Linie und Schrift), nie farbig.
+- Mehrere Aussagen eines Knotenpaars liegen nebeneinander gebogen, jede Beschriftung auf ihrem Bogen; der Abstand der
+  Scheitel richtet sich nach der Lage des Paars (steil: Breite der Beschriftung, flach: ihre Höhe). Je Paar und
+  Richtung höchstens drei Bögen (`GraphSource.MAX_ARCS`): Gibt es mehr, zeigen die zwei mit den meisten Belegen ihre
+  Kante, der dritte Bogen heißt „+ n weitere“. Diese Bögen nehmen keinen Umweg (er legte sie auf die Nachbarn); das
+  Layout-Budget aus W4b bleibt unverändert und zählt sie wie jede Kante.
+- Overlay „Belege“: Bei mehreren Aussagen des Paars in dieser Richtung je Aussage eine Überschrift mit Zahl und Stufe,
+  nach Belegen geordnet, die geklickte oben und aufgeklappt (bei „+ n weitere“ die, für die er steht); kein
+  „dafür/dagegen“. Eine Aussage allein zeigt das Overlay wie bisher, Kopf „Plan – prüfen – Ziel“.
+- Die Statuszeile zählt jede Aussage als Verbindung, auch die hinter „+ n weitere“.
+- Verbraucher der Kante: nur Fachsicht (Übersicht und Reiter „Graph“), Overlay und Begriffswissen (W6, Wortlaut über
+  `Statement#phrase`). Verben-Reiter, Glossar und Stand lesen `DomainTermGraph.Edge` nicht; der Export des
+  Bestandsgraphen bleibt unberührt. Andere Listen oder Tabellen der Fachsicht gibt es nicht.

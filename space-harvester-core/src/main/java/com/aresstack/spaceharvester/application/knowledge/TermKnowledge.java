@@ -94,13 +94,14 @@ public final class TermKnowledge {
 
     /**
      * Eine Aussage zwischen zwei Begriffen: {@code subject —verb→ object} mit ihren Merkmalen, zusammengefasst über
-     * alle Belege mit genau diesen Merkmalen. Verneinung, Verbindlichkeit und Zeitbezug trennen Aussagen: „prüft“ und
-     * „prüft nicht“ sind zwei Aussagen mit eigenen Belegen, nie eine.
+     * alle Belege mit genau diesen Merkmalen. Verneinung, Verbindlichkeit und Zeitbezug trennen Aussagen nach der einen
+     * Regel der Fachsicht ({@link DomainTermGraph.Qualifiers}): „prüfen“ und „nicht prüfen“ sind zwei Aussagen mit
+     * eigenen Belegen, nie eine.
      *
-     * @param negation     Verneinung, wie bei der Analyse bestimmt ({@link ParsedStatements.Negation#UNKNOWN}: nicht
-     *                     bestimmt)
-     * @param modality     Verbindlichkeit nach dem Modalverb
-     * @param temporality  Zeitbezug
+     * @param negation     {@link ParsedStatements.Negation#NEGATED} oder {@link ParsedStatements.Negation#AFFIRMED}
+     *                     (nicht bestimmt gilt als nicht verneint)
+     * @param modality     Verbindlichkeit nach dem Modalverb, {@link ParsedStatements.Modality#NONE} ohne
+     * @param temporality  Zeitbezug, {@link ParsedStatements.Temporality#GILT} ohne besonderen
      * @param trust        {@link DomainTermGraph.Trust#ABWEICHEND}, wenn ein Beleg abweicht und keiner geprüft ist,
      *                     sonst die höchste Stufe der Belege
      * @param evidence     Zahl der Belege (Sätze)
@@ -120,6 +121,15 @@ public final class TermKnowledge {
             Objects.requireNonNull(temporality, "temporality");
             Objects.requireNonNull(trust, "trust");
             pages = List.copyOf(pages);
+        }
+
+        /**
+         * Der Wortlaut wie an der Kante der Fachsicht ({@link DomainTermGraph.Qualifiers#phrase}): „nicht prüfen“,
+         * „muss prüfen (geplant)“.
+         */
+        public String phrase() {
+            return new DomainTermGraph.Qualifiers(negation == ParsedStatements.Negation.NEGATED, modality, temporality)
+                    .phrase(verb);
         }
     }
 
@@ -275,7 +285,7 @@ public final class TermKnowledge {
             if (owner == null) {
                 continue;
             }
-            byTerm.get(owner).addAll(byFeatures(edge));
+            byTerm.get(owner).add(edge);
         }
 
         // Aussagen über alle Begriffe nach Stufe und Belegen ordnen, dann kappen.
@@ -307,9 +317,10 @@ public final class TermKnowledge {
                     neighbourWeight.merge(end, edge.count(), Integer::sum);
                 }
             }
-            ParsedStatements.Features features = features(edge.evidence().getFirst());
+            DomainTermGraph.Qualifiers qualifiers = edge.qualifiers();
             statements.get(entry.getKey()).add(new Statement(label(nodes, edge.from()), edge.verb(),
-                    label(nodes, edge.to()), features.negation(), features.modality(), features.temporality(),
+                    label(nodes, edge.to()), qualifiers.negated() ? ParsedStatements.Negation.NEGATED
+                    : ParsedStatements.Negation.AFFIRMED, qualifiers.modality(), qualifiers.temporality(),
                     trust(edge), edge.count(), named, pages.size() - named.size()));
         }
         List<Term> terms = shown.stream().map(node -> new Term(node.label(), node.kind(), statements.get(node.key())))
@@ -322,29 +333,6 @@ public final class TermKnowledge {
         return new Answer(Outcome.FOUND, terms, neighbours.subList(0, neighbours.size() - omittedNeighbours),
                 List.of(), List.copyOf(delivered.values()), new Limits(inScope, read, omittedTerms,
                 omittedStatements, omittedNeighbours, omittedEvidencePages, view.truncated(), view.skippedStale()));
-    }
-
-    /**
-     * Eine Verb-Kante je Merkmalen ihrer Belege (Verneinung, Verbindlichkeit, Zeitbezug), in der Reihenfolge ihres
-     * ersten Belegs; Stufe und Abweichung rechnet {@link DomainTermGraph.Edge} je Teil aus dessen Belegen neu.
-     */
-    private static List<DomainTermGraph.Edge> byFeatures(DomainTermGraph.Edge edge) {
-        Map<List<Object>, List<DomainTermGraph.Evidence>> parts = new LinkedHashMap<>();
-        for (DomainTermGraph.Evidence item : edge.evidence()) {
-            ParsedStatements.Features features = features(item);
-            parts.computeIfAbsent(List.of(features.negation(), features.modality(), features.temporality()),
-                    unused -> new ArrayList<>()).add(item);
-        }
-        if (parts.size() <= 1) {
-            return List.of(edge);
-        }
-        return parts.values().stream().map(part -> new DomainTermGraph.Edge(edge.from(), edge.to(), edge.kind(),
-                edge.verb(), part.size(), part)).toList();
-    }
-
-    private static ParsedStatements.Features features(DomainTermGraph.Evidence item) {
-        ParsedStatements.Features features = item.statement().features();
-        return features == null ? ParsedStatements.Features.UNKNOWN : features;
     }
 
     /** Erst melden, dann herausgeben: Wirft die Meldung, gibt es keine Antwort. */

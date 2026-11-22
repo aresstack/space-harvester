@@ -334,6 +334,7 @@ public final class EvidencePopup extends JPopupMenu {
         shown.clear();
         texts.clear();
         otherTexts.clear();
+        sections.clear();
         hideStatus();
         lastWrite.clear();
         for (DomainTermGraph.Evidence item : evidence) {
@@ -347,6 +348,135 @@ public final class EvidencePopup extends JPopupMenu {
             loadReviews(mine);
         }
         return this;
+    }
+
+    /**
+     * Eine Aussage im Overlay (UX W9): Wortlaut wie an der Kante, etwa „nicht prüfen“, Zahl der Belege, Stufe der
+     * Kante und ihre Belege.
+     */
+    public record Statement(String heading, int total, String stage, List<DomainTermGraph.Evidence> evidence) {
+        public Statement {
+            Objects.requireNonNull(heading, "heading");
+            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        }
+    }
+
+    /**
+     * Füllt das Overlay mit den Aussagen eines Knotenpaars (UX W9). Eine Aussage allein zeigt es wie {@link #fill};
+     * mehrere stehen je unter eigener Überschrift mit Zahl und Stufe in der gegebenen Reihenfolge, nur die erste
+     * aufgeklappt; ein Klick auf eine Überschrift (oder Enter/Leertaste) klappt sie auf oder zu.
+     */
+    public EvidencePopup fillStatements(String title, int total, List<Statement> statements,
+                                        Map<String, SentenceText> sentences, boolean failed) {
+        if (statements.size() == 1) {
+            return fill(title, total, statements.getFirst().evidence(), sentences, failed);
+        }
+        int mine = ++generation;
+        heading.setText(title);
+        count.count(total);
+        rows.removeAll();
+        shown.clear();
+        texts.clear();
+        otherTexts.clear();
+        sections.clear();
+        hideStatus();
+        lastWrite.clear();
+        for (Statement statement : statements) {
+            Section section = new Section(statement, sections.isEmpty());
+            sections.add(section);
+            rows.add(section.head);
+            rows.add(Box.createVerticalStrut(6));
+            for (DomainTermGraph.Evidence item : statement.evidence()) {
+                Row row = new Row(item, sentences.get(item.statement().id()), failed, mine);
+                shown.add(row);
+                section.body.add(row.panel);
+                section.body.add(Box.createVerticalStrut(10));
+            }
+            section.body.setVisible(section.expanded);
+            rows.add(section.body);
+            rows.add(Box.createVerticalStrut(8));
+        }
+        relayout();
+        if (reviewing != null && !shown.isEmpty()) {
+            loadReviews(mine);
+        }
+        return this;
+    }
+
+    /** Die Überschriften der Aussagen; leer, wenn das Overlay nur eine zeigt. */
+    private final List<Section> sections = new ArrayList<>();
+
+    /** Überschrift einer Aussage samt ihren Belegen (UX W9). */
+    private final class Section {
+        final Statement statement;
+        final JPanel head = new JPanel(new BorderLayout(8, 0));
+        final JLabel toggle = new JLabel();
+        final JPanel body = new JPanel();
+        boolean expanded;
+
+        Section(Statement statement, boolean expanded) {
+            this.statement = statement;
+            this.expanded = expanded;
+            head.setOpaque(false);
+            head.setAlignmentX(LEFT_ALIGNMENT);
+            toggle.setFont(Comic.semiBold(13.5f));
+            toggle.setForeground(Comic.INK);
+            toggle.setFocusable(true);
+            // Etwas Luft rechts: doppelt aufgelöst misst die halbfette Schrift breiter, sonst fehlt der letzte Buchstabe.
+            toggle.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 4));
+            toggle.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            JPanel title = new JPanel();
+            title.setOpaque(false);
+            title.setLayout(new BoxLayout(title, BoxLayout.X_AXIS));
+            title.add(toggle);
+            title.add(Box.createHorizontalStrut(8));
+            CountChip number = new CountChip("Belege", Comic.MUTED);
+            number.setFocusable(false);
+            number.count(statement.total());
+            title.add(number);
+            if (statement.stage() != null && !statement.stage().isBlank()) {
+                title.add(Box.createHorizontalStrut(6));
+                CountChip stage = CountChip.tag(statement.stage(), Comic.MUTED, "Stufe der Aussage");
+                stage.setFocusable(false);
+                title.add(stage);
+            }
+            title.add(Box.createHorizontalGlue());
+            head.add(title, BorderLayout.CENTER);
+            body.setOpaque(false);
+            body.setAlignmentX(LEFT_ALIGNMENT);
+            body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+            body.setBorder(BorderFactory.createEmptyBorder(0, 14, 0, 0));
+            text();
+            toggle.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    flip();
+                }
+            });
+            toggle.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyPressed(KeyEvent e) {
+                    if (e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_SPACE) {
+                        flip();
+                    }
+                }
+            });
+        }
+
+        private void text() {
+            // Pfeil als Vektorsymbol (Pfeil rechts: zu, Pfeil unten: auf); die Schrift hat keine Dreiecke.
+            toggle.setIcon(expanded ? Glyph.COLLAPSE : Glyph.EXPAND);
+            toggle.setIconTextGap(4);
+            toggle.setText(statement.heading());
+            toggle.setToolTipText(expanded ? "Belege zuklappen" : "Belege aufklappen");
+        }
+
+        void flip() {
+            expanded = !expanded;
+            body.setVisible(expanded);
+            text();
+            relayout();
+        }
     }
 
     /** Zeigt das Overlay an der Mausposition; der erste Link bekommt den Fokus. */
@@ -1103,6 +1233,16 @@ public final class EvidencePopup extends JPopupMenu {
     }
 
     // ---- für Tests
+
+    /** Die Überschriften der Aussagen, davor „▾ “ (aufgeklappt) oder „▸ “ (zu); leer bei nur einer Aussage. */
+    List<String> statementHeadings() {
+        return sections.stream().map(section -> (section.expanded ? "▾ " : "▸ ") + section.toggle.getText()).toList();
+    }
+
+    /** Ein Klick auf die Überschrift der Aussage {@code index}. */
+    void clickStatement(int index) {
+        sections.get(index).flip();
+    }
 
     /** Die Überschrift (auch für Tests der Reiter in anderen Paketen). */
     public String headingText() {

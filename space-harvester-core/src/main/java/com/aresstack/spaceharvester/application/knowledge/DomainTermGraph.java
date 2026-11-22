@@ -173,6 +173,81 @@ public final class DomainTermGraph {
     }
 
     /**
+     * Die Merkmale einer Aussage, die eine Verb-Kante teilen (Paket W9, ADR 0032): Verneinung, Verbindlichkeit
+     * (Modalverb) und Zeitbezug. „prüfen“ und „nicht prüfen“ sind zwei Kanten mit eigenen Belegen, nie eine. Nicht
+     * bestimmte Merkmale (ältere Analysen, andere Analysatoren) gelten als schlicht: nicht verneint, ohne Modalverb,
+     * gilt. Die einzige Regel dafür; Fachsicht, Begriffswissen (W6), Chat und Suche nutzen sie über die Kante.
+     *
+     * @param negated     ob die Aussage verneint ist
+     * @param modality    Modalverb, {@link ParsedStatements.Modality#NONE} ohne
+     * @param temporality Zeitbezug, {@link ParsedStatements.Temporality#GILT} ohne besonderen
+     */
+    public record Qualifiers(boolean negated, ParsedStatements.Modality modality,
+                             ParsedStatements.Temporality temporality) {
+
+        /** Schlicht: nicht verneint, ohne Modalverb, gilt. */
+        public static final Qualifiers PLAIN = new Qualifiers(false, ParsedStatements.Modality.NONE,
+                ParsedStatements.Temporality.GILT);
+
+        public Qualifiers {
+            modality = modality == null || modality == ParsedStatements.Modality.UNKNOWN
+                    ? ParsedStatements.Modality.NONE : modality;
+            temporality = temporality == null || temporality == ParsedStatements.Temporality.UNKNOWN
+                    ? ParsedStatements.Temporality.GILT : temporality;
+        }
+
+        /** Die Merkmale einer gespeicherten Aussage. */
+        public static Qualifiers of(ParsedStatements.Statement statement) {
+            ParsedStatements.Features features = statement == null ? null : statement.features();
+            if (features == null) {
+                return PLAIN;
+            }
+            return new Qualifiers(features.negation() == ParsedStatements.Negation.NEGATED, features.modality(),
+                    features.temporality());
+        }
+
+        /** Ob nichts davon besonders ist. */
+        public boolean plain() {
+            return equals(PLAIN);
+        }
+
+        /** Ob die Aussage nicht mehr gilt (früher oder verworfen); die Fachsicht zeichnet sie blasser. */
+        public boolean past() {
+            return temporality == ParsedStatements.Temporality.FRUEHER
+                    || temporality == ParsedStatements.Temporality.VERWORFEN;
+        }
+
+        /**
+         * Der Wortlaut mit der Grundform {@code verb}: „prüfen“, „nicht prüfen“, „muss prüfen“, „muss nicht prüfen
+         * (geplant)“, „prüfen (früher)“; „gilt“ wird nicht angeschrieben.
+         */
+        public String phrase(String verb) {
+            StringBuilder text = new StringBuilder();
+            if (modality != ParsedStatements.Modality.NONE) {
+                text.append(modality.name().toLowerCase(Locale.ROOT)).append(' ');
+            }
+            if (negated) {
+                text.append("nicht ");
+            }
+            text.append(verb == null ? "" : verb);
+            String time = switch (temporality) {
+                case GEPLANT -> "geplant";
+                case FRUEHER -> "früher";
+                case VERWORFEN -> "verworfen";
+                default -> null;
+            };
+            if (time != null) {
+                text.append(" (").append(time).append(')');
+            }
+            return text.toString();
+        }
+
+        String key() {
+            return (negated ? "n" : "a") + "\u0000" + modality.name() + "\u0000" + temporality.name();
+        }
+    }
+
+    /**
      * Ein Beleg einer Verb-Kante: genau eine gespeicherte Aussage.
      *
      * @param page        Seite mit Stand
@@ -222,9 +297,10 @@ public final class DomainTermGraph {
      * @param trust    höchste Stufe der Belege: {@link Trust#GEPRUEFT}, {@link Trust#EINIG} oder
      *                 {@link Trust#UNGEPRUEFT}; bei Synonymen {@link Trust#GEPRUEFT} (bestätigte Beziehung)
      * @param differs  ob ein Beleg abweicht und keiner geprüft ist
+     * @param qualifiers Merkmale aller Belege dieser Kante (Paket W9); bei Synonymen {@link Qualifiers#PLAIN}
      */
     public record Edge(String from, String to, EdgeKind kind, String verb, int count, List<Evidence> evidence,
-                       Trust trust, boolean differs) {
+                       Trust trust, boolean differs, Qualifiers qualifiers) {
 
         public Edge {
             Objects.requireNonNull(from, "from");
@@ -232,12 +308,25 @@ public final class DomainTermGraph {
             Objects.requireNonNull(kind, "kind");
             evidence = List.copyOf(evidence);
             trust = trust == null ? Trust.UNGEPRUEFT : trust;
+            qualifiers = qualifiers == null ? Qualifiers.PLAIN : qualifiers;
+        }
+
+        /** Merkmale aus dem ersten Beleg (alle Belege einer Kante teilen sie). */
+        public Edge(String from, String to, EdgeKind kind, String verb, int count, List<Evidence> evidence,
+                    Trust trust, boolean differs) {
+            this(from, to, kind, verb, count, evidence, trust, differs, kind == EdgeKind.VERB && !evidence.isEmpty()
+                    ? Qualifiers.of(evidence.getFirst().statement()) : Qualifiers.PLAIN);
         }
 
         /** Stufe und Kennzeichen aus den Belegen. */
         public Edge(String from, String to, EdgeKind kind, String verb, int count, List<Evidence> evidence) {
             this(from, to, kind, verb, count, evidence, kind == EdgeKind.SYNONYM ? Trust.GEPRUEFT : rank(evidence),
                     kind == EdgeKind.VERB && differs(evidence));
+        }
+
+        /** Der Wortlaut der Aussage mit ihren Merkmalen ({@link Qualifiers#phrase}); bei Synonymen {@code null}. */
+        public String phrase() {
+            return kind == EdgeKind.VERB ? qualifiers.phrase(verb) : null;
         }
 
         private static Trust rank(List<Evidence> evidence) {
@@ -580,13 +669,15 @@ public final class DomainTermGraph {
                     continue;
                 }
                 String verb = verb(statement);
+                // Verneinung, Modalverb und Zeitbezug trennen Kanten (W9): eine Regel, hier.
+                String qualified = verb + "\u0000" + Qualifiers.of(statement).key();
                 if (ref.state() == PageStatements.State.STALE && !options.includeStale()) {
                     Set<String> pairs = new LinkedHashSet<>();
                     for (Match actor : actors) {
                         for (Match object : objects) {
                             if (!actor.key().equals(object.key())
                                     && pairs.add(actor.key() + "\u0000" + object.key())) {
-                                withStale.computeIfAbsent("verb\u0000" + actor.key() + "\u0000" + verb + "\u0000"
+                                withStale.computeIfAbsent("verb\u0000" + actor.key() + "\u0000" + qualified + "\u0000"
                                                 + object.key(),
                                         unused -> new EdgeBuilder(actor.key(), object.key(), EdgeKind.VERB, verb))
                                         .add(evidence(ref, statement, page.analysis().analyzerId(), actor, object,
@@ -606,7 +697,7 @@ public final class DomainTermGraph {
                                 || !seen.add(actor.key() + "\u0000" + object.key())) {
                             continue;
                         }
-                        String key = "verb\u0000" + actor.key() + "\u0000" + verb + "\u0000" + object.key();
+                        String key = "verb\u0000" + actor.key() + "\u0000" + qualified + "\u0000" + object.key();
                         Evidence item = evidence(ref, statement, page.analysis().analyzerId(), actor, object, trust,
                                 match);
                         edges.computeIfAbsent(key,
@@ -729,7 +820,17 @@ public final class DomainTermGraph {
                 }
             }
         }
-        verbs.sort(java.util.Comparator.comparingInt((EdgeBuilder edge) -> edge.evidence.size()).reversed());
+        // Partner nach allen Belegen zwischen Gruppe und Partner (Paket W9: eine Kante je Aussage, ein Partner kann
+        // mehrere tragen); gleich stark bleibt die Reihenfolge der stärksten Kante.
+        Map<String, Integer> weight = new java.util.HashMap<>();
+        for (EdgeBuilder edge : verbs) {
+            String key = owner.get(edge);
+            weight.merge(edge.from.equals(key) ? edge.to : edge.from, edge.evidence.size(), Integer::sum);
+        }
+        verbs.sort(java.util.Comparator.comparingInt((EdgeBuilder edge) -> {
+            String key = owner.get(edge);
+            return weight.get(edge.from.equals(key) ? edge.to : edge.from);
+        }).thenComparingInt(edge -> edge.evidence.size()).reversed());
         boolean truncated = false;
         for (EdgeBuilder edge : verbs) {
             String key = owner.get(edge);
