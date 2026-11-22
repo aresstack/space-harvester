@@ -379,8 +379,21 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
         // Die Schnellaktionen des Chats stehen in seiner Seitenleiste, nicht mehr unten in der Werkzeugleiste.
-        assertThat(onEdt(() -> view.tools() == view.detail().footTools()
-                && view.detail().footTools().getComponentCount() == 0))
+        // Unten steht in der Leseansicht höchstens der Platz für „Transkript kopieren“ des Podcasts.
+        assertThat(onEdt(() -> {
+            javax.swing.JComponent foot = view.detail().footTools();
+            if (view.tools() != foot || foot.getComponentCount() > 1) {
+                return false;
+            }
+            for (java.awt.Component row : foot.getComponents()) {
+                for (java.awt.Component tool : ((java.awt.Container) row).getComponents()) {
+                    if (!(tool instanceof com.aresstack.spaceharvester.app.ui.controls.CopyButton)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }))
                 .as("unten keine Chat-Chips").isTrue();
         // Ohne gezeigte Mitte verschwindet nur die dunkle Füllung, der gewählte Reiter bleibt.
         onEdt(() -> {
@@ -429,6 +442,20 @@ class ContentViewTest {
                 .as("Werkzeuge der Updates in der gemeinsamen Kopfzeile").isTrue();
         assertThat(onEdt(() -> barIcons(view.detail()))).as("die Symbole der Reiterleiste bleiben überall gleich")
                 .containsExactly(bar);
+        // Hinter dem Dreieck stehen hier die Speicher-Einträge; ohne Zusammenfassung und Podcast sind sie gesperrt.
+        assertThat(onEdt(() -> view.detail().moreButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> {
+            List<String> entries = new java.util.ArrayList<>();
+            for (java.awt.Component item : view.detail().moreMenu().getComponents()) {
+                entries.add(((javax.swing.JMenuItem) item).getText() + (item.isEnabled() ? "" : " (gesperrt)"));
+            }
+            return entries;
+        })).containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)",
+                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)");
+        // Neben der Lupe steht der Platz für „Transkript kopieren“; ohne Podcast bleibt der Knopf weg.
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
+                view.detail().sourceView().podcast().transcriptCopy(), view.tools()))).isTrue();
+        assertThat(onEdt(() -> view.detail().sourceView().podcast().transcriptCopy().isVisible())).isFalse();
         assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
                 .isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().sourceId())).isEqualTo("handbuch");

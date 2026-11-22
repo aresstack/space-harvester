@@ -267,7 +267,7 @@ class TermGraphViewTest {
         });
         assertThat(seen).containsExactly(
                 "3 Fachbegriffe · 2 Verbindungen · Aussagen aus MaltParser · 2 veraltete Aussagen ausgelassen",
-                GraphSource.Style.VERB, "Antragsteller stellen Antrag", 3,
+                GraphSource.Style.VERB, "Antragsteller – stellen – Antrag", 3,
                 List.of("Förderantrag (wiki / FOE)", "Leitfaden (wiki / FOE)"), List.of("nur MaltParser", "nur MaltParser"));
         assertThat(opened).containsExactly(new EvidencePopup.Target("wiki", "2", -1, -1));
     }
@@ -297,8 +297,8 @@ class TermGraphViewTest {
         assertThat(edges).extracting(GraphSource.Edge::label, GraphSource.Edge::trust, GraphSource.Edge::differs)
                 .containsExactly(Tuple.tuple("stellen · 2", DomainTermGraph.Trust.GEPRUEFT, false),
                         Tuple.tuple("wahren ≠ · 2", DomainTermGraph.Trust.UNGEPRUEFT, true));
-        assertThat(edges.getFirst().tip()).as("genaue Stufen wie die Pillen")
-                .isEqualTo("Vom Prüfschritt bestätigt 1 · abweichend 1 – Klick zeigt die Belege");
+        assertThat(edges.getFirst().tip()).as("Tooltip nach UX W9: Paar, Aussage, Zahl der Belege")
+                .isEqualTo("Antragsteller – stellen – Antrag · 2 Belege");
         java.awt.BasicStroke strong = TermGraphView.Canvas.trustStroke(edges.getFirst());
         java.awt.BasicStroke dotted = TermGraphView.Canvas.trustStroke(edges.get(1));
         assertThat(strong.getDashArray()).as("geprüft: durchgezogen").isNull();
