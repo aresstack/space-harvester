@@ -9,7 +9,6 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
-import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.marks.VideoMarks;
@@ -2324,6 +2323,12 @@ public final class Workspace {
     public JobStatus performJobAction(String jobId, JobAction action) {
         JobStatus current = job(jobId);
         String owner = current.owner();
+        if (action == JobAction.RESUME
+                && com.aresstack.spaceharvester.application.assets.PageAssetHarvests.pageHarvest(current)) {
+            // Fundstelle 24: Die Anhangsliste samt Rechten kennt nur die App; sie wird erst geholt, wenn er läuft.
+            return harvester.pageAssetHarvests().resume(jobId, owner,
+                    () -> visibleAttachments(current.sourceId(), current.rootPageId(), AccessKind.SYNC));
+        }
         if (action == JobAction.RESUME && imageRun(current)) {
             // D2: ein vom Benutzer gestarteter Lauf „Bilder beschreiben“ läuft mit dessen Rechten weiter.
             return harvester.imageDescriptions().resume(caller, jobId);
@@ -2363,6 +2368,38 @@ public final class Workspace {
     public AllJobs.Outcome cancelAllJobs(boolean background) {
         return AllJobs.apply(AllJobs.toCancel(jobs(background)),
                 job -> performJobAction(job.id(), JobAction.CANCEL));
+    }
+
+    /**
+     * Abonniert das Ende eines eigenen Auftrags (Fundstelle 24): {@code listener} läuft einmal auf dem Event Dispatch
+     * Thread mit dem Endstand (fertig, gescheitert, abgebrochen, angehalten oder gelöscht), sofort, wenn er schon
+     * geendet hat; gemeldet vom Core, ohne Abfragen (ADR 0027).
+     */
+    public Subscription whenJobFinished(String jobId, java.util.function.Consumer<JobStatus> listener) {
+        java.util.Objects.requireNonNull(listener, "listener");
+        java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.function.Consumer<JobStatus> once = status -> {
+            if (fired.compareAndSet(false, true)) {
+                javax.swing.SwingUtilities.invokeLater(() -> listener.accept(status));
+            }
+        };
+        Subscription watch = harvester.jobs().subscribe(Harvester.OWNER, new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+                if (status.id().equals(jobId) && status.state().terminal()) {
+                    once.accept(status);
+                }
+            }
+
+            @Override
+            public void removed(JobStatus last) {
+                if (last.id().equals(jobId)) {
+                    once.accept(last);
+                }
+            }
+        });
+        currentStatus(jobId).filter(status -> status.state().terminal()).ifPresent(once);
+        return watch;
     }
 
     /**
@@ -3186,9 +3223,16 @@ public final class Workspace {
         return harvester.assets().overview(visibleAttachments(sourceId, pageId, AccessKind.METADATA));
     }
 
-    /** Alle Anhänge einer Seite ernten ({@code POST …/assets/harvest}); braucht sync. */
-    public AssetHarvest harvestAssets(String sourceId, String pageId) {
-        return harvester.assets().harvest(visibleAttachments(sourceId, pageId, AccessKind.SYNC));
+    /**
+     * „Anhänge ablegen“: alle Anhänge einer Seite als Auftrag „Anhänge beschaffen“ ablegen (Fundstelle 24, Angelo
+     * 21.11.2026: nichts läuft unsichtbar); braucht sync. Der Fortschritt steht in der Auftragsliste, Abbrechen geht
+     * dort; „Fortsetzen“ holt nur, was fehlt ({@link #performJobAction}).
+     */
+    public JobStatus startAssetHarvest(String sourceId, String pageId) {
+        JobStatus status = harvester.pageAssetHarvests().start(visibleAttachments(sourceId, pageId, AccessKind.SYNC),
+                Harvester.OWNER);
+        activities.remember(status.id());
+        return status;
     }
 
     /** Inhalt eines Anhangs ({@code …/assets/{id}/content}); legt nur mit sync-Freigabe ab. */

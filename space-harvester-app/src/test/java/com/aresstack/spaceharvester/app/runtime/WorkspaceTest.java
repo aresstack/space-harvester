@@ -11,7 +11,6 @@ import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
-import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -805,9 +804,20 @@ class WorkspaceTest {
         assertThat(workspace.assets("wiki", "102").entries()).singleElement()
                 .satisfies(entry -> assertThat(entry.stored()).isNull());
 
-        AssetHarvest harvest = workspace.harvestAssets("wiki", "102");
-        assertThat(harvest.complete()).as(harvest.toString()).isTrue();
-        assertThat(harvest.count(AssetHarvest.Status.STORED)).isEqualTo(1);
+        // Fundstelle 24: „Anhänge ablegen“ ist ein Auftrag in der Auftragsliste.
+        JobStatus harvest = await(workspace, workspace.startAssetHarvest("wiki", "102"));
+        assertThat(harvest.state()).as(harvest.toString()).isEqualTo(JobState.COMPLETED);
+        assertThat(harvest.type()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.ATTACHMENTS);
+        assertThat(harvest.incomplete()).isFalse();
+        assertThat(harvest.progress().written()).isEqualTo(1);
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(harvest.id());
+        // Kein „Neu erzwingen“ wie bei der Anhangbeschaffung eines Exports: erneut starten holt, was fehlt.
+        assertThat(harvest.lifecycle().allows(com.aresstack.spaceharvester.application.jobs.JobAction.FORCE_REFRESH))
+                .isFalse();
+        // Erneut: nichts neu übertragen, der Anhang zählt als bewusst ausgelassen.
+        JobStatus again = await(workspace, workspace.startAssetHarvest("wiki", "102"));
+        assertThat(again.progress().processed()).isEqualTo(1);
+        assertThat(again.progress().written()).isZero();
         assertThat(workspace.assets("wiki", "102").entries()).singleElement()
                 .satisfies(entry -> assertThat(entry.stored()).isNotNull());
         assertThat(new String(workspace.assetContent("wiki", "102", "att900").content(), StandardCharsets.UTF_8))

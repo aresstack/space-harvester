@@ -196,6 +196,15 @@ public class JobActions {
             }
             case EXPORT -> exports.resume(current.id(), owner, access);
             case ASSETS, ATTACHMENTS -> {
+                if (com.aresstack.spaceharvester.application.assets.PageAssetHarvests.pageHarvest(current)) {
+                    // Die Anhangsliste kennt nur der Aufrufer (Workspace#performJobAction); im selben Lauf genügt der
+                    // gemerkte Auftrag.
+                    if (!jobs.resumable(current.id(), owner)) {
+                        throw new JobNotResumableException(current.id(),
+                                "„Anhänge ablegen“ setzt die Seitenansicht oder die Auftragsliste der App fort");
+                    }
+                    yield jobs.resume(current.id(), owner);
+                }
                 if (conversions == null) {
                     throw new JobNotResumableException(current.id(), "keine Bild- oder Anhangbeschaffung angebunden");
                 }

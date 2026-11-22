@@ -534,6 +534,14 @@ wird automatisch verwaltet.
     Abgleiche und Neueinlesen dort, die der Core selbst anstößt: Nachholen beim Start, Abgleich vor der Suche,
     Inventur, Wiederaufnahme und Neueinlesen nach einem Versionswechsel. Löschen entfernt sie aus der Ablage.
 
+16. **„Anhänge ablegen“ als Auftrag** (Angelo 21.11.2026, Fundstelle 24). Der Knopf in der Seitenansicht startet
+    einen Auftrag „Anhänge beschaffen“ (`ATTACHMENTS`, `task=page-harvest`, `PageAssetHarvests`) als Klick des
+    Benutzers (`submitInteractive`). Abgelegte Anhänge zählen als geschrieben, schon vorhandene als bewusst
+    ausgelassen, gescheiterte rot mit Grund. Abbrechen geht nach jedem Anhang; das Abgelegte bleibt. Die Statuszeile
+    des Reiters meldet „gestartet“ mit Link „Aufträge“, das Ergebnis ersetzt die Meldung (`Workspace#whenJobFinished`).
+    Fortsetzen holt nur, was fehlt; die Anhangsliste samt Rechten liefert die App, nach einem Neustart setzt deshalb
+    der Benutzer fort. „Neu erzwingen“ und „Nur Fehler“ der Anhangbeschaffung eines Exports gelten hier nicht.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel

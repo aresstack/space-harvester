@@ -49,6 +49,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 /**
  * Anwendungsfälle der Asset-Ernte (#19). Arbeitet immer auf einer frisch gelesenen Anhangsliste ({@link
@@ -375,48 +376,60 @@ public class Assets implements DocumentInventory {
      * voll, werden die übrigen Anhänge nicht mehr angefragt.
      */
     public AssetHarvest harvest(PageAttachmentList list) {
+        return harvest(list, entry -> { });
+    }
+
+    /**
+     * Wie {@link #harvest(PageAttachmentList)}; {@code each} erfährt jeden Anhang, sobald er erledigt ist, etwa für den
+     * Fortschritt eines Auftrags (Fundstelle 24). Wirft {@code each} (Abbrechen), endet der Lauf nach diesem Anhang;
+     * der Index bleibt für das bisher Abgelegte stimmig.
+     */
+    public AssetHarvest harvest(PageAttachmentList list, Consumer<AssetHarvest.Entry> each) {
         HarvestSource source = source(list.sourceId());
         String pageId = list.attachments().pageId();
         List<AssetHarvest.Entry> entries = new ArrayList<>();
         String stop = null;
         boolean indexed = false;
-        for (PageAttachment attachment : list.attachments().attachments()) {
-            if (stop != null) {
-                entries.add(failed(list, attachment, stop));
-                indexed |= forgetStale(list, attachment);
-                continue;
-            }
-            Optional<Asset> stored = stored(list.sourceId(), attachment);
-            if (stored.isPresent()) {
-                backfillText(stored.get());
-                indexed |= indexStored(list, stored.get());
-                entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.REUSED,
-                        stored.get(), null));
-                continue;
-            }
-            // Download und Textextraktion derselben Datei belegen zusammen einen Platz der Schranke.
-            try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
-                Downloaded downloaded = download(source, pageId, attachment, true, false);
-                harvestText(downloaded);
-                indexed |= indexStored(list, downloaded.asset());
-                entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.STORED,
-                        downloaded.asset(), null));
-            } catch (AssetTooLargeException e) {
-                entries.add(failed(list, attachment, "asset-too-large"));
-                indexed |= forgetStale(list, attachment);
-            } catch (AssetStoreFullException e) {
-                stop = "asset-store-full";
-                entries.add(failed(list, attachment, stop));
-                indexed |= forgetStale(list, attachment);
-            } catch (SourceAccessException e) {
-                if (e.reason() == SourceAccessException.Reason.RATE_LIMITED) {
-                    stop = code(e.reason());
+        try {
+            for (PageAttachment attachment : list.attachments().attachments()) {
+                if (stop != null) {
+                    report(entries, each, failed(list, attachment, stop));
+                    indexed |= forgetStale(list, attachment);
+                    continue;
                 }
-                entries.add(failed(list, attachment, code(e.reason())));
-                indexed |= forgetStale(list, attachment);
+                Optional<Asset> stored = stored(list.sourceId(), attachment);
+                if (stored.isPresent()) {
+                    backfillText(stored.get());
+                    indexed |= indexStored(list, stored.get());
+                    report(entries, each, new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.REUSED,
+                            stored.get(), null));
+                    continue;
+                }
+                // Download und Textextraktion derselben Datei belegen zusammen einen Platz der Schranke.
+                try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
+                    Downloaded downloaded = download(source, pageId, attachment, true, false);
+                    harvestText(downloaded);
+                    indexed |= indexStored(list, downloaded.asset());
+                    report(entries, each, new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.STORED,
+                            downloaded.asset(), null));
+                } catch (AssetTooLargeException e) {
+                    report(entries, each, failed(list, attachment, "asset-too-large"));
+                    indexed |= forgetStale(list, attachment);
+                } catch (AssetStoreFullException e) {
+                    stop = "asset-store-full";
+                    report(entries, each, failed(list, attachment, stop));
+                    indexed |= forgetStale(list, attachment);
+                } catch (SourceAccessException e) {
+                    if (e.reason() == SourceAccessException.Reason.RATE_LIMITED) {
+                        stop = code(e.reason());
+                    }
+                    report(entries, each, failed(list, attachment, code(e.reason())));
+                    indexed |= forgetStale(list, attachment);
+                }
             }
+        } finally {
+            finishIndexing(list, indexed);
         }
-        finishIndexing(list, indexed);
         return new AssetHarvest(list.sourceId(), pageId, list.spaceKey(), list.attachments().complete(), entries,
                 clock.instant());
     }
@@ -2397,6 +2410,12 @@ public class Assets implements DocumentInventory {
      * Nach einer Ernte: Anhänge, die die vollständige Liste nicht mehr nennt, fallen aus dem Index; Änderungen werden
      * dauerhaft.
      */
+    private static void report(List<AssetHarvest.Entry> entries, Consumer<AssetHarvest.Entry> each,
+                               AssetHarvest.Entry entry) {
+        entries.add(entry);
+        each.accept(entry);
+    }
+
     private void finishIndexing(PageAttachmentList list, boolean indexed) {
         if (texts == null) {
             return;

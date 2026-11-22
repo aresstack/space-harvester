@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.Background;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Facts;
 import com.aresstack.spaceharvester.app.ui.Feedback;
@@ -215,6 +216,8 @@ public final class PageDetailPanel extends JPanel {
     /** Schließt das Seiteninfo-Popup, sobald die Maus Überschrift und Popup verlassen hat. */
     private final javax.swing.Timer detailsWatch = new javax.swing.Timer(120, e -> hideDetailsWhenLeft());
     private final Feedback feedback = new Feedback();
+    /** Wartet auf das Ende von „Anhänge ablegen“ (Fundstelle 24). */
+    private com.aresstack.spaceharvester.application.observe.Subscription harvestWatch;
     /**
      * Hinweis über der Seite, wenn die Quelle einen neueren Stand hat als der sofort gezeigte aus dem Bestand (dieselbe
      * Platte wie in der Leseansicht, Angelo 17.11.2026); „Seite neu laden“ zeigt den schon geladenen neuen Stand.
@@ -4630,20 +4633,48 @@ public final class PageDetailPanel extends JPanel {
         }
         String source = sourceId;
         String id = pageId;
-        feedback.working("Anhänge werden abgelegt …");
-        Background.run(() -> runtime.workspace().harvestAssets(source, id), result -> {
-            long failed = result.entries().stream().filter(e -> e.status() == AssetHarvest.Status.FAILED).count();
-            long stored = result.entries().stream().filter(e -> e.status() == AssetHarvest.Status.STORED).count();
-            long reused = result.entries().stream().filter(e -> e.status() == AssetHarvest.Status.REUSED).count();
-            String summary = stored + " abgelegt, " + reused + " schon vorhanden, " + failed + " fehlgeschlagen";
-            if (failed == 0 && result.listComplete()) {
-                feedback.success("Anhänge abgelegt: " + summary);
-            } else {
-                feedback.warning("Anhänge nur teilweise abgelegt", summary
-                        + (result.listComplete() ? "" : "; die Anhangsliste war unvollständig"));
+        // Fundstelle 24: ein Auftrag in der Auftragsliste, mit Fortschritt und Abbrechen dort; das Ergebnis ersetzt die
+        // Meldung „gestartet“, gemeldet vom Core (UX, D3).
+        Background.run(() -> runtime.workspace().startAssetHarvest(source, id), started -> {
+            Runnable openJob = () -> context.navigator().showJob(started.id());
+            if (harvestWatch != null) {
+                harvestWatch.close();
             }
-            loadAssets(true);
+            if (source.equals(sourceId) && id.equals(pageId)) {
+                tabNote(ATTACHMENTS, new StatusNote(HARVEST_STARTED, StatusNote.Tone.PLAIN, JOBS, openJob));
+            }
+            harvestWatch = runtime.workspace().whenJobFinished(started.id(), done -> {
+                if (source.equals(sourceId) && id.equals(pageId)) {
+                    tabNote(ATTACHMENTS, harvested(done, openJob));
+                    loadAssets(true);
+                }
+            });
         }, feedback::problem);
+    }
+
+    /** Die Meldung „gestartet“ von „Anhänge ablegen“; „Aufträge“ ist der Link. */
+    static final String HARVEST_STARTED = "Anhänge werden abgelegt; Fortschritt und Abbruch unter Aufträge.";
+    private static final String JOBS = "Aufträge";
+
+    /** Das Ergebnis von „Anhänge ablegen“ für die Statuszeile des Reiters; rot nur bei Fehlern. */
+    static StatusNote harvested(JobStatus done, Runnable openJob) {
+        com.aresstack.spaceharvester.application.jobs.JobProgress p = done.progress();
+        long reused = Math.max(0, p.processed() - p.written() - p.failed());
+        String summary = p.written() + " abgelegt, " + reused + " schon vorhanden, " + p.failed() + " fehlgeschlagen";
+        return switch (done.state()) {
+            case COMPLETED -> p.failed() > 0
+                    ? new StatusNote("Anhänge nur teilweise abgelegt: " + summary + "; Gründe unter " + JOBS + ".",
+                            StatusNote.Tone.ERROR, JOBS, openJob)
+                    : done.incomplete()
+                    ? new StatusNote("Anhänge abgelegt: " + summary + "; die Anhangsliste war unvollständig.",
+                            StatusNote.Tone.WARNING, null, null)
+                    : StatusNote.plain("Anhänge abgelegt: " + summary);
+            case FAILED -> new StatusNote("Anhänge ablegen gescheitert; Grund unter " + JOBS + ".",
+                    StatusNote.Tone.ERROR, JOBS, openJob);
+            case PAUSED -> new StatusNote("Anhänge ablegen angehalten nach " + summary + "; fortsetzen unter " + JOBS
+                    + ".", StatusNote.Tone.PLAIN, JOBS, openJob);
+            default -> StatusNote.plain("Anhänge ablegen abgebrochen nach " + summary + "; das Abgelegte bleibt.");
+        };
     }
 
     private void saveAsset() {
