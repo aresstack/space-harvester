@@ -1,0 +1,207 @@
+package com.aresstack.spaceharvester.app.ui.controls;
+
+import com.aresstack.spaceharvester.app.ui.Comic;
+
+import javax.swing.ButtonGroup;
+import javax.swing.JPanel;
+import javax.swing.JToggleButton;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.GridLayout;
+import java.awt.RenderingHints;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
+
+/**
+ * Ein Umschalter wie eine Wippe (Angelo 22.11.2026): mehrere Hälften in einem gemeinsamen Rahmen, genau eine ist
+ * gewählt und gefüllt. Dezent und niedrig, für eine Werkzeugzeile; alle Hälften sind gleich breit, damit die Wippe
+ * beim Umschalten nicht springt. Eine Hälfte kann eine Zahl als kleinen Chip hinter dem Namen tragen.
+ */
+public final class SegmentedToggle extends JPanel {
+
+    private static final int SEGMENT_HEIGHT = 24;
+    private static final int PAD = 12;
+    private static final int CHIP_GAP = 6;
+    private static final int CHIP_HEIGHT = 16;
+
+    private final Map<String, Segment> segments = new LinkedHashMap<>();
+    private final ButtonGroup group = new ButtonGroup();
+    private final List<Consumer<String>> listeners = new ArrayList<>();
+    private String selected;
+
+    public SegmentedToggle() {
+        super(new GridLayout(1, 0, 0, 0));
+        setOpaque(false);
+    }
+
+    /** Fügt eine Hälfte an; die erste ist gewählt. */
+    public SegmentedToggle segment(String name) {
+        Segment segment = new Segment(name);
+        segments.put(name, segment);
+        group.add(segment);
+        add(segment);
+        segment.addActionListener(event -> select(name));
+        if (selected == null) {
+            selected = name;
+            segment.setSelected(true);
+        }
+        return this;
+    }
+
+    /** Wählt eine Hälfte; meldet nur einen echten Wechsel. */
+    public void select(String name) {
+        Segment segment = segments.get(name);
+        if (segment == null) {
+            return;
+        }
+        segment.setSelected(true);
+        if (!name.equals(selected)) {
+            selected = name;
+            repaint();
+            for (Consumer<String> listener : List.copyOf(listeners)) {
+                listener.accept(name);
+            }
+        }
+    }
+
+    public String selected() {
+        return selected;
+    }
+
+    public void onSelect(Consumer<String> listener) {
+        listeners.add(listener);
+    }
+
+    public JToggleButton button(String name) {
+        return segments.get(name);
+    }
+
+    /**
+     * Eine Zahl an einer Hälfte: ein kleiner Chip in {@code tone} hinter dem Namen; bei 0 kein Chip.
+     *
+     * @param tip Tooltip, solange die Zahl über 0 liegt; sonst gilt {@code idleTip}
+     */
+    public void count(String name, int count, Color tone, String tip, String idleTip) {
+        Segment segment = segments.get(name);
+        if (segment == null) {
+            return;
+        }
+        segment.count = Math.max(0, count);
+        segment.tone = tone;
+        segment.setToolTipText(count > 0 ? tip : idleTip);
+        revalidate();
+        repaint();
+    }
+
+    /** Die Zahl an einer Hälfte (für Tests); 0 ohne Chip. */
+    public int count(String name) {
+        Segment segment = segments.get(name);
+        return segment == null ? 0 : segment.count;
+    }
+
+    /** Eine Hälfte: zeichnet ihren Teil des gemeinsamen Rahmens, gewählt gefüllt. */
+    private final class Segment extends JToggleButton {
+        private int count;
+        private Color tone = Comic.PETROL;
+
+        Segment(String name) {
+            super(name);
+            setFont(Comic.semiBold(12f));
+            setOpaque(false);
+            setContentAreaFilled(false);
+            setBorderPainted(false);
+            setFocusPainted(false);
+            setRolloverEnabled(true);
+            getAccessibleContext().setAccessibleName(name);
+        }
+
+        private Font chipFont() {
+            return getFont().deriveFont(Font.BOLD, Math.max(10f, getFont().getSize2D() - 1f));
+        }
+
+        private int chipWidth() {
+            return count <= 0 ? 0 : Math.max(CHIP_HEIGHT,
+                    getFontMetrics(chipFont()).stringWidth(String.valueOf(count)) + 10);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            int chip = chipWidth();
+            return new Dimension(2 * PAD + getFontMetrics(getFont()).stringWidth(getText())
+                    + (chip > 0 ? CHIP_GAP + chip : 0), SEGMENT_HEIGHT);
+        }
+
+        @Override
+        public Dimension getMinimumSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                int width = getWidth();
+                int height = getHeight();
+                int index = new ArrayList<>(segments.values()).indexOf(this);
+                boolean first = index == 0;
+                boolean last = index == segments.size() - 1;
+                int arc = height - 1;
+                // Der gemeinsame Rahmen: nur die äußeren Enden sind rund, dazwischen gerade Kanten.
+                int x = first ? 0 : -arc;
+                int w = width - 1 + (first ? 0 : arc) + (last ? 0 : arc);
+                boolean on = isSelected();
+                if (on) {
+                    g.setColor(Comic.INK);
+                    g.fillRoundRect(x, 0, w, height - 1, arc, arc);
+                } else if (getModel().isRollover() && isEnabled()) {
+                    g.setColor(new Color(Comic.INK.getRed(), Comic.INK.getGreen(), Comic.INK.getBlue(), 20));
+                    g.fillRoundRect(x, 0, w, height - 1, arc, arc);
+                }
+                g.setColor(Comic.INK);
+                g.drawRoundRect(x, 0, w, height - 1, arc, arc);
+                if (isFocusOwner()) {
+                    g.setColor(on ? Color.WHITE : Comic.INK);
+                    g.setStroke(new java.awt.BasicStroke(1f, java.awt.BasicStroke.CAP_BUTT,
+                            java.awt.BasicStroke.JOIN_MITER, 1f, new float[] {2f, 2f}, 0f));
+                    g.drawRoundRect(4, 3, width - 9, height - 7, height - 7, height - 7);
+                    g.setStroke(new java.awt.BasicStroke(1f));
+                }
+                FontMetrics metrics = g.getFontMetrics(getFont());
+                int chip = chipWidth();
+                int content = metrics.stringWidth(getText()) + (chip > 0 ? CHIP_GAP + chip : 0);
+                int tx = (width - content) / 2;
+                g.setFont(getFont());
+                g.setColor(on ? Color.WHITE : Comic.INK);
+                g.drawString(getText(), tx, (height - metrics.getHeight()) / 2 + metrics.getAscent());
+                if (chip > 0) {
+                    int cx = tx + metrics.stringWidth(getText()) + CHIP_GAP;
+                    int cy = (height - CHIP_HEIGHT) / 2;
+                    g.setColor(tone);
+                    g.fillRoundRect(cx, cy, chip, CHIP_HEIGHT, CHIP_HEIGHT, CHIP_HEIGHT);
+                    if (on) {
+                        g.setColor(Color.WHITE);
+                        g.drawRoundRect(cx, cy, chip - 1, CHIP_HEIGHT - 1, CHIP_HEIGHT, CHIP_HEIGHT);
+                    }
+                    Font small = chipFont();
+                    g.setFont(small);
+                    FontMetrics chipMetrics = g.getFontMetrics(small);
+                    String text = String.valueOf(count);
+                    g.setColor(Color.WHITE);
+                    g.drawString(text, cx + (chip - chipMetrics.stringWidth(text)) / 2,
+                            cy + (CHIP_HEIGHT - chipMetrics.getHeight()) / 2 + chipMetrics.getAscent());
+                }
+            } finally {
+                g.dispose();
+            }
+        }
+    }
+}

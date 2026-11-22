@@ -150,8 +150,8 @@ class ActivitiesBackgroundTabTest {
                 java.awt.Rectangle visible = new java.awt.Rectangle(0, 0, 900, 520);
                 for (javax.swing.JComponent part : List.<javax.swing.JComponent>of(
                         view.tabs.button(ActivitiesView.JOBS_TAB), view.tabs.button(ActivitiesView.BACKGROUND_TAB),
-                        view.expandAll, view.collapseAll, view.preparations.box(), view.downloads.box(),
-                        view.connections.box(), view.deleteFinished, view.moreJobs, view.pauseAll, view.cancelAll)) {
+                        view.preparations.box(), view.downloads.box(),
+                        view.connections.box(), view.deleteFinished, view.moreJobs)) {
                     java.awt.Rectangle bounds = SwingUtilities.convertRectangle(part.getParent(), part.getBounds(),
                             root);
                     assertThat(part.isShowing() || part.isVisible()).isTrue();
@@ -161,9 +161,82 @@ class ActivitiesBackgroundTabTest {
                             .isGreaterThanOrEqualTo(Math.min(part.getPreferredSize().width, part.getMinimumSize()
                                     .width));
                 }
-                assertThat(view.tabs.button(ActivitiesView.BACKGROUND_TAB).getWidth())
-                        .isGreaterThanOrEqualTo(view.tabs.button(ActivitiesView.BACKGROUND_TAB)
-                                .getPreferredSize().width);
+                // Die Wippe steht links in der Kopfzeile, einzeilig, beide Hälften gleich breit und ganz zu lesen.
+                javax.swing.AbstractButton jobs = view.tabs.button(ActivitiesView.JOBS_TAB);
+                javax.swing.AbstractButton background = view.tabs.button(ActivitiesView.BACKGROUND_TAB);
+                assertThat(jobs.getY()).isEqualTo(background.getY());
+                assertThat(jobs.getWidth()).isEqualTo(background.getWidth());
+                assertThat(background.getWidth()).isGreaterThanOrEqualTo(background.getPreferredSize().width);
+                assertThat(background.getX()).isEqualTo(jobs.getX() + jobs.getWidth());
+                // Die Aktionen für alle Aufträge und das Auf- und Zuklappen stehen in der Werkzeugleiste unten.
+                javax.swing.JComponent tools = view.tools();
+                for (javax.swing.JComponent part : List.<javax.swing.JComponent>of(view.expandAll, view.collapseAll,
+                        view.pauseAll, view.cancelAll)) {
+                    assertThat(SwingUtilities.isDescendingFrom(part, root)).isFalse();
+                    assertThat(SwingUtilities.isDescendingFrom(part, tools)).isTrue();
+                }
+                tools.setSize(600, 30);
+                layout(tools);
+                assertThat(view.expandAll.getParent().getX()).isZero();
+                assertThat(view.pauseAll.getParent().getX()).isGreaterThan(view.collapseAll.getParent().getWidth());
+                view.tabs.select(ActivitiesView.JOBS_TAB);
+            });
+        } finally {
+            context.shutdown();
+        }
+    }
+
+    /**
+     * Der Detailbereich steht nur, solange ein Auftrag gewählt ist (Angelo 22.11.2026): Ohne Auswahl gehört die
+     * ganze Fläche der Liste; ein Klick in die leere Fläche unter den Zeilen hebt die Auswahl wieder auf.
+     */
+    @Test
+    void theDetailAreaOpensWithASelectionAndAClickIntoTheEmptyAreaClosesIt() throws Exception {
+        Path home = Files.createTempDirectory("details");
+        AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home),
+                home.resolve("app.yml"), "test");
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                ActivitiesView view = new ActivitiesView(context, null);
+                view.tabs.select(ActivitiesView.BACKGROUND_TAB);
+                view.showJobsForTest(sample());
+                javax.swing.JComponent root = view.component();
+                root.setSize(900, 520);
+                layout(root);
+                javax.swing.JTable table = view.table();
+                assertThat(table.getRowCount()).isPositive();
+                assertThat(view.detailsShown()).isFalse();
+                assertThat(view.detailScroll.isShowing() || view.detailScroll.isVisible()).isFalse();
+
+                table.getSelectionModel().setSelectionInterval(0, 0);
+                layout(root);
+                assertThat(view.detailsShown()).isTrue();
+                assertThat(view.detailScroll.getHeight()).isPositive();
+                // Mit den Details steht auch der Trenner wieder da, direkt über ihnen.
+                javax.swing.JSplitPane split = (javax.swing.JSplitPane) view.detailScroll.getParent();
+                java.awt.Component divider = ((javax.swing.plaf.basic.BasicSplitPaneUI) split.getUI()).getDivider();
+                assertThat(divider.getHeight()).isEqualTo(
+                        com.aresstack.spaceharvester.app.ui.controls.ComicDivider.THICKNESS);
+                assertThat(divider.getY() + divider.getHeight()).isEqualTo(view.detailScroll.getY());
+                assertThat(divider.getY()).isGreaterThanOrEqualTo(90);
+
+                // Unter den Zeilen ist die Tabelle zu Ende: Der Klick trifft die leere Fläche der Liste.
+                java.awt.Component viewport = table.getParent();
+                viewport.dispatchEvent(new java.awt.event.MouseEvent(viewport, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                        0, java.awt.event.InputEvent.BUTTON1_DOWN_MASK, 5, viewport.getHeight() - 2, 1, false,
+                        java.awt.event.MouseEvent.BUTTON1));
+                assertThat(table.getSelectedRow()).isEqualTo(-1);
+                assertThat(view.detailsShown()).isFalse();
+
+                // Und wieder auf: so oft man will, nicht nur beim ersten Mal. (Ohne Laufzeit leert das Nachlesen die
+                // Liste, deshalb stehen die Aufträge hier neu.)
+                view.showJobsForTest(sample());
+                table.getSelectionModel().setSelectionInterval(0, 0);
+                assertThat(view.detailsShown()).isTrue();
+                viewport.dispatchEvent(new java.awt.event.MouseEvent(viewport, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                        0, java.awt.event.InputEvent.BUTTON1_DOWN_MASK, 5, viewport.getHeight() - 2, 1, false,
+                        java.awt.event.MouseEvent.BUTTON1));
+                assertThat(view.detailsShown()).isFalse();
                 view.tabs.select(ActivitiesView.JOBS_TAB);
             });
         } finally {
