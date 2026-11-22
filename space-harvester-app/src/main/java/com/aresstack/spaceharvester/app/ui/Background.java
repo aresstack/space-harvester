@@ -39,6 +39,14 @@ public final class Background {
         });
     }
 
+    /**
+     * Der Executor selbst, für Arbeit, die ihr Ergebnis selbst auf den EDT bringt und darum austauschbar bleiben soll
+     * (etwa in Tests von Hand ausgeführt).
+     */
+    public static java.util.concurrent.Executor executor() {
+        return EXECUTOR;
+    }
+
     /** Wie {@link #run}, für Arbeit ohne Ergebnis. */
     public static void execute(ThrowingRunnable work, Runnable onSuccess, Consumer<Throwable> onFailure) {
         run(() -> {

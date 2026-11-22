@@ -717,6 +717,9 @@ public final class PageDetailPanel extends JPanel {
         statementsView.withSubpages(subpages::active);
         statementsTab(statementsView);
         graphView.onJump(this::jumpTo);
+        // Overlay „Belege“ der Fachsicht im Seitengraphen (W4b): der Seitentitel öffnet die Seite an der Stelle.
+        graphView.onEvidenceOpen(target -> openAt(new StandingTab.Target(target.sourceId(), target.pageId(),
+                target.start(), target.end())));
         statementsView.onAnalysed(() -> {
             graphView.analysisChanged();
             loadVerbs();
@@ -5082,7 +5085,14 @@ public final class PageDetailPanel extends JPanel {
         int current = ++request;
         feedback.working("Analysen werden berechnet …");
         Background.run(() -> {
-            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, null);
+            // Abnahme #1078: Wartet der Auftrag hinter laufenden Folgeaufträgen, sagt die Statuszeile es.
+            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, null, state ->
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        if (current == request) {
+                            feedback.working(state == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED
+                                    ? "Wartet auf freien Platz …" : "Analysen werden berechnet …");
+                        }
+                    }));
             DeliveredPage cached = runtime.workspace().page(source, id, false);
             List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
             ReaderDocument document = document(source, id, updated, text, font);
@@ -5108,7 +5118,13 @@ public final class PageDetailPanel extends JPanel {
                 feedback.success(run.computed() + " Analysen berechnet");
             }
         }, error -> {
-            if (current == request) {
+            if (current != request) {
+                return;
+            }
+            if (error instanceof com.aresstack.spaceharvester.application.jobs.JobCancelledException) {
+                // Fundstelle 21: läuft als Auftrag, den der Benutzer in der Auftragsliste abbrechen kann.
+                feedback.info("Neuberechnung abgebrochen", null);
+            } else {
                 feedback.problem(error);
             }
         });

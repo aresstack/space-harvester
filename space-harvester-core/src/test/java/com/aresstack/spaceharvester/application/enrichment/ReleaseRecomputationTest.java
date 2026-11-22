@@ -192,6 +192,272 @@ class ReleaseRecomputationTest {
         assertThat(withdrawn).containsExactly("alt");
     }
 
+    @Test
+    void withBackgroundJobsTheStartCheckIsAVisiblePartPerSourceAndWithoutModelNone() throws Exception {
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = List.of(text("wiki", "p1", "1", "Eins"), text("wiki", "p2", "1", "Zwei"));
+        enrichments.recompute(pages.get(0), null);
+        navigation.calls.clear();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs(Runnable::run);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> true, List.of("navigation"))) {
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 2);
+            recomputation.reconcileOnStart(List.of("wiki"), () -> false, NOT_APPROVED);
+            assertThat(background.groups()).as("ohne Modell keine Gruppe").isEmpty();
+
+            recomputation.reconcileOnStart(List.of("wiki"), () -> true, NOT_APPROVED);
+            awaitUntil(() -> navigation.count("p2") > 0);
+        }
+
+        assertThat(background.groups()).singleElement().satisfies(group -> {
+            assertThat(group.title()).isEqualTo(ReleaseRecomputation.CHECK_TITLE);
+            assertThat(group.parts()).singleElement().satisfies(part -> {
+                assertThat(part.parameter(com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND))
+                        .isEqualTo(ReleaseRecomputation.BACKGROUND_KIND);
+                assertThat(part.parameter(ReleaseRecomputation.MODE)).isEqualTo(ReleaseRecomputation.CHECK);
+                assertThat(part.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+                assertThat(part.progress().processed()).isEqualTo(2);
+            });
+        });
+        assertThat(navigation.calls).containsOnlyKeys("p2");
+    }
+
+    @Test
+    void aResumedGrantPartRecomputesOnlyWhatDoesNotFitTheRelease() throws Exception {
+        // Ein fortgesetzter Teil nach neuer Freigabe rechnet nicht alle Seiten erneut, nur nicht passende.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = List.of(text("wiki", "p1", "1", "Eins"), text("wiki", "p2", "1", "Zwei"));
+        enrichments.recompute(pages.get(0), null);
+        navigation.calls.clear();
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs(held::add);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> true, List.of("navigation"))) {
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 2);
+            String groupId = background.start(ReleaseRecomputation.BACKGROUND_KIND, ReleaseRecomputation.CHANGE_TITLE,
+                    List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", null,
+                            Map.of(ReleaseRecomputation.MODE, ReleaseRecomputation.GRANT)))).groupId();
+            background.pause(groupId);
+            runAll(held);
+            assertThat(navigation.calls).as("angehalten rechnet nichts").isEmpty();
+
+            background.resume(groupId);
+            runAll(held);
+            awaitUntil(() -> navigation.count("p2") > 0
+                    && background.group(groupId).orElseThrow().finished());
+        }
+
+        assertThat(navigation.calls).as("p1 passt schon").containsOnlyKeys("p2");
+    }
+
+    @Test
+    void aResumedWithdrawalWhoseSourceWasReleasedMeanwhileReconcilesAgainstTheReleaseOfNow() throws Exception {
+        // Codex-Befund #1073: Die Freigabe wechselte, während der Dienst stand; der fortgesetzte Teil ersetzt den
+        // Abgleich beim Start, den sein offener Eintrag ausließ, und nimmt nichts zurück.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = List.of(text("wiki", "p1", "1", "Eins"), text("wiki", "p2", "1", "Zwei"));
+        enrichments.recompute(pages.get(0), null);
+        navigation.calls.clear();
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        // Ein Platz: der Teil wartet und lässt sich anhalten, bevor er läuft.
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(1, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> true, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 2);
+            String groupId = background.start(ReleaseRecomputation.BACKGROUND_KIND, ReleaseRecomputation.CHANGE_TITLE,
+                    List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", null,
+                            Map.of(ReleaseRecomputation.MODE, ReleaseRecomputation.WITHDRAW)))).groupId();
+            background.pause(groupId);
+            assertThat(background.group(groupId).orElseThrow().paused()).isTrue();
+
+            jobs.parallelPreparations(2);
+            background.resume(groupId);
+            awaitUntil(() -> navigation.count("p2") > 0
+                    && background.group(groupId).orElseThrow().finished());
+        }
+
+        assertThat(navigation.calls).as("nur, was zur Freigabe von jetzt fehlt").containsOnlyKeys("p2");
+        assertThat(withdrawn).as("freigegeben: nichts zurückgenommen").isEmpty();
+    }
+
+    @Test
+    void withBackgroundJobsChangedPagesOfTheReleaseListTravelAsParametersAndNoEmptyRemovedOne() throws Exception {
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        PageSnapshot added = text("intern", "neu", "1", "Neu");
+        PageSnapshot removed = text("ops", "alt", "1", "Alt");
+        Map<PageKey, PageSnapshot> cache = Map.of(added.key(), added, removed.key(), removed);
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs(Runnable::run), "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> List.<PageSnapshot>of().iterator(), sourceId -> false, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.background(background, key -> Optional.ofNullable(cache.get(key)), () -> true, NOT_APPROVED,
+                    sourceId -> 0);
+            recomputation.recomputePages(List.of(added.key()), List.of(removed.key()), key -> Optional.empty());
+            awaitUntil(() -> !withdrawn.isEmpty());
+        }
+
+        assertThat(background.groups()).singleElement().satisfies(group -> {
+            assertThat(group.title()).isEqualTo(ReleaseRecomputation.PAGES_TITLE);
+            assertThat(group.parts()).hasSize(2);
+            assertThat(group.parts()).filteredOn(part -> part.sourceId().equals("intern")).singleElement()
+                    .satisfies(part -> {
+                        assertThat(part.parameter(ReleaseRecomputation.PAGES)).isEqualTo("neu");
+                        assertThat(part.parameters()).as("ohne entfernte Seiten keine leere Angabe")
+                                .doesNotContainKey(ReleaseRecomputation.REMOVED);
+                    });
+            assertThat(group.parts()).filteredOn(part -> part.sourceId().equals("ops")).singleElement()
+                    .satisfies(part -> assertThat(part.parameter(ReleaseRecomputation.REMOVED)).isEqualTo("alt"));
+        });
+        assertThat(withdrawn).containsExactly("alt");
+    }
+
+    @Test
+    void aPausedGrantPartDoesNotHoldBackTheStartCheckButAnOpenCheckDoes() throws Exception {
+        // Abnahme #1073: Nur ein offener Prüfteil ersetzt die Prüfung beim Start.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        // Ein Platz: Teile warten und laufen nicht.
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = singleSlot(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore());
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> List.<PageSnapshot>of().iterator(), sourceId -> true, List.of("navigation"))) {
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 0);
+            String grant = background.start(ReleaseRecomputation.BACKGROUND_KIND, ReleaseRecomputation.CHANGE_TITLE,
+                    List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", null,
+                            Map.of(ReleaseRecomputation.MODE, ReleaseRecomputation.GRANT)))).groupId();
+            background.pause(grant);
+
+            recomputation.reconcileOnStart(List.of("wiki"), () -> true, NOT_APPROVED);
+            recomputation.reconcileOnStart(List.of("wiki"), () -> true, NOT_APPROVED);
+        }
+
+        assertThat(background.groups()).extracting(
+                        com.aresstack.spaceharvester.application.background.BackgroundGroup::title)
+                .as("eine Prüfung neben dem angehaltenen Teil, die zweite fällt weg")
+                .containsExactlyInAnyOrder(ReleaseRecomputation.CHANGE_TITLE, ReleaseRecomputation.CHECK_TITLE);
+    }
+
+    @Test
+    void aCancelledWithdrawalSaysSoAndTheNextStartFinishesItEvenWithoutModel() throws Exception {
+        // Abnahme #1073: Ein Entzug geht nie still verloren.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = List.of(text("intern", "p1", "1", "Eins"), text("intern", "p2", "1", "Zwei"));
+        PageSnapshot removed = text("ops", "alt", "1", "Alt");
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.aresstack.spaceharvester.application.jobs.InMemoryJobStore stored =
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore();
+        com.aresstack.spaceharvester.application.jobs.Jobs before = singleSlot(stored);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs first =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(before, "app");
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> false, List.of("navigation"))) {
+            recomputation.background(first, key -> Optional.empty(), () -> false, NOT_APPROVED, sourceId -> 2);
+            recomputation.apply(Map.of("intern", false), List.of());
+            recomputation.recomputePages(List.of(), List.of(removed.key()), key -> Optional.empty());
+            first.groups().forEach(group -> first.cancel(group.groupId()));
+        }
+        List<com.aresstack.spaceharvester.application.jobs.JobStatus> cancelled = before.listAll(
+                com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND);
+        assertThat(cancelled).hasSize(2).allSatisfy(part -> {
+            assertThat(part.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED);
+            assertThat(before.events(part.id())).as("der Abbruch sagt, dass der nächste Start ihn zu Ende führt")
+                    .anySatisfy(event -> assertThat(event.message())
+                            .endsWith("; " + ReleaseRecomputation.WITHDRAWAL_CANCEL_NOTE));
+        });
+        assertThat(withdrawn).isEmpty();
+
+        // Neustart: andere Jobs über demselben Bestand, ohne Modell.
+        com.aresstack.spaceharvester.application.jobs.Jobs after = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(stored, Runnable::run, new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10,
+                java.time.Duration.ofHours(1)), CLOCK);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs second =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(after, "app");
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> false, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.background(second, key -> Optional.of(removed).filter(page -> page.key().equals(key)),
+                    () -> false, NOT_APPROVED, sourceId -> 2);
+            second.resumeInterrupted();
+            recomputation.reconcileOnStart(List.of("intern", "ops"), () -> false, NOT_APPROVED);
+            awaitUntil(() -> withdrawn.size() == 3);
+        }
+
+        assertThat(withdrawn).containsExactlyInAnyOrder("p1", "p2", "alt");
+        assertThat(after.listAll(com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND))
+                .extracting(com.aresstack.spaceharvester.application.jobs.JobStatus::state)
+                .containsOnly(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+    }
+
+    @Test
+    void aWithdrawalTheBackgroundDoesNotTakeRunsInItsOwnThread() throws Exception {
+        // Abnahme #1073: Nimmt der Hintergrund die Gruppe nicht an, geht der Entzug nicht verloren.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        PageSnapshot removed = text("ops", "alt", "1", "Alt");
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs(Runnable::run);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> List.<PageSnapshot>of().iterator(), sourceId -> false, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 0);
+            jobs.close();
+            recomputation.recomputePages(List.of(), List.of(removed.key()),
+                    key -> Optional.of(removed).filter(page -> page.key().equals(key)));
+            awaitUntil(() -> !withdrawn.isEmpty());
+        }
+
+        assertThat(background.groups()).isEmpty();
+        assertThat(withdrawn).containsExactly("alt");
+    }
+
+    private static com.aresstack.spaceharvester.application.jobs.Jobs singleSlot(
+            com.aresstack.spaceharvester.application.jobs.InMemoryJobStore stored) {
+        return new com.aresstack.spaceharvester.application.jobs.Jobs(stored, Runnable::run,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(1, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+    }
+
+    private static com.aresstack.spaceharvester.application.jobs.Jobs jobs(java.util.concurrent.Executor executor) {
+        return new com.aresstack.spaceharvester.application.jobs.Jobs(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), executor,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+    }
+
+    private static void runAll(java.util.Queue<Runnable> held) {
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+    }
+
     private static void awaitUntil(java.util.function.BooleanSupplier condition) {
         long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (!condition.getAsBoolean() && System.nanoTime() < end) {

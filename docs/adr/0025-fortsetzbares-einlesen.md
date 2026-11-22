@@ -299,8 +299,9 @@ wird automatisch verwaltet.
    als eigene Art an. Gegen doppelte Anläufe gibt es neben `running` `BackgroundJobs#waiting` (ein noch nicht
    gestarteter oder angehaltener Teil), `#startUnlessWaiting` (für Arten, die ihre Arbeit erst beim Start aus dem
    Bestand bestimmen: ein laufender Teil sieht einen neuen Anlass nicht mehr) und `#startUnlessRunning` (für Arten,
-   deren laufender Teil sich neue Arbeit selbst abholt). Ein angehaltener Teil zählt in allen dreien mit: Er hält neue
-   Anlässe zurück, beim Fortsetzen rechnet er sie mit (Abnahme #1052). Bisher umgestellt:
+   deren laufender Teil sich neue Arbeit selbst abholt). Ein angehaltener Teil zählt in diesen dreien mit (für
+   `#startUnlessRunning` über `#open`): Er hält neue Anlässe zurück, beim Fortsetzen rechnet er sie mit (Abnahme
+   #1052). `running` zählt ihn nicht, denn der Planer nimmt dessen Treffer als Vorgänger. Bisher umgestellt:
    - `synonyms` „Synonyme erkennen“ (`SynonymDiscovery#automatic`, ein Teil je Quelle; vorher ein Auftrag
      `ENRICHMENT` ohne Auftraggeber, den die App nie zeigte). Fortsetzen nach Neustart nur bei
      `terms.synonyms.automatic`.
@@ -346,7 +347,88 @@ wird automatisch verwaltet.
    `enrichment.documents.enabled`). Die Ablage der Anhänge kennt keinen Space: Ein Teil liest die Anhangseinträge der
    ganzen Quelle und behält die der Seiten seines Space.
 
+   Abgleiche beim Start (vorher je ein eigener Thread ohne Eintrag in der Auftragsliste). Sie beginnen erst nach
+   `resumeInterrupted`; eine Quelle mit schon offenem Teil derselben Art fällt heraus
+   (`BackgroundJobs#startUnlessRunning` für mehrere Teile, eine Gruppe je Anlass):
+   - `release` „KI-Freigabe prüfen“ (`ReleaseRecomputation#reconcileOnStart`, ein Teil je Quelle, nur mit Modell),
+     „KI-Freigabe nachziehen“ (nach einem Wechsel der Freigabe einer Quelle, Angabe `mode` = `grant`, `withdraw`
+     oder `images`) und `page-release` „Seitenfreigabe nachziehen“ (nach einer geänderten Liste freigegebener Seiten;
+     die Seiten-IDs stehen als Angaben `pages` und, nur wenn es welche gibt, `removed` am Teil). Die Freigabe fragt
+     jeder Teil wie bisher je Seite bei der Ausführung. Ein fortgesetzter Teil nach neuer Freigabe rechnet nur noch,
+     was nicht zur Freigabe passt (wie der Abgleich beim Start); nach einem Entzug nimmt er die Rücknahme erneut
+     vor. Nicht exklusiv: Prüfen und Nachziehen derselben Quelle sind verschiedene Arbeit; die Prüfung beim Start
+     fällt daher nur weg, wenn schon ein Prüfteil der Quelle offen ist, ein angehaltener Teil „erteilen“ oder
+     „entziehen“ hält sie nicht auf (`startUnlessRunning` mit Bedingung, Abnahme #1073).
+     **Ein Entzug geht nie still verloren** (Abnahme #1073): Der Start setzt jeden abgebrochenen oder gescheiterten
+     Teil, der zurücknimmt (`withdraw`, `images`, `page-release` mit `removed`), fort, auch nach
+     Zeitüberschreitung und auch ohne Modell, denn Bildbeschreibungen nimmt nur ein Entzug zurück, nie die Prüfung.
+     Das Ereignis des Abbruchs sagt das im Auftrag („der nächste Start führt den Entzug zu Ende“, Angabe
+     `Jobs#CANCEL_NOTE`, ob der Teil wartete oder lief). Verwerfen heißt: den Eintrag löschen. Nimmt der Hintergrund
+     die Gruppe eines Wechsels nicht an (voll, beim Beenden), läuft die Arbeit wie im Dienst im eigenen Thread.
+   - `versions` „Analysen nach Update nachrechnen“ (`VersionRecomputation`, lokale Prozessoren einer älteren
+     Version, ein Teil je Quelle, exklusiv).
+   - `links` „Verweise abgleichen“ (`PageLinks#reconcileOnStart`, ein Teil je Quelle, exklusiv). Die Teile laufen
+     nacheinander (`BackgroundJobs#startInSequenceUnlessRunning`, `Jobs#AFTER`, der erste hinter jedem schon offenen
+     Teil der Art; Abnahme #1073), denn ein Teil hält den Riegel der Erfassung über seine ganze Quelle und ein
+     zweiter belegte sonst nur einen Platz, um zu warten. Ein angehaltener Teil hält die folgenden auf („wartet auf
+     …“); bricht einer ab, laufen die folgenden ohne gelben Hinweis, sie warten nur der Reihe wegen. Der Abgleich nach
+     einer Änderung eines ganzen Space oder einer ganzen Quelle und einzelne Seiten bleiben beim Bündler, sonst gäbe
+     jeder Abgleich eine eigene Gruppe. Bis der erste Abgleich einer Quelle seit dem Start endet, gilt sie als nicht
+     vollständig; wird der Teil abgebrochen, holt das der nächste Abgleich eines Space nach.
+
+   Jeder dieser Teile baut seine Arbeit allein aus Quelle, Angaben und Cache und meldet die bekannten Seiten der
+   Quelle als Fortschritt. Ein Teil, den das Beenden des Dienstes unterbricht, gilt nicht als fertig und setzt nach
+   dem Neustart von vorn fort; Aktuelles kostet dann nur den Blick in die Ablage. Grenzen: Mit nur einem Platz für
+   Vorbereitungen laufen sie nicht und warten gelb (wie jeder Hintergrundauftrag); länger als die Laufzeitgrenze
+   eines Auftrags (`JobLimits#maxRunTime`) endet ein Teil mit Zeitüberschreitung und lässt sich fortsetzen.
+   Prozessoren, die über das Netz rechnen, reiht ein Teil wie bisher in die Warteschlange der Anreicherung ein
+   (`Enrichments#recomputeInBackground`); fertig heißt hier: alle Seiten geprüft und eingereiht. Diese Warteschlange
+   wird als eigene Art „KI-Anreicherung“ sichtbar (nächster Schritt). Beim Beenden wartet jede Komponente
+   (`close()`) bis zu zehn Sekunden auf ihre laufenden Teile, bevor die Ablage schließt. Ein fortgesetzter Teil nach
+   einem Wechsel der Freigabe gleicht gegen die Freigabe von jetzt ab, denn er ersetzt den Abgleich beim Start. Das
+   Aufräumen des Änderungsprotokolls und das Nachtragen der Update-Marken beim Start bleiben ohne Auftrag: kurze
+   Arbeit in der eigenen Ablage, ohne Netz und ohne Modell.
+
    Ohne Hintergrundaufträge (Dienst) bleibt es beim bisherigen Weg.
+
+10. **KI-Anreicherung** (Angelo 21.11.2026, Fundstelle 5). Die Warteschlange der Prozessoren, die über das Netz
+    rechnen (Embeddings, Absätze und Navigation mit Modell, Satzanalyse `statements`), lief bisher auf einem Thread
+    mit 1.000 Plätzen und verwarf still, was nicht mehr hineinpasste. Mit Hintergrundaufträgen ist sie die Art
+    `enrichment` „KI-Anreicherung“ (`Enrichments#background`):
+    - Je Quelle ein Teil, der neue Berechnungen aufnimmt, solange er noch nicht angefangen hat (jede abgelegte
+      Seite, Öffnen, Freigabe- und Update-Neuberechnung). Ab seinem Start rechnet er nur, was dann wartete; Späteres
+      bekommt einen neuen Teil hinten in der Kette, so hält eine Quelle mit stetem Zufluss keine andere auf (Reihenfolge
+      wie beim alten FIFO). Gewartet wird nur mit Prozessor und Seite, ohne Grenze und ohne Verwerfen; den Snapshot
+      liest der Teil erst beim Rechnen, die KI-Freigabe prüft wie bisher jede Berechnung bei der Ausführung.
+    - Die Teile laufen hintereinander (`BackgroundJobs#startBehindOpen`, `Jobs#AFTER`, nur der Reihe wegen), wie
+      vorher der eine Thread; die Logik der Berechnung bleibt gleich.
+    - Anhalten: Ein Teil, der noch nicht lief, sammelt weiter; ein angehaltener rechnet beim Fortsetzen weiter. Er hält
+      nur Teile seiner eigenen Quelle auf, denn Anhalten von A darf B nicht stoppen (gilt für jeden Teil, der nur der
+      Reihe wegen wartet). Abbrechen verwirft die wartenden Berechnungen des Teils, das Ereignis des Abbruchs sagt es
+      (`Jobs#CANCEL_NOTE`): Fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach, erzwungene
+      Neuberechnungen nach einer Freigabe oder einem Update erst der Abgleich beim nächsten Start. Scheitert eine
+      Berechnung (auch beim Lesen des Snapshots), meldet der Teil das gelb mit Quelle und Exception-Klasse und macht
+      mit der nächsten weiter. Scheitert ein Teil (etwa Laufzeitgrenze), übernimmt ein neuer Teil, was liegen blieb.
+    - Erzwungene Neuberechnungen (`recomputeInBackground`) warten nicht mehr auf einen der 50 Plätze: Ein Teil wie
+      „KI-Freigabe nachziehen“, der dort wartete, hielte einen Platz des Hintergrunds, den die KI-Anreicherung zum
+      Freigeben braucht.
+    - Bisheriger Weg: Kann der Hintergrund nicht laufen (nur ein Platz unter „Vorbereitung“, `Jobs#SINGLE_SLOT`) oder
+      nimmt er einen Teil nicht an (voll, beim Beenden, jeder andere Fehler), rechnet der bisherige eigene Thread.
+    - Grenze: Die Warteschlange lebt im Speicher. Nach einem Neustart ist sie leer; Teile von vorher, die sich noch
+      fortsetzen ließen, werden beim Start abgeschlossen (Info „Warteschlange nach Neustart leer“), damit kein
+      angehaltener alle neuen aufhält. Fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach,
+      erzwungene der Abgleich beim Start.
+    - In der Warteschlange ersetzt eine erzwungene Berechnung die gleiche ungezwungene an ihrer Stelle; eine
+      ungezwungene neben der gleichen erzwungenen entfällt.
+    - Semantische Suche (`SemanticPreparation`, Fundstelle 11): Die Suche ist ein Klick. Was nach der Frist von 10 s
+      noch nicht angefangen hat, rechnet ein gewöhnlicher Auftrag `ENRICHMENT` des Aufrufers („Suchtreffer
+      vorbereiten“, Angabe `task` `prepare-search-hits`, `Jobs#submitInteractive`) weiter: wie bisher bis zu vier
+      parallel, sichtbar, abbrechbar, ungezwungen (nur, was dann noch nicht aktuell ist). Nur die höchstens vier schon
+      laufenden Embeddings enden im Aufruf.
+    - „Neu berechnen“ einer Seite (Fundstelle 21): ein gewöhnlicher Auftrag `ENRICHMENT` (Angabe `task`
+      `recompute-page`, `root` = Seite) über `Jobs#submitInteractive` (`PageRecomputation`), sichtbar und abbrechbar
+      vor jedem Prozessor; der Knopf wartet auf das Ende und sagt „Wartet auf freien Platz …“, solange der Auftrag
+      hinter laufenden Folgeaufträgen wartet. Abgebrochen oder angehalten meldet er als Info, gescheitert rot mit Grund.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

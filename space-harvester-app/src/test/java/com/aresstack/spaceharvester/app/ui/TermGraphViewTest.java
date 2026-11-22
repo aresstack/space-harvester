@@ -523,6 +523,84 @@ class TermGraphViewTest {
         assertThat(EvidencePopup.sentenceText(found, true)).as("Fehler").isEqualTo(EvidencePopup.UNREADABLE);
     }
 
+    /** W4b: ohne Mitte (seitenweite Fachsicht, alle Knoten Tiefe 0) liegen alle Knoten auf Ringen, keiner gelb. */
+    @Test
+    void withoutACentreAllNodesAreLaidOutOnRingsAndNoneIsHighlighted() throws Exception {
+        List<GraphSource.Node> nodes = new ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            nodes.add(new GraphSource.Node("k" + i, "Begriff " + i, 0, null));
+        }
+        GraphSource.Graph graph = new GraphSource.Graph(nodes, List.of(new GraphSource.Edge("k0", "k1", "VERB", true,
+                true, GraphSource.Style.VERB, "planen · 2", List.of())), false);
+        List<String> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView.Canvas canvas = new TermGraphView.Canvas();
+            canvas.setSize(900, 560);
+            canvas.graph(graph);
+            seen.add("mit Mitte " + canvas.layout(900, 560).size());
+            assertThat(canvas.emptyText()).as("die Übersicht zeigt keinen Text in der Fläche").isNull();
+            canvas.domain(true);
+            canvas.centred(false);
+            Map<String, Rectangle2D> boxes = canvas.layout(900, 560);
+            seen.add("ohne Mitte " + boxes.size());
+            for (Rectangle2D box : boxes.values()) {
+                assertThat(new Rectangle2D.Double(0, 0, 900, 560).contains(box)).isTrue();
+            }
+            Rectangle2D first = boxes.get("k0");
+            BufferedImage image = new BufferedImage(900, 560, BufferedImage.TYPE_INT_RGB);
+            canvas.paint(image.getGraphics());
+            seen.add(String.valueOf(image.getRGB((int) first.getX() + 8, (int) first.getY() + 6)
+                    == Comic.YELLOW.getRGB()));
+            seen.add(canvas.nodeAt(new Point((int) first.getCenterX(), (int) first.getCenterY())).label());
+        });
+        assertThat(seen).containsExactly("mit Mitte 1", "ohne Mitte 30", "false", "Begriff 0");
+    }
+
+    /** W4b: Ein leerer Graph mit Text zeigt diesen gedämpft mitten in der Fläche. */
+    @Test
+    void anEmptyGraphWithATextPaintsItMutedInTheMiddle() throws Exception {
+        int[] found = {Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, -1, 0};
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView.Canvas canvas = new TermGraphView.Canvas();
+            canvas.setSize(600, 300);
+            canvas.emptyText("Auf dieser Seite sind keine bestätigten Fachbegriffe durch ein Verb verbunden.");
+            BufferedImage image = new BufferedImage(600, 300, BufferedImage.TYPE_INT_RGB);
+            canvas.paint(image.getGraphics());
+            int darkest = Integer.MAX_VALUE;
+            for (int x = 0; x < 600; x++) {
+                for (int y = 0; y < 300; y++) {
+                    int rgb = image.getRGB(x, y);
+                    if (rgb == java.awt.Color.WHITE.getRGB()) {
+                        continue;
+                    }
+                    found[0] = Math.min(found[0], x);
+                    found[1] = Math.max(found[1], x);
+                    found[2] = Math.min(found[2], y);
+                    found[3] = Math.max(found[3], y);
+                    if (rgb == Comic.INK.getRGB() || rgb == Comic.YELLOW.getRGB()) {
+                        found[5]++;
+                    }
+                    java.awt.Color color = new java.awt.Color(rgb);
+                    int brightness = color.getRed() + color.getGreen() + color.getBlue();
+                    if (brightness < darkest) {
+                        darkest = brightness;
+                        found[4] = rgb;
+                    }
+                }
+            }
+        });
+        assertThat(found[4]).as("Text gezeichnet").isNotEqualTo(-1);
+        // Kantenglättung hellt nur auf: Der dunkelste Punkt hat die gedämpfte Farbe, nie Tinte oder Gelb.
+        java.awt.Color darkest = new java.awt.Color(found[4]);
+        assertThat(Math.abs(darkest.getRed() - Comic.MUTED.getRed())).as("rot").isLessThanOrEqualTo(24);
+        assertThat(Math.abs(darkest.getGreen() - Comic.MUTED.getGreen())).as("grün").isLessThanOrEqualTo(24);
+        assertThat(Math.abs(darkest.getBlue() - Comic.MUTED.getBlue())).as("blau").isLessThanOrEqualTo(24);
+        assertThat(found[5]).as("kein Punkt in Tinte oder Gelb").isZero();
+        // Mittig: die gezeichneten Punkte liegen um die Mitte der Fläche.
+        assertThat(Math.abs((found[0] + found[1]) / 2 - 300)).as("waagrecht mittig").isLessThanOrEqualTo(12);
+        assertThat(Math.abs((found[2] + found[3]) / 2 - 150)).as("senkrecht mittig").isLessThanOrEqualTo(12);
+    }
+
     private static void awaitTrue(java.util.function.BooleanSupplier condition) throws Exception {
         long until = System.currentTimeMillis() + 5000;
         while (!condition.getAsBoolean()) {

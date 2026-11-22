@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.terms.TermText;
 import java.util.ArrayList;
@@ -248,6 +249,16 @@ public class KnowledgeGraph {
      */
     public List<AnalysedPage> analysed(AccessContext caller) {
         return visible(caller);
+    }
+
+    /**
+     * Wie {@link #analysed(AccessContext)}, aber nur für die Seiten in {@code pages} samt ihren Dokumenten: Die übrigen
+     * Analysen werden vorab nach ihrem Schlüssel übergangen und nie gelesen (kein Stand, keine Rechteprüfung). Für die
+     * genannten Seiten gilt dieselbe Lesestelle mit denselben Rechten wie dort; dieselbe Reihenfolge.
+     */
+    public List<AnalysedPage> analysed(AccessContext caller, PageSet pages) {
+        Objects.requireNonNull(pages, "pages");
+        return visible(caller, pages::contains);
     }
 
     /** Eine sichtbare analysierte Seite; leer ohne Analyse oder ohne Leserecht (nicht unterscheidbar). */
@@ -520,14 +531,23 @@ public class KnowledgeGraph {
     }
 
     private List<AnalysedPage> visible(AccessContext caller) {
+        return visible(caller, key -> true);
+    }
+
+    /** Die sichtbaren Analysen der Seiten, die {@code wanted} zulässt; die übrigen werden gar nicht erst gelesen. */
+    private List<AnalysedPage> visible(AccessContext caller, Predicate<PageKey> wanted) {
         List<AnalysedPage> pages = new ArrayList<>();
         // Eine Momentaufnahme der Prüfungen durch Menschen für den ganzen Lesevorgang, nicht je Analyse neu gelesen.
         java.util.function.UnaryOperator<PageStatementAnalysis> reviewed = statements.reviews().snapshot();
         for (PageStatementAnalysis analysis : store.all()) {
-            visible(caller, analysis, reviewed).ifPresent(pages::add);
+            if (wanted.test(analysis.key())) {
+                visible(caller, analysis, reviewed).ifPresent(pages::add);
+            }
         }
         for (PageStatementAnalysis analysis : store.documents()) {
-            visible(caller, analysis, reviewed).ifPresent(pages::add);
+            if (wanted.test(analysis.key())) {
+                visible(caller, analysis, reviewed).ifPresent(pages::add);
+            }
         }
         // Die Seite vor ihren Dokumenten: ihr Schlüssel ist ein Präfix der Schlüssel ihrer Dokumente.
         pages.sort(Comparator.comparing((AnalysedPage page) -> page.page().key().sourceId())

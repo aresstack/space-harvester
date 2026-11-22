@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.background.services.ServicePlan;
 import com.aresstack.spaceharvester.application.background.services.ServicePreview;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
+import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
@@ -27,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
@@ -1880,6 +1882,506 @@ class KnowledgeGraphTabTest {
                 after), false, false, null);
     }
 
+    // ---- Fachsicht im Seitengraphen (W4b)
+
+    /** Oben im Filtermenü „Nur Fachbegriffe“, darunter „Nur geprüft“ (ohne Fachsicht gesperrt), dann der Bestand. */
+    @Test
+    void theFilterMenuStartsWithTheDomainViewAndLocksTheStockFiltersInIt() {
+        tab.within(PageSet.of(Map.of("wiki", List.of("1"))));
+        assertThat(tab.filterMenuTexts()).startsWith("Nur Fachbegriffe", "Nur geprüft", "—", "Dokumente", "Aussagen",
+                "Erwähnungen", "Rollen", "Nominale Bezüge", "Seitenverbindungen");
+        assertThat(tab.domainChoice().isSelected()).as("Standard aus").isFalse();
+        assertThat(tab.checkedChoice().isEnabled()).isFalse();
+        assertThat(tab.checkedChoice().getToolTipText()).isEqualTo("Gilt nur mit „Nur Fachbegriffe“");
+        assertThat(tab.filterButton().marked()).isFalse();
+        String selectionTip = tab.filterItem("Nur Auswahl im Baum").getToolTipText();
+
+        tab.domainChoice().doClick();
+
+        assertThat(tab.checkedChoice().isEnabled()).isTrue();
+        assertThat(tab.checkedChoice().getToolTipText()).isEqualTo(
+                "Nur Verbindungen mit geprüften Belegen; die Zahl zählt nur diese");
+        for (String text : List.of("Dokumente", "Aussagen", "Erwähnungen", "Rollen", "Nominale Bezüge",
+                "Seitenverbindungen", "Gleiche Grundform (Kandidaten)", "Nur diese Quelle", "Nur Auswahl im Baum")) {
+            assertThat(tab.filterItem(text).isVisible()).as(text).isTrue();
+            assertThat(tab.filterItem(text).isEnabled()).as(text).isFalse();
+            assertThat(tab.filterItem(text).getToolTipText()).as(text).isEqualTo("Gilt nicht in der Fachsicht");
+        }
+        assertThat(tab.filterItem("Veraltete zeigen").isEnabled()).as("wirkt auch in der Fachsicht").isTrue();
+        assertThat(tab.filterButton().marked()).as("Punkt am Filter-Symbol").isTrue();
+        assertThat(tab.filterButton().getToolTipText()).contains("Fachsicht");
+
+        tab.domainChoice().doClick();
+
+        assertThat(tab.filterItem("Dokumente").isEnabled()).isTrue();
+        assertThat(tab.filterItem("Dokumente").getToolTipText()).isNull();
+        assertThat(tab.filterItem("Nur Auswahl im Baum").getToolTipText()).isEqualTo(selectionTip);
+        assertThat(tab.checkedChoice().isEnabled()).isFalse();
+        assertThat(tab.filterButton().marked()).isFalse();
+        assertThat(tab.filterButton().getToolTipText()).isEqualTo(KnowledgeGraphTab.FILTER_TIP);
+    }
+
+    @Test
+    void switchingTheDomainViewOnShowsThePageWideViewOfThePageAlone() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+
+        tab.domainChoice().doClick();
+        runner.runAll();
+
+        assertThat(actions.domainCalls).containsExactly("onPages {wiki=[1]}");
+        DomainTermGraph.Options options = actions.domainOptions.getLast();
+        assertThat(options.checkedOnly()).isFalse();
+        assertThat(options.includeStale()).isFalse();
+        assertThat(tab.domainCanvas().centred()).as("seitenweit ohne Mitte").isFalse();
+        assertThat(tab.domainCanvas().labels()).containsExactly("Plan", "Ziel", "Nachtlauf");
+        assertThat(tab.statusText()).isEqualTo("3 Fachbegriffe, 2 Verbindungen");
+        assertThat(tab.overviewButton().isVisible()).isTrue();
+        assertThat(tab.overviewButton().isEnabled()).as("gesperrt in der seitenweiten Sicht").isFalse();
+        assertThat(tab.overviewButton().getToolTipText()).isEqualTo("Zurück zur Gesamtsicht");
+        assertThat(tab.overviewButton().getText()).as("nur Symbol").isNullOrEmpty();
+        assertThat(tab.overviewButton().getIcon()).as("eigenes Symbol „alles zeigen“, kein Pfeil wie „Zurück“")
+                .isSameAs(com.aresstack.spaceharvester.app.ui.Glyph.OVERVIEW)
+                .isNotSameAs(com.aresstack.spaceharvester.app.ui.Glyph.BACK);
+    }
+
+    @Test
+    void withSubpagesTheDomainViewSpansThePageAndItsUnlockedSubpages() {
+        PageSelection below = new PageSelection(PageSet.of(Map.of("wiki", List.of("2", "3", "4"))),
+                HoldingCounts.ZERO, List.of(), true, PageSet.of(Map.of("wiki", List.of("4"))));
+        tab.page(WIKI);
+        tab.subpages(below, false);
+        tab.domainChoice().doClick();
+        tab.showPageNow();
+        runner.runAll();
+
+        assertThat(actions.domainOptions.getLast().pages().asMap()).containsExactly(
+                Map.entry("wiki", java.util.Set.of("1", "2", "3")));
+        assertThat(tab.statusText()).isEqualTo("3 Fachbegriffe, 2 Verbindungen · mit 2 Unterseiten");
+
+        // Abgehakt: wieder nur die Seite.
+        tab.subpages(null, false);
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(actions.domainOptions.getLast().pages().asMap()).containsExactly(
+                Map.entry("wiki", java.util.Set.of("1")));
+        assertThat(tab.statusText()).isEqualTo("3 Fachbegriffe, 2 Verbindungen");
+    }
+
+    @Test
+    void clickingATermCentresItAndBackReturnsToThePageWideView() {
+        tab.page(WIKI);
+        tab.subpages(below("2"), false);
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        PageSet pages = actions.domainOptions.getLast().pages();
+
+        tab.clickDomainNode("Plan");
+        runner.runAll();
+
+        assertThat(actions.domainCalls).containsExactly("onPages {wiki=[1, 2]}", "around Plan {wiki=[1, 2]}");
+        assertThat(actions.domainOptions.getLast().pages()).isEqualTo(pages);
+        assertThat(actions.domainOptions.getLast().depth()).isEqualTo(2);
+        assertThat(tab.domainCentre()).isEqualTo("Plan");
+        assertThat(tab.domainCanvas().centred()).isTrue();
+        assertThat(tab.overviewButton().isEnabled()).isTrue();
+        assertThat(tab.statusText()).isEqualTo("2 Fachbegriffe, 1 Verbindung um „Plan“ · mit 1 Unterseite");
+
+        tab.clickOverview();
+        runner.runAll();
+
+        assertThat(actions.domainCalls.getLast()).isEqualTo("onPages {wiki=[1, 2]}");
+        assertThat(tab.domainCentre()).isNull();
+        assertThat(tab.domainCanvas().centred()).isFalse();
+        assertThat(tab.overviewButton().isEnabled()).isFalse();
+    }
+
+    @Test
+    void checkedAndStaleReloadTheDomainViewAndKeepTheCentre() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        tab.clickDomainNode("Plan");
+        runner.runAll();
+        actions.domainCalls.clear();
+        actions.calls.clear();
+
+        tab.checkedChoice().doClick();
+        runner.runAll();
+        assertThat(actions.domainCalls).containsExactly("around Plan {wiki=[1]}");
+        assertThat(actions.domainOptions.getLast().checkedOnly()).isTrue();
+
+        tab.toggleShowStale();
+        runner.runAll();
+        assertThat(actions.domainCalls).containsExactly("around Plan {wiki=[1]}", "around Plan {wiki=[1]}");
+        assertThat(actions.domainOptions.getLast().includeStale()).isTrue();
+        assertThat(actions.calls).as("der Bestand rechnet in der Fachsicht nicht neu").isEmpty();
+        assertThat(tab.filterButton().getToolTipText()).contains("Nur geprüft", "Veraltete zeigen");
+
+        // Zurück im Bestand folgt er „Veraltete zeigen“.
+        tab.domainChoice().doClick();
+        runner.runAll();
+        assertThat(actions.calls).containsExactly("page wiki/1");
+        assertThat(actions.lastOptions.includeStale()).isTrue();
+        assertThat(tab.statusText()).startsWith("3 Knoten");
+    }
+
+    @Test
+    void theDomainStatusCountsSingularAndPluralAndNamesStaleAndTruncation() {
+        assertThat(KnowledgeGraphTab.domainStatusText(view(2, 1, false, 0), null, -1, false))
+                .isEqualTo("2 Fachbegriffe, 1 Verbindung");
+        assertThat(KnowledgeGraphTab.domainStatusText(view(2, 1, false, 1), "Plan", 1, false))
+                .isEqualTo("2 Fachbegriffe, 1 Verbindung um „Plan“ · mit 1 Unterseite"
+                        + " · 1 veraltete Aussage ausgeblendet");
+        assertThat(KnowledgeGraphTab.domainStatusText(view(1, 1, false, 0), null, -1, false))
+                .isEqualTo("1 Fachbegriff, 1 Verbindung");
+        assertThat(KnowledgeGraphTab.domainStatusText(view(40, 52, true, 2), null, 3, false))
+                .isEqualTo("40 Fachbegriffe, 52 Verbindungen · mit 3 Unterseiten · 2 veraltete Aussagen ausgeblendet"
+                        + " · die 40 mit den meisten Belegen");
+        assertThat(KnowledgeGraphTab.domainStatusText(view(40, 45, true, 0), "Plan", -1, false))
+                .as("around kürzt nach Nachbarschaft, nicht nach Belegen")
+                .isEqualTo("40 Fachbegriffe, 45 Verbindungen um „Plan“ · die ersten 40 Fachbegriffe");
+        assertThat(KnowledgeGraphTab.DOMAIN_TRUNCATED).contains(String.valueOf(DomainTermGraph.MAX_NODES));
+    }
+
+    @Test
+    void anEmptyPageWideViewExplainsItselfOnTheCanvasNotInTheStatusLine() {
+        actions.domainEmpty = true;
+        tab.page(WIKI);
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        runner.runAll();
+
+        assertThat(tab.domainCanvas().emptyText()).isEqualTo(
+                "Auf dieser Seite sind keine bestätigten Fachbegriffe durch ein Verb verbunden.");
+        assertThat(tab.statusText()).isBlank();
+
+        tab.subpages(below("2"), false);
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(tab.domainCanvas().emptyText()).isEqualTo("Auf dieser Seite und ihren Unterseiten sind keine "
+                + "bestätigten Fachbegriffe durch ein Verb verbunden.");
+        assertThat(tab.statusText()).isEqualTo("mit 1 Unterseite");
+
+        tab.checkedChoice().doClick();
+        runner.runAll();
+        assertThat(tab.domainCanvas().emptyText()).isEqualTo(KnowledgeGraphTab.NO_CHECKED_DOMAIN_EDGES_BELOW);
+
+        actions.domainEmpty = false;
+        tab.checkedChoice().doClick();
+        runner.runAll();
+        assertThat(tab.domainCanvas().emptyText()).as("mit Knoten kein Text").isNull();
+    }
+
+    @Test
+    void anOvertakenDomainResultIsDiscarded() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        tab.domainChoice().doClick();
+        // Die seitenweite Abfrage läuft noch, da kommt „Nur geprüft“: die erste ist überholt.
+        tab.checkedChoice().doClick();
+        assertThat(runner.pendingCount()).isEqualTo(2);
+
+        // Die neuere Abfrage endet zuerst (leer), die überholte danach mit Knoten: sie darf nichts mehr zeigen.
+        actions.domainEmpty = true;
+        runner.runAt(1);
+        actions.domainEmpty = false;
+        runner.runAll();
+
+        assertThat(actions.domainCalls).hasSize(2);
+        assertThat(actions.cancelledSeen).as("die überholte Rechnung erfährt es").containsExactly(false, true);
+        assertThat(tab.domainCanvas().labels()).as("nur das neuere Ergebnis").isEmpty();
+        assertThat(tab.domainCanvas().emptyText()).isEqualTo(KnowledgeGraphTab.NO_CHECKED_DOMAIN_EDGES);
+        assertThat(tab.statusText()).isBlank();
+    }
+
+    @Test
+    void anOvertakenDomainFailureIsDiscarded() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        tab.domainChoice().doClick();
+        tab.checkedChoice().doClick();
+
+        runner.runAt(1);
+        actions.domainFailure = new IllegalStateException("Ablage gesperrt");
+        runner.runAll();
+
+        assertThat(tab.domainCanvas().labels()).containsExactly("Plan", "Ziel", "Nachtlauf");
+        assertThat(tab.statusText()).isEqualTo("3 Fachbegriffe, 2 Verbindungen");
+    }
+
+    @Test
+    void aFailedCentreKeepsThePageWideViewAndTheTermCanBeClickedAgain() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        runner.runAll();
+
+        actions.domainFailure = new IllegalStateException("Ablage gesperrt");
+        tab.clickDomainNode("Plan");
+        runner.runAll();
+
+        assertThat(tab.statusText()).startsWith("Fachsicht nicht geladen");
+        assertThat(tab.domainCentre()).as("nie gezeigt, also keine Mitte").isNull();
+        assertThat(tab.domainCanvas().centred()).isFalse();
+        assertThat(tab.overviewButton().isEnabled()).isFalse();
+
+        actions.domainFailure = null;
+        tab.clickDomainNode("Plan");
+        runner.runAll();
+
+        assertThat(actions.domainCalls).containsExactly("onPages {wiki=[1]}", "around Plan {wiki=[1]}",
+                "around Plan {wiki=[1]}");
+        assertThat(tab.domainCentre()).isEqualTo("Plan");
+        assertThat(tab.domainCanvas().centred()).isTrue();
+        assertThat(tab.overviewButton().isEnabled()).isTrue();
+    }
+
+    @Test
+    void aLoneCentreExplainsItselfLikeTheOverview() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        actions.aroundAlone = true;
+
+        tab.clickDomainNode("Plan");
+        runner.runAll();
+
+        assertThat(tab.domainCanvas().labels()).containsExactly("Plan");
+        assertThat(tab.statusText()).isEqualTo(
+                "Zu diesem Fachbegriff gibt es auf dieser Seite noch keine Aussagen mit anderen Fachbegriffen.");
+
+        tab.checkedChoice().doClick();
+        runner.runAll();
+        assertThat(tab.statusText()).isEqualTo("Zu diesem Fachbegriff gibt es auf dieser Seite noch keine geprüften "
+                + "Aussagen mit anderen Fachbegriffen.");
+
+        tab.subpages(below("2"), false);
+        runner.runAll();
+        tab.showPageNow();
+        runner.runAll();
+        assertThat(tab.statusText()).isEqualTo("Zu diesem Fachbegriff gibt es auf dieser Seite und ihren Unterseiten "
+                + "noch keine geprüften Aussagen mit anderen Fachbegriffen. · mit 1 Unterseite");
+    }
+
+    @Test
+    void withAllSubpagesLockedTheDomainViewSpeaksOfThePageAlone() {
+        PageSelection locked = new PageSelection(PageSet.of(Map.of("wiki", List.of("2", "3"))),
+                HoldingCounts.ZERO, List.of(), true, PageSet.of(Map.of("wiki", List.of("2", "3"))));
+        tab.page(WIKI);
+        tab.subpages(locked, false);
+        tab.domainChoice().doClick();
+        tab.showPageNow();
+        runner.runAll();
+
+        assertThat(actions.domainOptions.getLast().pages().asMap()).containsExactly(
+                Map.entry("wiki", java.util.Set.of("1")));
+        assertThat(tab.statusText()).isEqualTo("3 Fachbegriffe, 2 Verbindungen");
+
+        actions.domainEmpty = true;
+        tab.toggleShowStale();
+        runner.runAll();
+        assertThat(tab.domainCanvas().emptyText()).isEqualTo(KnowledgeGraphTab.NO_DOMAIN_EDGES);
+        assertThat(tab.statusText()).isBlank();
+    }
+
+    @Test
+    void leavingTheDomainViewCatchesUpOnStaleWhileTheStockLoadIsStillRunning() {
+        tab.domainChoice().doClick();
+        tab.page(WIKI);
+        // Die Frage nach einer schon laufenden Gruppe von „Wissensgraph erzeugen“ (W5) ist vorher beantwortet.
+        runner.runAll();
+        tab.showPageNow();
+        // Bestand (ohne Veraltete) und Fachsicht laufen; nur die Fachsicht endet.
+        assertThat(runner.pendingCount()).isEqualTo(2);
+        runner.runAt(1);
+        tab.toggleShowStale();
+        runner.runAt(1);
+
+        tab.domainChoice().doClick();
+        runner.runAll();
+
+        assertThat(actions.calls).containsExactly("page wiki/1", "page wiki/1");
+        assertThat(actions.lastOptions.includeStale()).isTrue();
+        assertThat(tab.statusText()).startsWith("3 Knoten");
+    }
+
+    @Test
+    void aFailedStockLoadKeepsTheSharedStaleChoiceInTheDomainView() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        runner.runAll();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        tab.toggleShowStale();
+        runner.runAll();
+
+        actions.pageFailure = new IllegalStateException("Ablage gesperrt");
+        tab.reload();
+        runner.runAll();
+
+        assertThat(tab.filterItem("Veraltete zeigen").isSelected()).as("die Wahl des Nutzers bleibt").isTrue();
+        assertThat(actions.domainOptions.getLast().includeStale()).isTrue();
+        assertThat(tab.filterButton().getToolTipText()).contains("Veraltete zeigen");
+
+        // Zurück im Bestand holt er „Veraltete zeigen“ nach.
+        actions.pageFailure = null;
+        actions.calls.clear();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        assertThat(actions.calls).containsExactly("page wiki/1");
+        assertThat(actions.lastOptions.includeStale()).isTrue();
+    }
+
+    @Test
+    void theExportStaysTheStockGraphAndSaysSoInTheDomainView() {
+        tab.page(WIKI);
+        assertThat(tab.exportTip()).isEqualTo(KnowledgeGraphTab.EXPORT_TIP);
+        tab.domainChoice().doClick();
+        assertThat(tab.exportTip()).isEqualTo("Exportiert den Bestandsgraphen, nicht die Fachsicht");
+        assertThat(tab.exportAccessibleName()).as("auch für Screenreader").isEqualTo(tab.exportTip());
+        assertThat(tab.exportChoices()).extracting(KnowledgeGraphTab.ExportChoice::label).contains("Diese Seite");
+        tab.domainChoice().doClick();
+        assertThat(tab.exportTip()).isEqualTo(KnowledgeGraphTab.EXPORT_TIP);
+        assertThat(tab.exportAccessibleName()).isEqualTo(KnowledgeGraphTab.EXPORT_TIP);
+    }
+
+    @Test
+    void theDomainViewLastsForTheSessionAndAPageChangeStartsItPageWide() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        tab.clickDomainNode("Plan");
+        runner.runAll();
+        assertThat(tab.overviewButton().isEnabled()).isTrue();
+
+        tab.page(new PageKey("wiki", "2"));
+        assertThat(tab.domainChoice().isSelected()).as("gilt für die Sitzung").isTrue();
+        assertThat(tab.domainCentre()).isNull();
+        assertThat(tab.overviewButton().isEnabled()).isFalse();
+        tab.showPageNow();
+        runner.runAll();
+
+        assertThat(actions.domainCalls.getLast()).isEqualTo("onPages {wiki=[2]}");
+        assertThat(tab.domainCanvas().centred()).isFalse();
+        assertThat(tab.statusText()).isEqualTo("3 Fachbegriffe, 2 Verbindungen");
+    }
+
+    @Test
+    void aLateDomainResultOfALeftPageIsDiscarded() {
+        tab.page(WIKI);
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        tab.page(new PageKey("wiki", "2"));
+        runner.runAll();
+
+        assertThat(tab.domainCanvas().labels()).isEmpty();
+        assertThat(tab.statusText()).isBlank();
+    }
+
+    // ---- Wissensgraph erzeugen in der Fachsicht (W5 mit W4b)
+
+    /**
+     * Auch in der Fachsicht steht „Wissensgraph erzeugen“ bereit; am Ende rechnet der Reiter dieselbe Mitte über
+     * dieselben Seiten neu, ohne die gezeigte Sicht vorher zu leeren (die Zeichenfläche behält so ihre Lage), und lädt
+     * den Bestand dahinter ebenfalls an Ort und Stelle.
+     */
+    @Test
+    void theReloadAtTheEndInTheDomainViewKeepsTheCentreAndTheShownView() {
+        List<StatusNote> notes = new ArrayList<>();
+        tab.onNote(notes::add);
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        tab.clickDomainNode("Plan");
+        runner.runAll();
+        com.aresstack.spaceharvester.app.ui.GraphSource.Graph shown = tab.domainCanvas().graph();
+        assertThat(tab.generateOffered()).as("auch in der Fachsicht").isTrue();
+
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+        assertThat(tab.generateOffered()).isFalse();
+        assertThat(notes.getLast().text()).as("Fortschritt vor dem Stand der Fachsicht")
+                .startsWith("Wissensgraph wird erzeugt").contains("2 Fachbegriffe, 1 Verbindung um „Plan“");
+        actions.calls.clear();
+        actions.domainCalls.clear();
+
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAt(0); // die Hinweise der Teile, danach startet das Neuladen
+        assertThat(tab.domainCanvas().graph()).as("bis zum neuen Ergebnis bleibt die alte Sicht stehen")
+                .isSameAs(shown);
+        runner.runAll();
+
+        assertThat(actions.domainCalls).as("dieselbe Mitte über dieselben Seiten").containsExactly(
+                "around Plan {wiki=[1]}");
+        assertThat(actions.calls).as("der Bestand dahinter").containsExactly("page wiki/1");
+        assertThat(tab.domainCentre()).isEqualTo("Plan");
+        assertThat(tab.domainCanvas().centred()).isTrue();
+        assertThat(tab.domainCanvas().graph()).as("inhaltlich gleich: die fertige Lage gilt weiter").isEqualTo(shown);
+        assertThat(tab.statusText()).isEqualTo("2 Fachbegriffe, 1 Verbindung um „Plan“");
+        assertThat(notes.getLast().text()).startsWith("Wissensgraph erzeugt").contains("um „Plan“");
+        assertThat(tab.generateOffered()).isTrue();
+    }
+
+    /** Unsichtbar am Ende: Auch die Fachsicht rechnet erst beim nächsten Anzeigen neu, mit ihrer Mitte. */
+    @Test
+    void finishedWhileHiddenInTheDomainViewReloadsItWhenShownAgain() {
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        tab.clickDomainNode("Plan");
+        runner.runAll();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+        actions.calls.clear();
+        actions.domainCalls.clear();
+
+        tab.showingForTests(false);
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        assertThat(actions.calls).as("unsichtbar lädt nichts").isEmpty();
+        assertThat(actions.domainCalls).isEmpty();
+        assertThat(tab.domainCanvas().labels()).as("die alte Sicht bleibt stehen").isNotEmpty();
+
+        tab.showingForTests(true);
+        tab.reloadInPlace();
+        runner.runAll();
+        assertThat(actions.calls).containsExactly("page wiki/1");
+        assertThat(actions.domainCalls).containsExactly("around Plan {wiki=[1]}");
+        assertThat(tab.domainCentre()).isEqualTo("Plan");
+    }
+
+    /** Eine Fachsicht mit {@code nodes} Knoten und {@code edges} Kanten, erfundene Begriffe. */
+    private static DomainTermGraph.View view(int nodes, int edges, boolean truncated, int skippedStale) {
+        List<DomainTermGraph.Node> list = new ArrayList<>();
+        for (int i = 0; i < nodes; i++) {
+            list.add(new DomainTermGraph.Node("t" + i, "Begriff " + i, DomainTermGraph.NodeKind.TERM, 0, null));
+        }
+        List<DomainTermGraph.Edge> links = new ArrayList<>();
+        for (int i = 0; i < edges; i++) {
+            links.add(new DomainTermGraph.Edge("t0", "t1", DomainTermGraph.EdgeKind.VERB, "planen", 1, List.of()));
+        }
+        return new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND, list, links, truncated, skippedStale,
+                java.util.Set.of());
+    }
+
     /** Unterseiten wie aus {@code Holdings#descendants}, erfundene Seiten-IDs der Quelle „wiki“. */
     private static PageSelection below(String... pageIds) {
         return new PageSelection(PageSet.of(Map.of("wiki", List.of(pageIds))), HoldingCounts.ZERO, List.of(), true);
@@ -1976,6 +2478,66 @@ class KnowledgeGraphTabTest {
             return graphNotes;
         }
 
+        final List<String> domainCalls = new ArrayList<>();
+        final List<DomainTermGraph.Options> domainOptions = new ArrayList<>();
+        /** Je Abfrage der Fachsicht, ob sie beim Rechnen schon überholt war. */
+        final List<Boolean> cancelledSeen = new ArrayList<>();
+        boolean domainEmpty;
+        /** Die Mitte ohne Verbindung (around liefert nur sie). */
+        boolean aroundAlone;
+        RuntimeException domainFailure;
+        RuntimeException pageFailure;
+
+        @Override
+        public DomainTermGraph.View domainTermGraphOfPages(DomainTermGraph.Options options,
+                                                           BooleanSupplier cancelled) {
+            domainCalls.add("onPages " + new java.util.TreeMap<>(sorted(options.pages())));
+            domainOptions.add(options);
+            cancelledSeen.add(cancelled.getAsBoolean());
+            if (domainFailure != null) {
+                throw domainFailure;
+            }
+            if (domainEmpty) {
+                return new DomainTermGraph.View(DomainTermGraph.Outcome.NO_EDGES, List.of(), List.of(), false, 0,
+                        java.util.Set.of());
+            }
+            return new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND, List.of(
+                    new DomainTermGraph.Node("plan", "Plan", DomainTermGraph.NodeKind.TERM, 0, null),
+                    new DomainTermGraph.Node("ziel", "Ziel", DomainTermGraph.NodeKind.TERM, 0, null),
+                    new DomainTermGraph.Node("nachtlauf", "Nachtlauf", DomainTermGraph.NodeKind.TERM, 0, null)),
+                    List.of(new DomainTermGraph.Edge("plan", "ziel", DomainTermGraph.EdgeKind.VERB, "erreichen", 3,
+                                    List.of()),
+                            new DomainTermGraph.Edge("nachtlauf", "plan", DomainTermGraph.EdgeKind.VERB, "starten", 1,
+                                    List.of())), false, 0, java.util.Set.of());
+        }
+
+        @Override
+        public DomainTermGraph.View domainTermGraph(String start, DomainTermGraph.Options options,
+                                                    BooleanSupplier cancelled) {
+            domainCalls.add("around " + start + " " + new java.util.TreeMap<>(sorted(options.pages())));
+            domainOptions.add(options);
+            cancelledSeen.add(cancelled.getAsBoolean());
+            if (domainFailure != null) {
+                throw domainFailure;
+            }
+            if (aroundAlone) {
+                return new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND, List.of(
+                        new DomainTermGraph.Node("plan", "Plan", DomainTermGraph.NodeKind.TERM, 0, null)), List.of(),
+                        false, 0, java.util.Set.of());
+            }
+            return new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND, List.of(
+                    new DomainTermGraph.Node("plan", "Plan", DomainTermGraph.NodeKind.TERM, 0, null),
+                    new DomainTermGraph.Node("ziel", "Ziel", DomainTermGraph.NodeKind.TERM, 1, "plan")),
+                    List.of(new DomainTermGraph.Edge("plan", "ziel", DomainTermGraph.EdgeKind.VERB, "erreichen", 3,
+                            List.of())), false, 0, java.util.Set.of());
+        }
+
+        private static Map<String, List<String>> sorted(PageSet pages) {
+            Map<String, List<String>> sorted = new java.util.TreeMap<>();
+            pages.asMap().forEach((source, ids) -> sorted.put(source, ids.stream().sorted().toList()));
+            return sorted;
+        }
+
         @Override
         public int deleteAllStatements() {
             calls.add("deleteAll");
@@ -2000,6 +2562,9 @@ class KnowledgeGraphTabTest {
             if (options.maxNodes() > 1) {
                 calls.add("page " + key.sourceId() + "/" + key.pageId());
                 lastOptions = options;
+                if (pageFailure != null) {
+                    throw pageFailure;
+                }
             }
             if (empty || pageStale && !options.includeStale()) {
                 return GraphNeighbourhood.Subgraph.empty();
@@ -2120,6 +2685,15 @@ class KnowledgeGraphTabTest {
             while (!pending.isEmpty()) {
                 pending.removeFirst().run();
             }
+        }
+
+        /** Führt nur die {@code index}-te wartende Arbeit aus (von 0), etwa eine neuere vor einer älteren. */
+        void runAt(int index) {
+            pending.remove(index).run();
+        }
+
+        int pendingCount() {
+            return pending.size();
         }
     }
 }

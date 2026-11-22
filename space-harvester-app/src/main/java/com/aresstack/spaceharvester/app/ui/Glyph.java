@@ -47,7 +47,12 @@ public enum Glyph implements Icon {
      * „Wissensgraph erzeugen“ (W5): drei verbundene Knoten, unten rechts ein Plus; bewusst ohne Funkeln, denn erzeugt
      * wird auch ohne KI.
      */
-    GRAPH_PLUS;
+    GRAPH_PLUS,
+    /**
+     * „Alles zeigen“ bzw. „Zurück zur Gesamtsicht“ (W4b): vier Punkte auf einem Ring. Bewusst kein Pfeil, damit der
+     * Knopf nicht mit „Zurück“ ({@link #BACK}) verwechselt wird.
+     */
+    OVERVIEW;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -254,6 +259,14 @@ public enum Glyph implements Icon {
                     head.lineTo(3, 8);
                     head.lineTo(7, 12);
                     g.draw(head);
+                }
+                case OVERVIEW -> {
+                    // Ein feiner Ring, darauf vier volle Punkte oben, rechts, unten und links.
+                    g.setStroke(new BasicStroke(1.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g.draw(new Ellipse2D.Double(3, 3, 10, 10));
+                    for (double[] p : new double[][] {{8, 3}, {13, 8}, {8, 13}, {3, 8}}) {
+                        g.fill(new Ellipse2D.Double(p[0] - 2.1, p[1] - 2.1, 4.2, 4.2));
+                    }
                 }
                 case NEIGHBOURS -> {
                     // Ein Knoten, dessen Nachbarn dazukommen: Kreis mit Plus.

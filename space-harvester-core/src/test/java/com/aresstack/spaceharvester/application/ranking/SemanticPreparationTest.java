@@ -6,14 +6,22 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +47,40 @@ class SemanticPreparationTest {
         when(enrichments.recompute(snapshot, "embedding")).thenReturn(new Enrichments.Run(true, 1, 0, 1));
 
         assertThat(preparation().prepare(APP, query, "Nachtlauf")).isEqualTo(1);
+    }
+
+    @Test
+    void afterTheDeadlineWhatHasNotStartedGoesToAVisibleJobOfTheCaller() throws Exception {
+        // Fundstelle 11, Abnahme #1078: Nach der Frist rechnet ein gewöhnlicher Auftrag „Suchtreffer vorbereiten“
+        // weiter, ungezwungen und nicht hinter der Warteschlange der KI-Anreicherung.
+        found(new KeywordSearch.Results(null, List.of(HIT, HIT), List.of(searched()), null, true, 0));
+        when(enrichments.view(snapshot)).thenReturn(List.of());
+        when(enrichments.recompute(snapshot, "embedding")).thenReturn(new Enrichments.Run(true, 1, 0, 0));
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(2, 10, Duration.ofHours(1)),
+                Clock.systemUTC());
+
+        int pending = new SemanticPreparation(keywords, key -> Optional.of(snapshot), enrichments, "embedding",
+                Duration.ZERO, jobs).prepare(APP, query, "Nachtlauf");
+
+        assertThat(pending).as("diese Suche ist unvollständig").isEqualTo(1);
+        verify(enrichments, never()).recompute(snapshot, "embedding");
+        assertThat(jobs.listAll(JobType.ENRICHMENT)).singleElement().satisfies(job -> {
+            assertThat(job.owner()).isEqualTo(APP.jobOwner());
+            assertThat(job.parameter("task")).isEqualTo(SemanticPreparation.TASK);
+        });
+
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+
+        verify(enrichments, times(1)).recompute(snapshot, "embedding");
+        verify(enrichments, never()).recomputeInBackground(any(), any());
+        assertThat(jobs.listAll(JobType.ENRICHMENT).getFirst()).satisfies(job -> {
+            assertThat(job.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(job.progress().written()).isEqualTo(1);
+        });
     }
 
     @Test

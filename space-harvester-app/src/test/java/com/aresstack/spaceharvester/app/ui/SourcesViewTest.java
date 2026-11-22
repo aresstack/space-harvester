@@ -84,7 +84,7 @@ class SourcesViewTest {
         assertThat(view[0].reconcile.isEnabled()).isFalse();
         assertThat(view[0].initialize.isEnabled()).isFalse();
         assertThat(view[0].checkChanges.isEnabled()).isFalse();
-        assertThat(context.runtime().workspace().jobs()).isEmpty();
+        assertThat(userJobs(context)).isEmpty();
 
         // Mit gewähltem Space startet der Kreispfeil genau dessen Abgleich; die Auswahl übersteht den Klick.
         SwingUtilities.invokeAndWait(() -> spaces.setRowSelectionInterval(0, 0));
@@ -118,7 +118,7 @@ class SourcesViewTest {
         // Die Reihenfolge der Knöpfe: Stift, Papierkorb, Kreispfeile, drei Punkte.
         Container actions = arrow.getParent();
         assertThat(actions.getComponent(actions.getComponentCount() - 2)).isSameAs(arrow);
-        assertThat(context.runtime().workspace().jobs()).isEmpty();
+        assertThat(userJobs(context)).isEmpty();
 
         // Im selben EDT-Durchlauf wie der Klick prüfen: Ordner-Aufträge enden in Millisekunden, und das Wieder-
         // freigeben kommt per invokeLater – von außen gelesen wäre der Knopf sonst manchmal schon wieder aktiv.
@@ -132,10 +132,10 @@ class SourcesViewTest {
                     + find(root, Feedback.class).get(0).text();
         });
         assertThat(greyWhileRunning[0]).as("grau, solange die Aufträge laufen: " + why[0]).isTrue();
-        await(() -> !context.runtime().workspace().jobs().isEmpty());
+        await(() -> !userJobs(context).isEmpty());
         // Der Core hängt an einen Abgleich eigene Folgeaufträge (Anreicherung) ohne Parameter; geprüft wird der
-        // Abgleich selbst, den die Kreispfeile gestartet haben.
-        assertThat(context.runtime().workspace().jobs()).allMatch(job -> "kurz".equals(job.sourceId()));
+        // Abgleich selbst, den die Kreispfeile gestartet haben. Die Hintergrundaufträge des Starts zählen nicht.
+        assertThat(userJobs(context)).allMatch(job -> "kurz".equals(job.sourceId()));
         List<JobStatus> syncs = context.runtime().workspace().jobs().stream()
                 .filter(job -> job.type() == JobType.SYNC).toList();
         assertThat(syncs).hasSize(1);
@@ -317,7 +317,7 @@ class SourcesViewTest {
         });
         assertThat(prepared).containsExactly("lang", List.of(key), "lang", List.of(key));
         // Der Navigator startet die Downloads (Downloads.start); hier ist er ersetzt, also lief nichts an.
-        assertThat(context.runtime().workspace().jobs()).isEmpty();
+        assertThat(userJobs(context)).isEmpty();
     }
 
     /** Detailfläche und Drawer mit den Quellenkarten in einem Behälter, wie das Hauptfenster sie zeigt. */
@@ -429,5 +429,11 @@ class SourcesViewTest {
         assertThat(SourcesView.catalogState(cataloged)).isEqualTo("Erfasst");
         assertThat(SourcesView.pages(cataloged)).isEqualTo("120 / 14 · 3 veraltet · 1 zurückgehalten");
         assertThat(SourcesView.catalogState(null)).as("noch nicht geladen").isEmpty();
+    }
+
+    /** Die Aufträge der Liste ohne die Hintergrundaufträge des Starts (Verweise, Analysen nach Update). */
+    private static java.util.List<com.aresstack.spaceharvester.application.jobs.JobStatus> userJobs(
+            AppContext context) {
+        return context.runtime().workspace().jobs().stream().filter(job -> !job.type().background()).toList();
     }
 }

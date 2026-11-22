@@ -865,15 +865,27 @@ public final class AppContext {
     }
 
     /**
+     * Ob {@link #reload} diesen wartenden oder laufenden Auftrag abbräche. Ein Hintergrundauftrag nur, wenn ein Benutzer
+     * ihn startete ({@code BackgroundJobs#startedByUser}, Abnahme #1073): Er verlöre mit der Laufzeit seinen Aufrufer
+     * und hielte danach gelb „von Hand fortsetzen“ an. Automatik und Abgleiche beim Start unterbricht das Neuladen nur,
+     * sie setzen danach von selbst fort (ADR 0025, Nachtrag Punkt 9); sonst fragte jedes Übernehmen kurz nach dem Start
+     * nach.
+     */
+    static boolean abortedByReload(JobStatus job) {
+        return !job.state().terminal() && (!job.type().background()
+                || com.aresstack.spaceharvester.application.background.BackgroundJobs.startedByUser(job));
+    }
+
+    /**
      * Die Aufträge, die {@link #reload} abbrechen würde (wartend oder laufend); leer ohne Laufzeit oder wenn die
-     * Auftragsablage nicht lesbar ist.
+     * Auftragsablage nicht lesbar ist ({@link #abortedByReload}).
      */
     public List<JobStatus> runningJobs() {
         if (runtime == null) {
             return List.of();
         }
         try {
-            return runtime.workspace().jobs().stream().filter(job -> !job.state().terminal()).toList();
+            return runtime.workspace().jobs().stream().filter(AppContext::abortedByReload).toList();
         } catch (RuntimeException e) {
             LOG.warn("Laufende Aufträge ließen sich nicht lesen: {}", e.getMessage());
             return List.of();

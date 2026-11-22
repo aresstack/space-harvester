@@ -69,7 +69,7 @@ public final class EvidencePopup extends JPopupMenu {
     private final List<String> otherTexts = new ArrayList<>();
     private Consumer<Target> onOpen = target -> { };
 
-    EvidencePopup() {
+    public EvidencePopup() {
         setOpaque(true);
         setBackground(java.awt.Color.WHITE);
         setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.INK, 2),
@@ -107,7 +107,7 @@ public final class EvidencePopup extends JPopupMenu {
     }
 
     /** {@code listener} öffnet die Seite an der Stelle (im Reiter „Text“). */
-    EvidencePopup onOpen(Consumer<Target> listener) {
+    public EvidencePopup onOpen(Consumer<Target> listener) {
         onOpen = Objects.requireNonNull(listener, "listener");
         return this;
     }
@@ -122,7 +122,7 @@ public final class EvidencePopup extends JPopupMenu {
      *                  lesen
      * @param failed    ob die Sätze nicht gelesen werden konnten
      */
-    EvidencePopup fill(String title, int total, List<DomainTermGraph.Evidence> evidence,
+    public EvidencePopup fill(String title, int total, List<DomainTermGraph.Evidence> evidence,
                        Map<String, SentenceText> sentences, boolean failed) {
         heading.setText(title);
         count.count(total);
@@ -148,7 +148,7 @@ public final class EvidencePopup extends JPopupMenu {
     }
 
     /** Zeigt das Overlay an der Mausposition; der erste Link bekommt den Fokus. */
-    void showAt(Component owner, int x, int y) {
+    public void showAt(Component owner, int x, int y) {
         if (!owner.isShowing()) {
             return;
         }

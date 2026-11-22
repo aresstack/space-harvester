@@ -789,13 +789,27 @@ public final class Workspace {
         return harvester.enrichments().view(page.snapshot());
     }
 
-    /** Anreicherungen neu berechnen ({@code POST …/enrichments}); braucht wie im Dienst die sync-Freigabe. */
+    /**
+     * Anreicherungen neu berechnen ({@code POST …/enrichments}); braucht wie im Dienst die sync-Freigabe. Läuft als
+     * Auftrag in der Auftragsliste (Fundstelle 21) und kehrt zurück, wenn er endet.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobCancelledException wenn der Auftrag abgebrochen wurde
+     */
     public Enrichments.Run recomputeEnrichments(String sourceId, String pageId, String processor) {
+        return recomputeEnrichments(sourceId, pageId, processor, state -> {
+        });
+    }
+
+    /**
+     * Wie {@link #recomputeEnrichments(String, String, String)}; {@code state} erfährt, ob der Auftrag auf einen freien
+     * Platz wartet oder läuft (beliebiger Thread).
+     */
+    public Enrichments.Run recomputeEnrichments(String sourceId, String pageId, String processor,
+                                                java.util.function.Consumer<
+                                                        com.aresstack.spaceharvester.application.jobs.JobState> state) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
-        Enrichments.Run run = harvester.enrichments().recompute(page.snapshot(), processor);
-        harvester.enrichments().flush();
-        return run;
+        return harvester.pageRecomputation().recompute(caller.jobOwner(), page.snapshot(), processor, state);
     }
 
     /** Gespeicherte Bilder und Beschreibungen einer gelieferten Seite ({@code GET …/images}); beschreibt nichts. */
@@ -1650,6 +1664,17 @@ public final class Workspace {
             com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options options,
             java.util.function.BooleanSupplier cancelled) {
         return harvester.domainTermGraph().around(caller, start, options, cancelled);
+    }
+
+    /**
+     * Seitenweite Fachsicht ohne Startbegriff (Paket W4b) über {@code options.pages()} (Pflicht): die bestätigten
+     * Fachbegriffe und Synonyme dieser Seiten, die durch ein Verb verbunden sind, höchstens
+     * {@code DomainTermGraph.MAX_NODES}. Rechtegeprüft, rechnet nie; nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.View domainTermGraphOfPages(
+            com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options options,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.domainTermGraph().onPages(caller, options, cancelled);
     }
 
     /** Vorschläge für das Startfeld der Fachsicht: nur bestätigte Fachbegriffe und Synonyme. Nie auf dem EDT. */

@@ -75,18 +75,69 @@ public final class BackgroundJobs {
     public BackgroundJobs(Jobs jobs, String owner) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.owner = owner;
-        // D1: ein unterbrochener Vorgänger hält, solange er sich fortsetzen lässt; sonst gibt er frei.
-        jobs.predecessorGate(predecessor -> {
-            if (Jobs.PredecessorGate.DEFAULT.holds(predecessor)) {
-                return true;
+        jobs.predecessorGate(new Jobs.PredecessorGate() {
+            @Override
+            public boolean holds(JobStatus predecessor) {
+                return holdsAfter(predecessor);
             }
-            if (predecessor == null || predecessor.state() != JobState.FAILED || predecessor.error() == null
-                    || !INTERRUPTED.equals(predecessor.error().code())) {
-                return false;
+
+            @Override
+            public boolean holds(JobStatus predecessor, JobStatus follower) {
+                // Abnahme #1077: Wartet ein Teil nur der Reihe wegen, hält ihn ein angehaltener Vorgänger einer anderen
+                // Quelle nicht auf, denn Anhalten von A darf B nicht stoppen.
+                if (predecessor != null && predecessor.state() == JobState.PAUSED && follower != null
+                        && "true".equals(follower.parameter(ORDER_ONLY))
+                        && !Objects.equals(predecessor.sourceId(), follower.sourceId())) {
+                    return false;
+                }
+                return holdsAfter(predecessor);
             }
-            BackgroundKind kind = predecessor.type() == JobType.BACKGROUND ? kindOfPart(predecessor) : null;
-            return kind != null && kind.autoResume().getAsBoolean();
         });
+    }
+
+    /** D1: ein unterbrochener Vorgänger hält, solange er sich fortsetzen lässt; sonst gibt er frei. */
+    private boolean holdsAfter(JobStatus predecessor) {
+        if (Jobs.PredecessorGate.DEFAULT.holds(predecessor)) {
+            return true;
+        }
+        if (predecessor == null || predecessor.state() != JobState.FAILED || predecessor.error() == null
+                || !INTERRUPTED.equals(predecessor.error().code())) {
+            return false;
+        }
+        BackgroundKind kind = predecessor.type() == JobType.BACKGROUND ? kindOfPart(predecessor) : null;
+        return kind != null && kind.autoResume().getAsBoolean();
+    }
+
+    /**
+     * Ob Hintergrundteile überhaupt laufen können: erst ab zwei Plätzen unter „Vorbereitung“; mit einem wartet jeder
+     * gelb ({@link Jobs#SINGLE_SLOT}). Wer sonst einen eigenen Weg hat, nimmt dann den (Abnahme #1077).
+     */
+    public boolean canRun() {
+        return jobs.parallelPreparations() > 1;
+    }
+
+    /**
+     * Schließt alle Teile dieser Art ab, die sich noch fortsetzen ließen (angehalten oder gescheitert), als abgebrochen
+     * mit Info {@code reason} ({@link Jobs#retire}): für Arten, deren Arbeit nur im Speicher liegt und nach dem Neustart
+     * fehlt (Abnahme #1077). Wartende und laufende bleiben.
+     *
+     * @return die abgeschlossenen Teile
+     */
+    public List<JobStatus> retireResumable(String kind, String reason) {
+        Objects.requireNonNull(reason, "reason");
+        List<JobStatus> retired = new ArrayList<>();
+        for (JobStatus part : parts(kind)) {
+            if (part.state() != JobState.PAUSED && part.state() != JobState.FAILED) {
+                continue;
+            }
+            try {
+                jobs.retire(part.id(), owner, reason).ifPresent(retired::add);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Hintergrundauftrag {0} nicht abgeschlossen ({1})", part.id(),
+                        e.getClass().getName());
+            }
+        }
+        return retired;
     }
 
     /** Meldet eine Art an; eine zweite mit derselben Kennung ersetzt die erste. */
@@ -180,6 +231,12 @@ public final class BackgroundJobs {
      *                                  späteren wartet
      */
     public BackgroundGroup startSteps(String groupId, String groupKind, String title, List<Step> steps) {
+        return startSteps(groupId, groupKind, title, steps, false);
+    }
+
+    /** Wie {@link #startSteps(String, String, String, List)}; mit {@code orderOnly} warten die Teile nur der Reihe wegen. */
+    private BackgroundGroup startSteps(String groupId, String groupKind, String title, List<Step> steps,
+                                       boolean orderOnly) {
         Objects.requireNonNull(groupId, "groupId");
         Objects.requireNonNull(groupKind, "groupKind");
         Objects.requireNonNull(title, "title");
@@ -203,6 +260,9 @@ public final class BackgroundJobs {
                 parameters.put(GROUP_KIND, groupKind);
                 parameters.put(TITLE, title);
                 parameters.put(STEP_TITLE, step.stepTitle());
+                if (orderOnly) {
+                    parameters.put(ORDER_ONLY, "true");
+                }
                 List<String> after = new ArrayList<>(step.afterJobs());
                 step.afterSteps().forEach(index -> after.add(started.get(index).id()));
                 if (!after.isEmpty()) {
@@ -318,6 +378,134 @@ public final class BackgroundJobs {
         }
     }
 
+    /**
+     * Wie {@link #startUnlessRunning(String, String, BackgroundPart.Draft)} für alle Teile eines Anlasses in einer
+     * Gruppe, etwa die Abgleiche beim Start nach {@link #resumeInterrupted}: Teile, für deren Quelle und Space schon
+     * einer wartet, angehalten ist oder läuft, fallen heraus.
+     *
+     * @return die neue Gruppe mit den übrigen Teilen, oder leer, wenn keiner übrig bleibt
+     */
+    public Optional<BackgroundGroup> startUnlessRunning(String kind, String title, List<BackgroundPart.Draft> parts) {
+        Objects.requireNonNull(parts, "parts");
+        synchronized (startLock(kind)) {
+            List<BackgroundPart.Draft> missing = parts.stream()
+                    .filter(part -> open(kind, part.sourceId(), part.partitionKey()).isEmpty()).toList();
+            return missing.isEmpty() ? Optional.empty() : Optional.of(start(kind, title, missing));
+        }
+    }
+
+    /**
+     * Wie {@link #startUnlessRunning(String, String, List)}, nur ersetzt ein offener Teil einen neuen allein, wenn er
+     * {@code covers} erfüllt (Abnahme #1073): Ein angehaltener Teil, der etwas anderes tut als der neue Anlass, etwa
+     * „Freigabe erteilen“ statt „Freigabe prüfen“, hält ihn nicht auf.
+     *
+     * @param covers ob ein offener Teil derselben Art für Quelle und Space die Arbeit des neuen mitnimmt
+     * @return die neue Gruppe mit den übrigen Teilen, oder leer, wenn keiner übrig bleibt
+     */
+    public Optional<BackgroundGroup> startUnlessRunning(String kind, String title, List<BackgroundPart.Draft> parts,
+                                                        Predicate<JobStatus> covers) {
+        Objects.requireNonNull(parts, "parts");
+        Objects.requireNonNull(covers, "covers");
+        synchronized (startLock(kind)) {
+            List<BackgroundPart.Draft> missing = parts.stream()
+                    .filter(part -> openParts(kind).noneMatch(status -> covers.test(status)
+                            && Objects.equals(part.sourceId(), status.sourceId())
+                            && Objects.equals(part.partitionKey(), status.partitionKey()))).toList();
+            return missing.isEmpty() ? Optional.empty() : Optional.of(start(kind, title, missing));
+        }
+    }
+
+    /**
+     * Wie {@link #startUnlessRunning(String, String, List)}, die Teile aber nacheinander ({@link Jobs#AFTER}, Abnahme
+     * #1073): Jeder wartet auf den vorigen, der erste auf jeden schon offenen Teil der Art, etwa einen nach dem Neustart
+     * fortgesetzten. Für Arten, deren Teile sich sonst gegenseitig aufhielten und dabei Plätze belegten. Ein Teil gilt
+     * hier nur als Glied der Reihe: Bricht der vorige ab, läuft er ohne gelben Hinweis ({@value #ORDER_ONLY}).
+     *
+     * @return die neue Gruppe mit den übrigen Teilen, oder leer, wenn keiner übrig bleibt
+     */
+    public Optional<BackgroundGroup> startInSequenceUnlessRunning(String kind, String title,
+                                                                  List<BackgroundPart.Draft> parts) {
+        Objects.requireNonNull(parts, "parts");
+        Objects.requireNonNull(title, "title");
+        synchronized (startLock(kind)) {
+            List<BackgroundPart.Draft> missing = parts.stream()
+                    .filter(part -> open(kind, part.sourceId(), part.partitionKey()).isEmpty()).toList();
+            if (missing.isEmpty()) {
+                return Optional.empty();
+            }
+            List<String> openIds = openParts(kind).map(JobStatus::id).toList();
+            List<Step> steps = new ArrayList<>();
+            for (int i = 0; i < missing.size(); i++) {
+                BackgroundPart.Draft draft = missing.get(i);
+                List<String> afterJobs = i == 0 ? openIds : List.of();
+                List<Integer> afterSteps = i == 0 ? List.of() : List.of(i - 1);
+                steps.add(new Step(kind, title, draft, afterJobs, afterSteps,
+                        afterJobs.isEmpty() && afterSteps.isEmpty() ? List.of() : List.of(title)));
+            }
+            return Optional.of(startSteps(newGroupId(), kind, title, steps, true));
+        }
+    }
+
+    /**
+     * Startet eine Gruppe mit einem Teil hinter jedem schon offenen Teil der Art ({@link Jobs#AFTER}, nur der Reihe
+     * wegen, {@value #ORDER_ONLY}): Für Arten, deren Teile eine Arbeit nacheinander abholen, die erst nach dem Start
+     * dazukommt, etwa die KI-Anreicherung je Quelle. Ein offener Teil derselben Quelle verhindert ihn nicht; ob es einen
+     * braucht, entscheidet der Aufrufer. Ein angehaltener Vorgänger hält nur Teile seiner eigenen Quelle auf.
+     *
+     * @param groupId vorher vergeben ({@link #newGroupId()}), denn der Teil kann schon während des Starts laufen
+     */
+    public BackgroundGroup startBehindOpen(String groupId, String kind, String title, BackgroundPart.Draft part) {
+        Objects.requireNonNull(part, "part");
+        Objects.requireNonNull(title, "title");
+        synchronized (startLock(kind)) {
+            List<String> openIds = openParts(kind).map(JobStatus::id).toList();
+            return startSteps(groupId, kind, title, List.of(new Step(kind, title, part, openIds, List.of(),
+                    openIds.isEmpty() ? List.of() : List.of(title))), true);
+        }
+    }
+
+    /**
+     * Angabe eines Teils, der nur der Reihenfolge wegen auf seinen Vorgänger wartet
+     * ({@link #startInSequenceUnlessRunning}): Dessen Ergebnis braucht er nicht.
+     */
+    public static final String ORDER_ONLY = PREFIX + "orderOnly";
+
+    /** Angabe eines Teils: sein Anlass, {@value #USER} für einen Lauf, den ein Benutzer startete. */
+    public static final String TRIGGER = "trigger";
+    /** Anlass eines Teils, den ein Benutzer startete. */
+    public static final String USER = "user";
+    /** Angaben eines Teils, die seinen Benutzer nennen: Eigentümer, Benutzer oder Start-Aufrufer. */
+    private static final List<String> STARTER = List.of("owner", "principal", "caller");
+
+    /**
+     * Ob ein Benutzer diesen Teil gestartet hat (Abnahme #1073): Anlass {@value #USER} ({@value #TRIGGER}) oder ein
+     * Eigentümer, Benutzer oder Start-Aufrufer in den Angaben ({@code owner}, {@code principal}, {@code caller}), wie
+     * bei „Bilder beschreiben“, der Aussagenanalyse und jedem Teil des Dienst-Planers. Automatik und Abgleiche beim
+     * Start tragen nichts davon. Wer die Laufzeit ersetzt, fragt nur für solche Teile nach, denn mit dem Aufrufer im
+     * Speicher verlieren sie ihre Rechte und halten danach gelb „von Hand fortsetzen“ an.
+     */
+    public static boolean startedByUser(JobStatus part) {
+        Objects.requireNonNull(part, "part");
+        return part.type() == JobType.BACKGROUND && (USER.equals(part.parameter(TRIGGER))
+                || STARTER.stream().anyMatch(key -> part.parameter(key) != null));
+    }
+
+    /** Ob ein Unterauftrag wartet, angehalten ist oder läuft, also seine Arbeit noch tun wird. */
+    public static boolean open(JobStatus part) {
+        return isOpen(part.state());
+    }
+
+    /** Alle Teile dieser Art, älteste zuerst, in jedem Zustand; etwa für Teile, die der Start zu Ende führt. */
+    public List<JobStatus> parts(String kind) {
+        Objects.requireNonNull(kind, "kind");
+        return all().stream().filter(status -> kind.equals(status.parameter(KIND)))
+                .sorted(Comparator.comparing(JobStatus::createdAt)).toList();
+    }
+
+    private java.util.stream.Stream<JobStatus> openParts(String kind) {
+        return all().stream().filter(status -> isOpen(status.state()) && kind.equals(status.parameter(KIND)));
+    }
+
     private Object startLock(String kind) {
         return startLocks.computeIfAbsent(Objects.requireNonNull(kind, "kind"), ignored -> new Object());
     }
@@ -347,6 +535,7 @@ public final class BackgroundJobs {
 
     /** Ein Unterauftrag dieses Hintergrunds; leer, wenn es ihn nicht (mehr) gibt oder er keiner ist. */
     public Optional<JobStatus> part(String jobId) {
+        Objects.requireNonNull(jobId, "jobId");
         try {
             JobStatus status = jobs.status(jobId, owner);
             return status.type() == JobType.BACKGROUND ? Optional.of(status) : Optional.empty();
@@ -670,7 +859,7 @@ public final class BackgroundJobs {
      */
     private void notePredecessors(JobStatus status, com.aresstack.spaceharvester.application.jobs.JobContext context) {
         String after = status.parameter(Jobs.AFTER);
-        if (after == null || after.isBlank()) {
+        if (after == null || after.isBlank() || "true".equals(status.parameter(ORDER_ONLY))) {
             return;
         }
         for (String id : after.split(",")) {

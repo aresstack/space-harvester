@@ -402,6 +402,8 @@ public final class Harvester implements AutoCloseable {
     private final java.nio.file.Path knowledgeGraphExportDirectory;
     private final SignInRequests signIns;
     private final Enrichments enrichments;
+    /** „Neu berechnen“ einer Seite als Auftrag (Fundstelle 21). */
+    private final com.aresstack.spaceharvester.application.enrichment.PageRecomputation pageRecomputation;
     private final ConfiguredSourceCatalog catalog;
     private final SourceManagement sourceManagement;
     private final ExportPackageImport packageImport;
@@ -462,6 +464,9 @@ public final class Harvester implements AutoCloseable {
 
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
+        // Abgleiche beim Start als Hintergrundaufträge (ADR 0025 Nachtrag, Punkt 9): erst nach dem Fortsetzen
+        // unterbrochener Teile, damit nichts doppelt beginnt.
+        List<Runnable> startScans = new ArrayList<>();
         StartTimer start = new StartTimer();
         try {
             this.networkFollows = builder.configuration != null && !builder.networkFixed;
@@ -613,6 +618,15 @@ public final class Harvester implements AutoCloseable {
                     new com.aresstack.spaceharvester.application.presentation.VideoTranscriptTextProjector(
                             this::assets)));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
+            if (background != null) {
+                // ADR 0025 Nachtrag, Punkt 10: die Warteschlange der Netz-Prozessoren als „KI-Anreicherung“ je Quelle;
+                // schließt nach den Komponenten, die einreihen, und vor der Ablage.
+                Enrichments hostedEnrichments = enrichments;
+                hostedEnrichments.background(backgroundJobs, cache::find);
+                opened.add(() -> hostedEnrichments.closeBackground(Duration.ofSeconds(10)));
+            }
+            this.pageRecomputation = new com.aresstack.spaceharvester.application.enrichment.PageRecomputation(jobs,
+                    enrichments);
             this.pageTexts = projector;
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
             // Cache neu, eingeschaltet auch statements (#108); images rechnet nur auf Abruf und prüft die Freigabe dann
@@ -640,13 +654,16 @@ public final class Harvester implements AutoCloseable {
                 // ADR 0028: Der Abgleich beim Start fragt je Seite auch die Liste freigegebener Seiten.
                 recomputation.pageReleases(pageReleases::contains);
                 // Was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach, gleicht der Start
-                // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten; mit Satzanalyse auch nur mit
-                // Chat-Modell.
+                // einmal ab, ohne den Start aufzuhalten; mit Satzanalyse auch nur mit Chat-Modell. Alle Läufe sind
+                // Hintergrundaufträge „KI-Freigabe prüfen“, „KI-Freigabe nachziehen“, „Seitenfreigabe nachziehen“.
                 StatementProcessor statementsOnStart = statementProcessor;
-                recomputation.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList(),
-                        () -> embeddings != null && embeddings.available()
-                                || statementsOnStart != null && statementsOnStart.available(),
-                        PassagePayload.REASON_NOT_APPROVED);
+                java.util.function.BooleanSupplier releaseModel = () -> embeddings != null && embeddings.available()
+                        || statementsOnStart != null && statementsOnStart.available();
+                recomputation.background(backgroundJobs, cache::find, releaseModel,
+                        PassagePayload.REASON_NOT_APPROVED, cache::pageCount);
+                List<String> releaseSources = catalog.configs().stream().map(SourceSettingsConfig::id).toList();
+                startScans.add(() -> recomputation.reconcileOnStart(releaseSources, releaseModel,
+                        PassagePayload.REASON_NOT_APPROVED));
                 // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten,
                 // deren Quelle nicht als Ganzes freigegeben ist, sonst ändert sich nichts.
                 opened.add(pageReleases.subscribe(change -> recomputation.recomputePages(
@@ -655,11 +672,14 @@ public final class Harvester implements AutoCloseable {
                 this.releaseRecomputation = recomputation;
             }
             // Ergebnisse lokaler Prozessoren einer älteren Version (etwa nach geänderter Akronymerkennung) rechnet der
-            // Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten.
+            // Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten, als Hintergrundauftrag
+            // „Analysen nach Update nachrechnen“.
             VersionRecomputation versions = new VersionRecomputation(enrichments, cache::snapshots);
             opened.add(versions);
             start.step("Anreicherung");
-            versions.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList());
+            versions.background(backgroundJobs, cache::pageCount);
+            List<String> versionSources = catalog.configs().stream().map(SourceSettingsConfig::id).toList();
+            startScans.add(() -> versions.reconcileOnStart(versionSources));
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
@@ -679,7 +699,11 @@ public final class Harvester implements AutoCloseable {
             opened.add(pageLinks);
             HoldingsChanges cacheChanges = HoldingsChanges.all(holdings, pageLinks);
             cache.changes(cacheChanges);
-            pageLinks.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList());
+            // Abgleich beim Start als Hintergrundauftrag „Verweise abgleichen“; nach einem Abgleich eines Space und
+            // für einzelne Seiten bleibt es beim Bündler.
+            pageLinks.background(backgroundJobs);
+            List<String> linkSources = catalog.configs().stream().map(SourceSettingsConfig::id).toList();
+            startScans.add(() -> pageLinks.reconcileOnStart(linkSources));
             // ADR 0028: Eintragen aus der Auswahl, gebündelte Liste und Entfernen für die Oberfläche.
             this.pageReleaseService = new PageReleaseService(pageReleases, holdings, access, cache::findHeader,
                     key -> enrichmentStore.find(key).stream().anyMatch(found -> "embedding".equals(found.processorId())
@@ -900,7 +924,7 @@ public final class Harvester implements AutoCloseable {
             // ADR 0013, Punkt 3: mit Haken erst finden, laden und fehlende Embeddings berechnen.
             SemanticPreparation preparation = embedding == null || prefetch == null ? null
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
-                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
+                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT, jobs);
             // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
             EnrichmentSettings searchEnrichment = builder.enrichment;
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
@@ -1525,6 +1549,8 @@ public final class Harvester implements AutoCloseable {
             // Hintergrundaufträge, die das Beenden unterbrochen hat, laufen von selbst weiter; erst jetzt, da alle Arten
             // angemeldet sind.
             backgroundJobs.resumeInterrupted();
+            // Danach die Abgleiche beim Start; Quellen mit fortgesetztem Teil derselben Art fallen heraus.
+            startScans.forEach(Runnable::run);
             start.step("Zeitpläne und Nachholen");
             this.resources = List.copyOf(opened);
             start.done();
@@ -2344,6 +2370,11 @@ public final class Harvester implements AutoCloseable {
     /** Anreicherungen (Akronyme, Gliederung, Sprache, optional Embeddings); nach jedem Abgleich aktualisiert. */
     public Enrichments enrichments() {
         return enrichments;
+    }
+
+    /** „Neu berechnen“ einer Seite als gewöhnlicher Auftrag {@code ENRICHMENT} (Fundstelle 21). */
+    public com.aresstack.spaceharvester.application.enrichment.PageRecomputation pageRecomputation() {
+        return pageRecomputation;
     }
 
     /** Vorgabe für {@link Builder#maxTextFileBytes}: 200 MiB. */

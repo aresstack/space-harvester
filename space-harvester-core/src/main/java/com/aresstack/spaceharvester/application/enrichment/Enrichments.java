@@ -1,6 +1,18 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.background.BackgroundGroup;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
+import com.aresstack.spaceharvester.application.background.BackgroundKind;
+import com.aresstack.spaceharvester.application.background.BackgroundPart;
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
+import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobTask;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Clock;
@@ -22,6 +34,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 /**
@@ -32,6 +45,12 @@ import java.util.regex.Pattern;
  * in einem begrenzten Hintergrund ({@link #background(int)}): höchstens eine Berechnung zugleich, eine Warteschlange
  * fester Länge, jede Seite höchstens einmal darin. Ist sie voll, wird die Seite übersprungen und beim nächsten
  * Abgleich oder Abruf nachgeholt, weil ihr Ergebnis dann noch fehlt oder veraltet ist.
+ *
+ * <p>Mit Hintergrundaufträgen ({@link #background(BackgroundJobs, Function)}) ist diese Warteschlange sichtbar (ADR
+ * 0025 Nachtrag, Punkt 10): je Quelle ein Teil der Art {@value #BACKGROUND_KIND} „{@value #BACKGROUND_TITLE}“, der die
+ * Berechnungen seiner Quelle nacheinander abholt, anhaltbar und abbrechbar. Gewartet wird nur mit Prozessor und Seite,
+ * ohne Grenze und ohne Verwerfen; den Snapshot liest der Teil erst beim Rechnen. Die Teile laufen hintereinander, wie
+ * vorher der eine Thread.
  */
 public class Enrichments {
 
@@ -74,6 +93,20 @@ public class Enrichments {
      */
     public static final String VIDEO_PRESENTATION = "video-presentation";
 
+    /** Art der Warteschlange als Hintergrundauftrag, je Quelle ein Teil. */
+    public static final String BACKGROUND_KIND = "enrichment";
+    /** Titel der Gruppe in der Auftragsliste. */
+    public static final String BACKGROUND_TITLE = "KI-Anreicherung";
+    /** Am Teil ({@link Jobs#CANCEL_NOTE}): was ein Abbruch mit den wartenden Berechnungen tut. */
+    static final String CANCEL_NOTE = "die wartenden Berechnungen dieses Teils entfallen; fehlende oder veraltete "
+            + "Ergebnisse holt der nächste Abgleich oder Abruf nach, erzwungene Neuberechnungen nach einer Freigabe "
+            + "oder einem Update erst der Abgleich beim nächsten Start";
+    /** Info an Teilen von vor dem Neustart: ihre Warteschlange lag nur im Speicher (Abnahme #1077). */
+    static final String EMPTY_AFTER_RESTART = "Warteschlange nach Neustart leer";
+    /** Code des gelben Ereignisses, wenn eine Berechnung des Teils scheitert und er mit der nächsten weitermacht. */
+    static final String WORK_FAILED = "ENRICHMENT_WORK_FAILED";
+    private static final String COMPONENT = "enrichment";
+
     /** So viele erzwungene Neuberechnungen warten höchstens zugleich im Hintergrund; der übrige Platz bleibt frei. */
     public static final int FORCED_IN_BACKGROUND = 50;
 
@@ -88,6 +121,21 @@ public class Enrichments {
     private final Set<String> queued = ConcurrentHashMap.newKeySet();
     /** Plätze für erzwungene Neuberechnungen im Hintergrund ({@link #recomputeInBackground}). */
     private final Semaphore forcedSlots = new Semaphore(FORCED_IN_BACKGROUND);
+    /** Hintergrundaufträge für die Warteschlange; ohne sie der begrenzte {@link #background}. */
+    private volatile BackgroundJobs hosted;
+    /** Der gespeicherte Snapshot einer Seite, für die Teile der Warteschlange. */
+    private volatile Function<PageKey, Optional<PageSnapshot>> lookup = key -> Optional.empty();
+    /**
+     * Je Quelle die Berechnungen, die noch neue aufnehmen: Ihr Teil hat noch nicht angefangen; unter
+     * {@link #pendingLock}.
+     */
+    private final Map<String, Pending> pending = new HashMap<>();
+    /** Je Gruppe ihre wartenden Berechnungen, auch die eines laufenden oder angehaltenen Teils; unter {@link #pendingLock}. */
+    private final Map<String, Pending> groups = new HashMap<>();
+    private final Object pendingLock = new Object();
+    /** Laufende Teile der Warteschlange; {@link #closeBackground} wartet auf sie. */
+    private final ActiveParts parts = new ActiveParts();
+    private volatile boolean closed;
 
     /** Die Fakten aus den Ergebnissen dieser Ablage (#182), wenn sie welche führt. */
     public java.util.Optional<com.aresstack.spaceharvester.application.facts.FactStore> facts() {
@@ -359,6 +407,12 @@ public class Enrichments {
                 continue;
             }
             if (background != null && processor.background(key)) {
+                // Als Hintergrundauftrag ohne Platz aus forcedSlots: Ein Teil, der hier wartete, hielte einen Platz
+                // des Hintergrunds, den der Teil der Warteschlange zum Freigeben braucht.
+                if (enqueue(processor, key, true)) {
+                    count++;
+                    continue;
+                }
                 forcedSlots.acquire();
                 if (schedule(processor, snapshot, text, input, true)) {
                     count++;
@@ -521,7 +575,9 @@ public class Enrichments {
                 continue;
             }
             if (!force && background != null && processor.background(snapshot.key())) {
-                schedule(processor, snapshot, text, input);
+                if (!enqueue(processor, snapshot.key(), false)) {
+                    schedule(processor, snapshot, text, input);
+                }
                 continue;
             }
             Enrichment result = compute(processor, snapshot, text, input);
@@ -565,40 +621,7 @@ public class Enrichments {
         try {
             background.execute(() -> {
                 try {
-                    // Der Text kann sich ändern, während die Berechnung wartet oder läuft, ohne neue Payload (etwa
-                    // ein neues Transkript eines Videos): Gerechnet und gespeichert wird nur der aktuelle; ist er
-                    // weggefallen, nichts.
-                    PageText current = text;
-                    String currentInput = input;
-                    for (int attempt = 0; attempt < TEXT_CHANGE_ATTEMPTS; attempt++) {
-                        if (!processor.appliesTo(snapshot.key())) {
-                            return;
-                        }
-                        Enrichment previous = store.find(snapshot.key()).stream()
-                                .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
-                                .orElse(null);
-                        if (!force && previous != null && previous.freshness(currentInput, processor.version())
-                                == Enrichment.Freshness.CURRENT) {
-                            return;
-                        }
-                        Enrichment result = compute(processor, snapshot, current, currentInput);
-                        Optional<PageText> now = projection(snapshot);
-                        if (now.isEmpty()) {
-                            return;
-                        }
-                        if (!now.get().inputSha256().equals(currentInput)) {
-                            current = now.get();
-                            currentInput = current.inputSha256();
-                            continue;
-                        }
-                        if (saveWhileApplies(processor, result)) {
-                            store.flush();
-                        }
-                        return;
-                    }
-                } catch (RuntimeException e) {
-                    LOG.log(System.Logger.Level.WARNING, "Hintergrundberechnung {0} scheiterte ({1})",
-                            processor.id(), e.getClass().getName());
+                    computeQueued(processor, snapshot, text, input, force);
                 } finally {
                     queued.remove(id);
                     if (force) {
@@ -616,6 +639,373 @@ public class Enrichments {
             LOG.log(System.Logger.Level.INFO, "Hintergrund der Anreicherungen voll oder beendet; {0} wird später "
                     + "nachgeholt", processor.id());
             return false;
+        }
+    }
+
+    /**
+     * Eine Berechnung der Warteschlange. Ob der Prozessor die Seite noch bearbeitet, prüft erst die Ausführung: Wird
+     * eine Freigabe entzogen, während die Berechnung wartet, geht nichts mehr an den Dienst (ADR 0015). Der Text kann
+     * sich ändern, während die Berechnung wartet oder läuft, ohne neue Payload (etwa ein neues Transkript eines Videos):
+     * Gerechnet und gespeichert wird nur der aktuelle; ist er weggefallen, nichts.
+     */
+    private Outcome computeQueued(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input,
+                                  boolean force) {
+        try {
+            PageText current = text;
+            String currentInput = input;
+            for (int attempt = 0; attempt < TEXT_CHANGE_ATTEMPTS; attempt++) {
+                if (!processor.appliesTo(snapshot.key())) {
+                    return Outcome.SKIPPED;
+                }
+                Enrichment previous = store.find(snapshot.key()).stream()
+                        .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
+                        .orElse(null);
+                if (!force && previous != null && previous.freshness(currentInput, processor.version())
+                        == Enrichment.Freshness.CURRENT) {
+                    return Outcome.SKIPPED;
+                }
+                Enrichment result = compute(processor, snapshot, current, currentInput);
+                Optional<PageText> now = projection(snapshot);
+                if (now.isEmpty()) {
+                    return Outcome.SKIPPED;
+                }
+                if (!now.get().inputSha256().equals(currentInput)) {
+                    current = now.get();
+                    currentInput = current.inputSha256();
+                    continue;
+                }
+                if (!saveWhileApplies(processor, result)) {
+                    return Outcome.SKIPPED;
+                }
+                store.flush();
+                return result.status() == Enrichment.Status.FAILED ? Outcome.FAILED : Outcome.WRITTEN;
+            }
+            return Outcome.SKIPPED;
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Hintergrundberechnung {0} scheiterte ({1})",
+                    processor.id(), e.getClass().getName());
+            return Outcome.FAILED;
+        }
+    }
+
+    /** Was eine Berechnung der Warteschlange ergab, für den Fortschritt des Teils (Codex-Befund #1077). */
+    private enum Outcome {
+        /** gespeichert */
+        WRITTEN,
+        /** als fehlgeschlagen gespeichert oder gescheitert */
+        FAILED,
+        /** nichts zu tun: aktuell, nicht freigegeben, ohne Text */
+        SKIPPED
+    }
+
+    // --- Warteschlange als Hintergrundauftrag (ADR 0025 Nachtrag, Punkt 10) ----------------------------------------
+
+    /** Eine wartende Berechnung: nur Prozessor und Seite, den Snapshot liest der Teil beim Rechnen. */
+    private record Work(String processorId, PageKey key, boolean force) {
+    }
+
+    /** Die wartenden Berechnungen einer Quelle und die Gruppe, deren Teil sie abholt. */
+    private static final class Pending {
+
+        final String groupId;
+        final String sourceId;
+        /** Der Teil, sobald er angelegt ist. */
+        volatile String partId;
+        final Set<Work> work = new java.util.LinkedHashSet<>();
+        /**
+         * Ob der Teil angefangen hat; ab dann nimmt er nichts mehr auf (Abnahme #1077, kein Aushungern), Späteres kommt
+         * in den nächsten Teil hinten in der Kette.
+         */
+        boolean sealed;
+
+        Pending(String groupId, String sourceId) {
+            this.groupId = groupId;
+            this.sourceId = sourceId;
+        }
+
+        /**
+         * Nimmt eine Berechnung auf (Abnahme #1078): Eine erzwungene ersetzt die gleiche ungezwungene an ihrer Stelle,
+         * statt daneben zu stehen; eine ungezwungene neben der gleichen erzwungenen entfällt. Unter {@link #pendingLock}.
+         */
+        void add(Work added) {
+            Work unforced = new Work(added.processorId(), added.key(), false);
+            Work forced = new Work(added.processorId(), added.key(), true);
+            if (!added.force()) {
+                if (!work.contains(forced)) {
+                    work.add(added);
+                }
+                return;
+            }
+            if (!work.contains(unforced)) {
+                work.add(added);
+                return;
+            }
+            List<Work> order = new java.util.ArrayList<>(work);
+            order.set(order.indexOf(unforced), forced);
+            work.clear();
+            work.addAll(order);
+        }
+    }
+
+    /**
+     * Macht die Warteschlange sichtbar (ADR 0025 Nachtrag, Punkt 10): Teile der Art {@value #BACKGROUND_KIND}, je
+     * Quelle einer, der neue Berechnungen aufnimmt, bis er anfängt; danach rechnet er nur, was bei seinem Start
+     * wartete, und Späteres bekommt einen neuen Teil hinten in der Kette, wie beim früheren einen Thread. Ein
+     * angehaltener Teil rechnet beim Fortsetzen weiter; ein abgebrochener verwirft seine wartenden Berechnungen (das
+     * Ereignis des Abbruchs sagt es), ein gescheiterter übergibt sie einem neuen Teil. Die Teile laufen hintereinander
+     * ({@link BackgroundJobs#startBehindOpen}). Kann der Hintergrund nicht laufen (ein Platz), rechnet der bisherige
+     * Weg. Nach einem Neustart ist die Warteschlange leer: Teile von vorher werden abgeschlossen
+     * ({@value #EMPTY_AFTER_RESTART}); fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach.
+     *
+     * @param lookup der gespeicherte Snapshot einer Seite
+     */
+    public void background(BackgroundJobs background, Function<PageKey, Optional<PageSnapshot>> lookup) {
+        Objects.requireNonNull(background, "background");
+        this.lookup = Objects.requireNonNull(lookup, "lookup");
+        background.register(new BackgroundKind(BACKGROUND_KIND, part -> JobTask.blocking(context ->
+                parts.run(() -> closed, () -> {
+                    throw new JobCancelledException(context.jobId());
+                }, () -> drain(part, context)))));
+        // Abnahme #1077: Ein angehaltener Teil von vorher hätte keine Arbeit mehr, hielte aber jeden neuen auf.
+        List<JobStatus> retired = background.retireResumable(BACKGROUND_KIND, EMPTY_AFTER_RESTART);
+        if (!retired.isEmpty()) {
+            LOG.log(System.Logger.Level.INFO, "KI-Anreicherung: {0} Teile von vor dem Neustart abgeschlossen",
+                    retired.size());
+        }
+        this.hosted = background;
+    }
+
+    /**
+     * Reiht eine Berechnung als Hintergrundauftrag ein; startet für die Quelle einen Teil, wenn keiner sie abholt.
+     *
+     * @return {@code false} ohne Hintergrundaufträge, wenn sie nicht laufen können (ein Platz, Abnahme #1077) oder wenn
+     *         der Dienst schließt; dann rechnet der Aufrufer wie bisher
+     */
+    private boolean enqueue(EnrichmentProcessor processor, PageKey key, boolean force) {
+        BackgroundJobs jobs = hosted;
+        if (jobs == null || closed || !jobs.canRun()) {
+            return false;
+        }
+        Work work = new Work(processor.id(), key, force);
+        settleIfEnded(jobs, key.sourceId());
+        String groupId = null;
+        synchronized (pendingLock) {
+            Pending collecting = pending.get(key.sourceId());
+            if (collecting != null) {
+                collecting.add(work);
+            } else {
+                Pending created = new Pending(BackgroundJobs.newGroupId(), key.sourceId());
+                created.work.add(work);
+                pending.put(key.sourceId(), created);
+                groups.put(created.groupId, created);
+                groupId = created.groupId;
+            }
+        }
+        // Meldungen an die Auftragsverwaltung nie unter dem eigenen Riegel.
+        if (groupId != null) {
+            start(jobs, key.sourceId(), groupId);
+        }
+        return true;
+    }
+
+    /** Startet den Teil einer Quelle; nimmt der Hintergrund ihn nicht an, rechnet der bisherige Weg. */
+    private void start(BackgroundJobs jobs, String sourceId, String groupId) {
+        try {
+            BackgroundGroup started = jobs.startBehindOpen(groupId, BACKGROUND_KIND, BACKGROUND_TITLE,
+                    new BackgroundPart.Draft(sourceId, null, Map.of(Jobs.CANCEL_NOTE, CANCEL_NOTE)));
+            synchronized (pendingLock) {
+                Pending current = groups.get(groupId);
+                if (current != null) {
+                    current.partId = started.parts().getFirst().id();
+                }
+            }
+            Subscription[] subscription = new Subscription[1];
+            subscription[0] = jobs.watch(groupId, group -> ended(sourceId, groupId, group, subscription));
+            // Was schon vor dem Anmelden endete, meldet sich nicht mehr von selbst.
+            ended(sourceId, groupId, jobs.group(groupId).orElse(new BackgroundGroup(groupId, null, null, List.of())),
+                    subscription);
+        } catch (RuntimeException e) {
+            // Voll, beendet oder unerwartet (Abnahme #1077): nie eine Quelle ohne Teil zurücklassen.
+            List<Work> left = release(sourceId, groupId);
+            LOG.log(System.Logger.Level.WARNING, "KI-Anreicherung der Quelle {0} nicht als Hintergrundauftrag "
+                    + "gestartet ({1}): {2} Berechnungen auf dem bisherigen Weg", sourceId,
+                    e.getClass().getSimpleName(), left.size());
+            left.forEach(this::fallback);
+        }
+    }
+
+    /**
+     * Nach jeder Änderung der Gruppe: Endet ihr Teil (abgebrochen, gescheitert, fertig, nicht angehalten), holt er die
+     * Quelle nicht mehr ab. Was ein gescheiterter liegen ließ, übernimmt ein neuer Teil.
+     */
+    private void ended(String sourceId, String groupId, BackgroundGroup group, Subscription[] subscription) {
+        if (!group.parts().isEmpty() && (!group.finished() || group.paused())) {
+            return;
+        }
+        // Ohne Teil: gelöscht, wie abgebrochen.
+        JobState state = group.parts().isEmpty() ? JobState.CANCELLED : group.parts().getFirst().state();
+        List<Work> left = release(sourceId, groupId);
+        if (subscription[0] != null) {
+            subscription[0].close();
+        }
+        settle(sourceId, state, left);
+    }
+
+    /**
+     * Vor dem Einreihen: Ist der Teil der Quelle schon beendet, die Meldung darüber aber noch unterwegs (sie kommt
+     * gebündelt), löst er die Quelle hier, damit neue Arbeit einen neuen Teil bekommt statt bei einem beendeten zu
+     * liegen.
+     */
+    private void settleIfEnded(BackgroundJobs jobs, String sourceId) {
+        Pending existing;
+        synchronized (pendingLock) {
+            existing = pending.get(sourceId);
+        }
+        String partId = existing == null ? null : existing.partId;
+        if (partId == null) {
+            return;
+        }
+        Optional<JobStatus> part = jobs.part(partId);
+        if (part.isPresent() && BackgroundJobs.open(part.get())) {
+            return;
+        }
+        settle(sourceId, part.map(JobStatus::state).orElse(JobState.CANCELLED), release(sourceId, existing.groupId));
+    }
+
+    /** Was ein beendeter Teil liegen ließ: nach einem Fehler übernimmt ein neuer Teil, sonst entfällt es. */
+    private void settle(String sourceId, JobState state, List<Work> left) {
+        if (left.isEmpty()) {
+            return;
+        }
+        if (state == JobState.FAILED && !closed) {
+            // Selbstheilend: ein neuer Teil übernimmt, außerhalb der Meldung der Auftragsverwaltung.
+            Thread.ofVirtual().name("enrichment-handover").start(() -> left.forEach(work -> {
+                EnrichmentProcessor processor = processors.get(work.processorId());
+                if (processor != null && !enqueue(processor, work.key(), work.force())) {
+                    fallback(work);
+                }
+            }));
+            return;
+        }
+        LOG.log(System.Logger.Level.INFO, "KI-Anreicherung der Quelle {0} {1}: {2} wartende Berechnungen entfallen",
+                sourceId, state == JobState.CANCELLED ? "abgebrochen" : "beendet", left.size());
+    }
+
+    /** Löst die Gruppe von ihren wartenden Berechnungen, wenn sie noch welche hat; liefert, was noch wartete. */
+    private List<Work> release(String sourceId, String groupId) {
+        synchronized (pendingLock) {
+            Pending current = groups.remove(groupId);
+            if (current == null) {
+                return List.of();
+            }
+            pending.remove(sourceId, current);
+            return List.copyOf(current.work);
+        }
+    }
+
+    /**
+     * Ein Teil: rechnet nacheinander, was bei seinem Start für ihn wartete (Abnahme #1077: Eine Quelle mit stetem
+     * Zufluss hält so keine andere auf). Scheitert eine Berechnung, meldet er das gelb und macht mit der nächsten weiter.
+     */
+    private void drain(BackgroundPart part, JobContext context) {
+        String groupId = part.groupId();
+        Pending mine;
+        int waitingAtStart;
+        synchronized (pendingLock) {
+            mine = groups.get(groupId);
+            if (mine == null) {
+                return;
+            }
+            if (!mine.sealed) {
+                mine.sealed = true;
+                pending.remove(mine.sourceId, mine);
+            }
+            waitingAtStart = mine.work.size();
+        }
+        context.discovered(waitingAtStart);
+        while (true) {
+            if (closed) {
+                // Beim Beenden des Dienstes unterbrochen, nicht fertig.
+                throw new JobCancelledException(context.jobId());
+            }
+            context.checkpoint();
+            Work next;
+            synchronized (pendingLock) {
+                if (groups.get(groupId) != mine) {
+                    return;
+                }
+                java.util.Iterator<Work> waiting = mine.work.iterator();
+                if (!waiting.hasNext()) {
+                    groups.remove(groupId);
+                    return;
+                }
+                next = waiting.next();
+                waiting.remove();
+            }
+            Outcome outcome;
+            try {
+                outcome = computeWork(next);
+            } catch (JobCancelledException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                // Abnahme #1077: Sonst scheiterte der Teil, und jeder Ersatzteil verlöre die nächste Berechnung. Nur
+                // Quelle und Exception-Klasse, die Meldung könnte Text der Seite enthalten.
+                LOG.log(System.Logger.Level.WARNING, "KI-Anreicherung {0} in Quelle {1} gescheitert ({2})",
+                        next.processorId(), mine.sourceId, e.getClass().getName());
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, WORK_FAILED,
+                        "Berechnung " + next.processorId() + " in Quelle " + mine.sourceId + " gescheitert ("
+                                + e.getClass().getSimpleName() + "), weiter mit der nächsten"));
+                outcome = Outcome.FAILED;
+            }
+            switch (outcome) {
+                case WRITTEN -> context.written(1);
+                case FAILED -> context.failed(1);
+                case SKIPPED -> {
+                }
+            }
+            context.processed(1);
+        }
+    }
+
+    /** Rechnet eine Berechnung der Warteschlange mit dem Snapshot von jetzt. */
+    private Outcome computeWork(Work work) {
+        EnrichmentProcessor processor = processors.get(work.processorId());
+        Optional<PageSnapshot> snapshot = processor == null ? Optional.empty() : lookup.apply(work.key());
+        Optional<PageText> text = snapshot.flatMap(this::projection);
+        if (text.isEmpty()) {
+            return Outcome.SKIPPED;
+        }
+        return computeQueued(processor, snapshot.get(), text.get(), text.get().inputSha256(), work.force());
+    }
+
+    /**
+     * Der bisherige Weg für eine Berechnung, die kein Teil abholt. Eine erzwungene, die auch dort keinen Platz findet,
+     * rechnet im aufrufenden Thread wie bisher {@link #recomputeInBackground} (Codex-Befund #1077): Ihr altes Ergebnis
+     * sähe sonst weiter aktuell aus.
+     */
+    private void fallback(Work work) {
+        EnrichmentProcessor processor = processors.get(work.processorId());
+        Optional<PageSnapshot> snapshot = processor == null ? Optional.empty() : lookup.apply(work.key());
+        Optional<PageText> text = snapshot.flatMap(this::projection);
+        if (text.isEmpty() || background == null) {
+            return;
+        }
+        String input = text.get().inputSha256();
+        if (!work.force()) {
+            schedule(processor, snapshot.get(), text.get(), input);
+        } else if (!forcedSlots.tryAcquire() || !schedule(processor, snapshot.get(), text.get(), input, true)) {
+            computeQueued(processor, snapshot.get(), text.get(), input, true);
+        }
+    }
+
+    /**
+     * Beendet die Warteschlange als Hintergrundauftrag: Neue Berechnungen gehen den bisherigen Weg, laufende Teile
+     * enden nach der aktuellen Berechnung; wartet höchstens {@code wait} auf sie. Vor der Ablage schließen.
+     */
+    public void closeBackground(Duration wait) throws InterruptedException {
+        closed = true;
+        if (!parts.await(wait)) {
+            LOG.log(System.Logger.Level.WARNING, "KI-Anreicherung beim Beenden nicht rechtzeitig fertig");
         }
     }
 

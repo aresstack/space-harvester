@@ -5,6 +5,13 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.holdings.HoldingsChanges;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
+import com.aresstack.spaceharvester.application.background.BackgroundKind;
+import com.aresstack.spaceharvester.application.background.BackgroundPart;
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
+import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
+import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.observe.Coalescer;
 import com.aresstack.spaceharvester.application.observe.Listeners;
 import com.aresstack.spaceharvester.application.observe.Subscription;
@@ -48,7 +55,10 @@ import java.util.function.Consumer;
  * eines {@link Coalescer} erfasst. {@link #reconcileOnStart} gleicht beim Start im Hintergrund über den Hash der Payload
  * ab und lädt nur abweichende Payloads; bis er für eine Quelle beendet ist, gilt sie nicht als vollständig
  * ({@link Coverage#reconciling()}), danach kommt eine Meldung für die ganze Quelle. Jede Änderung
- * meldet {@link #subscribe} gebündelt (ADR 0027); niemand fragt in Abständen.
+ * meldet {@link #subscribe} gebündelt (ADR 0027); niemand fragt in Abständen. Mit Hintergrundaufträgen
+ * ({@link #background}) läuft der Abgleich beim Start sichtbar als Art {@value #BACKGROUND_KIND}
+ * „{@value #BACKGROUND_TITLE}“ (ADR 0025 Nachtrag, Punkt 9). Der Abgleich nach einer Änderung eines ganzen Space
+ * und einzelne Seiten bleiben beim Bündler.
  *
  * <p><b>Rechte.</b> Abgefragt wird mit den Rechten des Aufrufers: {@code content} auf die Seite, jede Gegenseite nur
  * mit {@code metadata}; was er nicht sehen darf, fehlt ohne Spur. Die Zähler nennt die {@link Coverage} nur, wenn er die
@@ -68,6 +78,11 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
     /** Mehr Seiten nennt eine Meldung nicht; dann bleibt die Menge leer und gilt für die ganze Quelle. */
     public static final int MAX_PAGES_PER_MESSAGE = 1_000;
 
+    /** Art des Abgleichs einer ganzen Quelle als Hintergrundauftrag. */
+    public static final String BACKGROUND_KIND = "links";
+    /** Titel der Gruppe in der Auftragsliste. */
+    public static final String BACKGROUND_TITLE = "Verweise abgleichen";
+
     private final StoredPages pages;
     private final LinkIndex index;
     private final List<PageLinkExtractor> extractors;
@@ -84,6 +99,8 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
      */
     private final Object work = new Object();
     private volatile boolean closed;
+    /** Hintergrundaufträge für den Abgleich ganzer Quellen; ohne sie auf dem Thread des Bündlers (Dienst). */
+    private volatile BackgroundJobs background;
 
     public PageLinks(StoredPages pages, LinkIndex index, List<PageLinkExtractor> extractors, AccessGuard access) {
         this(pages, index, extractors, access, Coalescer.INTERVAL);
@@ -229,8 +246,39 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
 
     // --- Aktualisieren --------------------------------------------------------------------------------------------
 
-    /** Reiht den Abgleich der Quellen mit dem Cache ein und kehrt sofort zurück. */
+    /**
+     * Gleicht beim Start jede Quelle als Hintergrundauftrag ab (Art {@value #BACKGROUND_KIND}, höchstens ein offener
+     * Teil je Quelle). Der Teil baut seine Arbeit allein aus dem Cache, anhaltbar und abbrechbar; ein angehaltener oder
+     * unterbrochener beginnt beim Fortsetzen von vorn, Aktuelles kostet dann nur den Vergleich der Hashes. Der Abgleich
+     * nach einer Änderung eines ganzen Space oder einer ganzen Quelle bleibt beim Bündler (Abnahme des Architekten):
+     * Er folgt jedem Abgleich und wäre sonst eine Gruppe je Abgleich.
+     */
+    public void background(BackgroundJobs background) {
+        Objects.requireNonNull(background, "background");
+        background.register(BackgroundKind.exclusive(BACKGROUND_KIND,
+                part -> JobTask.blocking(context -> reconcilePart(part.sourceId(), context)), () -> true));
+        this.background = background;
+    }
+
+    /**
+     * Reiht den Abgleich der Quellen mit dem Cache ein und kehrt sofort zurück; mit Hintergrundaufträgen eine Gruppe
+     * mit einem Teil je Quelle, für die nicht schon einer wartet oder läuft, etwa nach einem Neustart fortgesetzt. Die
+     * Teile laufen nacheinander ({@link BackgroundJobs#startInSequenceUnlessRunning}, Abnahme #1073): Ein Teil hält den
+     * Riegel der Erfassung über seine ganze Quelle, ein zweiter liefe sonst nur, um auf ihn zu warten, und belegte dabei
+     * einen Platz.
+     */
     public void reconcileOnStart(Collection<String> sourceIds) {
+        BackgroundJobs hosted = background;
+        if (hosted != null) {
+            try {
+                hosted.startInSequenceUnlessRunning(BACKGROUND_KIND, BACKGROUND_TITLE, List.copyOf(sourceIds).stream()
+                        .map(sourceId -> new BackgroundPart.Draft(sourceId, null)).toList());
+            } catch (JobCapacityExceededException | IllegalStateException e) {
+                LOG.log(System.Logger.Level.INFO, "Abgleich der Verweise beim Start nicht gestartet ({0})",
+                        e.getClass().getSimpleName());
+            }
+            return;
+        }
         for (String sourceId : List.copyOf(sourceIds)) {
             pending.mark(sourceId, Set.of(WHOLE_SOURCE));
         }
@@ -285,7 +333,7 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
         }
         try {
             if (pageIds.contains(WHOLE_SOURCE)) {
-                reconcile(sourceId);
+                reconcile(sourceId, null);
                 return;
             }
             Set<String> changed = new HashSet<>();
@@ -305,16 +353,42 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
     }
 
     /**
+     * Ein Teil der Art {@value #BACKGROUND_KIND}: der Abgleich der Quelle, zusammen mit dem Bündler nacheinander. Auf
+     * andere Teile wartet er nicht hier, sie sind schon hintereinander gereiht ({@link #reconcileOnStart}); der Riegel
+     * hält nur den Bündler und {@link #close} fern.
+     */
+    private void reconcilePart(String sourceId, JobContext context) {
+        synchronized (work) {
+            if (closed) {
+                // Beim Beenden des Dienstes unterbrochen, nicht fertig: setzt nach dem Neustart fort.
+                throw new JobCancelledException(context.jobId());
+            }
+            long known = pages.known(sourceId);
+            if (known > 0) {
+                context.discovered(known);
+            }
+            reconcile(sourceId, context);
+            if (closed) {
+                throw new JobCancelledException(context.jobId());
+            }
+        }
+    }
+
+    /**
      * Gleicht eine Quelle über den Hash der Payload mit dem Cache ab. Ein späterer Abgleich meldet nach jedem Schritt;
      * der erste meldet einmal am Ende für die ganze Quelle, denn erst dann stehen auch die Titel aller bekannten
-     * Seiten fest, an denen Kanten hängen.
+     * Seiten fest, an denen Kanten hängen. Mit {@code context} als Teil eines Hintergrundauftrags: Anhalten und
+     * Abbrechen wirken je Schritt, nachdem er geschrieben und gemeldet ist.
      */
-    private void reconcile(String sourceId) {
+    private void reconcile(String sourceId, JobContext context) {
         boolean first = !reconciled.contains(sourceId);
         Set<String> seen = new HashSet<>();
         int refreshed = 0;
         String after = null;
         while (!closed) {
+            if (context != null) {
+                context.checkpoint();
+            }
             List<StoredPage> batch = pages.pages(sourceId, after, BATCH);
             Set<String> changed = new HashSet<>();
             for (StoredPage stored : batch) {
@@ -339,6 +413,9 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
             index.flush();
             if (!first) {
                 announce(sourceId, changed);
+            }
+            if (context != null) {
+                context.processed(batch.size());
             }
             if (batch.size() < BATCH) {
                 break;

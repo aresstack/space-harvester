@@ -16,7 +16,7 @@ import java.util.Objects;
  * zur gewünschten Tiefe. Heute liefern sie die Beziehungen zwischen Begriffen ({@link #ofRelations}); ein späterer,
  * dauerhafter Wissensgraph im Core (#499) tritt hinter dieselbe Schnittstelle. Die Arbeit läuft außerhalb des EDT.
  */
-interface GraphSource {
+public interface GraphSource {
 
     /** Höchstens so viele Knoten zeigt ein Graph; mehr meldet {@link Graph#truncated()}. */
     int MAX_NODES = 40;
@@ -127,7 +127,7 @@ interface GraphSource {
             this(nodes, edges, truncated, "", null);
         }
 
-        static final Graph EMPTY = new Graph(List.of(), List.of(), false);
+        public static final Graph EMPTY = new Graph(List.of(), List.of(), false);
 
         Node centre() {
             return nodes.isEmpty() ? null : nodes.get(0);
@@ -219,6 +219,17 @@ interface GraphSource {
                         start, analyzerName);
             }
         };
+    }
+
+    /**
+     * Eine fertige Fachsicht des Core als zeichenbarer Graph, wie {@link #ofDomainTerms} sie liefert; auch die
+     * seitenweite ({@code DomainTermGraph.onPages}, Paket W4b) mit {@code start} {@code null}.
+     */
+    static Graph ofDomainView(DomainTermGraph.View view, String start,
+                              java.util.function.Function<String, String> analyzerName) {
+        Objects.requireNonNull(view, "view");
+        Objects.requireNonNull(analyzerName, "analyzerName");
+        return domainGraph(view, start == null ? "" : start, analyzerName);
     }
 
     private static Graph domainGraph(DomainTermGraph.View view, String start,

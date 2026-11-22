@@ -27,7 +27,7 @@ class TabHeaderTest {
 
     private final List<IconButton> buttons = new ArrayList<>();
 
-    /** Eine Leiste wie die des Wissensgraphen: Titel, Abzeichen, Hinweis, Suche, drei Aktionen, Kopieren, sechs Werkzeuge. */
+    /** Eine Leiste wie die des Wissensgraphen: Titel, Abzeichen, Hinweis, Suche, drei Aktionen, Kopieren, sieben Werkzeuge. */
     private TabHeader header() {
         TabHeader header = new TabHeader(HEADING);
         header.badge("Experimentell", Comic.PETROL)
@@ -39,9 +39,10 @@ class TabHeaderTest {
             header.action(button);
         }
         header.copy(() -> "Text");
-        // Wie im Reiter „Graph“ (W5): „Wissensgraph erzeugen“ direkt vor dem Export.
-        for (Glyph glyph : new Glyph[] {Glyph.FILTER, Glyph.FIT, Glyph.TABLE, Glyph.GRAPH_PLUS, Glyph.EXPORT,
-                Glyph.TRASH}) {
+        // Wie im Reiter „Graph“: „Zurück zur Gesamtsicht“ (W4b) vorn, „Wissensgraph erzeugen“ (W5) direkt vor dem
+        // Export.
+        for (Glyph glyph : new Glyph[] {Glyph.OVERVIEW, Glyph.FILTER, Glyph.FIT, Glyph.TABLE, Glyph.GRAPH_PLUS,
+                Glyph.EXPORT, Glyph.TRASH}) {
             IconButton button = new IconButton(glyph, glyph.name());
             buttons.add(button);
             header.tool(button);

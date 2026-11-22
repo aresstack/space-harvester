@@ -159,6 +159,16 @@ public class Jobs implements AutoCloseable {
          */
         boolean holds(JobStatus predecessor);
 
+        /**
+         * Wie {@link #holds(JobStatus)}, mit dem wartenden Nachfolger, etwa damit ein angehaltener Vorgänger nur
+         * Nachfolger derselben Quelle hält (Abnahme #1077). Vorgabe: fragt {@link #holds(JobStatus)}.
+         *
+         * @param follower der wartende Auftrag
+         */
+        default boolean holds(JobStatus predecessor, JobStatus follower) {
+            return holds(predecessor);
+        }
+
         /** Vorgabe: hält, solange der Vorgänger offen oder angehalten ist. */
         PredecessorGate DEFAULT = predecessor -> predecessor != null
                 && (!predecessor.state().terminal() || predecessor.state() == JobState.PAUSED);
@@ -237,6 +247,11 @@ public class Jobs implements AutoCloseable {
      * Hintergrundauftrag vorbei.
      */
     public static final String INTERACTIVE = "jobs.interactive";
+    /**
+     * Angabe: was nach einem Abbruch mit der Arbeit geschieht, etwa „der nächste Start führt den Entzug zu Ende“; das
+     * Ereignis des Abbruchs nennt es (Abnahme #1073), ob der Auftrag wartete oder lief.
+     */
+    public static final String CANCEL_NOTE = "jobs.cancelNote";
 
     /**
      * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)} für einen Klick des Benutzers, etwa
@@ -1425,11 +1440,12 @@ public class Jobs implements AutoCloseable {
                 }
                 // Erst das Ereignis, dann der Zustand: Ein beendeter Auftrag bekommt danach nie mehr ein Ereignis, sonst
                 // könnte eine Löschung dazwischen eines verwaist zurücklassen.
+                String note = job.parameters == null ? null : job.parameters.get(CANCEL_NOTE);
                 job.emit(wasQueued, wasQueued ? JobEvent.Severity.WARNING : JobEvent.Severity.INFO,
                         JobEvent.Category.JOB, COMPONENT, wasQueued ? "CANCELLED" : null,
-                        wasQueued ? (reason == null ? "Auftrag vor dem Start abgebrochen" : reason)
-                                : "Abbruch angefordert", null, null, null,
-                        null);
+                        (wasQueued ? (reason == null ? "Auftrag vor dem Start abgebrochen" : reason)
+                                : "Abbruch angefordert") + (note == null || note.isBlank() ? "" : "; " + note),
+                        null, null, null, null);
                 JobStatus status = job.snapshot();
                 store.save(status);
                 return status;
@@ -1742,6 +1758,7 @@ public class Jobs implements AutoCloseable {
             return false;
         }
         boolean held = false;
+        JobStatus follower = null;
         for (String id : after.split(",")) {
             if (id.isBlank()) {
                 continue;
@@ -1749,7 +1766,10 @@ public class Jobs implements AutoCloseable {
             Job open = this.open.get(id);
             JobStatus predecessor = open != null ? open.snapshot()
                     : predecessors.computeIfAbsent(id, store::find).orElse(null);
-            if (gate.holds(predecessor)) {
+            if (follower == null) {
+                follower = job.snapshot();
+            }
+            if (gate.holds(predecessor, follower)) {
                 held = true;
                 break;
             }
