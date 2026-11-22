@@ -95,6 +95,58 @@ class PodcastControlTest {
     }
 
     @Test
+    void renewingStartsAFreshPodcastAndPlaysItButNotWhileOneIsBeingMade() throws Exception {
+        onEdt(() -> {
+            control = control();
+            control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+            assertTrue(control.renewable());
+
+            control.renew();
+
+            assertEquals(1, source.renews);
+            assertEquals(PodcastOrb.State.WAITING, control.orb().state());
+            assertTrue(control.timelineShown(), "spielt ab, sobald der erste Abschnitt hörbar ist");
+            assertFalse(control.renewable(), "während der Podcast entsteht, geht neu erstellen nicht");
+
+            source.failRenew = true;
+            control.summary(summary("Das Projekt Nordlicht hat ein Glossar."));
+            control.renew();
+            assertEquals(PodcastOrb.State.FAILED, control.orb().state());
+            assertTrue(control.orb().getToolTipText().startsWith("Podcast nicht neu erstellt"));
+        });
+    }
+
+    @Test
+    void aClickOnTheWaitingButtonDuringRenewalKeepsThePodcastSilent() throws Exception {
+        onEdt(() -> {
+            List<Runnable> pending = new java.util.ArrayList<>();
+            control = new PodcastControl<>(() -> source, new SourceUpdatesView.Runner() {
+                @Override
+                public <T> void run(java.util.concurrent.Callable<T> work, java.util.function.Consumer<T> onSuccess,
+                        java.util.function.Consumer<Throwable> onFailure) {
+                    pending.add(() -> new SourceUpdatesViewTest.SyncRunner().run(work, onSuccess, onFailure));
+                }
+            });
+            control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+            while (!pending.isEmpty()) {
+                pending.remove(0).run();
+            }
+
+            control.renew();
+            assertEquals(PodcastOrb.State.WAITING, control.orb().state());
+            control.orb().doClick();
+            assertEquals(PodcastOrb.State.PLAY, control.orb().state());
+            List<Runnable> now = List.copyOf(pending);
+            pending.clear();
+            now.forEach(Runnable::run);
+
+            assertEquals(1, source.renews);
+            assertTrue(pending.isEmpty(), "nach dem Neuerstellen spielt nichts von selbst los");
+            assertEquals(PodcastOrb.State.PLAY, control.orb().state());
+        });
+    }
+
+    @Test
     void anotherSummaryStopsPlaybackAndHidesTheTimeline() throws Exception {
         onEdt(() -> {
             control = control();
@@ -259,7 +311,9 @@ class PodcastControlTest {
 
         boolean available = true;
         boolean failStart;
+        boolean failRenew;
         int starts;
+        int renews;
         List<Podcast.Part> parts = List.of();
         String transcript;
 
@@ -291,6 +345,21 @@ class PodcastControlTest {
                 throw new IllegalStateException("Dienst nicht erreichbar");
             }
             return null;
+        }
+
+        @Override
+        public JobStatus renew(UpdateSummary summary) {
+            renews++;
+            if (failRenew) {
+                throw new IllegalStateException("Der Podcast entsteht gerade");
+            }
+            starts++;
+            return null;
+        }
+
+        @Override
+        public boolean renewable() {
+            return true;
         }
 
         @Override

@@ -263,6 +263,33 @@ public final class UpdatePodcasts {
         return pictures;
     }
 
+    /**
+     * Erstellt den Podcast neu (Angelo 22.11.2026, „Podcast neu erstellen“): Plan, Texte, Audio und Bilder fallen weg,
+     * dann beginnt ein neuer Auftrag. Solange ein Auftrag dieses Podcasts nicht geendet hat (auch nach angefordertem
+     * Abbruch), geht das nicht: er würde mitten im Ablegen seine Grundlage verlieren.
+     *
+     * @throws IllegalStateException ohne Chat-Modell oder Sprachausgabe oder während der Podcast entsteht
+     */
+    public JobStatus renew(AccessContext caller, UpdateSummary summary) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(summary, "summary");
+        if (!available()) {
+            throw new IllegalStateException("Kein Chat-Modell oder keine Sprachausgabe eingerichtet");
+        }
+        String key = key(summary);
+        synchronized (starting) {
+            // Auch ein abgebrochener Auftrag läuft bis zu seinem nächsten Haltepunkt weiter und könnte seinen alten Plan
+            // in die geleerte Ablage zurückschreiben; erst wenn er wirklich endet, darf neu erstellt werden.
+            if (unfinished(jobs, key)) {
+                throw new IllegalStateException("Der Podcast entsteht gerade; neu erstellen geht, sobald er fertig "
+                        + "ist oder abgebrochen wurde");
+            }
+            store.delete(meta -> meta.key().equals(key));
+        }
+        production.notify(key);
+        return start(caller, summary);
+    }
+
     /** Meldet jede abgelegte Stufe dieses Podcasts. */
     public Subscription subscribe(String key, Runnable listener) {
         return production.subscribe(key, listener);
@@ -295,6 +322,16 @@ public final class UpdatePodcasts {
 
     private JobStatus open(String key) {
         return open(jobs, key);
+    }
+
+    /** Ob ein Auftrag dieses Podcasts noch nicht geendet hat, auch einer, dessen Abbruch erst angefordert ist. */
+    static boolean unfinished(Jobs jobs, String key) {
+        for (JobStatus status : jobs.listAll(JobType.UPDATE_PODCAST)) {
+            if (!status.state().terminal() && key.equals(status.parameters().get(PODCAST_PARAMETER))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Der offene Auftrag eines Podcasts, {@code null} ohne. */

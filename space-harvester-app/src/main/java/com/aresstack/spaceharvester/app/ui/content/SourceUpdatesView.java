@@ -325,6 +325,18 @@ final class SourceUpdatesView extends JPanel {
         return podcast;
     }
 
+    /** Ob „Podcast neu erstellen“ gerade geht (für den Eintrag im Menü ▾ oben rechts). */
+    boolean podcastRenewable() {
+        return mode == Mode.SUMMARY && podcast.renewable();
+    }
+
+    /** „Podcast neu erstellen“: Plan, Texte, Audio und Bilder entstehen neu (Angelo 22.11.2026). */
+    void renewPodcast() {
+        if (podcastRenewable()) {
+            podcast.renew();
+        }
+    }
+
     /** Die Werkzeuge für die gemeinsame Kopfzeile. */
     JComponent tools() {
         return tools;
@@ -2337,6 +2349,16 @@ final class SourceUpdatesView extends JPanel {
                         @Override
                         public List<Integer> focus(UpdateSummary summary, int topic) {
                             return workspace.podcastStatements(summary, topic);
+                        }
+
+                        @Override
+                        public JobStatus renew(UpdateSummary summary) {
+                            return workspace.renewPodcast(summary);
+                        }
+
+                        @Override
+                        public boolean renewable() {
+                            return true;
                         }
 
                         @Override

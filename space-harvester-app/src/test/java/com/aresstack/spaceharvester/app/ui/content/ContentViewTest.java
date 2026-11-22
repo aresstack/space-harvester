@@ -451,7 +451,7 @@ class ContentViewTest {
             }
             return entries;
         })).containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)",
-                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)");
+                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)");
         // Neben der Lupe steht der Platz für „Transkript kopieren“; ohne Podcast bleibt der Knopf weg.
         assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
                 view.detail().sourceView().podcast().transcriptCopy(), view.tools()))).isTrue();

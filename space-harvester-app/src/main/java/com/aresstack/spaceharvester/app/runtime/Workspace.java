@@ -3330,6 +3330,14 @@ public final class Workspace {
         return harvester.podcasts().start(caller, summary);
     }
 
+    /**
+     * „Podcast neu erstellen“: Plan, Texte, Audio und Bilder fallen weg, ein neuer Auftrag beginnt; wirft, während der
+     * Podcast entsteht.
+     */
+    public JobStatus renewPodcast(com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().renew(caller, summary);
+    }
+
     /** Meldet jede abgelegte Stufe eines Podcasts (Plan, Abschnitte, Audio), auf einem Thread des Core. */
     public Subscription subscribePodcast(String key, Runnable listener) {
         return harvester.podcasts().subscribe(key, listener);

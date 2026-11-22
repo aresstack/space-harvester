@@ -52,8 +52,9 @@ public final class PodcastWriter {
      * buchstabieren. Die Leseansicht zeigt beim Abspielen ohnehin die Stelle, um die es geht.
      */
     static final String SPOKEN = "Alles wird vorgelesen: keine internen Kennungen und Bezeichner, keine Kürzel aus "
-            + "Buchstaben und Ziffern, keine Projekt-, Auftrags- oder Ticketnummern, Dateinamen, Pfade, Klassen-, "
-            + "Tabellen- oder Benutzernamen. Sagt stattdessen in einfachen Worten, was gemeint ist (etwa „das neue "
+            + "Buchstaben und Ziffern, keine Projekt-, Auftrags- oder Ticketnummern, Aktenzeichen, Dateinamen, Pfade, "
+            + "Klassen-, Tabellen- oder Benutzernamen, keine Fachkürzel, die man buchstabieren müsste. Sagt "
+            + "stattdessen in einfachen Worten, was gemeint ist (etwa „ein Infrastrukturprojekt“ oder „das neue "
             + "Prüfwerkzeug für die Datenbanken“ statt der Kennung); ein gängiges Kürzel höchstens einmal, wenn es "
             + "ohne nicht geht.";
     static final String STYLE = "Du schreibst einen lockeren deutschen Nachrichten-Podcast im Stil von NotebookLM: zwei "
@@ -87,7 +88,8 @@ public final class PodcastWriter {
                 "jede Meldung kommt in genau einem Thema vor. Ordne so, wie es am spannendsten und interessantesten "
                         + "ist, nicht nach Umfang.",
                 "inhaltlich neu ist und was es bedeutet", "Heute schauen wir uns an, was es Neues gibt.",
-                "Nennt im Thema einmal knapp in einem Halbsatz, wo es steht (Space oder Seite), nicht öfter. ", true),
+                "Sagt nie, wo etwas steht: keine Namen von Spaces, Seiten oder Bereichen; die Stelle zeigt der Bericht "
+                        + "auf dem Bildschirm (Angelo 22.11.2026). ", true, false),
         /** Was auf einer Seite steht: das Wesentliche, Unwichtiges darf wegfallen. */
         EXPLAINER(EXPLAINER_STYLE, "Seite zum Erklären", "Teil", "Teile", "Kurz erklärt",
                 "Das erste Thema ist ein kurzer Einstieg: worum es geht und wozu man das braucht.",
@@ -97,7 +99,7 @@ public final class PodcastWriter {
                 "erklären: das Wesentliche verständlich und mit Beispielen aus dem Material, statt alles aufzuzählen",
                 "Heute erklären wir, worum es auf dieser Seite geht.",
                 "Steht etwas auf einer Unterseite, nennt sie einmal knapp; die erklärte Seite selbst nennt ihr nicht "
-                        + "immer wieder. ", false);
+                        + "immer wieder. ", false, true);
 
         final String style;
         final String heading;
@@ -112,9 +114,14 @@ public final class PodcastWriter {
         final String place;
         /** Jede Meldung muss vorkommen (fehlende werden ergänzt). */
         final boolean complete;
+        /**
+         * Ob das Modell erfährt, wo etwas steht (Space, Seite, Elternseiten). Die Neuigkeiten nicht: Verweise und
+         * Space-Namen gehören nicht in den Sprechtext, die Stelle markiert die Leseansicht (Angelo 22.11.2026).
+         */
+        final boolean places;
 
         Format(String style, String heading, String one, String many, String episode, String opening,
-               String coverage, String content, String greeting, String place, boolean complete) {
+               String coverage, String content, String greeting, String place, boolean complete, boolean places) {
             this.style = style;
             this.heading = heading;
             this.one = one;
@@ -126,6 +133,7 @@ public final class PodcastWriter {
             this.greeting = greeting;
             this.place = place;
             this.complete = complete;
+            this.places = places;
         }
     }
 
@@ -159,8 +167,8 @@ public final class PodcastWriter {
             Story story = stories.get(i);
             prompt.append('[').append(i + 1).append("] ").append(story.title()).append(": ")
                     .append(cut(flat(story.text()), MAX_STORY_BRIEF_CHARS));
-            if (!story.place().isEmpty()) {
-                prompt.append(" (").append(story.place()).append(')');
+            if (!material.place(story).isEmpty()) {
+                prompt.append(" (").append(material.place(story)).append(')');
             }
             prompt.append('\n');
         }
@@ -485,8 +493,8 @@ public final class PodcastWriter {
         }
         for (Story story : stories) {
             // Der Ort hat höchstens ein Drittel des Beitrags: lange Seitentitel lassen dem Inhalt immer Platz.
-            String where = story.place().isEmpty() ? ""
-                    : " Zu finden " + cut(story.place(), MAX_TURN_CHARS / 3) + ".";
+            String where = material.place(story).isEmpty() ? ""
+                    : " Zu finden " + cut(material.place(story), MAX_TURN_CHARS / 3) + ".";
             turns.add(new Turn(speaker, cut(spoken(story.title() + ": " + flat(story.text())), MAX_TURN_CHARS
                     - where.length()) + where));
             speaker = speaker.other();
@@ -523,8 +531,14 @@ public final class PodcastWriter {
             this(overview, stories, scope, Format.NEWS);
         }
 
+        /** Die Ebene für das Modell; leer, wenn das Format keine Orte nennt. */
         String describe() {
-            return scope == null || scope.isBlank() ? "" : " (" + scope + ")";
+            return !format.places || scope == null || scope.isBlank() ? "" : " (" + scope + ")";
+        }
+
+        /** Wo die Meldung steht, für das Modell; leer, wenn das Format keine Orte nennt. */
+        String place(Story story) {
+            return format.places ? story.place() : "";
         }
 
         /** Alle Seiten, deren Text in die Meldungen einging, ohne Wiederholung. */
@@ -621,8 +635,8 @@ public final class PodcastWriter {
         }
         for (Story story : stories) {
             text.append(material.format().one).append(" \"").append(story.title()).append("\"");
-            if (!story.place().isEmpty()) {
-                text.append(" – steht ").append(story.place());
+            if (!material.place(story).isEmpty()) {
+                text.append(" – steht ").append(material.place(story));
             }
             text.append(":\n").append(cut(story.text(), MAX_STORY_CHARS)).append('\n');
         }

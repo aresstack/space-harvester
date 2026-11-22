@@ -5356,6 +5356,9 @@ public final class PageDetailPanel extends JPanel {
 
     static final String SAVE_SUMMARY = "Zusammenfassung speichern …";
     static final String SAVE_TRANSCRIPT = "Transkript speichern …";
+    /** Ohne Rückfrage: der Podcast lässt sich jederzeit neu erzeugen (Angelo, UX-Manager 22.11.2026). */
+    static final String RENEW_PODCAST = "Podcast neu erstellen";
+    static final String RENEW_PODCAST_TIP = "Verwirft Texte, Audio und Bilder des Podcasts und erzeugt ihn neu";
 
     /** Auf der Quellenseite in der Leseansicht hat das Dreieck die Speicher-Einträge der Zusammenfassung. */
     private boolean sourceMenuShown() {
@@ -5374,6 +5377,8 @@ public final class PageDetailPanel extends JPanel {
                     this::saveSummary));
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
                     sourceView.podcast().hasTranscript(), () -> saveTranscript(sourceView.podcast())));
+            menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceView.podcastRenewable(),
+                    sourceView::renewPodcast));
             return menu;
         }
         for (ComposerButton action : List.of(bookmark, browse)) {
