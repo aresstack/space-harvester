@@ -160,6 +160,16 @@ class FindingCatalogingTest {
         }
     }
 
+    /**
+     * Ob genau ein anderer Teil als {@code first} wartet, aus einer einzigen Momentaufnahme: Zwei Abfragen nacheinander
+     * sähen zwischen dem Abbrechen des alten und dem Anlegen des neuen Teils eine leere Liste (CI #1112).
+     */
+    private static boolean onlyOtherQueued(com.aresstack.spaceharvester.application.background.BackgroundJobs background,
+                                           String first) {
+        List<com.aresstack.spaceharvester.application.jobs.JobStatus> now = queued(background);
+        return now.size() == 1 && !now.getFirst().id().equals(first);
+    }
+
     private static List<com.aresstack.spaceharvester.application.jobs.JobStatus> queued(
             com.aresstack.spaceharvester.application.background.BackgroundJobs background) {
         return background.parts(FindingCataloging.KIND).stream().filter(part -> part.state()
@@ -251,7 +261,7 @@ class FindingCatalogingTest {
 
             Set<String> taken = cataloging.accept(APP, "wiki", findings(capacity - 2, capacity + 3));
             assertThat(taken).containsExactly("p" + (capacity - 2), "p" + (capacity - 1));
-            await(() -> queued(background).size() == 1 && !queued(background).getFirst().id().equals(first));
+            await(() -> onlyOtherQueued(background, first));
 
             String pages = queued(background).getFirst().parameter(FindingCataloging.PAGES);
             List<String> ids = pages.lines().map(line -> line.substring(0, line.indexOf('\t'))).toList();
@@ -300,7 +310,7 @@ class FindingCatalogingTest {
             // Wieder möglich: Das nächste Angebot nimmt die angenommenen Funde mit.
             refuse.set(false);
             cataloging.offer(APP, "wiki", findings(2, 3));
-            await(() -> queued(background).size() == 1 && !queued(background).getFirst().id().equals(first));
+            await(() -> onlyOtherQueued(background, first));
             assertThat(queued(background).getFirst().parameter(FindingCataloging.PAGES))
                     .isEqualTo("p1\t1\np2\t1\np0\t1");
             assertThat(background.part(first).orElseThrow().state())
@@ -327,7 +337,7 @@ class FindingCatalogingTest {
             // Eine neue Fassung ersetzt die alte im wartenden Teil.
             assertThat(cataloging.accept(APP, "wiki", List.of(new FindingCatalog.Finding("1", "4"))))
                     .containsExactly("1");
-            await(() -> queued(background).size() == 1 && !queued(background).getFirst().id().equals(first));
+            await(() -> onlyOtherQueued(background, first));
             String second = queued(background).getFirst().id();
             assertThat(queued(background).getFirst().parameter(FindingCataloging.PAGES)).isEqualTo("1\t4");
 

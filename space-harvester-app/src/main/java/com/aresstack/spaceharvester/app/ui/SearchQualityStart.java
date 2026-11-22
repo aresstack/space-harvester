@@ -80,6 +80,9 @@ final class SearchQualityStart {
     /** Mit der Suchmethode „Synonyme der Fachbegriffe“ (K5a) messen; vorbelegt wie in den Suchoptionen. */
     final JCheckBox synonyms = Comic.checkBox(SYNONYMS);
     static final String SYNONYMS = "Mit Synonymen der Fachbegriffe messen";
+    /** Mit der Suchmethode „Seiten zu Fachbegriffen“ (W8) messen; vorbelegt wie in den Suchoptionen. */
+    final JCheckBox technicalTerms = Comic.checkBox(TECHNICAL_TERMS);
+    static final String TECHNICAL_TERMS = "Mit Seiten zu Fachbegriffen messen";
     final ComposerButton start = Comic.primary(START, "Fragen stellen; Ergebnis und Bericht im Ausgabeordner unter "
             + "„" + SearchQualityRuns.FOLDER + "“");
     /** Mindestens {@link #WIDTH} breit, so hoch wie der Inhalt (das Band darf wachsen, „Messen“ bleibt sichtbar). */
@@ -122,6 +125,10 @@ final class SearchQualityStart {
         synonyms.setSelected(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
         synonyms.setToolTipText("Wie die Suchmethode „Synonyme der Fachbegriffe“ der Suche: zu bestätigten "
                 + "Fachbegriffen auch ihre vorgeschlagenen Synonyme; der Lauf trägt „mit Synonymen“ im Namen");
+        technicalTerms.setOpaque(false);
+        technicalTerms.setSelected(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().termPages());
+        technicalTerms.setToolTipText("Wie die Suchmethode „Seiten zu Fachbegriffen“ der Suche: Seiten mit "
+                + "Aussagen zu Fachbegriffen der Frage kommen dazu; der Lauf trägt „mit Fachbegriffen“ im Namen");
         start.setEnabled(false);
         start.addActionListener(e -> start());
         status.setOpaque(true);
@@ -148,7 +155,8 @@ final class SearchQualityStart {
         SearchQualityStart[] holder = new SearchQualityStart[1];
         SearchQualityStart start = new SearchQualityStart(output, path -> runtime.workspace().readQualitySuite(path),
                 (suite, previous) -> runtime.workspace().startSearchQuality(suite, previous, output, version,
-                        holder[0].neighbors.isSelected(), holder[0].synonyms.isSelected()),
+                        holder[0].neighbors.isSelected(), holder[0].synonyms.isSelected(),
+                        holder[0].technicalTerms.isSelected()),
                 background, started);
         holder[0] = start;
         JDialog dialog = Dialogs.dialog(parent, TITLE);
@@ -195,6 +203,7 @@ final class SearchQualityStart {
         body.add(neighbors, c);
         c.insets = new Insets(4, 0, 0, 0);
         body.add(synonyms, c);
+        body.add(technicalTerms, c);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         actions.setOpaque(false);
         actions.add(start);

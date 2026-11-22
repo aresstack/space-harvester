@@ -253,7 +253,7 @@ class ServicePlannerTest {
         assertThat(jobs.events(goal)).filteredOn(event -> Jobs.WAITING_FOR.equals(event.code())).singleElement()
                 .satisfies(event -> assertThat(event.message()).isEqualTo("wartet auf „Vorstufe“"));
 
-        background.resumeJob(pre);
+        background.resumeWithoutCaller(pre);
         executor.runAll();
         assertThat(ran).containsExactly("goal:BETA", "pre:ALPHA", "goal:ALPHA");
     }
@@ -482,7 +482,7 @@ class ServicePlannerTest {
         executor.runAll();
         assertThat(ran).isEmpty();
 
-        background.resume(group.groupId());
+        background.resumeGroupWithoutCaller(group.groupId());
         executor.runAll();
         assertThat(ran).containsExactly("pre:ALPHA", "goal:ALPHA");
     }

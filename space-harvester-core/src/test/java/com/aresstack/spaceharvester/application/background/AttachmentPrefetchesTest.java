@@ -120,7 +120,7 @@ class AttachmentPrefetchesTest {
         assertThat(loaded).containsExactly("100/a1");
         assertThat(prefetches.waitingPages("wiki", "DEV")).isEqualTo(1);
 
-        background.resume(groupId);
+        background.resumeGroupWithoutCaller(groupId);
 
         eventually(() -> part(JobState.COMPLETED).isPresent());
         assertThat(loaded).containsExactly("100/a1", "100/a2", "100/a3");
@@ -216,7 +216,7 @@ class AttachmentPrefetchesTest {
         background.pause(groupId);
         gates.get("a2").countDown();
         eventually(() -> part(JobState.PAUSED).isPresent());
-        background.resume(groupId);
+        background.resumeGroupWithoutCaller(groupId);
 
         eventually(() -> part(JobState.FAILED).isPresent());
         assertThat(loaded).containsExactly("100/a2", "100/a3");

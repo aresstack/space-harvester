@@ -186,7 +186,7 @@ class StatementAnalysisBackgroundTest {
     }
 
     @Test
-    void afterARestartAPartOfAnotherOwnerStaysPausedYellowUntilSomeoneResumesItByHand() {
+    void afterARestartAPartOfAnotherOwnerStaysPausedYellowUntilItsOwnerResumesItByHand() {
         tree.space("DEV", "1", "2");
         AccessContext other = AccessContext.technicalClient("andere-anwendung");
         Service before = service(new Steps());
@@ -206,14 +206,19 @@ class StatementAnalysisBackgroundTest {
         assertThat(service(Runnable::run).background().resumeInterrupted()).isEmpty();
 
         // Die allgemeine Auftragsaktion hat keinen Aufrufer: nie mit den Rechten des wiederhergestellten.
-        after.background().resumeJob(part.id());
+        after.background().resumeWithoutCaller(part.id());
         assertThat(after.jobs().status(part.id()).pauseReason()).isEqualTo(PauseReason.RESUME_BY_HAND);
         assertThat(parser.calls).hasValue(0);
 
-        // Von Hand fortgesetzt läuft er mit den Rechten des Fortsetzenden: Seite 2 darf nur er nicht lesen.
+        // Abnahme #1112: Ein anderer Benutzer setzt ihn nicht fort, er bleibt gelb stehen.
         AccessContext resumer = AccessContext.technicalClient("pruefer");
-        deniedFor.put(resumer.jobOwner(), Set.of("2"));
         after.analyses().resume(resumer, StatementAnalysisJobs.groupOf(paused).orElseThrow());
+        assertThat(after.jobs().status(part.id()).pauseReason()).isEqualTo(PauseReason.RESUME_BY_HAND);
+        assertThat(parser.calls).hasValue(0);
+
+        // Von seinem Eigentümer fortgesetzt läuft er mit dessen Rechten: Seite 2 darf nur er nicht lesen.
+        deniedFor.put(other.jobOwner(), Set.of("2"));
+        after.analyses().resume(other, StatementAnalysisJobs.groupOf(paused).orElseThrow());
 
         JobStatus done = after.jobs().status(part.id());
         assertThat(done.state()).isEqualTo(JobState.COMPLETED);
@@ -376,7 +381,7 @@ class StatementAnalysisBackgroundTest {
         steps.runNext(); // DEV: 2 Seiten ≤ 3, analysiert Seite 1, hält an
         assertThat(service.jobs().status(dev).state()).isEqualTo(JobState.PAUSED);
         onFetch = pageId -> { };
-        service.background().resumeJob(dev);
+        service.background().resumeWithoutCaller(dev);
         assertThat(service.jobs().status(dev).progress().discovered()).as("Fortsetzen leert die Zähler").isZero();
         steps.runNext(); // OPS vor dem fortgesetzten DEV
 

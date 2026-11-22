@@ -71,6 +71,10 @@ public final class BackgroundJobs {
     private final String owner;
     private final Map<String, BackgroundKind> kinds = new ConcurrentHashMap<>();
     private final Map<String, Retry> retries = new ConcurrentHashMap<>();
+    /** Was nach dem nächsten {@link #resumeInterrupted()} laufen soll, je einmal. */
+    private final List<Runnable> afterResume = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Ob {@link #resumeInterrupted()} schon lief; dann läuft {@link #afterResume} sofort. */
+    private volatile boolean resumedOnce;
     /** Je Art ein Riegel, damit zwei gleichzeitige Anlässe nicht beide einen Teil starten. */
     private final Map<String, Object> startLocks = new ConcurrentHashMap<>();
 
@@ -130,10 +134,19 @@ public final class BackgroundJobs {
      * @return die abgeschlossenen Teile
      */
     public List<JobStatus> retireResumable(String kind, String reason) {
+        return retireResumable(kind, reason, part -> false);
+    }
+
+    /**
+     * Wie oben, nur ohne die Teile, für die {@code keep} zustimmt: etwa die, deren Arbeit eine Art über den Neustart
+     * hinweg abgelegt hat.
+     */
+    public List<JobStatus> retireResumable(String kind, String reason, java.util.function.Predicate<JobStatus> keep) {
         Objects.requireNonNull(reason, "reason");
+        Objects.requireNonNull(keep, "keep");
         List<JobStatus> retired = new ArrayList<>();
         for (JobStatus part : parts(kind)) {
-            if (part.state() != JobState.PAUSED && part.state() != JobState.FAILED) {
+            if (part.state() != JobState.PAUSED && part.state() != JobState.FAILED || keep.test(part)) {
                 continue;
             }
             try {
@@ -182,13 +195,27 @@ public final class BackgroundJobs {
 
     /**
      * „Nur Fehler neu versuchen“ (↻) an einem beendeten oder angehaltenen Teil einer Art mit {@link Retry}: Die Art legt
-     * ihre gescheiterte Arbeit bereit, der Teil läuft damit im selben Eintrag neu, die Zähler beginnen neu.
+     * ihre gescheiterte Arbeit bereit, der Teil läuft damit im selben Eintrag neu, die Zähler beginnen neu. Ohne
+     * Benutzer und damit ohne Prüfung des Eigentümers: nur für Wege ohne Klick; ein Klick nimmt
+     * {@link #retryFailed(String, com.aresstack.spaceharvester.application.access.AccessContext)}.
      *
      * @throws NothingToRetryException  wenn die Art nichts mehr zu wiederholen hat
      * @throws JobNotResumableException wenn die Art nichts wiederholt oder der Teil noch wartet oder läuft
      */
-    public JobStatus retryFailed(String jobId) {
+    public JobStatus retryFailedWithoutCaller(String jobId) {
+        return retryFailed(jobId, null);
+    }
+
+    /**
+     * Wie {@link #retryFailedWithoutCaller(String)}, für einen Klick von {@code caller}: Den Teil eines Benutzers
+     * wiederholt nur er selbst ({@link #mayContinue}, Abnahme #1112).
+     *
+     * @param caller wer ↻ drückt, {@code null} ohne Prüfung (etwa die Wiederaufnahme nach dem Neustart)
+     * @throws JobNotResumableException auch, wenn der Teil einem anderen Benutzer gehört
+     */
+    public JobStatus retryFailed(String jobId, com.aresstack.spaceharvester.application.access.AccessContext caller) {
         JobStatus current = jobs.status(jobId, owner);
+        requireMayContinue(current, caller);
         if (current.type() != JobType.BACKGROUND) {
             throw new JobNotResumableException(jobId, "kein Hintergrundauftrag");
         }
@@ -609,6 +636,39 @@ public final class BackgroundJobs {
                 || STARTER.stream().anyMatch(key -> part.parameter(key) != null));
     }
 
+    /**
+     * Ob {@code caller} diesen Teil fortsetzen oder wiederholen darf (Abnahme #1112): jeden, den kein Benutzer startete
+     * ({@link #startedByUser}); sonst nur, wenn er dessen Eigentümer ({@code owner}, {@link com.aresstack.spaceharvester.application.access.AccessContext#jobOwner()})
+     * oder Benutzer ({@code principal}) ist. Nennt der Teil keinen von beiden, entscheidet die Art beim Lauf.
+     */
+    public static boolean mayContinue(JobStatus part,
+                                      com.aresstack.spaceharvester.application.access.AccessContext caller) {
+        Objects.requireNonNull(part, "part");
+        Objects.requireNonNull(caller, "caller");
+        if (!startedByUser(part)) {
+            return true;
+        }
+        String starter = part.parameter("owner");
+        if (starter != null) {
+            return starter.equals(caller.jobOwner());
+        }
+        String principal = part.parameter("principal");
+        return principal == null || principal.equals(caller.principal());
+    }
+
+    /**
+     * Lehnt Fortsetzen oder ↻ am Hintergrundteil eines anderen Benutzers ab ({@link #mayContinue}); ohne
+     * {@code caller} (Wege ohne Klick) nichts.
+     *
+     * @throws JobNotResumableException wenn der Teil einem anderen Benutzer gehört
+     */
+    public static void requireMayContinue(JobStatus part,
+                                          com.aresstack.spaceharvester.application.access.AccessContext caller) {
+        if (caller != null && part.type() == JobType.BACKGROUND && !mayContinue(part, caller)) {
+            throw new JobNotResumableException(part.id(), "nur der Benutzer, der ihn startete, setzt ihn fort");
+        }
+    }
+
     /** Ob ein Unterauftrag wartet, angehalten ist oder läuft, also seine Arbeit noch tun wird. */
     public static boolean open(JobStatus part) {
         return isOpen(part.state());
@@ -772,8 +832,24 @@ public final class BackgroundJobs {
         return group(groupId);
     }
 
-    /** Setzt jeden angehaltenen, gescheiterten oder abgebrochenen Unterauftrag der Gruppe fort. */
-    public Optional<BackgroundGroup> resume(String groupId) {
+    /**
+     * Setzt jeden angehaltenen, gescheiterten oder abgebrochenen Unterauftrag der Gruppe fort, für einen Klick von
+     * {@code caller}: Teile eines anderen Benutzers bleiben stehen ({@link #mayContinue}, Abnahme #1112), ihre Nachfolger
+     * auch.
+     */
+    public Optional<BackgroundGroup> resume(String groupId, com.aresstack.spaceharvester.application.access.AccessContext caller) {
+        return resumeGroup(groupId, Objects.requireNonNull(caller, "caller"));
+    }
+
+    /**
+     * Wie {@link #resume(String, com.aresstack.spaceharvester.application.access.AccessContext)}, ohne Benutzer und damit ohne Prüfung des
+     * Eigentümers: nur für Wege ohne Klick, etwa beim Start.
+     */
+    public Optional<BackgroundGroup> resumeGroupWithoutCaller(String groupId) {
+        return resumeGroup(groupId, null);
+    }
+
+    private Optional<BackgroundGroup> resumeGroup(String groupId, com.aresstack.spaceharvester.application.access.AccessContext caller) {
         // Älteste zuerst; lässt sich ein Vorgänger nicht fortsetzen, bleiben seine Nachfolger stehen, statt frei zu
         // werden (Abnahme D1).
         java.util.Set<String> notResumed = new java.util.HashSet<>();
@@ -786,7 +862,7 @@ public final class BackgroundJobs {
                         return;
                     }
                     try {
-                        resumeJob(status.id());
+                        resumeJob(status.id(), caller);
                     } catch (RuntimeException e) {
                         notResumed.add(status.id());
                         LOG.log(System.Logger.Level.WARNING, "Hintergrundauftrag {0} nicht fortgesetzt ({1})",
@@ -800,15 +876,29 @@ public final class BackgroundJobs {
      * Setzt einen Unterauftrag im selben Eintrag fort, mit frisch gebauter Arbeit ({@link BackgroundPart#resumed()}),
      * auch nach einem Neustart; der Weg für „Fortsetzen“ in der Auftragsliste. Für eine Art mit höchstens einem offenen
      * Teil je Quelle und Space ({@link BackgroundKind#exclusive()}) nur, solange kein anderer wartet, angehalten ist oder
-     * läuft (Abnahme #1052), geprüft unter dem Startriegel der Art.
+     * läuft (Abnahme #1052), geprüft unter dem Startriegel der Art. Ohne Benutzer und damit ohne Prüfung des
+     * Eigentümers: nur für Wege ohne Klick, etwa beim Start; ▶ nimmt
+     * {@link #resumeJob(String, com.aresstack.spaceharvester.application.access.AccessContext)}.
      *
      * @throws UnknownJobException          wenn es den Auftrag nicht gibt
      * @throws BackgroundPartOpenException  wenn für eine solche Art schon ein anderer Teil offen ist („läuft schon“)
      * @throws JobNotResumableException     wenn er kein Hintergrundauftrag ist, seine Art fehlt, er wartet, läuft oder
      *                                      fertig ist
      */
-    public JobStatus resumeJob(String jobId) {
+    public JobStatus resumeWithoutCaller(String jobId) {
+        return resumeJob(jobId, null);
+    }
+
+    /**
+     * Wie {@link #resumeWithoutCaller(String)}, für einen Klick von {@code caller}: Den Teil eines Benutzers setzt nur er
+     * selbst fort ({@link #mayContinue}, Abnahme #1112), auch den, der dessen Arbeit nach einem Neustart übernommen hat.
+     *
+     * @param caller wer fortsetzt, {@code null} ohne Prüfung (etwa die Wiederaufnahme nach dem Neustart)
+     * @throws JobNotResumableException auch, wenn der Teil einem anderen Benutzer gehört
+     */
+    public JobStatus resumeJob(String jobId, com.aresstack.spaceharvester.application.access.AccessContext caller) {
         JobStatus current = jobs.status(jobId, owner);
+        requireMayContinue(current, caller);
         if (current.type() != JobType.BACKGROUND) {
             throw new JobNotResumableException(jobId, "kein Hintergrundauftrag");
         }
@@ -899,7 +989,55 @@ public final class BackgroundJobs {
             LOG.log(System.Logger.Level.INFO, "Hintergrund nach dem Neustart fortgesetzt: {0} Aufträge",
                     resumed.size());
         }
+        resumedOnce = true;
+        runAfterResume();
         return resumed;
+    }
+
+    private void runAfterResume() {
+        for (Runnable action : afterResume) {
+            if (afterResume.remove(action)) {
+                try {
+                    action.run();
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Nachlauf nach dem Fortsetzen gescheitert ({0})",
+                            e.getClass().getName());
+                }
+            }
+        }
+    }
+
+    /**
+     * Lässt {@code action} einmal nach dem nächsten {@link #resumeInterrupted()} laufen, wenn beim Start alles
+     * angemeldet ist, auch das offene Löschen von Quellen ({@link Jobs#sourceHold}): etwa für Arbeit, die eine Art nach
+     * dem Neustart neuen Teilen übergibt (Abnahme #1112).
+     */
+    public void afterResume(Runnable action) {
+        afterResume.add(Objects.requireNonNull(action, "action"));
+        if (resumedOnce) {
+            // Schon fortgesetzt: sofort.
+            runAfterResume();
+        }
+    }
+
+    /** Ob das Löschen der Daten der Quelle offen ist ({@link Jobs#sourceHold}). */
+    public boolean withdrawing(String sourceId) {
+        return jobs.sourceHolder(sourceId) != null;
+    }
+
+    /** Die Angaben, mit denen ein Benutzer den Teil gestartet hat ({@link #startedByUser}); sonst leer. */
+    public static Map<String, String> starter(JobStatus part) {
+        Map<String, String> starter = new java.util.LinkedHashMap<>();
+        if (USER.equals(part.parameter(TRIGGER))) {
+            starter.put(TRIGGER, USER);
+        }
+        for (String key : STARTER) {
+            String value = part.parameter(key);
+            if (value != null) {
+                starter.put(key, value);
+            }
+        }
+        return starter;
     }
 
     /**
@@ -942,7 +1080,7 @@ public final class BackgroundJobs {
     }
 
     /** Vom Beenden des Dienstes oder von einer verlorenen Verbindung unterbrochen, nicht vom Benutzer. */
-    static boolean interrupted(JobStatus status) {
+    public static boolean interrupted(JobStatus status) {
         if (status.state() == JobState.FAILED) {
             return status.error() != null && INTERRUPTED.equals(status.error().code());
         }

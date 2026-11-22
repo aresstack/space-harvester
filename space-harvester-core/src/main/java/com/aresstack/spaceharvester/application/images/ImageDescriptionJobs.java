@@ -280,15 +280,20 @@ public final class ImageDescriptionJobs {
     }
 
     /**
-     * Setzt einen Unterauftrag mit den Rechten des Benutzers fort, der ▶ drückt; der Weg der App für „Fortsetzen“.
+     * Setzt einen Unterauftrag mit den Rechten des Benutzers fort, der ▶ drückt; der Weg der App für „Fortsetzen“. Den
+     * Lauf eines anderen Benutzers lehnt er ab ({@link BackgroundJobs#mayContinue}, Abnahme #1112).
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobNotResumableException auch für einen fremden Lauf
      */
     public JobStatus resume(AccessContext caller, String jobId) {
+        Objects.requireNonNull(caller, "caller");
         JobStatus current = jobs.status(jobId, owner);
+        BackgroundJobs.requireMayContinue(current, caller);
         String group = current.parameter(BackgroundJobs.GROUP);
-        if (group != null && caller != null && !AUTOMATIC.equals(current.parameter(TRIGGER))) {
+        if (group != null && !AUTOMATIC.equals(current.parameter(TRIGGER))) {
             callers.put(group, caller);
         }
-        return background.resumeJob(jobId);
+        return background.resumeJob(jobId, caller);
     }
 
     /**
