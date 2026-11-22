@@ -687,6 +687,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param summary       Zeile „Zusammenfassung“ ({@code summary-*}); {@code null}: Standards des Core
      * @param summaryPlan   Zeile „Zusammenfassung – Plan“ ({@code summary-plan-*}); {@code null}: Standards des Core
      * @param podcast       Zeile „Podcast“ ({@code podcast-*}); {@code null}: Standards des Core
+     * @param imagePlan     Zeile „Bildgenerierung – Plan“ ({@code image-plan-*}); {@code null}: Standards des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
@@ -696,7 +697,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                              String stepThinking, Integer parallel, Integer visionMaxTokens, String imageModel,
                              Integer imageMaxTokens, String visionThinking, String imageThinking,
                              AiServiceSettings.ModelUse summary, AiServiceSettings.ModelUse summaryPlan,
-                             AiServiceSettings.ModelUse podcast) {
+                             AiServiceSettings.ModelUse podcast, AiServiceSettings.ModelUse imagePlan) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -706,6 +707,22 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             summary = summary == null ? AiServiceSettings.ModelUse.DEFAULT : summary;
             summaryPlan = summaryPlan == null ? AiServiceSettings.ModelUse.DEFAULT : summaryPlan;
             podcast = podcast == null ? AiServiceSettings.ModelUse.DEFAULT : podcast;
+            imagePlan = imagePlan == null ? AiServiceSettings.ModelUse.DEFAULT : imagePlan;
+        }
+
+        /** Ohne eigene Zeile für den Plan der Schaubilder. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                          Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                          Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
+                          String visionThinking, String imageThinking, AiServiceSettings.ModelUse summary,
+                          AiServiceSettings.ModelUse summaryPlan, AiServiceSettings.ModelUse podcast) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens,
+                    imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan, podcast, null);
         }
 
         /** Ohne eigene Zeilen für Zusammenfassung und Podcast. */
@@ -719,7 +736,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
                     rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
                     contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens,
-                    imageModel, imageMaxTokens, visionThinking, imageThinking, null, null, null);
+                    imageModel, imageMaxTokens, visionThinking, imageThinking, null, null,
+                    (AiServiceSettings.ModelUse) null);
         }
 
         /** Ohne eigenes Nachdenken für Vision-Modell und Bildgenerierung. */

@@ -43,6 +43,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param summaryPlanModel    Modell für den Plan der Zusammenfassung; leer: das Chat-Modell
  * @param summaryPlanMaxTokens Tokenlänge des Plans; leer: 16384
  * @param summaryPlanThinking Nachdenken des Plans; leer: none
+ * @param imagePlanModel      Modell für den Plan eines Schaubilds; leer: das Chat-Modell
+ * @param imagePlanMaxTokens  Tokenlänge des Schaubild-Plans; leer: 16384
+ * @param imagePlanThinking   Nachdenken des Schaubild-Plans; leer: none
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -58,7 +61,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            String visionThinking, String imageThinking, String summaryModel,
                            Integer summaryMaxTokens, String summaryThinking, String podcastModel,
                            Integer podcastMaxTokens, String podcastThinking, String summaryPlanModel,
-                           Integer summaryPlanMaxTokens, String summaryPlanThinking) {
+                           Integer summaryPlanMaxTokens, String summaryPlanThinking, String imagePlanModel,
+                           Integer imagePlanMaxTokens, String imagePlanThinking) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
@@ -67,7 +71,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                 loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
                 visionThinking, imageThinking, new AiServiceSettings.ModelUse(summaryModel, summaryMaxTokens,
                 summaryThinking), new AiServiceSettings.ModelUse(podcastModel, podcastMaxTokens, podcastThinking),
-                new AiServiceSettings.ModelUse(summaryPlanModel, summaryPlanMaxTokens, summaryPlanThinking));
+                new AiServiceSettings.ModelUse(summaryPlanModel, summaryPlanMaxTokens, summaryPlanThinking),
+                new AiServiceSettings.ModelUse(imagePlanModel, imagePlanMaxTokens, imagePlanThinking));
     }
 
     /** Ohne API-Key. */

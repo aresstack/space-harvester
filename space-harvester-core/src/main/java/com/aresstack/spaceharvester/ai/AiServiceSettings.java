@@ -75,6 +75,9 @@ import java.util.Set;
  * @param summaryPlanUse            Modell, Tokenlänge und Nachdenken für den Plan der Update-Zusammenfassung (etwa
  *                                  ein großes Modell); {@code null} heißt Chat-Modell,
  *                                  {@link #DEFAULT_SUMMARY_PLAN_MAX_TOKENS}, Nachdenken aus
+ * @param imagePlanUse              Modell, Tokenlänge und Nachdenken für den Plan eines Schaubilds (Zerlegung in
+ *                                  Teile); {@code null} heißt Chat-Modell, {@link #DEFAULT_IMAGE_PLAN_MAX_TOKENS},
+ *                                  Nachdenken aus
  */
 public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
                                 Integer embeddingDimensions, Duration timeout, String trustBundle,
@@ -84,7 +87,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                                 String stepThinking, Integer parallel, Integer visionMaxTokens,
                                 String imageModel, Integer imageMaxTokens, String visionThinking,
                                 String imageThinking, ModelUse summaryUse, ModelUse podcastUse,
-                                ModelUse summaryPlanUse) {
+                                ModelUse summaryPlanUse, ModelUse imagePlanUse) {
 
     /** Präfix der Properties im Server und in der Konfigurationsdatei der App. */
     public static final String PREFIX = "space-harvester.ai.";
@@ -121,6 +124,9 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final String SUMMARY_PLAN_MODEL = "summary-plan-model";
     public static final String SUMMARY_PLAN_MAX_TOKENS = "summary-plan-max-tokens";
     public static final String SUMMARY_PLAN_THINKING = "summary-plan-thinking";
+    public static final String IMAGE_PLAN_MODEL = "image-plan-model";
+    public static final String IMAGE_PLAN_MAX_TOKENS = "image-plan-max-tokens";
+    public static final String IMAGE_PLAN_THINKING = "image-plan-thinking";
     /** Die Stufen des Nachdenkens, wie sie in der Datei stehen und mit jeder Anfrage mitgehen. */
     public static final List<String> THINKING_LEVELS = List.of("none", "low", "medium", "high");
 
@@ -179,6 +185,9 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     /** Tokenlänge des Plans der Update-Zusammenfassung (Angelo 22.11.2026: Plan gern mit anderem Modell). */
     public static final int DEFAULT_SUMMARY_PLAN_MAX_TOKENS = 16384;
     public static final String DEFAULT_SUMMARY_PLAN_THINKING = "none";
+    /** Tokenlänge des Plans eines Schaubilds (Angelo 22.11.2026: Schaubild planen, dann in Teile zerlegen). */
+    public static final int DEFAULT_IMAGE_PLAN_MAX_TOKENS = 16384;
+    public static final String DEFAULT_IMAGE_PLAN_THINKING = "none";
 
     /**
      * Ein Einsatz eines Modells mit eigener Zeile in den Einstellungen: Modell ({@code null} = Chat-Modell),
@@ -290,6 +299,22 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         summaryUse = summaryUse == null ? ModelUse.DEFAULT : summaryUse;
         podcastUse = podcastUse == null ? ModelUse.DEFAULT : podcastUse;
         summaryPlanUse = summaryPlanUse == null ? ModelUse.DEFAULT : summaryPlanUse;
+        imagePlanUse = imagePlanUse == null ? ModelUse.DEFAULT : imagePlanUse;
+    }
+
+    /** Ohne eigenen Plan der Schaubilder. */
+    public AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
+                             Integer embeddingDimensions, Duration timeout, String trustBundle,
+                             Set<String> externalProcessingSources, String rerankModel, String visionModel,
+                             Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                             Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                             Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
+                             String visionThinking, String imageThinking, ModelUse summaryUse, ModelUse podcastUse,
+                             ModelUse summaryPlanUse) {
+        this(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens,
+                loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel,
+                imageMaxTokens, visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, null);
     }
 
     /** Ohne eigenen Plan der Zusammenfassung. */
@@ -508,7 +533,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 value(properties, IMAGE_MODEL), parsedImageMaxTokens, value(properties, VISION_THINKING),
                 value(properties, IMAGE_THINKING), use(properties, SUMMARY_MODEL, SUMMARY_MAX_TOKENS,
                 SUMMARY_THINKING), use(properties, PODCAST_MODEL, PODCAST_MAX_TOKENS, PODCAST_THINKING),
-                use(properties, SUMMARY_PLAN_MODEL, SUMMARY_PLAN_MAX_TOKENS, SUMMARY_PLAN_THINKING));
+                use(properties, SUMMARY_PLAN_MODEL, SUMMARY_PLAN_MAX_TOKENS, SUMMARY_PLAN_THINKING),
+                use(properties, IMAGE_PLAN_MODEL, IMAGE_PLAN_MAX_TOKENS, IMAGE_PLAN_THINKING));
     }
 
     /** Dieselben Einstellungen für eine andere Art von Dienst. */
@@ -516,7 +542,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderer Kontextlänge bei Ollama; {@code null} heißt Standard. */
@@ -524,7 +551,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderer Ladefrist bei Ollama; {@code null} heißt Standard. */
@@ -533,7 +561,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderer Zahl an Wiederholungen; {@code null} heißt Standard. */
@@ -542,7 +571,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderer Zahl gleichzeitiger Anfragen; {@code null} heißt Standard. */
@@ -551,7 +581,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderem Nachdenken bei Analyseschritten; {@code null} heißt Standard. */
@@ -560,7 +591,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderem Abstand der Frage nach dem Laden; {@code null} heißt Standard. */
@@ -569,7 +601,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /**
@@ -636,7 +669,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, key, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderem Embedding-Modell und anderer Dimension. */
@@ -644,7 +678,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, model, dimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderem Rerank-Modell (#181). */
@@ -652,7 +687,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, model, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderem Vision-Modell (ADR 0021). */
@@ -660,7 +696,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, model, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderem Ausgabelimit des Chat-Modells; {@code null} heißt Standard. */
@@ -668,7 +705,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, maxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /** Dieselben Einstellungen mit anderem Ausgabelimit des Vision-Modells; {@code null} heißt Standard. */
@@ -676,7 +714,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, maxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /**
@@ -687,7 +726,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, model, maxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /**
@@ -698,7 +738,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens, vision,
-                image, summaryUse, podcastUse, summaryPlanUse);
+                image, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /**
@@ -720,7 +761,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chosen, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, limit, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, level, parallel, visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
-                imageThinking, summaryUse, podcastUse, summaryPlanUse);
+                imageThinking, summaryUse, podcastUse, summaryPlanUse,
+                imagePlanUse);
     }
 
     /**
@@ -732,6 +774,11 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return forChat(imageModel, imageMaxTokens, imageThinkingLevel());
     }
 
+    /** Die Einzelteile eines Schaubilds (Zeile „Bildgenerierung – Einzelteile“); dasselbe wie {@link #imageGeneration()}. */
+    public AiServiceSettings imageParts() {
+        return imageGeneration();
+    }
+
     /**
      * Dieselben Einstellungen mit eigener Update-Zusammenfassung und eigenem Podcast; {@code null} heißt jeweils
      * der Standard ({@link ModelUse#DEFAULT}).
@@ -740,7 +787,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
-                visionThinking, imageThinking, summary, podcast, summaryPlanUse);
+                visionThinking, imageThinking, summary, podcast, summaryPlanUse, imagePlanUse);
     }
 
     /**
@@ -754,12 +801,33 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 : summaryUse.thinking());
     }
 
+    /** Dieselben Einstellungen mit eigenem Plan der Schaubilder; {@code null} heißt Standard. */
+    public AiServiceSettings withImagePlan(ModelUse plan) {
+        return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
+                visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, plan);
+    }
+
+    /**
+     * Die Einstellungen für den Plan eines Schaubilds als Chat (Angelo 22.11.2026: „dieselbe Hierarchie … getrennt
+     * einstellbar“): Chat-Modell = {@code image-plan-model}, sonst {@code image-model}, sonst das Chat-Modell, Tokenlänge =
+     * {@code image-plan-max-tokens} (Standard {@value #DEFAULT_IMAGE_PLAN_MAX_TOKENS}), Nachdenken =
+     * {@code image-plan-thinking} (Standard aus). Die Einzelteile zeichnet {@link #imageGeneration()}.
+     */
+    public AiServiceSettings imagePlan() {
+        String model = imagePlanUse.model() == null || imagePlanUse.model().isBlank() ? imageModel : imagePlanUse.model();
+        return forChat(model, imagePlanUse.maxTokens() == null ? DEFAULT_IMAGE_PLAN_MAX_TOKENS
+                : imagePlanUse.maxTokens(), imagePlanUse.thinking() == null ? DEFAULT_IMAGE_PLAN_THINKING
+                : imagePlanUse.thinking());
+    }
+
     /** Dieselben Einstellungen mit eigenem Plan der Zusammenfassung; {@code null} heißt Standard. */
     public AiServiceSettings withSummaryPlan(ModelUse plan) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
-                visionThinking, imageThinking, summaryUse, podcastUse, plan);
+                visionThinking, imageThinking, summaryUse, podcastUse, plan, imagePlanUse);
     }
 
     /**
@@ -816,6 +884,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         parts.add("summaryUse=" + summaryUse);
         parts.add("podcastUse=" + podcastUse);
         parts.add("summaryPlanUse=" + summaryPlanUse);
+        parts.add("imagePlanUse=" + imagePlanUse);
         return "AiServiceSettings[" + String.join(", ", parts) + "]";
     }
 

@@ -208,6 +208,13 @@ final class AiSettingsPanel {
             AiServiceSettings.DEFAULT_PODCAST_MAX_TOKENS);
     final ThinkingBox podcastThinking = new ThinkingBox();
     final ComposerButton pickPodcast = Comic.button("▾", "Modell der Podcast-Texte aus der Liste des Dienstes wählen");
+    /** Plan eines Schaubilds (Zerlegung in Teile); die Teile zeichnet die Zeile „Bildgenerierung – Einzelteile“. */
+    final JTextField imagePlanModel = Comic.field(24);
+    final TokenLengthBox imagePlanMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_IMAGE_PLAN_MAX_TOKENS);
+    final ThinkingBox imagePlanThinking = new ThinkingBox();
+    final ComposerButton pickImagePlan = Comic.button("▾", "Modell für den Plan der Schaubilder aus der Liste des "
+            + "Dienstes wählen");
     final JTextField chunkOverlap = Comic.field(6);
     final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     private final SettingDialogs.Rows modelRows;
@@ -520,6 +527,8 @@ final class AiSettingsPanel {
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Vision-Modell", modelRow(Comic.fieldWithButton(visionModel, pickVision), visionMaxTokens,
                 visionThinking, "Vision-Modell", VISION_MAX_TOKENS_HELP), null);
+        modelRows.add(IMAGE_PLAN_LABEL, modelRow(Comic.fieldWithButton(imagePlanModel, pickImagePlan),
+                imagePlanMaxTokens, imagePlanThinking, IMAGE_PLAN_LABEL, IMAGE_PLAN_HELP), null);
         modelRows.add(IMAGE_LABEL, modelRow(Comic.fieldWithButton(imageModel, pickImage), imageMaxTokens,
                 imageThinking, IMAGE_LABEL, IMAGE_HELP), null);
         modelRows.add(SUMMARY_PLAN_LABEL, modelRow(Comic.fieldWithButton(summaryPlanModel, pickSummaryPlan),
@@ -616,6 +625,7 @@ final class AiSettingsPanel {
         pickSummary.setEnabled(false);
         pickSummaryPlan.setEnabled(false);
         pickPodcast.setEnabled(false);
+        pickImagePlan.setEnabled(false);
         loadModels.addActionListener(e -> loadModels());
         pickSimplify.addActionListener(e -> pick(pickSimplify, simplifyModel, AiModel.CHAT));
         pickCheck.addActionListener(e -> pick(pickCheck, checkModel, AiModel.CHAT));
@@ -628,6 +638,7 @@ final class AiSettingsPanel {
         pickSummary.addActionListener(e -> pick(pickSummary, summaryModel, AiModel.CHAT));
         pickSummaryPlan.addActionListener(e -> pick(pickSummaryPlan, summaryPlanModel, AiModel.CHAT));
         pickPodcast.addActionListener(e -> pick(pickPodcast, podcastModel, AiModel.CHAT));
+        pickImagePlan.addActionListener(e -> pick(pickImagePlan, imagePlanModel, AiModel.CHAT));
         released.setOpaque(false);
         released.setLayout(new javax.swing.BoxLayout(released, javax.swing.BoxLayout.Y_AXIS));
         rows.add("An den Dienst senden", released, "Nur freigegebene Quellen bekommen Embeddings und Reranking");
@@ -685,6 +696,7 @@ final class AiSettingsPanel {
         showUse(current.summary(), summaryModel, summaryMaxTokens, summaryThinking);
         showUse(current.summaryPlan(), summaryPlanModel, summaryPlanMaxTokens, summaryPlanThinking);
         showUse(current.podcast(), podcastModel, podcastMaxTokens, podcastThinking);
+        showUse(current.imagePlan(), imagePlanModel, imagePlanMaxTokens, imagePlanThinking);
         loadPollInterval.setText(current.loadPollInterval() == null ? "" : current.loadPollInterval());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
@@ -997,7 +1009,8 @@ final class AiSettingsPanel {
                 imageMaxTokens.text(), visionThinking.level(), imageThinking.level(),
                 new AiDraft.Use(summaryModel.getText(), summaryMaxTokens.text(), summaryThinking.level()),
                 new AiDraft.Use(summaryPlanModel.getText(), summaryPlanMaxTokens.text(), summaryPlanThinking.level()),
-                new AiDraft.Use(podcastModel.getText(), podcastMaxTokens.text(), podcastThinking.level()));
+                new AiDraft.Use(podcastModel.getText(), podcastMaxTokens.text(), podcastThinking.level()),
+                new AiDraft.Use(imagePlanModel.getText(), imagePlanMaxTokens.text(), imagePlanThinking.level()));
     }
 
     /** Zeigt eine eigene Modellzeile aus der Datei. */
@@ -1649,13 +1662,19 @@ final class AiSettingsPanel {
             + "Bilder) und die Folien eines Videos; leer: keine Bildbeschreibung.\n\n" + TOKENS_HELP_TAIL
             + "\n\nStandard " + AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS + ". Schlüssel in der Konfigurationsdatei: "
             + "space-harvester.ai.vision-model, .vision-max-tokens und .vision-thinking (leer: wie Text-Modell).";
-    static final String IMAGE_LABEL = "Bildgenerierung";
+    static final String IMAGE_LABEL = "Bildgenerierung – Einzelteile";
+    static final String IMAGE_PLAN_LABEL = "Bildgenerierung – Plan";
     static final String IMAGE_HELP = "Dieses Modell zeichnet Bilder und Schaubilder als SVG, etwa für den Podcast. "
             + "Ohne eigenes Modell gilt das Text-Modell.\n\n" + TOKENS_HELP_TAIL + " Ein SVG-Schaubild ist lang; "
             + "deshalb ist der Standard hier höher (" + AiServiceSettings.DEFAULT_IMAGE_MAX_TOKENS + "), sonst bricht "
             + "die Antwort meist mittendrin ab.\n\nGilt ohne Neustart. Schlüssel in der Konfigurationsdatei: "
             + "space-harvester.ai.image-model, .image-max-tokens und .image-thinking (leer: wie Text-Modell).";
 
+    static final String IMAGE_PLAN_HELP = "Dieses Modell plant ein Schaubild: welche Teile es hat und wie sie "
+            + "angeordnet sind. Die Teile zeichnet danach die Zeile „Bildgenerierung – Einzelteile“. Leer: das "
+            + "Text-Modell.\n\n" + TOKENS_HELP_TAIL + "\n\nStandard " + AiServiceSettings.DEFAULT_IMAGE_PLAN_MAX_TOKENS
+            + " Tokens, denkt nicht. Schlüssel in der Konfigurationsdatei: space-harvester.ai.image-plan-model, "
+            + ".image-plan-max-tokens und .image-plan-thinking.";
     static final String SUMMARY_PLAN_LABEL = "Zusammenfassung – Plan";
     static final String SUMMARY_PLAN_HELP = "Dieses Modell plant die Update-Zusammenfassung: welche Themen es gibt und "
             + "welche Seiten dazugehören. Dafür passt ein großes Modell (etwa gpt-oss 120b). Leer: das Text-Modell.\n\n"
@@ -1885,6 +1904,7 @@ final class AiSettingsPanel {
         pickSummary.setEnabled(false);
         pickSummaryPlan.setEnabled(false);
         pickPodcast.setEnabled(false);
+        pickImagePlan.setEnabled(false);
     }
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
@@ -2007,6 +2027,7 @@ final class AiSettingsPanel {
         pickSummary.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickSummaryPlan.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickPodcast.setEnabled(!choices(AiModel.CHAT).isEmpty());
+        pickImagePlan.setEnabled(!choices(AiModel.CHAT).isEmpty());
         long embeddings = this.loaded.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
         if (this.loaded.isEmpty()) {
             modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");

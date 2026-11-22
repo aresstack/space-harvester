@@ -127,6 +127,27 @@ class ChatStepModelTest {
     }
 
     @Test
+    void theDiagramPlanHasItsOwnLineAndThePartsKeepTheImageLine() {
+        AiServiceSettings thinking = AI.withStepThinking("high");
+        assertThat(thinking.imagePlan().chatModel()).isEqualTo("chat-model");
+        assertThat(thinking.imagePlan().chatMaxTokens()).isEqualTo(AiServiceSettings.DEFAULT_IMAGE_PLAN_MAX_TOKENS)
+                .isEqualTo(16384);
+        assertThat(thinking.imagePlan().stepThinking()).as("Plan denkt standardmäßig nicht").isEqualTo("none");
+        assertThat(thinking.imageParts()).isEqualTo(thinking.imageGeneration());
+
+        AiServiceSettings images = AI.withImageGeneration("bild-modell", 32768);
+        assertThat(images.imagePlan().chatModel()).as("ohne eigenes Plan-Modell das Bild-Modell")
+                .isEqualTo("bild-modell");
+        assertThat(images.imagePlan().chatMaxTokens()).isEqualTo(16384);
+        AiServiceSettings own = images.withImagePlan(new AiServiceSettings.ModelUse("plan-modell", 8192, "LOW"));
+        assertThat(own.imagePlan().chatModel()).isEqualTo("plan-modell");
+        assertThat(own.imagePlan().chatMaxTokens()).isEqualTo(8192);
+        assertThat(own.imagePlan().stepThinking()).isEqualTo("low");
+        assertThat(own.imageParts().chatModel()).isEqualTo("bild-modell");
+        assertThat(own.imageParts().chatMaxTokens()).isEqualTo(32768);
+    }
+
+    @Test
     void theSummaryModelUsesItsOwnLineAndThePlanItsPlanLine() {
         AiServiceSettings own = AI.withUses(new AiServiceSettings.ModelUse("teile-modell", null, null), null)
                 .withSummaryPlan(new AiServiceSettings.ModelUse("plan-modell", null, null));

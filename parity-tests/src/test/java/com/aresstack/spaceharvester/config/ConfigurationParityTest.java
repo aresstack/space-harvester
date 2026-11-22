@@ -81,6 +81,9 @@ class ConfigurationParityTest {
                 podcast-model: podcast-model
                 podcast-max-tokens: 32768
                 podcast-thinking: none
+                image-plan-model: schaubild-plan
+                image-plan-max-tokens: 8192
+                image-plan-thinking: medium
                 external-processing-sources:
                   - confluence
               cache:
@@ -217,6 +220,8 @@ class ConfigurationParityTest {
                 .isEqualTo(new AiServiceSettings.ModelUse("plan-model", 8192, "high"));
         assertThat(appAi.podcast()).isEqualTo(ai.podcastUse())
                 .isEqualTo(new AiServiceSettings.ModelUse("podcast-model", 32768, "none"));
+        assertThat(appAi.imagePlan()).isEqualTo(ai.imagePlanUse())
+                .isEqualTo(new AiServiceSettings.ModelUse("schaubild-plan", 8192, "medium"));
         assertThat(appAi.externalProcessingSources()).containsExactlyInAnyOrderElementsOf(
                 ai.externalProcessingSources());
         assertThat(appAi.externalProcessingSources()).isEqualTo(List.of("confluence"));

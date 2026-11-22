@@ -50,7 +50,8 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.SUMMARY_THINKING, "ai." + AiServiceSettings.PODCAST_MODEL,
             "ai." + AiServiceSettings.PODCAST_MAX_TOKENS, "ai." + AiServiceSettings.PODCAST_THINKING,
             "ai." + AiServiceSettings.SUMMARY_PLAN_MODEL, "ai." + AiServiceSettings.SUMMARY_PLAN_MAX_TOKENS,
-            "ai." + AiServiceSettings.SUMMARY_PLAN_THINKING,
+            "ai." + AiServiceSettings.SUMMARY_PLAN_THINKING, "ai." + AiServiceSettings.IMAGE_PLAN_MODEL,
+            "ai." + AiServiceSettings.IMAGE_PLAN_MAX_TOKENS, "ai." + AiServiceSettings.IMAGE_PLAN_THINKING,
             SearchSettings.SEMANTIC, SearchSettings.RERANK, SearchSettings.PREFETCH_HITS,
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
@@ -134,6 +135,9 @@ public final class ConfigurationOverlay {
         put(properties, "ai." + AiServiceSettings.SUMMARY_PLAN_MODEL, ai.summaryPlanUse().model());
         put(properties, "ai." + AiServiceSettings.SUMMARY_PLAN_MAX_TOKENS, ai.summaryPlanUse().maxTokens());
         put(properties, "ai." + AiServiceSettings.SUMMARY_PLAN_THINKING, ai.summaryPlanUse().thinking());
+        put(properties, "ai." + AiServiceSettings.IMAGE_PLAN_MODEL, ai.imagePlanUse().model());
+        put(properties, "ai." + AiServiceSettings.IMAGE_PLAN_MAX_TOKENS, ai.imagePlanUse().maxTokens());
+        put(properties, "ai." + AiServiceSettings.IMAGE_PLAN_THINKING, ai.imagePlanUse().thinking());
         SearchSettings search = configuration.search();
         put(properties, SearchSettings.SEMANTIC, search.semantic());
         put(properties, SearchSettings.RERANK, search.rerank());

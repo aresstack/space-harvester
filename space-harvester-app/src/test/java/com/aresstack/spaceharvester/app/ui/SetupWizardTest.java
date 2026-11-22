@@ -472,7 +472,9 @@ class SetupWizardTest {
                     java.util.List.<java.awt.Component>of(panel.summaryPlanModel, panel.summaryPlanMaxTokens,
                             panel.summaryPlanThinking),
                     java.util.List.<java.awt.Component>of(panel.podcastModel, panel.podcastMaxTokens,
-                            panel.podcastThinking))) {
+                            panel.podcastThinking),
+                    java.util.List.<java.awt.Component>of(panel.imagePlanModel, panel.imagePlanMaxTokens,
+                            panel.imagePlanThinking))) {
                 java.awt.Container line = row.get(0).getParent().getParent();
                 assertThat(SwingUtilities.isDescendingFrom(row.get(1), line)).isTrue();
                 assertThat(SwingUtilities.isDescendingFrom(row.get(2), line)).isTrue();
