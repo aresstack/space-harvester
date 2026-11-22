@@ -139,9 +139,17 @@ class FillJobsTest {
         failing.add("2");
         BackgroundFill fill = fill();
         fillJobs(fill);
+        // Auf die Meldung des Teils warten, nicht im Takt nachsehen (Architekt, CI #1101).
+        CountDownLatch failed = new CountDownLatch(1);
+        open.add(background.subscribe(FillJobs.KIND, status -> {
+            if (status.state() == JobState.FAILED) {
+                failed.countDown();
+            }
+        }, removed -> {
+        })::close);
         fill.start();
 
-        eventually(() -> part(JobState.FAILED).isPresent());
+        assertThat(failed.await(30, TimeUnit.SECONDS)).as("Teil gescheitert gemeldet").isTrue();
 
         JobStatus done = part(JobState.FAILED).orElseThrow();
         assertThat(background.parts(FillJobs.KIND)).hasSize(1);

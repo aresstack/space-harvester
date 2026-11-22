@@ -1371,7 +1371,9 @@ public final class ActivitiesView implements View {
                         : "Fortsetzen · holt nur, was noch fehlt";
             }
             case CANCEL -> job.pauseRequested() ? "Abbrechen · statt nur anzuhalten" : "Abbrechen";
-            case RETRY_FAILED -> "Nur Fehler neu versuchen · die gescheiterten Seiten gezielt nachladen, "
+            case RETRY_FAILED -> job.type() == JobType.BACKGROUND
+                    ? "Nur Fehler neu versuchen · das Gescheiterte noch einmal, im selben Eintrag"
+                    : "Nur Fehler neu versuchen · die gescheiterten Seiten gezielt nachladen, "
                     + "ohne neue Inventur, im selben Eintrag";
             case FORCE_REFRESH -> "Neu erzwingen · alles neu von der Quelle abrufen, auch Unverändertes; "
                     + "der bisherige Stand bleibt, bis der neue fertig ist";
@@ -1454,7 +1456,11 @@ public final class ActivitiesView implements View {
             }
             poll();
         }, error -> {
-            if (error instanceof com.aresstack.spaceharvester.application.background.BackgroundPartOpenException) {
+            if (error instanceof com.aresstack.spaceharvester.application.background.NothingToRetryException) {
+                // Kein Fehler: Das Gescheiterte ist schon wiederholt oder weggefallen.
+                feedback.warning("Nichts zu wiederholen",
+                        "Für diesen Auftrag ist nichts Gescheitertes mehr offen.");
+            } else if (error instanceof com.aresstack.spaceharvester.application.background.BackgroundPartOpenException) {
                 // Abnahme #1052: Ein anderer Teil für diesen Space erledigt die Arbeit mit, das ist kein Fehler.
                 feedback.warning("Läuft schon",
                         com.aresstack.spaceharvester.application.background.BackgroundPartOpenException.REASON);
@@ -1773,8 +1779,11 @@ public final class ActivitiesView implements View {
     static String progressText(JobStatus status) {
         JobProgress p = status.progress();
         boolean fetching = status.type() == JobType.EXPORT && !status.state().terminal() && p.written() == 0;
+        // Gescheitertes zählt nicht als erledigt, aber nur, wo beide Zähler dieselbe Einheit zählen (Codex #1103): Eine
+        // Anreicherung zählt Abschnitte als erledigt, Fehlschläge aber je Prozessor.
+        boolean sameUnit = status.type() != JobType.EXPORT && status.type() != JobType.ENRICHMENT;
         long done = status.type() == JobType.EXPORT && !fetching ? p.written()
-                : Math.max(0, p.processed() - (status.type() == JobType.EXPORT ? 0 : p.failed()));
+                : Math.max(0, p.processed() - (sameUnit ? p.failed() : 0));
         long skipped = skipped(status);
         return done + "/" + p.discovered() + (skipped > 0 ? " · " + skipped + " ausgelassen" : "")
                 + (p.failed() > 0 ? " · " + p.failed() + " Fehler" : "");

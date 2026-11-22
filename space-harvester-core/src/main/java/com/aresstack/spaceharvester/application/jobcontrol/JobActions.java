@@ -140,6 +140,14 @@ public class JobActions {
             case CANCEL -> sync ? syncs.cancel(jobId, owner).status() : jobs.cancel(jobId, owner);
             case RESUME -> resume(current, owner, access);
             case RETRY_FAILED -> {
+                if (current.type() == JobType.BACKGROUND) {
+                    // Die Art legt ihre gescheiterte Arbeit bereit, der Teil läuft im selben Eintrag neu.
+                    com.aresstack.spaceharvester.application.background.BackgroundJobs bound = background;
+                    if (bound == null) {
+                        throw new JobNotResumableException(jobId, "kein Hintergrund angebunden");
+                    }
+                    yield bound.retryFailed(jobId);
+                }
                 if (state instanceof JobLifecycleState.Running || state instanceof JobLifecycleState.Preparing) {
                     // Während des Laufs: der Durchgang hält an und läuft sofort im selben Eintrag neu (Angelo
                     // 12.11.2026), Mehrfachdrücken löst nur einen Neustart aus.
