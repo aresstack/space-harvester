@@ -24,6 +24,14 @@ public final class ConnectionChecks {
     public static final String TITLE = "Verbindung prüfen";
     /** Fehlercode, wenn die Prüfung scheiterte. */
     public static final String FAILED = "connection-failed";
+    /** Info beim Abschließen eines Teils von vor dem Neustart. */
+    static final String AFTER_RESTART = "Prüfung von vor dem Neustart";
+    /**
+     * Beendet den Teil auf einem eigenen Thread: {@link Check#finish} kommt etwa vom EDT, und das Ende eines Auftrags
+     * schreibt in die Auftragsablage.
+     */
+    private static final java.util.concurrent.Executor FINISHER = task -> Thread.ofVirtual()
+            .name("verbindung-pruefen").start(task);
 
     private final BackgroundJobs background;
     private final Map<String, CompletableFuture<Void>> pending = new ConcurrentHashMap<>();
@@ -58,6 +66,8 @@ public final class ConnectionChecks {
         // Eigene Spur (Abnahme #1091): Der Teil rechnet nichts und belegt keinen Platz, sonst erschiene er bei vollen
         // Plätzen erst nach der Prüfung.
         background.register(new BackgroundKind(KIND, this::work, () -> false, false, true));
+        // Teile von vor dem Neustart haben keine Prüfung mehr: abschließen statt als gescheitert stehen lassen.
+        background.retireResumable(KIND, AFTER_RESTART);
     }
 
     /**
@@ -87,6 +97,11 @@ public final class ConnectionChecks {
         });
     }
 
+    private static Throwable unwrap(Throwable failure) {
+        return failure instanceof java.util.concurrent.CompletionException && failure.getCause() != null
+                ? failure.getCause() : failure;
+    }
+
     private JobTask work(BackgroundPart part) {
         return context -> {
             CompletableFuture<Void> done = pending.remove(part.groupId());
@@ -96,15 +111,25 @@ public final class ConnectionChecks {
                 context.processed(1);
                 return CompletableFuture.completedFuture(null);
             }
-            context.whenStopRequested(() -> done.complete(null));
-            return done.whenComplete((ignored, failure) -> {
-                context.processed(1);
-                if (failure == null) {
-                    context.written(1);
-                } else {
-                    context.failed(1);
+            // Abbrechen oder Anhalten beendet nur die Anzeige, die Prüfung läuft zu Ende; der Teil endet dann als
+            // abgebrochen bzw. angehalten, nicht grün (wie FillJobs).
+            context.whenStopRequested(() -> {
+                try {
+                    context.checkpoint();
+                    done.complete(null);
+                } catch (RuntimeException e) {
+                    done.completeExceptionally(e);
                 }
             });
+            return done.whenCompleteAsync((ignored, failure) -> {
+                if (failure == null) {
+                    context.processed(1);
+                    context.written(1);
+                } else if (unwrap(failure) instanceof JobFailedException) {
+                    context.processed(1);
+                    context.failed(1);
+                }
+            }, FINISHER);
         };
     }
 }

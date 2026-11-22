@@ -589,9 +589,10 @@ wird automatisch verwaltet.
     grün oder rot mit Grund (`connection-failed`) endet; endet sie vorher, entsteht kein Teil. Der Grund ist ein Code
     (`SourceAccessException.Reason`, sonst die Klasse), nie die Nachricht. Nur diese Art läuft zusätzlich auf eigener
     Spur (`Jobs.OWN_LANE`, `BackgroundKind.OWN_LANE_KINDS`): Der Teil rechnet nichts, die Prüfung hat ihre eigene
-    Zeitgrenze, und so erscheint er auch bei belegten Plätzen während der Prüfung. Abbrechen blendet den Teil nur aus,
-    die Prüfung selbst läuft zu Ende. Ein Teil von vor einem Neustart endet sofort. Mit nur einem Platz gilt der
-    bisherige Weg.
+    Zeitgrenze, und so erscheint er auch bei belegten Plätzen während der Prüfung. Abbrechen oder Anhalten beendet nur
+    den Teil (abgebrochen bzw. angehalten, nicht grün), die Prüfung selbst läuft zu Ende. Teile von vor einem Neustart
+    werden beim Start abgeschlossen (`BackgroundJobs#retireResumable`). Das Ende des Teils läuft nie auf dem EDT. Mit
+    nur einem Platz gilt der bisherige Weg.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

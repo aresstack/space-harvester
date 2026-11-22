@@ -130,6 +130,52 @@ class ConnectionChecksTest {
     }
 
     @Test
+    void cancellingThePartEndsItCancelledNotGreen() throws Exception {
+        ConnectionChecks.Check check = checks.begin("wiki").orElseThrow();
+        eventually(() -> part().map(p -> p.state() == JobState.RUNNING).orElse(false));
+
+        jobs.cancel(part().orElseThrow().id(), "app");
+
+        eventually(() -> part().orElseThrow().state() == JobState.CANCELLED);
+        assertThat(part().orElseThrow().progress().written()).isZero();
+        // Die Prüfung läuft zu Ende; ihr Ergebnis ändert am abgebrochenen Teil nichts mehr.
+        check.finish("UNAVAILABLE");
+        TimeUnit.MILLISECONDS.sleep(100);
+        assertThat(part().orElseThrow().state()).isEqualTo(JobState.CANCELLED);
+    }
+
+    @Test
+    void pausingThePartEndsItPaused() throws Exception {
+        checks.begin("wiki").orElseThrow();
+        eventually(() -> part().map(p -> p.state() == JobState.RUNNING).orElse(false));
+
+        jobs.pause(part().orElseThrow().id(), "app");
+
+        eventually(() -> part().orElseThrow().state() == JobState.PAUSED);
+    }
+
+    @Test
+    void anInterruptedPartFromBeforeARestartIsClosedAtStart() throws Exception {
+        InMemoryJobStore kept = new InMemoryJobStore();
+        Jobs before = new Jobs(kept, executor, new JobLimits(2, 10, Duration.ofHours(1)), Clock.systemUTC());
+        BackgroundJobs first = new BackgroundJobs(before, "app");
+        new ConnectionChecks(first).begin("wiki").orElseThrow();
+        eventually(() -> first.parts(ConnectionChecks.KIND).stream().anyMatch(p -> p.state() == JobState.RUNNING));
+        before.close();
+        eventually(() -> kept.all().stream().allMatch(status -> status.state().terminal()));
+
+        Jobs after = new Jobs(kept, executor, new JobLimits(2, 10, Duration.ofHours(1)), Clock.systemUTC());
+        try {
+            BackgroundJobs second = new BackgroundJobs(after, "app");
+            new ConnectionChecks(second);
+            assertThat(second.parts(ConnectionChecks.KIND)).extracting(JobStatus::state)
+                    .containsExactly(JobState.CANCELLED);
+        } finally {
+            after.close();
+        }
+    }
+
+    @Test
     void withOnlyOnePlaceNoPartIsCreated() {
         Jobs single = new Jobs(new InMemoryJobStore(), executor, new JobLimits(1, 10, Duration.ofHours(1)),
                 Clock.systemUTC());
