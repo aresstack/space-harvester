@@ -128,6 +128,12 @@ public enum JobType {
      */
     UPDATE_PODCAST,
     /**
+     * „Lese-Ansichten vorladen“ (Fundstelle 15, Abnahme #1080): beim Aufklappen eines Knotens die Lese-Ansichten der
+     * Kinder, ein Klick ({@link Jobs#submitInteractive}), nie hinter Hintergrund ({@code application.reading.ReadingViews}).
+     * Den Aufrufer hält nur der Speicher; nach einem Neustart wird nichts fortgesetzt, das Aufklappen lädt selbst.
+     */
+    READING_PREFETCH,
+    /**
      * Hintergrundauftrag (Angelo 21.11.2026, ADR 0025 Nachtrag „Hintergrundaufträge“): alles, was die App von sich aus
      * anstößt, etwa fehlende Seiten nachladen oder Bilder automatisch beschreiben. Welche Arbeit, sagt die Angabe
      * {@code background.kind}; zusammengehörige Unteraufträge (je Space einer) tragen dieselbe {@code background.group}

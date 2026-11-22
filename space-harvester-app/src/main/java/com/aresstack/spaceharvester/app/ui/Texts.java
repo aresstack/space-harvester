@@ -160,6 +160,7 @@ public final class Texts {
             case PRESENTATION_EXPORT -> "PPTX erzeugen";
             case SEARCH_QUALITY -> "Suchqualität messen";
             case UPDATE_PODCAST -> "Podcast erzeugen";
+            case READING_PREFETCH -> "Lese-Ansichten vorladen";
             case BACKGROUND -> "Hintergrund";
         };
     }
