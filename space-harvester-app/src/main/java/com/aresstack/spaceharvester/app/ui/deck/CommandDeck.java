@@ -3,8 +3,13 @@ package com.aresstack.spaceharvester.app.ui.deck;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess;
+import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewWorkspace;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
+import com.aresstack.spaceharvester.deck.access.ServerAccounts;
+import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
+import com.aresstack.spaceharvester.deck.betaview.http.HttpBetaViewServer;
 import com.aresstack.spaceharvester.deck.ftp.FtpSessions;
 import com.aresstack.spaceharvester.deck.ftp.commonsnet.CommonsNetFtpConnector;
 import com.aresstack.spaceharvester.deck.ndv.NdvSessions;
@@ -41,6 +46,7 @@ public final class CommandDeck {
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
     private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(), connecting);
     private final TerminalWorkspace terminal;
+    private final BetaViewWorkspace betaView;
     /** Gemeinsamer Editor aller Bereiche (Dateien, NDV, später FTP); die Dokumente überleben jeden Wechsel. */
     private final com.aresstack.spaceharvester.deck.editor.EditorSessions editors =
             new com.aresstack.spaceharvester.deck.editor.EditorSessions(connecting);
@@ -55,16 +61,26 @@ public final class CommandDeck {
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
 
-    /** Ohne Passwortspeicher (Tests). */
+    /** Ohne Passwortspeicher und Proxy (Tests). */
     public CommandDeck() {
-        this(com.aresstack.spaceharvester.deck.access.ServerAccounts.NONE);
+        this(ServerAccounts.NONE, BetaViewAccess.direct());
     }
 
     /**
      * @param accounts Host-Zugänge (KeePass), gemeinsam für Terminal, NDV und später FTP
      */
-    public CommandDeck(com.aresstack.spaceharvester.deck.access.ServerAccounts accounts) {
+    public CommandDeck(ServerAccounts accounts) {
+        this(accounts, BetaViewAccess.direct());
+    }
+
+    /**
+     * @param accounts       Host-Zugänge (KeePass), gemeinsam für Terminal, NDV und später FTP
+     * @param betaViewAccess Netzweg (Proxy, Zertifikate) und KeePass-Kopplung der App für BetaView
+     */
+    public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess) {
         terminal = new TerminalWorkspace(sessions, accounts);
+        betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
+                connecting), betaViewAccess);
         files = new FilesWorkspace(new com.aresstack.spaceharvester.deck.files.FileBrowser(
                 new com.aresstack.spaceharvester.deck.files.local.LocalFileSource(() -> sharedFolders.get()),
                 connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore());
@@ -87,6 +103,7 @@ public final class CommandDeck {
             navigation.add(button);
             workspace.add(switch (candidate) {
                 case TERMINAL -> terminal;
+                case BETAVIEW -> betaView;
                 case FILES -> files;
                 case FTP -> ftp;
                 case NDV -> ndv;
@@ -147,6 +164,7 @@ public final class CommandDeck {
     /** Trennt alle Sitzungen (Programmende). */
     public void shutdown() {
         sessions.closeAll();
+        betaView.shutdown();
         ftpSessions.closeAll();
         ndvSessions.closeAll();
         connecting.shutdownNow();
@@ -186,6 +204,10 @@ public final class CommandDeck {
 
     TerminalWorkspace terminal() {
         return terminal;
+    }
+
+    BetaViewWorkspace betaView() {
+        return betaView;
     }
 
     NdvWorkspace ndv() {
