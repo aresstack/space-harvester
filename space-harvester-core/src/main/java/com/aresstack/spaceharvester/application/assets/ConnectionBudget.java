@@ -105,10 +105,13 @@ public final class ConnectionBudget {
 
         private final JobContext context;
         private final AutoCloseable registration;
+        /** Der Zuhörer hat gefeuert; der Auftrag meldet ihn danach nicht mehr (höchstens einmal je Anmeldung). */
+        private volatile boolean fired;
 
         Wake(JobContext context) {
             this.context = java.util.Objects.requireNonNull(context, "context");
             this.registration = context.whenStopRequested(() -> {
+                fired = true;
                 lock.lock();
                 try {
                     changed.signalAll();
@@ -155,6 +158,12 @@ public final class ConnectionBudget {
 
         private final LongSupplier remaining;
         private int running;
+        /**
+         * Ein Zuhörer je Lease statt je {@link #acquire} (Architekt, Abnahme #1133): Jedes Anmelden und Abmelden kopiert
+         * die Zuhörerliste des Auftrags. Neu angemeldet wird nur bei einem anderen Auftrag oder nachdem der Zuhörer
+         * gefeuert hat (er läuft höchstens einmal, ein fortgesetzter Lauf braucht einen neuen). Nur unter {@link #lock}.
+         */
+        private Wake wake;
 
         private Lease(LongSupplier remaining) {
             this.remaining = remaining;
@@ -166,31 +175,46 @@ public final class ConnectionBudget {
          * zum Anhalten oder Abbrechen; danach prüft {@link JobContext#checkpoint()}.
          */
         public void acquire(JobContext context) {
-            try (Wake wake = new Wake(context)) {
-                lock.lock();
-                try {
-                    while (true) {
-                        wake.checkpoint();
-                        if (inFlight < total && running < ConnectionBudget.this.share(this)) {
-                            break;
-                        }
-                        try {
-                            // Rückfallnetz, kein Takt (ADR 0027): Freigeben, Zuteilen (An- und Abmelden, Budget),
-                            // Anhalten, Abbrechen und die Laufzeitgrenze wecken sofort. Die Frist greift nur für die
-                            // Verschiebung der Anteile nach Restzeit: die Schätzungen der Aufträge ändern sich ohne
-                            // Meldung.
-                            changed.awaitNanos(fallbackNanos);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            throw new IllegalStateException("Warten auf eine Verbindung unterbrochen", e);
-                        }
+            java.util.Objects.requireNonNull(context, "context");
+            lock.lock();
+            try {
+                Wake wake = wakeFor(context);
+                while (true) {
+                    wake.checkpoint();
+                    if (inFlight < total && running < ConnectionBudget.this.share(this)) {
+                        break;
                     }
-                    running++;
-                    inFlight++;
-                } finally {
-                    lock.unlock();
+                    try {
+                        // Rückfallnetz, kein Takt (ADR 0027): Freigeben, Zuteilen (An- und Abmelden, Budget),
+                        // Anhalten, Abbrechen und die Laufzeitgrenze wecken sofort. Die Frist greift nur für die
+                        // Verschiebung der Anteile nach Restzeit: die Schätzungen der Aufträge ändern sich ohne
+                        // Meldung.
+                        changed.awaitNanos(fallbackNanos);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("Warten auf eine Verbindung unterbrochen", e);
+                    }
                 }
+                running++;
+                inFlight++;
+            } finally {
+                lock.unlock();
             }
+        }
+
+        /** Unter {@link #lock}: der Zuhörer dieses Leases für {@code context}, wenn nötig neu angemeldet. */
+        private Wake wakeFor(JobContext context) {
+            Wake current = wake;
+            if (current != null && current.context == context && !current.fired) {
+                return current;
+            }
+            wake = null;
+            if (current != null) {
+                current.close();
+            }
+            Wake fresh = new Wake(context);
+            wake = fresh;
+            return fresh;
         }
 
         /** Gibt eine mit {@link #acquire} belegte Verbindung frei. */
@@ -224,6 +248,11 @@ public final class ConnectionBudget {
         public void close() {
             lock.lock();
             try {
+                Wake current = wake;
+                wake = null;
+                if (current != null) {
+                    current.close();
+                }
                 leases.remove(this);
                 changed.signalAll();
             } finally {

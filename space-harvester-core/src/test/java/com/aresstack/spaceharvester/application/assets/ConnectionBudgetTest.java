@@ -126,6 +126,43 @@ class ConnectionBudgetTest {
     }
 
     @Test
+    void aLeaseRegistersOneListenerForAllItsAcquiresAndDropsItOnClose() {
+        // Architekt, Abnahme #1133: ein Zuhörer je Lease statt je acquire, sonst kopiert jedes acquire die Liste.
+        ConnectionBudget budget = new ConnectionBudget(4);
+        StopContext job = new StopContext();
+        ConnectionBudget.Lease lease = budget.register(() -> 1);
+        for (int i = 0; i < 50; i++) {
+            lease.acquire(job);
+            lease.release();
+        }
+        assertThat(job.listeners).hasSize(1);
+        assertThat(job.registrations).hasValue(1);
+
+        lease.close();
+
+        assertThat(job.listeners).isEmpty();
+    }
+
+    @Test
+    void aFiredListenerIsRegisteredAgainForTheNextAcquire() {
+        // Der Zuhörer läuft höchstens einmal; danach braucht ein weiteres acquire einen neuen.
+        ConnectionBudget budget = new ConnectionBudget(4);
+        StopContext job = new StopContext();
+        ConnectionBudget.Lease lease = budget.register(() -> 1);
+        lease.acquire(job);
+        lease.release();
+        job.wakeWithoutStopping();
+        assertThat(job.listeners).isEmpty();
+
+        lease.acquire(job);
+        lease.release();
+
+        assertThat(job.listeners).hasSize(1);
+        assertThat(job.registrations).hasValue(2);
+        lease.close();
+    }
+
+    @Test
     void theCheckpointEndsAWait() {
         ConnectionBudget budget = new ConnectionBudget(0);
         StopContext paused = new StopContext();
@@ -227,8 +264,20 @@ class ConnectionBudgetTest {
             }
         }
 
+        /** Weckt alle Zuhörer, ohne anzuhalten (wie ein Anhalten, das gleich wieder fortsetzt). */
+        void wakeWithoutStopping() {
+            for (Runnable listener : listeners) {
+                if (listeners.remove(listener)) {
+                    listener.run();
+                }
+            }
+        }
+
+        final AtomicLong registrations = new AtomicLong();
+
         @Override
         public AutoCloseable whenStopRequested(Runnable listener) {
+            registrations.incrementAndGet();
             listeners.add(listener);
             if (cancelled && listeners.remove(listener)) {
                 listener.run();
