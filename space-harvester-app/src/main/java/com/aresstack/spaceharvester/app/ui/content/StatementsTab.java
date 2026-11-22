@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.app.runtime.Cancellation;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
@@ -285,7 +286,7 @@ final class StatementsTab extends JPanel {
         heading.setFont(Comic.semiBold(13f));
         modelText.setOpaque(false);
         modelLink.setForeground(Comic.BLUE);
-        modelLink.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(modelLink, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         modelLink.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -1502,7 +1503,7 @@ final class StatementsTab extends JPanel {
         row.setAlignmentX(LEFT_ALIGNMENT);
         if (jump != null && !jump.isEmpty()) {
             area.setToolTipText("Zum Beleg im Reiter „Text“ springen");
-            area.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(area, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             Runnable go = () -> onJump.accept(jump);
             jumps.add(go);
             area.addMouseListener(new MouseAdapter() {

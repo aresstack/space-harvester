@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.paint.SkyClouds;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPainter;
@@ -521,7 +522,7 @@ public final class DocumentNavigationSky extends JPanel {
             this.sections = sections;
             setOpaque(false);
             setName(depth == 0 ? "reader.navigationChapters" : "reader.navigationRow" + depth);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             ToolTipSupport.register(this);
             MouseAdapter mouse = new MouseAdapter() {
                 @Override
@@ -989,7 +990,7 @@ public final class DocumentNavigationSky extends JPanel {
 
         ExpandChevron() {
             setName("reader.navigationExpand");
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             addMouseListener(new MouseAdapter() {
                 @Override
                 public void mouseEntered(MouseEvent event) {

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import java.awt.Cursor;
@@ -37,7 +38,7 @@ final class CopyrightLink extends JPanel {
         copyright.setForeground(Comic.MUTED);
         link.setFont(plain);
         link.setForeground(Comic.MUTED);
-        link.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(link, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         link.setToolTipText(RELEASES);
         link.addMouseListener(new MouseAdapter() {
             @Override

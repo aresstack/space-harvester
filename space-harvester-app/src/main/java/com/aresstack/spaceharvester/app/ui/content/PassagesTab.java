@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.application.passages.PagePassages;
@@ -194,7 +195,7 @@ final class PassagesTab extends JPanel {
         };
         // Die Textfelder fangen Mausklicks selbst ab; der Klick gilt auf Zeile und Texten gleich.
         for (java.awt.Component part : preview == null ? List.of(row, title) : List.of(row, title, preview)) {
-            part.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(part, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             part.addMouseListener(click);
             if (part instanceof javax.swing.JComponent component) {
                 component.setToolTipText("Klick markiert den Absatz im Lesetext");

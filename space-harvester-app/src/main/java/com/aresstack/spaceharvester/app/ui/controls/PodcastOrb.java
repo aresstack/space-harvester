@@ -67,7 +67,7 @@ public final class PodcastOrb extends JButton {
         setOpaque(false);
         setRolloverEnabled(true);
         setRequestFocusEnabled(false);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setPreferredSize(new Dimension(SIZE, SIZE));
         setSize(SIZE, SIZE);
         setForeground(Color.WHITE);

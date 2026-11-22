@@ -96,7 +96,7 @@ public final class CopyButton extends JButton {
         setOpaque(false);
         setRolloverEnabled(true);
         setForeground(Comic.INK);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         reset.setRepeats(false);
         addActionListener(e -> copy());
     }
