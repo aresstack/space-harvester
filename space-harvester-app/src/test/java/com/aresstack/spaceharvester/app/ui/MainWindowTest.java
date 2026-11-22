@@ -389,6 +389,46 @@ class MainWindowTest {
     }
 
     @Test
+    void theFreeAreaOfTheWindowBarTellsAboutTheDoubleClick() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            surface.setSize(1280, 820);
+            layout(surface);
+            JPanel bar = window.windowBar();
+            java.awt.event.MouseEvent over = new java.awt.event.MouseEvent(bar, java.awt.event.MouseEvent.MOUSE_MOVED,
+                    0, 0, 2, 2, 0, false);
+            // Nicht maximiert (hier ohne Fenster) nennt die freie Fläche den Doppelklick zum Vergrößern.
+            assertThat(bar.getToolTipText(over)).isEqualTo("Doppelklick: Vollbild");
+            assertThat(MainWindow.windowBarTooltip(true)).isEqualTo("Doppelklick: Verkleinern");
+            // Knöpfe und Felder der Leiste behalten ihre eigenen Tooltips, keiner zeigt den der Leiste.
+            java.util.List<String> own = new java.util.ArrayList<>();
+            tooltips(bar, own);
+            assertThat(own).isNotEmpty().doesNotContain(MainWindow.MAXIMIZE_TOOLTIP, MainWindow.RESTORE_TOOLTIP);
+        });
+    }
+
+    private static void tooltips(java.awt.Container root, java.util.List<String> found) {
+        for (Component component : root.getComponents()) {
+            if (component instanceof JComponent child && child.getToolTipText() != null) {
+                found.add(child.getToolTipText());
+            }
+            if (component instanceof java.awt.Container container) {
+                tooltips(container, found);
+            }
+        }
+    }
+
+    @Test
     void withoutSourcesTheOverviewWelcomesWithTheWayToTheFirstSource() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
