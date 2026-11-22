@@ -465,6 +465,22 @@ class SetupWizardTest {
                     .isTrue();
             assertThat(SwingUtilities.isDescendingFrom(panel.checkThinking, panel.checkModel.getParent().getParent()))
                     .isTrue();
+            // Eigene Zeilen für Zusammenfassung, ihren Plan und den Podcast (Angelo 22.11.2026).
+            for (java.util.List<java.awt.Component> row : java.util.List.of(
+                    java.util.List.<java.awt.Component>of(panel.summaryModel, panel.summaryMaxTokens,
+                            panel.summaryThinking),
+                    java.util.List.<java.awt.Component>of(panel.summaryPlanModel, panel.summaryPlanMaxTokens,
+                            panel.summaryPlanThinking),
+                    java.util.List.<java.awt.Component>of(panel.podcastModel, panel.podcastMaxTokens,
+                            panel.podcastThinking),
+                    java.util.List.<java.awt.Component>of(panel.imagePlanModel, panel.imagePlanMaxTokens,
+                            panel.imagePlanThinking))) {
+                java.awt.Container line = row.get(0).getParent().getParent();
+                assertThat(SwingUtilities.isDescendingFrom(row.get(1), line)).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(row.get(2), line)).isTrue();
+                assertThat(javax.swing.SwingUtilities.convertPoint(row.get(0).getParent(), 0, 0, models).x)
+                        .isEqualTo(left);
+            }
             assertThat(javax.swing.SwingUtilities.convertPoint(panel.dimensions, panel.dimensions.getWidth(), 0,
                     models).x).as("gleiche rechte Kante wie Feld mit ▾").isEqualTo(right);
             assertThat(javax.swing.SwingUtilities.convertPoint(panel.advanced, 0, 0, models).x)

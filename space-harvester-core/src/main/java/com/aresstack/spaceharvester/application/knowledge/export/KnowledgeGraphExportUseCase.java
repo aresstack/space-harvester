@@ -91,7 +91,10 @@ public class KnowledgeGraphExportUseCase {
 
     private void run(AccessContext caller, Request request, JobContext context) {
         context.phase(COMPONENT, "Graph lesen");
-        List<KnowledgeGraph.AnalysedPage> pages = select(caller, request.scope(), request.includeStale());
+        // Quellen, deren Daten beim Start gelöscht wurden, lässt der Export aus (Abnahme #1090).
+        Set<String> withheld = Jobs.withheldSources();
+        List<KnowledgeGraph.AnalysedPage> pages = select(caller, request.scope(), request.includeStale()).stream()
+                .filter(page -> !withheld.contains(page.page().key().sourceId())).toList();
         context.discovered(pages.size());
         context.checkpoint();
         List<KnowledgeGraphJsonLd.Entry> entries = pages.stream()

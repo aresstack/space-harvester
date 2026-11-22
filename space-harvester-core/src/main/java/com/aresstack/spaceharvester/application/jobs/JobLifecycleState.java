@@ -55,7 +55,9 @@ public sealed interface JobLifecycleState {
         boolean download = status.type() == JobType.EXPORT;
         boolean sync = status.type() == JobType.SYNC;
         // Bilder und Anhänge holen beim erneuten Lauf nur, was fehlt; abgelegte Dateien kommen aus dem Speicher.
-        boolean files = status.type() == JobType.ASSETS || status.type() == JobType.ATTACHMENTS;
+        // „Anhänge ablegen“ einer Seite (task=page-harvest, Fundstelle 24) startet der Benutzer erneut statt gezielt.
+        boolean files = (status.type() == JobType.ASSETS || status.type() == JobType.ATTACHMENTS)
+                && !"page-harvest".equals(status.parameter("task"));
         boolean forceable = download || files || sync && !CATALOG_ONLY.equals(status.parameter(SYNC_MODE));
         // Metadaten und Analytics fragen Gescheitertes beim neuen Lauf erneut, erzwingen aber nichts: sie fragen
         // ohnehin immer die Quelle (Angelo 17.11.2026).

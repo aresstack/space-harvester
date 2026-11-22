@@ -47,9 +47,9 @@ final class PodcastProduction {
     /**
      * Die Bilder je Thema (Angelo 21.11.2026): wer Schaubilder zeichnet und woher die Seitenbilder kommen.
      *
-     * @param drawer zeichnet die Schaubilder (Modell der Bildgenerierung mit eigener Tokenlänge)
+     * @param drawer planen und zeichnen die Schaubilder (Bildgenerierung – Plan und – Einzelteile)
      */
-    record Pictures(StepModel drawer, PodcastPictures.PageImageSource images) {
+    record Pictures(DiagramComposer.Models drawer, PodcastPictures.PageImageSource images) {
         Pictures {
             Objects.requireNonNull(drawer, "drawer");
             Objects.requireNonNull(images, "images");

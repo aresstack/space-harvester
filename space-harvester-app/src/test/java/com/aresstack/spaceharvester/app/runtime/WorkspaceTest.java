@@ -11,7 +11,6 @@ import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
-import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -656,7 +655,8 @@ class WorkspaceTest {
 
     @Test
     void removingASourceDropsItsCachedPagesInTheCore() throws Exception {
-        Workspace workspace = start().workspace();
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
         assertThat(await(workspace, workspace.startSync("wiki", "DEV")).state()).isEqualTo(JobState.COMPLETED);
         assertThat(workspace.cachedPages("wiki", "DEV", null, 100).pages()).hasSize(2);
 
@@ -664,6 +664,28 @@ class WorkspaceTest {
 
         assertThat(workspace.sources()).extracting(HarvestSource::id).containsExactly("handbuch");
         assertThat(workspace.removeSource("wiki")).isFalse();
+        // Fundstelle 22: Die Daten löscht ein Auftrag in der Auftragsliste; bis er endet, ist die Kennung gesperrt.
+        JobStatus removal = workspace.jobs().stream()
+                .filter(job -> job.type() == com.aresstack.spaceharvester.application.jobs.JobType.PURGE)
+                .findFirst().orElseThrow();
+        assertThat(removal.sourceId()).isEqualTo("wiki");
+
+        // Nach dem Neuladen steht die entfernte Quelle in keiner Richtlinie mehr: Ihr Löschen bleibt sichtbar, für wen
+        // die Konfiguration verwaltet (Abnahme Punkt 6), samt Diagnose für den gelben Link.
+        Workspace reloaded = new Workspace(started.harvester(), new com.aresstack.spaceharvester.application.access
+                .AccessGuard(new LocalOperatorPolicy(com.aresstack.spaceharvester.application.access.AccessContext
+                .technicalClient(com.aresstack.spaceharvester.core.Harvester.OWNER), java.util.Set.of("handbuch"))),
+                new ActivityLog(home.resolve("neu-geladen.txt")));
+        assertThat(reloaded.jobs()).extracting(JobStatus::id).contains(removal.id());
+        assertThat(reloaded.events(removal.id())).isNotEmpty();
+
+        assertThat(await(workspace, removal).state()).isEqualTo(JobState.COMPLETED);
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(30).toNanos();
+        while (workspace.sourceRemovalPending("wiki").isPresent()) {
+            assertThat(System.nanoTime()).as("Sperre nach 30 s noch da").isLessThan(deadline);
+            Thread.sleep(10);
+        }
+        assertThat(workspace.sourceRemovalsPending()).isEmpty();
     }
 
     @Test
@@ -805,9 +827,23 @@ class WorkspaceTest {
         assertThat(workspace.assets("wiki", "102").entries()).singleElement()
                 .satisfies(entry -> assertThat(entry.stored()).isNull());
 
-        AssetHarvest harvest = workspace.harvestAssets("wiki", "102");
-        assertThat(harvest.complete()).as(harvest.toString()).isTrue();
-        assertThat(harvest.count(AssetHarvest.Status.STORED)).isEqualTo(1);
+        // Fundstelle 24: „Anhänge ablegen“ ist ein Auftrag in der Auftragsliste.
+        JobStatus harvest = await(workspace, workspace.startAssetHarvest("wiki", "102"));
+        assertThat(harvest.state()).as(harvest.toString()).isEqualTo(JobState.COMPLETED);
+        assertThat(harvest.type()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.ATTACHMENTS);
+        assertThat(harvest.incomplete()).isFalse();
+        assertThat(harvest.progress().written()).isEqualTo(1);
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(harvest.id());
+        // Kein „Neu erzwingen“ wie bei der Anhangbeschaffung eines Exports: erneut starten holt, was fehlt.
+        assertThat(harvest.lifecycle().allows(com.aresstack.spaceharvester.application.jobs.JobAction.FORCE_REFRESH))
+                .isFalse();
+        // Erneut: nichts neu übertragen, der Anhang zählt als bewusst ausgelassen.
+        JobStatus again = await(workspace, workspace.startAssetHarvest("wiki", "102"));
+        assertThat(again.state()).as(again.toString()).isEqualTo(JobState.COMPLETED);
+        assertThat(again.progress().processed()).isEqualTo(1);
+        assertThat(again.progress().written()).isZero();
+        // Bewusst ausgelassen, nicht gescheitert.
+        assertThat(again.progress().failed()).isZero();
         assertThat(workspace.assets("wiki", "102").entries()).singleElement()
                 .satisfies(entry -> assertThat(entry.stored()).isNotNull());
         assertThat(new String(workspace.assetContent("wiki", "102", "att900").content(), StandardCharsets.UTF_8))
@@ -942,6 +978,24 @@ class WorkspaceTest {
         assertThat(workspace.deleteAllJobs(List.of(sync.id()))).isEqualTo(1);
         assertThat(workspace.jobs()).extracting(JobStatus::id).containsAll(group.jobIds())
                 .doesNotContain(sync.id());
+    }
+
+    /**
+     * Fundstelle 4 (Angelo 21.11.2026: nichts läuft unsichtbar): Ein Abgleich, den der Core selbst anstößt (etwa
+     * Nachholen beim Start oder Abgleich vor der Suche), steht in der Auftragsliste, obwohl die App ihn nie gemerkt hat.
+     */
+    @Test
+    void aSyncTheCoreStartsByItselfIsListed() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+
+        JobStatus automatic = started.harvester().syncs().catchUp("handbuch", space,
+                com.aresstack.spaceharvester.core.Harvester.OWNER, null);
+
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(automatic.id());
+        await(workspace, automatic);
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(automatic.id());
     }
 
     /**

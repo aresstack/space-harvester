@@ -228,10 +228,16 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
         context.discovered(left.size());
         Semaphore slots = new Semaphore(PARALLEL);
         // close() wartet auf die laufenden Berechnungen, ohne sie zu unterbrechen (Lucene-Index).
+        // Quellen, deren Daten beim Start gelöscht wurden, lässt der Auftrag aus (Abnahme #1090).
+        Set<String> withheld = Jobs.withheldSources();
         try (ExecutorService runner = Executors.newVirtualThreadPerTaskExecutor()) {
             for (java.util.Map.Entry<PageKey, PageSnapshot> entry : left.entrySet()) {
                 PageSnapshot snapshot = entry.getValue();
                 String sourceId = entry.getKey().sourceId();
+                if (withheld.contains(sourceId)) {
+                    context.processed(1);
+                    continue;
+                }
                 context.checkpoint();
                 slots.acquireUninterruptibly();
                 try {

@@ -15,7 +15,6 @@ import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
-import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import java.time.Clock;
@@ -50,9 +49,12 @@ public final class SourceDataStores {
         return new SourceDataStores();
     }
 
-    /** Wartende Seiten der Hintergrundfüllung; zuerst, damit sie nichts nachlädt. {@code null} ohne Füllung. */
-    public SourceDataStores fillQueue(LuceneFillQueue queue) {
-        return queue == null ? this : add("Warteschlange der Hintergrundfüllung", queue::removeSource);
+    /**
+     * Wartende Seiten der Hintergrundfüllung; zuerst, damit sie nichts nachlädt. Über die Füllung selbst, damit ihr
+     * Spiegel mit bereinigt wird (Abnahme #1087); {@code null} ohne Füllung.
+     */
+    public SourceDataStores fillQueue(java.util.function.Consumer<String> removeSource) {
+        return removeSource == null ? this : add("Warteschlange der Hintergrundfüllung", removeSource::accept);
     }
 
     /** Für die KI freigegebene Seiten der Quelle (ADR 0028). {@code null} ohne Liste. */

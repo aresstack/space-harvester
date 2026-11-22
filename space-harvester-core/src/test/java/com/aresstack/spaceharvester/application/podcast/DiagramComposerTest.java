@@ -169,4 +169,18 @@ class DiagramComposerTest {
             }
         }
     }
+
+    @Test
+    void planAndPartsUseTheirOwnModels() {
+        AtomicInteger planned = new AtomicInteger();
+        AtomicInteger drawn = new AtomicInteger();
+        // der Planer kennt nur den Plan, der Zeichner nur Symbole
+        DiagramComposer composer = new DiagramComposer(new DiagramComposer.Models(model(PLAN, "kein Symbol", planned),
+                model("kein Plan", ICON, drawn)), Runnable::run, attempt -> { });
+        DiagramComposer.Diagram diagram = composer.compose("Nordlicht", "erfunden", DiagramComposer.Memory.NONE)
+                .orElseThrow();
+        assertThat(planned).hasValue(1);
+        assertThat(drawn.get()).isEqualTo(diagram.plan().elements().size());
+        assertThat(diagram.repairs()).isEmpty();
+    }
 }

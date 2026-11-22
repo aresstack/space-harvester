@@ -73,6 +73,8 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
     private final Listeners<Consumer<KeywordSearch.Progress>> listeners = new Listeners<>("Suchfortschritt");
     private final Coalescer<String, Object> notifier = new Coalescer<>("search-progress",
             (id, ignored) -> deliver(id));
+    /** Hintergrundaufträge für Treffer, die nach der Rückkehr der Suche weiterladen (Fundstelle 13); sonst {@code null}. */
+    private volatile com.aresstack.spaceharvester.application.background.SearchHitLoads loads;
 
     /**
      * @param cachedVersion Version der Seite im Cache, leer, wenn sie dort fehlt
@@ -167,6 +169,16 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         return new AcquisitionScheduler.Limits(defaults.foreground(), 0, defaults.perSource(), defaults.capacity());
     }
 
+    /**
+     * Führt Treffer, die nach der Rückkehr der Suche eines technischen Aufrufers weiterladen, als Hintergrundauftrag
+     * „Suchtreffer laden“ (Fundstelle 13, Angelo 21.11.2026: nichts läuft unsichtbar). Die Abrufe bleiben dieselben,
+     * mit Vorrang des Vordergrunds; der Auftrag zählt sie, Abbrechen dort zieht sie zurück. Die Übergabe kehrt sofort
+     * zurück und hält die Suche nie auf.
+     */
+    public void hitLoads(com.aresstack.spaceharvester.application.background.SearchHitLoads loads) {
+        this.loads = loads;
+    }
+
     @Override
     public boolean current(KeywordSearch.Hit hit) {
         if (scheduler == null || hit.version() == null) {
@@ -217,6 +229,7 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         boolean delegated = caller.credential() != null;
         long deadline = System.nanoTime() + (delegated ? wait : technicalWait).toNanos();
         int failed = 0;
+        Map<PageKey, AcquisitionScheduler.Ticket> continuing = new LinkedHashMap<>();
         for (Map.Entry<KeywordSearch.Hit, AcquisitionScheduler.Ticket> entry : waiting.entrySet()) {
             AcquisitionScheduler.Ticket ticket = entry.getValue();
             CompletableFuture<Boolean> future = counted.get(ticket);
@@ -229,6 +242,8 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                 if (delegated) {
                     // Die Anmeldung des Benutzers bleibt in seinem Aufruf; ein laufender Abruf endet regulär.
                     ticket.cancel();
+                } else {
+                    continuing.put(new PageKey(entry.getKey().sourceId(), entry.getKey().pageId()), ticket);
                 }
             } catch (CancellationException e) {
                 // Ein delegierter Benutzer hat seinen Abruf beendet; die Seite fehlt noch.
@@ -245,7 +260,25 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                 pending.add(entry.getKey());
             }
         }
+        handOver(caller, continuing, batch);
         return new Fill(pending, failed, batch.id, batch.snapshot());
+    }
+
+    /**
+     * Fundstelle 13: Was nach der Rückkehr weiterlädt, wird ein sichtbarer Hintergrundauftrag. Scheitert das, laden die
+     * Abrufe wie bisher weiter; die Suche scheitert daran nie.
+     */
+    private void handOver(AccessContext caller, Map<PageKey, AcquisitionScheduler.Ticket> continuing, Batch batch) {
+        com.aresstack.spaceharvester.application.background.SearchHitLoads visible = loads;
+        if (visible == null || continuing.isEmpty()) {
+            return;
+        }
+        try {
+            // Kehrt sofort zurück: Die Gruppe legt ein eigener Arbeiter an (Abnahme #1085).
+            visible.offer(batch.id, caller, continuing);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Suchtreffer nicht als Auftrag geführt ({0})", e.getClass().getName());
+        }
     }
 
     @Override
@@ -265,6 +298,16 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         }
         if (batch == null) {
             return false;
+        }
+        com.aresstack.spaceharvester.application.background.SearchHitLoads visible = loads;
+        if (visible != null) {
+            // Erst der Auftrag, dann die Abrufe: Sonst zählte er die zurückgezogenen als gescheitert.
+            try {
+                visible.cancel(id);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.DEBUG, "Auftrag der Suchtreffer nicht abgebrochen ({0})",
+                        e.getClass().getName());
+            }
         }
         batch.cancel();
         return true;

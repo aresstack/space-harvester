@@ -1215,7 +1215,8 @@ public final class AppSettingsLoader {
                         problems)), text(get(ai, "step-thinking"), problems), text(get(ai, "parallel"), problems),
                 text(get(ai, "vision-max-tokens"), problems), text(get(ai, "image-model"), problems),
                 text(get(ai, "image-max-tokens"), problems), text(get(ai, "vision-thinking"), problems),
-                text(get(ai, "image-thinking"), problems));
+                text(get(ai, "image-thinking"), problems), use(ai, "summary", problems),
+                use(ai, "summary-plan", problems), use(ai, "podcast", problems), use(ai, "image-plan", problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1226,7 +1227,14 @@ public final class AppSettingsLoader {
                 draft.tokens(), draft.overlap(), draft.visionModel(), draft.maxTokens(), draft.provider(),
                 draft.context(), draft.loadDuration(), draft.retryCount(),
                 draft.pollDuration(), draft.thinking(), draft.parallelCount(), draft.visionTokens(),
-                draft.imageModel(), draft.imageTokens(), draft.visionLevel(), draft.imageLevel());
+                draft.imageModel(), draft.imageTokens(), draft.visionLevel(), draft.imageLevel(),
+                draft.summary().use(), draft.summaryPlan().use(), draft.podcast().use(), draft.imagePlan().use());
+    }
+
+    /** Eine eigene Modellzeile ({@code <prefix>-model}, {@code -max-tokens}, {@code -thinking}) als Eingaben. */
+    private AiDraft.Use use(Map<?, ?> ai, String prefix, List<String> problems) {
+        return new AiDraft.Use(text(get(ai, prefix + "-model"), problems),
+                text(get(ai, prefix + "-max-tokens"), problems), text(get(ai, prefix + "-thinking"), problems));
     }
 
     /** Eine Dauer als Sekunden, wie das Feld der Einstellungen sie zeigt; {@code null} bleibt. */

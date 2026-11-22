@@ -169,6 +169,10 @@ class UpdateSummaryTest {
             }
             instructions.add(given);
             inputs.add(input);
+            if (truncateIf != null && truncateIf.test(input)) {
+                throw new com.aresstack.spaceharvester.ai.AiOutputTruncatedException(
+                        "Chat-Dienst: Antwort am Ausgabelimit abgeschnitten (finish_reason=length, max_tokens=32768)");
+            }
             int now = running.incrementAndGet();
             mostAtOnce.accumulateAndGet(now, Math::max);
             try {
@@ -180,11 +184,14 @@ class UpdateSummaryTest {
             } finally {
                 running.decrementAndGet();
             }
-            return answer;
+            return unusableFirst.getAndDecrement() > 0 ? "Leider kann ich das nicht." : answer;
         }
     };
+    private final java.util.concurrent.atomic.AtomicInteger unusableFirst =
+            new java.util.concurrent.atomic.AtomicInteger();
     private int parallel = 1;
     private volatile String failWhen;
+    private volatile java.util.function.Predicate<String> truncateIf;
     private final java.util.concurrent.atomic.AtomicInteger failFirst = new java.util.concurrent.atomic.AtomicInteger();
     private long delayMillis;
     private final java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
@@ -699,6 +706,198 @@ class UpdateSummaryTest {
         long parts = instructions.stream().filter(UpdateSummarizer.INSTRUCTIONS::equals).count();
         assertThat(parts).as("mindestens so viele Teile, wie zugleich laufen dürfen").isGreaterThanOrEqualTo(3);
         assertThat(mostAtOnce.get()).as("gleichzeitig, aber nie mehr als ai.parallel").isEqualTo(3);
+    }
+
+    /**
+     * Angelo 22.11.2026: eine am Ausgabelimit abgeschnittene Antwort (finish_reason=length) kippt den Auftrag nicht,
+     * der Teil wird halbiert und jede Hälfte für sich gefragt.
+     */
+    @Test
+    void aTruncatedAnswerSplitsThePartInsteadOfFailingTheJob() {
+        row(1, "100", "DEV", ChangeKind.NEW, "Start");
+        mark(10, true);
+        row(12, "102", "DEV", ChangeKind.NEW, "Erste Seite");
+        row(12, "103", "DEV", ChangeKind.NEW, "Zweite Seite");
+        released.add("102");
+        released.add("103");
+        // Nur die Anfrage mit beiden Seiten ist zu lang; jede Hälfte kommt durch.
+        truncateIf = input -> input.contains("Erste Seite") && input.contains("Zweite Seite");
+        answer = """
+                {"zusammenfassung": "Neu.", "themen": [{"titel": "Neu", "text": "Neu.", "seiten": ["102"]}]}""";
+        try {
+            assertThat(run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state()).isEqualTo(JobState.COMPLETED);
+            assertThat(instructions).as("erst mit dem Grund erneut gefragt")
+                    .anySatisfy(given -> assertThat(given).contains("am Ausgabelimit abgeschnitten"));
+            assertThat(inputs.stream().filter(input -> input.contains("Erste Seite")
+                    && !input.contains("Zweite Seite"))).as("erste Hälfte für sich").isNotEmpty();
+            assertThat(inputs.stream().filter(input -> input.contains("Zweite Seite")
+                    && !input.contains("Erste Seite"))).as("zweite Hälfte für sich").isNotEmpty();
+        } finally {
+            truncateIf = null;
+        }
+    }
+
+    /** Wie in 3d4j: eine unbrauchbare Antwort wird mit dem Grund erneut erfragt und kippt den Auftrag nicht. */
+    @Test
+    void anUnusableAnswerIsAskedAgainWithTheReason() {
+        String id = oneUpdate();
+        unusableFirst.set(1);
+
+        assertThat(run(log.summarize(CALLER, "wiki", id)).state()).isEqualTo(JobState.COMPLETED);
+
+        assertThat(instructions).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(instructions.get(1)).contains("Deine vorige Antwort war unbrauchbar").contains("JSON");
+        assertThat(log.summary(CALLER, "wiki", id)).isPresent();
+    }
+
+    /** Ein Planer, der für den Plan-Schritt {@code plan} antwortet oder, wenn gesetzt, immer abschneidet. */
+    private SummaryModel planner(List<String> asked, String plan, boolean truncate) {
+        return new SummaryModel() {
+            @Override
+            public String version() {
+                return "test-plan:1";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String complete(String given, String input) {
+                asked.add(given);
+                if (truncate) {
+                    throw new com.aresstack.spaceharvester.ai.AiOutputTruncatedException("abgeschnitten");
+                }
+                return plan;
+            }
+        };
+    }
+
+    private ChangeLog planned(SummaryModel planner) {
+        return new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)), () -> List.of("wiki"),
+                new ChangeLog.Summaries(jobs, model, key -> released.contains(key.pageId()),
+                        Clock.fixed(T0.plusSeconds(7200), ZoneOffset.UTC), material, planner));
+    }
+
+    private void fourNewPages() {
+        row(1, "100", "DEV", ChangeKind.NEW, "Start");
+        mark(10, true);
+        for (String id : List.of("201", "202", "203", "204")) {
+            row(12, id, "DEV", ChangeKind.NEW, "Seite " + id);
+            released.add(id);
+        }
+        answer = """
+                {"zusammenfassung": "Neu.", "themen": [{"titel": "Neu", "text": "Neu.", "seiten": ["201"]}]}""";
+    }
+
+    /**
+     * Angelo 22.11.2026: erst ein Plan (eigenes Modell), dann je geplantem Thema eine kleine Teilaufgabe; was der
+     * Plan nicht zuordnet, kommt in „Weitere Änderungen“.
+     */
+    @Test
+    void aPlanSplitsThePagesIntoOneSmallTaskPerTopic() {
+        fourNewPages();
+        List<String> asked = new CopyOnWriteArrayList<>();
+        ChangeLog withPlan = planned(planner(asked, """
+                {"themen": [{"titel": "Erstes Thema", "seiten": ["201", "202"]},
+                            {"titel": "Zweites Thema", "seiten": ["203", "999"]}]}""", false));
+        try {
+            assertThat(run(withPlan.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state())
+                    .isEqualTo(JobState.COMPLETED);
+        } finally {
+            withPlan.close();
+        }
+
+        assertThat(asked).containsExactly(UpdateSummarizer.PLAN);
+        List<String> parts = inputs.stream().filter(input -> input.contains("\"aenderungen\"")).toList();
+        assertThat(parts).hasSize(3);
+        assertThat(parts).anySatisfy(input -> assertThat(input).contains("\"geplantesThema\":\"Erstes Thema\"")
+                .contains("Seite 201").contains("Seite 202").doesNotContain("Seite 203"));
+        assertThat(parts).anySatisfy(input -> assertThat(input).contains("\"geplantesThema\":\"Zweites Thema\"")
+                .contains("Seite 203").doesNotContain("Seite 204"));
+        assertThat(parts).anySatisfy(input -> assertThat(input)
+                .contains("\"geplantesThema\":\"Weitere Änderungen\"").contains("Seite 204"));
+    }
+
+    /** Kommt der Plan auch mit Grund nicht zustande (abgeschnitten), teilt der Auftrag wie bisher und scheitert nicht. */
+    @Test
+    void aPlanThatNeverFitsFallsBackToTheUsualParts() {
+        fourNewPages();
+        List<String> asked = new CopyOnWriteArrayList<>();
+        ChangeLog withPlan = planned(planner(asked, null, true));
+        try {
+            assertThat(run(withPlan.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state())
+                    .isEqualTo(JobState.COMPLETED);
+        } finally {
+            withPlan.close();
+        }
+
+        assertThat(asked).hasSize(UpdateSummarizer.ATTEMPTS);
+        assertThat(asked.get(1)).contains("am Ausgabelimit abgeschnitten");
+        assertThat(inputs).isNotEmpty().noneSatisfy(input -> assertThat(input).contains("geplantesThema"));
+    }
+
+    /**
+     * Angelo 22.11.2026: „Zusammenfassen“ ist ein Oberauftrag; seine Teile laufen als eigene Unteraufträge in der
+     * Auftragsliste, so viele zugleich, wie die Job-Einstellungen und ai.parallel zulassen.
+     */
+    @Test
+    void thePartsRunAsChildJobsOfTheSummary() throws Exception {
+        long backoff = UpdateSummarizer.backoffMillis;
+        UpdateSummarizer.backoffMillis = 1;
+        parallel = 3;
+        delayMillis = 100;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
+        Jobs wide = new Jobs(new InMemoryJobStore(), pool, new JobLimits(6, 50, Duration.ofHours(1)),
+                Clock.fixed(T0.plusSeconds(3600), ZoneOffset.UTC));
+        ChangeLog parentLog = new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)),
+                () -> List.of("wiki"), new ChangeLog.Summaries(wide, model,
+                key -> released.contains(key.pageId()), Clock.fixed(T0.plusSeconds(7200), ZoneOffset.UTC), material));
+        try {
+            row(1, "1", "DEV", ChangeKind.NEW, "Start");
+            mark(10, true);
+            String paragraph = "Absatz mit Inhalt. ".repeat(25);
+            for (int i = 0; i < 24; i++) {
+                String pageId = "p" + i;
+                row(1, pageId, "DEV", ChangeKind.NEW, "Seite " + i);
+                row(12, pageId, "DEV", ChangeKind.CONTENT_CHANGED, "Seite " + i);
+                ParagraphChange[] changes = new ParagraphChange[12];
+                for (int j = 0; j < changes.length; j++) {
+                    changes[j] = new ParagraphChange(ParagraphChange.Kind.CHANGED, paragraph + j, paragraph + "neu " + j);
+                }
+                diff(12, pageId, "1", "2", false, changes);
+                released.add(pageId);
+            }
+            answer = """
+                    {"zusammenfassung": "Überblick.", "themen": [{"titel": "Seiten", "text": "Inhalt.", "seiten": ["p0"]}]}""";
+
+            // Eine Seite nimmt der Dienst nie an: der Unterauftrag lässt sie aus, der Oberauftrag gilt als unvollständig.
+            failWhen = "\"Seite 5\"";
+            JobStatus parent = parentLog.summarize(CALLER, "wiki", ChangeUpdate.OPEN);
+            JobStatus done = wide.await(parent.id(), CALLER.jobOwner(), Duration.ofSeconds(60));
+
+            assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(done.incomplete()).as("Ausgelassenes eines Unterauftrags meldet auch der Oberauftrag").isTrue();
+            assertThat(done.progress().failed()).isEqualTo(1);
+            List<JobStatus> children = wide.listAll(JobType.UPDATE_SUMMARY).stream()
+                    .filter(job -> parent.id().equals(job.parameters().get(ChangeLog.PARENT_PARAMETER)))
+                    .toList();
+            assertThat(children).as("Teile als Unteraufträge").hasSizeGreaterThanOrEqualTo(3);
+            assertThat(children).allSatisfy(child -> {
+                assertThat(child.parameters().get(ChangeLog.STEP_PARAMETER)).isNotBlank();
+                assertThat(child.state().terminal()).isTrue();
+            });
+            assertThat(children).anySatisfy(child ->
+                    assertThat(child.parameters().get(ChangeLog.STEP_PARAMETER)).startsWith("Teil 1 von "));
+            assertThat(mostAtOnce.get()).as("gleichzeitig, nie mehr als ai.parallel").isBetween(2, 3);
+        } finally {
+            failWhen = null;
+            UpdateSummarizer.backoffMillis = backoff;
+            parentLog.close();
+            wide.close();
+            pool.shutdownNow();
+        }
     }
 
     @Test

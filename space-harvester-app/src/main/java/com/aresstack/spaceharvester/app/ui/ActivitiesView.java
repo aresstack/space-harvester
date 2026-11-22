@@ -769,6 +769,13 @@ public final class ActivitiesView implements View {
                 .add(counters.processed(), String.valueOf(p.processed()))
                 .add(counters.written(), String.valueOf(p.written()))
                 .add(counters.failed(), String.valueOf(p.failed()), p.failed() > 0 ? Comic.RED : Comic.INK);
+        if (com.aresstack.spaceharvester.application.background.FillJobs.KIND.equals(
+                status.parameter(BackgroundJobs.KIND))) {
+            // Fundstelle 12: Die Hintergrundfüllung zeigt auch, wie viele Seiten im Space noch warten.
+            // Beendete und angehaltene Teile laden nichts: 0 (Abnahme #1087).
+            boolean active = status.state() == JobState.RUNNING || status.state() == JobState.QUEUED;
+            facts.add("Wartend", String.valueOf(active ? Math.max(0, p.discovered() - p.processed()) : 0));
+        }
         if (skipped(status) > 0) {
             facts.add("Bewusst ausgelassen", String.valueOf(skipped(status)));
         }
@@ -1794,7 +1801,16 @@ public final class ActivitiesView implements View {
         AppRuntime runtime = context.runtime();
         // Nur echte Aufträge des Reiters: Gruppenzeilen sind bloß Darstellung und zählen nicht mit.
         List<JobStatus> own = tabJobs(lastJobs, backgroundTab());
-        List<String> confirmed = own.stream().filter(ActivitiesView::finished).map(JobStatus::id).toList();
+        // Ein offenes Löschen der Daten einer Quelle (gescheitert, wiederholt sich) bleibt: sonst fiele die Sperre und
+        // die alten Daten blieben liegen (Fundstelle 22).
+        List<String> withdrawing = runtime == null ? List.of() : own.stream().filter(ActivitiesView::finished)
+                .filter(job -> openWithdrawal(runtime, job)).map(JobStatus::id).toList();
+        List<String> confirmed = own.stream().filter(ActivitiesView::finished)
+                .filter(job -> !withdrawing.contains(job.id())).map(JobStatus::id).toList();
+        if (runtime != null && confirmed.isEmpty() && !withdrawing.isEmpty()) {
+            feedback.warning(WITHDRAWAL_KEPT, WITHDRAWAL_KEPT_TEXT);
+            return;
+        }
         if (runtime == null || confirmed.isEmpty()) {
             return;
         }
@@ -1815,9 +1831,27 @@ public final class ActivitiesView implements View {
                 table.clearSelection();
                 render();
             }
-            feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            if (withdrawing.isEmpty()) {
+                feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            } else {
+                feedback.warning(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht; " + WITHDRAWAL_KEPT,
+                        WITHDRAWAL_KEPT_TEXT);
+            }
             poll();
         }, feedback::problem);
+    }
+
+    /** Gelb, wenn der Besen ein offenes Löschen der Daten einer Quelle stehen lässt (Fundstelle 22). */
+    static final String WITHDRAWAL_KEPT = "Löschen der Quelle läuft noch";
+    static final String WITHDRAWAL_KEPT_TEXT = "Das Löschen der alten Daten einer Quelle bleibt in der Liste, bis es "
+            + "gelingt oder abgebrochen wird; gescheitert wiederholt es sich von selbst.";
+
+    private static boolean openWithdrawal(AppRuntime runtime, JobStatus job) {
+        try {
+            return runtime.workspace().openWithdrawal(job);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /**
@@ -1828,9 +1862,17 @@ public final class ActivitiesView implements View {
     void deleteAll() {
         AppRuntime runtime = context.runtime();
         // Genau die echten Aufträge des Reiters, die der Dialog zählt, werden gelöscht; der andere Reiter bleibt.
-        List<JobStatus> own = tabJobs(lastJobs, backgroundTab());
+        List<JobStatus> all = tabJobs(lastJobs, backgroundTab());
+        // Wie beim Besen: Ein offenes Löschen der Daten einer Quelle bleibt (Fundstelle 22, Abnahme #1090).
+        List<String> withdrawing = runtime == null ? List.of() : all.stream()
+                .filter(job -> openWithdrawal(runtime, job)).map(JobStatus::id).toList();
+        List<JobStatus> own = all.stream().filter(job -> !withdrawing.contains(job.id())).toList();
         List<String> ids = own.stream().map(JobStatus::id).toList();
         int count = own.size();
+        if (runtime != null && count == 0 && !withdrawing.isEmpty()) {
+            feedback.warning(WITHDRAWAL_KEPT, WITHDRAWAL_KEPT_TEXT);
+            return;
+        }
         if (runtime == null || count == 0) {
             return;
         }
@@ -1851,7 +1893,12 @@ public final class ActivitiesView implements View {
             detail = null;
             table.clearSelection();
             render();
-            feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            if (withdrawing.isEmpty()) {
+                feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            } else {
+                feedback.warning(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht; " + WITHDRAWAL_KEPT,
+                        WITHDRAWAL_KEPT_TEXT);
+            }
             poll();
         }, feedback::problem);
     }
@@ -2258,6 +2305,10 @@ public final class ActivitiesView implements View {
         if (job.type() == JobType.EXPORT) {
             return "export:" + job.id();
         }
+        if (job.type() == JobType.UPDATE_SUMMARY && job.parameter(com.aresstack.spaceharvester.application.changelog.ChangeLog.PARENT_PARAMETER) == null) {
+            // „Zusammenfassen“ ist Oberauftrag seiner Teile und Zusammenführungen (Angelo 22.11.2026).
+            return "summary:" + job.id();
+        }
         String run = job.parameter(com.aresstack.spaceharvester.application.presentation.VideoPresentations
                 .RUN_PARAMETER);
         return job.type() == JobType.PRESENTATION_EXPORT && run != null ? "presentation:" + run : null;
@@ -2268,6 +2319,10 @@ public final class ActivitiesView implements View {
         if (job.type() == JobType.BACKGROUND && !groupRow(job)) {
             String group = job.parameter(BackgroundJobs.GROUP);
             return group == null ? null : "background:" + group;
+        }
+        if (job.type() == JobType.UPDATE_SUMMARY) {
+            String parent = job.parameter(com.aresstack.spaceharvester.application.changelog.ChangeLog.PARENT_PARAMETER);
+            return parent == null ? null : "summary:" + parent;
         }
         if (showsProgress(job)) {
             String exportId = job.parameter(ExportAssetCollection.EXPORT_ID);

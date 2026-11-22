@@ -42,7 +42,8 @@ class ChangeLogConfiguration {
 
     @Bean(destroyMethod = "close")
     ChangeLog changeLog(ObjectProvider<LucenePageCache> cache, AccessGuard access, SourceCatalog catalog, Jobs jobs,
-                        SummaryModel summaries, AiRelease release) {
+                        SummaryModel summaries, ObjectProvider<AiConfiguration.UpdateSummaryPlanner> planner,
+                        AiRelease release) {
         LucenePageCache available = cache.getIfAvailable();
         PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
                 new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
@@ -59,7 +60,9 @@ class ChangeLogConfiguration {
         return new ChangeLog(store, access, headers, () -> catalog.all().stream().map(HarvestSource::id).toList(),
                 new ChangeLog.Summaries(jobs, summaries, release::mayProcess, Clock.systemUTC(),
                         // Worum es geht (Angelo, 21.11.2026): Lesetext und Space-Namen aus dem Cache.
-                        available == null ? null : new SnapshotSummaryMaterial(available::find, projector)))
+                        available == null ? null : new SnapshotSummaryMaterial(available::find, projector),
+                        // Plan vorab (Angelo 22.11.2026), Zeile „Zusammenfassung – Plan“.
+                        planner.getIfAvailable() == null ? null : planner.getIfAvailable().model()))
                 // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Servers.
                 .perDay(java.time.ZoneId.systemDefault());
     }

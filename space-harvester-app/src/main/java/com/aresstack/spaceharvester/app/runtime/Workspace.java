@@ -9,7 +9,6 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
-import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.marks.VideoMarks;
@@ -120,6 +119,15 @@ public final class Workspace {
     public List<HarvestSource> sources() {
         return access.filter(caller, harvester.sources().sources(), AccessKind.METADATA,
                 source -> ResourceScope.source(source.id()));
+    }
+
+    /**
+     * Macht eine laufende Verbindungsprüfung als Hintergrundteil sichtbar (Fundstelle 17); die App ruft das erst nach
+     * einer Sekunde. Leer bei nur einem Platz (bisheriger Weg).
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.background.ConnectionChecks.Check>
+            beginConnectionCheck(String sourceId) {
+        return harvester.connectionChecks().begin(sourceId);
     }
 
     /** Spaces einer Quelle, live ({@code GET /api/v1/sources/{id}/spaces}); zugleich die Verbindungsprüfung. */
@@ -730,6 +738,35 @@ public final class Workspace {
      */
     public boolean removeSource(String sourceId) {
         return harvester.sourceManagement().remove(sourceId);
+    }
+
+    /**
+     * Der Auftrag, der die Daten einer entfernten Quelle dieser ID noch löscht (Fundstelle 22); solange lässt sich die
+     * Kennung nicht neu vergeben.
+     */
+    public java.util.Optional<JobStatus> sourceRemovalPending(String sourceId) {
+        return harvester.sourceManagement().removalPending(sourceId);
+    }
+
+    /**
+     * Die Quellen, deren Daten nach dem Entfernen noch gelöscht werden, je mit dem Auftrag; aus dem Speicher des Core,
+     * den die Auftragsmeldungen pflegen, darf also auf dem EDT laufen.
+     */
+    public java.util.Map<String, JobStatus> sourceRemovalsPending() {
+        return harvester.sourceManagement().removalsPending();
+    }
+
+    /**
+     * Ob die Daten der Quelle gerade gelöscht werden (entfernt oder umgestellt), auch angehalten oder gescheitert mit
+     * ausstehender Wiederholung; aus dem Speicher des Core.
+     */
+    public boolean sourceDataBeingDeleted(String sourceId) {
+        return harvester.sourceManagement().withdrawalOpen(sourceId) != null;
+    }
+
+    /** Ob {@code job} ein offenes Löschen der Daten einer Quelle ist; das bleibt, bis es gelingt oder abbricht. */
+    public boolean openWithdrawal(JobStatus job) {
+        return job.sourceId() != null && job.id().equals(harvester.sourceManagement().withdrawalOpen(job.sourceId()));
     }
 
     /**
@@ -1743,6 +1780,16 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #keywordSearch(KeywordSearch.Query, String, int, KeywordSearch.Found)} als Teil der Suche
+     * {@code searchId} der Trefferliste (Fundstelle 23): Ihre Stapel und ihr Neusortieren bieten jeden Fund nur einmal
+     * zum Katalogisieren an. {@code found} darf {@code null} sein.
+     */
+    public KeywordSearch.Results keywordSearchIn(String searchId, KeywordSearch.Query query, String cursor, int limit,
+                                                 KeywordSearch.Found found) {
+        return harvester.keywordSearch().search(caller, query, cursor, limit, null, found, searchId);
+    }
+
+    /**
      * Suchmethode „Synonyme der Fachbegriffe“ (K5a): wie viele Synonymvorschläge die Suche {@code query} je Quelle
      * höchstens stellen würde, vor der Grenze {@code SearchExpansion.MAX_EXPANSIONS}; derselbe Umfang und dieselbe
      * Entdoppelung wie die Suche. Wirft, wenn das Glossar nicht lesbar ist; nie auf dem EDT.
@@ -2294,6 +2341,8 @@ public final class Workspace {
             // Metadaten und Analytics: ein neuer Lauf im selben Eintrag, auch nach einem Neustart (Angelo 17.11.2026).
             case METADATA_EXPORT, ANALYTICS_EXPORT -> harvester.jobActions().perform(jobId, Harvester.OWNER,
                     JobAction.RESUME);
+            // „Daten bereinigen“, auch das Löschen einer entfernten Quelle: im selben Eintrag von vorn (Fundstelle 22).
+            case PURGE -> harvester.jobActions().perform(jobId, Harvester.OWNER, JobAction.RESUME);
             default -> harvester.resumeExport(jobId);
         };
     }
@@ -2335,6 +2384,12 @@ public final class Workspace {
     public JobStatus performJobAction(String jobId, JobAction action) {
         JobStatus current = job(jobId);
         String owner = current.owner();
+        if (action == JobAction.RESUME
+                && com.aresstack.spaceharvester.application.assets.PageAssetHarvests.pageHarvest(current)) {
+            // Fundstelle 24: Die Anhangsliste samt Rechten kennt nur die App; sie wird erst geholt, wenn er läuft.
+            return harvester.pageAssetHarvests().resume(jobId, owner,
+                    () -> visibleAttachments(current.sourceId(), current.rootPageId(), AccessKind.SYNC));
+        }
         if (action == JobAction.RESUME && imageRun(current)) {
             // D2: ein vom Benutzer gestarteter Lauf „Bilder beschreiben“ läuft mit dessen Rechten weiter.
             return harvester.imageDescriptions().resume(caller, jobId);
@@ -2377,6 +2432,84 @@ public final class Workspace {
     public AllJobs.Outcome cancelAllJobs(boolean background) {
         return AllJobs.apply(AllJobs.toCancel(jobs(background)),
                 job -> performJobAction(job.id(), JobAction.CANCEL));
+    }
+
+    /**
+     * Folgt einem eigenen Auftrag bis zu seinem Ende (Fundstelle 24): {@code listener} läuft auf dem Event Dispatch
+     * Thread mit dem Stand, wenn er angehalten wird (danach geht es weiter), und einmal mit dem Endstand (fertig,
+     * gescheitert, abgebrochen oder gelöscht); danach ist er abgemeldet. Anmelden und erste Prüfung laufen nicht auf
+     * dem EDT; gemeldet vom Core, ohne Abfragen (ADR 0027).
+     */
+    public Subscription whenJobFinished(String jobId, java.util.function.Consumer<JobStatus> listener) {
+        java.util.Objects.requireNonNull(listener, "listener");
+        java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<com.aresstack.spaceharvester.application.jobs.JobState> last =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Subscription> registered = new java.util.concurrent.atomic
+                .AtomicReference<>();
+        Runnable unsubscribe = () -> {
+            Subscription own = registered.getAndSet(Subscription.NONE);
+            if (own != null) {
+                own.close();
+            }
+        };
+        java.util.function.BiConsumer<JobStatus, Boolean> report = (status, removed) -> {
+            if (done.get()) {
+                return;
+            }
+            com.aresstack.spaceharvester.application.jobs.JobState state = status.state();
+            if (!removed && state == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED) {
+                if (last.getAndSet(state) != com.aresstack.spaceharvester.application.jobs.JobState.PAUSED) {
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        if (!done.get()) {
+                            listener.accept(status);
+                        }
+                    });
+                }
+                return;
+            }
+            if (!removed && !state.terminal()) {
+                last.set(state);
+                return;
+            }
+            if (done.compareAndSet(false, true)) {
+                // Nach dem Ende abgemeldet: Der Zuhörer hielt sonst seinen Aufrufer (etwa ein Panel) fest.
+                unsubscribe.run();
+                javax.swing.SwingUtilities.invokeLater(() -> listener.accept(status));
+            }
+        };
+        Thread.ofVirtual().name("job-watch").start(() -> {
+            try {
+                Subscription watch = harvester.jobs().subscribe(Harvester.OWNER, new JobListener() {
+                    @Override
+                    public void changed(JobStatus status) {
+                        if (status.id().equals(jobId)) {
+                            report.accept(status, false);
+                        }
+                    }
+
+                    @Override
+                    public void removed(JobStatus gone) {
+                        if (gone.id().equals(jobId)) {
+                            report.accept(gone, true);
+                        }
+                    }
+                });
+                if (!registered.compareAndSet(null, watch)) {
+                    // Schon geendet oder vom Aufrufer abgemeldet, bevor die Anmeldung zurückkam.
+                    watch.close();
+                }
+                currentStatus(jobId).ifPresent(status -> report.accept(status, false));
+            } catch (RuntimeException e) {
+                System.getLogger(Workspace.class.getName()).log(System.Logger.Level.DEBUG,
+                        "Auftrag {0} nicht beobachtet ({1})", jobId,
+                        e.getClass().getName());
+            }
+        });
+        return () -> {
+            done.set(true);
+            unsubscribe.run();
+        };
     }
 
     /**
@@ -2760,23 +2893,15 @@ public final class Workspace {
                 // gemerkt: eine kurz verweigerte Prüfung (etwa beim Start) löscht ihn nicht aus der Liste.
             }
         }
-        // Exporte, Anreicherungen, Bilder und Anhänge auch direkt aus der Auftragsablage: Bilder und Anhänge stehen als
-        // Unterzeilen unter ihrem Export, der deshalb nie fehlen darf, auch wenn die gemerkte Liste ihn verloren hat.
-        List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.EXPORT));
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ATTACHMENTS));
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.GLOSSARY));
-        // Auch die Dateien („Datei erzeugen“) gehören zu ihrem Export und gehen nie verloren.
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.CONVERSION));
-        // Hintergrundaufträge (ADR 0025 Nachtrag) stößt der Core selbst an; sie stehen im Reiter „Hintergrund“.
-        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.BACKGROUND));
-        // Aufträge des Aufrufers der App (Zusammenfassen, Synonymlauf, Aussagenanalyse) sind ebenso global sichtbar.
+        // Alle Aufträge der Eigentümer auch direkt aus der Auftragsablage, jeder Art (Fundstelle 4, Angelo 21.11.2026:
+        // nichts läuft unsichtbar): auch Abgleiche und Neueinlesen, die der Core selbst anstößt (Nachholen beim Start,
+        // Abgleich vor der Suche, Inventur, Wiederaufnahme), und Exporte samt ihren Bildern, Anhängen und Dateien, die
+        // als Unterzeilen nie fehlen dürfen, auch wenn die gemerkte Liste sie verloren hat. Hintergrundaufträge
+        // (ADR 0025 Nachtrag) stehen im Reiter „Hintergrund“.
+        List<JobStatus> followUps = new ArrayList<>();
         for (String owner : jobOwners()) {
-            if (!owner.equals(Harvester.OWNER)) {
-                for (JobType type : JobType.values()) {
-                    followUps.addAll(harvester.jobs().list(owner, type));
-                }
+            for (JobType type : JobType.values()) {
+                followUps.addAll(harvester.jobs().list(owner, type));
             }
         }
         for (JobStatus followUp : followUps) {
@@ -3295,7 +3420,8 @@ public final class Workspace {
 
     /**
      * Wie {@link #deleteAllJobs()}, nur für die genannten Aufträge, etwa die eines Reiters der Auftragsliste: laufende
-     * und wartende werden vorher abgebrochen. @return Anzahl
+     * und wartende werden vorher abgebrochen. Ein offenes Löschen der Daten einer Quelle bleibt (Fundstelle 22, Abnahme
+     * #1090); die übrigen werden trotzdem gelöscht. @return Anzahl
      */
     public int deleteAllJobs(java.util.Collection<String> jobIds) {
         int deleted = 0;
@@ -3305,6 +3431,8 @@ public final class Workspace {
                 deleted++;
             } catch (UnknownJobException e) {
                 activities.forget(id);
+            } catch (JobStillRunningException e) {
+                // ein offenes Löschen der Daten einer Quelle bleibt
             }
         }
         return deleted;
@@ -3320,6 +3448,8 @@ public final class Workspace {
                     deleted++;
                 } catch (UnknownJobException e) {
                     activities.forget(status.id());
+                } catch (JobStillRunningException e) {
+                    // ein offenes Löschen der Daten einer Quelle bleibt
                 }
             }
         }
@@ -3376,9 +3506,16 @@ public final class Workspace {
         return harvester.assets().overview(visibleAttachments(sourceId, pageId, AccessKind.METADATA));
     }
 
-    /** Alle Anhänge einer Seite ernten ({@code POST …/assets/harvest}); braucht sync. */
-    public AssetHarvest harvestAssets(String sourceId, String pageId) {
-        return harvester.assets().harvest(visibleAttachments(sourceId, pageId, AccessKind.SYNC));
+    /**
+     * „Anhänge ablegen“: alle Anhänge einer Seite als Auftrag „Anhänge beschaffen“ ablegen (Fundstelle 24, Angelo
+     * 21.11.2026: nichts läuft unsichtbar); braucht sync. Der Fortschritt steht in der Auftragsliste, Abbrechen geht
+     * dort; „Fortsetzen“ holt nur, was fehlt ({@link #performJobAction}).
+     */
+    public JobStatus startAssetHarvest(String sourceId, String pageId) {
+        JobStatus status = harvester.pageAssetHarvests().start(visibleAttachments(sourceId, pageId, AccessKind.SYNC),
+                Harvester.OWNER);
+        activities.remember(status.id());
+        return status;
     }
 
     /** Inhalt eines Anhangs ({@code …/assets/{id}/content}); legt nur mit sync-Freigabe ab. */
@@ -3386,6 +3523,16 @@ public final class Workspace {
         PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
         return harvester.assets().content(list, attachmentId, mayStore, Harvester.OWNER);
+    }
+
+    /**
+     * Gibt Anhänge einer Seite zum Vorladen an den Hintergrundteil „Anhänge vorladen“ ihres Space ab (Fundstelle 18);
+     * geladen und abgelegt wird wie mit {@link #assetContent}. Leer bei nur einem Platz: Dann lädt die App selbst vor.
+     */
+    public java.util.Optional<JobStatus> prefetchAttachments(String sourceId, String pageId, List<String> attachmentIds) {
+        PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
+        return harvester.attachmentPrefetches().request(sourceId, list.spaceKey(), pageId, attachmentIds,
+                (source, page, attachment) -> assetContent(source, page, attachment));
     }
 
     /**
@@ -3469,6 +3616,12 @@ public final class Workspace {
         if (!Harvester.OWNER.equals(status.owner())) {
             // Läufe des Aufrufers (Zusammenfassen, Synonymlauf, Aussagenanalyse) gehören ihm selbst, auch
             // quellenübergreifende; die Rechte hat der Core schon beim Start geprüft.
+            return;
+        }
+        if (status.type() == JobType.PURGE && status.parameter(
+                com.aresstack.spaceharvester.application.sources.SourceDataPurge.REASON) != null) {
+            // Das Löschen einer entfernten oder umgestellten Quelle sieht, wer die Konfiguration verwalten darf, wie
+            // {@link #removeSource}; nach dem Neuladen steht die entfernte Quelle in keiner Richtlinie mehr.
             return;
         }
         if (!access.permits(caller, scope(status.sourceId(), status.partitionKey()), kind)) {

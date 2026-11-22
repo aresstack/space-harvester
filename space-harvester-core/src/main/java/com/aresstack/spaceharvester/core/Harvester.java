@@ -372,9 +372,12 @@ public final class Harvester implements AutoCloseable {
     private final Exports exports;
     private final ExportConversions conversions;
     private final DocumentRereads rereads;
+    private final com.aresstack.spaceharvester.application.assets.PageAssetHarvests pageAssetHarvests;
     private final JobActions jobActions;
     /** Hintergrundaufträge (Angelo 21.11.2026, ADR 0025 Nachtrag). */
     private final com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs;
+    private final com.aresstack.spaceharvester.application.background.ConnectionChecks connectionChecks;
+    private final com.aresstack.spaceharvester.application.background.AttachmentPrefetches attachmentPrefetches;
     /** „Seiten nachladen“ als Hintergrundauftrag. */
     private final com.aresstack.spaceharvester.application.background.PageLoads pageLoads;
     private final com.aresstack.spaceharvester.application.background.services.ServicePlanner servicePlanner;
@@ -510,6 +513,13 @@ public final class Harvester implements AutoCloseable {
             // Hintergrundaufträge (ADR 0025 Nachtrag): was die App von sich aus anstößt, nachrangig und nach einem
             // Neustart fortgesetzt. Früh, damit sich jeder Baustein mit seiner Art anmelden kann.
             this.backgroundJobs = new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, OWNER);
+            // Fundstelle 17: eine Verbindungsprüfung, die länger als eine Sekunde dauert, als Hintergrundteil.
+            this.connectionChecks = new com.aresstack.spaceharvester.application.background.ConnectionChecks(
+                    backgroundJobs);
+            // Fundstelle 18: die übrigen Anhänge einer geöffneten Art je Quelle und Space als Hintergrundteil.
+            this.attachmentPrefetches = new com.aresstack.spaceharvester.application.background.AttachmentPrefetches(
+                    backgroundJobs);
+            opened.add(attachmentPrefetches);
 
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
@@ -755,6 +765,10 @@ public final class Harvester implements AutoCloseable {
                         }
                     }, clock);
             opened.add(findings);
+            if (backgroundJobs != null) {
+                // Fundstelle 14: Funde katalogisieren als Hintergrundart „Funde katalogisieren“.
+                findings.background(backgroundJobs);
+            }
             this.navigation = new PageNavigation(catalog, reader, access, findings, pageLinks);
             this.search = new PageSearch(catalog, index, access);
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
@@ -874,6 +888,13 @@ public final class Harvester implements AutoCloseable {
                 prefetch = new SearchHitPrefetch(key -> texts.cachedVersion(key, cache::findHeader, cache::find),
                         key -> cache.findHeader(key).map(PageHeader::metadata), scheduler,
                         SearchHitPrefetch.DEFAULT_WAIT, builder.searchWait);
+                // Fundstelle 13: Was nach der Rückkehr der Suche weiterlädt, steht als „Suchtreffer laden“ in der Liste.
+                com.aresstack.spaceharvester.application.background.SearchHitLoads hitLoads =
+                        new com.aresstack.spaceharvester.application.background.SearchHitLoads(backgroundJobs,
+                                scheduler, AccessContext.technicalClient(OWNER),
+                                key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
+                opened.add(hitLoads);
+                prefetch.hitLoads(hitLoads);
             }
             SearchReranker reranker = builder.reranker;
             SwappableReranker swappable = null;
@@ -1030,7 +1051,10 @@ public final class Harvester implements AutoCloseable {
                             summaryRelease::mayProcess, clock,
                             // Worum es geht (Angelo, 21.11.2026): Lesetext und Space-Namen aus dem Cache.
                             new com.aresstack.spaceharvester.application.changelog.SnapshotSummaryMaterial(
-                                    cache::find, pageTexts)))
+                                    cache::find, pageTexts),
+                            // Plan vorab (Angelo 22.11.2026), Zeile „Zusammenfassung – Plan“.
+                            ChatUpdateSummaryModel.plan(() -> liveAi ? this.settings.ai() : startAi, catalog,
+                                    trustBundles, builder.userAgent)))
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault());
             opened.add(changeLog);
@@ -1038,9 +1062,15 @@ public final class Harvester implements AutoCloseable {
             // TTS-Modelle des Dienstes; Ablage unter data/podcasts, damit ein neuer Lauf dort weitermacht.
             java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastAi =
                     () -> liveAi ? this.settings.ai() : startAi;
+            // Plan und Sprechertexte mit eigener Zeile „Podcast“ (Angelo 22.11.2026): ai.podcast-model,
+            // ai.podcast-max-tokens, ai.podcast-thinking; Sprache (TTS) bleibt bei podcastAi.
+            java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastText = () -> {
+                com.aresstack.spaceharvester.ai.AiServiceSettings ai = podcastAi.get();
+                return ai == null ? null : ai.podcast();
+            };
             this.podcasts = new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts(jobs,
                     new ChatStepModel(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.VERSION,
-                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                            podcastText, () -> null, catalog, trustBundles, builder.userAgent),
                     new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
                             builder.userAgent, sentences),
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(
@@ -1060,7 +1090,7 @@ public final class Harvester implements AutoCloseable {
             ChangeLog podcastChangeLog = this.changeLog;
             this.pagePodcasts = new com.aresstack.spaceharvester.application.podcast.PagePodcasts(jobs,
                     new ChatStepModel(com.aresstack.spaceharvester.application.podcast.PagePodcasts.VERSION,
-                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                            podcastText, () -> null, catalog, trustBundles, builder.userAgent),
                     new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
                             builder.userAgent, sentences),
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(
@@ -1165,18 +1195,22 @@ public final class Harvester implements AutoCloseable {
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder im Podcast (Angelo 21.11.2026): je Thema ein Seitenbild nach seiner Beschreibung, sonst ein
-            // Schaubild aus Teilen. Gezeichnet wird mit der Einstellung „Bildgenerierung“ (ai.image-model,
-            // ai.image-max-tokens, ai.image-thinking), damit lange SVG-Antworten nicht abbrechen.
+            // Schaubild aus Teilen. Plan und Einzelteile sind getrennt einstellbar (Angelo 22.11.2026):
+            // „Bildgenerierung – Plan“ (ai.image-plan-*) und „– Einzelteile“ (ai.image-*), damit lange SVG-Antworten
+            // nicht abbrechen und jede Stufe für sich justiert werden kann.
             com.aresstack.spaceharvester.application.podcast.StoredPageImages podcastImages =
                     new com.aresstack.spaceharvester.application.podcast.StoredPageImages(cache::find,
                             this.imageAnalysis, assets);
+            ChatStepModel podcastPlanner = new ChatStepModel("podcast-picture-plan", () -> {
+                AiServiceSettings ai = liveAi ? this.settings.ai() : startAi;
+                return ai == null ? null : ai.imagePlan();
+            }, () -> null, catalog, trustBundles, builder.userAgent);
             ChatStepModel podcastDrawer = new ChatStepModel("podcast-pictures", () -> {
                 AiServiceSettings ai = liveAi ? this.settings.ai() : startAi;
-                return ai == null ? null : ai.imageGeneration();
-            }, () -> null, catalog, trustBundles,
-                    builder.userAgent);
-            this.podcasts.pictures(podcastDrawer, podcastImages);
-            this.pagePodcasts.pictures(podcastDrawer, podcastImages);
+                return ai == null ? null : ai.imageParts();
+            }, () -> null, catalog, trustBundles, builder.userAgent);
+            this.podcasts.pictures(podcastPlanner, podcastDrawer, podcastImages);
+            this.pagePodcasts.pictures(podcastPlanner, podcastDrawer, podcastImages);
             // B1: Bilder automatisch beschreiben nach dem Abgleich und nach neuer KI-Freigabe, nur mit images.automatic.
             com.aresstack.spaceharvester.application.configuration.ImageSettings startImages = builder.images;
             // D2: jeder Lauf „Bilder beschreiben“ über das Auftragssystem, im Hintergrund ein Unterauftrag je Space.
@@ -1478,6 +1512,9 @@ public final class Harvester implements AutoCloseable {
                     sourceId -> catalog.config(sourceId).isPresent(),
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
                     new FileReadStates(builder.assetDirectory()), clock);
+            // Fundstelle 24: „Anhänge ablegen“ einer Seite als Auftrag.
+            this.pageAssetHarvests = new com.aresstack.spaceharvester.application.assets.PageAssetHarvests(jobs,
+                    assets);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads, sourceQueryExports);
             jobActions.presentations(videoPresentations);
             // Q1: Suchqualität über den Suchweg des Chats; der Bereich wie im Chat als Seitenmenge aus dem Bestand.
@@ -1499,7 +1536,15 @@ public final class Harvester implements AutoCloseable {
             KnowledgeGraph graph = this.knowledgeGraph;
             // „Daten bereinigen“ und „Quelle entfernen“ leeren dieselben Ablagen; die Füllschlange zuerst.
             SourceDataPurge purge = new SourceDataPurge(jobs, SourceDataStores.builder()
-                    .fillQueue(fillQueue)
+                    // Über die Füllung, sobald es sie gibt: Sie bereinigt ihren Spiegel mit (Abnahme #1087).
+                    .fillQueue(fillQueue == null ? null : sourceId -> {
+                        BackgroundFill current = filling.get();
+                        if (current != null) {
+                            current.removeSource(sourceId);
+                        } else {
+                            fillQueue.removeSource(sourceId);
+                        }
+                    })
                     .pageReleases(pageReleases)
                     .pageCache(cache)
                     .fullText(textIndex)
@@ -1517,6 +1562,18 @@ public final class Harvester implements AutoCloseable {
                     .build(), sourceId -> catalog.config(sourceId).isPresent(),
                     sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
             this.sourceManagement = new SourceManagement(catalog, jobs, purge);
+            jobActions.purge(purge);
+            // Quellenübergreifende Aufträge lassen die Quellen aus, deren Löschen bei ihrem Start offen war (Abnahme
+            // #1090): festgehalten am Auftrag, auch auf den Threads, die seine Arbeit startet.
+            jobs.openWithdrawals(purge::openWithdrawals);
+            access.withhold(sourceId -> Jobs.withheldSources().contains(sourceId));
+            try {
+                // Fundstelle 22: Löschen entfernter oder umgestellter Quellen setzt nach dem Neustart fort.
+                sourceManagement.resumeWithdrawals();
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Löschen entfernter Quellen nicht fortgesetzt ({0})",
+                        e.getClass().getName());
+            }
             start.step("Exporte, Bilder und Aussagen");
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);
@@ -1535,6 +1592,11 @@ public final class Harvester implements AutoCloseable {
                 opened.add(fill);
                 this.backgroundFill = fill;
                 filling.set(fill);
+                // Fundstelle 12: sichtbar als „Hintergrundfüllung“, je Quelle und Space ein Teil auf eigener Spur.
+                com.aresstack.spaceharvester.application.background.FillJobs fillJobs =
+                        new com.aresstack.spaceharvester.application.background.FillJobs(backgroundJobs, jobs);
+                opened.add(fillJobs);
+                fillJobs.attach(fill, key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
                 // ADR 0027: jeder Commit des Seiten-Cache weckt die Suche nach Lücken, nie in Abständen.
                 cache.changes(cacheChanges.andThen(fill::wake));
             } else {
@@ -2387,7 +2449,22 @@ public final class Harvester implements AutoCloseable {
     /** Vorgabe für {@link Builder#maxTextFileBytes}: 200 MiB. */
     public static final long DEFAULT_MAX_TEXT_FILE_BYTES = 200L * 1024 * 1024;
 
+    /** Verbindungsprüfungen, die länger als eine Sekunde dauern, als Hintergrundteil (Fundstelle 17). */
+    public com.aresstack.spaceharvester.application.background.ConnectionChecks connectionChecks() {
+        return connectionChecks;
+    }
+
+    /** „Anhänge vorladen“ als Hintergrundteil je Quelle und Space (Fundstelle 18). */
+    public com.aresstack.spaceharvester.application.background.AttachmentPrefetches attachmentPrefetches() {
+        return attachmentPrefetches;
+    }
+
     /** Abgleich eines Space in den Cache als Auftrag; Status und Delta über {@link SpaceSyncJobs#status}. */
+    /** „Anhänge ablegen“ einer Seite als Auftrag (Fundstelle 24). */
+    public com.aresstack.spaceharvester.application.assets.PageAssetHarvests pageAssetHarvests() {
+        return pageAssetHarvests;
+    }
+
     public SpaceSyncJobs syncs() {
         return syncs;
     }

@@ -36,6 +36,8 @@ public final class StatusLabel extends JLabel {
     static {
         ICON_HOST.setForeground(Comic.BLUE);
     }
+    /** Der Ton „gelb“ (bewusst ausgelassen, wartet) auch für Hinweise außerhalb der Statuszeile. */
+    public static final Color WARNING_COLOR = WARNING;
 
     private StatusNote note = StatusNote.plain(" ");
     /** Der Text, wie er gemessen wird: mit Leerzeichen als Platz für das Symbol. */

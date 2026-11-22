@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
@@ -42,6 +43,7 @@ import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -142,6 +144,19 @@ public class KeywordSearch {
     private final CandidateSelectionStrategy selection;
     private final SearchRunLog runs;
     private final FindingCatalog findings;
+    /**
+     * Je Suche (Kennung des Aufrufers) die Seiten, deren Funde schon zum Katalogisieren angeboten wurden (Fundstelle
+     * 23, Abnahme PR 4): Neusortieren derselben Suche bietet sie nicht noch einmal an. Die jüngsten Suchen zuerst.
+     */
+    private final Map<String, Set<PageKey>> offeredIn = java.util.Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Set<PageKey>> eldest) {
+                    return size() > REMEMBERED_SEARCHES;
+                }
+            });
+    /** So viele Suchen merkt sich {@link #offeredIn}. */
+    static final int REMEMBERED_SEARCHES = 64;
     private final SearchExpansion expansion;
     /** Suchmethode „Synonyme der Fachbegriffe“ (K5a): nur, wenn die Anfrage sie einschaltet. */
     private final SearchExpansion glossarySynonyms;
@@ -464,9 +479,23 @@ public class KeywordSearch {
      */
     public Results search(AccessContext caller, Query query, String cursor, int limit, SearchRunId partOf,
                           Found found) {
+        return search(caller, query, cursor, limit, partOf, found, null);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, Query, String, int, SearchRunId, Found)} als Teil einer Suche des Aufrufers,
+     * etwa der Trefferliste, die denselben Stapel bei jedem Ladefortschritt neu einsortiert (Fundstelle 23, Abnahme PR
+     * 4): Funde, die diese Suche schon zum Katalogisieren angeboten hat, bietet sie nicht noch einmal an; Neusortieren
+     * allein erzeugt so keinen Auftrag „Funde katalogisieren“.
+     *
+     * @param searchId Kennung der Suche, gleich für ihre Stapel und ihr Neusortieren, oder {@code null}
+     */
+    public Results search(AccessContext caller, Query query, String cursor, int limit, SearchRunId partOf,
+                          Found found, String searchId) {
         Instant startedAt = Instant.now();
         long started = System.nanoTime();
         Tally tally = new Tally();
+        tally.searchId = searchId;
         Results results = batch(caller, query, cursor, limit, tally, found);
         if (runs == SearchRunLog.NONE) {
             return results;
@@ -529,6 +558,8 @@ public class KeywordSearch {
         OptionalInt queued = OptionalInt.empty();
         OptionalInt pending = OptionalInt.empty();
         OptionalInt confirmed = OptionalInt.empty();
+        /** Die Suche des Aufrufers, zu der der Stapel gehört, oder {@code null}. */
+        String searchId;
     }
 
     private Results batch(AccessContext caller, Query query, String cursor, int limit, Tally tally, Found watcher) {
@@ -617,15 +648,18 @@ public class KeywordSearch {
                 expanded.forEach(extra -> all.add(new SourceQuery(extra.query(), extra.relation())));
                 asked.put(search.source().id(), List.copyOf(all));
                 for (SourceQuery sent : all) {
-                    perQuery.add(searching.submit(() -> search.source().searchPages(sent.text(), search.wanted(),
-                            query.spaces())));
+                    perQuery.add(searching.submit(Jobs.carryingWithheld(() -> search.source().searchPages(sent.text(),
+                            search.wanted(), query.spaces()))));
                 }
                 calls.add(perQuery);
                 if (observer != null) {
                     // Sobald diese Quelle geantwortet hat, erfährt es der Beobachter, auch wenn andere noch suchen.
                     List<Future<List<SourceSearchMatch>>> answers = List.copyOf(perQuery);
                     List<SourceQuery> sent = List.copyOf(all);
-                    searching.submit(() -> report(observer, caller, query, search, answers, sent, limit));
+                    searching.submit(Jobs.carryingWithheld(() -> {
+                        report(observer, caller, query, search, answers, sent, limit);
+                        return null;
+                    }));
                 }
             }
         }
@@ -713,7 +747,7 @@ public class KeywordSearch {
         // K5a: Was nur ein Synonymvorschlag fand, steht hinter allen übrigen; der Cursor zählt je Quelle weiter.
         candidates = HitReason.proposedSynonymsLast(candidates, Candidate::reasons);
 
-        catalogFindings(caller, query, pending);
+        catalogFindings(caller, query, pending, tally.searchId);
 
         Map<String, Integer> next = new LinkedHashMap<>();
         for (String sourceId : pending.keySet()) {
@@ -879,12 +913,25 @@ public class KeywordSearch {
      * Seitenmenge nur ihre Funde (ADR 0029): Die Hintergrundfüllung lädt angebotene Funde, und außerhalb der Auswahl
      * soll nichts geladen werden.
      */
-    private void catalogFindings(AccessContext caller, Query query, Map<String, List<SourceSearchMatch>> found) {
+    private void catalogFindings(AccessContext caller, Query query, Map<String, List<SourceSearchMatch>> found,
+                                 String searchId) {
+        Set<PageKey> offered = searchId == null ? null
+                : offeredIn.computeIfAbsent(searchId, ignored -> ConcurrentHashMap.newKeySet());
         found.forEach((sourceId, matches) -> {
             try {
-                findings.offer(caller, sourceId, matches.stream()
+                List<FindingCatalog.Finding> fresh = matches.stream()
                         .filter(match -> query.admits(sourceId, match.pageId()))
-                        .map(match -> new FindingCatalog.Finding(match.pageId(), match.version())).toList());
+                        // Fundstelle 23: in dieser Suche nur, was sie noch nicht angeboten hat.
+                        .filter(match -> offered == null || !offered.contains(new PageKey(sourceId, match.pageId())))
+                        .map(match -> new FindingCatalog.Finding(match.pageId(), match.version())).toList();
+                if (fresh.isEmpty()) {
+                    return;
+                }
+                // Abnahme #1082: Nur Angenommenes gilt als angeboten; den Rest holt ein Neusortieren nach.
+                Set<String> accepted = findings.accept(caller, sourceId, fresh);
+                if (offered != null && accepted != null) {
+                    accepted.forEach(pageId -> offered.add(new PageKey(sourceId, pageId)));
+                }
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Funde aus {0} nicht katalogisiert ({1})", sourceId,
                         e.getClass().getName());
@@ -1050,14 +1097,15 @@ public class KeywordSearch {
         List<Future<Optional<Hit>>> futures = new ArrayList<>();
         try (ExecutorService checks = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Candidate candidate : candidates) {
-                futures.add(checks.submit(() -> {
+                // Die ausgelassenen Quellen eines quellenübergreifenden Auftrags gelten auch hier (Abnahme #1090).
+                futures.add(checks.submit(Jobs.carryingWithheld(() -> {
                     slots.acquireUninterruptibly();
                     try {
                         return hit(caller, query, candidate);
                     } finally {
                         slots.release();
                     }
-                }));
+                })));
             }
         }
         List<Hit> hits = new ArrayList<>();

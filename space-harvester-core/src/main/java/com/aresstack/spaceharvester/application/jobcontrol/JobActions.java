@@ -92,6 +92,14 @@ public class JobActions {
         this.background = background;
     }
 
+    /** „Daten bereinigen“ oder {@code null}; bindet der Harvester nach dem Bau an. */
+    private volatile com.aresstack.spaceharvester.application.sources.SourceDataPurge purge;
+
+    /** Bindet „Daten bereinigen“ an: Fortsetzen löscht im selben Eintrag von vorn, auch nach einem Neustart. */
+    public void purge(com.aresstack.spaceharvester.application.sources.SourceDataPurge purge) {
+        this.purge = purge;
+    }
+
     /** Der wirksame Zustand des eigenen Auftrags mit den jetzt erlaubten Aktionen. */
     public JobLifecycleState state(String jobId, String owner) {
         return jobs.status(jobId, owner).lifecycle();
@@ -196,6 +204,12 @@ public class JobActions {
             }
             case EXPORT -> exports.resume(current.id(), owner, access);
             case ASSETS, ATTACHMENTS -> {
+                if (com.aresstack.spaceharvester.application.assets.PageAssetHarvests.pageHarvest(current)) {
+                    // Die Anhangsliste samt Rechten kennt nur der Aufrufer (Workspace#performJobAction); auch im selben
+                    // Lauf, sonst ginge es mit alter Liste und alten Rechten weiter.
+                    throw new JobNotResumableException(current.id(),
+                            "„Anhänge ablegen“ setzt die Seitenansicht oder die Auftragsliste der App fort");
+                }
                 if (conversions == null) {
                     throw new JobNotResumableException(current.id(), "keine Bild- oder Anhangbeschaffung angebunden");
                 }
@@ -227,6 +241,13 @@ public class JobActions {
             case BACKGROUND -> {
                 com.aresstack.spaceharvester.application.background.BackgroundJobs bound = background;
                 yield bound != null ? bound.resumeJob(current.id()) : jobs.resume(current.id(), owner);
+            }
+            case PURGE -> {
+                com.aresstack.spaceharvester.application.sources.SourceDataPurge bound = purge;
+                if (bound == null) {
+                    throw new JobNotResumableException(current.id(), "kein „Daten bereinigen“ angebunden");
+                }
+                yield bound.resume(current.id(), owner);
             }
             default -> throw new JobNotResumableException(current.id(), "diese Auftragsart lässt sich nicht fortsetzen");
         };

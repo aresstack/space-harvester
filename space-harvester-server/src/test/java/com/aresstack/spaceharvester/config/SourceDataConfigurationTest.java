@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.acquisition.BackgroundFill;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
 import com.aresstack.spaceharvester.application.assets.AssetStore;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
@@ -51,7 +52,8 @@ class SourceDataConfigurationTest {
                 new JobLimits(2, 5, Duration.ofHours(1), Duration.ofDays(1)), Clock.systemUTC());
         try {
             SourceDataPurge purge = new SourceDataConfiguration().sourceDataPurge(jobs,
-                    ConfiguredSourceCatalog.of(List.of(), "test"), none(LuceneFillQueue.class), release,
+                    ConfiguredSourceCatalog.of(List.of(), "test"), none(LuceneFillQueue.class),
+                    none(BackgroundFill.class), release,
                     none(LucenePageCache.class), none(LucenePageTextIndex.class), none(LuceneEnrichmentStore.class),
                     none(AssetStore.class), none(ExportArtifactWriter.class), none(TermRelations.class),
                     none(FileResolutionCache.class), none(FileResolutionCache.class),

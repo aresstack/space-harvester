@@ -844,8 +844,10 @@ public final class AppContext {
         AppRuntime current = runtime;
         connections.put(sourceId, new Connection(Connection.State.CHECKING, Instant.now(), List.of(), null));
         fire();
+        VisibleCheck visible = new VisibleCheck(sourceId, () -> current.workspace().beginConnectionCheck(sourceId));
         Background.run(() -> current.workspace().spaces(sourceId),
                 spaces -> {
+                    visible.end(null);
                     // Ergebnis einer inzwischen ersetzten Laufzeit (Neu laden) verwerfen.
                     if (runtime != current) {
                         return;
@@ -855,6 +857,7 @@ public final class AppContext {
                     done.run();
                 },
                 error -> {
+                    visible.end(com.aresstack.spaceharvester.application.background.ConnectionChecks.reasonCode(error));
                     if (runtime != current) {
                         return;
                     }
@@ -865,6 +868,69 @@ public final class AppContext {
     }
 
     /**
+     * Die Sichtbarkeit einer Verbindungsprüfung (Fundstelle 17, Abnahme des Architekten): ein einmaliger Zeitgeber von
+     * einer Sekunde je Prüfung, kein Polling. Läuft die Prüfung dann noch, wird sie als Hintergrundteil „Verbindung
+     * prüfen“ sichtbar; endet sie vorher, entsteht kein Teil. Kommt der Teil erst nach dem Ergebnis an, endet er sofort.
+     */
+    static final class VisibleCheck {
+
+        /** Ab dieser Dauer wird eine Prüfung sichtbar. */
+        static final int THRESHOLD_MILLIS = 1000;
+
+        private final javax.swing.Timer threshold;
+        private boolean ended;
+        private String failure;
+        private com.aresstack.spaceharvester.application.background.ConnectionChecks.Check check;
+
+        VisibleCheck(String sourceId, java.util.function.Supplier<java.util.Optional<
+                com.aresstack.spaceharvester.application.background.ConnectionChecks.Check>> begin) {
+            threshold = new javax.swing.Timer(THRESHOLD_MILLIS, event -> {
+                synchronized (this) {
+                    if (ended) {
+                        return;
+                    }
+                }
+                Background.run(begin::get, started -> started.ifPresent(this::shown),
+                        // Nur Quelle und Klasse, nie die Nachricht (Abnahme #1091).
+                        error -> LOG.debug("Verbindungsprüfung von {} ließ sich nicht anzeigen ({})", sourceId,
+                                error.getClass().getName()));
+            });
+            threshold.setRepeats(false);
+            threshold.start();
+        }
+
+        private void shown(com.aresstack.spaceharvester.application.background.ConnectionChecks.Check started) {
+            boolean finishNow;
+            String reason;
+            synchronized (this) {
+                finishNow = ended;
+                reason = failure;
+                check = started;
+            }
+            if (finishNow) {
+                started.finish(reason);
+            }
+        }
+
+        /** @param reason der Grundcode ({@code ConnectionChecks#reasonCode}) einer gescheiterten Prüfung, sonst null */
+        void end(String reason) {
+            threshold.stop();
+            com.aresstack.spaceharvester.application.background.ConnectionChecks.Check shown;
+            synchronized (this) {
+                if (ended) {
+                    return;
+                }
+                ended = true;
+                failure = reason;
+                shown = check;
+            }
+            if (shown != null) {
+                shown.finish(reason);
+            }
+        }
+    }
+
+    /**
      * Ob {@link #reload} diesen wartenden oder laufenden Auftrag abbräche. Ein Hintergrundauftrag nur, wenn ein Benutzer
      * ihn startete ({@code BackgroundJobs#startedByUser}, Abnahme #1073): Er verlöre mit der Laufzeit seinen Aufrufer
      * und hielte danach gelb „von Hand fortsetzen“ an. Automatik und Abgleiche beim Start unterbricht das Neuladen nur,
@@ -872,6 +938,11 @@ public final class AppContext {
      * nach.
      */
     static boolean abortedByReload(JobStatus job) {
+        // Was das Ende des Dienstes übersteht, etwa das Löschen einer entfernten Quelle (Fundstelle 22), setzt danach
+        // von selbst fort und wird nicht abgebrochen.
+        if ("true".equals(job.parameter(com.aresstack.spaceharvester.application.jobs.Jobs.SURVIVES_SHUTDOWN))) {
+            return false;
+        }
         return !job.state().terminal() && (!job.type().background()
                 || com.aresstack.spaceharvester.application.background.BackgroundJobs.startedByUser(job));
     }

@@ -454,6 +454,167 @@ wird automatisch verwaltet.
     - Bei nur einem Platz unter „Vorbereitung“ (`BackgroundJobs#canRun()` falsch) nehmen Nachladen und Vorladen ihren
       bisherigen Weg.
 
+12. **Funde katalogisieren** (Angelo 21.11.2026, Fundstellen 14 und 23, Entwurf vom Architekten bestätigt).
+    - `FindingCataloging` ist die Art `catalog` „Funde katalogisieren“: je Angebot und Quelle ein Teil, die Funde als
+      Seiten-ID und Version in den Angaben (`pages`), der technische Aufrufer als Kennung (`finder`) und der Anlass im
+      Änderungsprotokoll (`change-trigger`). So setzt ein Teil auch nach einem Neustart mit denselben Rechten fort.
+    - Höchstens ein wartender Teil je Quelle, Aufrufer und Anlass: Ein neues Angebot ersetzt ihn und nimmt seine Funde
+      hinter den eigenen mit. Erst entsteht der Ersatz, dann wird der alte abgebrochen; scheitert das Anlegen, bleiben
+      der alte Teil und die angenommenen Funde stehen und gehen mit dem nächsten Angebot mit (Abnahme #1082).
+    - Angenommenes fällt nie weg: Ein Teil fasst höchstens 1000 Funde; ist er voll, nimmt er vom neuen Angebot nur, was
+      passt. `FindingCatalog#accept` nennt die angenommenen Seiten; dazu zählen auch eben geprüfte (`RECHECK`, zehn
+      Minuten) und solche, die ein offener Teil noch in derselben Fassung katalogisiert. Erledigte Seiten eines Teils
+      zählen nicht mehr als offen; eine neue Fassung ist ein neuer Fund. Funde von Endnutzern und delegierten Aufrufern
+      zählen wie bisher nicht.
+    - `accept` kehrt sofort zurück: Die Teile legt ein eigener Arbeiter (`Coalescer`, gebündelt je Schlüssel) an. Die
+      offenen Teile führt `FindingCataloging` im Speicher, gepflegt über Anlegen, Arbeit und die Auftragsmeldungen der
+      Art (`BackgroundJobs#subscribe(kind, …)`); den ganzen Auftragsspeicher liest es nur einmal beim Start.
+    - Die Trefferliste sortiert denselben Stapel bei jedem Ladefortschritt neu (`SearchView#refresh`). Sie nennt dabei
+      ihre Suche (`KeywordSearch#search(…, searchId)`), und die Suche bietet nur Funde an, die in dieser Suche noch nicht
+      angenommen sind: Neusortieren allein erzeugt keinen Teil, holt aber Abgewiesenes nach.
+    - Bei nur einem Platz unter „Vorbereitung“ bleibt es beim bisherigen Weg im Speicher.
+
+13. **Suchtreffer laden** (Angelo 21.11.2026, Fundstelle 13, Entwurf vom Architekten bestätigt, Abnahme #1085).
+    - Kehrt die Suche eines technischen Aufrufers zurück, bevor die Treffer eines Stapels geladen sind
+      (`technicalWait`, in der App null), wird, was noch lädt oder wartet, die Gruppe „Suchtreffer laden“ der eigenen
+      Art `search-hits` (`SearchHitLoads`), je Quelle und Space ein Teil. Das gilt für jede Schlagwortsuche, auch aus
+      Chat und progressiver Suche.
+    - Die Suche übergibt nur und kehrt sofort zurück: Die Gruppe legt ein eigener Arbeiter an (`Coalescer`, gebündelt je
+      Stapel). Welche Seiten offene Teile schon laden, führt `SearchHitLoads` im Speicher, gepflegt über Anlegen und die
+      Auftragsmeldungen der Art (`BackgroundJobs#subscribe(kind, …)`); solche Seiten fallen aus neuen Teilen heraus.
+    - Die Abrufe bleiben dieselben: Vorrang des Vordergrunds, Platz im Planer, kein zweiter Abruf. Der Teil wartet über
+      Rückrufe auf sie (kein blockierter Arbeiter) und zählt sie; `progress()` der Suche zählt dieselben Abrufe, beide
+      Anzeigen stimmen also überein.
+    - Scheitert eine Seite, zählt sie rot mit Grund (Ereignis im Auftrag), die übrigen laden weiter; der Teil endet dann
+      als gescheitert („… ließen sich nicht laden; die nächste Suche versucht es erneut“) und lässt sich einzeln
+      wiederholen.
+    - Die übernommenen Abrufe bricht nur der Benutzer ab: Abbrechen oder Anhalten in der Auftragsliste zieht sie
+      zurück, Abbrechen in der Trefferliste bricht auch die Gruppe ab. Scheitert das Anlegen der Gruppe, laufen die
+      Abrufe der Suche unverändert weiter.
+    - Erst nach einem Neustart oder Fortsetzen fordert der Teil selbst an, was noch fehlt: höchstens 32 zugleich, wie
+      die Suche als Vordergrund ohne `refresh` (zurückgestellt, Anlass `SEARCH`); ist der Planer voll, weckt ihn
+      dessen Meldung.
+    - Delegierte Benutzer laden wie bisher nur während ihres Aufrufs, ohne Auftrag. Bei nur einem Platz unter
+      „Vorbereitung“ bleibt es beim bisherigen Weg.
+    - **Eigene Spur** (Abnahme #1085, gilt auch für die Hintergrundfüllung): Teile, die nur auf Arbeit warten, die der
+      Planer ohnehin begrenzt, belegen keinen Hintergrundplatz. `BackgroundKind#ownLane` ist nur für die genannten Arten
+      erlaubt (`OWN_LANE_KINDS`); solche Teile starten sofort, zählen weder unter „läuft“ noch im Hintergrundanteil und
+      haben keine Frist. Sie laufen nur mit mehr als einem Platz unter „Vorbereitung“ und ruhen mit „Hintergrund
+      anhalten“ wie alle Hintergrundteile.
+
+14. **Hintergrundfüllung** (Angelo 21.11.2026, Fundstelle 12, Variante A vom Architekten bestätigt).
+    - Die Füllung selbst bleibt, wie sie ist (`BackgroundFill`, über den Planer). Sobald sie in einem Space Lücken
+      übergibt, entsteht dort ein Teil der Gruppe „Hintergrundfüllung“ (Art `fill`, `FillJobs`), je Quelle und Space
+      einer, solange dort Seiten warten oder laden. Der Teil rechnet nichts: Er zählt die Abrufe der Füllung (geladen,
+      gescheitert, „Wartend“) und wartet über ihre Rückrufe, auf eigener Spur (Punkt 13).
+    - Anhalten: Der Space ruht, bis der Teil fortgesetzt wird. Abbrechen: Der Space ruht bis zum nächsten
+      abgeschlossenen Abgleich des Space oder der ganzen Quelle. Beides wird aus den Aufträgen abgeleitet, nicht im
+      Speicher gehalten, und übersteht so den Neustart. Ruhende Spaces übergeht die Füllung beim Suchen, Anbieten und
+      Nachschieben. Das gilt auch für einen noch wartenden Teil.
+    - Ruhen räumt ab (`BackgroundFill#rest`): Was beim Planer noch wartet, wird sofort zurückgezogen, nur im Speicher.
+      Die Einträge des Space verlassen die Warteschlange in einem Commit auf dem Arbeiter der Füllung, nie unter der
+      Sperre der Aufträge. Laufende Abrufe enden regulär und werden gezählt, rot mit Grund, wenn sie scheitern.
+    - Fortsetzen setzt denselben Teil fort, keine neue Gruppe, auch nach Abbrechen: Die Füllung sucht sofort im
+      Katalog nach Lücken seines Space (`BackgroundFill#scanFor`), und der Teil endet erst, wenn sie dort nichts mehr
+      findet; ohne Space meldet sie gleich „leer“. Was nach dem Abbrechen noch endet, zählt für keinen späteren Teil.
+    - Die Sperre der Füllung gilt nur über ihre Karten im Speicher, nie über Zugriffe auf Warteschlange oder Cache.
+    - Einreihen (erst spiegeln, dann hinzufügen) und Austragen (erst entfernen, dann Spiegel löschen) laufen unter einer
+      eigenen Reihenfolge-Sperre nie verschränkt; ein Eintrag ohne Spiegel trägt die Füllung aus, statt ihn zu
+      überspringen, damit er keinen Platz im Fenster dauerhaft belegt.
+    - Wird ein Teil gelöscht, von Hand oder nach der Aufbewahrungsfrist, folgt sein Space den übrigen Teilen. „Daten
+      bereinigen“ leert die Warteschlange über die Füllung (`BackgroundFill#removeSource`), damit auch ihr Spiegel
+      bereinigt wird. „Wartend“ zeigt bei beendeten und angehaltenen Teilen 0.
+    - Gescheiterte Abrufe stehen rot mit Grund im Teil; endet er mit Fehlern, scheitert er (`PAGES_MISSING`), und die
+      Füllung versucht die Seiten nach ihrer Wartezeit erneut. Abrufe, die enden, bevor ihr Teil läuft, werden beim
+      Start nachgemeldet.
+    - Bei nur einem Platz unter „Vorbereitung“ bleibt die Füllung unsichtbar wie bisher.
+
+15. **Automatische Abgleiche in der Auftragsliste** (Angelo 21.11.2026, Fundstelle 4). Die Auftragsliste der App
+    liest alle Aufträge ihrer Eigentümer aus der Auftragsablage, jeder Art, nicht nur die gemerkten. So stehen auch
+    Abgleiche und Neueinlesen dort, die der Core selbst anstößt: Nachholen beim Start, Abgleich vor der Suche,
+    Inventur, Wiederaufnahme und Neueinlesen nach einem Versionswechsel. Löschen entfernt sie aus der Ablage.
+
+16. **„Anhänge ablegen“ als Auftrag** (Angelo 21.11.2026, Fundstelle 24). Der Knopf in der Seitenansicht startet
+    einen Auftrag „Anhänge beschaffen“ (`ATTACHMENTS`, `task=page-harvest`, `PageAssetHarvests`) als Klick des
+    Benutzers (`submitInteractive`). Abgelegte Anhänge zählen als geschrieben, schon vorhandene als bewusst
+    ausgelassen, gescheiterte rot mit Grund. Abbrechen geht nach jedem Anhang; das Abgelegte bleibt. Die Statuszeile
+    des Reiters meldet „gestartet“ mit Link „Aufträge“, das Ergebnis ersetzt die Meldung (`Workspace#whenJobFinished`).
+    Fortsetzen holt nur, was fehlt; die Anhangsliste samt Rechten liefert die App, nach einem Neustart setzt deshalb
+    der Benutzer fort. „Neu erzwingen“ und „Nur Fehler“ der Anhangbeschaffung eines Exports gelten hier nicht.
+
+17. **Quelle entfernen als Auftrag** (Angelo 21.11.2026, Fundstelle 22, Entwurf vom Architekten bestätigt). Entfernen
+    und Umstellen auf ein neues Ziel löschen die Daten der Quelle nicht mehr im aufrufenden Thread, sondern als
+    Auftrag „Daten bereinigen“ (`PURGE`, `purge.reason` = `removed` oder `moved`, `SourceDataPurge#startWithdrawal`)
+    mit denselben Ablagen wie „Daten bereinigen“, KI-Ergebnisse und Caches eingeschlossen.
+    - Der Auftrag trägt `Jobs.SURVIVES_SHUTDOWN`: Endet der Dienst, etwa weil die App nach dem Entfernen neu lädt, gilt
+      er wie ein Hintergrundauftrag als unterbrochen, nicht als abgebrochen; „wird abgebrochen“ zählt ihn nicht. Der
+      nächste Start setzt ihn im selben Eintrag fort (`SourceManagement#resumeWithdrawals`); ältere offene Einträge
+      derselben Quelle werden abgelöst (`Jobs#retire`). Ein vom Benutzer abgebrochenes Löschen bleibt abgebrochen, ein
+      angehaltenes angehalten, bis sein Besitzer fortsetzt.
+    - Scheitert er (Ablage nicht geleert, Laufzeitgrenze), wiederholt er sich von selbst im selben Eintrag
+      (`SourceDataPurge.HEAL_DELAYS`: 30 s, 2, 10, dann alle 30 min); „Fortsetzen“ in den Aufträgen geht jederzeit.
+      Auf laufende Aufträge der Quelle wartet er, statt nach 30 s zu scheitern.
+    - Bis er gelingt, lässt sich dieselbe Kennung nicht neu anlegen (`SourceRemovalPendingException`); das Formular
+      zeigt unter der Kennung einen gelben Hinweis mit dem Link „Aufträge“ (`StatusLabel`). Die Sperre liest einen
+      Speicher, den die Auftragsmeldungen pflegen, nie die Auftragsablage.
+    - Steht eine entfernte Quelle vor dem Neustart wieder in der Konfiguration (YAML), wird sie trotzdem erst zu Ende
+      gelöscht; bis dahin ist sie abgeschaltet und zeigt gelb „Wird noch entfernt“, danach ist sie leer und wieder an.
+    - Das Löschen entfernter Quellen sieht, wer die Konfiguration verwaltet, auch wenn die Quelle nach dem Neuladen in
+      keiner Richtlinie mehr steht.
+    - Beim Umstellen auf ein neues Ziel kehrt `SourceManagement#change` sofort zurück.
+    - **Eine Wahrheit „Löschen offen“** (zweite Abnahme): `SourceDataPurge#openWithdrawal` hält je Quelle den jüngsten
+      Löschauftrag im Speicher, gepflegt aus den Auftragsmeldungen und beim Start aus der Ablage aufgebaut. Offen ist er
+      von der Annahme bis `COMPLETED` oder `CANCELLED`, also auch angehalten, unterbrochen und gescheitert mit
+      ausstehender Selbstheilung. Daran hängen Halten, Sperre der Kennung, Abschalten und Löschschutz.
+    - Halten: Solange das Löschen offen ist, startet kein anderer Auftrag der Quelle (`Jobs#sourceHold`, auf jedem Weg:
+      Annahme, Fortsetzen, ↻, Hintergrund); er wartet und meldet einmal „wartet auf das Löschen der Daten der Quelle“
+      (`Jobs.WAITING_FOR_WITHDRAWAL`). Gehaltene Aufträge belegen keinen Platz in der Warteschlange, und Fortsetzen
+      und Selbstheilung eines offenen Löschens umgehen die Grenze (angenommene Arbeit). Aufträge über alle Quellen lassen
+      die Quellen aus, deren Löschen bei ihrem Start offen war (`Jobs#withheldSources`, am Auftrag festgehalten und an
+      seine Arbeiter-Threads mitgegeben, `Jobs#carryingWithheld`; `AccessGuard#withhold`; ausdrücklich gefiltert in
+      Suchtreffer-Vorbereitung, Synonymsuche und Knowledge-Graph-Export). `Jobs#cancelSource`, etwa
+      beim Abschalten der Quelle, lässt ihr offenes Löschen stehen.
+      Das Löschen beendet nur Aufträge, die vor ihm angenommen wurden, auch nach Anhalten und Fortsetzen (Annahmezeit
+      des Eintrags).
+    - Die Selbstheilung plant nach einem abgelehnten neuen Versuch (etwa volle Warteschlange) weiter; beim Start bekommt
+      jedes offene gescheiterte Löschen seinen Zeitgeber.
+    - Löschschutz: Der Besen („Abgeschlossene löschen“) lässt offenes Löschen stehen und meldet gelb „Löschen der Quelle
+      läuft noch“, ebenso „Alle Aufträge löschen“; einzeln lässt es sich nicht löschen (`JobStillRunningException`), die Aufbewahrungsfrist nimmt es
+      nicht mit. „Daten bereinigen …“ ist bis dahin gesperrt, mit Hinweis.
+    - Eine bis zum Ende des Löschens abgeschaltete Quelle merkt sich den Schalter des Benutzers getrennt; schaltet er
+      sie in der Zeit aus, bleibt sie danach aus. Freigegeben wird bei `COMPLETED` und `CANCELLED`. Beim Start wird
+      erst gehalten, dann fortgesetzt.
+    - Nimmt `Jobs` den Auftrag nicht an (Warteschlange voll), wird wie früher sofort gelöscht; die Daten bleiben nie
+      ohne Auftrag liegen. Ein unterbrochener, gescheiterter oder angehaltener Auftrag läuft nicht nach der
+      Aufbewahrungsfrist ab, solange ihn kein neuerer Auftrag derselben Art und Quelle ablöst (`Jobs#purgeExpired`).
+18. **Verbindung prüfen ab einer Sekunde sichtbar** (Angelo 21.11.2026, Fundstelle 17, Entwurf vom Architekten
+    bestätigt). Die App prüft Quellen nach jedem Neuladen und Speichern weiter selbst (Spaces live abfragen). Je Prüfung
+    läuft ein einmaliger Zeitgeber von einer Sekunde, kein Polling (`AppContext.VisibleCheck`). Läuft die Prüfung dann
+    noch, entsteht ein Hintergrundteil „Verbindung prüfen“ (`ConnectionChecks`, Art `connection`), der mit der Prüfung
+    grün oder rot mit Grund (`connection-failed`) endet; endet sie vorher, entsteht kein Teil. Der Grund ist ein Code
+    (`SourceAccessException.Reason`, sonst die Klasse), nie die Nachricht. Nur diese Art läuft zusätzlich auf eigener
+    Spur (`Jobs.OWN_LANE`, `BackgroundKind.OWN_LANE_KINDS`): Der Teil rechnet nichts, die Prüfung hat ihre eigene
+    Zeitgrenze, und so erscheint er auch bei belegten Plätzen während der Prüfung. Abbrechen oder Anhalten beendet nur
+    den Teil (abgebrochen bzw. angehalten, nicht grün), die Prüfung selbst läuft zu Ende. Teile von vor einem Neustart
+    werden beim Start abgeschlossen (`BackgroundJobs#retireResumable`). Das Ende des Teils läuft nie auf dem EDT. Mit
+    nur einem Platz gilt der bisherige Weg.
+19. **Anhänge vorladen als Hintergrundteil** (Angelo 21.11.2026, Fundstelle 18, Entwurf vom Architekten bestätigt).
+    Öffnet man einen Anhang, lädt die App den gezeigten, je zwei Nachbarn und die Standbilder der Videomarken (sie
+    brauchen den offenen Player) weiter selbst vor. Die übrigen Anhänge derselben Art gibt sie einmal je Seite an den
+    Hintergrundteil „Anhänge vorladen“ ab (`AttachmentPrefetches`, Art `attachment-prefetch`).
+    - Je Quelle und Space sammelt ein Teil die Seiten (`startUnlessWaiting`), auf einem normalen Hintergrundplatz; ein
+      laufender Teil nimmt weitere Seiten seines Space mit. Geladen und abgelegt wird mit den Rechten des Aufrufers
+      wie beim Öffnen.
+    - Anhalten legt den Rest zurück, Fortsetzen lädt ihn, Abbrechen oder Löschen verwirft ihn, auch bei einem Teil,
+      der noch wartet. Jede Seite gehört dem Teil, der sie annahm; was nach einem angeforderten Abbruch kommt, lädt
+      ein neuer Teil. Jeder Anhang wird einmal abgegeben; eine weitere Art derselben Seite kommt hinzu.
+    - Je Space warten höchstens 5.000 Anhänge (`AttachmentPrefetches#MAX_WAITING`). Darüber, oder wenn kein Teil
+      entsteht, wartet nichts von der Anfrage und die App lädt wie bisher selbst. Gescheiterte Anhänge
+      stehen rot mit Grund im Teil, der dann scheitert (`attachments-missing`); sie laden beim Öffnen.
+    - Die Seiten liegen nur im Speicher: Teile von vor einem Neustart werden beim Start abgeschlossen
+      (`BackgroundJobs#retireResumable`). Endet der Teil, zeigt die
+      geöffnete Seite ihre Anhänge neu. Mit nur einem Platz lädt die App wie bisher alles selbst.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel

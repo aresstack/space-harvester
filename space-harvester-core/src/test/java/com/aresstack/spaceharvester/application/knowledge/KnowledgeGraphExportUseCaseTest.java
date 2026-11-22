@@ -77,6 +77,17 @@ class KnowledgeGraphExportUseCaseTest {
     }
 
     @Test
+    void anExportOfTheWholeGraphLeavesOutSourcesWhoseDataIsBeingDeleted() throws Exception {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.");
+        analyse("altwiki", "1", "Die Buchhaltung prüft den Beleg.");
+        jobs.openWithdrawals(() -> Set.of("altwiki"));
+
+        assertThat(run(new Scope.All()).state()).isEqualTo(JobState.COMPLETED);
+
+        assertThat(read().toString()).contains("Sachbearbeiter").doesNotContain("Buchhaltung");
+    }
+
+    @Test
     void anAttachmentIsExportedAsItsOwnDocumentWithSeparateIdentifiers() throws Exception {
         // ADR 0026, Punkt 10 und Schlüsselform Punkt 1 (AP9c)
         analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.");

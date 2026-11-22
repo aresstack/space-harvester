@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -71,6 +72,31 @@ class CoalescerTest {
         coalescer.mark("DEV");
         coalescer.close();
         assertThat(delivered.poll(INTERVAL.toMillis() * 3, TimeUnit.MILLISECONDS)).isNull();
+    }
+
+    @Test
+    void closeWaitsForARunningDeliveryWithoutInterruptingIt() throws InterruptedException {
+        CountDownLatch inside = new CountDownLatch(1);
+        AtomicBoolean interrupted = new AtomicBoolean();
+        AtomicBoolean finished = new AtomicBoolean();
+        Coalescer<String, String> coalescer = new Coalescer<>("test", Duration.ZERO, (key, values) -> {
+            inside.countDown();
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException e) {
+                interrupted.set(true);
+                return;
+            }
+            finished.set(true);
+        });
+        coalescer.mark("DEV");
+        assertThat(inside.await(5, TimeUnit.SECONDS)).isTrue();
+
+        coalescer.close();
+
+        // Ein Unterbrechen mitten im Schreiben schlösse den Lucene-Index; close() wartet deshalb das Ende ab.
+        assertThat(interrupted).isFalse();
+        assertThat(finished).isTrue();
     }
 
     private static <T> T next(BlockingQueue<T> queue) throws InterruptedException {
