@@ -166,6 +166,55 @@ class FillJobsTest {
         assertThat(jobs.events(done.id())).anySatisfy(event -> assertThat(event.message()).contains("UNAVAILABLE"));
     }
 
+    @Test
+    void theLastPageEndingBetweenWaitingAndLiveStillEndsThePartThroughItsOwnSearch() throws Exception {
+        // CI #1121, Auflage AT #1130: „wartend“ ist beim ersten Lesen noch 1, danach 0, und keine Seite meldet sich
+        // mehr; ihr „leer“ ging verloren, weil der Teil noch nicht lief. Er muss über seine eigene Suche enden.
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger searched = new java.util.concurrent.atomic.AtomicInteger();
+        FillJobs fillJobs = new FillJobs(background, jobs);
+        open.add(fillJobs);
+        fillJobs.attach(new FillJobs.Fill() {
+            @Override
+            public boolean enabled() {
+                return true;
+            }
+
+            @Override
+            public int waiting(BackgroundFill.Where where) {
+                return asked.getAndIncrement() == 0 ? 1 : 0;
+            }
+
+            @Override
+            public void scanFor(BackgroundFill.Where where) {
+                // Wie die echte Füllung: Findet die Suche nichts, meldet sie „leer“.
+                searched.incrementAndGet();
+                fillJobs.idle(where);
+            }
+
+            @Override
+            public void wake() {
+            }
+
+            @Override
+            public void rest(BackgroundFill.Where where) {
+            }
+        });
+        CountDownLatch ended = new CountDownLatch(1);
+        open.add(background.subscribe(FillJobs.KIND, status -> {
+            if (status.state().terminal()) {
+                ended.countDown();
+            }
+        }, removed -> {
+        })::close);
+
+        fillJobs.handed(DEV);
+
+        assertThat(ended.await(30, TimeUnit.SECONDS)).as("der Teil endet, statt ewig zu laufen").isTrue();
+        assertThat(part(JobState.COMPLETED)).isPresent();
+        assertThat(searched).as("„leer“ zählt erst nach der eigenen Suche, dann einmal neu").hasValue(2);
+    }
+
     private void gate(String... ids) {
         for (String id : ids) {
             gates.put(id, new CountDownLatch(1));

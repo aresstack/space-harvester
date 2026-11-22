@@ -72,7 +72,24 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private final Map<BackgroundFill.Where, Instant> synced = new HashMap<>();
     private final Subscription parts;
     private final Subscription syncs;
-    private volatile BackgroundFill fill;
+    private volatile Fill fill;
+
+    /**
+     * Was die Teile von der Füllung brauchen ({@link BackgroundFill}); eigene Schnittstelle, damit Tests einen Ablauf
+     * gezielt herbeiführen können, ohne Haken im Code.
+     */
+    interface Fill {
+
+        boolean enabled();
+
+        int waiting(BackgroundFill.Where where);
+
+        void scanFor(BackgroundFill.Where where);
+
+        void wake();
+
+        void rest(BackgroundFill.Where where);
+    }
 
     /** Was vor dem Lauf des Teils endete: wird beim Start nachgemeldet, nichts verschwindet still. */
     private static final class Early {
@@ -163,18 +180,56 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
      * ruhte, räumt sie aus ihrer Warteschlange.
      */
     public void attach(BackgroundFill fill, Function<PageKey, Optional<String>> spaceOf) {
-        this.fill = Objects.requireNonNull(fill, "fill");
+        Objects.requireNonNull(fill, "fill");
+        this.fill = new Fill() {
+            @Override
+            public boolean enabled() {
+                return fill.enabled();
+            }
+
+            @Override
+            public int waiting(BackgroundFill.Where where) {
+                return fill.waiting(where);
+            }
+
+            @Override
+            public void scanFor(BackgroundFill.Where where) {
+                fill.scanFor(where);
+            }
+
+            @Override
+            public void wake() {
+                fill.wake();
+            }
+
+            @Override
+            public void rest(BackgroundFill.Where where) {
+                fill.rest(where);
+            }
+        };
         fill.observe(spaceOf, this, this::resting);
+        restResting();
+    }
+
+    /** Hängt eine Füllung an, ohne dass sie hierher meldet; für Tests, die Meldungen selbst geben. */
+    void attach(Fill fill) {
+        this.fill = Objects.requireNonNull(fill, "fill");
+        restResting();
+    }
+
+    /** Was schon vor dem Neustart ruhte, räumt die Füllung aus ihrer Warteschlange. */
+    private void restResting() {
+        Fill current = fill;
         Set<BackgroundFill.Where> resting = new HashSet<>();
         synchronized (monitor) {
             resting.addAll(paused);
             cancelled.keySet().stream().filter(this::restingLocked).forEach(resting::add);
         }
-        resting.forEach(fill::rest);
+        resting.forEach(current::rest);
     }
 
     private void wakeFill() {
-        BackgroundFill current = fill;
+        Fill current = fill;
         if (current != null) {
             current.wake();
         }
@@ -182,7 +237,7 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
 
     /** Lässt den Space in der Füllung ruhen; kehrt sofort zurück, die Füllung räumt auf ihrem Arbeiter ab. */
     private void restFill(BackgroundFill.Where where) {
-        BackgroundFill current = fill;
+        Fill current = fill;
         if (current != null) {
             current.rest(where);
         }
@@ -375,7 +430,7 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
      * {@link #monitor} gerufen, weil die Füllung ihre eigene Sperre nimmt.
      */
     private void count(Live part, BackgroundFill.Where where, int adjust) {
-        BackgroundFill current = fill;
+        Fill current = fill;
         // Erst die erledigten, dann die wartenden: Eine Seite verlässt die Schlange, bevor sie als erledigt zählt. So
         // zählt sie höchstens kurz gar nicht, nie doppelt; „gefunden“ sinkt nie und bliebe sonst zu hoch (CI #1101).
         long processed;
@@ -448,7 +503,7 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
             Live mine = new Live(context);
             boolean woke;
             Early tally;
-            BackgroundFill current = fill;
+            Fill current = fill;
             boolean active = current != null && current.enabled();
             // Fortgesetzt (die Schlange des Space wurde beim Anhalten geräumt) oder dort wartet nichts: Der Teil setzt
             // seine Arbeit fort, die Füllung sucht für ihn sofort im Katalog und meldet „leer“, wenn sie nichts (mehr)
@@ -493,6 +548,16 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                     mine.done.completeExceptionally(e);
                 }
             });
+            if (active && !rescan && current.waiting(where) == 0) {
+                // Endete die letzte wartende Seite, nachdem „wartend“ oben gelesen war, aber bevor der Teil in live
+                // stand, zählte sie nur nachgemeldet und ihr „leer“ fand keinen Teil; ohne neue Suche liefe er ewig
+                // (CI #1121). Jetzt steht er in live: Jede spätere Seite meldet sich selbst, für die früheren sucht er,
+                // nach derselben Regel wie ein fortgesetzter Teil („leer“ zählt erst nach der eigenen Suche).
+                rescan = true;
+                synchronized (monitor) {
+                    mine.scanAhead = true;
+                }
+            }
             if (!active) {
                 // Ohne laufende Füllung gibt es nichts zu zeigen.
                 synchronized (monitor) {
