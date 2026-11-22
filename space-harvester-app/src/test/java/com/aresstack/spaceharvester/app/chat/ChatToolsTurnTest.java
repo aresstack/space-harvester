@@ -730,8 +730,9 @@ class ChatToolsTurnTest {
                                 new com.aresstack.spaceharvester.application.terms.RelationScope("andere", null)));
             }
         };
+        // Alle Quellen freigegeben: geprüft wird hier die Reihenfolge Freigabe vor Antwort, nicht die KI-Freigabe (#1118).
         TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(graph, vocabulary),
-                com.aresstack.spaceharvester.application.release.AiRelease.ofSources(sourceId -> false));
+                com.aresstack.spaceharvester.application.release.AiRelease.ofSources(sourceId -> true));
         List<String> order = new CopyOnWriteArrayList<>();
 
         String text = tools(order).termLookup((query, scope, delivery, cancelled) -> {
