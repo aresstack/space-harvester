@@ -93,6 +93,40 @@ class AttachmentPreviewTabTest {
         assertThat(onEdt(panel::attachmentViewer)).isNull();
     }
 
+    @Test
+    void changingThePageReleasesTheWatchOfThePrefetchPart() throws Exception {
+        FakeConfluence wiki = new FakeConfluence();
+        wiki.space("DEV", "Entwicklung");
+        wiki.page("200", "Betrieb", "DEV", "<p>Ansicht</p>").storage("<p>Text</p>");
+        wiki.page("300", "Planung", "DEV", "<p>Ansicht</p>").storage("<p>Text</p>");
+        wiki.homepage("DEV", "200");
+        start(serve(wiki));
+        PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
+        onEdt(() -> {
+            panel.load("wiki", "200", false);
+            panel.watchPrefetch(context.runtime(), "erfunden", null, "wiki\n200");
+            return null;
+        });
+        assertThat(onEdt(panel::watchingPrefetch)).isTrue();
+
+        onEdt(() -> {
+            panel.load("wiki", "200", true);
+            return null;
+        });
+        assertThat(onEdt(panel::watchingPrefetch)).as("dieselbe Seite neu geladen").isTrue();
+
+        onEdt(() -> {
+            panel.load("wiki", "300", false);
+            return null;
+        });
+        assertThat(onEdt(panel::watchingPrefetch)).as("nach dem Seitenwechsel").isFalse();
+        onEdt(() -> {
+            panel.watchPrefetch(context.runtime(), "erfunden", null, "wiki\n200");
+            return null;
+        });
+        assertThat(onEdt(panel::watchingPrefetch)).as("eine späte Rückmeldung der alten Seite").isFalse();
+    }
+
     // ------------------------------------------------------------------ Aufbau
 
     private void start(URI wiki) throws Exception {

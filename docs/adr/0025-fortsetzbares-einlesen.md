@@ -598,6 +598,22 @@ wird automatisch verwaltet.
     den Teil (abgebrochen bzw. angehalten, nicht grün), die Prüfung selbst läuft zu Ende. Teile von vor einem Neustart
     werden beim Start abgeschlossen (`BackgroundJobs#retireResumable`). Das Ende des Teils läuft nie auf dem EDT. Mit
     nur einem Platz gilt der bisherige Weg.
+19. **Anhänge vorladen als Hintergrundteil** (Angelo 21.11.2026, Fundstelle 18, Entwurf vom Architekten bestätigt).
+    Öffnet man einen Anhang, lädt die App den gezeigten, je zwei Nachbarn und die Standbilder der Videomarken (sie
+    brauchen den offenen Player) weiter selbst vor. Die übrigen Anhänge derselben Art gibt sie einmal je Seite an den
+    Hintergrundteil „Anhänge vorladen“ ab (`AttachmentPrefetches`, Art `attachment-prefetch`).
+    - Je Quelle und Space sammelt ein Teil die Seiten (`startUnlessWaiting`), auf einem normalen Hintergrundplatz; ein
+      laufender Teil nimmt weitere Seiten seines Space mit. Geladen und abgelegt wird mit den Rechten des Aufrufers
+      wie beim Öffnen.
+    - Anhalten legt den Rest zurück, Fortsetzen lädt ihn, Abbrechen oder Löschen verwirft ihn, auch bei einem Teil,
+      der noch wartet. Jede Seite gehört dem Teil, der sie annahm; was nach einem angeforderten Abbruch kommt, lädt
+      ein neuer Teil. Jeder Anhang wird einmal abgegeben; eine weitere Art derselben Seite kommt hinzu.
+    - Je Space warten höchstens 5.000 Anhänge (`AttachmentPrefetches#MAX_WAITING`). Darüber, oder wenn kein Teil
+      entsteht, wartet nichts von der Anfrage und die App lädt wie bisher selbst. Gescheiterte Anhänge
+      stehen rot mit Grund im Teil, der dann scheitert (`attachments-missing`); sie laden beim Öffnen.
+    - Die Seiten liegen nur im Speicher: Teile von vor einem Neustart werden beim Start abgeschlossen
+      (`BackgroundJobs#retireResumable`). Endet der Teil, zeigt die
+      geöffnete Seite ihre Anhänge neu. Mit nur einem Platz lädt die App wie bisher alles selbst.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

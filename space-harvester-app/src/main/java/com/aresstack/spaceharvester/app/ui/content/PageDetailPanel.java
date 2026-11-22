@@ -856,6 +856,7 @@ public final class PageDetailPanel extends JPanel {
         referencesLoaded = false;
         imagesLoaded = false;
         leaveHarvest();
+        leavePrefetch(null);
         readingPane.clear(" ");
         closeOriginalFile();
         breadcrumbs.clear();
@@ -1417,6 +1418,8 @@ public final class PageDetailPanel extends JPanel {
         this.page = null;
         // Die Meldung von „Anhänge ablegen“ gehört zu ihrer Seite; läuft hier noch einer, erscheint sie wieder.
         leaveHarvest();
+        // Ebenso die Rückmeldung von „Anhänge vorladen“: Eine fremde soll die neue Seite nicht neu laden.
+        leavePrefetch(sourceId + "\n" + pageId);
         String harvest = harvests.get(new PageKey(sourceId, pageId));
         if (harvest != null) {
             watchHarvest(runtime, harvest, sourceId, pageId);
@@ -3537,6 +3540,8 @@ public final class PageDetailPanel extends JPanel {
             harvestWatch.close();
             harvestWatch = null;
         }
+        // Ebenso die Rückmeldung von „Anhänge vorladen“ (ein angehaltener Teil endet vielleicht nie).
+        leavePrefetch(null);
         super.removeNotify();
     }
 
@@ -4322,8 +4327,45 @@ public final class PageDetailPanel extends JPanel {
             }
         }, PageDetailPanel::reason, () -> attachmentsChanged(video),
                 context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_CACHED),
-                context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_BATCH));
+                context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_BATCH),
+                // Fundstelle 18: die übrigen als Hintergrundteil „Anhänge vorladen“; endet er, gilt die Liste neu.
+                rest -> runtime.workspace().prefetchAttachments(source, id, rest).map(part -> {
+                    javax.swing.SwingUtilities.invokeLater(() -> watchPrefetch(runtime, part.id(), video, key));
+                    return true;
+                }).orElse(false),
+                com.aresstack.spaceharvester.application.assets.Assets::videoMark);
         return prefetch;
+    }
+
+    /** Wacht über den Hintergrundteil, der die übrigen Anhänge der Seite vorlädt; einer je Seite. */
+    private com.aresstack.spaceharvester.application.observe.Subscription prefetchWatch;
+    /** Für welche Seite ({@code Quelle \n Seite}). */
+    private String prefetchWatchPage;
+
+    /** Folgt dem Teil, der die übrigen Anhänge der Seite {@code page} ({@code Quelle \n Seite}) vorlädt (EDT). */
+    void watchPrefetch(AppRuntime runtime, String jobId, VideoFrameSource video, String page) {
+        String shown = sourceId + "\n" + pageId;
+        if (!shown.equals(page)) {
+            // Die Seite ist schon gewechselt: Ihre Rückmeldung gehört nicht hierher.
+            return;
+        }
+        leavePrefetch(null);
+        prefetchWatchPage = shown;
+        prefetchWatch = runtime.workspace().whenJobFinished(jobId, done -> attachmentsChanged(video));
+    }
+
+    /** Löst die Rückmeldung von „Anhänge vorladen“, außer sie gehört zu {@code page} ({@code null}: immer). */
+    private void leavePrefetch(String page) {
+        if (prefetchWatch != null && !java.util.Objects.equals(page, prefetchWatchPage)) {
+            prefetchWatch.close();
+            prefetchWatch = null;
+            prefetchWatchPage = null;
+        }
+    }
+
+    /** Ob die Seitenansicht gerade einem Teil „Anhänge vorladen“ folgt (Tests). */
+    boolean watchingPrefetch() {
+        return prefetchWatch != null;
     }
 
     /** Die Anhänge derselben Art in der Reihenfolge der Liste. */
