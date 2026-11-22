@@ -15,7 +15,8 @@ public final class Perspectives {
 
     public static final String HARVESTER = "harvester";
     public static final String COMMAND_DECK = "command-deck";
-    public static final String MISSION_PROTOCOL = "mission-protocol";
+    public static final String PROVING_GROUND = "proving-ground";
+    public static final String MISSION_CONTROL = "mission-control";
 
     private final List<Perspective> all = new ArrayList<>();
     private final List<Consumer<Perspective>> listeners = new ArrayList<>();
@@ -68,15 +69,28 @@ public final class Perspectives {
     }
 
     /**
-     * Mission Protocol ist zurückgestellt (#1141): keine Workflow-Engine, keine Bedienung, nur ein Blick aus dem
-     * Cockpit auf vorbeiziehende Sterne. Die Animation läuft nur, solange die Fläche zu sehen ist.
+     * Proving Ground (#1153): Webtests aufzeichnen, bearbeiten, ausführen und auswerten. Bis zur ersten Ausbaustufe
+     * nur ein Platzhalter mit ruhig treibenden Sternen; die Animation läuft nur, solange die Fläche zu sehen ist.
      */
-    public static Perspective missionProtocol() {
+    public static Perspective provingGround() {
+        Starfield stars = new Starfield(Starfield.Mode.DRIFT)
+                .headline("PROVING GROUND")
+                .caption("In Vorbereitung · Webtests aufzeichnen, bearbeiten, ausführen und auswerten")
+                .cockpit(true);
+        return Perspective.of(PROVING_GROUND, "Proving Ground",
+                "Webtests aufzeichnen, bearbeiten, ausführen und auswerten", false, null, stars, null);
+    }
+
+    /**
+     * Mission Control (früher Mission Protocol, #1141) ist zurückgestellt: keine Workflow-Engine, keine Bedienung, nur
+     * ein Blick aus dem Cockpit auf vorbeiziehende Sterne. Die Animation läuft nur, solange die Fläche zu sehen ist.
+     */
+    public static Perspective missionControl() {
         Starfield stars = new Starfield(Starfield.Mode.WARP)
-                .headline("MISSION PROTOCOL")
+                .headline("MISSION CONTROL")
                 .caption("In Vorbereitung · Workflows definieren, ausführen und überwachen")
                 .cockpit(true);
-        return Perspective.of(MISSION_PROTOCOL, "Mission Protocol",
-                "Workflows definieren, ausführen und überwachen – in Vorbereitung", false, null, stars, null);
+        return Perspective.of(MISSION_CONTROL, "Mission Control",
+                "Workflows definieren, ausführen und überwachen", false, null, stars, null);
     }
 }

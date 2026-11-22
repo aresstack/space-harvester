@@ -809,6 +809,36 @@ public final class ChatPanel extends JPanel {
 
     // ------------------------------------------------------------------ Auswahl und Wissen
 
+    /**
+     * Was der eine Chat in einer anderen Perspektive als dem Space Harvester bekommt (#1151): den Bereich in Worten
+     * (für Marke und Systemnachricht), einen Schlüssel für die Marke „Ab hier: …“, die Werkzeuge und die
+     * Systemnachricht. Der Chat selbst, sein Verlauf und sein Ablageort bleiben dieselben.
+     */
+    public record ToolScope(String area, String scopeKey,
+                            com.aresstack.spaceharvester.app.chat.ChatToolset tools, String system) {
+    }
+
+    private java.util.function.Supplier<ToolScope> toolScope;
+
+    /**
+     * Setzt die Werkzeuge der aktiven Perspektive (beim Senden ausgewertet) oder nimmt sie mit {@code null} weg; dann
+     * gilt wieder der links gewählte Bereich des Space Harvesters.
+     */
+    public void toolScope(java.util.function.Supplier<ToolScope> scope) {
+        this.toolScope = scope;
+        if (scope != null) {
+            knowledge.setText(TOOL_SCOPE_HINT);
+            load.setVisible(false);
+            updateSend();
+        } else {
+            refresh();
+        }
+    }
+
+    /** Der Hinweis über dem Eingabefeld, solange die Werkzeuge einer Perspektive gelten. */
+    static final String TOOL_SCOPE_HINT = "Command Deck: Der Chat liest die Terminal-Maske und füllt Felder aus – "
+            + "abschicken kannst nur du.";
+
     /** Die Auswahl links; {@code null} ohne Auswahl. Erst anmelden, dann lesen (ADR 0027). */
     public void selection(Selection selection) {
         if (Objects.equals(this.selection, selection)) {
@@ -962,6 +992,11 @@ public final class ChatPanel extends JPanel {
         // Nachladen je Quelle, Space oder Seite; die globale Auswahl lädt man links je Wissensquelle.
         load.setVisible(current != null && !current.global() && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
+        if (toolScope != null) {
+            // Im Command Deck gilt nicht die Auswahl links, sondern das Terminal (#1151).
+            knowledge.setText(TOOL_SCOPE_HINT);
+            load.setVisible(false);
+        }
         // Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird.
         updateSend();
         updateQuickActions();
@@ -975,7 +1010,7 @@ public final class ChatPanel extends JPanel {
      * Chat bleibt beim Navigieren stehen); Senden braucht eine aufgelöste Auswahl.
      */
     private void updateSend() {
-        send.setEnabled(turn != null || (selection != null && settled));
+        send.setEnabled(turn != null || toolScope != null || (selection != null && settled));
     }
 
     // ------------------------------------------------------------------ Schnellaktionen
@@ -1360,6 +1395,11 @@ public final class ChatPanel extends JPanel {
         if (text.isEmpty() || !send.isEnabled()) {
             return;
         }
+        ToolScope custom = toolScope == null ? null : toolScope.get();
+        if (custom != null) {
+            submit(withAttachments(text), null, custom.area(), ChatTurn.Kind.QUESTION, custom);
+            return;
+        }
         submit(withAttachments(text), resolved, areaText(selection, resolved == null ? null : resolved.counts()),
                 ChatTurn.Kind.QUESTION);
     }
@@ -1370,6 +1410,11 @@ public final class ChatPanel extends JPanel {
      * der Systemnachricht. Die Freigabe gilt immer dem links Gewählten (Angelo 13.11.2026).
      */
     private void submit(String question, PageSelection scope, String area, ChatTurn.Kind kind) {
+        submit(question, scope, area, kind, null);
+    }
+
+    /** Wie oben; mit {@code custom} bekommt die Frage die Werkzeuge der Perspektive statt des Wissens (#1151). */
+    private void submit(String question, PageSelection scope, String area, ChatTurn.Kind kind, ToolScope custom) {
         if (turn != null || !send.isEnabled()) {
             return;
         }
@@ -1386,7 +1431,7 @@ public final class ChatPanel extends JPanel {
             return;
         }
         // Nur die Seite statt der Auswahl samt Unterseiten ist ein eigener Bereich.
-        String scopeKey = scopeKey(node, scope != resolved);
+        String scopeKey = custom != null ? custom.scopeKey() : scopeKey(node, scope != resolved);
         addAreaMark(lastQuestion(chat), area, scopeKey);
         addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question);
         long now = System.currentTimeMillis();
@@ -1412,16 +1457,22 @@ public final class ChatPanel extends JPanel {
         listening = listener;
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
                 listener, SwingUtilities::invokeLater);
-        // ADR 0033: Was offen ist, sieht das Modell; den Rest des Bereichs holt es sich per Werkzeug.
-        Selection open = selection;
-        turn.knowledgeByTools(open == null || open.pageId() == null ? null
-                : new com.aresstack.spaceharvester.application.snapshot.PageKey(open.sourceId(), open.pageId()));
-        turn.releasing(releases(runtime, open));
-        // R2/C1: Der Chat folgt der Suchmethode „Nachbarseiten“ der Suchoptionen, wie sie beim Senden steht.
-        turn.searchingNeighbors(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
-        // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
-        turn.searchingGlossarySynonyms(
-                com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
+        if (custom != null) {
+            // #1151: dieselbe Unterhaltung, aber die Werkzeuge der Perspektive (Command Deck: Maskenassistent).
+            turn.withToolset(custom.tools(), custom.system());
+        } else {
+            // ADR 0033: Was offen ist, sieht das Modell; den Rest des Bereichs holt es sich per Werkzeug.
+            Selection open = selection;
+            turn.knowledgeByTools(open == null || open.pageId() == null ? null
+                    : new com.aresstack.spaceharvester.application.snapshot.PageKey(open.sourceId(),
+                            open.pageId()));
+            turn.releasing(releases(runtime, open));
+            // R2/C1: Der Chat folgt der Suchmethode „Nachbarseiten“ der Suchoptionen, wie sie beim Senden steht.
+            turn.searchingNeighbors(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
+            // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
+            turn.searchingGlossarySynonyms(
+                    com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
+        }
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());
