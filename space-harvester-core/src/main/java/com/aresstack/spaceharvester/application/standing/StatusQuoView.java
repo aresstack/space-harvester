@@ -1,7 +1,9 @@
 package com.aresstack.spaceharvester.application.standing;
 
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Die Status-quo-Sicht über eine Auswahl (ADR 0032, FL6): was fachlich gerade gilt, danach Geplantes, Unklares und
@@ -23,11 +25,22 @@ import java.util.Map;
  *                          ({@code REJECTED}, ADR 0032 W3): Die Aussage zählt nicht und fehlt in {@code entries}, die
  *                          Entscheidung bleibt hier erreichbar, damit die Prüfung zurückgenommen werden kann. Nie
  *                          veraltet, solange es die Aussage gibt
+ * @param lockedPages       die Seiten der Sicht, die im Bestand gesperrt sind (ADR 0014): Ihre Analyse bleibt lesbar,
+ *                          Stand und Prüfung nehmen sie nicht an ({@link LockedPageException}); die Oberfläche sperrt
+ *                          ihre Schalter vorab
  */
 public record StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> states, List<PageStanding> pages,
                             Map<Standing, Integer> counts, Map<Standing, Integer> certainCounts,
                             List<StandingDecision> staleDecisions, int staleEntries,
-                            List<StandingDecision> rejectedDecisions) {
+                            List<StandingDecision> rejectedDecisions, Set<PageKey> lockedPages) {
+
+    /** Ohne gesperrte Seiten. */
+    public StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> states, List<PageStanding> pages,
+                         Map<Standing, Integer> counts, Map<Standing, Integer> certainCounts,
+                         List<StandingDecision> staleDecisions, int staleEntries,
+                         List<StandingDecision> rejectedDecisions) {
+        this(entries, states, pages, counts, certainCounts, staleDecisions, staleEntries, rejectedDecisions, Set.of());
+    }
 
     /** Ohne verworfene Aussagen. */
     public StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> states, List<PageStanding> pages,
@@ -52,5 +65,11 @@ public record StatusQuoView(List<StatusQuoEntry> entries, List<BearerStates> sta
         certainCounts = PageStanding.complete(certainCounts);
         staleDecisions = List.copyOf(staleDecisions);
         rejectedDecisions = List.copyOf(rejectedDecisions);
+        lockedPages = Set.copyOf(lockedPages);
+    }
+
+    /** Ob die Seite im Bestand gesperrt ist (kein Stand, keine Prüfung). */
+    public boolean locked(PageKey page) {
+        return lockedPages.contains(page);
     }
 }
