@@ -910,6 +910,9 @@ class KnowledgeGraphTabTest {
         assertThat(tab.overviewButton().isEnabled()).as("gesperrt in der seitenweiten Sicht").isFalse();
         assertThat(tab.overviewButton().getToolTipText()).isEqualTo("Zurück zur Gesamtsicht");
         assertThat(tab.overviewButton().getText()).as("nur Symbol").isNullOrEmpty();
+        assertThat(tab.overviewButton().getIcon()).as("eigenes Symbol „alles zeigen“, kein Pfeil wie „Zurück“")
+                .isSameAs(com.aresstack.spaceharvester.app.ui.Glyph.OVERVIEW)
+                .isNotSameAs(com.aresstack.spaceharvester.app.ui.Glyph.BACK);
     }
 
     @Test

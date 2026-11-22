@@ -859,6 +859,11 @@ public final class TermGraphView {
 
         /** Lage aller Kanten, parallele nebeneinander; dieselbe Rechnung wie beim Zeichnen. */
         List<Segment> segments(Map<String, Rectangle2D> boxes) {
+            return placeLabels(lines(boxes), boxes);
+        }
+
+        /** Die Linien aller Kanten ohne Beschriftung: gerade, parallel versetzt oder als Bogen um fremde Knoten. */
+        private List<Segment> lines(Map<String, Rectangle2D> boxes) {
             List<Segment> segments = new ArrayList<>();
             Map<String, Integer> pairs = new java.util.HashMap<>();
             for (GraphSource.Edge edge : graph.edges()) {
@@ -910,64 +915,263 @@ public final class TermGraphView {
                     double bend = Math.max(45, length * 0.22);
                     control = new Point2D.Double(mx + nx * bend * 2, my + ny * bend * 2);
                 }
-                segments.add(new Segment(edge, a, b, null, control));
+                Segment segment = new Segment(edge, a, b, null, control);
+                if (domain && foreignHits(segment, boxes) > 0) {
+                    segment = detour(segment, boxes);
+                }
+                segments.add(segment);
             }
-            return placeLabels(segments, boxes);
+            return segments;
+        }
+
+        /** Abstand, den eine Kante zu fremden Knoten hält. */
+        private static final double NODE_CLEARANCE = 3;
+        /** Wie weit ein Umweg-Bogen höchstens ausholt (Scheitel neben der geraden Linie), in Stufen. */
+        private static final double[] BENDS = {22, 36, 52, 70, 92, 118};
+
+        /** Wie viele Knoten außer ihren eigenen Enden die Kante kreuzt (mit {@link #NODE_CLEARANCE} Abstand). */
+        private static int foreignHits(Segment segment, Map<String, Rectangle2D> boxes) {
+            int hits = 0;
+            for (Map.Entry<String, Rectangle2D> box : boxes.entrySet()) {
+                if (box.getKey().equals(segment.edge().from()) || box.getKey().equals(segment.edge().to())) {
+                    continue;
+                }
+                Rectangle2D r = box.getValue();
+                if (segment.crosses(new Rectangle2D.Double(r.getX() - NODE_CLEARANCE, r.getY() - NODE_CLEARANCE,
+                        r.getWidth() + 2 * NODE_CLEARANCE, r.getHeight() + 2 * NODE_CLEARANCE))) {
+                    hits++;
+                }
+            }
+            return hits;
+        }
+
+        /**
+         * Die Kante als Bogen, dessen Scheitel {@code bend} px neben der Verbindung der beiden Knotenmitten liegt
+         * (Vorzeichen: Seite); die Enden verlassen die Kästen in Richtung des Kontrollpunkts. {@code null}, wenn ein
+         * Knoten fehlt.
+         */
+        private static Segment bowed(Segment segment, Map<String, Rectangle2D> boxes, double bend) {
+            Rectangle2D from = boxes.get(segment.edge().from());
+            Rectangle2D to = boxes.get(segment.edge().to());
+            if (from == null || to == null) {
+                return null;
+            }
+            double dx = to.getCenterX() - from.getCenterX();
+            double dy = to.getCenterY() - from.getCenterY();
+            double length = Math.max(1, Math.hypot(dx, dy));
+            Point2D control = new Point2D.Double((from.getCenterX() + to.getCenterX()) / 2 - dy / length * bend * 2,
+                    (from.getCenterY() + to.getCenterY()) / 2 + dx / length * bend * 2);
+            Rectangle2D towards = new Rectangle2D.Double(control.getX(), control.getY(), 0, 0);
+            return new Segment(segment.edge(), exit(from, towards), exit(to, towards), segment.tag(), control);
+        }
+
+        /** Die Bögen, die eine Kante statt ihrer Lage nehmen kann: zuerst flach, abwechselnd beide Seiten. */
+        private static List<Segment> detours(Segment segment, Map<String, Rectangle2D> boxes) {
+            List<Segment> shapes = new ArrayList<>();
+            for (double bend : BENDS) {
+                for (double sign : new double[] {1, -1}) {
+                    Segment shape = bowed(segment, boxes, sign * bend);
+                    if (shape != null) {
+                        shapes.add(shape);
+                    }
+                }
+            }
+            return shapes;
+        }
+
+        /**
+         * Eine Kante, die unter einem fremden Knoten durchliefe, nimmt den flachsten Bogen, der frei ist; gibt es
+         * keinen, den mit den wenigsten Kreuzungen (die eigene Lage bei Gleichstand).
+         */
+        private static Segment detour(Segment segment, Map<String, Rectangle2D> boxes) {
+            Segment best = segment;
+            int bestHits = foreignHits(segment, boxes);
+            for (Segment shape : detours(segment, boxes)) {
+                int hits = foreignHits(shape, boxes);
+                if (hits < bestHits) {
+                    best = shape;
+                    bestHits = hits;
+                    if (hits == 0) {
+                        break;
+                    }
+                }
+            }
+            return best;
         }
 
         /** Abstand einer Beschriftung zu Knoten, anderen Beschriftungen und fremden Kanten. */
         private static final double LABEL_GAP = 4;
-        private static final double[] LABEL_POSITIONS = {0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.2, 0.8};
+        /** Wie weit der Schatten eines Knotens (3 px versetzt, dazu die halbe Randlinie) rechts und unten übersteht. */
+        static final double NODE_SHADOW = 4;
+
+        /** Die gezeichnete Fläche eines Knotens: sein Kasten samt Schatten rechts und unten. */
+        static Rectangle2D drawn(Rectangle2D box) {
+            return new Rectangle2D.Double(box.getX(), box.getY(), box.getWidth() + NODE_SHADOW,
+                    box.getHeight() + NODE_SHADOW);
+        }
+        private static final double[] LABEL_POSITIONS = {0.5, 0.45, 0.55, 0.4, 0.6, 0.35, 0.65, 0.3, 0.7, 0.25, 0.75,
+                0.2, 0.8, 0.16, 0.84};
+
+        /** Letzte Rechnung von {@link #segments}: dieselben Kästen, derselbe Graph, dieselbe Fläche ergeben dasselbe. */
+        private Map<String, Rectangle2D> cachedBoxes;
+        private GraphSource.Graph cachedGraph;
+        private String cachedFlags;
+        private List<Segment> cachedSegments;
 
         /**
          * Setzt jede Beschriftung auf ihre eigene Kante, so weit von der Mitte verschoben, bis sie mit
-         * {@link #LABEL_GAP} Abstand weder Knoten noch andere Beschriftungen berührt und keine fremde Kante sie kreuzt;
-         * findet sich keine freie Stelle, die mit den wenigsten Berührungen.
+         * {@link #LABEL_GAP} Abstand weder Knoten noch andere Beschriftungen berührt, in der Fläche bleibt und keine
+         * fremde Kante sie kreuzt. Findet sich auf der Kante keine freie Stelle, nimmt die Fachsicht die Kante als
+         * flachen Bogen ({@link #detours}), sofern der weder fremde Knoten noch schon gesetzte Beschriftungen kreuzt;
+         * findet sich auch so keine, gilt die Stelle mit den wenigsten Berührungen.
          */
         private List<Segment> placeLabels(List<Segment> segments, Map<String, Rectangle2D> boxes) {
+            String flags = domain + "/" + centred + "/" + getWidth() + "x" + getHeight();
+            if (graph == cachedGraph && flags.equals(cachedFlags) && boxes.equals(cachedBoxes)) {
+                return cachedSegments;
+            }
+            Rectangle2D area = getWidth() > 0 && getHeight() > 0
+                    ? new Rectangle2D.Double(0, 0, getWidth(), getHeight()) : null;
+            return remember(flags, boxes, place(segments, boxes, area).segments());
+        }
+
+        private List<Segment> remember(String flags, Map<String, Rectangle2D> boxes, List<Segment> segments) {
+            cachedGraph = graph;
+            cachedFlags = flags;
+            cachedBoxes = new LinkedHashMap<>(boxes);
+            cachedSegments = List.copyOf(segments);
+            return cachedSegments;
+        }
+
+        /** Ergebnis einer Beschriftungsrunde: die Kanten mit ihren Beschriftungen und die verbliebenen Berührungen. */
+        private record Placed(List<Segment> segments, int hits) {
+        }
+
+        /** Wie oft die Fachsicht die Beschriftungen in anderer Reihenfolge neu setzt, wenn welche noch berühren. */
+        private static final int LABEL_ROUNDS = 3;
+
+        /**
+         * Setzt die Beschriftungen (siehe {@link #placeLabels}). Bleiben in der Fachsicht Berührungen, versucht sie es
+         * erneut und setzt die Beschriftungen, die keinen freien Platz fanden, zuerst: Ein einzelner gieriger Durchlauf
+         * kann eine früh gesetzte Beschriftung nicht mehr verschieben. Es gilt die Runde mit den wenigsten Berührungen.
+         */
+        private Placed place(List<Segment> segments, Map<String, Rectangle2D> boxes, Rectangle2D area) {
+            List<Integer> order = new ArrayList<>();
+            for (int i = 0; i < segments.size(); i++) {
+                order.add(i);
+            }
+            int[] hits = new int[segments.size()];
+            Placed best = place(segments, boxes, area, order, hits);
+            for (int round = 1; round < LABEL_ROUNDS && domain && best.hits() > 0; round++) {
+                List<Integer> next = new ArrayList<>();
+                for (int i : order) {
+                    if (hits[i] > 0) {
+                        next.add(i);
+                    }
+                }
+                for (int i : order) {
+                    if (hits[i] == 0) {
+                        next.add(i);
+                    }
+                }
+                if (next.equals(order)) {
+                    break;
+                }
+                order = next;
+                int[] roundHits = new int[segments.size()];
+                Placed attempt = place(segments, boxes, area, order, roundHits);
+                if (attempt.hits() < best.hits()) {
+                    best = attempt;
+                }
+                hits = roundHits;
+            }
+            return best;
+        }
+
+        /** Eine Runde in der Reihenfolge {@code order}; trägt die Berührungen je Kante in {@code hitsOut} ein. */
+        private Placed place(List<Segment> segments, Map<String, Rectangle2D> boxes, Rectangle2D area,
+                             List<Integer> order, int[] hitsOut) {
             FontMetrics metrics = getFontMetrics(Comic.regular(11f));
             List<Rectangle2D> placed = new ArrayList<>();
-            List<Segment> result = new ArrayList<>();
-            for (Segment segment : segments) {
+            List<Segment> current = new ArrayList<>(segments);
+            int total = 0;
+            for (int i : order) {
+                Segment segment = current.get(i);
                 String label = labelOf(segment.edge());
                 if (label == null) {
-                    result.add(segment);
                     continue;
                 }
                 double w = metrics.stringWidth(label) + 10;
                 double h = metrics.getHeight() + 2;
                 Rectangle2D best = null;
+                Segment bestShape = segment;
                 int bestHits = Integer.MAX_VALUE;
-                for (double t : domain ? LABEL_POSITIONS : new double[] {0.5}) {
-                    Point2D middle = segment.at(t);
-                    Rectangle2D candidate = new Rectangle2D.Double(middle.getX() - w / 2, middle.getY() - h / 2, w,
-                            h);
-                    Rectangle2D padded = new Rectangle2D.Double(candidate.getX() - LABEL_GAP,
-                            candidate.getY() - LABEL_GAP, w + 2 * LABEL_GAP, h + 2 * LABEL_GAP);
-                    int hits = 0;
-                    for (Rectangle2D other : placed) {
-                        hits += other.intersects(padded) ? 1 : 0;
+                List<Segment> shapes = new ArrayList<>();
+                shapes.add(segment);
+                boolean lookFurther = domain;
+                for (int s = 0; s < shapes.size() && bestHits > 0; s++) {
+                    Segment shape = shapes.get(s);
+                    if (s > 0 && (foreignHits(shape, boxes) > 0 || crossesAny(shape, placed))) {
+                        continue;
                     }
-                    for (Rectangle2D box : boxes.values()) {
-                        hits += box.intersects(padded) ? 1 : 0;
-                    }
-                    for (Segment other : segments) {
-                        if (other != segment && other.crosses(padded)) {
-                            hits++;
+                    for (double t : domain ? LABEL_POSITIONS : new double[] {0.5}) {
+                        Point2D middle = shape.at(t);
+                        Rectangle2D candidate = new Rectangle2D.Double(middle.getX() - w / 2, middle.getY() - h / 2,
+                                w, h);
+                        int hits = labelHits(candidate, i, current, placed, boxes, area, bestHits);
+                        if (hits < bestHits) {
+                            best = candidate;
+                            bestShape = shape;
+                            bestHits = hits;
+                        }
+                        if (hits == 0 || !domain) {
+                            break;
                         }
                     }
-                    if (hits < bestHits) {
-                        best = candidate;
-                        bestHits = hits;
-                    }
-                    if (hits == 0 || !domain) {
-                        break;
+                    if (s == 0 && bestHits > 0 && lookFurther) {
+                        shapes.addAll(detours(segment, boxes));
                     }
                 }
                 placed.add(best);
-                result.add(new Segment(segment.edge(), segment.a(), segment.b(), best, segment.control()));
+                hitsOut[i] = bestHits;
+                total += bestHits;
+                current.set(i, new Segment(segment.edge(), bestShape.a(), bestShape.b(), best, bestShape.control()));
             }
-            return result;
+            return new Placed(current, total);
+        }
+
+        /**
+         * Berührungen einer Beschriftung (mit {@link #LABEL_GAP} Abstand) für die Kante an Stelle {@code own}; hört
+         * bei {@code limit} auf zu zählen, weil dann schon eine bessere Stelle bekannt ist.
+         */
+        private static int labelHits(Rectangle2D candidate, int own, List<Segment> segments, List<Rectangle2D> placed,
+                                     Map<String, Rectangle2D> boxes, Rectangle2D area, int limit) {
+            Rectangle2D padded = new Rectangle2D.Double(candidate.getX() - LABEL_GAP, candidate.getY() - LABEL_GAP,
+                    candidate.getWidth() + 2 * LABEL_GAP, candidate.getHeight() + 2 * LABEL_GAP);
+            int hits = area != null && !area.contains(candidate) ? 1 : 0;
+            for (Rectangle2D other : placed) {
+                hits += other.intersects(padded) ? 1 : 0;
+            }
+            for (Rectangle2D box : boxes.values()) {
+                hits += drawn(box).intersects(padded) ? 1 : 0;
+            }
+            for (int j = 0; j < segments.size() && hits < limit; j++) {
+                if (j != own && segments.get(j).crosses(padded)) {
+                    hits++;
+                }
+            }
+            return hits;
+        }
+
+        /** Ob die Linie eine der schon gesetzten Beschriftungen (mit Abstand) kreuzt. */
+        private static boolean crossesAny(Segment shape, List<Rectangle2D> placed) {
+            for (Rectangle2D tag : placed) {
+                if (shape.crosses(new Rectangle2D.Double(tag.getX() - LABEL_GAP, tag.getY() - LABEL_GAP,
+                        tag.getWidth() + 2 * LABEL_GAP, tag.getHeight() + 2 * LABEL_GAP))) {
+                    return true;
+                }
+            }
+            return false;
         }
 
 
@@ -1021,19 +1225,133 @@ public final class TermGraphView {
         }
 
         /**
+         * Wie weit die Ringe ausgreifen, relativ zur Grundlage: {@code inner} streckt den inneren Ring (mit Mitte: die
+         * Nachbarn), {@code outer} den äußeren, {@code stretch} ist die waagrechte Dehnung (Grundlage 1,35) und
+         * {@code turn} dreht den inneren Ring um diesen Bruchteil eines Schritts.
+         */
+        record Spread(double inner, double outer, double stretch, double turn) {
+            static final Spread BASE = new Spread(1, 1, 1.35, 0);
+        }
+
+        private static final double[] SPREAD_STRETCH = {1.35, 1.6, 1.85};
+        private static final double[] SPREAD_INNER = {1, 1.16, 1.32, 1.48, 0.85};
+        private static final double[] SPREAD_TURN = {0, 0.25, -0.25, 0.5};
+        private static final double[] SPREAD_OUTER = {1, 1.05, 0.9};
+
+        /** Letzte Wahl von {@link #layout} in der Fachsicht: derselbe Graph auf derselben Fläche liegt gleich. */
+        private GraphSource.Graph layoutGraph;
+        private String layoutKey;
+        private Map<String, Rectangle2D> layoutBoxes;
+
+        /**
          * Kästen je Knoten: die Mitte im Zentrum, Tiefe 1 gleichmäßig im Kreis, Tiefe 2 außen im Fächer ihres
-         * Vorgängers.
+         * Vorgängers; ohne Mitte alle auf Ringen ({@link #rings}).
+         *
+         * <p>Die Fachsicht prüft die Lage: Berührt danach noch eine Beschriftung einen Knoten, eine andere
+         * Beschriftung oder eine fremde Kante, oder läuft eine Kante unter einem fremden Knoten durch, rückt sie die
+         * Ringe in festen Stufen auseinander, dreht den inneren Ring und dehnt waagrecht ({@link Spread}), bis nichts
+         * mehr berührt; sonst gilt die Lage mit den wenigsten Berührungen. Eine Lage, die schon frei ist, bleibt wie
+         * sie ist; die Bestandssicht rechnet wie bisher.
          */
         Map<String, Rectangle2D> layout(int width, int height) {
-            Map<String, Rectangle2D> boxes = new LinkedHashMap<>();
             if (graph.nodes().isEmpty() || width <= 0 || height <= 0) {
-                return boxes;
+                return new LinkedHashMap<>();
             }
+            if (!domain) {
+                return layout(width, height, Spread.BASE);
+            }
+            String key = centred + "/" + width + "x" + height + "/" + getFont();
+            if (graph == layoutGraph && key.equals(layoutKey)) {
+                return new LinkedHashMap<>(layoutBoxes);
+            }
+            Rectangle2D area = new Rectangle2D.Double(0, 0, width, height);
+            Map<String, Rectangle2D> bestBoxes = null;
+            Placed best = null;
+            int bestConflicts = Integer.MAX_VALUE;
+            java.util.Set<Map<String, Rectangle2D>> tried = new java.util.HashSet<>();
+            search:
+            for (double stretch : SPREAD_STRETCH) {
+                for (double inner : SPREAD_INNER) {
+                    for (double turn : SPREAD_TURN) {
+                        for (double outer : SPREAD_OUTER) {
+                            Map<String, Rectangle2D> boxes = layout(width, height,
+                                    new Spread(inner, outer, stretch, turn));
+                            if (!tried.add(boxes)) {
+                                continue;
+                            }
+                            Placed placed = place(lines(boxes), boxes, area);
+                            int conflicts = conflicts(boxes, placed.segments(), area);
+                            if (conflicts < bestConflicts) {
+                                bestBoxes = boxes;
+                                best = placed;
+                                bestConflicts = conflicts;
+                            }
+                            if (conflicts == 0) {
+                                break search;
+                            }
+                        }
+                    }
+                }
+            }
+            layoutGraph = graph;
+            layoutKey = key;
+            layoutBoxes = bestBoxes;
+            if (width == getWidth() && height == getHeight()) {
+                remember(domain + "/" + centred + "/" + getWidth() + "x" + getHeight(), bestBoxes, best.segments());
+            }
+            return new LinkedHashMap<>(bestBoxes);
+        }
+
+        /**
+         * Alle Berührungen einer Lage: Knoten außerhalb der Fläche oder übereinander, Kanten unter fremden Knoten,
+         * Beschriftungen außerhalb der Fläche, auf Knoten, auf anderen Beschriftungen oder von fremden Kanten
+         * gekreuzt (jeweils mit {@link #LABEL_GAP} Abstand).
+         */
+        private static final int NODE_WEIGHT = 10;
+
+        static int conflicts(Map<String, Rectangle2D> boxes, List<Segment> segments, Rectangle2D area) {
+            int conflicts = 0;
+            List<Rectangle2D> nodes = new ArrayList<>(boxes.values());
+            // Übereinanderliegende oder angeschnittene Knoten wiegen schwerer als eine berührte Beschriftung.
+            for (int i = 0; i < nodes.size(); i++) {
+                conflicts += area.contains(nodes.get(i)) ? 0 : NODE_WEIGHT;
+                for (int j = i + 1; j < nodes.size(); j++) {
+                    conflicts += nodes.get(i).intersects(nodes.get(j)) ? NODE_WEIGHT : 0;
+                }
+            }
+            for (Segment segment : segments) {
+                conflicts += foreignHits(segment, boxes);
+            }
+            for (int i = 0; i < segments.size(); i++) {
+                Rectangle2D tag = segments.get(i).tag();
+                if (tag == null) {
+                    continue;
+                }
+                Rectangle2D padded = new Rectangle2D.Double(tag.getX() - LABEL_GAP, tag.getY() - LABEL_GAP,
+                        tag.getWidth() + 2 * LABEL_GAP, tag.getHeight() + 2 * LABEL_GAP);
+                conflicts += area.contains(tag) ? 0 : 1;
+                for (Rectangle2D box : nodes) {
+                    conflicts += drawn(box).intersects(padded) ? 1 : 0;
+                }
+                for (int j = 0; j < segments.size(); j++) {
+                    if (j == i) {
+                        continue;
+                    }
+                    Rectangle2D other = segments.get(j).tag();
+                    conflicts += j > i && other != null && other.intersects(padded) ? 1 : 0;
+                    conflicts += segments.get(j).crosses(padded) ? 1 : 0;
+                }
+            }
+            return conflicts;
+        }
+
+        /** Die Kästen bei dieser Ausdehnung der Ringe. */
+        private Map<String, Rectangle2D> layout(int width, int height, Spread spread) {
             FontMetrics metrics = getFontMetrics(getFont());
             double cx = width / 2.0;
             double cy = height / 2.0;
             if (!centred) {
-                return boxes(rings(width, height), metrics, width, height);
+                return boxes(rings(width, height, spread), metrics, width, height);
             }
             List<GraphSource.Node> first = new ArrayList<>();
             Map<String, List<GraphSource.Node>> children = new LinkedHashMap<>();
@@ -1045,18 +1363,20 @@ public final class TermGraphView {
                 }
             }
             double radius = Math.min(width, height) / 2.0 - BOX_HEIGHT;
-            double r1 = children.isEmpty() ? radius * 0.75 : radius * 0.5;
-            double r2 = radius * 0.95;
+            double r1 = Math.min(radius * 0.95, (children.isEmpty() ? radius * 0.75 : radius * 0.5) * spread.inner());
+            double r2 = radius * 0.95 * spread.outer();
+            double stretch = spread.stretch();
             Map<String, Point2D> centres = new LinkedHashMap<>();
             Map<String, Double> angles = new LinkedHashMap<>();
             centres.put(graph.nodes().get(0).key(), new Point2D.Double(cx, cy));
             int n = first.size();
             // Ab vier Nachbarn um einen halben Schritt gedreht: kein breiter Kasten genau links oder rechts der Mitte.
-            double turn = domain && n >= 4 && n % 2 == 0 ? Math.PI / n : 0;
+            double turn = (domain && n >= 4 && n % 2 == 0 ? Math.PI / n : 0)
+                    + (n == 0 ? 0 : spread.turn() * 2 * Math.PI / n);
             for (int i = 0; i < n; i++) {
                 double angle = -Math.PI / 2 + turn + 2 * Math.PI * i / n;
                 angles.put(first.get(i).key(), angle);
-                centres.put(first.get(i).key(), new Point2D.Double(cx + r1 * Math.cos(angle) * 1.35,
+                centres.put(first.get(i).key(), new Point2D.Double(cx + r1 * Math.cos(angle) * stretch,
                         cy + r1 * Math.sin(angle)));
             }
             double sector = n == 0 ? 2 * Math.PI : 2 * Math.PI / n;
@@ -1066,12 +1386,15 @@ public final class TermGraphView {
                 double step = Math.min(0.45, sector * 0.8 / Math.max(1, kids.size()));
                 for (int j = 0; j < kids.size(); j++) {
                     double angle = base + (j - (kids.size() - 1) / 2.0) * step;
-                    centres.put(kids.get(j).key(), new Point2D.Double(cx + r2 * Math.cos(angle) * 1.35,
+                    centres.put(kids.get(j).key(), new Point2D.Double(cx + r2 * Math.cos(angle) * stretch,
                             cy + r2 * Math.sin(angle)));
                 }
             }
             return boxes(centres, metrics, width, height);
         }
+
+        /** Abstand der Knoten vom Rand der Fläche in der Fachsicht. */
+        private static final double EDGE_MARGIN = 12;
 
         /** Kästen um die Mittelpunkte, in der Fläche gehalten. */
         private Map<String, Rectangle2D> boxes(Map<String, Point2D> centres, FontMetrics metrics, int width,
@@ -1083,8 +1406,11 @@ public final class TermGraphView {
                     continue;
                 }
                 double w = metrics.stringWidth(node.label()) + 2 * PAD;
-                double x = Math.max(4, Math.min(width - w - 8, c.getX() - w / 2));
-                double y = Math.max(4, Math.min(height - BOX_HEIGHT - 8, c.getY() - BOX_HEIGHT / 2.0));
+                // Die Fachsicht hält Knoten samt Schatten ein Stück vom Rand, damit keiner an der Kante klebt.
+                double edge = domain ? EDGE_MARGIN : 4;
+                double far = domain ? EDGE_MARGIN + NODE_SHADOW : 8;
+                double x = Math.max(edge, Math.min(width - w - far, c.getX() - w / 2));
+                double y = Math.max(edge, Math.min(height - BOX_HEIGHT - far, c.getY() - BOX_HEIGHT / 2.0));
                 boxes.put(node.key(), new Rectangle2D.Double(x, y, w, BOX_HEIGHT));
             }
             return boxes;
@@ -1094,7 +1420,7 @@ public final class TermGraphView {
          * Ohne Mitte: alle Knoten in ihrer Reihenfolge (die mit den meisten Belegen zuerst) auf bis zu drei Ringen,
          * innen die ersten; je Ring so viele, wie sein Umfang trägt, versetzt gegen den Ring davor.
          */
-        private Map<String, Point2D> rings(int width, int height) {
+        private Map<String, Point2D> rings(int width, int height, Spread spread) {
             Map<String, Point2D> centres = new LinkedHashMap<>();
             List<GraphSource.Node> nodes = graph.nodes();
             int n = nodes.size();
@@ -1112,14 +1438,26 @@ public final class TermGraphView {
                 radii[k] = count == 1 ? radius * 0.8 : radius * (0.38 + 0.57 * k / (count - 1));
                 total += radii[k];
             }
+            // Die Verteilung auf die Ringe bleibt die der Grundlage; gestreckt werden nur die Halbmesser.
+            int[] onRings = new int[count];
+            int assigned = 0;
+            for (int k = 0; k < count; k++) {
+                onRings[k] = k == count - 1 ? n - assigned : (int) Math.round(n * radii[k] / total);
+                assigned += onRings[k];
+            }
+            for (int k = 0; k < count; k++) {
+                boolean inner = count == 1 || k < count - 1;
+                radii[k] = Math.min(radius, radii[k] * (inner ? spread.inner() : spread.outer()));
+            }
             int index = 0;
             for (int k = 0; k < count; k++) {
-                int onRing = k == count - 1 ? n - index : (int) Math.round(n * radii[k] / total);
-                double shift = k % 2 == 0 ? 0 : Math.PI / Math.max(1, onRing);
+                int onRing = onRings[k];
+                double shift = (k % 2 == 0 ? 0 : Math.PI / Math.max(1, onRing))
+                        + (count == 1 || k < count - 1 ? spread.turn() * 2 * Math.PI / Math.max(1, onRing) : 0);
                 for (int i = 0; i < onRing && index < n; i++, index++) {
                     double angle = -Math.PI / 2 + shift + 2 * Math.PI * i / onRing;
-                    centres.put(nodes.get(index).key(), new Point2D.Double(cx + radii[k] * Math.cos(angle) * 1.35,
-                            cy + radii[k] * Math.sin(angle)));
+                    centres.put(nodes.get(index).key(), new Point2D.Double(
+                            cx + radii[k] * Math.cos(angle) * spread.stretch(), cy + radii[k] * Math.sin(angle)));
                 }
             }
             return centres;

@@ -195,7 +195,7 @@ final class KnowledgeGraphTab extends JPanel {
     /** Overlay „Belege“ einer Verb-Kante der Fachsicht, wie in der Übersicht. */
     private final EvidencePopup evidence = new EvidencePopup();
     private Consumer<EvidencePopup.Target> onEvidenceOpen = target -> { };
-    private final IconButton overview = new IconButton(Glyph.BACK, OVERVIEW_TIP);
+    private final IconButton overview = new IconButton(Glyph.OVERVIEW, OVERVIEW_TIP);
     /**
      * Gewünschte Mitte der Fachsicht (Wortlaut des angeklickten Fachbegriffs) oder {@code null} für seitenweit; scheitert
      * ihr Laden, gilt wieder {@link #shownCentre}.
