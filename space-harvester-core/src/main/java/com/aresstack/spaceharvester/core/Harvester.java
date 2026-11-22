@@ -1133,13 +1133,15 @@ public final class Harvester implements AutoCloseable {
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder im Podcast (Angelo 21.11.2026): je Thema ein Seitenbild nach seiner Beschreibung, sonst ein
-            // Schaubild aus Teilen. Gezeichnet wird über ai.chat-model; mit der Einstellung „Bildgenerierung“ (Modell
-            // und Tokenlänge) wechselt das Zeichenmodell dorthin.
+            // Schaubild aus Teilen. Gezeichnet wird mit der Einstellung „Bildgenerierung“ (ai.image-model,
+            // ai.image-max-tokens, ai.image-thinking), damit lange SVG-Antworten nicht abbrechen.
             com.aresstack.spaceharvester.application.podcast.StoredPageImages podcastImages =
                     new com.aresstack.spaceharvester.application.podcast.StoredPageImages(cache::find,
                             this.imageAnalysis, assets);
-            ChatStepModel podcastDrawer = new ChatStepModel("podcast-pictures",
-                    () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog, trustBundles,
+            ChatStepModel podcastDrawer = new ChatStepModel("podcast-pictures", () -> {
+                AiServiceSettings ai = liveAi ? this.settings.ai() : startAi;
+                return ai == null ? null : ai.imageGeneration();
+            }, () -> null, catalog, trustBundles,
                     builder.userAgent);
             this.podcasts.pictures(podcastDrawer, podcastImages);
             this.pagePodcasts.pictures(podcastDrawer, podcastImages);
