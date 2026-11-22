@@ -41,7 +41,12 @@ public final class CopyButton extends JButton {
     public static final int FEEDBACK_MILLIS = 1500;
 
     private final Supplier<String> text;
+    /** Holt den Text selbst, etwa im Hintergrund, und gibt ihn an {@link #deliver}; {@code null} ohne. */
+    private final Consumer<Consumer<String>> fetch;
     private final Consumer<String> clipboard;
+    private final String tooltip;
+    /** Zeilen auf dem vorderen Blatt: Es ist gesprochener Text (Transkript), nicht der gezeigte Inhalt. */
+    private final boolean lines;
     private final Timer reset = new Timer(FEEDBACK_MILLIS, e -> done());
     private Popup badge;
     private boolean copied;
@@ -55,11 +60,36 @@ public final class CopyButton extends JButton {
 
     /** @param clipboard wohin der Text geht; die App nimmt die Zwischenablage, Tests eine Liste */
     public CopyButton(Supplier<String> text, Consumer<String> clipboard) {
+        this(Objects.requireNonNull(text, "text"), null, clipboard, TOOLTIP, false);
+    }
+
+    /**
+     * Ein Kopierknopf für Text, der erst geholt werden muss (Dateien lesen, nie auf dem EDT): Der Klick ruft
+     * {@code fetch} mit einem Abnehmer; wer den Text hat, gibt ihn dem Abnehmer auf dem EDT, dann steht er in der
+     * Zwischenablage und der Haken erscheint. {@code null} oder leerer Text kopiert nichts.
+     *
+     * @param tooltip was kopiert wird, etwa „Transkript kopieren“
+     */
+    public static CopyButton deferred(String tooltip, Consumer<Consumer<String>> fetch) {
+        return deferred(tooltip, fetch, CopyButton::systemClipboard);
+    }
+
+    /** @param clipboard wohin der Text geht; die App nimmt die Zwischenablage, Tests eine Liste */
+    public static CopyButton deferred(String tooltip, Consumer<Consumer<String>> fetch, Consumer<String> clipboard) {
+        return new CopyButton(null, Objects.requireNonNull(fetch, "fetch"), clipboard,
+                Objects.requireNonNull(tooltip, "tooltip"), true);
+    }
+
+    private CopyButton(Supplier<String> text, Consumer<Consumer<String>> fetch, Consumer<String> clipboard,
+                       String tooltip, boolean lines) {
         super(new Glyph());
-        this.text = Objects.requireNonNull(text, "text");
+        this.text = text;
+        this.fetch = fetch;
         this.clipboard = Objects.requireNonNull(clipboard, "clipboard");
-        setToolTipText(TOOLTIP);
-        getAccessibleContext().setAccessibleName(TOOLTIP);
+        this.tooltip = tooltip;
+        this.lines = lines;
+        setToolTipText(tooltip);
+        getAccessibleContext().setAccessibleName(tooltip);
         setContentAreaFilled(false);
         setBorderPainted(false);
         setFocusPainted(true);
@@ -72,8 +102,15 @@ public final class CopyButton extends JButton {
     }
 
     private void copy() {
-        String value = text.get();
-        if (value == null) {
+        if (fetch != null) {
+            fetch.accept(this::deliver);
+            return;
+        }
+        deliver(text.get());
+    }
+
+    private void deliver(String value) {
+        if (value == null || fetch != null && value.isBlank()) {
             return;
         }
         clipboard.accept(value);
@@ -86,7 +123,7 @@ public final class CopyButton extends JButton {
 
     private void done() {
         copied = false;
-        setToolTipText(TOOLTIP);
+        setToolTipText(tooltip);
         hideBadge();
         repaint();
     }
@@ -202,6 +239,11 @@ public final class CopyButton extends JButton {
                 back.lineTo(10.5, 5.5);
                 g.draw(back);
                 g.draw(new RoundRectangle2D.Double(5.5, 5.5, 8, 8, 2, 2));
+                if (c instanceof CopyButton button && button.lines) {
+                    g.setStroke(new BasicStroke(1f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g.draw(new java.awt.geom.Line2D.Double(7.8, 8.4, 11.2, 8.4));
+                    g.draw(new java.awt.geom.Line2D.Double(7.8, 10.6, 10.2, 10.6));
+                }
             } finally {
                 g.dispose();
             }

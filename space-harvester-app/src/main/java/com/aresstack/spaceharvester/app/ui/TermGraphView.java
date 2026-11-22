@@ -557,7 +557,7 @@ public final class TermGraphView {
             text = checkedOnly ? NO_CHECKED_VERBS : fach ? NO_VERBS : NO_NEIGHBOURS;
         } else {
             text = Texts.count(graph.nodes().size(), fach ? "Fachbegriff" : "Begriff", fach ? "Fachbegriffe"
-                    : "Begriffe") + " · " + Texts.count(graph.edges().size(), fach ? "Verbindung" : "Beziehung",
+                    : "Begriffe") + " · " + Texts.count(connections(graph), fach ? "Verbindung" : "Beziehung",
                     fach ? "Verbindungen" : "Beziehungen") + (graph.truncated() ? " · " + TRUNCATED : "");
         }
         if (!graph.note().isBlank()) {
@@ -569,10 +569,22 @@ public final class TermGraphView {
         hint.setText(text);
     }
 
-    /** Overlay „Belege“ einer Verb-Kante: Sätze im Hintergrund lesen, dann zeigen. */
+    /** Zahl der Verbindungen: jede Aussage zählt, auch die hinter „+ n weitere“ (UX W9). */
+    static int connections(GraphSource.Graph graph) {
+        return graph.edges().stream().mapToInt(edge -> edge.bundle() ? edge.hidden().size() : 1).sum();
+    }
+
+    /**
+     * Overlay „Belege“ einer Verb-Kante: Sätze im Hintergrund lesen, dann zeigen. Tragen Plan und Ziel in dieser
+     * Richtung mehrere Aussagen, steht jede unter eigener Überschrift, die geklickte oben und aufgeklappt (UX W9).
+     */
     private void showEvidence(GraphSource.Edge edge, int x, int y) {
-        String title = evidenceTitle(canvas, edge);
-        int total = edgeCount(edge);
+        List<EvidencePopup.Statement> statements = statements(canvas.graph(), edge);
+        String title = statements.size() == 1 ? evidenceTitle(canvas, edge)
+                : canvas.label(edge.from()) + " – " + canvas.label(edge.to());
+        int total = statements.stream().mapToInt(EvidencePopup.Statement::total).sum();
+        java.util.List<com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Evidence> all =
+                statements.stream().flatMap(statement -> statement.evidence().stream()).toList();
         AppRuntime runtime = context == null ? null : context.runtime();
         int current = ++evidenceRequest;
         java.util.function.Function<java.util.Map<com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph
@@ -581,13 +593,13 @@ public final class TermGraphView {
                 reader = sentenceReader != null ? sentenceReader
                 : runtime == null ? null : runtime.workspace()::statementSentences;
         if (reader == null) {
-            evidence.fill(title, total, edge.evidence(), java.util.Map.of(), true).showAt(canvas, x, y);
+            evidence.fillStatements(title, total, statements, java.util.Map.of(), true).showAt(canvas, x, y);
             return;
         }
         java.util.Map<com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph.PageRef,
                 java.util.List<com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Statement>> byPage =
                 new java.util.LinkedHashMap<>();
-        edge.evidence().forEach(item -> byPage.computeIfAbsent(item.page(), unused -> new ArrayList<>())
+        all.forEach(item -> byPage.computeIfAbsent(item.page(), unused -> new ArrayList<>())
                 .add(item.statement()));
         int graphRequest = request;
         evidencePending = true;
@@ -598,7 +610,7 @@ public final class TermGraphView {
             }
             evidencePending = false;
             if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
-                evidence.fill(title, total, edge.evidence(), sentences, false).showAt(canvas, x, y);
+                evidence.fillStatements(title, total, statements, sentences, false).showAt(canvas, x, y);
             }
             catchUp();
         }, failure -> {
@@ -607,16 +619,54 @@ public final class TermGraphView {
             }
             evidencePending = false;
             if (current == evidenceRequest && graphRequest == request && canvas.isShowing()) {
-                evidence.fill(title, total, edge.evidence(), java.util.Map.of(), true).showAt(canvas, x, y);
+                evidence.fillStatements(title, total, statements, java.util.Map.of(), true).showAt(canvas, x, y);
             }
             catchUp();
         });
     }
 
-    /** Kopf des Overlays „Belege“ einer Verb-Kante: „Antragsteller stellt Antrag“ ohne Zahl und „≠“. */
+    /**
+     * Die Aussagen des Knotenpaars in Richtung der geklickten Kante für das Overlay (UX W9): die geklickte zuerst (beim
+     * Bogen „+ n weitere“ die, für die er steht), dann die übrigen; jeweils die mit den meisten Belegen zuerst.
+     */
+    public static List<EvidencePopup.Statement> statements(GraphSource.Graph graph, GraphSource.Edge clicked) {
+        List<GraphSource.Edge> first = clicked.bundle() ? new ArrayList<>(clicked.hidden())
+                : new ArrayList<>(List.of(clicked));
+        List<GraphSource.Edge> rest = new ArrayList<>();
+        for (GraphSource.Edge edge : graph.edges()) {
+            // Gleich, nicht dieselbe: Nach einem Neuladen mit gleichem Inhalt hält die Lage die alten Kanten.
+            if (edge.equals(clicked) || edge.style() != GraphSource.Style.VERB || !edge.from().equals(clicked.from())
+                    || !edge.to().equals(clicked.to())) {
+                continue;
+            }
+            if (edge.bundle()) {
+                rest.addAll(edge.hidden());
+            } else {
+                rest.add(edge);
+            }
+        }
+        java.util.Comparator<GraphSource.Edge> strongest =
+                java.util.Comparator.comparingInt(TermGraphView::edgeCount).reversed();
+        first.sort(strongest);
+        rest.sort(strongest);
+        List<EvidencePopup.Statement> statements = new ArrayList<>();
+        for (GraphSource.Edge edge : first) {
+            statements.add(statementOf(edge));
+        }
+        for (GraphSource.Edge edge : rest) {
+            statements.add(statementOf(edge));
+        }
+        return statements;
+    }
+
+    private static EvidencePopup.Statement statementOf(GraphSource.Edge edge) {
+        return new EvidencePopup.Statement(edge.phrase(), edgeCount(edge),
+                GraphSource.trustText(edge.trust(), edge.differs()), edge.evidence());
+    }
+
+    /** Kopf des Overlays „Belege“ einer Verb-Kante: „Plan – nicht prüfen – Ziel“ ohne Zahl und „≠“ (UX W9). */
     public static String evidenceTitle(Canvas canvas, GraphSource.Edge edge) {
-        return canvas.label(edge.from()) + " " + edge.label().replaceFirst("( ≠)? · \\d+$", "") + " "
-                + canvas.label(edge.to());
+        return canvas.label(edge.from()) + " – " + edge.phrase() + " – " + canvas.label(edge.to());
     }
 
     /** Zahl aller Belege aus der Beschriftung „Grundform · N“; sonst die mitgelieferten. */
@@ -1088,7 +1138,8 @@ public final class TermGraphView {
             }
 
             private static String edgeKey(GraphSource.Edge edge) {
-                return edge.from() + "\u0000" + edge.to() + "\u0000" + edge.type() + "\u0000" + edge.style();
+                return edge.from() + "\u0000" + edge.to() + "\u0000" + edge.type() + "\u0000" + edge.style()
+                        + "\u0000" + edge.phrase();
             }
 
             /**
@@ -1628,6 +1679,7 @@ public final class TermGraphView {
 
             /** Die Linien aller Kanten ohne Beschriftung: gerade, parallel versetzt oder als Bogen um fremde Knoten. */
             private List<Segment> lines(Map<String, Rectangle2D> boxes) {
+                arcGaps.clear();
                 List<Segment> segments = new ArrayList<>();
                 Map<String, Integer> pairs = new java.util.HashMap<>();
                 for (GraphSource.Edge edge : graph.edges()) {
@@ -1643,6 +1695,27 @@ public final class TermGraphView {
                     String pair = pairKey(edge);
                     int index = seen.merge(pair, 1, Integer::sum) - 1;
                     if (from == null || to == null) {
+                        continue;
+                    }
+                    if (domain && pairs.get(pair) > 1) {
+                        // Mehrere Aussagen zwischen denselben Knoten (UX W9): nebeneinander gebogen, jede Beschriftung
+                        // auf ihrem eigenen Bogen; die Seiten gelten für beide Richtungen gleich.
+                        double gap = arcGap(pair, boxes);
+                        double bend = (index - (pairs.get(pair) - 1) / 2.0) * gap;
+                        boolean flip = edge.from().compareTo(edge.to()) > 0;
+                        Rectangle2D first = flip ? to : from;
+                        Rectangle2D second = flip ? from : to;
+                        double outward = outward(first, second, centre, edge);
+                        if (outward != 0) {
+                            // Zwischen zwei Nachbarn durch die Mitte: der ganze Fächer außen um die Mitte, der
+                            // innerste Bogen wie eine einzelne Kante dort, die übrigen weiter außen.
+                            bend = outward + Math.signum(outward) * index * gap;
+                        }
+                        Segment arc = new Segment(edge, exit(from, to), exit(to, from), null, null);
+                        if (bend != 0) {
+                            arc = bowed(arc, boxes, flip ? -bend : bend);
+                        }
+                        segments.add(arc);
                         continue;
                     }
                     double offset = (index - (pairs.get(pair) - 1) / 2.0) * PARALLEL_GAP;
@@ -1686,6 +1759,62 @@ public final class TermGraphView {
                     segments.add(segment);
                 }
                 return segments;
+            }
+
+            /**
+             * Abstand der Scheitel nebeneinander gebogener Aussagen eines Knotenpaars (UX W9): so weit, dass ihre
+             * Beschriftungen quer zur Verbindung nebeneinander passen (bei steilen Paaren die Breite, bei flachen die
+             * Höhe), mindestens {@link #ARC_GAP}.
+             */
+            private double arcGap(String pair, Map<String, Rectangle2D> boxes) {
+                Double known = arcGaps.get(pair);
+                if (known != null) {
+                    return known;
+                }
+                double gap = ARC_GAP;
+                for (GraphSource.Edge edge : graph.edges()) {
+                    String label = labelOf(edge);
+                    Rectangle2D from = boxes.get(edge.from());
+                    Rectangle2D to = boxes.get(edge.to());
+                    if (label == null || from == null || to == null || !pairKey(edge).equals(pair)) {
+                        continue;
+                    }
+                    double dx = to.getCenterX() - from.getCenterX();
+                    double dy = to.getCenterY() - from.getCenterY();
+                    double length = Math.max(1, Math.hypot(dx, dy));
+                    double w = labelMetrics.stringWidth(label) + 10;
+                    double h = labelMetrics.getHeight() + 2;
+                    gap = Math.max(gap, Math.abs(dy / length) * w + Math.abs(dx / length) * h + 2 * LABEL_GAP + 2);
+                }
+                arcGaps.put(pair, gap);
+                return gap;
+            }
+
+            /** Je Knotenpaar der Abstand seiner Bögen für die aktuelle Lage ({@link #arcGap}). */
+            private final Map<String, Double> arcGaps = new java.util.HashMap<>();
+
+            /**
+             * Scheitelabstand, mit dem eine Kante zwischen zwei Nachbarn außen um die Mitte biegt (dieselbe Regel wie
+             * für einzelne Kanten), mit Vorzeichen in Richtung von {@code first} nach {@code second} wie bei
+             * {@link #bowed}; 0, wenn sie nicht durch die Mitte liefe.
+             */
+            private double outward(Rectangle2D first, Rectangle2D second, Point2D centre, GraphSource.Edge edge) {
+                if (!domain || centre == null || depthOf(edge.from()) == 0 || depthOf(edge.to()) == 0) {
+                    return 0;
+                }
+                Point2D a = new Point2D.Double(first.getCenterX(), first.getCenterY());
+                Point2D b = new Point2D.Double(second.getCenterX(), second.getCenterY());
+                if (new Line2D.Double(exit(first, second), exit(second, first)).ptSegDist(centre) >= 60) {
+                    return 0;
+                }
+                double dx = b.getX() - a.getX();
+                double dy = b.getY() - a.getY();
+                double length = Math.max(1, Math.hypot(dx, dy));
+                double nx = -dy / length;
+                double ny = dx / length;
+                double side = ((a.getX() + b.getX()) / 2 - centre.getX()) * nx
+                        + ((a.getY() + b.getY()) / 2 - centre.getY()) * ny;
+                return (side < 0 ? -1 : 1) * Math.max(45, length * 0.22);
             }
 
             /** Wie viele Knoten außer ihren eigenen Enden die Kante kreuzt; hört bei {@code limit} auf zu zählen. */
@@ -1787,6 +1916,19 @@ public final class TermGraphView {
                     drawn.add(drawn(box));
                 }
                 List<Segment> current = new ArrayList<>(segments);
+                // Nebeneinander gebogene Aussagen behalten ihren Bogen: ein Umweg legte sie auf die Nachbarn.
+                Map<String, Integer> pairs = new java.util.HashMap<>();
+                for (Segment segment : segments) {
+                    pairs.merge(pairKey(segment.edge()), 1, Integer::sum);
+                }
+                java.util.Set<String> fanned = new java.util.HashSet<>();
+                if (domain) {
+                    pairs.forEach((pair, count) -> {
+                        if (count > 1) {
+                            fanned.add(pair);
+                        }
+                    });
+                }
                 int total = 0;
                 for (int i : order) {
                     Segment segment = current.get(i);
@@ -1825,7 +1967,7 @@ public final class TermGraphView {
                                 break;
                             }
                         }
-                        if (s == 0 && bestHits > 0 && thorough) {
+                        if (s == 0 && bestHits > 0 && thorough && !fanned.contains(pairKey(segment.edge()))) {
                             shapes.addAll(detours(segment, boxes));
                         }
                     }
@@ -2107,6 +2249,8 @@ public final class TermGraphView {
         }
 
         private static final double PARALLEL_GAP = 22;
+        /** Abstand der Scheitel nebeneinander gebogener Aussagen eines Knotenpaars (UX W9). */
+        static final double ARC_GAP = 30;
 
         /** Gleicher Schlüssel für beide Richtungen eines Begriffspaars. */
         static String pairKey(GraphSource.Edge edge) {
@@ -2119,12 +2263,12 @@ public final class TermGraphView {
             Point2D a = segment.a();
             Point2D b = segment.b();
             Color color = switch (edge.style()) {
-                case VERB -> Comic.INK;
+                case VERB -> edge.bundle() ? Comic.MUTED : edge.qualifiers().past() ? PALE : Comic.INK;
                 case SYNONYM -> Comic.MUTED;
                 case RELATION -> edgeColor(edge.type());
             };
             g2.setColor(color);
-            if (edge.style() == GraphSource.Style.SYNONYM) {
+            if (edge.style() == GraphSource.Style.SYNONYM || edge.bundle()) {
                 g2.setStroke(new BasicStroke(1.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             } else if (edge.style() == GraphSource.Style.VERB && edge.trust() != null) {
                 g2.setStroke(trustStroke(edge));
@@ -2138,6 +2282,9 @@ public final class TermGraphView {
                 arrow(g2, segment.control() == null ? a : segment.at(0.9), b);
             }
             Rectangle2D box = segment.tag();
+            if (edge.style() == GraphSource.Style.VERB && edge.qualifiers().negated()) {
+                negation(g2, segment, box);
+            }
             String label = labelOf(edge);
             if (box == null || label == null) {
                 return;
@@ -2155,17 +2302,88 @@ public final class TermGraphView {
             float x = (float) (box.getCenterX() - metrics.stringWidth(label) / 2.0);
             float y = (float) (box.getY() + 1 + metrics.getAscent());
             int dot = edge.style() == GraphSource.Style.VERB ? label.lastIndexOf(" · ") : -1;
+            Color text = edge.style() == GraphSource.Style.VERB && edge.qualifiers().past() ? PALE : Comic.INK;
             if (dot < 0) {
-                g2.setColor(Comic.INK);
+                g2.setColor(text);
                 g2.drawString(label, x, y);
             } else {
                 // „Grundform · N“: die Zahl gedämpft.
                 String verb = label.substring(0, dot);
-                g2.setColor(Comic.INK);
+                g2.setColor(text);
                 g2.drawString(verb, x, y);
                 g2.setColor(Comic.MUTED);
                 g2.drawString(label.substring(dot), x + metrics.stringWidth(verb), y);
             }
+        }
+
+        /** Linie und Schrift einer Aussage, die früher galt oder verworfen ist (UX W9): blasser, nie farbig. */
+        static final Color PALE = new Color(Comic.INK.getRed(), Comic.INK.getGreen(), Comic.INK.getBlue(), 105);
+        /** Länge des Querstrichs einer verneinten Aussage (UX W9). */
+        static final double NEGATION_LENGTH = 14;
+        /** Abstand des Querstrichs zur Beschriftung (UX W9). */
+        static final double NEGATION_GAP = 8;
+        /** So lang ist eine gestrichelte oder gepunktete Linie um den Querstrich durchgezogen (UX W9). */
+        static final double NEGATION_SOLID = 12;
+
+        /**
+         * Querstrich einer verneinten Aussage (UX W9): 14 px, etwa 60° zur Linie, in Linienfarbe, mindestens 2 px stark,
+         * {@link #NEGATION_GAP} vor der Beschriftung auf der Seite des Startknotens, obenauf. Auf gestrichelter oder
+         * gepunkteter Linie ist die Linie {@link #NEGATION_SOLID} um ihn durchgezogen, damit er sich vom Muster abhebt.
+         */
+        private static void negation(Graphics2D g2, Segment segment, Rectangle2D tag) {
+            double t = negationAt(segment, tag);
+            Point2D at = segment.at(t);
+            Point2D ahead = segment.at(Math.min(1, t + 0.01));
+            Point2D behind = segment.at(Math.max(0, t - 0.01));
+            double direction = Math.atan2(ahead.getY() - behind.getY(), ahead.getX() - behind.getX());
+            java.awt.Stroke before = g2.getStroke();
+            float line = before instanceof BasicStroke basic ? basic.getLineWidth() : 2f;
+            if (before instanceof BasicStroke basic && basic.getDashArray() != null) {
+                // Ein Stück durchgezogene Linie unter dem Querstrich, entlang der Kante.
+                double step = 0.002;
+                Point2D[] ends = new Point2D[2];
+                for (int side = 0; side < 2; side++) {
+                    Point2D last = at;
+                    double walked = 0;
+                    for (double u = t; walked < NEGATION_SOLID / 2 && u >= 0 && u <= 1;
+                         u += side == 0 ? -step : step) {
+                        Point2D next = segment.at(Math.max(0, Math.min(1, u)));
+                        walked += next.distance(last);
+                        last = next;
+                    }
+                    ends[side] = last;
+                }
+                g2.setStroke(new BasicStroke(line, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND));
+                g2.draw(new Line2D.Double(ends[0], at));
+                g2.draw(new Line2D.Double(at, ends[1]));
+            }
+            double angle = direction + Math.toRadians(60);
+            double dx = Math.cos(angle) * NEGATION_LENGTH / 2;
+            double dy = Math.sin(angle) * NEGATION_LENGTH / 2;
+            g2.setStroke(new BasicStroke(Math.max(2f, line), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.draw(new Line2D.Double(at.getX() - dx, at.getY() - dy, at.getX() + dx, at.getY() + dy));
+            g2.setStroke(before);
+        }
+
+        /**
+         * Wo der Querstrich sitzt: auf der Linie, so weit vor der Beschriftung (Seite des Startknotens), dass er
+         * {@link #NEGATION_GAP} Abstand hält; ohne Beschriftung die Mitte.
+         */
+        static double negationAt(Segment segment, Rectangle2D tag) {
+            if (tag == null) {
+                return 0.5;
+            }
+            double margin = NEGATION_GAP + NEGATION_LENGTH / 2;
+            Rectangle2D near = new Rectangle2D.Double(tag.getX() - margin, tag.getY() - margin,
+                    tag.getWidth() + 2 * margin, tag.getHeight() + 2 * margin);
+            int steps = 200;
+            for (int i = 0; i <= steps; i++) {
+                double t = i / (double) steps;
+                if (near.contains(segment.at(t))) {
+                    return Math.max(0.02, t);
+                }
+            }
+            return 0.5;
         }
 
         /**
