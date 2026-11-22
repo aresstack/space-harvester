@@ -22,16 +22,20 @@ import java.util.regex.Pattern;
  * {@link EnrichmentQueueStore} als eine Datei je Gruppe ({@code <Gruppe>.queue}) in einem eigenen Verzeichnis, atomar
  * ersetzt (temporäre Datei, dann umbenannt). Zeilen: {@code v1}, {@code source <Quelle>}, {@code part <Teil>}, dann je
  * Berechnung {@code W} (wartend) oder {@code F} (gescheitert), erzwungen {@code 1}/{@code 0}, Prozessor und Seite;
- * Felder URL-kodiert. Eine unlesbare Datei fehlt in {@link #all()}; dann holt der nächste Abgleich nach.
+ * Felder URL-kodiert. Eine unlesbare Datei lässt sich nie wiederherstellen: {@link #all()} löscht sie, dann holt der
+ * nächste Abgleich nach. Temporäre Reste eines abgebrochenen Schreibens entfernt der erste Zugriff (Abnahme #1112).
  */
 public final class FileEnrichmentQueue implements EnrichmentQueueStore {
 
     static final String SUFFIX = ".queue";
+    static final String TEMP = ".tmp";
     private static final String VERSION = "v1";
     private static final Pattern GROUP = Pattern.compile("[A-Za-z0-9-]{1,100}");
     private static final System.Logger LOG = System.getLogger(FileEnrichmentQueue.class.getName());
 
     private final Path directory;
+    /** Ob die temporären Reste von vorher entfernt sind. */
+    private boolean tidied;
 
     /** @param directory Verzeichnis der Dateien; wird bei Bedarf angelegt */
     public FileEnrichmentQueue(Path directory) {
@@ -42,7 +46,8 @@ public final class FileEnrichmentQueue implements EnrichmentQueueStore {
     public synchronized void save(Saved saved) {
         Objects.requireNonNull(saved, "saved");
         Path file = file(saved.groupId());
-        Path temp = directory.resolve(saved.groupId() + "." + UUID.randomUUID() + ".tmp");
+        Path temp = directory.resolve(saved.groupId() + "." + UUID.randomUUID() + TEMP);
+        tidy();
         try {
             Files.createDirectories(directory);
             try (BufferedWriter writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
@@ -93,24 +98,75 @@ public final class FileEnrichmentQueue implements EnrichmentQueueStore {
     @Override
     public synchronized List<Saved> all() {
         List<Saved> saved = new ArrayList<>();
+        tidy();
         if (!Files.isDirectory(directory)) {
             return saved;
         }
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(directory, "*" + SUFFIX)) {
-            for (Path file : files) {
-                String name = file.getFileName().toString();
-                String groupId = name.substring(0, name.length() - SUFFIX.length());
-                try {
-                    saved.add(read(groupId, Files.readAllLines(file, StandardCharsets.UTF_8)));
-                } catch (IOException | RuntimeException e) {
-                    LOG.log(System.Logger.Level.WARNING, "Warteschlange der KI-Anreicherung {0} unlesbar ({1})",
-                            groupId, e.getClass().getName());
-                }
+        for (Path file : files("*" + SUFFIX)) {
+            String name = file.getFileName().toString();
+            String groupId = name.substring(0, name.length() - SUFFIX.length());
+            List<String> lines = null;
+            try {
+                lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+                saved.add(read(groupId, lines));
+            } catch (IOException | RuntimeException e) {
+                // Nie wiederherstellbar; sonst hielte die Datei Quellen- und Seitenschlüssel über jedes Bereinigen.
+                LOG.log(System.Logger.Level.WARNING, "Warteschlange der KI-Anreicherung der Quelle {0} unlesbar, "
+                        + "verworfen ({1})", lines == null ? "?" : sourceOf(lines).orElse("?"),
+                        e.getClass().getName());
+                deleteQuietly(file);
             }
+        }
+        return saved;
+    }
+
+    /** Die Quelle aus der Kopfzeile, auch wenn der Rumpf kaputt ist. */
+    private static java.util.Optional<String> sourceOf(List<String> lines) {
+        if (lines.size() < 2 || !lines.get(1).startsWith("source ")) {
+            return java.util.Optional.empty();
+        }
+        try {
+            return java.util.Optional.of(decode(lines.get(1).substring("source ".length())));
+        } catch (IllegalArgumentException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
+    /** Entfernt temporäre Reste eines abgebrochenen Schreibens, einmal beim ersten Zugriff. */
+    private void tidy() {
+        if (tidied) {
+            return;
+        }
+        tidied = true;
+        removeTemps();
+    }
+
+    private void removeTemps() {
+        if (!Files.isDirectory(directory)) {
+            return;
+        }
+        for (Path temp : files("*" + TEMP)) {
+            deleteQuietly(temp);
+        }
+    }
+
+    private List<Path> files(String glob) {
+        List<Path> found = new ArrayList<>();
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(directory, glob)) {
+            files.forEach(found::add);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        return saved;
+        return found;
+    }
+
+    private static void deleteQuietly(Path file) {
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Rest der Warteschlange nicht gelöscht ({0})",
+                    e.getClass().getName());
+        }
     }
 
     private static Saved read(String groupId, List<String> lines) {
@@ -136,12 +192,31 @@ public final class FileEnrichmentQueue implements EnrichmentQueueStore {
         return new Saved(groupId, sourceId, partId, work, failed);
     }
 
+    /**
+     * Löscht jede Datei der Quelle, auch mit kaputtem Rumpf, solange die Kopfzeile sie nennt, und alle temporären Reste
+     * (geschrieben wird nur unter diesem Monitor, also gehört keiner einem laufenden Schreiben).
+     */
     @Override
     public synchronized void removeSource(String sourceId) {
         Objects.requireNonNull(sourceId, "sourceId");
-        for (Saved saved : all()) {
-            if (saved.sourceId().equals(sourceId)) {
-                delete(saved.groupId());
+        if (!Files.isDirectory(directory)) {
+            return;
+        }
+        removeTemps();
+        for (Path file : files("*" + SUFFIX)) {
+            List<String> lines;
+            try {
+                lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            } catch (IOException | RuntimeException e) {
+                // Ganz unlesbar: Beim nächsten Start verwirft all() sie.
+                continue;
+            }
+            if (sourceOf(lines).filter(sourceId::equals).isPresent()) {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
             }
         }
     }

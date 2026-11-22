@@ -70,6 +70,40 @@ class FileEnrichmentQueueTest {
         Files.writeString(directory.resolve("g-2.queue"), "irgendwas\n", StandardCharsets.UTF_8);
 
         assertThat(queue.all()).extracting(Saved::groupId).containsExactly("g-1");
+        // Nie wiederherstellbar: verworfen, statt Schlüssel über jedes Bereinigen zu halten (Abnahme #1112).
+        assertThat(directory.resolve("g-2.queue")).doesNotExist();
+    }
+
+    @Test
+    void removingASourceAlsoDeletesItsFileWithABrokenBodyAndLeftoverTemporaryFiles() throws Exception {
+        Files.createDirectories(directory);
+        Files.writeString(directory.resolve("g-1.queue"), "v1\nsource wiki\npart job-1\nW kaputt\n",
+                StandardCharsets.UTF_8);
+        Files.writeString(directory.resolve("g-2.queue"), "v1\nsource ops\npart job-2\nW 0 remote 1\n",
+                StandardCharsets.UTF_8);
+        Files.writeString(directory.resolve("g-3.0f0e.tmp"), "v1\nsource wiki\npart job-3\n",
+                StandardCharsets.UTF_8);
+        FileEnrichmentQueue queue = new FileEnrichmentQueue(directory);
+
+        queue.removeSource("wiki");
+
+        try (Stream<Path> files = Files.list(directory)) {
+            assertThat(files).extracting(file -> file.getFileName().toString()).containsExactly("g-2.queue");
+        }
+    }
+
+    @Test
+    void theFirstAccessRemovesTemporaryLeftoversOfAnInterruptedWrite() throws Exception {
+        Files.createDirectories(directory);
+        Files.writeString(directory.resolve("g-1.7a7a.tmp"), "v1\nsource wiki\npart job-1\n",
+                StandardCharsets.UTF_8);
+        FileEnrichmentQueue queue = new FileEnrichmentQueue(directory);
+
+        assertThat(queue.all()).isEmpty();
+
+        try (Stream<Path> files = Files.list(directory)) {
+            assertThat(files).isEmpty();
+        }
     }
 
     @Test

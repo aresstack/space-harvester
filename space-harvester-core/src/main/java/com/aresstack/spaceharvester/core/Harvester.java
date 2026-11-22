@@ -1564,7 +1564,10 @@ public final class Harvester implements AutoCloseable {
                             fillQueue.removeSource(sourceId);
                         }
                     })
-                    .enrichmentQueue(background != null ? enrichments::forgetQueued : null)
+                    // Auch ohne gehostete Warteschlange: Dateien eines früheren Laufs gehören mit zur Quelle.
+                    .enrichmentQueue(background != null ? enrichments::forgetQueued
+                            : new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(
+                                    cacheDirectory.resolve("enrichment-queue"))::removeSource)
                     .pageReleases(pageReleases)
                     .pageCache(cache)
                     .fullText(textIndex)

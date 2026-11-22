@@ -107,7 +107,12 @@ public class Enrichments {
     static final String WORK_FAILED = "ENRICHMENT_WORK_FAILED";
     /** Code des gelben Ereignisses, wenn ein von einem Benutzer gestarteter Teil nach dem Neustart anhält. */
     static final String RESUME_BY_HAND = "ENRICHMENT_RESUME_BY_HAND";
-    /** Nach so vielen Berechnungen legt ein Teil seinen Stand ab ({@link EnrichmentQueueStore}). */
+    /**
+     * Angabe am Teil, der die Arbeit eines gescheiterten, von einem Benutzer gestarteten Teils nach dem Neustart
+     * übernimmt: Er hält beim ersten Lauf gelb an ({@value #RESUME_BY_HAND}) und rechnet erst von Hand.
+     */
+    static final String BY_HAND = "enrichment.by-hand";
+    /** Nach so vielen Berechnungen (erledigt oder gescheitert) legt ein Teil seinen Stand ab ({@link EnrichmentQueueStore}). */
     static final int PERSIST_EVERY = 25;
     private static final String COMPONENT = "enrichment";
 
@@ -146,8 +151,24 @@ public class Enrichments {
     private final ActiveParts parts = new ActiveParts();
     private volatile boolean closed;
     private volatile Subscription removedParts = Subscription.NONE;
-    /** Die Warteschlange über einen Neustart hinweg (Angelo 22.11.2026); geschrieben unter {@link #pendingLock}. */
+    /** Die Warteschlange über einen Neustart hinweg (Angelo 22.11.2026); geschrieben von {@link #writeQueue}. */
     private volatile EnrichmentQueueStore queueStore = EnrichmentQueueStore.NONE;
+    /** Folgenummer der Schnappschüsse ({@link #persist}); unter {@link #pendingLock}. */
+    private long persistSequence;
+    /** Je Gruppe ihr neuester noch nicht geschriebener Schnappschuss; unter {@link #pendingLock}. */
+    private final Map<String, Snapshot> unwritten = new LinkedHashMap<>();
+    /** Der einzige Schreiber der Ablage: Datei-E/A nie unter {@link #pendingLock}. */
+    private final java.util.concurrent.locks.ReentrantLock writer = new java.util.concurrent.locks.ReentrantLock();
+    /** Je Gruppe die Folgenummer des zuletzt geschriebenen Stands; unter {@link #writer}. */
+    private final Map<String, Long> written = new HashMap<>();
+    /** Je bereinigter Quelle die Folgenummer beim Bereinigen; ältere Stände der Quelle entfallen; unter {@link #writer}. */
+    private final Map<String, Long> forgotten = new HashMap<>();
+    /** Die Wiederholung (↻), damit das Bereinigen auch ihre bereitgelegte Arbeit vergisst. */
+    private volatile RetryFailed retryFailed;
+
+    /** Ein Stand einer Gruppe zum Schreiben; ohne {@code saved} wird ihr Eintrag gelöscht. */
+    private record Snapshot(long sequence, String sourceId, EnrichmentQueueStore.Saved saved) {
+    }
 
     /** Die Fakten aus den Ergebnissen dieser Ablage (#182), wenn sie welche führt. */
     public java.util.Optional<com.aresstack.spaceharvester.application.facts.FactStore> facts() {
@@ -760,6 +781,14 @@ public class Enrichments {
 
         @Override
         public boolean prepare(BackgroundPart part) {
+            try {
+                return prepareLocked(part);
+            } finally {
+                writeQueue();
+            }
+        }
+
+        private boolean prepareLocked(BackgroundPart part) {
             synchronized (pendingLock) {
                 Failed previous = failed.remove(part.groupId());
                 if (previous == null || previous.work.isEmpty()) {
@@ -826,6 +855,12 @@ public class Enrichments {
                 failed.put(part.groupId(), undone.work());
                 persist(part.groupId());
             }
+            writeQueue();
+        }
+
+        /** Beim Bereinigen: was für Teile der Quelle bereitlag, gilt nicht mehr. Unter {@link #pendingLock}. */
+        void forget(String sourceId) {
+            prepared.values().removeIf(undone -> undone.work().sourceId.equals(sourceId));
         }
     }
 
@@ -842,6 +877,11 @@ public class Enrichments {
          * in den nächsten Teil hinten in der Kette.
          */
         boolean sealed;
+        /**
+         * Die Berechnung, die der Teil gerade rechnet: Sie bleibt im abgelegten Stand, bis ihr Ergebnis feststeht
+         * (Abnahme #1112); unter {@link #pendingLock}.
+         */
+        Work current;
 
         Pending(String groupId, String sourceId) {
             this.groupId = groupId;
@@ -869,6 +909,31 @@ public class Enrichments {
             order.set(order.indexOf(unforced), forced);
             work.clear();
             work.addAll(order);
+        }
+
+        /** Stellt eine unterbrochene Berechnung erzwungen wieder vorn an. Unter {@link #pendingLock}. */
+        void pushFront(Work interrupted) {
+            Work forced = new Work(interrupted.processorId(), interrupted.key(), true);
+            List<Work> order = new java.util.ArrayList<>(work.size() + 1);
+            order.add(forced);
+            for (Work each : work) {
+                if (!each.key().equals(forced.key()) || !each.processorId().equals(forced.processorId())) {
+                    order.add(each);
+                }
+            }
+            work.clear();
+            work.addAll(order);
+        }
+
+        /** Was der Teil noch vor sich hat, die laufende Berechnung zuerst. Unter {@link #pendingLock}. */
+        List<Work> open() {
+            if (current == null) {
+                return List.copyOf(work);
+            }
+            List<Work> open = new java.util.ArrayList<>(work.size() + 1);
+            open.add(current);
+            work.stream().filter(each -> !each.equals(current)).forEach(open::add);
+            return open;
         }
     }
 
@@ -906,7 +971,9 @@ public class Enrichments {
                 parts.run(() -> closed, () -> {
                     throw new JobCancelledException(context.jobId());
                 }, () -> drain(part, context)))));
-        background.registerRetry(BACKGROUND_KIND, new RetryFailed(background));
+        RetryFailed retry = new RetryFailed(background);
+        this.retryFailed = retry;
+        background.registerRetry(BACKGROUND_KIND, retry);
         // Gelöschte Teile brauchen ihre gescheiterten Berechnungen nicht mehr.
         this.removedParts = background.subscribe(BACKGROUND_KIND, changed -> {
         }, removed -> {
@@ -916,10 +983,12 @@ public class Enrichments {
                     failed.remove(groupId);
                     persist(groupId);
                 }
+                writeQueue();
             }
         });
         Map<String, List<Work>> handOver = new LinkedHashMap<>();
-        Set<String> restored = restore(background, handOver);
+        Map<String, List<Work>> byHand = new LinkedHashMap<>();
+        Set<String> restored = restore(background, handOver, byHand);
         // Abnahme #1077: Ein angehaltener Teil von vorher ohne Arbeit hielte jeden neuen auf.
         List<JobStatus> retired = background.retireResumable(BACKGROUND_KIND, EMPTY_AFTER_RESTART,
                 part -> restored.contains(part.id()));
@@ -928,8 +997,33 @@ public class Enrichments {
                     + "abgeschlossen", restored.size(), retired.size());
         }
         this.hosted = background;
-        // Was ein gescheiterter Teil vor dem Neustart nicht mehr übergeben konnte, übernimmt ein neuer.
-        handOver.forEach((sourceId, left) -> settle(sourceId, JobState.FAILED, left));
+        // Was ein gescheiterter Teil vor dem Neustart nicht mehr übergeben konnte, übernimmt ein neuer, aber erst
+        // zusammen mit dem Fortsetzen der unterbrochenen (Abnahme #1112): Vorher ist das offene Löschen einer Quelle noch
+        // nicht angemeldet (Jobs#sourceHold), und ein neuer Teil liefe an ihm vorbei.
+        if (!handOver.isEmpty() || !byHand.isEmpty()) {
+            background.afterResume(() -> {
+                handOver.forEach((sourceId, left) -> settle(sourceId, JobState.FAILED, left));
+                byHand.forEach(this::handOverByHand);
+            });
+        }
+    }
+
+    /**
+     * Die Arbeit eines gescheiterten, von einem Benutzer gestarteten Teils: ein eigener Teil, der beim ersten Lauf gelb
+     * anhält ({@value #RESUME_BY_HAND}), denn ohne den Benutzer fehlen seine Rechte.
+     */
+    private void handOverByHand(String sourceId, List<Work> left) {
+        BackgroundJobs jobs = hosted;
+        if (jobs == null || closed || left.isEmpty()) {
+            return;
+        }
+        Pending created = new Pending(BackgroundJobs.newGroupId(), sourceId);
+        created.sealed = true;
+        left.forEach(created::add);
+        synchronized (pendingLock) {
+            groups.put(created.groupId, created);
+        }
+        start(jobs, sourceId, created.groupId, Map.of(BY_HAND, "true"));
     }
 
     /**
@@ -937,9 +1031,11 @@ public class Enrichments {
      * Gescheiterte aller Teile, die es noch gibt. Abgelegtes zu gelöschten Teilen entfällt.
      *
      * @param handOver nimmt die Arbeit gescheiterter Teile auf, je Quelle
+     * @param byHand   ebenso für gescheiterte Teile, die ein Benutzer gestartet hat
      * @return die Teile, die mit ihrer Arbeit weiterlaufen
      */
-    private Set<String> restore(BackgroundJobs background, Map<String, List<Work>> handOver) {
+    private Set<String> restore(BackgroundJobs background, Map<String, List<Work>> handOver,
+                                Map<String, List<Work>> byHand) {
         List<EnrichmentQueueStore.Saved> saved;
         try {
             saved = queueStore.all();
@@ -977,7 +1073,8 @@ public class Enrichments {
                     groups.put(groupId, waiting);
                     restored.add(entry.partId());
                 } else if (!work.isEmpty() && status.state() == JobState.FAILED) {
-                    handOver.computeIfAbsent(entry.sourceId(), ignored -> new ArrayList<>()).addAll(work);
+                    (BackgroundJobs.startedByUser(status) ? byHand : handOver)
+                            .computeIfAbsent(entry.sourceId(), ignored -> new ArrayList<>()).addAll(work);
                 }
                 // Was nicht weiterläuft, steht nicht mehr als wartend in der Ablage.
                 persist(groupId);
@@ -994,6 +1091,8 @@ public class Enrichments {
                         subscription));
             }
         }
+        // Die Schnappschüsse von oben, außerhalb des Riegels.
+        writeQueue();
         return restored;
     }
 
@@ -1008,32 +1107,77 @@ public class Enrichments {
     }
 
     /**
-     * Legt den Stand der Gruppe ab, wie er jetzt im Speicher steht: ihre wartende und ihre gescheiterte Arbeit; ohne
-     * beides entfällt der Eintrag. Unter {@link #pendingLock}, damit nie ein älterer Stand einen neueren überschreibt.
+     * Legt den Stand der Gruppe ab, wie er jetzt im Speicher steht: ihre wartende Arbeit samt der laufenden Berechnung
+     * und ihre gescheiterte; ohne beides entfällt der Eintrag. Unter {@link #pendingLock} entsteht nur der Schnappschuss
+     * mit Folgenummer; geschrieben wird außerhalb ({@link #writeQueue}), damit Datei-E/A nie das Einreihen aller
+     * Quellen aufhält (Abnahme #1112). Unter dem Riegel aufgerufen, schreibt der Aufrufer danach mit
+     * {@link #writeQueue}.
      */
     private void persist(String groupId) {
-        EnrichmentQueueStore target = queueStore;
-        if (target == EnrichmentQueueStore.NONE) {
+        if (queueStore == EnrichmentQueueStore.NONE) {
             return;
         }
         synchronized (pendingLock) {
             Pending waiting = groups.get(groupId);
             Failed broken = failed.get(groupId);
-            List<EnrichmentQueueStore.Entry> work = waiting == null ? List.of() : entries(waiting.work);
+            List<EnrichmentQueueStore.Entry> work = waiting == null ? List.of() : entries(waiting.open());
             List<EnrichmentQueueStore.Entry> misses = broken == null ? List.of() : entries(broken.work);
             String partId = waiting != null && waiting.partId != null ? waiting.partId
                     : broken != null ? broken.partId : null;
             String sourceId = waiting != null ? waiting.sourceId : broken != null ? broken.sourceId : null;
-            try {
-                if (partId == null || work.isEmpty() && misses.isEmpty()) {
-                    target.delete(groupId);
-                } else {
-                    target.save(new EnrichmentQueueStore.Saved(groupId, sourceId, partId, work, misses));
+            EnrichmentQueueStore.Saved saved = partId == null || work.isEmpty() && misses.isEmpty() ? null
+                    : new EnrichmentQueueStore.Saved(groupId, sourceId, partId, work, misses);
+            unwritten.put(groupId, new Snapshot(++persistSequence, sourceId, saved));
+        }
+        writeQueue();
+    }
+
+    /**
+     * Schreibt die offenen Schnappschüsse, einer nach dem anderen ({@link #writer}); ein älterer Stand überschreibt nie
+     * einen neueren, und nach dem Bereinigen einer Quelle schreibt kein Stand von davor ihre Datei neu. Unter
+     * {@link #pendingLock} ohne Wirkung; der Aufrufer schreibt nach dem Riegel.
+     */
+    private void writeQueue() {
+        EnrichmentQueueStore target = queueStore;
+        if (target == EnrichmentQueueStore.NONE || Thread.holdsLock(pendingLock)) {
+            return;
+        }
+        while (true) {
+            List<Map.Entry<String, Snapshot>> batch;
+            synchronized (pendingLock) {
+                if (unwritten.isEmpty()) {
+                    return;
                 }
-            } catch (RuntimeException e) {
-                // Nur die Klasse: Der nächste Stand schreibt neu.
-                LOG.log(System.Logger.Level.WARNING, "Warteschlange der KI-Anreicherung {0} nicht abgelegt ({1})",
-                        groupId, e.getClass().getName());
+                batch = new ArrayList<>();
+                unwritten.forEach((groupId, snapshot) -> batch.add(Map.entry(groupId, snapshot)));
+                unwritten.clear();
+            }
+            writer.lock();
+            try {
+                for (Map.Entry<String, Snapshot> each : batch) {
+                    String groupId = each.getKey();
+                    Snapshot snapshot = each.getValue();
+                    Long done = written.get(groupId);
+                    Long purged = snapshot.sourceId() == null ? null : forgotten.get(snapshot.sourceId());
+                    if (done != null && done >= snapshot.sequence()
+                            || purged != null && purged >= snapshot.sequence()) {
+                        continue;
+                    }
+                    written.put(groupId, snapshot.sequence());
+                    try {
+                        if (snapshot.saved() == null) {
+                            target.delete(groupId);
+                        } else {
+                            target.save(snapshot.saved());
+                        }
+                    } catch (RuntimeException e) {
+                        // Nur die Klasse: Der nächste Stand schreibt neu.
+                        LOG.log(System.Logger.Level.WARNING, "Warteschlange der KI-Anreicherung {0} nicht abgelegt "
+                                + "({1})", groupId, e.getClass().getName());
+                    }
+                }
+            } finally {
+                writer.unlock();
             }
         }
     }
@@ -1044,17 +1188,29 @@ public class Enrichments {
      */
     public void forgetQueued(String sourceId) {
         Objects.requireNonNull(sourceId, "sourceId");
+        long sequence;
         synchronized (pendingLock) {
             pending.remove(sourceId);
             groups.values().removeIf(waiting -> waiting.sourceId.equals(sourceId));
             failed.values().removeIf(broken -> broken.sourceId.equals(sourceId));
-            try {
-                queueStore.removeSource(sourceId);
-            } catch (RuntimeException e) {
-                LOG.log(System.Logger.Level.WARNING, "Warteschlange der KI-Anreicherung der Quelle {0} nicht "
-                        + "bereinigt ({1})", sourceId, e.getClass().getName());
-                throw e;
+            RetryFailed retry = retryFailed;
+            if (retry != null) {
+                retry.forget(sourceId);
             }
+            unwritten.values().removeIf(snapshot -> sourceId.equals(snapshot.sourceId()));
+            sequence = ++persistSequence;
+        }
+        writer.lock();
+        try {
+            // Auch ein Stand, den ein anderer Faden vor dem Bereinigen genommen hat, schreibt die Datei nicht neu.
+            forgotten.put(sourceId, sequence);
+            queueStore.removeSource(sourceId);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Warteschlange der KI-Anreicherung der Quelle {0} nicht "
+                    + "bereinigt ({1})", sourceId, e.getClass().getName());
+            throw e;
+        } finally {
+            writer.unlock();
         }
     }
 
@@ -1087,6 +1243,7 @@ public class Enrichments {
                 groupId = created.groupId;
             }
         }
+        writeQueue();
         // Meldungen an die Auftragsverwaltung nie unter dem eigenen Riegel.
         if (groupId != null) {
             start(jobs, key.sourceId(), groupId);
@@ -1096,9 +1253,15 @@ public class Enrichments {
 
     /** Startet den Teil einer Quelle; nimmt der Hintergrund ihn nicht an, rechnet der bisherige Weg. */
     private void start(BackgroundJobs jobs, String sourceId, String groupId) {
+        start(jobs, sourceId, groupId, Map.of());
+    }
+
+    private void start(BackgroundJobs jobs, String sourceId, String groupId, Map<String, String> extra) {
         try {
+            Map<String, String> parameters = new LinkedHashMap<>(extra);
+            parameters.put(Jobs.CANCEL_NOTE, CANCEL_NOTE);
             BackgroundGroup started = jobs.startBehindOpen(groupId, BACKGROUND_KIND, BACKGROUND_TITLE,
-                    new BackgroundPart.Draft(sourceId, null, Map.of(Jobs.CANCEL_NOTE, CANCEL_NOTE)));
+                    new BackgroundPart.Draft(sourceId, null, parameters));
             Pending queue;
             synchronized (pendingLock) {
                 queue = groups.get(groupId);
@@ -1107,6 +1270,7 @@ public class Enrichments {
                     persist(groupId);
                 }
             }
+            writeQueue();
             Subscription[] subscription = new Subscription[1];
             subscription[0] = jobs.watch(groupId, group -> ended(sourceId, groupId, queue, group, subscription));
             // Was schon vor dem Anmelden endete, meldet sich nicht mehr von selbst.
@@ -1192,18 +1356,22 @@ public class Enrichments {
 
     /** Wie oben, nur wenn die Gruppe noch {@code queue} hält ({@code null}: jede). */
     private List<Work> release(String sourceId, String groupId, Pending queue) {
-        synchronized (pendingLock) {
-            Pending current = groups.get(groupId);
-            if (current == null || queue != null && current != queue) {
-                return List.of();
+        try {
+            synchronized (pendingLock) {
+                Pending current = groups.get(groupId);
+                if (current == null || queue != null && current != queue) {
+                    return List.of();
+                }
+                groups.remove(groupId);
+                pending.remove(sourceId, current);
+                if (!closed) {
+                    // Beim Beenden bleibt der abgelegte Rest für den Neustart stehen.
+                    persist(groupId);
+                }
+                return List.copyOf(current.work);
             }
-            groups.remove(groupId);
-            pending.remove(sourceId, current);
-            if (!closed) {
-                // Beim Beenden bleibt der abgelegte Rest für den Neustart stehen.
-                persist(groupId);
-            }
-            return List.copyOf(current.work);
+        } finally {
+            writeQueue();
         }
     }
 
@@ -1213,8 +1381,9 @@ public class Enrichments {
      */
     private void drain(BackgroundPart part, JobContext context) {
         BackgroundJobs jobs = hosted;
-        if (part.automatic() && jobs != null && jobs.part(part.jobId()).filter(BackgroundJobs::startedByUser)
-                .isPresent()) {
+        boolean byHand = !part.resumed() && "true".equals(part.parameter(BY_HAND));
+        if (byHand || part.automatic() && jobs != null && jobs.part(part.jobId())
+                .filter(BackgroundJobs::startedByUser).isPresent()) {
             // Abnahme 22.11.2026: Mit dem Benutzer im Speicher fehlen seine Rechte; nie von selbst weiter.
             context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, RESUME_BY_HAND,
                     "Lauf eines Benutzers; bitte von Hand fortsetzen"));
@@ -1248,6 +1417,7 @@ public class Enrichments {
             carried = before == null ? 0 : before.work.size();
             persist(groupId);
         }
+        writeQueue();
         // Jeder Lauf beginnt bei null (Jobs#rerun): Was vorher scheiterte und noch nicht wiederholt ist, zählt weiter als
         // Fehler, damit ↻ auch nach Fortsetzen oder Neustart angeboten wird (Codex #1109).
         context.discovered(waitingAtStart + carried);
@@ -1274,11 +1444,14 @@ public class Enrichments {
                 }
                 next = waiting.next();
                 waiting.remove();
+                mine.current = next;
             }
             Queued queued;
             try {
                 queued = computeWork(next);
             } catch (JobCancelledException e) {
+                // Angehalten, abgebrochen oder beim Beenden unterbrochen: Die Berechnung kommt wieder vorn an.
+                backToFront(groupId, mine, next);
                 throw e;
             } catch (RuntimeException e) {
                 // Abnahme #1077: Sonst scheiterte der Teil, und jeder Ersatzteil verlöre die nächste Berechnung. Im Log
@@ -1288,11 +1461,23 @@ public class Enrichments {
                 queued = new Queued(Outcome.FAILED, e);
             }
             Outcome outcome = queued.outcome();
-            if (outcome == Outcome.FAILED) {
-                context.record(failure(next, mine.sourceId, queued.cause()));
-                synchronized (pendingLock) {
+            if (outcome == Outcome.FAILED && closed) {
+                // Abnahme #1112: Beim Beenden unterbrochen ist kein Fehler der Seite. Sie wartet wieder (erzwungen, ein
+                // gescheitertes Ergebnis gälte sonst als aktuell), ohne rotes Ereignis; der Teil gilt als unterbrochen.
+                backToFront(groupId, mine, next);
+                throw new JobCancelledException(context.jobId());
+            }
+            boolean mineStill;
+            synchronized (pendingLock) {
+                mine.current = null;
+                // Nach dem Bereinigen der Quelle (forgetQueued) nimmt nichts mehr Gescheitertes auf (Abnahme #1112).
+                mineStill = groups.get(groupId) == mine;
+                if (outcome == Outcome.FAILED && mineStill) {
                     failed.computeIfAbsent(groupId, ignored -> new Failed(mine.sourceId, part.jobId())).work.add(next);
                 }
+            }
+            if (outcome == Outcome.FAILED) {
+                context.record(failure(next, mine.sourceId, queued.cause()));
             }
             switch (outcome) {
                 case WRITTEN -> context.written(1);
@@ -1301,9 +1486,23 @@ public class Enrichments {
                 }
             }
             context.processed(1);
-            if (++sinceSaved >= PERSIST_EVERY || outcome == Outcome.FAILED) {
+            // Erledigte und gescheiterte zählen gleich (Abnahme #1112): Bei toter Gegenstelle schriebe sonst jeder
+            // Fehlschlag die ganze Datei neu.
+            if (++sinceSaved >= PERSIST_EVERY && mineStill) {
                 sinceSaved = 0;
                 persist(groupId);
+            }
+        }
+    }
+
+    /** Stellt die laufende Berechnung wieder vorn an, solange die Gruppe dem Teil gehört. */
+    private void backToFront(String groupId, Pending mine, Work next) {
+        synchronized (pendingLock) {
+            if (mine.current == next) {
+                mine.current = null;
+                if (groups.get(groupId) == mine) {
+                    mine.pushFront(next);
+                }
             }
         }
     }

@@ -71,6 +71,8 @@ public final class BackgroundJobs {
     private final String owner;
     private final Map<String, BackgroundKind> kinds = new ConcurrentHashMap<>();
     private final Map<String, Retry> retries = new ConcurrentHashMap<>();
+    /** Was nach dem nächsten {@link #resumeInterrupted()} laufen soll, je einmal. */
+    private final List<Runnable> afterResume = new java.util.concurrent.CopyOnWriteArrayList<>();
     /** Je Art ein Riegel, damit zwei gleichzeitige Anlässe nicht beide einen Teil starten. */
     private final Map<String, Object> startLocks = new ConcurrentHashMap<>();
 
@@ -908,7 +910,26 @@ public final class BackgroundJobs {
             LOG.log(System.Logger.Level.INFO, "Hintergrund nach dem Neustart fortgesetzt: {0} Aufträge",
                     resumed.size());
         }
+        for (Runnable action : afterResume) {
+            if (afterResume.remove(action)) {
+                try {
+                    action.run();
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Nachlauf nach dem Fortsetzen gescheitert ({0})",
+                            e.getClass().getName());
+                }
+            }
+        }
         return resumed;
+    }
+
+    /**
+     * Lässt {@code action} einmal nach dem nächsten {@link #resumeInterrupted()} laufen, wenn beim Start alles
+     * angemeldet ist, auch das offene Löschen von Quellen ({@link Jobs#sourceHold}): etwa für Arbeit, die eine Art nach
+     * dem Neustart neuen Teilen übergibt (Abnahme #1112).
+     */
+    public void afterResume(Runnable action) {
+        afterResume.add(Objects.requireNonNull(action, "action"));
     }
 
     /**

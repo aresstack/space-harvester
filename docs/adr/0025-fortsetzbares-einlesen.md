@@ -425,16 +425,24 @@ wird automatisch verwaltet.
     - Neustart (Angelo 22.11.2026, Abnahme Architekt): Die Warteschlange liegt zusätzlich in
       `<Cache>/enrichment-queue`, eine Datei je Gruppe (`FileEnrichmentQueue`), nur Schlüssel (Quelle, Teil, Seite,
       Prozessor, erzwungen), nie Text, atomar ersetzt (temporäre Datei, dann umbenannt). Abgelegt wird beim Start
-      eines Teils, alle 25 Berechnungen, nach jedem Fehlschlag, beim Anhalten, Abbrechen und Beenden; ein Teil ohne
-      Wartendes und ohne Gescheitertes hat keine Datei mehr, Löschen des Teils löscht sie. Nach dem Neustart setzt ein
-      unterbrochener Teil mit seinem Rest von selbst fort (`resumeInterrupted`), im selben Eintrag; ein angehaltener
-      bleibt mit seiner Arbeit angehalten; ein von einem Benutzer gestarteter Teil (`startedByUser`) hält gelb an „bitte
-      von Hand fortsetzen“. Was vorher scheiterte, zählt in jedem neuen Lauf weiter als Fehler, damit ↻ auch nach
-      Fortsetzen oder Neustart angeboten wird. Die KI-Freigabe prüft jede Berechnung bei der Ausführung. Nur Teile ohne
-      abgelegte Arbeit werden beim Start abgeschlossen (Info „Warteschlange nach Neustart leer“). „Daten bereinigen“
-      und „Quelle entfernen“ vergessen die Warteschlange der Quelle samt Dateien (`SourceDataStores#enrichmentQueue`);
-      ein Teil, der hinter dem Löschen wartete, findet danach nichts mehr zu tun. Nach einem Absturz fehlt höchstens,
-      was seit der letzten Ablage dazukam; fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach.
+      eines Teils, alle 25 Berechnungen (erledigt oder gescheitert), beim Anhalten, Abbrechen und Beenden; die Datei-E/A
+      läuft außerhalb des Riegels der Warteschlange, ein einziger Schreiber verwirft ältere Stände. Die laufende
+      Berechnung bleibt im abgelegten Stand, bis ihr Ergebnis feststeht; unterbricht das Beenden sie, wartet sie wieder
+      (erzwungen), ohne roten Eintrag. Ein Teil ohne Wartendes und ohne Gescheitertes hat keine Datei mehr, Löschen des
+      Teils löscht sie. Nach dem Neustart setzt ein unterbrochener Teil mit seinem Rest von selbst fort
+      (`resumeInterrupted`), im selben Eintrag; ein angehaltener bleibt mit seiner Arbeit angehalten; ein von einem
+      Benutzer gestarteter Teil (`startedByUser`) hält gelb an „bitte von Hand fortsetzen“. Die Arbeit eines
+      gescheiterten Teils übernimmt ein neuer, erst zusammen mit dem Fortsetzen (`BackgroundJobs#afterResume`), wenn das
+      offene Löschen von Quellen angemeldet ist (`Jobs#sourceHold`); war der gescheiterte von einem Benutzer gestartet,
+      hält der neue beim ersten Lauf ebenso gelb an. Was vorher scheiterte, zählt in jedem neuen Lauf weiter als Fehler,
+      damit ↻ auch nach Fortsetzen oder Neustart angeboten wird. Die KI-Freigabe prüft jede Berechnung bei der
+      Ausführung. Beim Start abgeschlossen (Info „Warteschlange nach Neustart leer“) werden angehaltene oder
+      gescheiterte Teile ohne abgelegte Arbeit sowie gescheiterte, deren Arbeit ein neuer Teil übernimmt. „Daten
+      bereinigen“ und „Quelle entfernen“ vergessen die Warteschlange der Quelle samt Dateien, auch solche mit kaputtem
+      Rumpf, und danach nimmt die Quelle nichts Gescheitertes mehr auf (`SourceDataStores#enrichmentQueue`); ein Teil,
+      der hinter dem Löschen wartete, findet danach nichts mehr zu tun. Eine unlesbare Datei wird beim Start verworfen.
+      Nach einem Absturz fehlt höchstens, was seit der letzten Ablage dazukam; fehlende oder veraltete Ergebnisse holt
+      der nächste Abgleich oder Abruf nach.
     - In der Warteschlange ersetzt eine erzwungene Berechnung die gleiche ungezwungene an ihrer Stelle; eine
       ungezwungene neben der gleichen erzwungenen entfällt.
     - Semantische Suche (`SemanticPreparation`, Fundstelle 11): Die Suche ist ein Klick. Was nach der Frist von 10 s
