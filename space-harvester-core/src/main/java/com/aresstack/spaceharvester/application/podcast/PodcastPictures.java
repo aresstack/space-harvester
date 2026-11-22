@@ -136,7 +136,7 @@ public final class PodcastPictures {
 
     private final PodcastStore store;
     private final StepModel chooser;
-    private final StepModel drawer;
+    private final DiagramComposer.Models drawer;
     private final PageImageSource images;
     private final Executor parts;
     private final PodcastWriter.Pause pause;
@@ -168,17 +168,17 @@ public final class PodcastPictures {
      */
     public PodcastPictures(PodcastStore store, StepModel chooser, StepModel drawer, PageImageSource images,
                            Executor parts, PodcastWriter.Pause pause) {
-        this(store, chooser, drawer, images, parts, pause, Fence.OPEN);
+        this(store, chooser, DiagramComposer.Models.of(drawer), images, parts, pause, Fence.OPEN);
     }
 
     /**
      * @param chooser wählt anhand der Beschreibungen ein Seitenbild (das Chat-Modell des Podcasts)
-     * @param drawer  zeichnet die Schaubilder (Modell der Bildgenerierung mit eigener Tokenlänge)
+     * @param drawer  planen und zeichnen die Schaubilder (Bildgenerierung – Plan und – Einzelteile)
      * @param parts   führt alle Modellaufrufe aus; seine Größe begrenzt die gleichzeitigen Aufrufe
      * @param fence   lässt jede Ablage nur zu, solange der Lauf noch ablegen darf
      */
-    public PodcastPictures(PodcastStore store, StepModel chooser, StepModel drawer, PageImageSource images,
-                           Executor parts, PodcastWriter.Pause pause, Fence fence) {
+    public PodcastPictures(PodcastStore store, StepModel chooser, DiagramComposer.Models drawer,
+                           PageImageSource images, Executor parts, PodcastWriter.Pause pause, Fence fence) {
         this.fence = Objects.requireNonNull(fence, "fence");
         this.store = Objects.requireNonNull(store, "store");
         this.chooser = Objects.requireNonNull(chooser, "chooser");
