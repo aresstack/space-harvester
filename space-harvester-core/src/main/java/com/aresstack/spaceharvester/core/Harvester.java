@@ -986,7 +986,7 @@ public final class Harvester implements AutoCloseable {
                     (who, query) -> searchScope(termHoldings, catalog.all().stream().map(HarvestSource::id).toList(),
                             who, query),
                     com.aresstack.spaceharvester.application.query.progressive.TermSearch.Knowledge.of(
-                            searching::termKnowledge));
+                            searching::termKnowledge, searching::termVocabulary));
             SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
                     new SemanticVariantSearch(relevance, textIndex),
                     new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
@@ -2291,8 +2291,14 @@ public final class Harvester implements AutoCloseable {
                 com.aresstack.spaceharvester.application.holdings.PageSelection selection =
                         resolved(holdings, caller, root);
                 if (selection != null) {
-                    selection.pages().asMap().forEach((source, ids) -> pages.computeIfAbsent(source,
-                            unused -> new ArrayList<>()).addAll(ids));
+                    // Gesperrte Seiten (404, ADR 0029) fallen wie ausgeschlossene Spaces vor der Grenze weg.
+                    com.aresstack.spaceharvester.application.snapshot.PageSet locked = selection.locked();
+                    selection.pages().asMap().forEach((source, ids) -> {
+                        List<String> open = ids.stream().filter(id -> !locked.contains(source, id)).toList();
+                        if (!open.isEmpty()) {
+                            pages.computeIfAbsent(source, unused -> new ArrayList<>()).addAll(open);
+                        }
+                    });
                 }
             }
         }
@@ -2418,6 +2424,24 @@ public final class Harvester implements AutoCloseable {
      */
     public KnowledgeGraph knowledgeGraph() {
         return knowledgeGraph;
+    }
+
+    /**
+     * Wortschatz der Suchmethode „Fachbegriffe“ (W8): bestätigte Fachbegriffe und beide Enden bestätigter Synonyme,
+     * die der Aufrufer sehen darf, normalisiert. Nur Wortgruppen daraus fragen das Begriffswissen.
+     */
+    java.util.Set<String> termVocabulary(AccessContext caller) {
+        com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary vocabulary =
+                new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations);
+        java.util.Set<String> words = new java.util.HashSet<>();
+        java.util.function.Consumer<String> add = word -> words.add(
+                com.aresstack.spaceharvester.application.terms.TermText.normalize(word).strip());
+        vocabulary.terms(caller).forEach(term -> add.accept(term.term()));
+        vocabulary.synonyms(caller).forEach(synonym -> {
+            add.accept(synonym.fromTerm());
+            add.accept(synonym.toTerm());
+        });
+        return words;
     }
 
     /**

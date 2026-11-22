@@ -51,7 +51,14 @@ class SearchOrchestratorTermsTest {
             KeywordSearch.Query query = call.getArgument(1);
             return query.pages() != null && query.pages().contains("wiki", "b") ? results("b") : results();
         });
-        TermSearch.Knowledge knowledge = (caller, term, scope, cancelled) -> {
+        TermSearch.Knowledge knowledge = caller -> new TermSearch.Lookup() {
+            @Override
+            public boolean mayBeTerm(String phrase) {
+                return true;
+            }
+
+            @Override
+            public TermKnowledge.Answer answer(String term, PageSet scope, java.util.function.BooleanSupplier cancelled) {
             asked.incrementAndGet();
             if (!term.equals("Leistungsakte")) {
                 return new TermKnowledge.Answer(TermKnowledge.Outcome.NOT_A_TERM, List.of(), List.of(), List.of(),
@@ -63,6 +70,7 @@ class SearchOrchestratorTermsTest {
                     List.of(), List.of(), List.of(new TermKnowledge.Page(new PageKey("wiki", "a"), "ABL", "Seite a"),
                     new TermKnowledge.Page(new PageKey("wiki", "b"), "ABL", "Seite b")),
                     new TermKnowledge.Limits(3, 3, 0, 0, 0, 0, false, 0));
+            }
         };
         return new TermSearch(keywords, (caller, query) -> PageSet.of(Map.of("wiki", List.of("o", "a", "b"))),
                 knowledge);

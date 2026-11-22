@@ -92,6 +92,10 @@ public final class SearchView implements View {
             + "denen der Wissensgraph Aussagen zu ihm belegt";
     /** Gelbe Zeile, wenn die Seiten zu Fachbegriffen nicht ganz gesucht werden konnten; kein Fehler der Suche. */
     static final String TERM_PAGES_UNCHECKED = "Seiten zu Fachbegriffen nicht ganz gesucht";
+    static final String TERM_PAGES_RUNNING = "Seiten zu Fachbegriffen werden gesucht …";
+    /** Frist der Seiten zu Fachbegriffen im Schlagwortmodus: dieselbe wie die der ganzen progressiven Suche. */
+    static final java.time.Duration TERM_PAGES_DEADLINE =
+            com.aresstack.spaceharvester.application.query.progressive.SearchProfile.DEFAULT_TIME_BUDGET;
     /** Gelbe Zeile, wenn der Bereich größer war als die Grenze des Begriffswissens. */
     static final String TERM_PAGES_CAPPED = "Seiten zu Fachbegriffen: nur die ersten "
             + com.aresstack.spaceharvester.application.knowledge.TermKnowledge.MAX_PAGES
@@ -125,6 +129,16 @@ public final class SearchView implements View {
     final JCheckBox termPages = checkBox(TERM_PAGES, TERM_PAGES_TIP);
     /** Die Suche, nach deren Stapel die Seiten zu Fachbegriffen noch gesucht werden; -1 ohne. */
     private int termPagesFor = -1;
+    /** Stopp der laufenden Suche nach Seiten zu Fachbegriffen (Schlagwortmodus) oder {@code null}. */
+    private java.util.concurrent.atomic.AtomicBoolean termPagesStop;
+    /** Stand der Seiten zu Fachbegriffen für die Statuszeile: angehängt, laufend, gelber Hinweis. */
+    private int termPagesAdded;
+    private boolean termPagesRunning;
+    private String termPagesNoteText;
+    /** Wie oft die Suche nach Seiten zu Fachbegriffen im Schlagwortmodus startete (für Tests). */
+    int termSearchesStarted;
+    /** Der zuletzt in die Statuszeile geschriebene Teil zu Fachbegriffen. */
+    private String shownTermTail = "";
     /** Gelber Zusatz der Statuszeile zur Synonymsuche der laufenden Anfrage (Kürzung, Glossar nicht lesbar), sonst leer. */
     private String synonymNote = "";
     /**
@@ -1099,6 +1113,7 @@ public final class SearchView implements View {
         checkSynonyms(runtime, q, id);
         neighborsFor = neighbors.isSelected() && neighbors.isEnabled() ? id : -1;
         termPagesFor = termPagesOn() ? id : -1;
+        resetTermPages();
         run.setEnabled(false);
         more.setVisible(false);
         feedback.clear();
@@ -1526,6 +1541,10 @@ public final class SearchView implements View {
 
     /** Bricht das Laden ab; die Treffer bleiben, die Zeile meldet den Abbruch. */
     private void cancelLoading() {
+        if (stopTermPages() && progressId == null && running == null) {
+            cancel.setEnabled(false);
+            return;
+        }
         if (running != null) {
             // Der Core bricht Suchanfragen und Ladevorgänge ab und meldet completed(CANCELLED).
             running.cancel();
@@ -1551,6 +1570,7 @@ public final class SearchView implements View {
      * laufende Schlagwortsuche wird unterbrochen, ihr spätes Ergebnis verfällt; danach endet das Laden in den Cache.
      */
     void cancelSearch() {
+        boolean terms = stopTermPages();
         if (running != null) {
             running.cancel();
             cancel.setEnabled(false);
@@ -1569,6 +1589,11 @@ public final class SearchView implements View {
             finished(true);
             status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · Suche abgebrochen");
             status.setForeground(Comic.MUTED);
+            shownTermTail = "";
+            return;
+        }
+        if (terms && progressId == null) {
+            cancel.setEnabled(false);
             return;
         }
         cancelLoading();
@@ -1583,6 +1608,7 @@ public final class SearchView implements View {
         }
         heldNeighbors.clear();
         heldTermPages.clear();
+        stopTermPages();
         if (running != null) {
             running.cancel();
             running = null;
@@ -1659,8 +1685,10 @@ public final class SearchView implements View {
         if (incomplete) {
             line.append(" · unvollständig: nicht jede Quelle oder jeder Treffer ließ sich prüfen");
         }
-        status.setText(line.append(synonymNote).toString());
-        status.setForeground(incomplete || !synonymNote.isEmpty() ? Comic.ORANGE : Comic.MUTED);
+        shownTermTail = termTail();
+        status.setText(line.append(synonymNote).append(shownTermTail).toString());
+        status.setForeground(incomplete || !synonymNote.isEmpty() || termPagesNoteText != null ? Comic.ORANGE
+                : Comic.MUTED);
     }
 
     /** Die schmale Zeile unter dem Suchfeld: Balken und „x von y“, bis der Core meldet, dass nichts mehr lädt. */
@@ -1739,23 +1767,114 @@ public final class SearchView implements View {
                 .map(row -> new com.aresstack.spaceharvester.application.snapshot.PageKey(row.sourceId(),
                         row.pageId())).toList();
         int sid = searchId;
-        Background.run(() -> runtime.workspace().termSearch(q, shown, () -> sid != searchId), found -> {
+        java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+        termPagesStop = stop;
+        long deadline = System.nanoTime() + TERM_PAGES_DEADLINE.toNanos();
+        java.util.function.BooleanSupplier cancelled = () -> stop.get() || sid != searchId
+                || System.nanoTime() - deadline >= 0;
+        termPagesRunning = true;
+        termSearchesStarted++;
+        // Abbrechen steht bereit, solange sie läuft (wie beim Laden in den Cache).
+        cancel.setVisible(true);
+        cancel.setEnabled(true);
+        applyTermTail();
+        Background.run(() -> runtime.workspace().termSearch(q, shown, cancelled), found -> {
             if (sid != searchId) {
                 return;
             }
-            appendTermPages(found.hits());
-            String note = termPagesNote(!found.complete() ? ProgressiveResult.TechnicalTerms.UNCHECKED
+            endTermPages(stop);
+            ProgressiveResult.TechnicalTerms state = !found.complete() || stop.get()
+                    ? ProgressiveResult.TechnicalTerms.UNCHECKED
                     : found.capped() ? ProgressiveResult.TechnicalTerms.CAPPED
-                    : ProgressiveResult.TechnicalTerms.CHECKED);
-            if (note != null) {
-                noteTermPages(note);
-            }
+                    : ProgressiveResult.TechnicalTerms.CHECKED;
+            termPagesNoteText = termPagesNote(state);
+            appendTermPages(found.hits());
+            applyTermTail();
         }, error -> {
             if (sid == searchId) {
+                endTermPages(stop);
                 LOG.log(System.Logger.Level.INFO, "Fachbegriffe nicht gesucht ({0})", error.getClass().getName());
-                noteTermPages(TERM_PAGES_UNCHECKED);
+                termPagesNoteText = TERM_PAGES_UNCHECKED;
+                applyTermTail();
             }
         });
+    }
+
+    /** Die Suche nach Seiten zu Fachbegriffen ist zu Ende; ohne weiteres Laden geht Abbrechen wieder. */
+    private void endTermPages(java.util.concurrent.atomic.AtomicBoolean stop) {
+        termPagesRunning = false;
+        if (termPagesStop == stop) {
+            termPagesStop = null;
+        }
+        if (progressId == null && running == null) {
+            cancel.setVisible(false);
+        }
+    }
+
+    /** Stoppt eine laufende Suche nach Seiten zu Fachbegriffen; gefundene bleiben. {@code true}, wenn eine lief. */
+    private boolean stopTermPages() {
+        java.util.concurrent.atomic.AtomicBoolean stop = termPagesStop;
+        if (stop == null) {
+            return false;
+        }
+        stop.set(true);
+        return true;
+    }
+
+    /** Neue Suche: kein Stand zu Fachbegriffen mehr. */
+    private void resetTermPages() {
+        stopTermPages();
+        termPagesStop = null;
+        termPagesAdded = 0;
+        termPagesRunning = false;
+        termPagesNoteText = null;
+        shownTermTail = "";
+    }
+
+    /** Der Teil der Statuszeile zu Fachbegriffen: angehängte Seiten, laufender Schritt, gelber Hinweis. */
+    String termTail() {
+        StringBuilder tail = new StringBuilder();
+        if (termPagesAdded > 0) {
+            tail.append(" · ").append(Texts.count(termPagesAdded, "Seite", "Seiten")).append(" zu Fachbegriffen dazu");
+        }
+        if (termPagesRunning) {
+            tail.append(" · ").append(TERM_PAGES_RUNNING);
+        }
+        if (termPagesNoteText != null) {
+            tail.append(" · ").append(termPagesNoteText);
+        }
+        return tail.toString();
+    }
+
+    /**
+     * Die einzige Stelle, die den Stand zu Fachbegriffen in die Statuszeile schreibt: Zahl der Treffer vorn neu, der
+     * frühere Teil zu Fachbegriffen geht, der aktuelle kommt ans Ende; der Rest der Zeile bleibt.
+     */
+    void applyTermTail() {
+        status.setText(withTermTail(status.getText(), shownTermTail, model.rows.size(), termTail()));
+        shownTermTail = termTail();
+        if (termPagesNoteText != null) {
+            status.setForeground(Comic.ORANGE);
+        }
+    }
+
+    /** Die Statuszeile mit neuer Trefferzahl und ausgetauschtem Teil zu Fachbegriffen. */
+    static String withTermTail(String status, String oldTail, int total, String newTail) {
+        String text = status == null ? "" : status.strip();
+        if (!oldTail.isEmpty()) {
+            // Steht der frühere Teil nicht mehr am Ende (etwa Nachbarseiten danach), geht er trotzdem.
+            text = text.replace(oldTail, "").replace(oldTail.strip(), "").strip();
+        }
+        java.util.regex.Matcher count = java.util.regex.Pattern.compile("^(\\d+|Keine) Treffer").matcher(text);
+        if (count.find()) {
+            text = Texts.count(total, "Treffer", "Treffer") + text.substring(count.end());
+        } else if (text.isEmpty()) {
+            text = Texts.count(total, "Treffer", "Treffer");
+        }
+        if (text.startsWith("· ")) {
+            text = text.substring(2);
+        }
+        return text + newTail;
     }
 
     /** Die gelbe Zeile zum Stand der Seiten zu Fachbegriffen oder {@code null}, wenn es nichts zu sagen gibt. */
@@ -1768,9 +1887,13 @@ public final class SearchView implements View {
     }
 
     private void noteTermPages(String note) {
-        String text = status.getText().strip();
-        status.setText(text.isEmpty() ? note : text + " · " + note);
-        status.setForeground(Comic.ORANGE);
+        termPagesNoteText = note;
+        applyTermTail();
+    }
+
+    /** Für Tests: der gelbe Hinweis zu Fachbegriffen. */
+    void termPagesNoteForTest(String note) {
+        noteTermPages(note);
     }
 
     /**
@@ -1797,9 +1920,11 @@ public final class SearchView implements View {
         Hit selected = selectedHit();
         model.append(fresh);
         select(selected);
-        String text = status.getText().strip();
-        String added = Texts.count(fresh.size(), "Seite", "Seiten") + " zu Fachbegriffen dazu";
-        status.setText(text.isEmpty() ? added : text + " · " + added);
+        termPagesAdded += fresh.size();
+        // Treffer sind da: ein „Keine Treffer“ von vorhin gilt nicht mehr.
+        awaitingHits = false;
+        feedback.clear();
+        applyTermTail();
     }
 
     /**
@@ -1838,6 +1963,9 @@ public final class SearchView implements View {
         model.append(fresh);
         select(selected);
         status.setText(withNeighbors(status.getText(), before, model.rows.size(), fresh.size()));
+        if (!shownTermTail.isEmpty()) {
+            applyTermTail();
+        }
     }
 
     /** Nach einem Stapel: die zurückgehaltenen Nachbar-Treffer. */

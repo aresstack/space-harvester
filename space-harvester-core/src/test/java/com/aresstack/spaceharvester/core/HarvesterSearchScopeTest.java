@@ -64,6 +64,17 @@ class HarvesterSearchScopeTest {
     }
 
     @Test
+    void lockedPagesAreLeftOutLikeExcludedSpaces() {
+        when(holdings.resolve(any(), eq(Selection.of(Selection.Root.source("wiki"))))).thenReturn(new PageSelection(
+                PageSet.of(Map.of("wiki", List.of("a1", "a2"))), HoldingCounts.ZERO, List.of(), true,
+                PageSet.of(Map.of("wiki", List.of("a2")))));
+
+        PageSet scope = Harvester.searchScope(holdings, List.of("wiki"), USER, KeywordSearch.Query.of("Leistungsakte"));
+
+        assertThat(scope.asMap()).isEqualTo(Map.of("wiki", Set.of("a1")));
+    }
+
+    @Test
     void aPageLimitIsTheScopeItself() {
         PageSet pages = PageSet.of(Map.of("wiki", List.of("x")));
 

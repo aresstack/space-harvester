@@ -118,7 +118,8 @@ class SearchViewTest {
         assertThat(first[2]).isEqualTo("DEV");
         assertThat(keys).hasSize(2 * PAGES_PER_SOURCE);
         assertThat(sourcesSeen).containsExactlyInAnyOrder("alpha", "beta");
-        assertThat(view[0].statusText()).doesNotContain("unvollständig");
+        assertThat(view[0].statusText()).doesNotContain("unvollständig").doesNotContain("Fachbegriffen");
+        assertThat(view[0].termSearchesStarted).as("ohne Haken keine Suche nach Seiten zu Fachbegriffen").isZero();
         assertThat(view[0].progressText.getText()).isEqualTo("Die Suche ist abgeschlossen · "
                 + (2 * PAGES_PER_SOURCE) + " Treffer");
 
@@ -552,6 +553,11 @@ class SearchViewTest {
             assertThat(view[0].termPages.isSelected()).as("Seiten zu Fachbegriffen ist Standard aus").isFalse();
             assertThat(view[0].termPages.isEnabled()).isTrue();
             assertThat(view[0].modeLabel.getText()).doesNotContain("Fachbegriffe");
+            view[0].termPages.doClick();
+            assertThat(view[0].modeLabel.getText()).endsWith(" + Fachbegriffe");
+            view[0].termPages.doClick();
+            assertThat(view[0].modeLabel.getText()).doesNotContain("Fachbegriffe");
+            assertThat(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().termPages()).isFalse();
             assertThat(view[0].technicalTerms.isSelected()).as("„Nur Fachbegriffe“ ist Standard aus").isFalse();
             assertThat(view[0].glossarySynonyms.isSelected()).isFalse();
             assertThat(view[0].glossarySynonyms.isEnabled()).isTrue();
@@ -768,6 +774,55 @@ class SearchViewTest {
         });
 
         assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b", "c", "n1", "n2");
+    }
+
+    @Test
+    void termPagesKeepTheRestOfTheStatusLineAndReplaceTheirOwnPart() {
+        String first = SearchView.withTermTail("12 Treffer · Wiki: nicht erreichbar", "", 14,
+                " · 2 Seiten zu Fachbegriffen dazu");
+        assertThat(first).isEqualTo("14 Treffer · Wiki: nicht erreichbar · 2 Seiten zu Fachbegriffen dazu");
+
+        // Nachbarseiten danach: der alte Teil geht, der neue steht am Ende, die Zahl stimmt.
+        String withNeighbors = SearchView.withNeighbors(first, 14, 15, 1);
+        String second = SearchView.withTermTail(withNeighbors, " · 2 Seiten zu Fachbegriffen dazu", 15,
+                " · 2 Seiten zu Fachbegriffen dazu · " + SearchView.TERM_PAGES_UNCHECKED);
+        assertThat(second).isEqualTo("15 Treffer · 1 Nachbarseite dazu · Wiki: nicht erreichbar · 2 Seiten zu "
+                + "Fachbegriffen dazu · " + SearchView.TERM_PAGES_UNCHECKED);
+
+        assertThat(SearchView.withTermTail("Keine Treffer", "", 3, " · 3 Seiten zu Fachbegriffen dazu"))
+                .isEqualTo("3 Treffer · 3 Seiten zu Fachbegriffen dazu");
+    }
+
+    @Test
+    void termPagesAreNeverShownTwiceAreCountedAndAYellowNoteSurvivesALaterRow() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].model.set(List.of(row("a"), row("b")));
+            view[0].status.setText("2 Treffer");
+            // Kommt während eines Stapels: wartet auf ihn.
+            view[0].searching = new java.util.concurrent.CompletableFuture<Void>();
+            view[0].appendTermPages(List.of(neighbor("t1")));
+        });
+        assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b");
+
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].searching = null;
+            view[0].releaseNeighbors();
+            view[0].appendTermPages(List.of(neighbor("a"), neighbor("t1"), neighbor("t2")));
+        });
+
+        assertThat(view[0].model.rows).extracting(SearchView.Hit::pageId).containsExactly("a", "b", "t1", "t2");
+        assertThat(view[0].status.getText()).isEqualTo("4 Treffer · 2 Seiten zu Fachbegriffen dazu");
+
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].termPagesNoteForTest(SearchView.TERM_PAGES_CAPPED);
+            view[0].appendNeighbors(List.of(neighbor("n1")));
+        });
+        assertThat(view[0].status.getText()).startsWith("5 Treffer · 1 Nachbarseite dazu")
+                .endsWith("2 Seiten zu Fachbegriffen dazu · " + SearchView.TERM_PAGES_CAPPED);
+        assertThat(view[0].status.getForeground()).isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.ORANGE);
     }
 
     private static SearchView.Hit row(String pageId) {

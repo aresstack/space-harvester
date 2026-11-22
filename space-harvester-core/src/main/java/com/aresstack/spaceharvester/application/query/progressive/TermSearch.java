@@ -25,10 +25,11 @@ import java.util.function.BooleanSupplier;
  * Fachbegriff oder ein bestätigtes Synonym, kommen die Seiten dazu, auf denen der Wissensgraph Aussagen zu diesem
  * Begriff belegt ({@link TermKnowledge}, Paket W6).
  *
- * <p>Ablauf: Wortgruppen der Anfrage (drei, zwei, ein Wort, längste zuerst, ohne Überlappung) gehen als Probe an
- * {@link TermKnowledge#answer}, höchstens {@link #MAX_PROBES} Proben und {@link #MAX_TERMS} gefundene Begriffe.
- * Die Belegseiten eines Begriffs sind nur Kandidaten: Dieselbe {@link KeywordSearch} sucht sie mit dem Begriff als
- * Suchtext, begrenzt auf genau diese Seiten und im Umfang der Anfrage ({@link KeywordSearch.Query#withText},
+ * <p>Ablauf: Wortgruppen der Anfrage (drei, zwei, ein Wort, längste zuerst, ohne Überlappung), die im Wortschatz
+ * des Aufrufers stehen, gehen als Probe an {@link TermKnowledge#answer}, höchstens {@link #MAX_PROBES} Proben und
+ * {@link #MAX_TERMS} gefundene Begriffe; ein Fehler einer Probe lässt die übrigen laufen. Die Belegseiten eines
+ * Begriffs sind nur Kandidaten: Dieselbe {@link KeywordSearch} sucht sie mit dem Begriff der Gruppe, zu dem ihre
+ * Aussagen gehören, als Suchtext, begrenzt auf genau diese Seiten und im Umfang der Anfrage ({@link KeywordSearch.Query#withText},
  * {@link KeywordSearch.Query#within}). Rechte, Quellen, Spaces samt ausgeschlossenen, Dateitypen und Auszüge gelten
  * also wie bei jedem Treffer; was die Suche dort nicht liefert, erscheint nicht. Jeder Treffer trägt zusätzlich die
  * Ursache {@link HitReason.Kind#TERM}.
@@ -68,18 +69,61 @@ public final class TermSearch {
         PageSet of(AccessContext caller, KeywordSearch.Query query);
     }
 
-    /** Begriffswissen; in der Anwendung {@link TermKnowledge#answer} mit {@link TermKnowledge.Delivery#NONE}. */
+    /**
+     * Begriffswissen für eine Suche: {@link #open} einmal je Suche, dann die Proben. In der Anwendung
+     * {@link #of(java.util.function.Supplier, java.util.function.Function)}.
+     */
     @FunctionalInterface
     public interface Knowledge {
 
-        TermKnowledge.Answer answer(AccessContext caller, String term, PageSet scope, BooleanSupplier cancelled);
+        /** Das Wissen für eine Suche des Aufrufers; gilt nur für sie. */
+        Lookup open(AccessContext caller);
 
-        /** Über {@link TermKnowledge}; die Suche gibt keine Aussage weiter, also {@link TermKnowledge.Delivery#NONE}. */
-        static Knowledge of(java.util.function.Supplier<TermKnowledge> knowledge) {
+        /**
+         * Über ein {@link TermKnowledge} je Suche; die Suche gibt keine Aussage weiter, also
+         * {@link TermKnowledge.Delivery#NONE}. Nur Wortgruppen aus dem Wortschatz des Aufrufers (bestätigte Fachbegriffe
+         * und Enden ihrer Synonyme, normalisiert) gehen an {@link TermKnowledge#answer}; so berechnet keine Probe
+         * Vorschläge, die niemand liest.
+         *
+         * @param vocabulary der Wortschatz des Aufrufers, einmal je Suche gelesen
+         */
+        static Knowledge of(java.util.function.Supplier<TermKnowledge> knowledge,
+                            java.util.function.Function<AccessContext, Set<String>> vocabulary) {
             Objects.requireNonNull(knowledge, "knowledge");
-            return (caller, term, scope, cancelled) -> knowledge.get().answer(caller, term, scope,
-                    TermKnowledge.Delivery.NONE, cancelled);
+            Objects.requireNonNull(vocabulary, "vocabulary");
+            return caller -> {
+                TermKnowledge once = knowledge.get();
+                Set<String> words = vocabulary.apply(caller);
+                return new Lookup() {
+                    @Override
+                    public boolean mayBeTerm(String phrase) {
+                        return words.contains(TermText.normalize(phrase).strip());
+                    }
+
+                    @Override
+                    public TermKnowledge.Answer answer(String term, PageSet scope, BooleanSupplier cancelled) {
+                        return once.answer(caller, term, scope, TermKnowledge.Delivery.NONE, cancelled);
+                    }
+                };
+            };
         }
+    }
+
+    /** Das Begriffswissen einer Suche. */
+    public interface Lookup {
+
+        /** Ob die Wortgruppe ein Fachbegriff oder Synonym sein kann; billig, ohne Seiten zu lesen. */
+        boolean mayBeTerm(String phrase);
+
+        /** Was der Wissensgraph im Bereich über den Begriff weiß; liest höchstens {@link TermKnowledge#MAX_PAGES}. */
+        TermKnowledge.Answer answer(String term, PageSet scope, BooleanSupplier cancelled);
+    }
+
+    /**
+     * Belegseiten, gesucht mit dem Wortlaut {@code label} (dem Begriff der Gruppe, zu dem die Aussagen auf diesen
+     * Seiten gehören), gemeldet unter dem Begriff der Anfrage {@code term}.
+     */
+    private record Batch(String term, String label, List<PageKey> pages) {
     }
 
     /**
@@ -151,48 +195,82 @@ public final class TermSearch {
         boolean[] taken = new boolean[words.size()];
         KeywordSearch.Query anyKind = query.ofKinds(Set.of());
         List<String> terms = new ArrayList<>();
-        // Je Begriff seine Belegseiten im Umfang der Anfrage, in der Reihenfolge der Antwort.
-        Map<String, List<PageKey>> evidence = new LinkedHashMap<>();
+        List<Batch> evidence = new ArrayList<>();
+        Lookup lookup = knowledge.open(caller);
         probing:
         for (int length = Math.min(MAX_WORDS, words.size()); length >= 1; length--) {
             for (int start = 0; start + length <= words.size(); start++) {
                 if (terms.size() >= MAX_TERMS) {
                     break probing;
                 }
-                if (free(taken, start, length) && candidate(words, start, length)) {
-                    if (probes >= MAX_PROBES) {
-                        complete = false;
-                        break probing;
-                    }
-                    if (cancelled.getAsBoolean()) {
-                        return partial(caller, query, evidence, terms, seen, capped, cancelled, maxSearches);
-                    }
-                    probes++;
-                    String phrase = String.join(" ", words.subList(start, start + length));
-                    TermKnowledge.Answer answer;
-                    try {
-                        answer = knowledge.answer(caller, phrase, pages, cancelled);
-                    } catch (CancellationException e) {
-                        return partial(caller, query, evidence, terms, seen, capped, cancelled, maxSearches);
-                    }
-                    if (answer.outcome() != TermKnowledge.Outcome.FOUND) {
-                        continue;
-                    }
-                    for (int i = start; i < start + length; i++) {
-                        taken[i] = true;
-                    }
-                    String term = answer.terms().isEmpty() ? phrase : answer.terms().getFirst().term();
-                    terms.add(term);
-                    capped |= answer.limits().pagesRead() < answer.limits().pagesInScope();
+                if (!free(taken, start, length) || !candidate(words, start, length)) {
+                    continue;
+                }
+                String phrase = String.join(" ", words.subList(start, start + length));
+                if (!lookup.mayBeTerm(phrase)) {
+                    continue;
+                }
+                if (probes >= MAX_PROBES) {
+                    complete = false;
+                    break probing;
+                }
+                if (cancelled.getAsBoolean()) {
+                    return partial(caller, query, evidence, terms, seen, capped, cancelled, maxSearches);
+                }
+                probes++;
+                TermKnowledge.Answer answer;
+                try {
+                    answer = lookup.answer(phrase, pages, cancelled);
+                } catch (CancellationException e) {
+                    return partial(caller, query, evidence, terms, seen, capped, cancelled, maxSearches);
+                } catch (RuntimeException e) {
+                    // Eine Probe ergänzt nur; ihr Scheitern lässt die Belege früherer Begriffe stehen.
+                    LOG.log(System.Logger.Level.INFO, "Fachbegriff nicht geprüft ({0})", e.getClass().getName());
+                    complete = false;
+                    continue;
+                }
+                if (answer.outcome() != TermKnowledge.Outcome.FOUND) {
+                    continue;
+                }
+                for (int i = start; i < start + length; i++) {
+                    taken[i] = true;
+                }
+                String term = answer.terms().isEmpty() ? phrase : answer.terms().getFirst().term();
+                terms.add(term);
+                capped |= answer.limits().pagesRead() < answer.limits().pagesInScope();
+                Set<PageKey> assigned = new HashSet<>();
+                Set<PageKey> delivered = new HashSet<>();
+                answer.pages().forEach(page -> delivered.add(page.key()));
+                // Je Begriff der Gruppe seine Belegseiten: Eine Seite, die nur den Hauptbegriff nennt, wird mit ihm
+                // gesucht, nicht mit dem Synonym der Anfrage.
+                for (TermKnowledge.Term member : answer.terms()) {
                     List<PageKey> keys = new ArrayList<>();
-                    for (TermKnowledge.Page page : answer.pages()) {
-                        // Dateitypen entscheidet erst die Suche: Aussagen eines Anhangs tragen den Titel der Seite.
-                        if (!seen.contains(page.key()) && NeighborScope.allows(anyKind, page.key(),
-                                new PageRef(page.key(), page.title(), page.spaceKey()))) {
-                            keys.add(page.key());
+                    for (TermKnowledge.Statement statement : member.statements()) {
+                        for (TermKnowledge.Page page : statement.pages()) {
+                            // Dateitypen entscheidet erst die Suche: Aussagen eines Anhangs tragen den Titel der Seite.
+                            if (delivered.contains(page.key()) && !keys.contains(page.key())
+                                    && !seen.contains(page.key()) && NeighborScope.allows(anyKind, page.key(),
+                                    new PageRef(page.key(), page.title(), page.spaceKey()))) {
+                                keys.add(page.key());
+                            }
                         }
                     }
-                    evidence.put(term, keys);
+                    if (!keys.isEmpty()) {
+                        evidence.add(new Batch(term, member.term(), keys));
+                        assigned.addAll(keys);
+                    }
+                }
+                // Belegseiten ohne genannte Aussage (über die Grenze je Aussage hinaus) mit dem Begriff selbst.
+                List<PageKey> rest = new ArrayList<>();
+                for (TermKnowledge.Page page : answer.pages()) {
+                    if (!assigned.contains(page.key()) && !rest.contains(page.key()) && !seen.contains(page.key())
+                            && NeighborScope.allows(anyKind, page.key(),
+                            new PageRef(page.key(), page.title(), page.spaceKey()))) {
+                        rest.add(page.key());
+                    }
+                }
+                if (!rest.isEmpty()) {
+                    evidence.add(new Batch(term, term, rest));
                 }
             }
         }
@@ -202,7 +280,7 @@ public final class TermSearch {
     }
 
     /** Nach Frist oder Abbruch: was bis dahin gefunden ist, als unvollständig. */
-    private Result partial(AccessContext caller, KeywordSearch.Query query, Map<String, List<PageKey>> evidence,
+    private Result partial(AccessContext caller, KeywordSearch.Query query, List<Batch> evidence,
                            List<String> terms, Set<PageKey> seen, boolean capped, BooleanSupplier cancelled,
                            int maxSearches) {
         Result found = collect(caller, query, evidence, terms, seen, capped, cancelled, maxSearches);
@@ -210,14 +288,14 @@ public final class TermSearch {
     }
 
     /** Sucht je Begriff seine Belegseiten mit dem Begriff als Suchtext; höchstens {@link #MAX_HITS} neue Treffer. */
-    private Result collect(AccessContext caller, KeywordSearch.Query query, Map<String, List<PageKey>> evidence,
+    private Result collect(AccessContext caller, KeywordSearch.Query query, List<Batch> evidence,
                            List<String> terms, Set<PageKey> seen, boolean capped, BooleanSupplier cancelled,
                            int maxSearches) {
         List<KeywordSearch.Hit> hits = new ArrayList<>();
         boolean complete = true;
         int searches = 0;
-        for (Map.Entry<String, List<PageKey>> entry : evidence.entrySet()) {
-            List<PageKey> candidates = entry.getValue().stream().filter(key -> !seen.contains(key)).toList();
+        for (Batch batch : evidence) {
+            List<PageKey> candidates = batch.pages().stream().filter(key -> !seen.contains(key)).toList();
             if (candidates.isEmpty()) {
                 continue;
             }
@@ -225,11 +303,11 @@ public final class TermSearch {
                 complete = false;
                 break;
             }
-            String term = entry.getKey();
+            String term = batch.term();
             KeywordSearch.Results results;
             searches++;
             try {
-                results = keywords.search(caller, query.withText(term).within(PageSet.ofKeys(candidates)), null,
+                results = keywords.search(caller, query.withText(batch.label()).within(PageSet.ofKeys(candidates)), null,
                         Math.min(KeywordSearch.MAX_LIMIT, MAX_HITS));
             } catch (RuntimeException e) {
                 // Die Methode ergänzt nur; ihr Scheitern lässt die übrigen Treffer stehen.

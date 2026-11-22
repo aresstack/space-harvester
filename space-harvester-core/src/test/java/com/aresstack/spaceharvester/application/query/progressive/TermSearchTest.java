@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
+import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.knowledge.TermKnowledge;
 import com.aresstack.spaceharvester.application.query.HitReason;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
@@ -64,13 +65,39 @@ class TermSearchTest {
                 new TermKnowledge.Limits(5, 5, 0, 0, 0, 0, false, 0));
     }
 
-    /** Wissen mit festen Antworten je Wortgruppe (normalisiert klein); alles andere ist kein Fachbegriff. */
-    private TermSearch.Knowledge knowledge(Map<String, TermKnowledge.Answer> answers) {
-        return (caller, term, scope, cancelled) -> {
-            probes.add(term);
-            return answers.getOrDefault(term.toLowerCase(java.util.Locale.ROOT), notATerm());
+    /** Eine Probe des Wissens. */
+    @FunctionalInterface
+    interface Probe {
+        TermKnowledge.Answer answer(String term, PageSet scope, BooleanSupplier cancelled);
+    }
+
+    /** Wissen, dessen Wortschatz jede Wortgruppe enthält; je Suche ein {@code open}. */
+    private TermSearch.Knowledge all(Probe probe) {
+        return caller -> {
+            opened.incrementAndGet();
+            return new TermSearch.Lookup() {
+                @Override
+                public boolean mayBeTerm(String phrase) {
+                    return true;
+                }
+
+                @Override
+                public TermKnowledge.Answer answer(String term, PageSet scope, BooleanSupplier cancelled) {
+                    return probe.answer(term, scope, cancelled);
+                }
+            };
         };
     }
+
+    /** Wissen mit festen Antworten je Wortgruppe (normalisiert klein); alles andere ist kein Fachbegriff. */
+    private TermSearch.Knowledge knowledge(Map<String, TermKnowledge.Answer> answers) {
+        return all((term, scope, cancelled) -> {
+            probes.add(term);
+            return answers.getOrDefault(term.toLowerCase(java.util.Locale.ROOT), notATerm());
+        });
+    }
+
+    private final java.util.concurrent.atomic.AtomicInteger opened = new java.util.concurrent.atomic.AtomicInteger();
 
     private TermSearch search(TermSearch.Knowledge knowledge) {
         return new TermSearch(keywords, (caller, query) -> query.pages() != null ? query.pages() : SCOPE, knowledge);
@@ -240,7 +267,7 @@ class TermSearchTest {
         keywordsReturn("p1");
         AtomicBoolean cancelled = new AtomicBoolean();
         List<BooleanSupplier> handedOn = new ArrayList<>();
-        TermSearch.Knowledge knowledge = (caller, term, scope, stop) -> {
+        TermSearch.Knowledge knowledge = all((term, scope, stop) -> {
             probes.add(term);
             handedOn.add(stop);
             if (!term.equals("Leistungsakte")) {
@@ -249,7 +276,7 @@ class TermSearchTest {
             // Mit dem ersten Fund läuft die Frist ab.
             cancelled.set(true);
             return found("Leistungsakte", List.of(page("p1", "ABL")), 5, 5);
-        };
+        });
 
         TermSearch.Result result = search(knowledge).search(USER,
                 KeywordSearch.Query.of("Leistungsakte und Fristablauf"), List.of(), cancelled::get);
@@ -265,9 +292,9 @@ class TermSearchTest {
 
     @Test
     void aCancellationInsideTheKnowledgeEndsTheSearchAsIncomplete() {
-        TermSearch.Knowledge knowledge = (caller, term, scope, stop) -> {
+        TermSearch.Knowledge knowledge = all((term, scope, stop) -> {
             throw new CancellationException("Fachsicht abgebrochen");
-        };
+        });
 
         TermSearch.Result result = search(knowledge).search(USER, KeywordSearch.Query.of("Leistungsakte"), List.of(),
                 () -> false);
@@ -292,6 +319,79 @@ class TermSearchTest {
 
         assertThat(result.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("p2");
         assertThat(result.complete()).isFalse();
+    }
+
+    @Test
+    void aFailingProbeIsSkippedAndTheOthersStillCount() {
+        keywordsReturn("p2");
+        TermSearch.Knowledge knowledge = all((term, scope, stop) -> {
+            probes.add(term);
+            if (term.equals("Leistungsakte")) {
+                throw new IllegalStateException("Graph belegt");
+            }
+            return term.equals("Fristablauf") ? found("Fristablauf", List.of(page("p2", "ABL")), 5, 5) : notATerm();
+        });
+
+        TermSearch.Result result = search(knowledge).search(USER, KeywordSearch.Query.of("Leistungsakte Fristablauf"),
+                List.of(), () -> false);
+
+        assertThat(probes).contains("Leistungsakte", "Fristablauf");
+        assertThat(result.terms()).containsExactly("Fristablauf");
+        assertThat(result.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("p2");
+        assertThat(result.complete()).isFalse();
+    }
+
+    @Test
+    void onlyPhrasesOfTheVocabularyAskTheKnowledgeAndItIsOpenedOncePerSearch() {
+        keywordsReturn("p1");
+        TermSearch.Knowledge knowledge = caller -> {
+            opened.incrementAndGet();
+            return new TermSearch.Lookup() {
+                @Override
+                public boolean mayBeTerm(String phrase) {
+                    return phrase.equals("Leistungsakte");
+                }
+
+                @Override
+                public TermKnowledge.Answer answer(String term, PageSet scope, BooleanSupplier cancelled) {
+                    probes.add(term);
+                    return found("Leistungsakte", List.of(page("p1", "ABL")), 5, 5);
+                }
+            };
+        };
+
+        TermSearch.Result result = search(knowledge).search(USER,
+                KeywordSearch.Query.of("Wann endet die Leistungsakte im Archiv"), List.of(), () -> false);
+
+        assertThat(opened).hasValue(1);
+        assertThat(probes).containsExactly("Leistungsakte");
+        assertThat(result.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("p1");
+    }
+
+    @Test
+    void aPageThatOnlyNamesTheMainTermIsSearchedWithItButMarkedWithTheQueriedSynonym() {
+        // „Fallmappe“ ist Synonym; die Belegseite p2 trägt nur Aussagen über den Hauptbegriff „Leistungsakte“.
+        List<String> texts = new ArrayList<>();
+        when(keywords.search(any(), any(), isNull(), anyInt())).thenAnswer(call -> {
+            KeywordSearch.Query query = call.getArgument(1);
+            texts.add(query.text());
+            List<KeywordSearch.Hit> hits = query.text().equals("Leistungsakte") ? List.of(hit("p2")) : List.of();
+            return new KeywordSearch.Results("wiki", hits, List.of(), null, true, 0);
+        });
+        TermKnowledge.Statement aboutMain = new TermKnowledge.Statement("Leistungsakte", "enthält", "Bescheid",
+                ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT,
+                DomainTermGraph.Trust.GEPRUEFT, 1, List.of(page("p2", "ABL")), 0);
+        TermKnowledge.Answer answer = new TermKnowledge.Answer(TermKnowledge.Outcome.FOUND, List.of(
+                new TermKnowledge.Term("Fallmappe", DomainTermGraph.NodeKind.SYNONYM, List.of()),
+                new TermKnowledge.Term("Leistungsakte", DomainTermGraph.NodeKind.TERM, List.of(aboutMain))),
+                List.of(), List.of(), List.of(page("p2", "ABL")), new TermKnowledge.Limits(5, 5, 0, 0, 0, 0, false, 0));
+
+        TermSearch.Result result = search(knowledge(Map.of("fallmappe", answer)))
+                .search(USER, KeywordSearch.Query.of("Fallmappe"), List.of(), () -> false);
+
+        assertThat(texts).containsExactly("Leistungsakte");
+        assertThat(result.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("p2");
+        assertThat(result.hits().getFirst().reasons()).contains(HitReason.term("Fallmappe"));
     }
 
     @Test
