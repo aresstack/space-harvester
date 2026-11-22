@@ -19,6 +19,7 @@ class MaskAssistantTest {
         List<Field> fields = new ArrayList<>();
         int cursor;
         boolean locked;
+        long generation;
         final List<String> calls = new ArrayList<>();
 
         MemoryMask() {
@@ -44,14 +45,28 @@ class MaskAssistantTest {
 
         @Override
         public ScreenImage capture() {
-            return new ScreenImage(4, 40, cursor, locked, cells.clone(), fields);
+            return new ScreenImage(4, 40, cursor, locked, cells.clone(), fields, generation);
         }
 
+        /** Läuft vor der Prüfung im Schreibzug, wie eine Taste des Menschen kurz vorher. */
+        Runnable beforeWrite = () -> { };
+
         @Override
-        public void write(int start, int length, String value) {
-            calls.add("write " + start + " " + value);
-            for (int i = 0; i < length; i++) {
-                cells[start + i] = i < value.length() ? value.charAt(i) : ' ';
+        public void write(long expectedGeneration, List<FieldWrite> writes) {
+            beforeWrite.run();
+            if (expectedGeneration != generation) {
+                throw new MaskRefused("neues Bild");
+            }
+            for (FieldWrite write : writes) {
+                if (!MaskAssistant.trimEnd(new String(cells, write.start(), write.length())).equals(write.expected())) {
+                    throw new MaskRefused("von Hand geändert");
+                }
+            }
+            for (FieldWrite write : writes) {
+                calls.add("write " + write.start() + " " + write.value());
+                for (int i = 0; i < write.length(); i++) {
+                    cells[write.start() + i] = i < write.value().length() ? write.value().charAt(i) : ' ';
+                }
             }
         }
 
@@ -246,5 +261,38 @@ class MaskAssistantTest {
         assistant.fill(revision, List.of(new MaskAssistant.FieldValue(1, "A")));
         assistant.undo();
         assertThat(heard).hasSize(2);
+    }
+
+    @Test
+    void aKeystrokeBetweenCheckAndWriteWinsAndNothingIsWritten() {
+        String revision = assistant.read().revision();
+        mask.beforeWrite = () -> mask.put(90, "5");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> assistant.fill(revision, List.of(
+                new MaskAssistant.FieldValue(1, "A.B"), new MaskAssistant.FieldValue(2, "12"))))
+                .isInstanceOf(MaskRefused.class);
+        assertThat(mask.calls).isEmpty();
+        assertThat(assistant.edits()).isEmpty();
+    }
+
+    @Test
+    void anIdenticalNewScreenFromTheHostIsStillANewMask() {
+        String revision = assistant.read().revision();
+        assistant.fill(revision, List.of(new MaskAssistant.FieldValue(1, "A.B")));
+        mask.generation++;
+
+        assertThat(assistant.edits()).isEmpty();
+        assertThatThrownBy(() -> assistant.fill(revision, List.of(new MaskAssistant.FieldValue(1, "C.D"))))
+                .isInstanceOf(MaskRefused.class).hasMessageContaining("geändert");
+        assertThat(assistant.undo()).isZero();
+    }
+
+    @Test
+    void hiddenProtectedTextNeverBecomesALabel() {
+        mask.put(40, "XYZ4711  ");
+        mask.fields.set(0, new TerminalMask.Field(40, 9, true, false, true, false));
+        MaskSnapshot snapshot = assistant.read();
+        assertThat(snapshot.fields().get(0).label()).doesNotContain("XYZ4711");
+        assertThat(String.join("\n", snapshot.lines())).doesNotContain("XYZ4711");
     }
 }

@@ -123,6 +123,31 @@ class MaskAssistantOpenTermTest {
     }
 
     @Test
+    void theSamePanelRedrawnByTheHostAfterEnterIsANewMask() throws Exception {
+        try (FakeTn3270Host host = new FakeTn3270Host(ALLOCATE, "Cp273")) {
+            TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(),
+                    runnable -> Thread.ofVirtual().start(runnable));
+            TerminalSession session = sessions.open(TerminalProfile.of("127.0.0.1", host.port()));
+            TerminalView view = session.view(TerminalView.class).orElseThrow();
+            await(() -> session.state() == SessionState.CONNECTED && view.text().contains("ALLOCATE NEW DATA SET")
+                    && !view.keyboardLocked());
+            MaskAssistant assistant = session.assistant();
+            MaskSnapshot mask = assistant.read();
+            assistant.fill(mask.revision(), List.of(new MaskAssistant.FieldValue(1, "USER.ALT")));
+
+            session.view(TerminalKeyboard.class).orElseThrow().enter(); // Host zeigt dieselbe Maske noch einmal
+            await(() -> host.inputs() == 1 && !view.keyboardLocked());
+            Thread.sleep(200);
+
+            assertThat(assistant.edits()).isEmpty();
+            assertThatThrownBy(() -> assistant.fill(mask.revision(),
+                    List.of(new MaskAssistant.FieldValue(1, "USER.NEU")))).isInstanceOf(MaskRefused.class);
+            assertThat(assistant.read().revision()).isNotEqualTo(mask.revision());
+            session.disconnect();
+        }
+    }
+
+    @Test
     void theMaskPortIsNotTheKeyboard() throws Exception {
         try (FakeTn3270Host host = new FakeTn3270Host(ALLOCATE, "Cp273")) {
             var connection = new OpenTermConnector().create(TerminalProfile.of("127.0.0.1", host.port()),

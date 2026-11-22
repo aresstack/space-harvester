@@ -164,14 +164,21 @@ public final class MaskAssistant {
                 }
                 planned.add(new Edit(number, field.start(), field.length(), now, value));
             }
+            List<TerminalMask.FieldWrite> writes = new ArrayList<>();
             for (Edit edit : planned) {
-                if (edit.before().equals(edit.after())) {
-                    continue;
+                if (!edit.before().equals(edit.after())) {
+                    writes.add(new TerminalMask.FieldWrite(edit.start(), edit.length(), edit.before(),
+                            edit.after()));
+                    done.add(edit);
                 }
-                mask.write(edit.start(), edit.length(), edit.after());
-                readValues.put(edit.start(), edit.after());
-                record(edit, revision);
-                done.add(edit);
+            }
+            if (!writes.isEmpty()) {
+                // Prüfen und Schreiben in einem Zug im Terminal: Tippt der Mensch dazwischen, wird abgelehnt.
+                mask.write(image.generation(), writes);
+                for (Edit edit : done) {
+                    readValues.put(edit.start(), edit.after());
+                    record(edit, revision);
+                }
             }
         } finally {
             lock.unlock();
@@ -282,6 +289,7 @@ public final class MaskAssistant {
             String revision = revision(image);
             if (revision.equals(editsRevision) && !image.keyboardLocked()) {
                 java.util.Set<Integer> done = new java.util.HashSet<>();
+                List<TerminalMask.FieldWrite> writes = new ArrayList<>();
                 for (int i = edits.size() - 1; i >= 0; i--) {
                     Edit edit = edits.get(i);
                     if (!done.add(edit.start())) {
@@ -290,12 +298,15 @@ public final class MaskAssistant {
                     TerminalMask.Field field = new TerminalMask.Field(edit.start(), edit.length(), false, false,
                             false, false);
                     String now = trimEnd(image.text(field));
-                    String first = firstBefore(edit.start());
                     if (now.equals(edit.after())) {
-                        mask.write(edit.start(), edit.length(), first);
-                        readValues.put(edit.start(), first);
-                        restored++;
+                        writes.add(new TerminalMask.FieldWrite(edit.start(), edit.length(), edit.after(),
+                                firstBefore(edit.start())));
                     }
+                }
+                if (!writes.isEmpty()) {
+                    mask.write(image.generation(), writes);
+                    writes.forEach(write -> readValues.put(write.start(), write.value()));
+                    restored = writes.size();
                 }
             }
             edits.clear();
@@ -432,6 +443,13 @@ public final class MaskAssistant {
                 input[Math.floorMod(field.start() + i, input.length)] = true;
             }
         }
+        // Verdeckte Felder (auch geschützte) liefern nie Text für eine Beschriftung.
+        char[] visible = image.cells().clone();
+        for (TerminalMask.Field field : image.fields()) {
+            if (field.hidden()) {
+                blank(visible, field);
+            }
+        }
         Map<Integer, String> labels = new HashMap<>();
         for (int i = 0; i < inputs.size(); i++) {
             TerminalMask.Field field = inputs.get(i);
@@ -439,14 +457,14 @@ public final class MaskAssistant {
             int column = field.start() % columns - 1;
             StringBuilder left = new StringBuilder();
             for (int c = column - 1; c >= 0 && !input[row * columns + c]; c--) {
-                left.insert(0, image.cells()[row * columns + c]);
+                left.insert(0, visible[row * columns + c]);
             }
             String label = clean(left.toString());
             if (label.isEmpty() && row > 0) {
                 StringBuilder above = new StringBuilder();
                 int from = Math.max(0, column);
                 for (int c = from; c < Math.min(columns, from + field.length() + 1); c++) {
-                    above.append(input[(row - 1) * columns + c] ? ' ' : image.cells()[(row - 1) * columns + c]);
+                    above.append(input[(row - 1) * columns + c] ? ' ' : visible[(row - 1) * columns + c]);
                 }
                 label = clean(above.toString());
             }
@@ -464,6 +482,8 @@ public final class MaskAssistant {
     /** Kennung der Maske: Aufbau der Felder und alle geschützten Texte, nicht die Werte der Eingabefelder. */
     static String revision(TerminalMask.ScreenImage image) {
         StringBuilder b = new StringBuilder();
+        // Die Hostgeneration gehört dazu: Auch ein gleich aussehendes neues Bild ist eine neue Maske.
+        b.append(image.generation()).append('|');
         b.append(image.rows()).append('x').append(image.columns()).append('|');
         boolean[] input = new boolean[image.cells().length];
         for (TerminalMask.Field field : image.fields()) {

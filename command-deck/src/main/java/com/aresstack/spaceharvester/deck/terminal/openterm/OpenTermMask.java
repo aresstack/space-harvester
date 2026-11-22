@@ -30,9 +30,17 @@ final class OpenTermMask implements TerminalMask {
     /** Zeichnet die Anzeige neu und meldet das neue Bild; die Anzeige selbst (mit Host-Tasten) kennt sie nicht. */
     private final Runnable repaint;
 
+    /**
+     * Zählt Bilder vom Host: Jede Host-Taste sperrt die Tastatur, jedes Bild gibt sie wieder frei – beides meldet
+     * OpenTerm über den {@code KbdLockListener}, lokale Eingaben nie. So gilt auch ein gleich aussehendes neues Bild
+     * als neue Maske.
+     */
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
+
     OpenTermMask(Terminal terminal, Runnable repaint) {
         this.terminal = terminal;
         this.repaint = repaint;
+        terminal.addKbdLockListener(changed -> generation.incrementAndGet());
     }
 
     @Override
@@ -61,7 +69,7 @@ final class OpenTermMask implements TerminalMask {
         }
         fields.sort(java.util.Comparator.comparingInt(Field::start));
         return new ScreenImage(rows, columns, terminal.getCursorPosition(), terminal.isKeyboardLocked(), text,
-                fields);
+                fields, generation.get());
     }
 
     /** Das Attributbyte steht auf {@code getBeginBA()}, die Daten dahinter bis einschließlich {@code getEndBA()}. */
@@ -75,31 +83,68 @@ final class OpenTermMask implements TerminalMask {
     }
 
     @Override
-    public void write(int start, int length, String value) {
-        AtomicReference<RuntimeException> failure = new AtomicReference<>();
+    public void write(long expectedGeneration, List<FieldWrite> writes) {
+        // Ein einziger Zug auf dem EDT: Tasten des Menschen laufen ebenfalls dort und kommen nicht dazwischen.
         onEdt(() -> {
-            try {
-                writeNow(start, length, value);
-            } catch (RuntimeException e) {
-                failure.set(e);
-            }
+            writeAllNow(expectedGeneration, writes);
             return null;
         });
-        if (failure.get() != null) {
-            throw failure.get();
+    }
+
+    private void writeAllNow(long expectedGeneration, List<FieldWrite> writes) {
+        if (terminal.isKeyboardLocked()) {
+            throw new MaskRefused("Der Host nimmt gerade keine Eingabe an (X-Wait); nichts geändert.");
+        }
+        if (generation.get() != expectedGeneration) {
+            throw new MaskRefused("Inzwischen kam ein neues Bild vom Host; nichts geändert. Maske neu lesen.");
+        }
+        ScreenImage now = captureNow();
+        for (FieldWrite write : writes) {
+            TermField field = terminal.getField(write.start());
+            if (field == null || field.isProtected()) {
+                throw new MaskRefused("Das Feld ist geschützt; nichts geändert.");
+            }
+            String current = trimEnd(now.text(new Field(write.start(), write.length(), false, false, false,
+                    false)));
+            if (!current.equals(write.expected())) {
+                throw new MaskRefused("Ein Feld wurde gerade von Hand geändert; die Eingabe des Benutzers bleibt, "
+                        + "nichts geändert. Maske neu lesen.");
+            }
+        }
+        int cursor = terminal.getCursorPosition();
+        List<FieldWrite> written = new ArrayList<>();
+        try {
+            for (FieldWrite write : writes) {
+                written.add(write);
+                writeNow(write.start(), write.length(), write.value());
+            }
+        } catch (RuntimeException failed) {
+            // Alles oder nichts: schon geschriebene Felder bekommen ihren Wert von vorher zurück.
+            for (FieldWrite write : written) {
+                try {
+                    writeNow(write.start(), write.length(), write.expected());
+                } catch (RuntimeException ignored) {
+                    // Bestmöglich zurück; der Grund des ersten Fehlers zählt.
+                }
+            }
+            throw failed;
+        } finally {
+            terminal.setCursorPosition(cursor);
+            repaint.run();
         }
     }
 
-    private void writeNow(int start, int length, String value) {
-        if (terminal.isKeyboardLocked()) {
-            throw new MaskRefused("Der Host nimmt gerade keine Eingabe an (X-Wait).");
+    private static String trimEnd(String text) {
+        int end = text.length();
+        while (end > 0 && (text.charAt(end - 1) == ' ' || text.charAt(end - 1) == 0)) {
+            end--;
         }
+        return text.substring(0, end);
+    }
+
+    private void writeNow(int start, int length, String value) {
         int cells = terminal.getRows() * terminal.getCols();
         TermField field = terminal.getField(start);
-        if (field == null || field.isProtected()) {
-            throw new MaskRefused("Das Feld ist geschützt.");
-        }
-        int cursor = terminal.getCursorPosition();
         try {
             terminal.setCursorPosition(start);
             var input = terminal.getCharHandler();
@@ -120,9 +165,6 @@ final class OpenTermMask implements TerminalMask {
             throw new MaskRefused("Das Feld ist geschützt.");
         } catch (java.io.IOException e) {
             throw new MaskRefused("Eingabe gescheitert (" + e.getClass().getSimpleName() + ").");
-        } finally {
-            terminal.setCursorPosition(cursor);
-            repaint.run();
         }
     }
 

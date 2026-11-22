@@ -19,12 +19,22 @@ public interface TerminalMask {
     ScreenImage capture();
 
     /**
-     * Schreibt {@code value} lokal in das ungeschützte Feld ab {@code start} und löscht den Rest des Feldes (wie
-     * „Erase EOF“). Die Schreibmarke steht danach wieder, wo sie war. Schickt nichts an den Host.
+     * Schreibt lokal in ungeschützte Felder, alles in einem Zug, in den keine Taste des Menschen dazwischenkommt:
+     * Erst wird geprüft, dass das Bild noch die Hostgeneration {@code generation} hat und jedes Feld noch seinen
+     * erwarteten Wert, dann wird geschrieben (Rest des Feldes wie „Erase EOF“). Die Schreibmarke steht danach wieder,
+     * wo sie war. Schickt nichts an den Host.
      *
-     * @throws MaskRefused wenn das Feld geschützt ist oder die Tastatur gesperrt (X-Wait)
+     * @throws MaskRefused wenn sich Bild oder ein Feld inzwischen geändert hat, ein Feld geschützt ist oder die
+     *                     Tastatur gesperrt (X-Wait); dann ist nichts geschrieben
      */
-    void write(int start, int length, String value);
+    void write(long generation, List<FieldWrite> writes);
+
+    /**
+     * Ein Schreibwunsch: Feld ab {@code start}, {@code length} lang, das jetzt {@code expected} enthält (ohne
+     * Füllzeichen am Ende), bekommt {@code value}.
+     */
+    record FieldWrite(int start, int length, String expected, String value) {
+    }
 
     /** Setzt die Schreibmarke lokal; schickt nichts an den Host. */
     void moveCursor(int position);
@@ -38,8 +48,11 @@ public interface TerminalMask {
      * @param keyboardLocked ob der Host gerade keine Eingabe annimmt
      * @param cells          Zeichen je Zelle, Zeile für Zeile; Attributzellen und Nullen als Leerzeichen
      * @param fields         alle Felder in Pufferreihenfolge; leer bei unformatiertem Bild
+     * @param generation     zählt jedes Bild vom Host (und jedes Sperren der Tastatur durch eine Host-Taste), nie
+     *                       eine lokale Eingabe; so wird auch ein gleich aussehendes neues Bild erkannt
      */
-    record ScreenImage(int rows, int columns, int cursor, boolean keyboardLocked, char[] cells, List<Field> fields) {
+    record ScreenImage(int rows, int columns, int cursor, boolean keyboardLocked, char[] cells, List<Field> fields,
+                       long generation) {
 
         public ScreenImage {
             Objects.requireNonNull(cells, "cells");
