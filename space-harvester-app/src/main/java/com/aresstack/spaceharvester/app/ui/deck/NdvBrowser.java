@@ -9,18 +9,25 @@ import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
+import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
+import com.aresstack.spaceharvester.deck.editor.EditorSession;
+import com.aresstack.spaceharvester.deck.editor.EditorSessions;
+import com.aresstack.spaceharvester.deck.ndv.NdvDocumentStore;
 import com.aresstack.spaceharvester.deck.ndv.NdvObject;
 import com.aresstack.spaceharvester.deck.ndv.NdvObjectType;
 import com.aresstack.spaceharvester.deck.ndv.NdvSession;
 import com.aresstack.spaceharvester.deck.ndv.NdvSessions;
 import com.aresstack.spaceharvester.deck.ndv.NdvState;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -39,7 +46,6 @@ import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JSplitPane;
 import javax.swing.JTable;
-import javax.swing.JTextArea;
 import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
@@ -53,13 +59,16 @@ import javax.swing.table.TableRowSorter;
  * sofort sichtbar, darunter der Quelltext des geöffneten Objekts. Oben rechts in der Kopfzeile ({@link #tools()})
  * Namensfilter, Art und Neu laden; unten ({@link #foot()}) Zustand und Aktionen der Sitzung.
  *
- * <p>Nur lesend: Auflisten und Öffnen schreiben nichts auf den Server. Bearbeiten und Speichern übernimmt der
- * gemeinsame Editor des Command Deck. Alle Gespräche mit dem Server laufen im Hintergrund; die Sitzung reiht sie.
+ * <p>Auflisten und Öffnen schreiben nichts auf den Server. Der Quelltext erscheint unten im gemeinsamen Editor des
+ * Command Deck ({@link NdvDocumentStore}); auf den Server geschrieben wird nur mit „Speichern“ (Strg+S), und nur, wenn
+ * ihn seit dem Laden niemand geändert hat – wie {@code writeIfUnchanged} in MainframeMate. Alle Gespräche mit dem
+ * Server laufen im Hintergrund; die Sitzung reiht sie.
  */
 final class NdvBrowser extends JPanel {
 
     static final String LIBRARY_KEY = "deck.ndv.library";
     static final String ALL_TYPES = "Alle Arten";
+    private static final String HINT = "hint";
 
     private final NdvSession session;
     private final NdvSessions sessions;
@@ -73,12 +82,19 @@ final class NdvBrowser extends JPanel {
     private final TableRowSorter<ObjectModel> sorter = new TableRowSorter<>(objects);
     private final PlaceholderField objectFilter = new PlaceholderField(12, "Objekt filtern, * erlaubt");
     private final JComboBox<Object> typeFilter = Comic.combo();
-    private final JTextArea source = Comic.code();
+    private final EditorSessions editors;
+    private final NdvDocumentStore store;
+    private final CardLayout sourceCards = new CardLayout();
+    private final JPanel sourceStage = new JPanel(sourceCards);
+    private final Map<EditorSession, DocumentEditor> editorOf = new LinkedHashMap<>();
+    private final JSplitPane right;
     private final JLabel sourceTitle = Comic.caption("Quelltext – Objekt doppelt anklicken");
     private final BusyOverlay libraryBusy;
     private final BusyOverlay objectBusy;
     private final JLabel status = Comic.muted(" ");
     private final ComposerButton open = Comic.button("Öffnen", "Quelltext des gewählten Objekts laden (Eingabe)");
+    private final ComposerButton save = Comic.button("Speichern",
+            "Quelltext auf den Server schreiben (Strg+S); nur, wenn ihn seit dem Laden niemand geändert hat");
     private final ComposerButton reconnect = Comic.button("Neu verbinden", "Verbindung neu aufbauen");
     private final ComposerButton disconnect = Comic.button("Trennen", "Verbindung dieser Sitzung trennen");
     private final ComposerButton close = Comic.button("Schließen", "Getrennte Sitzung aus der Liste nehmen");
@@ -88,13 +104,19 @@ final class NdvBrowser extends JPanel {
     private final AtomicInteger listing = new AtomicInteger();
     private String library;
     private NdvObject shown;
+    /** Das Dokument, das unten im Editor steht. */
+    private EditorSession document;
+    private long announcedRevision;
     private boolean everConnected;
     private String note = "";
     private boolean noteIsError;
 
-    NdvBrowser(NdvSession session, NdvSessions sessions, Executor background, Runnable closed) {
+    NdvBrowser(NdvSession session, NdvSessions sessions, EditorSessions editors, Executor background,
+               Runnable closed) {
         super(new BorderLayout());
         this.session = Objects.requireNonNull(session, "session");
+        this.editors = Objects.requireNonNull(editors, "editors");
+        this.store = new NdvDocumentStore(session);
         this.sessions = sessions;
         this.background = background;
         setBackground(Comic.SURFACE);
@@ -163,17 +185,19 @@ final class NdvBrowser extends JPanel {
             note(objects.getRowCount() + " Objekte in " + library + " (abgebrochen, unvollständig)", false);
         });
 
-        // Rechts unten: Quelltext, nur lesen.
-        source.getAccessibleContext().setAccessibleName("Quelltext");
-        Comic.noAutoScroll(source);
+        // Rechts unten: Quelltext im gemeinsamen Editor; vor dem ersten Öffnen nur der Hinweis darüber.
+        sourceStage.setOpaque(false);
+        JPanel empty = new JPanel();
+        empty.setOpaque(false);
+        sourceStage.add(empty, HINT);
         JPanel sourcePanel = new JPanel(new BorderLayout(0, 4));
         sourcePanel.setOpaque(false);
         sourcePanel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
         sourcePanel.add(sourceTitle, BorderLayout.NORTH);
-        sourcePanel.add(Comic.scroll(source), BorderLayout.CENTER);
+        sourcePanel.add(sourceStage, BorderLayout.CENTER);
 
-        JSplitPane right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, objectBusy, sourcePanel);
-        right.setResizeWeight(0.55);
+        right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, objectBusy, sourcePanel);
+        right.setResizeWeight(0.4);
         right.setOpaque(false);
         right.setBorder(BorderFactory.createEmptyBorder(8, 6, 8, 12));
         ComicDivider.install(right);
@@ -211,6 +235,7 @@ final class NdvBrowser extends JPanel {
 
         // Fuß: Zustand links, Aktionen rechts.
         open.addActionListener(e -> openSelected());
+        save.addActionListener(e -> save());
         reconnect.addActionListener(e -> sessions.reconnect(session));
         disconnect.addActionListener(e -> session.disconnect());
         close.addActionListener(e -> closed.run());
@@ -218,7 +243,7 @@ final class NdvBrowser extends JPanel {
         foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(6, 16, 6, 16)));
         foot.add(status, BorderLayout.CENTER);
-        foot.add(Comic.row(open, reconnect, disconnect, close), BorderLayout.EAST);
+        foot.add(Comic.row(open, save, reconnect, disconnect, close), BorderLayout.EAST);
 
         session.observe(changed -> SwingUtilities.invokeLater(this::stateChanged));
         stateChanged();
@@ -234,6 +259,11 @@ final class NdvBrowser extends JPanel {
 
     NdvSession session() {
         return session;
+    }
+
+    /** Die Ablage dieser Sitzung im gemeinsamen Editor. */
+    NdvDocumentStore store() {
+        return store;
     }
 
     private void stateChanged() {
@@ -321,7 +351,10 @@ final class NdvBrowser extends JPanel {
         });
     }
 
-    /** Lädt den Quelltext des gewählten Objekts in die Ansicht darunter; schreibt nichts. */
+    /**
+     * Öffnet den Quelltext des gewählten Objekts unten im gemeinsamen Editor; schreibt nichts. Ist er schon offen und
+     * unverändert, wird er neu vom Server gelesen; ungespeicherte Änderungen bleiben stehen.
+     */
     void openSelected() {
         int row = objectTable.getSelectedRow();
         if (row < 0) {
@@ -332,14 +365,92 @@ final class NdvBrowser extends JPanel {
             note("„" + object.displayName() + "“ hat keinen Quelltext (Art: " + object.type().name() + ")", true);
             return;
         }
-        note("Lade Quelltext: " + object.path() + " …", false);
-        work(() -> session.read(object), text -> {
-            shown = object;
-            source.setText(text);
-            source.setCaretPosition(0);
-            sourceTitle.setText(object.path() + " · " + text.lines().count() + " Zeilen");
-            note(text.isEmpty() ? "Leerer Quelltext: " + object.path() : "Geöffnet: " + object.path(), false);
-        }, error -> note("Quelltext nicht lesbar: " + ConnectForm.describe(error), true));
+        String location = store.register(object);
+        boolean known = editors.find(store, location).isPresent();
+        EditorSession opened = editors.open(store, location, NdvDocumentStore.name(object));
+        shown = object;
+        show(opened);
+        if (known && !opened.dirty() && opened.state() != EditorSession.State.LOADING
+                && opened.state() != EditorSession.State.SAVING) {
+            opened.load();
+        }
+    }
+
+    /** Schreibt den Quelltext im Editor auf den Server (Konfliktprüfung macht die Ablage). */
+    void save() {
+        if (document != null && document.dirty()) {
+            document.save();
+        }
+    }
+
+    private void show(EditorSession opened) {
+        DocumentEditor editor = editorOf.get(opened);
+        if (editor == null) {
+            if (editorOf.isEmpty()) {
+                // Mit dem ersten Quelltext bekommt der Editor den größeren Teil; die Liste bleibt sichtbar.
+                right.setDividerLocation(0.35);
+            }
+            editor = new DocumentEditor(opened);
+            editorOf.put(opened, editor);
+            sourceStage.add(editor, opened.location());
+            opened.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
+        }
+        document = opened;
+        // Neu gezeigt: der geladene Stand wird gemeldet, auch wenn das Laden schon fertig war.
+        announcedRevision = -1;
+        sourceCards.show(sourceStage, opened.location());
+        if (opened.state() == EditorSession.State.LOADING) {
+            note("Lade Quelltext: " + opened.location() + " …", false);
+        }
+        documentChanged(opened);
+    }
+
+    private void documentChanged(EditorSession changed) {
+        if (changed != document) {
+            return;
+        }
+        EditorSession.State state = changed.state();
+        String title = changed.location();
+        if (state == EditorSession.State.LOADING || state == EditorSession.State.SAVING) {
+            title += " · " + state.label() + " …";
+        } else {
+            title += changed.text().map(text -> " · " + lines(text)).orElse("");
+            if (changed.dirty()) {
+                title += " · ungespeichert";
+            }
+        }
+        sourceTitle.setText(title);
+        if (changed.revision() != announcedRevision && state == EditorSession.State.READY) {
+            announcedRevision = changed.revision();
+            String text = changed.text().orElse("");
+            note(text.isEmpty() ? "Leerer Quelltext: " + changed.location() : "Geöffnet: " + changed.location(),
+                    false);
+        } else if (state == EditorSession.State.READY && changed.note().isPresent()) {
+            String message = changed.note().get();
+            note(message.equals("Gespeichert") ? "Gespeichert: " + changed.location() : message,
+                    !message.equals("Gespeichert"));
+        } else if (state == EditorSession.State.CONFLICT) {
+            // Den Grund und „Überschreiben“ zeigt der Hinweis im Editor; die Statuszeile sagt nur das Ergebnis.
+            note("Nicht gespeichert: " + changed.location() + " wurde auf dem Server geändert", true);
+        } else if (state == EditorSession.State.FAILED) {
+            note("Quelltext nicht lesbar: " + changed.location(), true);
+        }
+        showState();
+    }
+
+    private static String lines(String text) {
+        long count = text.isEmpty() ? 0 : text.lines().count();
+        return count == 1 ? "1 Zeile" : count + " Zeilen";
+    }
+
+    /** Ungespeicherte Dokumente dieser Sitzung (Rückfrage vor dem Schließen). */
+    List<EditorSession> unsaved() {
+        return editors.all().stream().filter(doc -> doc.store() == store && doc.dirty()).toList();
+    }
+
+    /** Nimmt alle Dokumente dieser Sitzung aus dem gemeinsamen Editor. */
+    void closeDocuments() {
+        editors.all().stream().filter(doc -> doc.store() == store).forEach(editors::close);
     }
 
     private void filterLibraries() {
@@ -402,6 +513,9 @@ final class NdvBrowser extends JPanel {
         NdvState state = session.state();
         boolean connected = state == NdvState.CONNECTED;
         open.setEnabled(connected && objectTable.getSelectedRow() >= 0);
+        EditorSession.State documentState = document == null ? null : document.state();
+        save.setEnabled(connected && document != null && document.dirty()
+                && (documentState == EditorSession.State.READY || documentState == EditorSession.State.CONFLICT));
         reconnect.setEnabled(state == NdvState.FAILED || state == NdvState.DISCONNECTED);
         disconnect.setEnabled(state == NdvState.CONNECTED || state == NdvState.CONNECTING);
         close.setEnabled(state == NdvState.FAILED || state == NdvState.DISCONNECTED);
@@ -480,7 +594,20 @@ final class NdvBrowser extends JPanel {
     }
 
     String sourceText() {
-        return source.getText();
+        DocumentEditor editor = document == null ? null : editorOf.get(document);
+        return editor == null ? "" : editor.text();
+    }
+
+    DocumentEditor editor() {
+        return document == null ? null : editorOf.get(document);
+    }
+
+    EditorSession document() {
+        return document;
+    }
+
+    boolean saveEnabled() {
+        return save.isEnabled();
     }
 
     NdvObject shown() {
