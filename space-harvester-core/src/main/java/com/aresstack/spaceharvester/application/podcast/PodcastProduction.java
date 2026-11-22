@@ -179,9 +179,23 @@ final class PodcastProduction {
         context.checkpoint();
         int topics = plan.topics().size();
         context.discovered(topics);
-        RankedPool pool = new RankedPool(parallel.getAsInt(), "space-harvester-podcast-" + key.substring(0, 6));
+        int threads = Math.max(1, parallel.getAsInt());
+        RankedPool pool = new RankedPool(threads, "space-harvester-podcast-" + key.substring(0, 6));
         Future<?> drawing = null;
         java.util.concurrent.atomic.AtomicBoolean ended = new java.util.concurrent.atomic.AtomicBoolean();
+        // Jedes Ablegen geht durch diesen Zaun: Nach dem Ende des Laufs (oder dem Zurückziehen) legt kein Faden aus dem
+        // Pool mehr etwas ab, auch wenn er seinen Modellaufruf erst später beendet; run() darf dann löschen.
+        PodcastPictures.Fence fence = write -> {
+            synchronized (ended) {
+                if (ended.get() || revoked.contains(key)) {
+                    throw new PodcastPictures.Closed("Podcast-Lauf beendet oder zurückgezogen");
+                }
+                write.run();
+            }
+        };
+        // Ein speak()-Aufruf stellt selbst bis zu speech.workers() Anfragen: zusammen höchstens ai.parallel.
+        java.util.concurrent.Semaphore voices = new java.util.concurrent.Semaphore(
+                Math.max(1, threads / Math.max(1, speech.workers())));
         try {
             final PodcastPlan planned = plan;
             // Alles auf einmal einreichen, der Rang ordnet (Angelo 22.11.2026: Start dauert, stockt nach Kapitel 1):
@@ -192,7 +206,8 @@ final class PodcastProduction {
             for (int t = 0; t < topics; t++) {
                 final int topic = t;
                 chapters.add(pool.supply(rank(topic, Stage.SEGMENTS, 0),
-                        () -> segments(writer, key, material, planned, topic, names, repairs)).thenApply(segments -> {
+                        () -> segments(writer, key, material, planned, topic, names, repairs, fence))
+                        .thenApply(segments -> {
                     List<CompletableFuture<Boolean>> audio = new ArrayList<>();
                     for (int s = 0; s < segments.size(); s++) {
                         final int segment = s;
@@ -200,9 +215,9 @@ final class PodcastProduction {
                             Segment before = segment > 0 ? segments.get(segment - 1) : previousLast(key, topic);
                             boolean last = topic == topics - 1 && segment == segments.size() - 1;
                             return script(writer, key, material, planned, topic, segments, segment, before, last,
-                                    names, repairs);
+                                    names, repairs, fence);
                         }).thenCompose(turns -> pool.supply(rank(topic, Stage.SPEECH, segment),
-                                () -> speak(speaker, key, topic, segment, turns, repairs))));
+                                () -> speak(speaker, voices, key, topic, segment, turns, repairs, fence))));
                     }
                     return audio;
                 }));
@@ -214,7 +229,7 @@ final class PodcastProduction {
                 CompletableFuture<?> firstAudio = chapters.get(0).thenCompose(audio -> audio.isEmpty()
                         ? CompletableFuture.completedFuture(Boolean.FALSE) : audio.get(0));
                 drawing = picturesThread(key, origin.sourceId(), material, planned, configured, pool, firstAudio,
-                        context, repairs, ended);
+                        context, repairs, fence);
             }
             context.phase("Podcast", "Texte und Sprachausgabe");
             List<int[]> failed = new ArrayList<>();
@@ -233,7 +248,7 @@ final class PodcastProduction {
             for (int[] part : failed) {
                 List<Turn> turns = store.script(key, part[0], part[1]).orElse(List.of());
                 retries.add(pool.supply(rank(part[0], Stage.SPEECH, part[1]),
-                        () -> speak(speaker, key, part[0], part[1], turns, repairs)));
+                        () -> speak(speaker, voices, key, part[0], part[1], turns, repairs, fence)));
             }
             for (int i = 0; i < failed.size(); i++) {
                 if (!await(retries.get(i), context)) {
@@ -304,16 +319,7 @@ final class PodcastProduction {
     /** Startet die Bilder aller Themen in einem eigenen Faden; jedes fertige Bild meldet {@link #subscribe}. */
     private Future<?> picturesThread(String key, String sourceId, PodcastWriter.Material material, PodcastPlan plan,
                                      Pictures configured, RankedPool pool, CompletableFuture<?> firstAudio,
-                                     JobContext context, List<String> repairs,
-                                     java.util.concurrent.atomic.AtomicBoolean ended) {
-        PodcastPictures.Fence fence = write -> {
-            synchronized (ended) {
-                if (ended.get() || revoked.contains(key)) {
-                    throw new PodcastPictures.Closed("Podcast-Lauf beendet oder zurückgezogen");
-                }
-                write.run();
-            }
-        };
+                                     JobContext context, List<String> repairs, PodcastPictures.Fence fence) {
         // Jeder Modellaufruf eines Bildes läuft im Pool mit dem Rang seines Themas, hinter dessen Text und Audio.
         java.util.concurrent.atomic.AtomicLong rank = new java.util.concurrent.atomic.AtomicLong(
                 rank(0, Stage.PICTURE, 0));
@@ -376,14 +382,14 @@ final class PodcastProduction {
     }
 
     private List<Segment> segments(PodcastWriter writer, String key, PodcastWriter.Material material,
-                                   PodcastPlan plan, int topic, PodcastWriter.Voices names, List<String> repairs) {
+                                   PodcastPlan plan, int topic, PodcastWriter.Voices names, List<String> repairs,
+                                   PodcastPictures.Fence fence) {
         Optional<List<Segment>> stored = store.segments(key, topic);
         if (stored.isPresent()) {
             return stored.get();
         }
         List<Segment> segments = writer.segments(material, plan, topic, names, repairs);
-        guard(key);
-        store.saveSegments(key, topic, segments);
+        fence.write(() -> store.saveSegments(key, topic, segments));
         notify(key);
         return segments;
     }
@@ -398,20 +404,20 @@ final class PodcastProduction {
 
     private List<Turn> script(PodcastWriter writer, String key, PodcastWriter.Material material, PodcastPlan plan,
                               int topic, List<Segment> segments, int segment, Segment before, boolean last,
-                              PodcastWriter.Voices names, List<String> repairs) {
+                              PodcastWriter.Voices names, List<String> repairs, PodcastPictures.Fence fence) {
         Optional<List<Turn>> stored = store.script(key, topic, segment);
         if (stored.isPresent()) {
             return stored.get();
         }
         List<Turn> turns = writer.script(material, plan, topic, segments, segment, before, last, names, repairs);
-        guard(key);
-        store.saveScript(key, topic, segment, turns);
+        fence.write(() -> store.saveScript(key, topic, segment, turns));
         return turns;
     }
 
     /** Spricht einen Abschnitt, falls sein Audio fehlt; {@code false}, wenn das nicht gelang. */
-    private boolean speak(PodcastSpeaker speaker, String key, int topic, int segment, List<Turn> turns,
-                          List<String> repairs) {
+    private boolean speak(PodcastSpeaker speaker, java.util.concurrent.Semaphore voices, String key, int topic,
+                          int segment, List<Turn> turns, List<String> repairs, PodcastPictures.Fence fence)
+            throws InterruptedException {
         if (store.audio(key, topic, segment).isPresent()) {
             return true;
         }
@@ -419,15 +425,19 @@ final class PodcastProduction {
             return false;
         }
         guard(key);
+        voices.acquire();
         try {
             byte[] wav = speaker.speak(turns, repairs);
-            guard(key);
-            store.saveAudio(key, topic, segment, wav);
+            fence.write(() -> store.saveAudio(key, topic, segment, wav));
             notify(key);
             return true;
+        } catch (PodcastPictures.Closed closed) {
+            throw closed;
         } catch (java.io.IOException | RuntimeException e) {
             repairs.add("Abschnitt " + (topic + 1) + "." + (segment + 1) + " ohne Audio (" + e.getMessage() + ")");
             return false;
+        } finally {
+            voices.release();
         }
     }
 

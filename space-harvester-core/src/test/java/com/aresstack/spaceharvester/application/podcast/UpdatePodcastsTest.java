@@ -150,6 +150,18 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void aSpeechCallWithItsOwnWorkersCountsAgainstTheParallelBudget() throws Exception {
+        FakeSpeech speech = new FakeSpeech(voice -> false, 100);
+        speech.workers = 2;
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+
+        podcasts(new FakeModel(), speech).start(caller, summary);
+
+        // ai.parallel = 2, je Aufruf 2 Anfragen: nur ein Abschnitt zugleich
+        assertThat(speech.mostAtOnce.get()).isEqualTo(1);
+    }
+
+    @Test
     void reportsSegmentsWithoutAudioInTheDiagnosis() throws Exception {
         FakeSpeech speech = new FakeSpeech(voice -> true);
         UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
@@ -315,6 +327,7 @@ class UpdatePodcastsTest {
         private final AtomicInteger atOnce = new AtomicInteger();
         private final Predicate<String> failing;
         private final long millis;
+        int workers = 1;
 
         FakeSpeech(Predicate<String> failing) {
             this(failing, 0);
@@ -334,6 +347,11 @@ class UpdatePodcastsTest {
         @Override
         public List<String> models() {
             return List.of("orpheus-3b-german");
+        }
+
+        @Override
+        public int workers() {
+            return workers;
         }
 
         @Override
