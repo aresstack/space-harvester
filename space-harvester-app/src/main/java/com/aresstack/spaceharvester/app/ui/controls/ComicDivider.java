@@ -6,9 +6,11 @@ import javax.swing.JSplitPane;
 import javax.swing.plaf.basic.BasicSplitPaneDivider;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
 import java.awt.Color;
+import java.awt.Cursor;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.event.MouseEvent;
 
 /**
  * Der Trenner aller geteilten Flächen der App, in beiden Lagen gleich: ruhige Fläche, eine Tuschelinie in der Mitte
@@ -25,6 +27,7 @@ public final class ComicDivider extends BasicSplitPaneDivider {
     static final int GRIP_MAX = 36;
 
     private final ComicPalette palette;
+    private boolean draggable = true;
 
     private ComicDivider(BasicSplitPaneUI ui, ComicPalette palette) {
         super(ui);
@@ -48,6 +51,47 @@ public final class ComicDivider extends BasicSplitPaneDivider {
         pane.setBorder(null);
         ui.getDivider().setBorder(null);
         pane.setDividerSize(THICKNESS);
+    }
+
+    /**
+     * Sperrt oder erlaubt das Ziehen dieses Trenners, ohne die Teilung selbst abzuschalten: Eine abgeschaltete
+     * Teilung nähme allem darin den eigenen Mauszeiger (die Zeigersuche von AWT überspringt abgeschaltete Flächen
+     * samt Inhalt), auch den Doppelpfeil der Trenner weiter innen. Gesperrt zeigt der Trenner den normalen Zeiger;
+     * Klicks (etwa der Doppelklick zum Aufklappen) kommen weiter an.
+     */
+    public static void draggable(JSplitPane pane, boolean draggable) {
+        if (pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider) {
+            divider.draggable = draggable;
+            divider.showCursor();
+        }
+    }
+
+    /** Ob sich der Trenner dieser Teilung ziehen lässt (für Tests). */
+    public static boolean draggable(JSplitPane pane) {
+        return pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider
+                && divider.draggable;
+    }
+
+    private void showCursor() {
+        boolean lying = splitPane != null && splitPane.getOrientation() == JSplitPane.VERTICAL_SPLIT;
+        setCursor(!draggable ? Cursor.getDefaultCursor()
+                : Cursor.getPredefinedCursor(lying ? Cursor.S_RESIZE_CURSOR : Cursor.E_RESIZE_CURSOR));
+    }
+
+    @Override
+    public void propertyChange(java.beans.PropertyChangeEvent event) {
+        super.propertyChange(event);
+        // Die Basisklasse setzt bei neuer Lage den Doppelpfeil; gesperrt bleibt der normale Zeiger.
+        showCursor();
+    }
+
+    @Override
+    protected void processMouseEvent(MouseEvent event) {
+        // Gesperrt beginnt kein Ziehen: Das Drücken erreicht die Zieh-Logik der Basisklasse nicht.
+        if (!draggable && event.getID() == MouseEvent.MOUSE_PRESSED) {
+            return;
+        }
+        super.processMouseEvent(event);
     }
 
     @Override
