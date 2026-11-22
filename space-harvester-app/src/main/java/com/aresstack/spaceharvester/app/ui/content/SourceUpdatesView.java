@@ -66,8 +66,8 @@ final class SourceUpdatesView extends JPanel {
     static final String HELP = "Ein Update fasst alle manuellen Synchronisierungen eines Tages zusammen und umfasst "
             + "alles, was sich in der Quelle seit dem vorigen Update geändert hat, auch was im Hintergrund geholt wurde; "
             + "die Kreispfeile hinter gescheiterten Abgleichen wiederholen sie. Die Updates stehen als Wolken "
-            + "oben, das jüngste ganz rechts und vorgewählt; „Seit dem letzten Update“ ist, was danach dazugekommen ist, "
-            + "es zählt zum nächsten. Ein Klick auf eine Seite öffnet "
+            + "oben, das jüngste ganz rechts; „Seit dem letzten Update“ ist, was danach dazugekommen ist, es zählt zum "
+            + "nächsten und ist vorgewählt, solange es dort Änderungen gibt. Ein Klick auf eine Seite öffnet "
             + "sie.\n\n"
             + "Die Leseansicht zeigt die KI-Zusammenfassung des gewählten Updates. Fehlt sie, erstellt das eingestellte "
             + "Chat-Modell sie beim Öffnen von selbst; „Zusammenfassen“ erstellt sie neu. Es liest nur Seiten, die für "
@@ -495,12 +495,16 @@ final class SourceUpdatesView extends JPanel {
     }
 
     /**
-     * Vorgewählt ist „die letzte Änderung“ (Angelo): das jüngste abgeschlossene Update mit Änderungen in der Ebene,
-     * keine Erstbefüllung; sonst das jüngste abgeschlossene; nur wenn es keines gibt, „Seit dem letzten Update“
-     * (ADR-0030-Nachtrag, offener Punkt 2, Auflage des Architekten vom 17.11.2026).
+     * Vorgewählt ist „die letzte Änderung“ (Angelo): „Seit dem letzten Update“, wenn es dort Änderungen gibt (Angelo,
+     * 22.11.2026: das Neueste zuerst, nicht die Vergangenheit); sonst das jüngste abgeschlossene Update mit Änderungen
+     * in der Ebene, keine Erstbefüllung; sonst das jüngste abgeschlossene; sonst „Seit dem letzten Update“
+     * (ADR-0030-Nachtrag, offener Punkt 2). Nach der nächsten manuellen Synchronisierung ist das offene leer und fällt
+     * weg; dann ist das neue Update mit seinem Datum vorgewählt.
      */
     static String preselected(List<ChangeUpdate> in) {
-        return in.stream().filter(update -> !update.open() && !update.initial() && update.pages() > 0).findFirst()
+        return in.stream().filter(update -> update.open() && !update.initial() && update.pages() > 0).findFirst()
+                .or(() -> in.stream().filter(update -> !update.open() && !update.initial() && update.pages() > 0)
+                        .findFirst())
                 .or(() -> in.stream().filter(update -> !update.open()).findFirst())
                 .or(() -> in.stream().findFirst()).map(ChangeUpdate::id).orElse(null);
     }

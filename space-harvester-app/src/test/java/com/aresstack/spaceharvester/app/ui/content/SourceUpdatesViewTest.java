@@ -71,12 +71,14 @@ class SourceUpdatesViewTest {
                 "10.11.2026, 08:00 · angelo");
         assertThat(view.counts(actions.open())).isEqualTo("Änderungen seit dem letzten manuellen Update: 1 neu");
         assertThat(view.counts(actions.initial())).isEqualTo("Erstbefüllung · 340 Seiten");
-        assertThat(view.selectedUpdate()).as("das jüngste abgeschlossene gewählt").isEqualTo(actions.second().id());
+        assertThat(view.selectedUpdate()).as("mit Änderungen seither ist das offene gewählt (Angelo, 22.11.2026)")
+                .isEqualTo(ChangeUpdate.OPEN);
         assertThat(view.subscribed()).isTrue();
     }
 
     @Test
     void behindTheRedLineTheCircleArrowsRetryTheFailedSyncsOfTheLatestUpdate() {
+        actions.withOpen = false;
         actions.failed = 2;
         actions.failedSpaces = List.of("DEV");
         List<String> retried = new ArrayList<>();
@@ -99,6 +101,7 @@ class SourceUpdatesViewTest {
 
     @Test
     void withoutARetryHandlerOnlyTheRedLineStands() {
+        actions.withOpen = false;
         actions.failed = 1;
         view.source("wiki", "Confluence HaVdB");
 
@@ -136,8 +139,26 @@ class SourceUpdatesViewTest {
     }
 
     @Test
-    void thePreselectionIsTheLatestUpdateWithChangesNotAnEmptyOneOrTheInitialFill() {
+    void thePreselectionIsSinceTheLastUpdateWhenItHasChanges() {
         ChangeUpdate open = actions.open();
+        ChangeUpdate changed = actions.second();
+        ChangeUpdate initial = actions.initial();
+
+        assertThat(open.pages()).isPositive();
+        assertThat(SourceUpdatesView.preselected(List.of(open, changed, initial)))
+                .as("das Neueste zuerst, nicht die Vergangenheit").isEqualTo(ChangeUpdate.OPEN);
+        assertThat(SourceUpdatesView.preselected(List.of(changed, initial)))
+                .as("nach der Synchronisierung das neue Update").isEqualTo(changed.id());
+    }
+
+    private static ChangeUpdate noChanges(ChangeUpdate open) {
+        return new ChangeUpdate(open.id(), open.sourceId(), open.from(), open.to(), open.mark(), open.initial(),
+                Map.of(), Map.of(), 0, 0, 0, false);
+    }
+
+    @Test
+    void thePreselectionIsTheLatestUpdateWithChangesNotAnEmptyOneOrTheInitialFill() {
+        ChangeUpdate open = noChanges(actions.open());
         ChangeUpdate changed = actions.second();
         ChangeUpdate initial = actions.initial();
         ChangeUpdate empty = new ChangeUpdate("leer", "wiki", changed.to(), changed.to().plusSeconds(3600),
@@ -175,6 +196,7 @@ class SourceUpdatesViewTest {
 
     @Test
     void aMessageBetweenClickAndAnswerDoesNotDropTheNextPages() throws Exception {
+        actions.withOpen = false;
         List<Runnable> waiting = new ArrayList<>();
         SourceUpdatesView slow = new SourceUpdatesView(() -> actions, new SourceUpdatesView.Runner() {
             @Override
@@ -316,16 +338,16 @@ class SourceUpdatesViewTest {
         assertThat(view.sky().navigation().chapters()).extracting(Navigation.Section::label)
                 .as("das älteste links, das jüngste rechts")
                 .containsExactly("10.11.2026, 08:00 · angelo", "16.11.2026, 18:30 · angelo", "Seit dem letzten Update");
-        assertThat(view.markedUpdate()).as("standardmäßig das jüngste abgeschlossene Update")
-                .isEqualTo(actions.second().id());
+        assertThat(view.markedUpdate()).as("mit Änderungen seither standardmäßig „Seit dem letzten Update“")
+                .isEqualTo(ChangeUpdate.OPEN);
         assertThat(view.sky().dashedForTest(2)).as("„Seit dem letzten Update“ gestrichelt").isTrue();
         assertThat(view.sky().dashedForTest(1)).isFalse();
         assertThat(view.paleClouds()).as("Erstbefüllung blass").containsExactly("10.11.2026, 08:00 · angelo");
         assertThat(view.cloudTooltip("16.11.2026, 18:30 · angelo")).as("der Tooltip nennt auch die Zahlen")
                 .isEqualTo("16.11.2026, 18:30 · angelo · " + view.counts(actions.second()));
 
-        assertThat(view.clickUpdate("Seit dem letzten Update")).isTrue();
-        assertThat(view.markedUpdate()).isEqualTo(view.selectedUpdate()).isEqualTo(ChangeUpdate.OPEN);
+        assertThat(view.clickUpdate("16.11.2026, 18:30 · angelo")).isTrue();
+        assertThat(view.markedUpdate()).isEqualTo(view.selectedUpdate()).isEqualTo(actions.second().id());
 
         summary.source("wiki", "Confluence HaVdB");
         summary.select(view.selectedUpdate());
@@ -430,6 +452,7 @@ class SourceUpdatesViewTest {
 
     @Test
     void openingTheReadingViewCreatesTheMissingSummaryByItselfOnceAndSaysSo() throws Exception {
+        actions.withOpen = false;
         summary.source("wiki", "Confluence HaVdB");
 
         assertThat(summary.selectedUpdate()).isEqualTo(actions.second().id());
@@ -468,6 +491,7 @@ class SourceUpdatesViewTest {
 
     @Test
     void summarizingRunsAsAJobAndShowsTheSummaryAboveTheKindsWithLinksToItsPages() throws Exception {
+        actions.withOpen = false;
         summary.source("wiki", "Confluence HaVdB");
         summary.clickUpdate("16.11.2026, 18:30 · angelo");
 
@@ -540,6 +564,7 @@ class SourceUpdatesViewTest {
 
     @Test
     void whenTheDailyUpdateChangesItsIdTheQuietRunCoversTheNewIdWithoutARing() throws Exception {
+        actions.withOpen = false;
         actions.stored = new UpdateSummary("wiki", actions.second().id(), "Bisher: eine Seite geändert.",
                 List.of(), "gpt-test", SECOND, 0, false);
         summary.source("wiki", "Confluence HaVdB");
@@ -565,6 +590,7 @@ class SourceUpdatesViewTest {
 
     @Test
     void aSummaryTheCoreDiscardedForTheSameUpdateIsNotKeptOnScreen() throws Exception {
+        actions.withOpen = false;
         actions.stored = new UpdateSummary("wiki", actions.second().id(), "Vertraulich bisher.", List.of(),
                 "gpt-test", SECOND, 0, false);
         summary.source("wiki", "Confluence HaVdB");
@@ -774,6 +800,7 @@ class SourceUpdatesViewTest {
 
     @Test
     void cancellingEndsTheJobAndKeepsThePreviousSummary() throws Exception {
+        actions.withOpen = false;
         summary.source("wiki", "Confluence HaVdB");
         summary.clickUpdate("16.11.2026, 18:30 · angelo");
         summary.clickSummarize();
@@ -789,6 +816,7 @@ class SourceUpdatesViewTest {
 
     @Test
     void aFailedJobSaysWhyAndOffersItAgain() throws Exception {
+        actions.withOpen = false;
         summary.source("wiki", "Confluence HaVdB");
         summary.clickUpdate("16.11.2026, 18:30 · angelo");
         summary.clickSummarize();
@@ -967,6 +995,8 @@ class SourceUpdatesViewTest {
         /** Die Ebenen der Abfragen, in Reihenfolge; {@code null} die ganze Quelle. */
         final List<String> levels = new ArrayList<>();
         String summarizedLevel = "nie";
+        /** Ob es Änderungen „Seit dem letzten Update“ gibt; ohne sie ist das jüngste abgeschlossene vorgewählt. */
+        boolean withOpen = true;
 
         @Override
         public List<ChangeUpdate> updates(String sourceId, String spaceKey) {
@@ -978,7 +1008,7 @@ class SourceUpdatesViewTest {
                 return List.of(new ChangeUpdate(s.id(), s.sourceId(), s.from(), s.to(), s.mark(), false, Map.of(),
                         Map.of(), 0, 0, 0, false), initial());
             }
-            return none ? List.of() : List.of(open(), second(), initial());
+            return none ? List.of() : withOpen ? List.of(open(), second(), initial()) : List.of(second(), initial());
         }
 
         @Override
