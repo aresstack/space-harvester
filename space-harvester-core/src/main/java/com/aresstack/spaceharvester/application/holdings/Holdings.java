@@ -208,6 +208,7 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(selection, "selection");
         Map<String, Set<String>> pages = new LinkedHashMap<>();
+        Map<String, Set<String>> locked = new LinkedHashMap<>();
         Map<Space, SpaceSummary> spaces = new LinkedHashMap<>();
         HoldingCounts counts = HoldingCounts.ZERO;
         boolean complete = true;
@@ -220,11 +221,15 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
                 for (Map.Entry<String, HoldingState> page : resolved.pages().entrySet()) {
                     if (selected.add(page.getKey())) {
                         counts = counts.plus(HoldingCounts.of(page.getValue()));
+                        if (page.getValue() == HoldingState.LOCKED) {
+                            locked.computeIfAbsent(root.sourceId(), id -> new HashSet<>()).add(page.getKey());
+                        }
                     }
                 }
             }
         }
-        return new PageSelection(PageSet.of(pages), counts, List.copyOf(spaces.values()), complete);
+        return new PageSelection(PageSet.of(pages), counts, List.copyOf(spaces.values()), complete,
+                PageSet.of(locked));
     }
 
     /**
@@ -233,7 +238,8 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
      * fragen damit beim Anzeigen über ihre Unterseiten ab; nichts wird in die Elternseite kopiert, eine Änderung einer
      * Unterseite ist beim nächsten Abfragen von selbst dabei. Leer, wenn die Seite keine sichtbaren Unterseiten hat oder
      * nicht im Katalog steht; {@link PageSelection#complete()} sagt wie bei {@link #resolve}, ob der Teilbaum
-     * lückenlos ist. Die Zähler zählen nur die Nachfahren.
+     * lückenlos ist. Die Zähler zählen nur die Nachfahren; {@link PageSelection#locked()} nennt die gesperrten unter
+     * ihnen.
      *
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wie {@link #resolve}
      * @throws UnknownSourceException wie {@link #resolve}
@@ -243,15 +249,110 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         Selection.Root root = Selection.Root.subtree(sourceId, spaceKey, pageId);
         Resolved resolved = resolve(caller, root.sourceId(), root.spaceKey(), root.pageId());
         Set<String> below = new HashSet<>();
+        Set<String> locked = new HashSet<>();
         HoldingCounts counts = HoldingCounts.ZERO;
         for (Map.Entry<String, HoldingState> page : resolved.pages().entrySet()) {
             if (!page.getKey().equals(pageId) && below.add(page.getKey())) {
                 counts = counts.plus(HoldingCounts.of(page.getValue()));
+                if (page.getValue() == HoldingState.LOCKED) {
+                    locked.add(page.getKey());
+                }
             }
         }
         Map<String, Set<String>> pages = below.isEmpty() ? Map.of() : Map.of(sourceId, below);
         return new PageSelection(PageSet.of(pages), counts, List.of(resolved.summary()),
-                resolved.summary().inventoried() && resolved.found());
+                resolved.summary().inventoried() && resolved.found(),
+                PageSet.of(locked.isEmpty() ? Map.of() : Map.of(sourceId, locked)));
+    }
+
+    /**
+     * Space und Bestand je Seite einer Menge, nach derselben Regel wie {@link #state} (für den Planer, Fahrplan D1, und
+     * {@code StatementAnalysisJobs#missing}). Ohne Quellenzugriff. Seiten ohne gespeicherten Kopf (etwa gelistet, aber
+     * beim ersten Abruf gescheitert) findet sie im Bestand der Spaces der Quelle. Es fehlen Seiten, die kein Bestand
+     * nennt, in Spaces ohne {@code metadata}-Freigabe und solche, die der Aufrufer nicht sehen darf.
+     */
+    public Map<PageKey, Located> locate(AccessContext caller, PageSet pages) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(pages, "pages");
+        Map<PageKey, Located> located = new LinkedHashMap<>();
+        for (String sourceId : pages.sourceIds()) {
+            Map<String, List<String>> bySpace = new LinkedHashMap<>();
+            Set<String> unplaced = new LinkedHashSet<>();
+            for (String pageId : pages.pagesOf(sourceId)) {
+                Optional<String> spaceKey = catalog.spaceOf(sourceId, pageId);
+                if (spaceKey.isPresent()) {
+                    bySpace.computeIfAbsent(spaceKey.get(), ignored -> new ArrayList<>()).add(pageId);
+                } else {
+                    unplaced.add(pageId);
+                }
+            }
+            Map<String, Optional<HoldingsCatalog.Stock>> stocks = new HashMap<>();
+            for (Map.Entry<String, List<String>> space : bySpace.entrySet()) {
+                locateIn(caller, sourceId, space.getKey(), space.getValue(), stocks, located);
+            }
+            if (!unplaced.isEmpty()) {
+                // Ohne Kopf: zuerst in den schon gelesenen Spaces suchen, dann in den übrigen der Quelle.
+                Set<String> spaceKeys = new LinkedHashSet<>(bySpace.keySet());
+                spaceKeys.addAll(catalog.spaceKeys(sourceId));
+                for (String spaceKey : spaceKeys) {
+                    if (unplaced.isEmpty()) {
+                        break;
+                    }
+                    unplaced.removeAll(locateIn(caller, sourceId, spaceKey, List.copyOf(unplaced), stocks, located));
+                }
+            }
+        }
+        return located;
+    }
+
+    /**
+     * Ordnet {@code pageIds} im Bestand eines Spaces ein ({@link #locate}).
+     *
+     * @return die Seiten, die dieser Bestand nennt, auch die der Aufrufer nicht sehen darf
+     */
+    private Set<String> locateIn(AccessContext caller, String sourceId, String spaceKey, List<String> pageIds,
+                                 Map<String, Optional<HoldingsCatalog.Stock>> stocks, Map<PageKey, Located> located) {
+        if (!access.permits(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA)) {
+            return Set.of();
+        }
+        Optional<HoldingsCatalog.Stock> found = stocks.computeIfAbsent(spaceKey,
+                key -> catalog.stock(sourceId, key));
+        if (found.isEmpty()) {
+            return Set.of();
+        }
+        HoldingsCatalog.Stock stock = found.get();
+        Map<String, HoldingsCatalog.CatalogPage> byId = new HashMap<>();
+        stock.pages().forEach(page -> byId.putIfAbsent(page.pageId(), page));
+        Set<String> locked = new HashSet<>();
+        stock.locked().forEach(page -> locked.add(page.pageId()));
+        Set<String> named = new HashSet<>();
+        for (String pageId : pageIds) {
+            HoldingsCatalog.CatalogPage page = byId.get(pageId);
+            HoldingState state = page != null ? state(page, stock.stale())
+                    : locked.contains(pageId) ? HoldingState.LOCKED : null;
+            if (state == null) {
+                continue;
+            }
+            named.add(pageId);
+            if (visible(caller, sourceId, spaceKey, pageId)) {
+                located.put(new PageKey(sourceId, pageId), new Located(spaceKey, state));
+            }
+        }
+        return named;
+    }
+
+    /**
+     * Space und Bestand einer Seite ({@link #locate}).
+     *
+     * @param spaceKey ihr Space
+     * @param state    ihr Zustand im Bestand
+     */
+    public record Located(String spaceKey, HoldingState state) {
+
+        public Located {
+            Objects.requireNonNull(spaceKey, "spaceKey");
+            Objects.requireNonNull(state, "state");
+        }
     }
 
     /** Die Spaces einer Wurzel: ihr eigener oder alle der Quelle, die der Aufrufer sehen darf. */

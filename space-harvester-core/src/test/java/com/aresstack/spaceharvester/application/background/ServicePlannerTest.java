@@ -214,6 +214,28 @@ class ServicePlannerTest {
     }
 
     @Test
+    void aPausedPartOfAnotherGroupIsNotReusedAsPredecessor() {
+        // Nachprüfung #1052: Sonst wartete das neue Ziel, bis jemand die fremde, angehaltene Gruppe fortsetzt.
+        Jobs jobs = jobs();
+        BackgroundJobs background = background(jobs);
+        BackgroundGroup earlier = background.start("pre", "Früher", List.of(new BackgroundPart.Draft("wiki",
+                "ALPHA", Map.of(AnalysisService.PAGES, "a1"))));
+        background.pause(earlier.groupId());
+        executor.runAll();
+        assertThat(jobs.status(earlier.parts().get(0).id()).state()).isEqualTo(JobState.PAUSED);
+        missing.put("pre", missingIn(ALPHA));
+
+        BackgroundGroup group = planner(background).start(CALLER, "goal", PAGES).group().orElseThrow();
+
+        JobStatus pre = part(group, "pre", "ALPHA");
+        assertThat(pre.id()).as("ein eigener Teil statt des angehaltenen").isNotEqualTo(earlier.parts().get(0).id());
+        assertThat(part(group, "goal", "ALPHA").parameter(Jobs.AFTER)).isEqualTo(pre.id());
+        executor.runAll();
+        assertThat(ran).containsSubsequence("pre:ALPHA", "goal:ALPHA");
+        assertThat(jobs.status(earlier.parts().get(0).id()).state()).isEqualTo(JobState.PAUSED);
+    }
+
+    @Test
     void aPausedPrerequisiteHoldsOnlyItsSpaceAndResumingKeepsTheOrder() {
         Jobs jobs = jobs();
         BackgroundJobs background = background(jobs);
@@ -494,5 +516,25 @@ class ServicePlannerTest {
         executor.runAll();
 
         assertThat(ran).containsExactly("sync");
+    }
+
+    @Test
+    void theServiceFixesItsParametersOnceForAllPartsAndThePagesStayThePlanners() {
+        Jobs jobs = jobs();
+        BackgroundJobs background = background(jobs);
+        ServicePlanner planner = planner(background);
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        planner.register(new AnalysisService("goal", "Ziel", start("goal"), List.of("pre"), "goal",
+                (caller, pages) -> MissingPages.NONE, caller -> Map.of("owner", caller.jobOwner(),
+                "run", Integer.toString(asked.incrementAndGet()), AnalysisService.PAGES, "fremd")));
+
+        BackgroundGroup group = planner.start(CALLER, "goal", PAGES).group().orElseThrow();
+
+        assertThat(group.parts()).hasSize(2).allSatisfy(status -> {
+            assertThat(status.parameter("owner")).isEqualTo(CALLER.jobOwner());
+            assertThat(status.parameter("run")).as("einmal je Start, für alle Spaces gleich").isEqualTo("1");
+        });
+        assertThat(part(group, "goal", "ALPHA").parameter(AnalysisService.PAGES)).isEqualTo("a1\na2");
+        assertThat(part(group, "goal", "BETA").parameter(AnalysisService.PAGES)).isEqualTo("b1");
     }
 }

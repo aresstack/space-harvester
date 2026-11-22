@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -27,6 +28,7 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
+import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
@@ -149,13 +151,19 @@ class WorkspaceTest {
             assertThat(in.readAllBytes()).hasSize((int) first.bytes());
         }
 
-        // Anreicherung und Bilder sind eigene Folgeaufträge und stehen mit in der Liste.
+        // Anreicherung und Bilder sind eigene Folgeaufträge und stehen mit in der Liste; Hintergrundaufträge haben
+        // ihren eigenen Reiter und werden unten geprüft.
         assertThat(workspace.jobs()).extracting(JobStatus::type).contains(JobType.ENRICHMENT)
-                .filteredOn(type -> !type.followUp()).containsExactly(JobType.EXPORT, JobType.SYNC);
+                .filteredOn(type -> !type.followUp() && !type.background())
+                .containsExactly(JobType.EXPORT, JobType.SYNC);
         // Erst wenn auch die Folgeaufträge fertig sind, liegt alles auf der Platte, was zu durchsuchen ist.
         for (JobStatus listed : workspace.jobs()) {
             assertThat(await(workspace, listed).state().terminal()).isTrue();
         }
+        // Die Synonymerkennung nach der Anreicherung läuft sichtbar als Hintergrundauftrag (#1052).
+        assertThat(workspace.jobs()).filteredOn(entry -> entry.type().background())
+                .extracting(entry -> entry.parameter(BackgroundJobs.TITLE))
+                .contains(SynonymDiscovery.BACKGROUND_TITLE);
         assertThat(CONFLUENCE.requestHeaders()).anySatisfy(headers ->
                 assertThat(headers.values()).contains("Bearer " + TOKEN));
         assertNoFileContains(home, TOKEN);
@@ -931,6 +939,92 @@ class WorkspaceTest {
         assertThat(workspace.deleteAllJobs(List.of(sync.id()))).isEqualTo(1);
         assertThat(workspace.jobs()).extracting(JobStatus::id).containsAll(group.jobIds())
                 .doesNotContain(sync.id());
+    }
+
+    /**
+     * AT zu #1059: Die Teile der Aussagenanalyse gehören dem Core. Wer lesen, aber nicht abgleichen darf, sieht sie in
+     * der Auftragsliste nicht ({@code sync}); das Ergebnis im Reiter „Aussagen“ liest er trotzdem, und verfolgen und
+     * abbrechen geht ohne Fehler.
+     */
+    @Test
+    void theOutcomeOfAStatementGroupIsReadWithoutTheRightToSync() throws Exception {
+        AppRuntime started = start();
+        var harvester = started.harvester();
+        String space = "DEV";
+        var background = harvester.backgroundJobs();
+        var group = background.start(com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId(),
+                com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.KIND, "Aussagen analysieren",
+                List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", space,
+                        Map.of(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.SCOPE, "space",
+                                com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.ANALYZER,
+                                "model", // ohne KI-Freigabe lässt er jede Seite bewusst aus
+                                com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.OWNER,
+                                com.aresstack.spaceharvester.application.access.AccessContext.technicalClient(
+                                        com.aresstack.spaceharvester.core.Harvester.OWNER).jobOwner()))));
+        String partId = group.parts().get(0).id();
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
+        while (!harvester.jobs().status(partId).state().terminal() && Instant.now().isBefore(deadline)) {
+            Thread.sleep(50);
+        }
+        var finished = background.group(group.groupId()).orElseThrow();
+        assertThat(finished.finished()).isTrue();
+        Workspace readOnly = new Workspace(harvester,
+                new com.aresstack.spaceharvester.application.access.AccessGuard((context, scope, kind) ->
+                        kind == com.aresstack.spaceharvester.application.access.AccessKind.SYNC
+                                ? com.aresstack.spaceharvester.application.access.AccessDecision.DENY
+                                : com.aresstack.spaceharvester.application.access.AccessDecision.ALLOW),
+                new ActivityLog(home.resolve("nur-lesen.txt")));
+
+        assertThatThrownBy(() -> readOnly.events(partId)).as("so las der Reiter vorher")
+                .isInstanceOf(com.aresstack.spaceharvester.application.jobs.UnknownJobException.class);
+        long omitted = com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.omitted(
+                harvester.jobs().events(partId));
+        assertThat(omitted).as("ausgelassene Seiten stehen in den Ereignissen").isPositive();
+        assertThat(readOnly.statementGroupOmitted(finished)).as("ohne sync gelesen").isEqualTo(omitted);
+        Workspace blind = new Workspace(harvester,
+                new com.aresstack.spaceharvester.application.access.AccessGuard((context, scope, kind) ->
+                        kind == com.aresstack.spaceharvester.application.access.AccessKind.METADATA
+                                ? com.aresstack.spaceharvester.application.access.AccessDecision.DENY
+                                : com.aresstack.spaceharvester.application.access.AccessDecision.ALLOW),
+                new ActivityLog(home.resolve("blind.txt")));
+        assertThat(blind.statementGroupOmitted(finished)).as("ohne metadata nichts").isZero();
+        readOnly.cancelStatementGroup(group.groupId()); // fertig: nichts zu tun, kein Fehler
+
+        // Ein wartender Teil (hinter einem blockierten Vorgänger) lässt sich ohne sync abbrechen.
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        background.register(new com.aresstack.spaceharvester.application.background.BackgroundKind("probe",
+                part -> com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+                    try {
+                        release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                })));
+        var probe = background.start(com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId(),
+                "probe", "Probe", List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart
+                        .Draft("wiki", space)));
+        var held = background.startSteps(com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId(),
+                com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.KIND, "Aussagen analysieren",
+                List.of(new com.aresstack.spaceharvester.application.background.BackgroundJobs.Step(
+                        com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.KIND, "Aussagen",
+                        new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", space,
+                                Map.of(com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.SCOPE,
+                                        "space")),
+                        List.of(probe.parts().get(0).id()), List.of(), List.of("Probe"))));
+        String heldId = held.parts().get(0).id();
+        assertThat(harvester.jobs().status(heldId).state().terminal()).isFalse();
+        readOnly.cancelStatementGroup(held.groupId());
+        release.countDown();
+        Instant cancelled = Instant.now().plus(Duration.ofSeconds(30));
+        while (!harvester.jobs().status(heldId).state().terminal() && Instant.now().isBefore(cancelled)) {
+            Thread.sleep(50);
+        }
+        assertThat(harvester.jobs().status(heldId).state()).isEqualTo(JobState.CANCELLED);
+        java.util.concurrent.CompletableFuture<Boolean> onEdt = new java.util.concurrent.CompletableFuture<>();
+        try (var watch = readOnly.watchBackground(group.groupId(),
+                seen -> onEdt.complete(javax.swing.SwingUtilities.isEventDispatchThread() && seen.finished()))) {
+            assertThat(onEdt.get(10, java.util.concurrent.TimeUnit.SECONDS)).as("jetziger Stand auf dem EDT").isTrue();
+        }
     }
 
     private AppRuntime start() throws Exception {

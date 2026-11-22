@@ -256,6 +256,19 @@ public class KnowledgeGraph {
     }
 
     /**
+     * Ob der Aufrufer den Inhalt der Seite lesen darf ({@link AccessGuard#canRead}), gleich ob sie analysiert ist; der
+     * Space aus dem Bestand, sonst {@code spaceKey}. Für Listen von Seiten „ohne Analyse“: Sie nennen nur Seiten, die
+     * der Aufrufer lesen darf, denn {@link #page} unterscheidet „nicht analysiert“ nicht von „nicht lesbar“.
+     */
+    public boolean readable(AccessContext caller, PageKey key, String spaceKey) {
+        if (!activeSources.test(key.sourceId())) {
+            return false;
+        }
+        String space = snapshots.apply(key).map(PageSnapshot::spaceKey).orElse(spaceKey);
+        return access.canRead(caller, key.sourceId(), space, key.pageId());
+    }
+
+    /**
      * Ein sichtbares analysiertes Dokument: Seite, Anhang oder enthaltene Datei (ADR 0026, Punkt 10). Leer ohne Analyse
      * oder ohne Leserecht auf die Seite (nicht unterscheidbar); ein Dokument hat die Rechte seiner Seite.
      */
@@ -343,15 +356,62 @@ public class KnowledgeGraph {
 
     /** Wie oben für ein Dokument; Ziele sind alle anderen sichtbaren Dokumente, auch die derselben Seite. */
     public List<Link> links(AccessContext caller, DocumentKey document) {
-        PageKey key = document.page();
-        Optional<AnalysedPage> origin = page(caller, document);
-        if (origin.isEmpty()) {
-            return List.of();
+        return links(caller, List.of(document), target -> true).getOrDefault(document, List.of());
+    }
+
+    /**
+     * Wie {@link #links(AccessContext, DocumentKey)} für mehrere Dokumente auf einmal, etwa eine Seite samt Unterseiten
+     * (W4): <em>ein</em> Durchgang über die sichtbaren Dokumente für alle, nicht einer je Dokument. {@code targets}
+     * grenzt die Ziele vorab ein (etwa auf die Menge); nur zugelassene Ziele werden überhaupt verglichen.
+     *
+     * @return je Dokument mit Analyse und Leserecht seine Verbindungen in derselben Reihenfolge wie einzeln abgefragt;
+     *         Dokumente ohne Analyse oder ohne Leserecht fehlen
+     */
+    public Map<DocumentKey, List<Link>> links(AccessContext caller, java.util.Collection<DocumentKey> documents,
+                                              Predicate<PageRef> targets) {
+        Objects.requireNonNull(targets, "targets");
+        Map<DocumentKey, Wanted> origins = new LinkedHashMap<>();
+        for (DocumentKey document : documents) {
+            if (origins.containsKey(document)) {
+                continue;
+            }
+            Optional<AnalysedPage> origin = page(caller, document);
+            if (origin.isEmpty()) {
+                continue;
+            }
+            origins.put(document, wanted(caller, document.page(), origin.get().analysis()));
         }
-        Map<String, List<String>> own = keys(origin.get().analysis());
-        if (own.isEmpty()) {
-            return List.of();
+        Map<DocumentKey, List<Link>> links = new LinkedHashMap<>();
+        origins.keySet().forEach(document -> links.put(document, new ArrayList<>()));
+        if (origins.values().stream().allMatch(wanted -> wanted.match().isEmpty())) {
+            return links;
         }
+        for (AnalysedPage target : visible(caller)) {
+            if (!targets.test(target.page())) {
+                continue;
+            }
+            Map<String, List<String>> there = null;
+            for (Map.Entry<DocumentKey, Wanted> origin : origins.entrySet()) {
+                if (target.page().document().equals(origin.getKey()) || origin.getValue().match().isEmpty()) {
+                    continue;
+                }
+                there = there == null ? keys(target.analysis()) : there;
+                for (Map.Entry<String, Match> entry : origin.getValue().match().entrySet()) {
+                    List<String> targetMentions = there.get(entry.getKey());
+                    if (targetMentions != null) {
+                        links.get(origin.getKey()).add(new Link(entry.getKey(), entry.getValue(),
+                                origin.getValue().mentions().get(entry.getKey()), target.page(), targetMentions));
+                    }
+                }
+            }
+        }
+        links.replaceAll((document, found) -> List.copyOf(found));
+        return links;
+    }
+
+    /** Die gesuchten Begriffe eines Dokuments: eigene Grundformen, dann bestätigte Beziehungen, je mit Erwähnungen. */
+    private Wanted wanted(AccessContext caller, PageKey key, PageStatementAnalysis analysis) {
+        Map<String, List<String>> own = keys(analysis);
         Map<String, Match> wanted = new LinkedHashMap<>();
         Map<String, List<String>> mentionsByWanted = new LinkedHashMap<>();
         own.forEach((term, ids) -> {
@@ -371,21 +431,11 @@ public class KnowledgeGraph {
                 }
             }
         });
-        List<Link> links = new ArrayList<>();
-        for (AnalysedPage target : visible(caller)) {
-            if (target.page().document().equals(document)) {
-                continue;
-            }
-            Map<String, List<String>> there = keys(target.analysis());
-            for (Map.Entry<String, Match> entry : wanted.entrySet()) {
-                List<String> targetMentions = there.get(entry.getKey());
-                if (targetMentions != null) {
-                    links.add(new Link(entry.getKey(), entry.getValue(), mentionsByWanted.get(entry.getKey()),
-                            target.page(), targetMentions));
-                }
-            }
-        }
-        return links;
+        return new Wanted(wanted, mentionsByWanted);
+    }
+
+    /** Gesuchte Begriffe eines Ausgangsdokuments mit Art der Verbindung und den eigenen Erwähnungen je Begriff. */
+    private record Wanted(Map<String, Match> match, Map<String, List<String>> mentions) {
     }
 
     /**

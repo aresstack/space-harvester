@@ -384,7 +384,7 @@ final class OverallProgress {
         if (typical != null) {
             return typical;
         }
-        return priorSize(job.type()) * (job.type() == JobType.EXPORT ? 1 + EXPORT_SHARE : 1);
+        return priorSize(Texts.kind(job)) * (job.type() == JobType.EXPORT ? 1 + EXPORT_SHARE : 1);
     }
 
     /**
@@ -392,7 +392,7 @@ final class OverallProgress {
      * anderen ab ihrem Start; misst ein Auftrag gerade nicht, gilt sein zuletzt gemessenes Tempo.
      */
     double perUnit(JobStatus job, Instant now, Function<JobType, Duration> averages) {
-        double prior = priorSeconds(job.type(), averages);
+        double prior = priorSeconds(Texts.kind(job), averages);
         if (job.type().download()) {
             Loading since = loading.get(job.id());
             if (since == null) {

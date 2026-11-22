@@ -14,8 +14,16 @@ import java.util.function.Function;
  *                   in Quelle, Space und {@link BackgroundPart#parameters()} steht
  * @param autoResume ob unterbrochene Unteraufträge dieser Art jetzt von selbst weiterlaufen sollen, etwa nur bei
  *                   eingeschalteter Automatik und eingestelltem Modell; zur Laufzeit gefragt
+ * @param exclusive  höchstens ein offener (wartender, angehaltener oder laufender) Unterauftrag je Quelle und Space,
+ *                   für Arten, deren Teil seine Arbeit allein aus dem Bestand bestimmt und die neue Teile nur mit
+ *                   {@link BackgroundJobs#startUnlessRunning} starten (Abnahme #1052): Fortsetzen lehnt
+ *                   {@link BackgroundJobs#resumeJob} dann ab, solange ein anderer offen ist, und nach einem Neustart
+ *                   setzt {@link BackgroundJobs#resumeInterrupted} nur den jüngsten unterbrochenen fort. Nicht für
+ *                   Arten mit {@link BackgroundJobs#startUnlessWaiting}: Dort dürfen ein laufender und ein wartender
+ *                   Teil nebeneinander stehen, und nach „Alle anhalten“ sperrten sich beide beim Fortsetzen gegenseitig
  */
-public record BackgroundKind(String id, Function<BackgroundPart, JobTask> work, BooleanSupplier autoResume) {
+public record BackgroundKind(String id, Function<BackgroundPart, JobTask> work, BooleanSupplier autoResume,
+                             boolean exclusive) {
 
     public BackgroundKind {
         Objects.requireNonNull(id, "id");
@@ -26,8 +34,19 @@ public record BackgroundKind(String id, Function<BackgroundPart, JobTask> work, 
         Objects.requireNonNull(autoResume, "autoResume");
     }
 
+    /** Eine Art, von der je Quelle und Space mehrere Unteraufträge offen sein dürfen. */
+    public BackgroundKind(String id, Function<BackgroundPart, JobTask> work, BooleanSupplier autoResume) {
+        this(id, work, autoResume, false);
+    }
+
     /** Eine Art, deren unterbrochene Unteraufträge immer von selbst weiterlaufen. */
     public BackgroundKind(String id, Function<BackgroundPart, JobTask> work) {
         this(id, work, () -> true);
+    }
+
+    /** Eine Art mit höchstens einem offenen Unterauftrag je Quelle und Space ({@link #exclusive()}). */
+    public static BackgroundKind exclusive(String id, Function<BackgroundPart, JobTask> work,
+                                           BooleanSupplier autoResume) {
+        return new BackgroundKind(id, work, autoResume, true);
     }
 }

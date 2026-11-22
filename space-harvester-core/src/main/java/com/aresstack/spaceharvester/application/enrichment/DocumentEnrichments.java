@@ -8,21 +8,33 @@ import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.assets.IndexedDocuments;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.assets.StoredExtraction;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
+import com.aresstack.spaceharvester.application.background.BackgroundKind;
+import com.aresstack.spaceharvester.application.background.BackgroundPart;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobListener;
+import com.aresstack.spaceharvester.application.jobs.JobStage;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
+import com.aresstack.spaceharvester.application.observe.Coalescer;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.HashSet;
@@ -43,10 +55,13 @@ import java.util.stream.Stream;
 /**
  * Analysen je Anhang und enthaltener Datei (ADR 0026, AP9a): Liegt ein Dokument-Anhang neu oder geändert im
  * Volltextindex, rechnen die Prozessoren mit {@link EnrichmentProcessor#documents()} je abgelegtem Abschnitt, Eingabe
- * {@link DocumentSectionText}. Gerechnet wird im selben Mechanismus wie für Seiten: als Auftrag
- * {@link JobType#ENRICHMENT} der Quelle und des Space, sichtbar, anhaltbar und abbrechbar wie dort, kein zweiter
- * Hintergrundweg. Der Auftrag nimmt alle bis dahin gemeldeten Anhänge seiner Partition mit; ein weiterer entsteht erst,
- * wenn er fertig ist.
+ * {@link DocumentSectionText}. Gerechnet wird als Hintergrundauftrag „{@value #BACKGROUND_TITLE}“ (ADR 0025
+ * Nachtrag, {@link #background}) mit höchstens einem offenen Teil je Quelle und Space, sichtbar im Reiter
+ * „Hintergrund“, anhaltbar und abbrechbar; der Teil bestimmt seine Arbeit allein aus dem Bestand, eine Meldung und die
+ * Anreicherung nach einem Abgleich ({@link #afterSync}) vermerken nur, dass es Arbeit gibt. Ohne Hintergrundaufträge
+ * (Dienst) als Auftrag {@link JobType#ENRICHMENT} der Quelle und des
+ * Space, der alle bis dahin gemeldeten Anhänge seiner Partition mitnimmt; ein weiterer entsteht erst, wenn er fertig
+ * ist.
  *
  * <ul>
  *   <li>Nur Dokumente und Teile mit Status {@code OK} oder {@code PARTIAL} ({@link DocumentExtractions#documentSections});
@@ -59,14 +74,30 @@ import java.util.stream.Stream;
  *   <li>Abgeschaltet ({@code enabled} liefert {@code false}) entsteht nichts Neues; vorhandene Ergebnisse bleiben
  *       lesbar.</li>
  *   <li>Nach Abbruch oder Anhalten bleiben die übrigen Anhänge gemeldet und laufen mit dem nächsten Auftrag der
- *       Partition.</li>
+ *       Partition; ein angehaltener Hintergrundteil rechnet sie beim Fortsetzen, auch nach einem Neustart. Ein
+ *       abgebrochener Hintergrundteil startet keinen neuen: erst ein neuer Anlass, etwa der nächste Abgleich des Space.
+ *       Vermerke, aus denen noch kein Teil wurde (die Bündelung von {@link #BUNDLE}, ein laufender Abgleich), liegen
+ *       nur im Speicher; nach einem Neustart holt sie der nächste Abgleich des Space nach.</li>
  * </ul>
  */
-public final class DocumentEnrichments implements IndexedDocuments {
+public final class DocumentEnrichments implements IndexedDocuments, AutoCloseable {
 
     private static final System.Logger LOG = System.getLogger(DocumentEnrichments.class.getName());
     private static final String COMPONENT = "Enrichments";
     public static final String PHASE = "Anreichern: Anhänge";
+    /** Art der Hintergrundaufträge (ADR 0025 Nachtrag; Angelo 21.11.2026: nichts läuft unsichtbar). */
+    public static final String BACKGROUND_KIND = "documents";
+    /** Titel der Gruppe in der Auftragsliste. */
+    public static final String BACKGROUND_TITLE = "Anhänge analysieren";
+    /** So lange bündelt {@link #background} Meldungen außerhalb eines Abgleichs, bevor ein Teil startet. */
+    public static final Duration BUNDLE = Duration.ofSeconds(10);
+    /**
+     * Arten der Aufträge, die einen Teil aufhalten können ({@link #holdsBack}): Abgleich, Neulesen, Anhänge und die
+     * Anreicherung nach einem Abgleich. Solange einer davon für den Space wartet oder läuft, startet kein Teil; sein
+     * Ende startet ihn (Abnahme #1052: eine Gruppe je Abgleich, nicht je Anhang).
+     */
+    private static final Set<JobType> INDEXING = EnumSet.of(JobType.SYNC, JobType.ENRICHMENT, JobType.ATTACHMENTS,
+            JobType.REREAD);
 
     private final Enrichments enrichments;
     private final Jobs jobs;
@@ -84,6 +115,49 @@ public final class DocumentEnrichments implements IndexedDocuments {
     private final Map<String, Integer> removals = new HashMap<>();
     /** Anhänge für den Bestand ({@link #catchUp}); ohne sie holt der Lauf nichts nach. */
     private volatile DocumentInventory assets;
+    /** Hintergrundaufträge; ohne sie ein eigener Auftrag ohne Auftraggeber (Dienst). */
+    private volatile BackgroundJobs background;
+    /** Die Seiten eines Space, aus denen ein Hintergrundteil seine Anhänge bestimmt. */
+    private volatile SpacePages spacePages;
+    /** Bündelt Meldungen je Partition; {@code null}: sofort im meldenden Thread. */
+    private volatile Coalescer<Partition, Boolean> starts;
+    /** Meldungen der Auftragsverwaltung über das Ende eines Abgleichs. */
+    private volatile Subscription indexingEnds = () -> {
+    };
+    /** Partitionen mit Arbeit, die noch kein Teil aufgenommen hat; bewacht von {@code this}. */
+    private final Set<Partition> noted = new HashSet<>();
+    /**
+     * Rechnende Teile nach Auftrags-ID mit ihrer Partition; ein rechnender sieht danach noch einmal nach. Je Auftrag,
+     * damit das Ende eines nach {@link Jobs#STOP_GRACE} abgekoppelten Teils keinen anderen derselben Partition austrägt;
+     * bewacht von {@code this}.
+     */
+    private final Map<String, Partition> active = new HashMap<>();
+    /** Partitionen mit Arbeit, deren Start auf das Ende eines Abgleichs wartet; bewacht von {@code this}. */
+    private final Set<Partition> deferred = new HashSet<>();
+    /**
+     * Abgebrochene Teile, deren Vermerke schon verworfen sind; bewacht von {@code this}. Die Auftragsverwaltung meldet
+     * einen beendeten Auftrag erneut, etwa nach {@link Jobs#STOP_GRACE} oder bei jedem Zähler einer abgekoppelten
+     * Arbeit: Verworfen wird nur beim ersten Mal, sonst gingen Vermerke neuer Anlässe verloren. Ein Fortsetzen oder
+     * Löschen trägt den Teil wieder aus, ein Löschen während seiner Arbeit erst deren Ende ({@link #goneWhileComputing}).
+     */
+    private final Set<String> discarded = new HashSet<>();
+    /**
+     * Gelöschte Teile, deren abgekoppelte Arbeit noch rechnet (Nachprüfung #1052); bewacht von {@code this}. Sie bleiben
+     * bis zum Ende dieser Arbeit in {@link #discarded}, damit deren {@code finally} keinen Vermerk verwirft, der erst
+     * nach dem Löschen kam.
+     */
+    private final Set<String> goneWhileComputing = new HashSet<>();
+
+    /** Quelle und Space eines Hintergrundteils; der Space kann fehlen. */
+    private record Partition(String sourceId, String spaceKey) {
+    }
+
+    /** Die Seiten-IDs eines Space mit gespeichertem Inhalt; aus ihren Anhängen bestimmt ein Teil seine Arbeit. */
+    @FunctionalInterface
+    public interface SpacePages {
+
+        Collection<String> pageIds(String sourceId, String spaceKey);
+    }
 
     /**
      * @param jobs    Auftragsverwaltung oder {@code null}, dann im aufrufenden Thread
@@ -113,6 +187,86 @@ public final class DocumentEnrichments implements IndexedDocuments {
     /** Schließt die Anhänge an, aus deren Ablage {@link #catchUp} den Bestand nachholt. */
     public void assets(DocumentInventory assets) {
         this.assets = assets;
+    }
+
+    /** Wie {@link #background(BackgroundJobs, SpacePages, Duration)}, Meldungen gebündelt über {@link #BUNDLE}. */
+    public void background(BackgroundJobs background, SpacePages pages) {
+        background(background, pages, BUNDLE);
+    }
+
+    /**
+     * Rechnet als Hintergrundauftrag (Art {@value #BACKGROUND_KIND}, Abnahme #1052): Ein Teil je Quelle und Space
+     * bestimmt seine Arbeit allein aus dem Bestand, die Anhänge der Seiten des Space ohne aktuelle Analyse
+     * ({@link #catchUp}); eine Meldung ({@link #indexed}) und die Anreicherung nach einem Abgleich ({@link #afterSync})
+     * vermerken nur, dass es Arbeit gibt. Je Space ist höchstens ein Teil offen ({@link BackgroundKind#exclusive()},
+     * auch beim Fortsetzen): Wartet oder ruht einer, nimmt er die Arbeit mit; rechnet einer, sieht er danach noch
+     * einmal nach. Solange ein Abgleich, ein Neulesen oder ein Anhangsauftrag der Quelle für den Space oder die
+     * Anreicherung nach dem Abgleich des Space wartet oder läuft ({@link #holdsBack}), startet kein Teil und ein
+     * rechnender beginnt keine weitere Runde; erst das Ende des Auftrags startet den nächsten (Auftragsmeldung,
+     * ADR 0027). Außerhalb davon bündelt der Dienst Meldungen über {@code bundle}. Nur ein fertiger Teil plant für
+     * Vermerke aus seiner Laufzeit einen neuen; ein abgebrochener verwirft sie. Nach einem Neustart setzt ein
+     * unterbrochener Teil nur fort, wenn die Analysen je Dokument eingeschaltet sind.
+     *
+     * @param pages  die Seiten eines Space mit gespeichertem Inhalt
+     * @param bundle so lange werden Meldungen je Space gebündelt; {@link Duration#ZERO} startet im meldenden Thread
+     */
+    public void background(BackgroundJobs background, SpacePages pages, Duration bundle) {
+        Objects.requireNonNull(background, "background");
+        Objects.requireNonNull(bundle, "bundle");
+        this.spacePages = Objects.requireNonNull(pages, "pages");
+        background.register(BackgroundKind.exclusive(BACKGROUND_KIND, part -> JobTask.blocking(context ->
+                analyse(part.jobId(), new Partition(part.sourceId(), part.partitionKey()), context)), enabled));
+        this.starts = bundle.isZero() ? null
+                : new Coalescer<>("document-enrichments", bundle, (partition, ignored) -> startWhenIdle(partition));
+        if (jobs != null) {
+            this.indexingEnds = jobs.subscribeAll(new JobListener() {
+                @Override
+                public void changed(JobStatus status) {
+                    if (INDEXING.contains(status.type()) && !busy(status)) {
+                        wake(status.sourceId(), status.partitionKey());
+                    } else if (ownPart(status)) {
+                        if (status.state().terminal()) {
+                            ended(status.id(), new Partition(status.sourceId(), status.partitionKey()),
+                                    status.state());
+                        } else {
+                            reopened(status.id());
+                        }
+                    }
+                }
+
+                @Override
+                public void removed(JobStatus last) {
+                    if (INDEXING.contains(last.type())) {
+                        wake(last.sourceId(), last.partitionKey());
+                    } else if (ownPart(last)) {
+                        synchronized (DocumentEnrichments.this) {
+                            // Ein gelöschter, noch nicht fertiger Teil ist abgebrochen; seine Abbruchmeldung kommt nie.
+                            if (last.state() == JobState.CANCELLED || !last.state().terminal()) {
+                                ended(last.id(), new Partition(last.sourceId(), last.partitionKey()),
+                                        JobState.CANCELLED);
+                            }
+                            // Rechnet seine Arbeit noch, trägt erst deren Ende ihn aus (analyse, finally).
+                            if (active.containsKey(last.id())) {
+                                goneWhileComputing.add(last.id());
+                            } else {
+                                discarded.remove(last.id());
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        this.background = background;
+    }
+
+    /** Beendet Bündelung und Auftragsmeldungen; laufende Teile beendet die Auftragsverwaltung. */
+    @Override
+    public void close() {
+        indexingEnds.close();
+        Coalescer<Partition, Boolean> bundled = starts;
+        if (bundled != null) {
+            bundled.close();
+        }
     }
 
     /**
@@ -171,6 +325,10 @@ public final class DocumentEnrichments implements IndexedDocuments {
         if (!enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
             return;
         }
+        if (background != null) {
+            note(new Partition(list.sourceId(), list.spaceKey()));
+            return;
+        }
         PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
         Pending item = new Pending(DocumentKey.attachment(page, asset.attachmentId()), list.spaceKey(),
                 asset.sha256(), Objects.requireNonNull(extractions, "extractions"));
@@ -190,14 +348,251 @@ public final class DocumentEnrichments implements IndexedDocuments {
             return;
         }
         try {
-            String id = jobs.submit(JobType.ENRICHMENT, list.sourceId(), list.spaceKey(), null,
-                    JobTask.blocking(context -> drain(list.sourceId(), list.spaceKey(), context))).id();
+            String id = submit(list.sourceId(), list.spaceKey());
             synchronized (this) {
                 scheduled.put(partition, id);
             }
         } catch (JobCapacityExceededException | IllegalStateException e) {
             LOG.log(System.Logger.Level.INFO, "Analysen der Anhänge in {0} nicht eingeplant ({1}); die nächste "
                     + "Meldung holt sie nach", list.sourceId(), e.getClass().getSimpleName());
+        }
+    }
+
+    /** Plant den Auftrag der Partition ein (ohne Hintergrundaufträge). */
+    private String submit(String sourceId, String spaceKey) {
+        return jobs.submit(JobType.ENRICHMENT, sourceId, spaceKey, null,
+                JobTask.blocking(context -> drain(sourceId, spaceKey, context))).id();
+    }
+
+    // --- Hintergrundauftrag ---------------------------------------------------------------------------------------
+
+    /** Vermerkt Arbeit für die Partition und plant ihren Start. */
+    private void note(Partition partition) {
+        synchronized (this) {
+            noted.add(partition);
+        }
+        schedule(partition);
+    }
+
+    private void schedule(Partition partition) {
+        Coalescer<Partition, Boolean> bundled = starts;
+        if (bundled != null) {
+            bundled.mark(partition);
+        } else {
+            startWhenIdle(partition);
+        }
+    }
+
+    /**
+     * Nach dem Ende eines Teils (Auftragsmeldung): Nur ein fertiger plant für Arbeit, die er nicht mehr gesehen hat,
+     * einen neuen. Ein abgebrochener verwirft die Vermerke des Space (Abnahme #1052: Abbrechen heißt diese Arbeit
+     * nicht); erst ein neuer Anlass startet wieder. Ein angehaltener hält sie, bis er fortgesetzt wird, ein
+     * gescheiterter lässt sie für den nächsten Anlass liegen.
+     */
+    private void ended(String jobId, Partition partition, JobState state) {
+        boolean due;
+        synchronized (this) {
+            if (state == JobState.CANCELLED) {
+                if (!discarded.add(jobId)) {
+                    return;
+                }
+                noted.remove(partition);
+                deferred.remove(partition);
+                return;
+            }
+            due = state == JobState.COMPLETED && noted.contains(partition) && !computing(partition);
+        }
+        if (due) {
+            schedule(partition);
+        }
+    }
+
+    /** Ein Teil dieser Art (Auftragsmeldung). */
+    private static boolean ownPart(JobStatus status) {
+        return status.type() == JobType.BACKGROUND && BACKGROUND_KIND.equals(status.parameter(BackgroundJobs.KIND));
+    }
+
+    /** Ein Teil läuft wieder (fortgesetzt): ein späteres Abbrechen verwirft wieder. */
+    private synchronized void reopened(String jobId) {
+        discarded.remove(jobId);
+    }
+
+    /** Ob ein Teil der Partition gerade rechnet; unter {@code this}. */
+    private boolean computing(Partition partition) {
+        return active.containsValue(partition);
+    }
+
+    /** Nach dem Ende eines Abgleichs der Quelle: die Partitionen, deren Start darauf wartete. */
+    private void wake(String sourceId, String spaceKey) {
+        List<Partition> due;
+        synchronized (this) {
+            due = deferred.stream().filter(partition -> partition.sourceId().equals(sourceId)
+                    && (spaceKey == null || spaceKey.equals(partition.spaceKey()))).toList();
+        }
+        due.forEach(this::schedule);
+    }
+
+    /**
+     * Startet einen Teil für vermerkte Arbeit, außer ein Teil rechnet gerade (er sieht danach noch einmal nach), einer
+     * wartet, ruht oder beginnt eben (er nimmt sie mit) oder ein Auftrag hält die Partition auf ({@link #holdsBack};
+     * dessen Ende startet ihn). Endet ein Teil, kurz nachdem er zuletzt nachsah, startet sein Ende den nächsten
+     * ({@link #ended}).
+     */
+    private void startWhenIdle(Partition partition) {
+        BackgroundJobs hosted = background;
+        if (hosted == null) {
+            return;
+        }
+        synchronized (this) {
+            if (!noted.contains(partition) || computing(partition)) {
+                deferred.remove(partition);
+                return;
+            }
+            // Erst vormerken, dann nachsehen: Endet der Abgleich dazwischen, findet seine Meldung den Vermerk.
+            deferred.add(partition);
+        }
+        if (indexing(partition)) {
+            return;
+        }
+        synchronized (this) {
+            deferred.remove(partition);
+        }
+        try {
+            hosted.startUnlessRunning(BACKGROUND_KIND, BACKGROUND_TITLE,
+                    new BackgroundPart.Draft(partition.sourceId(), partition.spaceKey()));
+        } catch (JobCapacityExceededException | IllegalStateException e) {
+            LOG.log(System.Logger.Level.INFO, "Analysen der Anhänge in {0} nicht eingeplant ({1}); die nächste "
+                    + "Meldung holt sie nach", partition.sourceId(), e.getClass().getSimpleName());
+        }
+    }
+
+    /** Ob ein Auftrag die Partition aufhält ({@link #holdsBack}). */
+    private boolean indexing(Partition partition) {
+        if (jobs == null) {
+            return false;
+        }
+        for (JobType type : INDEXING) {
+            for (JobStatus status : jobs.listAll(type)) {
+                if (holdsBack(status, partition.sourceId(), partition.spaceKey())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Ob dieser Auftrag den Start und jede weitere Runde eines Teils für Quelle und Space aufhält (Abnahme #1052): ein
+     * wartender oder laufender Abgleich, ein Neulesen oder ein Anhangsauftrag der Quelle für diesen Space oder ohne
+     * Space (ein Neulesen gilt für die ganze Quelle), und die Anreicherung nach dem Abgleich dieses Space
+     * ({@link EnrichmentsAfterSync#TASK}). Andere Anreicherungen, etwa Bildbeschreibung, Abkürzungen oder Synonyme,
+     * halten nicht auf, ebenso kein Auftrag, der auf seinen Vorgänger wartet ({@link JobStage#AWAITING}, etwa die
+     * Anhänge eines Exports bis zu dessen Text) oder angehalten ist.
+     */
+    static boolean holdsBack(JobStatus status, String sourceId, String spaceKey) {
+        if (!busy(status) || !sourceId.equals(status.sourceId())) {
+            return false;
+        }
+        return switch (status.type()) {
+            case SYNC, REREAD, ATTACHMENTS -> status.partitionKey() == null
+                    || status.partitionKey().equals(spaceKey);
+            case ENRICHMENT -> EnrichmentsAfterSync.TASK.equals(status.parameter(EnrichmentsAfterSync.TASK_PARAMETER))
+                    && Objects.equals(status.partitionKey(), spaceKey);
+            default -> false;
+        };
+    }
+
+    /** Wartend, aber nicht auf seinen Vorgänger, oder laufend; angehalten oder beendet nicht. */
+    private static boolean busy(JobStatus status) {
+        return status.state() == JobState.RUNNING
+                || status.state() == JobState.QUEUED && status.stage() != JobStage.AWAITING;
+    }
+
+    /**
+     * Ein Hintergrundteil: die Anhänge der Seiten des Space ohne aktuelle Analyse, aus dem Bestand; kam währenddessen
+     * eine Meldung, noch ein Durchgang. Vor jedem Durchgang sieht er nach, ob ein Auftrag die Partition aufhält
+     * ({@link #holdsBack}); dann endet er und vermerkt die Arbeit für den nächsten Teil, den das Ende jenes Auftrags
+     * startet (Abnahme #1052). Nach Anhalten, Abbruch oder Neustart beginnt er von vorn, Aktuelles kostet dann nur den
+     * Blick auf den Analysestand.
+     */
+    private void analyse(String jobId, Partition partition, JobContext context) {
+        boolean elsewhere;
+        synchronized (this) {
+            // Rechnet noch die abgekoppelte Arbeit eines anderen Teils (Jobs#STOP_GRACE), etwa nach dem Fortsetzen
+            // eines älteren Eintrags: nicht doppelt rechnen; deren Ende plant den nächsten Teil.
+            elsewhere = computing(partition);
+            if (elsewhere) {
+                noted.add(partition);
+            } else {
+                active.put(jobId, partition);
+            }
+        }
+        if (elsewhere) {
+            context.record(JobEvent.Draft.info(COMPONENT, "Ein anderer Teil des Space rechnet noch; danach geht es "
+                    + "mit einem neuen Teil weiter"));
+            return;
+        }
+        try {
+            while (true) {
+                if (indexing(partition)) {
+                    synchronized (this) {
+                        noted.add(partition);
+                        deferred.add(partition);
+                    }
+                    context.record(JobEvent.Draft.info(COMPONENT, "Ein Abgleich, ein Neulesen oder ein Anhangsauftrag "
+                            + "des Space läuft; danach geht es mit einem neuen Teil weiter"));
+                    return;
+                }
+                synchronized (this) {
+                    noted.remove(partition);
+                }
+                SpacePages pages = spacePages;
+                catchUp(partition.sourceId(), partition.spaceKey(), pages == null ? List.of()
+                        : pages.pageIds(partition.sourceId(), partition.spaceKey()), context);
+                synchronized (this) {
+                    if (!noted.contains(partition)) {
+                        return;
+                    }
+                }
+            }
+        } finally {
+            // Abgekoppelt abgebrochen oder gelöscht: Die Meldung darüber kann noch ausstehen, verworfen wird jetzt
+            // (einmal, ended); sonst plante dieser Teil gleich wieder für Vermerke aus seiner eigenen Laufzeit. Kam
+            // die Löschung schon an, ist längst verworfen, und was seither vermerkt ist, bleibt.
+            boolean cancelled = cancelledOrGone(jobId);
+            synchronized (this) {
+                active.remove(jobId);
+                if (cancelled) {
+                    ended(jobId, partition, JobState.CANCELLED);
+                }
+                if (goneWhileComputing.remove(jobId)) {
+                    discarded.remove(jobId);
+                }
+            }
+            boolean due;
+            synchronized (this) {
+                due = noted.contains(partition) && !computing(partition);
+            }
+            // Abgekoppelt nach Jobs#STOP_GRACE ist der Eintrag schon beendet, wenn die Arbeit hier ankommt: Vermerke
+            // seither bekämen sonst keinen Teil. Läuft er noch, plant sein Ende ({@link #ended}); ruht er, das
+            // Fortsetzen.
+            BackgroundJobs hosted = background;
+            if (due && hosted != null
+                    && hosted.open(BACKGROUND_KIND, partition.sourceId(), partition.spaceKey()).isEmpty()) {
+                schedule(partition);
+            }
+        }
+    }
+
+    /** Ob der eigene Eintrag schon abgebrochen oder gelöscht ist (abgekoppelte Arbeit, Jobs#STOP_GRACE). */
+    private boolean cancelledOrGone(String jobId) {
+        if (jobs == null) {
+            return false;
+        }
+        try {
+            return jobs.status(jobId).state() == JobState.CANCELLED;
+        } catch (UnknownJobException e) {
+            return true;
         }
     }
 
@@ -359,6 +754,56 @@ public final class DocumentEnrichments implements IndexedDocuments {
     }
 
     /**
+     * Nach einem Abgleich des Space, im Auftrag der Anreicherung ({@link EnrichmentsAfterSync}) für die abgeglichenen
+     * Seiten. Mit Hintergrundaufträgen rechnet hier nichts und fragt kein Modell (Abnahme #1052: Anhalten hält
+     * wirklich an): Ist für einen Anhang dieser Seiten laut Manifest etwas zu tun, wird nur vermerkt, dass es im Space
+     * Arbeit gibt; den Teil startet das Ende der Anreicherung ({@link #holdsBack}). So erscheint nach einem Abgleich
+     * ohne Arbeit keine leere Gruppe. Ohne Hintergrundaufträge (Dienst) wie bisher {@link #catchUp}.
+     */
+    public void afterSync(String sourceId, String spaceKey, Collection<String> pageIds, JobContext context) {
+        if (background == null) {
+            catchUp(sourceId, spaceKey, pageIds, context);
+            return;
+        }
+        if (anyDue(sourceId, spaceKey, pageIds, context)) {
+            note(new Partition(sourceId, spaceKey));
+        }
+    }
+
+    /**
+     * Ob für einen der abgelegten Dokument-Anhänge dieser Seiten etwas zu tun ist, am Manifest erkannt wie die
+     * Abkürzung in {@link #process}: ohne einen Abschnitt zu lesen und ohne Prozessor.
+     */
+    private boolean anyDue(String sourceId, String spaceKey, Collection<String> pageIds, JobContext context) {
+        DocumentInventory source = assets;
+        if (source == null || !enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
+            return false;
+        }
+        Optional<DocumentExtractions> structured = source.documentExtractions();
+        if (structured.isEmpty()) {
+            return false;
+        }
+        for (Asset asset : source.indexedDocuments(sourceId, pageIds)) {
+            if (context != null) {
+                context.checkpoint();
+            }
+            Pending item = new Pending(DocumentKey.attachment(new PageKey(sourceId, asset.pageId()),
+                    asset.attachmentId()), spaceKey, asset.sha256(), structured.get());
+            try {
+                Optional<StoredExtraction> extraction = item.extractions().readable(item.sha256());
+                if (extraction.isPresent() && !manifest(item, extraction.get()).current()) {
+                    return true;
+                }
+            } catch (RuntimeException e) {
+                // Wie im Lauf: Ein Anhang, der sich nicht prüfen lässt, hält die übrigen nicht auf.
+                LOG.log(System.Logger.Level.WARNING, "Analysestand eines Anhangs in {0} nicht geprüft ({1})",
+                        sourceId, e.getClass().getName());
+            }
+        }
+        return false;
+    }
+
+    /**
      * Nach dem Verlust der KI-Freigabe dieser Seiten (ADR 0028, Abschnitt 4; Liste oder Quelle): holt für ihre Anhänge
      * wie {@link #catchUp} nach, was jetzt nicht mehr gilt, etwa semantische Absätze und Themenüberschriften, die mit
      * Modell entstanden; ohne Freigabe fragt dabei nichts mehr das Modell. Seiten, die {@code released} jetzt zulässt,
@@ -399,25 +844,14 @@ public final class DocumentEnrichments implements IndexedDocuments {
             // Ohne lesbare Extraktion gilt der alte Stand weiter.
             return;
         }
-        DocumentKey attachment = item.attachment();
-        // Mit der Grenze für das Embedding-Modell: eine andere Grenze nimmt die Abkürzung über das Manifest nicht.
-        long embeddingMaxChars = settings.get().documentEmbeddingMaxChars();
-        String basis = basis(extraction.get()) + "|embedding-max-chars=" + embeddingMaxChars;
-        Map<String, String> versions = enrichments.documentProcessorVersions(attachment.page());
-        Map<DocumentKey, List<Enrichment>> stored = new HashMap<>();
-        for (Enrichment enrichment : enrichments.store().findDocuments(attachment.page())) {
-            if (enrichment.document().attachmentId().equals(attachment.attachmentId())) {
-                stored.computeIfAbsent(enrichment.document(), key -> new ArrayList<>()).add(enrichment);
-            }
-        }
-        List<DocumentKey> expected = item.extractions().documents(extraction.get()).stream()
-                .map(part -> part.map(entry -> attachment.child(entry.id())).orElse(attachment)).toList();
-        // Die Extraktion steht erst am Stand, wenn das Dokument vollständig durchlief; ein abgebrochener Lauf genügt
-        // dieser Abkürzung also nie.
-        if (!expected.isEmpty() && expected.stream().allMatch(document -> current(stored.get(document), versions,
-                basis) && stored.get(document).stream().noneMatch(enrichments::outdated))) {
+        Manifest manifest = manifest(item, extraction.get());
+        if (manifest.current()) {
             return;
         }
+        long embeddingMaxChars = manifest.embeddingMaxChars();
+        String basis = manifest.basis();
+        Map<String, String> versions = manifest.versions();
+        Map<DocumentKey, List<Enrichment>> stored = manifest.stored();
         // Erster Durchgang: Hash des Lesetextes je Dokument und die Abschnitte mit Text.
         Map<DocumentKey, MessageDigest> digests = new LinkedHashMap<>();
         Map<DocumentKey, Set<Integer>> seen = new HashMap<>();
@@ -486,6 +920,42 @@ public final class DocumentEnrichments implements IndexedDocuments {
                     .forEach(section -> enrichments.store().removeSection(document, section));
         }
         enrichments.flush();
+    }
+
+    /**
+     * Was ein Anhang laut Manifest hat, ohne einen Abschnitt zu lesen.
+     *
+     * @param basis   Kennung der Extraktion mit der Grenze für das Embedding-Modell: eine andere Grenze nimmt die
+     *                Abkürzung über das Manifest nicht
+     * @param stored  die gespeicherten Stände je Dokument des Anhangs
+     * @param current ob das Manifest schon genügt: je erwartetem Dokument Stände aller zuständigen Prozessoren in ihrer
+     *                Version für diese Extraktion, keiner veraltet; ohne erwartete Dokumente, wenn auch keine Stände
+     *                wegfallen müssen. Die Extraktion steht erst am Stand, wenn das Dokument vollständig durchlief; ein
+     *                abgebrochener Lauf genügt also nie
+     */
+    private record Manifest(String basis, long embeddingMaxChars, Map<String, String> versions,
+                            Map<DocumentKey, List<Enrichment>> stored, boolean current) {
+    }
+
+    private Manifest manifest(Pending item, StoredExtraction extraction) {
+        DocumentKey attachment = item.attachment();
+        long embeddingMaxChars = settings.get().documentEmbeddingMaxChars();
+        String basis = basis(extraction) + "|embedding-max-chars=" + embeddingMaxChars;
+        Map<String, String> versions = enrichments.documentProcessorVersions(attachment.page());
+        Map<DocumentKey, List<Enrichment>> stored = new HashMap<>();
+        for (Enrichment enrichment : enrichments.store().findDocuments(attachment.page())) {
+            if (enrichment.document().attachmentId().equals(attachment.attachmentId())) {
+                stored.computeIfAbsent(enrichment.document(), key -> new ArrayList<>()).add(enrichment);
+            }
+        }
+        List<DocumentKey> expected = item.extractions().documents(extraction).stream()
+                .map(part -> part.map(entry -> attachment.child(entry.id())).orElse(attachment)).toList();
+        boolean current = expected.isEmpty() ? stored.isEmpty() : expected.stream().allMatch(document -> {
+            List<Enrichment> results = stored.get(document);
+            return current(results, versions, basis)
+                    && (results == null || results.stream().noneMatch(enrichments::outdated));
+        });
+        return new Manifest(basis, embeddingMaxChars, versions, stored, current);
     }
 
     /**

@@ -21,7 +21,7 @@ class PodcastWriterTest {
         }
         List<String> repairs = new ArrayList<>();
 
-        PodcastPlan plan = PodcastWriter.readOutline("{\"title\":\"T\",\"topics\":[" + topics + "]}", repairs);
+        PodcastPlan plan = PodcastWriter.readOutline("{\"title\":\"T\",\"topics\":[" + topics + "]}", 0, repairs);
 
         assertThat(plan.topics()).hasSize(PodcastPlan.MAX_TOPICS);
         assertThat(plan.topics().get(PodcastPlan.MAX_TOPICS - 1).title()).isEqualTo("Thema 12");
@@ -30,8 +30,8 @@ class PodcastWriterTest {
 
     @Test
     void answersWithoutTopicsCountAsMissing() {
-        assertThat(PodcastWriter.readOutline("Leider nein.", new ArrayList<>())).isNull();
-        assertThat(PodcastWriter.readOutline("{\"topics\":[]}", new ArrayList<>())).isNull();
+        assertThat(PodcastWriter.readOutline("Leider nein.", 0, new ArrayList<>())).isNull();
+        assertThat(PodcastWriter.readOutline("{\"topics\":[]}", 0, new ArrayList<>())).isNull();
     }
 
     @Test
@@ -58,12 +58,79 @@ class PodcastWriterTest {
     }
 
     @Test
-    void theFallbackScriptReadsThePointsWithGreetingAndGoodbye() {
-        List<Turn> turns = PodcastWriter.fallbackScript(new PodcastPlan.Topic("Neue Startseite", "", 0.5,
-                List.of("Die Startseite wurde neu gebaut.")), true, true);
+    void theFallbackScriptKeepsRoomForTheContentWhenThePlaceIsLong() {
+        String longTitle = "Sehr langer Seitentitel ".repeat(12);
+        PodcastWriter.Material material = new PodcastWriter.Material("", List.of(new PodcastWriter.Story("Nordlicht",
+                "Der Lauf prüft vorher den Spool-Bereich.", List.of("auf der Seite „" + longTitle + "“",
+                "auf der Seite „" + longTitle + " 2“"))), null);
+        PodcastPlan.Topic topic = new PodcastPlan.Topic("Nordlicht", "", 0.5, List.of(), List.of(1));
 
-        assertThat(turns).hasSize(4);
-        assertThat(turns.get(2).text()).isEqualTo("Die Startseite wurde neu gebaut.");
+        List<Turn> turns = PodcastWriter.fallbackScript(material, topic, false, false);
+
+        assertThat(turns).hasSize(1);
+        assertThat(turns.get(0).text()).contains("Spool-Bereich").hasSizeLessThanOrEqualTo(PodcastWriter.MAX_TURN_CHARS + 20);
+    }
+
+    @Test
+    void aSegmentNeverEndsWithAnOpenQuestion() {
+        Segment segment = new Segment("Umzug", List.of(new Beat(Speaker.HOST, "erzählt"),
+                new Beat(Speaker.COHOST, "fragt")));
+        List<String> repairs = new ArrayList<>();
+
+        List<Turn> turns = PodcastWriter.withoutOpenQuestion(List.of(new Turn(Speaker.HOST, "Die Daten werden gesichert."),
+                new Turn(Speaker.COHOST, "Und was passiert am Montag?")), segment, repairs);
+
+        assertThat(turns).extracting(Turn::text).containsExactly("Die Daten werden gesichert.");
+        assertThat(repairs).hasSize(1);
+        assertThat(PodcastWriter.withoutOpenQuestion(List.of(new Turn(Speaker.HOST, "Wer hätte das gedacht?")),
+                segment, repairs)).hasSize(1);
+    }
+
+    @Test
+    void theFallbackScriptReadsTheStoriesWithPlaceGreetingAndGoodbye() {
+        PodcastWriter.Material material = new PodcastWriter.Material("", List.of(new PodcastWriter.Story(
+                "Neue Startseite", "Die Startseite zeigt die Ansprechstellen je Team.",
+                List.of("auf der Seite „Start“"))), "Space DEMO");
+
+        List<Turn> turns = PodcastWriter.fallbackScript(material, new PodcastPlan.Topic("Neue Startseite", "", 0.5,
+                List.of(), List.of(1)), true, true);
+
+        assertThat(turns).hasSize(3);
+        assertThat(turns.get(1).text()).isEqualTo("Neue Startseite: Die Startseite zeigt die Ansprechstellen je Team. "
+                + "Zu finden auf der Seite „Start“.");
+    }
+
+    @Test
+    void everyStoryIsToldExactlyOnce() {
+        List<String> repairs = new ArrayList<>();
+
+        PodcastPlan plan = PodcastWriter.readOutline("{\"topics\":[{\"title\":\"Einstieg\",\"stories\":[]},"
+                + "{\"title\":\"Nachtlauf\",\"stories\":[1,3,1,9]},{\"title\":\"Datenbank\",\"stories\":[3]},"
+                + "{\"title\":\"Abschluss\",\"stories\":[]}]}", 4, repairs);
+
+        assertThat(plan.topics()).extracting(PodcastPlan.Topic::stories).containsExactly(List.of(), List.of(1, 3),
+                List.of(), List.of(2), List.of(4), List.of());
+        assertThat(plan.topics().get(plan.topics().size() - 1).title()).isEqualTo("Abschluss");
+        assertThat(repairs).anyMatch(repair -> repair.contains("[2, 4]"));
+    }
+
+    @Test
+    void eachTopicSeesOnlyItsOwnStoriesInFull() {
+        PodcastWriter.Material material = new PodcastWriter.Material("Neues bei Nordlicht und in der Testumgebung.",
+                List.of(new PodcastWriter.Story("Nachtlauf", "Vor dem Start wird der Spool-Bereich geprüft.",
+                                List.of("auf der Seite „Nachtlauf“, unter Handbuch")),
+                        new PodcastWriter.Story("Datenbank", "Die Testumgebung zieht im nächsten Quartal um.",
+                                List.of())), "Space DEMO");
+        PodcastPlan plan = new PodcastPlan("Neues", List.of(new PodcastPlan.Topic("Einstieg", "", 0.6, List.of()),
+                new PodcastPlan.Topic("Nachtlauf", "", 0.5, List.of(), List.of(1)),
+                new PodcastPlan.Topic("Datenbank", "", 0.5, List.of(), List.of(2)),
+                new PodcastPlan.Topic("Abschluss", "", 0.4, List.of())), List.of());
+
+        String nightRun = PodcastWriter.topicMaterial(material, plan, 1);
+        String intro = PodcastWriter.topicMaterial(material, plan, 0);
+
+        assertThat(nightRun).contains("Spool-Bereich", "unter Handbuch").doesNotContain("Quartal", "Überblick");
+        assertThat(intro).contains("Überblick").doesNotContain("Spool-Bereich");
     }
 
     @Test

@@ -221,7 +221,18 @@ wird automatisch verwaltet.
 1. **Eigene Auftragsart** `JobType.BACKGROUND` (`JobType#background()`). Welche Arbeit, sagt die Angabe
    `background.kind`; Arten melden sich bei `BackgroundJobs#register(BackgroundKind)` an (`application.background`).
    Eingebaut ist „Seiten nachladen“ (`PageLoads`, Art `pages`, `Harvester#pageLoads()`); die Bildbeschreibung meldet
-   sich als Art `images` an.
+   sich als Art `images` an. Fahrplan D3: „Aussagen analysieren“ über Teilbaum, Space oder Quelle ist die Art
+   `statements` (`StatementAnalysisJobs#background`); eine einzelne Seite bleibt ein normaler Auftrag
+   `STATEMENT_ANALYSIS`, als Klick über `Jobs#submitInteractive` (ebenso „Prüfen“ einer Seite), derselbe Code rechnet
+   beide. Der Reiter „Aussagen“ rechnet und prüft dabei die gezeigte Fassung (`startShown`, `startCheckShown`), ohne
+   die Seite erneut abzurufen; mit „mit Unterseiten“ zählt und fragt er wie der Baum (Sicherheitsgrenze, „wirklich“),
+   verfolgt die Gruppe über `BackgroundJobs#watch` (Fortschritt und Abbrechen im Reiter, nach dem Anhalten weiter, bis
+   sie fertig ist) und liest ihr Ergebnis abseits des EDT (`Workspace#statementGroupOmitted`, mit dem Recht
+   `metadata` auf den Space statt `sync`). Eine Quelle mit Grenze: Die Grenze gilt für die Summe aller Spaces. Jeder
+   Teil zählt nach seiner eigenen Ermittlung die schon ermittelten Seiten der übrigen Teile aus dem Auftragsspeicher
+   dazu, ohne fremde Spaces abzugehen; wer die Grenze damit überschreitet, scheitert vor seiner ersten Analyse
+   (`SCOPE_TOO_LARGE`), fertige Teile behalten ihre Analysen. Die ermittelte Zahl steht zusätzlich als Ereignis
+   `SCOPE_COUNTED` am Teil, denn Fortsetzen leert seine Zähler; Geschwister zählen das Größere von beidem.
 2. **Gruppe statt Oberauftrag mit eigenem Platz.** Ein Start (`BackgroundJobs#start`) legt je Space einen Unterauftrag
    an; alle tragen dieselbe `background.group` und `background.title`. Die Gruppe (`BackgroundGroup`) ist kein eigener
    Auftrag, belegt nichts und hat ihren Zustand aus den Unteraufträgen. Jeder Unterauftrag hat einen eigenen Platz und
@@ -251,6 +262,15 @@ wird automatisch verwaltet.
 6. **Rechte.** Der Hintergrund lädt nie mit der Anmeldung eines Benutzers (wie ADR 0016). `PageLoads` lädt mit dem
    technischen Aufrufer des Start-Aufrufs, nach einem Neustart mit dem technischen Aufrufer des Dienstes; was schon im
    Cache liegt, fällt vorher heraus, ein Fortsetzen holt also nur, was fehlt.
+   `statements` legt den Eigentümer des Start-Aufrufers in den Angaben ab (`owner`, `AccessContext#jobOwner`) und
+   setzt nach einem Neustart nur fort, wenn der wiederhergestellte Aufrufer derselbe ist (in der Desktop-App der
+   App-Benutzer); sonst hält der Teil gelb an (`PauseReason#RESUME_BY_HAND`, „Angehalten – von Hand fortsetzen“),
+   und `StatementAnalysisJobs#resume` setzt ihn mit den Rechten des Fortsetzenden fort. Die allgemeine
+   Auftragsaktion (`BackgroundJobs#resumeJob`) kennt keinen Aufrufer; mit ihr hält ein fremder Teil erneut an, statt
+   mit den Rechten des wiederhergestellten Aufrufers zu laufen. Der Analysator steht beim Start in
+   den Angaben (`analyzer`) und wird nie neu aus `statements.analyzer` gelesen; beim Fortsetzen überspringt der Teil
+   Seiten, die dieser Analysator schon aktuell hat (mit „erneut analysieren“ nur die seit dem Start, `since`).
+   `BackgroundPart#automatic` sagt, ob `resumeInterrupted` fortsetzt oder ein Benutzer (für die Meldung).
 7. **Desktop-App.** Die Auftragsverwaltung zeigt Hintergrundaufträge in einem eigenen Reiter „Hintergrund“, je Gruppe
    eine Zeile mit den Unteraufträgen darunter, farblich hervorgehoben (Form mit dem UX-Manager); die Liste der
    Benutzeraufträge bleibt frei davon.
@@ -274,6 +294,59 @@ wird automatisch verwaltet.
    Freigabe endet er gelb. `missing()` nennt dieselben Seiten, die ein Lauf an das Modell gäbe (auch gescheiterte und
    ohne gespeicherte Lese-Ansicht). Mit `jobs.parallel-preparations=1` läuft „Bilder beschreiben“ als
    Hintergrundauftrag nie (`SINGLE_SLOT`, gewollt seit #1030): Hintergrundaufträge brauchen mindestens zwei Plätze.
+9. **Nichts läuft unsichtbar** (Angelo 21.11.2026: „volle Kontrolle über das, was passiert, beziehungsweise zumindest
+   informiert“). Arbeit, die der Core von sich aus anstößt und die bisher an der Auftragsliste vorbeilief, meldet sich
+   als eigene Art an. Gegen doppelte Anläufe gibt es neben `running` `BackgroundJobs#waiting` (ein noch nicht
+   gestarteter oder angehaltener Teil), `#startUnlessWaiting` (für Arten, die ihre Arbeit erst beim Start aus dem
+   Bestand bestimmen: ein laufender Teil sieht einen neuen Anlass nicht mehr) und `#startUnlessRunning` (für Arten,
+   deren laufender Teil sich neue Arbeit selbst abholt). Ein angehaltener Teil zählt in allen dreien mit: Er hält neue
+   Anlässe zurück, beim Fortsetzen rechnet er sie mit (Abnahme #1052). Bisher umgestellt:
+   - `synonyms` „Synonyme erkennen“ (`SynonymDiscovery#automatic`, ein Teil je Quelle; vorher ein Auftrag
+     `ENRICHMENT` ohne Auftraggeber, den die App nie zeigte). Fortsetzen nach Neustart nur bei
+     `terms.synonyms.automatic`.
+   - `documents` „Anhänge analysieren“ (`DocumentEnrichments`, vorher ebenso ein Auftrag ohne Auftraggeber). Die
+     Arbeit kommt allein aus Quelle, Space und Bestand: die Anhänge der Seiten des Space ohne aktuelle Analyse. Eine
+     Meldung (`IndexedDocuments#indexed`) und die Anreicherung nach einem Abgleich (`DocumentEnrichments#afterSync`)
+     vermerken nur, dass es im Space Arbeit gibt; gerechnet wird nur im Teil, Anhalten hält also wirklich an. Die
+     Anreicherung vermerkt nur, wenn für einen Anhang der abgeglichenen Seiten laut Manifest etwas zu tun ist, ohne
+     einen Abschnitt zu lesen; nach einem Abgleich ohne Arbeit erscheint keine Gruppe. Je Anlass eine Gruppe, je Space
+     höchstens ein offener Teil (`BackgroundKind#exclusive`, unten); eine Meldung während des Laufs holt derselbe Teil
+     in einem weiteren Durchgang ab. Gestartet wird erst, und eine weitere Runde beginnt erst, wenn für den Space kein
+     Abgleich, kein Neulesen (es gilt für die ganze Quelle), kein Anhangsauftrag und keine Anreicherung nach dem
+     Abgleich dieses Space (Angabe `task` = `after-sync`) mehr wartet oder läuft; sonst endet der Teil nach seiner
+     Runde und vermerkt den Rest. Andere Anreicherungen (Bildbeschreibung, Abkürzungen, Synonyme) halten nicht auf,
+     ebenso kein Auftrag, der auf seinen Vorgänger wartet (`AWAITING`, etwa die Anhänge eines Exports bis zu dessen
+     Text). Das Ende solcher Aufträge kommt als Auftragsmeldung (ADR 0027, kein Abfragen). Außerhalb davon bündelt
+     ein `Coalescer` die Meldungen zehn Sekunden lang. So geben die Anhänge eines Abgleichs eine einzige Gruppe. Nur
+     ein fertiger Teil plant für Vermerke aus seiner Laufzeit einen neuen; ein abgebrochener (auch ein laufend
+     gelöschter) verwirft sie einmal, erst ein neuer Anlass startet wieder. Wiederholte Meldungen desselben beendeten
+     Teils verwerfen nichts mehr, ebenso wenig das Ende der noch rechnenden Arbeit eines gelöschten Teils: Was nach
+     dem Löschen gemeldet wurde, bekommt einen neuen Teil. Rechnet beim Start eines Teils noch die abgekoppelte Arbeit eines anderen desselben
+     Space, endet er sofort und vermerkt; deren Ende plant. Endet die Arbeit eines nach `STOP_GRACE` abgekoppelten Teils, plant sie selbst,
+     falls seither etwas vermerkt ist und kein Teil des Space mehr offen ist.
+
+   Höchstens ein offener Teil je Quelle und Space (`BackgroundKind#exclusive`, Abnahme #1052): `resumeJob` lehnt
+   unter dem Startriegel der Art ab, solange ein anderer Teil wartet, angehalten ist oder läuft
+   (`BackgroundPartOpenException`, in der App gelb „Läuft schon“), und `resumeInterrupted` setzt je Art, Quelle und
+   Space nur den jüngsten unterbrochenen fort; dessen Arbeit aus dem Bestand deckt die der älteren. Die älteren
+   schließt es als abgebrochen ab (`Jobs#retire`, Info „Durch jüngeren Teil ersetzt“), damit sie nach einem späteren
+   Neustart nicht von selbst loslaufen, auch wenn der Benutzer den jüngeren inzwischen abgebrochen hat; ist schon ein
+   anderer Teil offen, schließt es alle unterbrochenen so ab. Diese Prüfungen zählen einen angehaltenen Teil als offen
+   (`BackgroundJobs#open`); `BackgroundJobs#running` zählt ihn nicht, denn der Planer nimmt einen solchen Teil als
+   Vorgänger, und ein angehaltener Teil einer fremden Gruppe ließe sein Ziel warten. Nur für Arten,
+   die neue Teile mit `startUnlessRunning` starten: Bei `startUnlessWaiting` (etwa `synonyms`) dürfen ein laufender
+   und ein wartender Teil nebeneinander stehen, und nach „Alle anhalten“ sperrten sie sich beim Fortsetzen
+   gegenseitig.
+
+   Grenzen: Vermerke, aus denen noch kein Teil wurde (die zehn Sekunden Bündelung, ein noch laufender Abgleich),
+   liegen nur im Speicher. Beim Beenden des Dienstes gehen sie verloren; der nächste Abgleich des Space holt sie über
+   die Anreicherung nach. Ebenso ein Vermerk, der nach einem Abbruch eintrifft, solange die Arbeit des abgebrochenen
+   Teils noch bis zu ihrem nächsten Prüfpunkt rechnet, höchstens `Jobs#STOP_GRACE` lang: Ihr Ende verwirft ihn mit. Nach
+   einem Neustart setzt nur ein schon angelegter, unterbrochener Teil von selbst fort (nur bei
+   `enrichment.documents.enabled`). Die Ablage der Anhänge kennt keinen Space: Ein Teil liest die Anhangseinträge der
+   ganzen Quelle und behält die der Seiten seines Space.
+
+   Ohne Hintergrundaufträge (Dienst) bleibt es beim bisherigen Weg.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
@@ -311,12 +384,22 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    oder gar nicht, zurückgenommen wird vom letzten Teil her.
 5. **Neustart.** Die Vorgänger stehen in den Angaben; `resumeInterrupted` setzt die ältesten Teile zuerst fort, darum
    läuft eine unterbrochene Kette in derselben Reihenfolge weiter.
-6. **Erste Dienste** (`Harvester#servicePlanner`) nur als Beschreibung: Indexieren (AUTOMATIC), Bilder beschreiben
+6. **Erste Dienste** (`Harvester#servicePlanner`): Indexieren (AUTOMATIC), Bilder beschreiben
    (wie `images.automatic`), Aussagenanalyse (MANUAL), Glossar (AUTOMATIC), Wissensgraph (MANUAL, nach Aussagenanalyse
-   und Bildbeschreibung). Ihre Arten bauen die Stränge B1 (D2) und A2 (D3).
-   „Bilder beschreiben“ hat seine Art (`images`, `ImageDescriptionJobs`): `missing` sind die freigegebenen Seiten, die
-   ein Lauf an das Modell gäbe (`ImageDescriptionJobs#missing`), je Space und nur sichtbare. Ein Teil des Planers trägt
-   seine Seiten (`pages`) und seinen Eigentümer (`principal`, `principal.kind`, `via`) und beschreibt genau diese
-   Seiten mit dessen Rechten; je Seite gelten Inhaltsrecht und KI-Freigabe zum Zeitpunkt der Arbeit. Lässt sich der
-   Eigentümer nach einem Neustart nicht bauen, hält der Teil gelb mit `IMAGES_RESUME_BY_HAND` an wie ein Lauf des
-   Benutzers; nie technische Rechte. Nicht freigegebene Seiten darunter meldet er gelb.
+   und Bildbeschreibung). Die Aussagenanalyse arbeitet über ihre Art `statements` (D3): `missing` aus
+   `StatementAnalysisJobs#missing`, je Quelle und Space nach dem gespeicherten Kopf gruppiert. „Bilder beschreiben“
+   arbeitet über seine Art `images` (D2): `missing` sind die freigegebenen Seiten, die ein Lauf an das Modell gäbe
+   (`ImageDescriptionJobs#missing`), je Space und nur sichtbare. Die übrigen Arten bleiben Beschreibung.
+7. **Angaben der Teile.** Jeder Teil trägt seine Seiten (`AnalysisService.PAGES`). Ein Dienst kann weitere Angaben
+   beisteuern (`AnalysisService#parameters`), einmal je Start und für alle Spaces gleich; `pages` setzt immer der
+   Planer. Die Aussagenanalyse legt so Eigentümer, Startzeit und den beim Start eingestellten Analysator fest
+   (`StatementAnalysisJobs#plannerParameters`), dazu eine Kennung des Start-Aufrufers in diesem Prozess (`caller`).
+   Ein Teil mit `pages` analysiert genau diese Seiten seines Space ohne Navigation, jede nur mit Leserecht; der erste
+   Lauf rechnet mit den Rechten des Start-Aufrufers, nach einem Neustart gilt die Eigentümer-Regel aus Punkt 6 oben
+   (gleicher Eigentümer läuft weiter, sonst gelb „von Hand fortsetzen“). Ohne „erneut analysieren“ und ohne Grenze;
+   aktuelle Seiten überspringt der Teil.
+   „Bilder beschreiben“ legt ebenso den Eigentümer (`principal`, `principal.kind`, `via`) und die Kennung `caller`
+   fest (`ImageDescriptionJobs#plannerParameters`). Ein Teil mit `pages` beschreibt genau diese Seiten mit den
+   Rechten des Start-Aufrufers, nach einem Neustart mit dem aus den Angaben gebauten Eigentümer; lässt der sich nicht
+   bauen (Endnutzer ohne Anmeldedaten), hält er gelb mit `IMAGES_RESUME_BY_HAND` an, nie technisch. Je Seite gelten
+   Inhaltsrecht und KI-Freigabe zum Zeitpunkt der Arbeit.

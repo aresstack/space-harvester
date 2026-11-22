@@ -84,6 +84,11 @@ public final class ImageDescriptionJobs {
     /** Angabe: der durchreichende Client eines Endnutzers. */
     public static final String VIA = "via";
     /**
+     * Angabe eines Teils aus dem Dienst-Planer: Kennung des Start-Aufrufers in diesem Prozess
+     * ({@link #plannerParameters}); nach einem Neustart wertlos, dann gilt der Eigentümer.
+     */
+    public static final String CALLER = "caller";
+    /**
      * Angabe eines Teils des Dienst-Planers (D1): seine Seiten-IDs, durch Zeilenumbruch getrennt
      * ({@link AnalysisService#PAGES}).
      */
@@ -253,11 +258,25 @@ public final class ImageDescriptionJobs {
     }
 
     /**
-     * Merkt sich den Aufrufer einer Gruppe, die ein anderer angelegt hat (etwa der Dienst-Planer), bevor ihre Teile
-     * anlaufen; so läuft auch ein Endnutzer, der sich aus den Angaben nicht wiederherstellen lässt, mit seinen Rechten.
+     * Die Angaben der Teile, die der Dienst-Planer (D1) für „Bilder beschreiben“ anlegt
+     * ({@link AnalysisService#parameters()}): Anlass Benutzer, Eigentümer ({@value #PRINCIPAL},
+     * {@value #PRINCIPAL_KIND}, {@value #VIA}) und eine Kennung des Start-Aufrufers in diesem Prozess
+     * ({@value #CALLER}), damit der erste Lauf mit seinen Rechten rechnet, auch als Endnutzer. Die Zuordnung lebt nur im
+     * Speicher und verdrängt die ältesten; nach einem Neustart gilt der Eigentümer.
      */
-    public void remember(String groupId, AccessContext caller) {
-        callers.put(Objects.requireNonNull(groupId, "groupId"), Objects.requireNonNull(caller, "caller"));
+    public Map<String, String> plannerParameters(AccessContext caller) {
+        Objects.requireNonNull(caller, "caller");
+        String token = java.util.UUID.randomUUID().toString();
+        callers.put(token, caller);
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put(TRIGGER, USER);
+        parameters.put(PRINCIPAL, caller.principal());
+        parameters.put(PRINCIPAL_KIND, caller.kind().name());
+        if (caller.via() != null) {
+            parameters.put(VIA, caller.via());
+        }
+        parameters.put(CALLER, token);
+        return parameters;
     }
 
     /**
@@ -484,6 +503,9 @@ public final class ImageDescriptionJobs {
     /** Der Benutzer eines Laufs: im Speicher, sonst aus den Angaben; ohne beides {@code null}. */
     private AccessContext caller(BackgroundPart part) {
         AccessContext known = callers.get(part.groupId());
+        if (known == null && part.parameter(CALLER) != null) {
+            known = callers.get(part.parameter(CALLER));
+        }
         if (known != null) {
             return known;
         }

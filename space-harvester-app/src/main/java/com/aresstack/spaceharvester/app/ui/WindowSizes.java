@@ -9,7 +9,7 @@ import java.util.prefs.Preferences;
  * unter Windows also im Benutzerzweig der Registry. Fehlt der Speicher oder ist er gesperrt, gilt einfach die
  * Standardgröße.
  */
-final class WindowSizes {
+public final class WindowSizes {
 
     private static final int MIN = 200;
 
@@ -41,7 +41,7 @@ final class WindowSizes {
     }
 
     /** Ein gemerkter Zahlenwert des Bedienzustands, etwa die Breite einer Seitenleiste. */
-    static int recallInt(String key, int fallback) {
+    public static int recallInt(String key, int fallback) {
         try {
             return node().getInt(key, fallback);
         } catch (RuntimeException e) {
@@ -49,7 +49,7 @@ final class WindowSizes {
         }
     }
 
-    static void rememberInt(String key, int value) {
+    public static void rememberInt(String key, int value) {
         try {
             node().putInt(key, value);
         } catch (RuntimeException e) {

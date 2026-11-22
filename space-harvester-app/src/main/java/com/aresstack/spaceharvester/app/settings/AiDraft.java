@@ -41,12 +41,22 @@ import java.util.List;
  *                                  oder leer (Standard des Core: aus)
  * @param parallel                  gleichzeitige Anfragen an den KI-Dienst ({@code parallel}) als Text oder leer
  *                                  (Standard des Core: 4)
+ * @param visionMaxTokens           Ausgabelimit einer Antwort des Vision-Modells ({@code vision-max-tokens}) als
+ *                                  Text oder leer (Core: 8192)
+ * @param imageModel                Modell der Bildgenerierung ({@code image-model}) oder leer: das Text-Modell
+ * @param imageMaxTokens            Ausgabelimit einer Bildgenerierung ({@code image-max-tokens}) als Text oder leer
+ *                                  (Core: 16384)
+ * @param visionThinking            Nachdenken des Vision-Modells ({@code vision-thinking}) oder leer: wie
+ *                                  step-thinking
+ * @param imageThinking             Nachdenken der Bildgenerierung ({@code image-thinking}) oder leer: wie
+ *                                  step-thinking
  */
 public record AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
                       Duration timeout, List<String> externalProcessingSources, String rerankModel,
                       String chunkTokens, String chunkOverlapSentences, String visionModel, String chatMaxTokens,
                       AiProvider provider, String contextTokens, String loadTimeout, String retries,
-                      String loadPollInterval, String stepThinking, String parallel) {
+                      String loadPollInterval, String stepThinking, String parallel, String visionMaxTokens,
+                      String imageModel, String imageMaxTokens, String visionThinking, String imageThinking) {
 
     /** Grenzen der Kontextlänge bei Ollama, wie im Core ({@code AiServiceSettings}). */
     public static final int MIN_CONTEXT_TOKENS = 512;
@@ -78,6 +88,35 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         loadPollInterval = trim(loadPollInterval);
         stepThinking = trim(stepThinking);
         parallel = trim(parallel);
+        visionMaxTokens = trim(visionMaxTokens);
+        imageModel = trim(imageModel);
+        imageMaxTokens = trim(imageMaxTokens);
+        visionThinking = trim(visionThinking);
+        imageThinking = trim(imageThinking);
+    }
+
+    /** Ohne eigenes Nachdenken für Vision-Modell und Bildgenerierung. */
+    public AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
+                   Duration timeout, List<String> externalProcessingSources, String rerankModel, String chunkTokens,
+                   String chunkOverlapSentences, String visionModel, String chatMaxTokens, AiProvider provider,
+                   String contextTokens, String loadTimeout, String retries, String loadPollInterval,
+                   String stepThinking, String parallel, String visionMaxTokens, String imageModel,
+                   String imageMaxTokens) {
+        this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources, rerankModel,
+                chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens, null,
+                null);
+    }
+
+    /** Ohne eigene Tokenlänge des Vision-Modells und ohne Bildgenerierung. */
+    public AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
+                   Duration timeout, List<String> externalProcessingSources, String rerankModel, String chunkTokens,
+                   String chunkOverlapSentences, String visionModel, String chatMaxTokens, AiProvider provider,
+                   String contextTokens, String loadTimeout, String retries, String loadPollInterval,
+                   String stepThinking, String parallel) {
+        this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources, rerankModel,
+                chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, stepThinking, parallel, (String) null, null, null);
     }
 
     /** Ohne Vorgabe für gleichzeitige Anfragen. */
@@ -147,7 +186,11 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 settings.loadPollInterval() == null ? null
                         : String.valueOf(settings.loadPollInterval().toSeconds()),
                 settings.stepThinking(),
-                settings.parallel() == null ? null : String.valueOf(settings.parallel()));
+                settings.parallel() == null ? null : String.valueOf(settings.parallel()),
+                settings.visionMaxTokens() == null ? null : String.valueOf(settings.visionMaxTokens()),
+                settings.imageModel(),
+                settings.imageMaxTokens() == null ? null : String.valueOf(settings.imageMaxTokens()),
+                settings.visionThinking(), settings.imageThinking());
     }
 
     /**
@@ -157,63 +200,72 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                               String rerankModel, String chunkTokens, String chunkOverlapSentences) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Dieselben Eingaben mit anderem Vision-Modell. */
     public AiDraft withVisionModel(String visionModel) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Dieselben Eingaben mit anderem Ausgabelimit des Text-Modells. */
     public AiDraft withChatMaxTokens(String chatMaxTokens) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Dieselben Modelle mit anderem Dienst und anderen Freigaben (Reiter „KI-Dienst“). */
     public AiDraft withService(String baseUrl, List<String> externalProcessingSources) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Dieselben Eingaben für eine andere Art von Dienst. */
     public AiDraft withProvider(AiProvider provider) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Dieselben Eingaben mit anderer Kontextlänge bei Ollama. */
     public AiDraft withContextTokens(String contextTokens) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Dieselben Eingaben mit anderer Ladefrist bei Ollama (Sekunden). */
     public AiDraft withLoadTimeout(String loadTimeout) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Dieselben Eingaben mit anderer Zahl an Wiederholungen. */
     public AiDraft withRetries(String retries) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Dieselben Eingaben mit anderem Abstand der Frage nach dem Laden (Sekunden). */
     public AiDraft withLoadPollInterval(String loadPollInterval) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Ob der Dienst ein Ollama-Server ist. */
@@ -227,13 +279,30 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 && timeout == null && externalProcessingSources.isEmpty() && rerankModel == null
                 && chunkTokens == null && chunkOverlapSentences == null && visionModel == null
                 && chatMaxTokens == null && !ollama() && contextTokens == null && loadTimeout == null
-                && retries == null && loadPollInterval == null && stepThinking == null && parallel == null;
+                && retries == null && loadPollInterval == null && stepThinking == null && parallel == null
+                && visionMaxTokens == null && imageModel == null && imageMaxTokens == null && visionThinking == null
+                && imageThinking == null;
     }
 
     /** Das Nachdenken bei Analyseschritten, wenn gültig; sonst {@code null}. */
     public String thinking() {
-        return stepThinking != null && stepThinking.toLowerCase(java.util.Locale.ROOT).matches("none|low|medium|high")
-                ? stepThinking.toLowerCase(java.util.Locale.ROOT) : null;
+        return level(stepThinking);
+    }
+
+    /** Das Nachdenken des Vision-Modells, wenn gültig; sonst {@code null} (wie das Text-Modell). */
+    public String visionLevel() {
+        return level(visionThinking);
+    }
+
+    /** Das Nachdenken der Bildgenerierung, wenn gültig; sonst {@code null} (wie das Text-Modell). */
+    public String imageLevel() {
+        return level(imageThinking);
+    }
+
+    /** Eine Stufe des Nachdenkens (none, low, medium, high) klein geschrieben; sonst {@code null}. */
+    static String level(String value) {
+        return value != null && value.toLowerCase(java.util.Locale.ROOT).matches("none|low|medium|high")
+                ? value.toLowerCase(java.util.Locale.ROOT) : null;
     }
 
     /** Was nicht passt; leer, wenn die Eingaben so in die Datei können. */
@@ -244,7 +313,9 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
             if (chatModel != null || embeddingModel != null || embeddingDimensions != null || rerankModel != null
                     || visionModel != null || chunkTokens != null || chunkOverlapSentences != null
                     || chatMaxTokens != null || ollama() || contextTokens != null || loadTimeout != null
-                    || retries != null || loadPollInterval != null || parallel != null) {
+                    || retries != null || loadPollInterval != null || parallel != null || visionMaxTokens != null
+                    || imageModel != null || imageMaxTokens != null || visionThinking != null
+                    || imageThinking != null) {
                 problems.add("Die Basisadresse des KI-Dienstes fehlt.");
             }
         } else if (looksLikeKey(baseUrl)) {
@@ -285,8 +356,22 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         if (stepThinking != null && thinking() == null) {
             problems.add("Das Nachdenken bei Analyseschritten ist none, low, medium oder high oder bleibt leer.");
         }
+        if (visionThinking != null && visionLevel() == null) {
+            problems.add("Das Nachdenken des Vision-Modells ist none, low, medium oder high oder bleibt leer.");
+        }
+        if (imageThinking != null && imageLevel() == null) {
+            problems.add("Das Nachdenken der Bildgenerierung ist none, low, medium oder high oder bleibt leer.");
+        }
         if (chatMaxTokens != null && maxTokens() == null) {
             problems.add("Das Ausgabelimit ist eine ganze Zahl von 1 bis " + MAX_CHAT_MAX_TOKENS
+                    + " oder bleibt leer.");
+        }
+        if (visionMaxTokens != null && visionTokens() == null) {
+            problems.add("Die Tokenlänge des Vision-Modells ist eine ganze Zahl von 1 bis " + MAX_CHAT_MAX_TOKENS
+                    + " oder bleibt leer.");
+        }
+        if (imageMaxTokens != null && imageTokens() == null) {
+            problems.add("Die Tokenlänge der Bildgenerierung ist eine ganze Zahl von 1 bis " + MAX_CHAT_MAX_TOKENS
                     + " oder bleibt leer.");
         }
         return problems;
@@ -327,11 +412,49 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
 
     /** Das Ausgabelimit des Text-Modells als Zahl oder {@code null}, wenn leer oder ungültig. */
     public Integer maxTokens() {
-        if (chatMaxTokens == null || !chatMaxTokens.matches("\\d{1,7}")) {
+        return tokenLimit(chatMaxTokens);
+    }
+
+    /** Das Ausgabelimit des Vision-Modells als Zahl oder {@code null}, wenn leer oder ungültig. */
+    public Integer visionTokens() {
+        return tokenLimit(visionMaxTokens);
+    }
+
+    /** Das Ausgabelimit der Bildgenerierung als Zahl oder {@code null}, wenn leer oder ungültig. */
+    public Integer imageTokens() {
+        return tokenLimit(imageMaxTokens);
+    }
+
+    private static Integer tokenLimit(String text) {
+        if (text == null || !text.matches("\\d{1,7}")) {
             return null;
         }
-        int value = Integer.parseInt(chatMaxTokens);
+        int value = Integer.parseInt(text);
         return value >= 1 && value <= MAX_CHAT_MAX_TOKENS ? value : null;
+    }
+
+    /** Dieselben Eingaben mit anderem Ausgabelimit des Vision-Modells. */
+    public AiDraft withVisionMaxTokens(String visionMaxTokens) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
+    }
+
+    /** Dieselben Eingaben mit anderer Bildgenerierung (Modell und Ausgabelimit). */
+    public AiDraft withImageGeneration(String imageModel, String imageMaxTokens) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
+    }
+
+    /** Dieselben Eingaben mit anderem Nachdenken für Vision-Modell und Bildgenerierung (leer: wie Text-Modell). */
+    public AiDraft withThinking(String visionThinking, String imageThinking) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     /** Die Kontextlänge als Zahl oder {@code null}, wenn leer oder ungültig. */
@@ -384,7 +507,8 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
     public AiDraft withParallel(String parallel) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
-                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking);
     }
 
     private static Integer number(String text) {
@@ -421,6 +545,19 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         }
         append(yaml, inner, "rerank-model", rerankModel);
         append(yaml, inner, "vision-model", visionModel);
+        if (visionTokens() != null) {
+            yaml.append(inner).append("vision-max-tokens: ").append(visionTokens()).append('\n');
+        }
+        append(yaml, inner, "image-model", imageModel);
+        if (imageTokens() != null) {
+            yaml.append(inner).append("image-max-tokens: ").append(imageTokens()).append('\n');
+        }
+        if (visionLevel() != null) {
+            yaml.append(inner).append("vision-thinking: ").append(visionLevel()).append('\n');
+        }
+        if (imageLevel() != null) {
+            yaml.append(inner).append("image-thinking: ").append(imageLevel()).append('\n');
+        }
         if (retryCount() != null) {
             yaml.append(inner).append("retries: ").append(retryCount()).append('\n');
         }

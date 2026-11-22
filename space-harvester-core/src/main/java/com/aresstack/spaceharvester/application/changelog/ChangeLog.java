@@ -605,7 +605,10 @@ public final class ChangeLog implements AutoCloseable {
                     Instant now = runtime.clock().instant();
                     store.saveSummary(new StoredSummary(sourceId, update, spaceKey, result.text(), result.statements(),
                             runtime.model().version(), now, report.update().to() != null ? report.update().to() : now,
-                            result.unreadable(), UpdateSummarizer.reportSha256(report, page -> contentState(page, span)),
+                            result.unreadable(), UpdateSummarizer.reportSha256(report, page -> contentState(page, span))
+                                    // Fehlen Seiten, weil der Dienst sie nie annahm, gilt die Zusammenfassung als veraltet
+                                    // und wird nicht als vollständig gezeigt.
+                                    + (result.lost() > 0 ? "+unvollstaendig:" + result.lost() : ""),
                             result.inputPages(), span.from()));
                     context.written(1);
                 }));
@@ -864,6 +867,36 @@ public final class ChangeLog implements AutoCloseable {
     private List<String> releasedPath(ReportedPage page, Visibility visible, Predicate<PageKey> released) {
         return path(page, headers.apply(new PageKey(page.sourceId(), page.pageId())), (found, key) -> released.test(key)
                 && visible.page(key.sourceId(), found.metadata().partitionKey(), key.pageId()));
+    }
+
+    /**
+     * Die Titel der übergeordneten Seiten einer Seite von oben, nur sichtbare mit KI-Freigabe wie im Pfad der
+     * Zusammenfassung; leer ohne Zusammenfassungen. Für den Podcast: wo eine Meldung steht.
+     */
+    public List<String> ancestors(AccessContext caller, String sourceId, String pageId) {
+        Objects.requireNonNull(caller, "caller");
+        if (summaries == null || sourceId == null || pageId == null) {
+            return List.of();
+        }
+        Visibility visible = new Visibility(caller);
+        Predicate<PageKey> released = summaries.released();
+        List<String> path = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        String parent = headers.apply(new PageKey(sourceId, pageId)).map(found -> found.metadata().parentPageId())
+                .orElse(null);
+        while (parent != null && !parent.isEmpty() && path.size() < MAX_PATH_DEPTH && seen.add(parent)) {
+            PageKey key = new PageKey(sourceId, parent);
+            Optional<PageHeader> ancestor = headers.apply(key);
+            if (ancestor.isEmpty()) {
+                break;
+            }
+            PageHeader found = ancestor.get();
+            if (released.test(key) && visible.page(sourceId, found.metadata().partitionKey(), parent)) {
+                path.addFirst(found.metadata().title());
+            }
+            parent = found.metadata().parentPageId();
+        }
+        return path;
     }
 
     /** Titel der Vorfahren von oben, die {@code shown} zeigt. */

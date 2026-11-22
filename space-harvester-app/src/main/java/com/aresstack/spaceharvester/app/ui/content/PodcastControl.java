@@ -1,22 +1,31 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.event.ApplicationEvent;
+import com.aresstack.spaceharvester.app.event.ContentOverlayEvent;
 import com.aresstack.spaceharvester.app.event.TimelineEvent;
 import com.aresstack.spaceharvester.app.speech.PodcastPlayer;
+import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Problems;
+import com.aresstack.spaceharvester.app.ui.WindowSizes;
 import com.aresstack.spaceharvester.app.ui.content.viewer.VideoSeekBar;
+import com.aresstack.spaceharvester.app.ui.controls.PictureStage;
 import com.aresstack.spaceharvester.app.ui.controls.PodcastOrb;
-import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.podcast.Podcast;
-import com.aresstack.spaceharvester.application.podcast.UpdatePodcasts;
 
+import javax.swing.Icon;
+import javax.swing.JComponent;
+import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
+import java.awt.BorderLayout;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -38,36 +47,56 @@ import java.util.function.Supplier;
  *
  * Gespielt wird nur die gerade gezeigte Zusammenfassung; eine andere Wahl beendet die Wiedergabe.
  */
-final class PodcastControl {
+final class PodcastControl<S> {
 
-    /** Was die Steuerung vom Core braucht; in Tests ersetzbar. */
-    interface Source {
+    private static final System.Logger LOG = System.getLogger(PodcastControl.class.getName());
+
+    /**
+     * Was die Steuerung vom Core braucht; in Tests ersetzbar.
+     *
+     * @param <S> wofür der Podcast entsteht: eine Update-Zusammenfassung oder eine Seite
+     */
+    interface Source<S> {
 
         /** Chat-Modell und Sprachausgabe eingerichtet. */
         boolean available();
 
-        Optional<Podcast> podcast(UpdateSummary summary);
+        /** Der Schlüssel des Podcasts, ohne zu lesen (auf dem EDT). */
+        String key(S subject);
 
-        JobStatus start(UpdateSummary summary);
+        Optional<Podcast> podcast(S subject);
+
+        JobStatus start(S subject);
 
         Subscription subscribe(String key, Runnable listener);
 
         Subscription subscribeJobs(JobListener listener);
 
         /** Ohne Laufzeit: der Knopf bleibt aus. */
-        Source NONE = new Source() {
+        @SuppressWarnings("unchecked")
+        static <S> Source<S> none() {
+            return (Source<S>) NONE;
+        }
+
+        /** Ohne Laufzeit: der Knopf bleibt aus. */
+        Source<Object> NONE = new Source<>() {
             @Override
             public boolean available() {
                 return false;
             }
 
             @Override
-            public Optional<Podcast> podcast(UpdateSummary summary) {
+            public String key(Object subject) {
+                return "";
+            }
+
+            @Override
+            public Optional<Podcast> podcast(Object subject) {
                 return Optional.empty();
             }
 
             @Override
-            public JobStatus start(UpdateSummary summary) {
+            public JobStatus start(Object subject) {
                 throw new IllegalStateException("Keine Laufzeit");
             }
 
@@ -83,15 +112,40 @@ final class PodcastControl {
         };
     }
 
-    private final Supplier<Source> sources;
+    /** Die Texte am Knopf, je nachdem, wofür der Podcast entsteht. */
+    record Labels(String listen, String missing, String name, boolean hideUnusable) {
+
+        /** Der Podcast der Update-Zusammenfassung. */
+        static final Labels SUMMARY = new Labels("Die Zusammenfassung als Podcast hören",
+                "Podcast: erst eine Zusammenfassung erstellen", "updates", false);
+        /**
+         * Der Erklär-Podcast einer Seite (Angelo 21.11.2026); ohne Chat-Modell oder Sprachausgabe bleibt der Knopf
+         * weg, statt auf jeder Seite ausgegraut zu stehen.
+         */
+        static final Labels PAGE = new Labels("Diese Seite und ihre Unterseiten als Podcast erklären lassen",
+                "Podcast: erst eine Seite öffnen", "page", true);
+    }
+
+    private final Supplier<Source<S>> sources;
+    private final Labels labels;
     private final SourceUpdatesView.Runner runner;
     private final PodcastOrb orb = new PodcastOrb();
     private final PodcastPlayer player;
     private final VideoSeekBar timeline;
+    /** Die Zeitleiste samt Schalter „Bilder zeigen“; sie steht über der Suchleiste, solange der Podcast spielt. */
+    private final JPanel timelineRow = new JPanel(new BorderLayout(6, 0));
+    private final IconButton picturesToggle = new IconButton(PICTURE_ICON, PICTURES_ON).compact();
+    /** Die Bühne für das Bild des laufenden Themas über dem Inhaltsbereich (Angelo 22.11.2026). */
+    private final PictureStage stage = new PictureStage(() -> pictures(false));
+    private final Map<Path, PictureStage.Picture> loaded = new HashMap<>();
+    /** Das Bild, das zum laufenden Abschnitt gehört (auch während es lädt); {@code null} ohne. */
+    private Podcast.Picture runningPicture;
+    private boolean stageShown;
+    private boolean pictures = WindowSizes.recallInt(PICTURES_KEY, 1) == 1;
     private Consumer<ApplicationEvent<?>> events = event -> { };
 
-    private Source source = Source.NONE;
-    private UpdateSummary summary;
+    private Source<S> source = Source.none();
+    private S summary;
     private String key;
     private Subscription stages = Subscription.NONE;
     private Subscription jobs = Subscription.NONE;
@@ -107,13 +161,27 @@ final class PodcastControl {
     private boolean refreshRunning;
     private boolean refreshPending;
 
-    PodcastControl(Supplier<Source> sources, SourceUpdatesView.Runner runner) {
+    PodcastControl(Supplier<Source<S>> sources, SourceUpdatesView.Runner runner) {
+        this(sources, runner, Labels.SUMMARY);
+    }
+
+    PodcastControl(Supplier<Source<S>> sources, SourceUpdatesView.Runner runner, Labels labels) {
         this.sources = Objects.requireNonNull(sources, "sources");
+        this.labels = Objects.requireNonNull(labels, "labels");
         this.runner = Objects.requireNonNull(runner, "runner");
         this.player = new PodcastPlayer(new PlayerEvents());
         this.timeline = new VideoSeekBar(share -> player.seek(Math.round(share * player.total()))).light(this::titleAt);
-        timeline.setName("updates.podcastTimeline");
+        timeline.setName(labels.name() + ".podcastTimeline");
+        orb.setName(labels.name() + ".podcastOrb");
         orb.addActionListener(event -> clicked());
+        timelineRow.setOpaque(false);
+        timelineRow.add(timeline, BorderLayout.CENTER);
+        timelineRow.add(picturesToggle, BorderLayout.EAST);
+        timelineRow.setName(labels.name() + ".podcastTimelineRow");
+        picturesToggle.setName(labels.name() + ".podcastPictures");
+        picturesToggle.addActionListener(event -> pictures(!pictures));
+        stage.setName(labels.name() + ".podcastStage");
+        showPicturesToggle();
         summary(null);
     }
 
@@ -130,10 +198,146 @@ final class PodcastControl {
         return timeline;
     }
 
-    /** Die gezeigte Zusammenfassung, {@code null} ohne; eine andere beendet die Wiedergabe. */
-    void summary(UpdateSummary shown) {
-        Source current = shown == null ? Source.NONE : Objects.requireNonNullElse(sources.get(), Source.NONE);
-        String shownKey = shown == null ? null : UpdatePodcasts.key(shown);
+    /** Was über der Suchleiste steht: die Zeitleiste und rechts der Schalter für die Bilder. */
+    JComponent timelineRow() {
+        return timelineRow;
+    }
+
+    // --- Bilder der Themen --------------------------------------------------------------------------------------
+
+    static final String PICTURES_KEY = "podcast.pictures";
+    static final String PICTURES_ON = "Bilder zum Podcast ausblenden";
+    static final String PICTURES_OFF = "Bilder zum Podcast zeigen";
+    private static final Icon PICTURE_ICON = com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.picture();
+    /** Bilder aus: dasselbe Symbol, durchgestrichen. */
+    private static final Icon NO_PICTURE_ICON = new Icon() {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
+            PICTURE_ICON.paintIcon(c, g, x, y);
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(c.getForeground());
+            g2.setStroke(new java.awt.BasicStroke(1.6f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
+            g2.drawLine(x + 1, y + getIconHeight() - 1, x + getIconWidth() - 1, y + 1);
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return PICTURE_ICON.getIconWidth();
+        }
+
+        @Override
+        public int getIconHeight() {
+            return PICTURE_ICON.getIconHeight();
+        }
+    };
+
+    /** Schaltet die Bilder ein oder aus (Schalter an der Zeitleiste, „Esc“ auf der Bühne); die Wahl wird gemerkt. */
+    void pictures(boolean show) {
+        pictures = show;
+        WindowSizes.rememberInt(PICTURES_KEY, show ? 1 : 0);
+        showPicturesToggle();
+        showPicture();
+    }
+
+    boolean pictures() {
+        return pictures;
+    }
+
+    private void showPicturesToggle() {
+        picturesToggle.setIcon(pictures ? PICTURE_ICON : NO_PICTURE_ICON);
+        picturesToggle.setToolTipText(pictures ? PICTURES_ON : PICTURES_OFF);
+        picturesToggle.getAccessibleContext().setAccessibleName(pictures ? PICTURES_ON : PICTURES_OFF);
+    }
+
+    /** Das Bild des Abschnitts an {@code millis}; ohne Bild oder ohne Wiedergabe bleibt der Inhalt frei. */
+    private void pictureAt(long millis) {
+        pictureOf(player.trackAt(millis));
+    }
+
+    /** Das Bild des Abschnitts {@code track} (Reihenfolge der Tracks = Reihenfolge der Abschnitte). */
+    void pictureOf(int track) {
+        Podcast podcast = last;
+        int index = podcast == null || !timelineShown ? -1 : track;
+        Podcast.Picture next = index < 0 || index >= podcast.parts().size() ? null
+                : podcast.parts().get(index).picture();
+        if (!Objects.equals(next, runningPicture)) {
+            runningPicture = next;
+            showPicture();
+        }
+    }
+
+    /** Zeigt das Bild des laufenden Abschnitts auf der Bühne oder nimmt die Bühne weg; lädt es bei Bedarf. */
+    private void showPicture() {
+        Podcast.Picture wantedPicture = pictures ? runningPicture : null;
+        if (wantedPicture == null) {
+            showStage(false);
+            return;
+        }
+        PictureStage.Picture ready = loaded.get(wantedPicture.file());
+        if (ready != null) {
+            stage.show(ready);
+            showStage(true);
+            return;
+        }
+        int mine = generation;
+        runner.run(() -> read(wantedPicture), picture -> {
+            if (mine != generation) {
+                return;
+            }
+            loaded.put(wantedPicture.file(), picture);
+            if (pictures && wantedPicture.equals(runningPicture)) {
+                stage.show(picture);
+                showStage(true);
+            }
+        }, failure -> {
+            // Ein unlesbares Bild ist kein Fehler des Podcasts: Der Inhalt bleibt einfach sichtbar.
+            LOG.log(System.Logger.Level.INFO, "Podcast-Bild nicht gelesen ({0})", failure.getClass().getName());
+            if (mine == generation && wantedPicture.equals(runningPicture)) {
+                showStage(false);
+            }
+        });
+    }
+
+    /** Liest ein Bild von der Platte: SVG als Schaubild, alles andere als Rasterbild. */
+    static PictureStage.Picture read(Podcast.Picture picture) throws java.io.IOException {
+        if (picture.vector()) {
+            return new PictureStage.Picture(null, com.aresstack.spaceharvester.application.diagrams.VectorDiagram
+                    .of(java.nio.file.Files.readAllBytes(picture.file()))
+                    .orElseThrow(() -> new java.io.IOException("Kein lesbares SVG")), picture.caption());
+        }
+        java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(picture.file().toFile());
+        if (image == null) {
+            throw new java.io.IOException("Kein lesbares Bild");
+        }
+        return new PictureStage.Picture(image, null, picture.caption());
+    }
+
+    private void showStage(boolean show) {
+        if (show == stageShown) {
+            return;
+        }
+        stageShown = show;
+        if (!show) {
+            stage.clear();
+        }
+        events.accept(show ? ContentOverlayEvent.show(stage) : ContentOverlayEvent.hide(stage));
+    }
+
+    PictureStage stage() {
+        return stage;
+    }
+
+    boolean stageShown() {
+        return stageShown;
+    }
+
+    /** Das Gezeigte (Zusammenfassung oder Seite), {@code null} ohne; etwas anderes beendet die Wiedergabe. */
+    void summary(S shown) {
+        Source<S> current = shown == null ? Source.none()
+                : Objects.requireNonNullElse(sources.get(), Source.<S>none());
+        String shownKey = shown == null ? null : key(current, shown);
         if (shownKey != null && shownKey.equals(key) && current == source) {
             summary = shown;
             return;
@@ -148,13 +352,19 @@ final class PodcastControl {
         summary = shown;
         key = shownKey;
         last = null;
+        runningPicture = null;
+        loaded.clear();
+        showStage(false);
         resumeAt = 0;
         retrying = false;
         orb.setState(PodcastOrb.State.PLAY);
         boolean usable = shown != null && available(current);
         orb.setEnabled(usable);
-        orb.setToolTipText(shown == null ? "Podcast: erst eine Zusammenfassung erstellen"
-                : usable ? "Die Zusammenfassung als Podcast hören"
+        if (labels.hideUnusable()) {
+            orb.setVisible(usable);
+        }
+        orb.setToolTipText(shown == null ? labels.missing()
+                : usable ? labels.listen()
                 : "Podcast: kein Chat-Modell oder keine Sprachausgabe (TTS) eingerichtet");
         if (!usable) {
             return;
@@ -169,8 +379,8 @@ final class PodcastControl {
         jobs = current.subscribeJobs(new JobListener() {
             @Override
             public void changed(JobStatus status) {
-                if (status.type() == JobType.UPDATE_PODCAST && watched.equals(status.parameter(
-                        UpdatePodcasts.PODCAST_PARAMETER))) {
+                if (status.type() == JobType.UPDATE_PODCAST && watched != null && watched.equals(status.parameter(
+                        com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.PODCAST_PARAMETER))) {
                     SwingUtilities.invokeLater(() -> {
                         if (mine == generation) {
                             refresh();
@@ -182,7 +392,16 @@ final class PodcastControl {
         refresh();
     }
 
-    private static boolean available(Source source) {
+    private static <S> String key(Source<S> source, S subject) {
+        try {
+            String key = source.key(subject);
+            return key == null || key.isEmpty() ? null : key;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static boolean available(Source<?> source) {
         try {
             return source.available();
         } catch (RuntimeException e) {
@@ -231,8 +450,8 @@ final class PodcastControl {
         orb.setState(PodcastOrb.State.WAITING);
         orb.setToolTipText("Podcast wird vorbereitet");
         showTimeline(true);
-        Source current = source;
-        UpdateSummary shown = summary;
+        Source<S> current = source;
+        S shown = summary;
         int mine = generation;
         runner.run(() -> {
             Optional<Podcast> podcast = current.podcast(shown);
@@ -280,8 +499,8 @@ final class PodcastControl {
             return;
         }
         refreshRunning = true;
-        Source current = source;
-        UpdateSummary shown = summary;
+        Source<S> current = source;
+        S shown = summary;
         int mine = generation;
         runner.run(() -> {
             Optional<Podcast> podcast = current.podcast(shown);
@@ -321,6 +540,8 @@ final class PodcastControl {
     private void apply(Podcast podcast) {
         last = podcast;
         timeline.slides(player.topicStarts());
+        // Ein Bild, das erst jetzt fertig wurde, erscheint zum laufenden Thema.
+        pictureAt(player.position());
         if (!player.playing() || player.total() > 0 && !timeline.isDragging()) {
             timeline.update(player.position(), player.total());
         }
@@ -343,7 +564,11 @@ final class PodcastControl {
             return;
         }
         timelineShown = show;
-        events.accept(show ? TimelineEvent.show(timeline) : TimelineEvent.hide(timeline));
+        events.accept(show ? TimelineEvent.show(timelineRow) : TimelineEvent.hide(timelineRow));
+        if (!show) {
+            runningPicture = null;
+            showStage(false);
+        }
     }
 
     /** Rückmeldungen der Wiedergabe, auf den EDT gebracht. */
@@ -360,10 +585,11 @@ final class PodcastControl {
                     timeline.update(millis, total);
                 }
                 resumeAt = millis;
+                pictureAt(millis);
                 if (retrying) {
                     // Das Wiederholen hat geklappt: wieder blau.
                     retrying = false;
-                    orb.setToolTipText("Die Zusammenfassung als Podcast hören");
+                    orb.setToolTipText(labels.listen());
                 }
                 if (orb.state() != PodcastOrb.State.PAUSE && !player.paused()) {
                     orb.setState(PodcastOrb.State.PAUSE);

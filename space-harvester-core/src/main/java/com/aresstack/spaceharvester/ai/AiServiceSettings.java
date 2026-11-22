@@ -60,13 +60,23 @@ import java.util.Set;
  *                                  (Bildbeschreibungen, „In PPTX umwandeln“); {@code null} heißt
  *                                  {@link #DEFAULT_PARALLEL}. Ein Ollama-Server beantwortet so viele zugleich, wie
  *                                  {@code OLLAMA_NUM_PARALLEL} erlaubt
+ * @param visionMaxTokens           Ausgabelimit einer Antwort des Vision-Modells in Tokens ({@code max_tokens}, bei
+ *                                  Ollama {@code num_predict}); {@code null} heißt {@link #DEFAULT_CHAT_MAX_TOKENS}
+ * @param imageModel                Modell der Bildgenerierung (SVG-Schaubilder) oder {@code null} für das Chat-Modell
+ * @param imageMaxTokens            Ausgabelimit einer Bildgenerierung in Tokens; {@code null} heißt
+ *                                  {@link #DEFAULT_IMAGE_MAX_TOKENS}
+ * @param visionThinking            Nachdenken des Vision-Modells ({@code none}, {@code low}, {@code medium},
+ *                                  {@code high}); {@code null} heißt wie {@code stepThinking}
+ * @param imageThinking             Nachdenken der Bildgenerierung; {@code null} heißt wie {@code stepThinking}
  */
 public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
                                 Integer embeddingDimensions, Duration timeout, String trustBundle,
                                 Set<String> externalProcessingSources, String rerankModel, String visionModel,
                                 Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
                                 Duration loadTimeout, Integer retries, Duration loadPollInterval,
-                                String stepThinking, Integer parallel) {
+                                String stepThinking, Integer parallel, Integer visionMaxTokens,
+                                String imageModel, Integer imageMaxTokens, String visionThinking,
+                                String imageThinking) {
 
     /** Präfix der Properties im Server und in der Konfigurationsdatei der App. */
     public static final String PREFIX = "space-harvester.ai.";
@@ -89,6 +99,13 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final String LOAD_POLL_INTERVAL = "load-poll-interval";
     public static final String STEP_THINKING = "step-thinking";
     public static final String PARALLEL = "parallel";
+    public static final String VISION_MAX_TOKENS = "vision-max-tokens";
+    public static final String IMAGE_MODEL = "image-model";
+    public static final String IMAGE_MAX_TOKENS = "image-max-tokens";
+    public static final String VISION_THINKING = "vision-thinking";
+    public static final String IMAGE_THINKING = "image-thinking";
+    /** Die Stufen des Nachdenkens, wie sie in der Datei stehen und mit jeder Anfrage mitgehen. */
+    public static final List<String> THINKING_LEVELS = List.of("none", "low", "medium", "high");
 
     /**
      * Standard der gleichzeitigen Anfragen (Angelo, 20.11.2026: „Warum verwendet er nur eine Verbindung zum
@@ -127,12 +144,21 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     /** Obergrenze von {@link #CHAT_MAX_TOKENS}. */
     public static final int MAX_CHAT_MAX_TOKENS = 1_000_000;
 
+    /**
+     * Ausgabelimit einer Bildgenerierung (SVG-Schaubilder), höher als beim Text-Modell, wie {@code chat.maxTokens} in
+     * 3D4J: Ein Schaubild als SVG ist lang, und bei 8192 brach die Antwort meist ab.
+     */
+    public static final int DEFAULT_IMAGE_MAX_TOKENS = 16384;
+
+    /** Die Auswahl der Tokenlänge in den Einstellungen, wie die Knöpfe in 3D4J; jede andere Zahl ist erlaubt. */
+    public static final List<Integer> TOKEN_CHOICES = List.of(2048, 8192, 16384, 32768, 65536);
+
     /** Standard der Lesefrist. */
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
 
     /** Kein Dienst eingerichtet. */
     public static final AiServiceSettings NONE = new AiServiceSettings(null, null, null, null, null, null, null,
-            Set.of(), null, null, null, null, null, null, null, null, null, null);
+            Set.of(), null, null, null, null, null, null, null, null, null, null, null, null, null);
 
     public AiServiceSettings {
         if (baseUrl != null && !("https".equalsIgnoreCase(baseUrl.getScheme())
@@ -192,6 +218,66 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         if (parallel < 1 || parallel > MAX_PARALLEL) {
             throw new IllegalArgumentException(PREFIX + PARALLEL + " muss zwischen 1 und " + MAX_PARALLEL + " liegen");
         }
+        visionMaxTokens = visionMaxTokens == null ? DEFAULT_CHAT_MAX_TOKENS : visionMaxTokens;
+        if (visionMaxTokens < 1 || visionMaxTokens > MAX_CHAT_MAX_TOKENS) {
+            throw new IllegalArgumentException(PREFIX + VISION_MAX_TOKENS + " muss zwischen 1 und "
+                    + MAX_CHAT_MAX_TOKENS + " liegen");
+        }
+        imageModel = blankToNull(imageModel);
+        imageMaxTokens = imageMaxTokens == null ? DEFAULT_IMAGE_MAX_TOKENS : imageMaxTokens;
+        if (imageMaxTokens < 1 || imageMaxTokens > MAX_CHAT_MAX_TOKENS) {
+            throw new IllegalArgumentException(PREFIX + IMAGE_MAX_TOKENS + " muss zwischen 1 und "
+                    + MAX_CHAT_MAX_TOKENS + " liegen");
+        }
+        visionThinking = thinking(visionThinking, VISION_THINKING);
+        imageThinking = thinking(imageThinking, IMAGE_THINKING);
+    }
+
+    /** Ohne eigenes Nachdenken für Vision-Modell und Bildgenerierung: beide wie {@code stepThinking}. */
+    public AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
+                             Integer embeddingDimensions, Duration timeout, String trustBundle,
+                             Set<String> externalProcessingSources, String rerankModel, String visionModel,
+                             Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                             Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                             Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens) {
+        this(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens,
+                loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel,
+                imageMaxTokens, null, null);
+    }
+
+    /** Eine Stufe des Nachdenkens, klein geschrieben; leer heißt {@code null} (wie das Text-Modell). */
+    private static String thinking(String value, String key) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String level = value.strip().toLowerCase(java.util.Locale.ROOT);
+        if (!THINKING_LEVELS.contains(level)) {
+            throw new IllegalArgumentException(PREFIX + key + " ist none, low, medium oder high");
+        }
+        return level;
+    }
+
+    /** Das Nachdenken, das mit jeder Anfrage an das Vision-Modell mitgeht. */
+    public String visionThinkingLevel() {
+        return visionThinking != null ? visionThinking : stepThinking;
+    }
+
+    /** Das Nachdenken, das mit jeder Bildgenerierung mitgeht. */
+    public String imageThinkingLevel() {
+        return imageThinking != null ? imageThinking : stepThinking;
+    }
+
+    /** Ohne eigene Tokenlänge für Bilder und ohne Bildgenerierung: deren Standards. */
+    public AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
+                             Integer embeddingDimensions, Duration timeout, String trustBundle,
+                             Set<String> externalProcessingSources, String rerankModel, String visionModel,
+                             Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                             Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                             Integer parallel) {
+        this(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens,
+                loadTimeout, retries, loadPollInterval, stepThinking, parallel, null, null, null);
     }
 
     /** Mit dem Standard der gleichzeitigen Anfragen ({@link #DEFAULT_PARALLEL}). */
@@ -325,58 +411,76 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(PREFIX + PARALLEL + " ist keine Zahl");
         }
+        Integer parsedVisionMaxTokens = tokens(properties, VISION_MAX_TOKENS);
+        Integer parsedImageMaxTokens = tokens(properties, IMAGE_MAX_TOKENS);
         return new AiServiceSettings(baseUrl, value(properties, API_KEY), value(properties, CHAT_MODEL),
                 value(properties, EMBEDDING_MODEL), parsedDimensions, parsedTimeout, value(properties, TRUST_BUNDLE),
                 allowed, value(properties, RERANK_MODEL), value(properties, VISION_MODEL), parsedMaxTokens,
                 AiProvider.fromKey(value(properties, PROVIDER)), parsedContext, parsedLoad, parsedRetries,
-                parsedPoll, value(properties, STEP_THINKING), parsedParallel);
+                parsedPoll, value(properties, STEP_THINKING), parsedParallel, parsedVisionMaxTokens,
+                value(properties, IMAGE_MODEL), parsedImageMaxTokens, value(properties, VISION_THINKING),
+                value(properties, IMAGE_THINKING));
     }
 
     /** Dieselben Einstellungen für eine andere Art von Dienst. */
     public AiServiceSettings withProvider(AiProvider provider) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderer Kontextlänge bei Ollama; {@code null} heißt Standard. */
     public AiServiceSettings withContextTokens(Integer contextTokens) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderer Ladefrist bei Ollama; {@code null} heißt Standard. */
     public AiServiceSettings withLoadTimeout(Duration loadTimeout) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
-                retries, loadPollInterval, stepThinking, parallel);
+                retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderer Zahl an Wiederholungen; {@code null} heißt Standard. */
     public AiServiceSettings withRetries(Integer retries) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
-                retries, loadPollInterval, stepThinking, parallel);
+                retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderer Zahl gleichzeitiger Anfragen; {@code null} heißt Standard. */
     public AiServiceSettings withParallel(Integer parallel) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
-                retries, loadPollInterval, stepThinking, parallel);
+                retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderem Nachdenken bei Analyseschritten; {@code null} heißt Standard. */
     public AiServiceSettings withStepThinking(String stepThinking) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
-                retries, loadPollInterval, stepThinking, parallel);
+                retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderem Abstand der Frage nach dem Laden; {@code null} heißt Standard. */
     public AiServiceSettings withLoadPollInterval(Duration loadPollInterval) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
-                retries, loadPollInterval, stepThinking, parallel);
+                retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /**
@@ -441,31 +545,102 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     /** Dieselben Einstellungen mit dem API-Key aus einem Tresor oder Secret-Speicher. */
     public AiServiceSettings withApiKey(String key) {
         return new AiServiceSettings(baseUrl, key, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderem Embedding-Modell und anderer Dimension. */
     public AiServiceSettings withEmbedding(String model, Integer dimensions) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, model, dimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderem Rerank-Modell (#181). */
     public AiServiceSettings withRerankModel(String model) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, model, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                externalProcessingSources, model, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderem Vision-Modell (ADR 0021). */
     public AiServiceSettings withVisionModel(String model) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, model, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                externalProcessingSources, rerankModel, model, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
     }
 
     /** Dieselben Einstellungen mit anderem Ausgabelimit des Chat-Modells; {@code null} heißt Standard. */
     public AiServiceSettings withChatMaxTokens(Integer maxTokens) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources, rerankModel, visionModel, maxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel);
+                externalProcessingSources, rerankModel, visionModel, maxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
+    }
+
+    /** Dieselben Einstellungen mit anderem Ausgabelimit des Vision-Modells; {@code null} heißt Standard. */
+    public AiServiceSettings withVisionMaxTokens(Integer maxTokens) {
+        return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, stepThinking, parallel, maxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
+    }
+
+    /**
+     * Dieselben Einstellungen mit anderer Bildgenerierung: Modell ({@code null}/leer heißt das Chat-Modell) und
+     * Ausgabelimit ({@code null} heißt {@link #DEFAULT_IMAGE_MAX_TOKENS}).
+     */
+    public AiServiceSettings withImageGeneration(String model, Integer maxTokens) {
+        return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, model, maxTokens, visionThinking,
+                imageThinking);
+    }
+
+    /**
+     * Dieselben Einstellungen mit eigenem Nachdenken für Vision-Modell und Bildgenerierung; {@code null}/leer heißt
+     * jeweils wie das Text-Modell ({@code stepThinking}).
+     */
+    public AiServiceSettings withThinking(String vision, String image) {
+        return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens, vision,
+                image);
+    }
+
+    /**
+     * Dieselben Einstellungen für einen Schritt mit eigenem Modell und eigener Tokenlänge: {@code model} wird das
+     * Chat-Modell, {@code maxTokens} sein Ausgabelimit; {@code null}/leer behält jeweils den eingestellten Wert.
+     */
+    public AiServiceSettings forChat(String model, Integer maxTokens) {
+        return forChat(model, maxTokens, null);
+    }
+
+    /**
+     * Wie {@link #forChat(String, Integer)}, dazu das Nachdenken des Schritts: {@code thinking} wird
+     * {@code stepThinking} und geht mit jeder Anfrage mit; {@code null}/leer behält das des Text-Modells.
+     */
+    public AiServiceSettings forChat(String model, Integer maxTokens, String thinking) {
+        String chosen = model == null || model.isBlank() ? chatModel : model.strip();
+        Integer limit = maxTokens == null ? chatMaxTokens : maxTokens;
+        String level = thinking == null || thinking.isBlank() ? stepThinking : thinking;
+        return new AiServiceSettings(baseUrl, apiKey, chosen, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, limit, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, level, parallel, visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
+                imageThinking);
+    }
+
+    /**
+     * Die Einstellungen der Bildgenerierung (SVG-Schaubilder) als Chat: Chat-Modell = {@link #imageModel} oder, ohne
+     * eigenes, das Chat-Modell; Ausgabelimit = {@link #imageMaxTokens}. Damit geht die höhere Tokenlänge bei jeder
+     * Anfrage mit, und eine lange SVG-Antwort bricht nicht ab.
+     */
+    public AiServiceSettings imageGeneration() {
+        return forChat(imageModel, imageMaxTokens, imageThinkingLevel());
     }
 
     /** Ohne API-Key, damit nichts davon in Logs oder Fehlermeldungen gelangt. */
@@ -491,7 +666,21 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         parts.add("loadPollInterval=" + loadPollInterval);
         parts.add("stepThinking=" + stepThinking);
         parts.add("parallel=" + parallel);
+        parts.add("visionMaxTokens=" + visionMaxTokens);
+        parts.add("imageModel=" + imageModel);
+        parts.add("imageMaxTokens=" + imageMaxTokens);
+        parts.add("visionThinking=" + visionThinking);
+        parts.add("imageThinking=" + imageThinking);
         return "AiServiceSettings[" + String.join(", ", parts) + "]";
+    }
+
+    private static Integer tokens(Properties properties, String name) {
+        String text = value(properties, name);
+        try {
+            return text == null ? null : Integer.valueOf(text);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(PREFIX + name + " ist keine Zahl");
+        }
     }
 
     private static String value(Properties properties, String name) {

@@ -753,7 +753,7 @@ public final class ActivitiesView implements View {
         JobStatus status = current.get();
         title.setText(Texts.type(status) + " " + where(status));
         JobProgress p = status.progress();
-        Counters counters = Counters.of(status.type());
+        Counters counters = Counters.of(Texts.kind(status));
         boolean waiting = waitingForSignIn(status.id());
         facts.add("Zustand", waiting ? SIGN_IN : Texts.state(status),
                         waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status)))
@@ -1107,7 +1107,7 @@ public final class ActivitiesView implements View {
     static List<RowActions.Action> progressSlots(JobStatus job, java.time.Duration remaining) {
         JobProgress p = job.progress();
         String eta = remaining == null ? null : remainingText(remaining);
-        Counters counters = Counters.of(job.type());
+        Counters counters = Counters.of(Texts.kind(job));
         long skipped = skipped(job);
         String tip = p.discovered() == 0 ? "Noch nichts gefunden"
                 : p.processed() + " von " + p.discovered() + " " + counters.processed().toLowerCase(java.util.Locale.GERMAN)
@@ -1309,7 +1309,9 @@ public final class ActivitiesView implements View {
                 if (outcome.failed() > 0) {
                     feedback.warning(Texts.count(outcome.changed(), "Unterauftrag", "Unteraufträge") + " erreicht, "
                             + outcome.failed() + " nicht", outcome.problem() == null ? null
-                            : outcome.problem().getMessage());
+                            : outcome.problem() instanceof com.aresstack.spaceharvester.application.background
+                            .BackgroundPartOpenException ? "Läuft schon. " + com.aresstack.spaceharvester.application
+                            .background.BackgroundPartOpenException.REASON : outcome.problem().getMessage());
                 }
                 poll();
             }, feedback::problem);
@@ -1329,7 +1331,15 @@ public final class ActivitiesView implements View {
                 show(after.id());
             }
             poll();
-        }, feedback::problem);
+        }, error -> {
+            if (error instanceof com.aresstack.spaceharvester.application.background.BackgroundPartOpenException) {
+                // Abnahme #1052: Ein anderer Teil für diesen Space erledigt die Arbeit mit, das ist kein Fehler.
+                feedback.warning("Läuft schon",
+                        com.aresstack.spaceharvester.application.background.BackgroundPartOpenException.REASON);
+            } else {
+                feedback.problem(error);
+            }
+        });
     }
 
     /** Für Tests und Bilder: zeigt diese Aufträge, als kämen sie vom Core. */

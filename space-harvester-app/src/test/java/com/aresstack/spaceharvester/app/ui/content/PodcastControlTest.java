@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.event.ApplicationEvent;
+import com.aresstack.spaceharvester.app.event.ContentOverlayEvent;
 import com.aresstack.spaceharvester.app.event.TimelineEvent;
 import com.aresstack.spaceharvester.app.ui.controls.PodcastOrb;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
@@ -28,7 +29,7 @@ class PodcastControlTest {
 
     private final FakeSource source = new FakeSource();
     private final List<ApplicationEvent<?>> events = new ArrayList<>();
-    private PodcastControl control;
+    private PodcastControl<UpdateSummary> control;
 
     @Test
     void staysOffWithoutASummaryOrWithoutSpeech() throws Exception {
@@ -56,7 +57,8 @@ class PodcastControlTest {
             assertEquals(PodcastOrb.State.WAITING, control.orb().state());
             assertTrue(control.timelineShown());
             assertTrue(events.getLast() instanceof TimelineEvent shown && shown.getPayload().show()
-                    && shown.getPayload().timeline() == control.timeline());
+                    && shown.getPayload().timeline() == control.timelineRow());
+            assertTrue(SwingUtilities.isDescendingFrom(control.timeline(), control.timelineRow()));
         });
     }
 
@@ -96,6 +98,80 @@ class PodcastControlTest {
     }
 
     @Test
+    void showsThePictureOfTheRunningTopicOverTheContentAndHidesItWithoutOne(@org.junit.jupiter.api.io.TempDir Path dir)
+            throws Exception {
+        Path raster = dir.resolve("startseite.png");
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(320, 180,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+        javax.imageio.ImageIO.write(image, "png", raster.toFile());
+        Path drawing = dir.resolve("glossar.svg");
+        java.nio.file.Files.writeString(drawing, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1280\" "
+                + "height=\"720\" viewBox=\"0 0 1280 720\"><rect width=\"1280\" height=\"720\" fill=\"#fff\"/></svg>");
+        Podcast.Picture first = new Podcast.Picture(raster, "image/png", "Die neue Startseite von Nordlicht");
+        Podcast.Picture second = new Podcast.Picture(drawing, "image/svg+xml", "");
+        source.parts = List.of(
+                new Podcast.Part(0, 0, "Startseite", "Was neu ist", null, first),
+                new Podcast.Part(0, 1, "Startseite", "Warum", null, first),
+                new Podcast.Part(1, 0, "Glossar", "Glossar", null, second),
+                new Podcast.Part(2, 0, "Abschluss", "Abschluss", null, null));
+        int before = com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(PodcastControl.PICTURES_KEY, 1);
+        try {
+            onEdt(() -> {
+                com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PodcastControl.PICTURES_KEY, 1);
+                control = control();
+                control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+                // Ohne Wiedergabe liegt nichts über dem Inhalt.
+                control.pictureOf(0);
+                assertFalse(control.stageShown());
+                control.orb().doClick();
+
+                // Mit der Wiedergabe liegt das Bild des laufenden Themas über dem Inhalt.
+                control.pictureOf(0);
+                assertTrue(control.stageShown());
+                assertTrue(events.getLast() instanceof ContentOverlayEvent shown && shown.getPayload().show()
+                        && shown.getPayload().overlay() == control.stage());
+                assertEquals("Die neue Startseite von Nordlicht", control.stage().caption());
+                com.aresstack.spaceharvester.app.ui.controls.PictureStage.Picture shownFirst = control.stage().shown();
+                // Derselbe Abschnitt und der nächste desselben Themas: dasselbe Bild, keine neue Meldung.
+                int count = events.size();
+                control.pictureOf(1);
+                assertEquals(count, events.size());
+                assertTrue(control.stage().shown() == shownFirst);
+                // Nächstes Thema: das Schaubild, ohne Unterschrift.
+                control.pictureOf(2);
+                assertTrue(control.stageShown());
+                assertTrue(control.stage().shown().vector() != null);
+                assertEquals("", control.stage().caption());
+                // Ein Thema ohne Bild gibt den Inhalt frei.
+                control.pictureOf(3);
+                assertFalse(control.stageShown());
+                assertTrue(events.getLast() instanceof ContentOverlayEvent hidden && !hidden.getPayload().show());
+                // „Esc“ bzw. der Schalter an der Zeitleiste blendet die Bilder aus, bis man sie wieder einschaltet.
+                control.pictureOf(0);
+                assertTrue(control.stageShown());
+                javax.swing.AbstractButton toggle = (javax.swing.AbstractButton)
+                        ((java.awt.Container) control.timelineRow()).getComponent(1);
+                assertEquals(PodcastControl.PICTURES_ON, toggle.getToolTipText());
+                toggle.doClick();
+                assertFalse(control.stageShown());
+                assertFalse(control.pictures());
+                assertEquals(PodcastControl.PICTURES_OFF, toggle.getToolTipText());
+                assertEquals(0, com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(PodcastControl.PICTURES_KEY,
+                        1));
+                control.pictureOf(2);
+                assertFalse(control.stageShown());
+                toggle.doClick();
+                assertTrue(control.stageShown());
+                // Etwas anderes wird gezeigt: Wiedergabe und Bild enden.
+                control.summary(null);
+                assertFalse(control.stageShown());
+            });
+        } finally {
+            com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PodcastControl.PICTURES_KEY, before);
+        }
+    }
+
+    @Test
     void namesTimelinePositionsAfterTopicAndSegment() {
         Podcast podcast = new Podcast("00112233445566778899aabbccddeeff", "Neues bei Nordlicht", List.of(
                 new Podcast.Part(0, 0, "Einstieg", "Einstieg", Path.of("a.wav")),
@@ -109,8 +185,8 @@ class PodcastControlTest {
         assertTrue(tracks.stream().allMatch(com.aresstack.spaceharvester.app.speech.PodcastPlayer.Track::startsTopic));
     }
 
-    private PodcastControl control() {
-        PodcastControl created = new PodcastControl(() -> source, new SourceUpdatesViewTest.SyncRunner());
+    private PodcastControl<UpdateSummary> control() {
+        PodcastControl<UpdateSummary> created = new PodcastControl<>(() -> source, new SourceUpdatesViewTest.SyncRunner());
         created.events(events::add);
         return created;
     }
@@ -138,11 +214,12 @@ class PodcastControlTest {
     }
 
     /** Ein Podcast, der erst entsteht: bis zum Start gibt es nichts, danach einen laufenden Auftrag ohne Audio. */
-    private static final class FakeSource implements PodcastControl.Source {
+    private static final class FakeSource implements PodcastControl.Source<UpdateSummary> {
 
         boolean available = true;
         boolean failStart;
         int starts;
+        List<Podcast.Part> parts = List.of();
 
         @Override
         public boolean available() {
@@ -150,9 +227,14 @@ class PodcastControlTest {
         }
 
         @Override
+        public String key(UpdateSummary summary) {
+            return UpdatePodcasts.key(summary);
+        }
+
+        @Override
         public Optional<Podcast> podcast(UpdateSummary summary) {
             return starts == 0 || failStart ? Optional.empty()
-                    : Optional.of(new Podcast(UpdatePodcasts.key(summary), null, List.of(), true));
+                    : Optional.of(new Podcast(UpdatePodcasts.key(summary), null, parts, true));
         }
 
         @Override
