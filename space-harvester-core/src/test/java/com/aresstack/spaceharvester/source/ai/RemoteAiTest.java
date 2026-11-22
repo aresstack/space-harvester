@@ -46,6 +46,7 @@ class RemoteAiTest {
     private final List<String> authorizations = new CopyOnWriteArrayList<>();
     private final List<String> bodies = new CopyOnWriteArrayList<>();
     private volatile int status = 200;
+    private volatile boolean rejectNone;
     private volatile String chatAnswer = """
             {"choices":[{"index":0,"message":{"role":"assistant",
               "content":"{\\"queries\\":[{\\"text\\":\\"Nachtlauf Abbruch\\",\\"priority\\":1}]}"}}]}""";
@@ -78,6 +79,16 @@ class RemoteAiTest {
             authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
             String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             bodies.add(request);
+            if (rejectNone && request.contains("reasoning_effort")) {
+                // Wie ein Gateway: HTTP 200, die Ablehnung als Fehler im Ereignisstrom.
+                byte[] bytes = "data: {\"error\":{\"message\":\"unsupported reasoning_effort\"}}\n\n"
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+                return;
+            }
             if (status == 200 && ChatSse.wanted(request)) {
                 byte[] bytes = ChatSse.of(chatAnswer).getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
@@ -239,6 +250,25 @@ class RemoteAiTest {
         assertThat(model.version()).startsWith(ChatAcronymExpansionModel.ID + ":gpt-x@")
                 .doesNotContain(base().getHost());
         assertThat(new ChatAcronymExpansionModel(() -> AiServiceSettings.NONE, this::remote).available()).isFalse();
+    }
+
+    /**
+     * Angelo 22.11.2026: „aus“ schickt keinen reasoning_effort (wie EAC, 3d4j, askai); lehnt ein Dienst einen
+     * eingestellten Wert im Ereignisstrom ab (HTTP 200 mit error), geht die Anfrage ohne ihn, statt als Ausfall
+     * wiederholt zu werden.
+     */
+    @Test
+    void offSendsNoReasoningEffortAndARejectionInsideTheStreamGoesWithout() {
+        rejectNone = true;
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+
+        remote(settings.withStepThinking("none")).summaryCompletions().apply("Anweisung", "{}");
+        String answer = remote(settings.withStepThinking("high")).summaryCompletions().apply("Anweisung", "{}");
+
+        assertThat(answer).isNotBlank();
+        assertThat(bodies.get(0)).doesNotContain("reasoning_effort");
+        assertThat(bodies.get(1)).contains("\"reasoning_effort\":\"high\"");
+        assertThat(bodies.getLast()).doesNotContain("reasoning_effort");
     }
 
     @Test
@@ -496,7 +526,7 @@ class RemoteAiTest {
     }
 
     @Test
-    void anOpenAiCompatibleServiceGetsExactlyTheConfiguredReasoningEffortAlsoNone() {
+    void anOpenAiCompatibleServiceGetsTheConfiguredReasoningEffortAndNothingWhenOff() {
         ChatRequest plain = new ChatRequest(List.of(ChatMessage.user("Hallo")), ChatOptions.defaults());
         List<ChatRequest> seen = new CopyOnWriteArrayList<>();
         ChatCompletionPort port = new ChatCompletionPort() {
@@ -517,14 +547,14 @@ class RemoteAiTest {
         RemoteAi.limited(port, 1024, "high").complete(new ChatRequest(List.of(ChatMessage.user("Hallo")),
                 ChatOptions.builder().reasoningEffort("low").build()));
 
-        // Angelo 22.11.2026: genau der eingestellte Wert; ohne Angabe dachte gpt-oss mit seiner Vorgabe bis ans Limit.
-        assertThat(seen.get(0).options().reasoningEffort()).isEqualTo("none");
+        // Angelo 22.11.2026: wie EAC, 3d4j und askai: „aus“ schickt keinen reasoning_effort („none“ ist unzulässig).
+        assertThat(seen.get(0).options().reasoningEffort()).isNull();
         assertThat(seen.get(1).options().reasoningEffort()).isEqualTo("high");
         assertThat(seen.get(2).options().reasoningEffort()).isEqualTo("low");
         assertThat(seen).allSatisfy(request -> assertThat(request.options().maxTokens()).isEqualTo(1024));
     }
 
-    /** Lehnt der Dienst das Nachdenken technisch ab, weicht die Anfrage aus: „none“ → „low“ → ohne Angabe. */
+    /** Lehnt der Dienst das Nachdenken technisch ab, geht die Anfrage ohne Angabe. */
     @Test
     void aServiceThatRejectsTheReasoningEffortIsAskedOnceMoreWithoutIt() {
         ChatRequest plain = new ChatRequest(List.of(ChatMessage.user("Hallo")), ChatOptions.defaults());
@@ -546,13 +576,12 @@ class RemoteAiTest {
             }
         };
 
-        RemoteAi.limited(port, 1024, "none").complete(plain);
+        RemoteAi.limited(port, 1024, "high").complete(plain);
 
-        // Erst genau „none“, abgelehnt: das kleinste Nachdenken, abgelehnt: ohne Angabe.
-        assertThat(seen).hasSize(3);
-        assertThat(seen.get(0).options().reasoningEffort()).isEqualTo("none");
-        assertThat(seen.get(1).options().reasoningEffort()).isEqualTo(RemoteAi.MIN_REASONING_EFFORT);
-        assertThat(seen.get(2).options().reasoningEffort()).isNull();
+        // Erst genau „high“, abgelehnt: ohne Angabe.
+        assertThat(seen).hasSize(2);
+        assertThat(seen.get(0).options().reasoningEffort()).isEqualTo("high");
+        assertThat(seen.get(1).options().reasoningEffort()).isNull();
     }
 
     /** Lehnt der Dienst schon während stream() ab, bleibt der Ausweichversuch der Griff, den ein Abbruch trifft. */
@@ -616,11 +645,11 @@ class RemoteAiTest {
             }
         };
 
-        ChatTask task = RemoteAi.limited(port, 1024, "none").stream(
+        ChatTask task = RemoteAi.limited(port, 1024, "high").stream(
                 new ChatRequest(List.of(ChatMessage.user("Hallo")), ChatOptions.defaults()), quiet);
 
         assertThat(seen).hasSize(2);
-        assertThat(seen.get(1).options().reasoningEffort()).isEqualTo(RemoteAi.MIN_REASONING_EFFORT);
+        assertThat(seen.get(1).options().reasoningEffort()).isNull();
         assertThat(task.isDone()).as("der Ausweichversuch läuft noch").isFalse();
         task.cancel();
         assertThat(retryCancelled).isTrue();
