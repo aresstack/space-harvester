@@ -101,7 +101,11 @@ public final class ViewerPopup {
         place();
         animate(1);
         SwingUtilities.invokeLater(() -> {
-            if (open && !content.requestFocusInWindow()) {
+            Component focused = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+            // Hat der Inhalt den Fokus schon selbst geholt (z. B. seine Bildfläche), bleibt er dort: Seine Tasten
+            // gelten nur, solange der Fokus in ihm sitzt.
+            if (open && (focused == null || !SwingUtilities.isDescendingFrom(focused, frame))
+                    && !content.requestFocusInWindow()) {
                 scrim.requestFocusInWindow();
             }
         });
