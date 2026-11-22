@@ -11,10 +11,8 @@ import com.aresstack.spaceharvester.application.terms.TermText;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
@@ -28,8 +26,8 @@ import java.util.function.BooleanSupplier;
  * <p>Ablauf: Wortgruppen der Anfrage (drei, zwei, ein Wort, längste zuerst, ohne Überlappung), die im Wortschatz
  * des Aufrufers stehen, gehen als Probe an {@link TermKnowledge#answer}, höchstens {@link #MAX_PROBES} Proben und
  * {@link #MAX_TERMS} gefundene Begriffe; ein Fehler einer Probe lässt die übrigen laufen. Die Belegseiten eines
- * Begriffs sind nur Kandidaten: Dieselbe {@link KeywordSearch} sucht sie mit dem Begriff der Gruppe, zu dem ihre
- * Aussagen gehören, als Suchtext, begrenzt auf genau diese Seiten und im Umfang der Anfrage ({@link KeywordSearch.Query#withText},
+ * Begriffs sind nur Kandidaten: Dieselbe {@link KeywordSearch} sucht sie in einer Suche je Begriff mit ihm als
+ * Suchtext, begrenzt auf genau diese Seiten und im Umfang der Anfrage ({@link KeywordSearch.Query#withText},
  * {@link KeywordSearch.Query#within}). Rechte, Quellen, Spaces samt ausgeschlossenen, Dateitypen und Auszüge gelten
  * also wie bei jedem Treffer; was die Suche dort nicht liefert, erscheint nicht. Jeder Treffer trägt zusätzlich die
  * Ursache {@link HitReason.Kind#TERM}.
@@ -119,11 +117,8 @@ public final class TermSearch {
         TermKnowledge.Answer answer(String term, PageSet scope, BooleanSupplier cancelled);
     }
 
-    /**
-     * Belegseiten, gesucht mit dem Wortlaut {@code label} (dem Begriff der Gruppe, zu dem die Aussagen auf diesen
-     * Seiten gehören), gemeldet unter dem Begriff der Anfrage {@code term}.
-     */
-    private record Batch(String term, String label, List<PageKey> pages) {
+    /** Die Belegseiten eines gefundenen Begriffs, gesucht und gemeldet mit ihm. */
+    private record Batch(String term, List<PageKey> pages) {
     }
 
     /**
@@ -238,39 +233,18 @@ public final class TermSearch {
                 String term = answer.terms().isEmpty() ? phrase : answer.terms().getFirst().term();
                 terms.add(term);
                 capped |= answer.limits().pagesRead() < answer.limits().pagesInScope();
-                Set<PageKey> assigned = new HashSet<>();
-                Set<PageKey> delivered = new HashSet<>();
-                answer.pages().forEach(page -> delivered.add(page.key()));
-                // Je Begriff der Gruppe seine Belegseiten: Eine Seite, die nur den Hauptbegriff nennt, wird mit ihm
-                // gesucht, nicht mit dem Synonym der Anfrage.
-                for (TermKnowledge.Term member : answer.terms()) {
-                    List<PageKey> keys = new ArrayList<>();
-                    for (TermKnowledge.Statement statement : member.statements()) {
-                        for (TermKnowledge.Page page : statement.pages()) {
-                            // Dateitypen entscheidet erst die Suche: Aussagen eines Anhangs tragen den Titel der Seite.
-                            if (delivered.contains(page.key()) && !keys.contains(page.key())
-                                    && !seen.contains(page.key()) && NeighborScope.allows(anyKind, page.key(),
-                                    new PageRef(page.key(), page.title(), page.spaceKey()))) {
-                                keys.add(page.key());
-                            }
-                        }
-                    }
-                    if (!keys.isEmpty()) {
-                        evidence.add(new Batch(term, member.term(), keys));
-                        assigned.addAll(keys);
-                    }
-                }
-                // Belegseiten ohne genannte Aussage (über die Grenze je Aussage hinaus) mit dem Begriff selbst.
-                List<PageKey> rest = new ArrayList<>();
+                // Eine Suche je Begriff über die Belegseiten aller Mitglieder der Gruppe, entdoppelt; die
+                // Schlagwortsuche weitet bestätigte Synonyme selbst aus.
+                List<PageKey> keys = new ArrayList<>();
                 for (TermKnowledge.Page page : answer.pages()) {
-                    if (!assigned.contains(page.key()) && !rest.contains(page.key()) && !seen.contains(page.key())
-                            && NeighborScope.allows(anyKind, page.key(),
-                            new PageRef(page.key(), page.title(), page.spaceKey()))) {
-                        rest.add(page.key());
+                    // Dateitypen entscheidet erst die Suche: Aussagen eines Anhangs tragen den Titel der Seite.
+                    if (!keys.contains(page.key()) && !seen.contains(page.key()) && NeighborScope.allows(anyKind,
+                            page.key(), new PageRef(page.key(), page.title(), page.spaceKey()))) {
+                        keys.add(page.key());
                     }
                 }
-                if (!rest.isEmpty()) {
-                    evidence.add(new Batch(term, term, rest));
+                if (!keys.isEmpty()) {
+                    evidence.add(new Batch(term, keys));
                 }
             }
         }
@@ -307,7 +281,7 @@ public final class TermSearch {
             KeywordSearch.Results results;
             searches++;
             try {
-                results = keywords.search(caller, query.withText(batch.label()).within(PageSet.ofKeys(candidates)), null,
+                results = keywords.search(caller, query.withText(term).within(PageSet.ofKeys(candidates)), null,
                         Math.min(KeywordSearch.MAX_LIMIT, MAX_HITS));
             } catch (RuntimeException e) {
                 // Die Methode ergänzt nur; ihr Scheitern lässt die übrigen Treffer stehen.

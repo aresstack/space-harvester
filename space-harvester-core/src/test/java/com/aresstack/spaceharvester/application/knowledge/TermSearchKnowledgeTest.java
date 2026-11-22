@@ -60,12 +60,22 @@ class TermSearchKnowledgeTest {
         synonyms.add(new DomainTermGraph.Synonym("Plan", "Vorhaben", new RelationScope(null, null)));
         analyse("1", "Der Plan prüft das Ziel.");
         analyse("2", "Das Ziel bleibt offen.");
-        // Die Schlagwortsuche findet nur Seiten, deren Text den Suchtext enthält.
+        // Die Schlagwortsuche findet Seiten, deren Text den Suchtext oder ein bestätigtes Synonym davon enthält
+        // (wie die echte über die bestätigten Beziehungen).
         when(keywords.search(any(), any(), isNull(), anyInt())).thenAnswer(call -> {
             KeywordSearch.Query query = call.getArgument(1);
+            Set<String> wanted = new HashSet<>(Set.of(query.text()));
+            synonyms.forEach(synonym -> {
+                if (synonym.fromTerm().equals(query.text())) {
+                    wanted.add(synonym.toTerm());
+                }
+                if (synonym.toTerm().equals(query.text())) {
+                    wanted.add(synonym.fromTerm());
+                }
+            });
             List<KeywordSearch.Hit> hits = texts.entrySet().stream()
                     .filter(entry -> query.pages() == null || query.pages().contains(entry.getKey()))
-                    .filter(entry -> entry.getValue().contains(query.text()))
+                    .filter(entry -> wanted.stream().anyMatch(entry.getValue()::contains))
                     .map(entry -> new KeywordSearch.Hit("wiki", entry.getKey().pageId(), "DEV",
                             "Seite " + entry.getKey().pageId(), entry.getValue(), null, "1", null, null))
                     .toList();
@@ -83,6 +93,7 @@ class TermSearchKnowledgeTest {
         assertThat(created).as("ein Begriffswissen je Suche").hasValue(1);
         assertThat(result.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1");
         assertThat(result.hits().getFirst().reasons()).anyMatch(reason -> reason.kind() == HitReason.Kind.TERM);
+        assertThat(result.searches()).as("eine Suche je gefundenem Begriff").isEqualTo(1);
         assertThat(result.complete()).isTrue();
     }
 

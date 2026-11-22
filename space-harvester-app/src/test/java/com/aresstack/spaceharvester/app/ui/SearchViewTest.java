@@ -341,6 +341,8 @@ class SearchViewTest {
         await(view[0].semantic::isEnabled);
         assertThat(view[0].semantic.getToolTipText()).contains("nach Regeln");
         SwingUtilities.invokeAndWait(() -> {
+            // Reste einer Schlagwortsuche mit Seiten zu Fachbegriffen (Abnahme AT): gehen mit der neuen Suche.
+            view[0].termPagesNoteForTest(SearchView.TERM_PAGES_UNCHECKED);
             view[0].semantic.setSelected(true);
             assertThat(view[0].modeLabel.getText()).isEqualTo("Modus: Semantische Suche");
             view[0].search("Betrieb Plattform Wartung");
@@ -351,7 +353,7 @@ class SearchViewTest {
         assertThat(view[0].progressText.getText()).startsWith(SearchView.DONE);
         JTable table = find(whole(view[0]), JTable.class).get(0);
         assertThat(table.getRowCount()).isPositive();
-        assertThat(view[0].statusText()).contains("semantisch");
+        assertThat(view[0].statusText()).contains("semantisch").doesNotContain("Fachbegriffen");
         assertThat(button(whole(view[0]), "Weitere laden").isVisible()).isFalse();
         // Am Ende „Fertig“ statt „Abbrechen“; die Ansicht hat keine eigene Aktionszeile mehr.
         assertThat(view[0].actions()).isNull();
@@ -823,6 +825,33 @@ class SearchViewTest {
         assertThat(view[0].status.getText()).startsWith("5 Treffer · 1 Nachbarseite dazu")
                 .endsWith("2 Seiten zu Fachbegriffen dazu · " + SearchView.TERM_PAGES_CAPPED);
         assertThat(view[0].status.getForeground()).isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.ORANGE);
+    }
+
+    @Test
+    void cancelStaysWhileTermPagesRunAndComesBackForTheNextLoad() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].model.set(List.of(row("a")));
+            java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+            view[0].termPagesStop = stop;
+            // (a) Ein zweites „Fertig“ nach dem Cache-Laden blendet Abbrechen nicht aus, solange die Begriffe laufen.
+            view[0].idle("Fertig");
+            assertThat(view[0].cancel.isVisible()).isTrue();
+            assertThat(view[0].cancel.isEnabled()).isTrue();
+            // (b) Nur die Begriffssuche abbrechen: sie hört auf, Abbrechen geht.
+            view[0].cancelSearch();
+            assertThat(stop.get()).isTrue();
+            assertThat(view[0].cancel.isVisible()).isFalse();
+            view[0].termPagesStop = null;
+            // Das nächste Laden in den Cache schaltet Abbrechen wieder ein.
+            view[0].progressId = "lauf";
+            view[0].progress(new com.aresstack.spaceharvester.application.query.KeywordSearch.Progress("lauf", 4, 1,
+                    0, false));
+        });
+        assertThat(view[0].cancel.isVisible()).isTrue();
+        assertThat(view[0].cancel.isEnabled()).isTrue();
     }
 
     private static SearchView.Hit row(String pageId) {

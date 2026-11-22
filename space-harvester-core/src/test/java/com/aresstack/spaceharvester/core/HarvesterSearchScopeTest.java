@@ -81,4 +81,45 @@ class HarvesterSearchScopeTest {
         assertThat(Harvester.searchScope(holdings, List.of("wiki"), USER,
                 KeywordSearch.Query.of("Leistungsakte").within(pages))).isSameAs(pages);
     }
+
+    @Test
+    void aPageLimitLosesItsLockedPages() {
+        PageSet pages = PageSet.of(Map.of("wiki", List.of("x", "y")));
+        when(holdings.locate(any(), eq(pages))).thenReturn(Map.of(
+                new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "y"),
+                new Holdings.Located("DEV", com.aresstack.spaceharvester.application.holdings.HoldingState.LOCKED)));
+
+        PageSet scope = Harvester.searchScope(holdings, List.of("wiki"), USER,
+                KeywordSearch.Query.of("Leistungsakte").within(pages));
+
+        assertThat(scope.asMap()).isEqualTo(Map.of("wiki", Set.of("x")));
+    }
+
+    @Test
+    void theVocabularyHoldsTermsAndBothEndsOfSynonymsNormalized() {
+        com.aresstack.spaceharvester.application.terms.RelationScope global =
+                new com.aresstack.spaceharvester.application.terms.RelationScope(null, null);
+        com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Vocabulary vocabulary =
+                new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Vocabulary() {
+                    @Override
+                    public List<com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Term> terms(
+                            AccessContext caller) {
+                        return List.of(new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Term(
+                                "Leistungsakte", global));
+                    }
+
+                    @Override
+                    public List<com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Synonym> synonyms(
+                            AccessContext caller) {
+                        return List.of(new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Synonym(
+                                "Leistungsakte", "Fallmappe", global));
+                    }
+                };
+
+        Set<String> words = Harvester.termVocabulary(vocabulary, USER);
+
+        assertThat(words).containsExactlyInAnyOrder(
+                com.aresstack.spaceharvester.application.terms.TermText.normalize("Leistungsakte").strip(),
+                com.aresstack.spaceharvester.application.terms.TermText.normalize("Fallmappe").strip());
+    }
 }

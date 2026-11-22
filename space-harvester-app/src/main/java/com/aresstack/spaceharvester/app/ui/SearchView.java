@@ -130,7 +130,9 @@ public final class SearchView implements View {
     /** Die Suche, nach deren Stapel die Seiten zu Fachbegriffen noch gesucht werden; -1 ohne. */
     private int termPagesFor = -1;
     /** Stopp der laufenden Suche nach Seiten zu Fachbegriffen (Schlagwortmodus) oder {@code null}. */
-    private java.util.concurrent.atomic.AtomicBoolean termPagesStop;
+    java.util.concurrent.atomic.AtomicBoolean termPagesStop;
+    /** Abbrechen der progressiven Suche ist angefordert; der Core meldet das Ende. */
+    private boolean runningCancelRequested;
     /** Stand der Seiten zu Fachbegriffen für die Statuszeile: angehängt, laufend, gelber Hinweis. */
     private int termPagesAdded;
     private boolean termPagesRunning;
@@ -254,7 +256,7 @@ public final class SearchView implements View {
      */
     private Subscription progressSubscription = Subscription.NONE;
     /** Kennung des ladenden Stapels für {@code progress} und {@code cancel}; {@code null}, wenn nichts lädt. */
-    private String progressId;
+    String progressId;
     /** Zuletzt gemeldete geladene Seiten; steigt die Zahl, sucht die Ansicht denselben Stapel erneut. */
     private int lastLoaded;
     /** Ob der erste Stapel leer kam, während der Core noch lädt; „Keine Treffer“ erst nach dem Laden. */
@@ -1229,6 +1231,9 @@ public final class SearchView implements View {
         showVariants(List.of());
         feedback.clear();
         status.setText(" ");
+        // Reste einer Schlagwortsuche (Seiten zu Fachbegriffen) gehören nicht in diese Statuszeile.
+        resetTermPages();
+        runningCancelRequested = false;
         starting("Suche läuft · Suchanfragen werden gebildet …");
         cancel.setVisible(true);
         cancel.setEnabled(true);
@@ -1277,6 +1282,7 @@ public final class SearchView implements View {
     /** Ende der semantischen Suche: Endliste, Grund in der Fortschrittszeile, Hinweis bei keinen Treffern. */
     private void ended(ProgressiveResult result) {
         running = null;
+        runningCancelRequested = false;
         overlay.setBusy(false);
         showRanked(result.hits());
         showVariants(result.variants());
@@ -1542,13 +1548,14 @@ public final class SearchView implements View {
     /** Bricht das Laden ab; die Treffer bleiben, die Zeile meldet den Abbruch. */
     private void cancelLoading() {
         if (stopTermPages() && progressId == null && running == null) {
-            cancel.setEnabled(false);
+            updateCancel();
             return;
         }
         if (running != null) {
             // Der Core bricht Suchanfragen und Ladevorgänge ab und meldet completed(CANCELLED).
             running.cancel();
-            cancel.setEnabled(false);
+            runningCancelRequested = true;
+            updateCancel();
             return;
         }
         AppRuntime runtime = context.runtime();
@@ -1573,7 +1580,8 @@ public final class SearchView implements View {
         boolean terms = stopTermPages();
         if (running != null) {
             running.cancel();
-            cancel.setEnabled(false);
+            runningCancelRequested = true;
+            updateCancel();
             return;
         }
         if (searching != null) {
@@ -1593,7 +1601,7 @@ public final class SearchView implements View {
             return;
         }
         if (terms && progressId == null) {
-            cancel.setEnabled(false);
+            updateCancel();
             return;
         }
         cancelLoading();
@@ -1692,7 +1700,7 @@ public final class SearchView implements View {
     }
 
     /** Die schmale Zeile unter dem Suchfeld: Balken und „x von y“, bis der Core meldet, dass nichts mehr lädt. */
-    private void progress(KeywordSearch.Progress state) {
+    void progress(KeywordSearch.Progress state) {
         if (state.done()) {
             progressId = null;
             untrack();
@@ -1705,7 +1713,7 @@ public final class SearchView implements View {
         progressText.setVisible(true);
         progressText.setText(progressLine(state.loaded(), state.total(), model.rows.size()));
         endState.setVisible(false);
-        cancel.setVisible(true);
+        updateCancel();
         updateMore();
     }
 
@@ -1775,8 +1783,7 @@ public final class SearchView implements View {
         termPagesRunning = true;
         termSearchesStarted++;
         // Abbrechen steht bereit, solange sie läuft (wie beim Laden in den Cache).
-        cancel.setVisible(true);
-        cancel.setEnabled(true);
+        updateCancel();
         applyTermTail();
         Background.run(() -> runtime.workspace().termSearch(q, shown, cancelled), found -> {
             if (sid != searchId) {
@@ -1806,9 +1813,7 @@ public final class SearchView implements View {
         if (termPagesStop == stop) {
             termPagesStop = null;
         }
-        if (progressId == null && running == null) {
-            cancel.setVisible(false);
-        }
+        updateCancel();
     }
 
     /** Stoppt eine laufende Suche nach Seiten zu Fachbegriffen; gefundene bleiben. {@code true}, wenn eine lief. */
@@ -2071,10 +2076,23 @@ public final class SearchView implements View {
     }
 
     /** Leere Spur ohne Abbrechen; mittig der Endzustand, {@code null} ohne. */
-    private void idle(String end) {
-        cancel.setVisible(false);
+    void idle(String end) {
+        updateCancel();
         endState.setText(end == null ? " " : end);
         endState.setVisible(end != null);
+    }
+
+    /**
+     * Abbrechen aus dem Zustand: sichtbar und aktiv, solange irgendein Schritt läuft (Laden in den Cache, progressive
+     * Suche, Seiten zu Fachbegriffen); nach angefordertem Abbruch der progressiven Suche sichtbar, aber gesperrt.
+     */
+    void updateCancel() {
+        java.util.concurrent.atomic.AtomicBoolean stop = termPagesStop;
+        boolean terms = stop != null && !stop.get();
+        boolean loading = progressId != null && !cancelled;
+        boolean semantic = running != null;
+        cancel.setVisible(terms || loading || semantic);
+        cancel.setEnabled(terms || loading || semantic && !runningCancelRequested);
     }
 
     /** Sofort beim Start: unbestimmter Balken, bis der Core antwortet. */
@@ -2083,7 +2101,7 @@ public final class SearchView implements View {
         endState.setVisible(false);
         progressText.setText(text);
         progressText.setVisible(true);
-        cancel.setVisible(false);
+        updateCancel();
         more.setVisible(false);
         more.setEnabled(false);
     }

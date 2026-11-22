@@ -369,29 +369,38 @@ class TermSearchTest {
     }
 
     @Test
-    void aPageThatOnlyNamesTheMainTermIsSearchedWithItButMarkedWithTheQueriedSynonym() {
-        // „Fallmappe“ ist Synonym; die Belegseite p2 trägt nur Aussagen über den Hauptbegriff „Leistungsakte“.
-        List<String> texts = new ArrayList<>();
+    void oneSearchPerTermOverTheDeduplicatedPagesOfAllMembersWithTheQueriedTerm() {
+        // „Fallmappe“ ist Synonym; p2 trägt Aussagen zu beiden Mitgliedern, p3 nur zum Hauptbegriff.
+        List<KeywordSearch.Query> asked = new ArrayList<>();
         when(keywords.search(any(), any(), isNull(), anyInt())).thenAnswer(call -> {
             KeywordSearch.Query query = call.getArgument(1);
-            texts.add(query.text());
-            List<KeywordSearch.Hit> hits = query.text().equals("Leistungsakte") ? List.of(hit("p2")) : List.of();
-            return new KeywordSearch.Results("wiki", hits, List.of(), null, true, 0);
+            asked.add(query);
+            return new KeywordSearch.Results("wiki", List.of(hit("p2"), hit("p3")), List.of(), null, true, 0);
         });
-        TermKnowledge.Statement aboutMain = new TermKnowledge.Statement("Leistungsakte", "enthält", "Bescheid",
-                ParsedStatements.Negation.AFFIRMED, ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT,
-                DomainTermGraph.Trust.GEPRUEFT, 1, List.of(page("p2", "ABL")), 0);
         TermKnowledge.Answer answer = new TermKnowledge.Answer(TermKnowledge.Outcome.FOUND, List.of(
-                new TermKnowledge.Term("Fallmappe", DomainTermGraph.NodeKind.SYNONYM, List.of()),
-                new TermKnowledge.Term("Leistungsakte", DomainTermGraph.NodeKind.TERM, List.of(aboutMain))),
-                List.of(), List.of(), List.of(page("p2", "ABL")), new TermKnowledge.Limits(5, 5, 0, 0, 0, 0, false, 0));
+                new TermKnowledge.Term("Fallmappe", DomainTermGraph.NodeKind.SYNONYM, List.of(statement(
+                        "Fallmappe", page("p2", "ABL")))),
+                new TermKnowledge.Term("Leistungsakte", DomainTermGraph.NodeKind.TERM, List.of(statement(
+                        "Leistungsakte", page("p2", "ABL"), page("p3", "ABL"))))),
+                List.of(), List.of(), List.of(page("p2", "ABL"), page("p3", "ABL")),
+                new TermKnowledge.Limits(5, 5, 0, 0, 0, 0, false, 0));
 
         TermSearch.Result result = search(knowledge(Map.of("fallmappe", answer)))
                 .search(USER, KeywordSearch.Query.of("Fallmappe"), List.of(), () -> false);
 
-        assertThat(texts).containsExactly("Leistungsakte");
-        assertThat(result.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("p2");
+        assertThat(asked).singleElement().satisfies(query -> {
+            assertThat(query.text()).isEqualTo("Fallmappe");
+            assertThat(query.pages().asMap()).isEqualTo(Map.of("wiki", java.util.Set.of("p2", "p3")));
+        });
+        assertThat(result.searches()).isEqualTo(1);
+        assertThat(result.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("p2", "p3");
         assertThat(result.hits().getFirst().reasons()).contains(HitReason.term("Fallmappe"));
+    }
+
+    private static TermKnowledge.Statement statement(String subject, TermKnowledge.Page... pages) {
+        return new TermKnowledge.Statement(subject, "enthält", "Bescheid", ParsedStatements.Negation.AFFIRMED,
+                ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT, DomainTermGraph.Trust.GEPRUEFT, 1,
+                List.of(pages), 0);
     }
 
     @Test

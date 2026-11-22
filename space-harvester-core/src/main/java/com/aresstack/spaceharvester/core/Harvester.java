@@ -2264,7 +2264,7 @@ public final class Harvester implements AutoCloseable {
     static com.aresstack.spaceharvester.application.snapshot.PageSet searchScope(Holdings holdings,
             List<String> configured, AccessContext caller, KeywordSearch.Query query) {
         if (query.pages() != null) {
-            return query.pages();
+            return withoutLocked(holdings, caller, query.pages());
         }
         List<String> sources = query.sourceId() != null ? List.of(query.sourceId())
                 : !query.sourceIds().isEmpty() ? List.copyOf(query.sourceIds()) : configured;
@@ -2303,6 +2303,35 @@ public final class Harvester implements AutoCloseable {
             }
         }
         return com.aresstack.spaceharvester.application.snapshot.PageSet.of(pages);
+    }
+
+    /** Die Seitengrenze der Anfrage ohne gesperrte Seiten; scheitert das Nachsehen, bleibt sie, wie sie ist. */
+    private static com.aresstack.spaceharvester.application.snapshot.PageSet withoutLocked(Holdings holdings,
+            AccessContext caller, com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        Map<com.aresstack.spaceharvester.application.snapshot.PageKey, Holdings.Located> located;
+        try {
+            located = holdings.locate(caller, pages);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Gesperrte Seiten der Seitengrenze nicht geprüft ({0})",
+                    e.getClass().getName());
+            return pages;
+        }
+        if (located == null || located.values().stream().noneMatch(where -> where.state()
+                == com.aresstack.spaceharvester.application.holdings.HoldingState.LOCKED)) {
+            return pages;
+        }
+        Map<String, List<String>> open = new LinkedHashMap<>();
+        for (String sourceId : pages.sourceIds()) {
+            for (String pageId : pages.pagesOf(sourceId)) {
+                Holdings.Located where = located.get(
+                        new com.aresstack.spaceharvester.application.snapshot.PageKey(sourceId, pageId));
+                if (where == null || where.state()
+                        != com.aresstack.spaceharvester.application.holdings.HoldingState.LOCKED) {
+                    open.computeIfAbsent(sourceId, unused -> new ArrayList<>()).add(pageId);
+                }
+            }
+        }
+        return com.aresstack.spaceharvester.application.snapshot.PageSet.of(open);
     }
 
     /** Eine Wurzel mit den Rechten des Aufrufers; ohne Leserecht oder nicht (mehr) eingerichtet {@code null}. */
@@ -2431,8 +2460,15 @@ public final class Harvester implements AutoCloseable {
      * die der Aufrufer sehen darf, normalisiert. Nur Wortgruppen daraus fragen das Begriffswissen.
      */
     java.util.Set<String> termVocabulary(AccessContext caller) {
-        com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary vocabulary =
-                new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations);
+        return termVocabulary(
+                new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations),
+                caller);
+    }
+
+    /** Wie oben, aus einem Wortschatz. */
+    static java.util.Set<String> termVocabulary(
+            com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Vocabulary vocabulary,
+            AccessContext caller) {
         java.util.Set<String> words = new java.util.HashSet<>();
         java.util.function.Consumer<String> add = word -> words.add(
                 com.aresstack.spaceharvester.application.terms.TermText.normalize(word).strip());
