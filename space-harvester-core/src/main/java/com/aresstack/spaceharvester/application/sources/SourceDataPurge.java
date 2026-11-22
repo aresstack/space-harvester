@@ -34,6 +34,16 @@ public final class SourceDataPurge {
     /** Fehlercode des Auftrags, wenn eine Ablage nicht geleert werden konnte. */
     public static final String INCOMPLETE = "purge-incomplete";
 
+    /**
+     * Parameter eines Auftrags, der die Daten einer entfernten oder auf ein neues Ziel umgestellten Quelle löscht
+     * (Fundstelle 22): {@code removed} oder {@code moved}.
+     */
+    public static final String REASON = "purge.reason";
+    /** Wert von {@link #REASON}: Die Quelle wurde entfernt. */
+    public static final String REMOVED = "removed";
+    /** Wert von {@link #REASON}: Die Quelle zeigt auf ein anderes Ziel. */
+    public static final String MOVED = "moved";
+
     /** So lange wartet die Bereinigung auf laufende Aufträge der Quelle. */
     public static final Duration JOB_STOP_TIMEOUT = Duration.ofSeconds(30);
 
@@ -120,7 +130,76 @@ public final class SourceDataPurge {
         }
         // Gibt Plätze frei, bevor der Auftrag sie braucht; gewartet wird erst im Auftrag.
         stopJobs(sourceId, null, Duration.ZERO);
-        return jobs.submit(JobType.PURGE, sourceId, null, owner, JobTask.blocking(context -> {
+        return jobs.submit(JobType.PURGE, sourceId, null, owner, task(sourceId));
+    }
+
+    /**
+     * Löscht die Daten einer eben entfernten oder auf ein neues Ziel umgestellten Quelle als Auftrag (Fundstelle 22,
+     * Angelo 21.11.2026: nichts läuft unsichtbar), statt im aufrufenden Thread. Prüft nicht, ob die Quelle eingerichtet
+     * ist. Der Auftrag läuft im Core weiter, auch wenn die App neu lädt; endet der Dienst vorher, setzt
+     * {@link #resumeInterrupted()} ihn beim nächsten Start fort.
+     *
+     * @param reason {@link #REMOVED} oder {@link #MOVED}
+     */
+    public JobStatus startWithdrawal(String sourceId, String owner, String reason) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        stopJobs(sourceId, null, Duration.ZERO);
+        return jobs.submit(JobType.PURGE, sourceId, null, null, owner, java.util.Map.of(REASON, reason, Jobs.SURVIVES_SHUTDOWN, "true"),
+                task(sourceId));
+    }
+
+    /**
+     * Ob die Daten einer entfernten Quelle noch gelöscht werden: ein Auftrag aus {@link #startWithdrawal} mit
+     * {@link #REMOVED}, der wartet oder läuft oder vom Ende des Dienstes unterbrochen wurde. Solange lässt sich dieselbe
+     * ID nicht neu anlegen.
+     */
+    public java.util.Optional<JobStatus> withdrawing(String sourceId) {
+        return latestWithdrawal(sourceId).filter(status -> REMOVED.equals(status.parameter(REASON))
+                && (!status.state().terminal() || interrupted(status)));
+    }
+
+    /**
+     * Beim Start: setzt jeden vom Ende des Dienstes unterbrochenen Auftrag aus {@link #startWithdrawal} mit einem
+     * neuen Auftrag derselben Angaben fort, den jüngsten je Quelle. Eine entfernte Quelle, die inzwischen wieder
+     * eingerichtet ist, bleibt unberührt.
+     *
+     * @return die fortgesetzten Aufträge
+     */
+    public List<JobStatus> resumeInterrupted() {
+        List<JobStatus> resumed = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        List<JobStatus> all = new ArrayList<>(jobs.listAll(JobType.PURGE));
+        all.sort(java.util.Comparator.comparing(JobStatus::createdAt).reversed());
+        for (JobStatus status : all) {
+            if (status.parameter(REASON) == null || status.sourceId() == null || !seen.add(status.sourceId())) {
+                continue;
+            }
+            if (interrupted(status) && !(REMOVED.equals(status.parameter(REASON)) && configured.test(status.sourceId()))) {
+                // „Daten bereinigen“ startet nicht im selben Eintrag neu: ein neuer Auftrag mit denselben Angaben; der
+                // unterbrochene bleibt als solcher stehen.
+                resumed.add(startWithdrawal(status.sourceId(), status.owner(), status.parameter(REASON)));
+                LOG.log(System.Logger.Level.INFO, "Löschen der Daten von Quelle {0} wird fortgesetzt",
+                        status.sourceId());
+            }
+        }
+        return resumed;
+    }
+
+    private java.util.Optional<JobStatus> latestWithdrawal(String sourceId) {
+        return jobs.listAll(JobType.PURGE).stream()
+                .filter(status -> sourceId.equals(status.sourceId()) && status.parameter(REASON) != null)
+                .max(java.util.Comparator.comparing(JobStatus::createdAt));
+    }
+
+    private static boolean interrupted(JobStatus status) {
+        return status.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED
+                && status.error() != null
+                && com.aresstack.spaceharvester.application.jobs.JobLifecycleState.INTERRUPTED.equals(
+                        status.error().code());
+    }
+
+    private JobTask task(String sourceId) {
+        return JobTask.blocking(context -> {
             context.discovered(stores.size());
             context.phase(COMPONENT, "Aufträge der Quelle beenden");
             if (!stopJobs(sourceId, context.jobId(), JOB_STOP_TIMEOUT)) {
@@ -136,7 +215,7 @@ public final class SourceDataPurge {
             if (!outcome.complete()) {
                 throw new JobFailedException(INCOMPLETE, "Nicht geleert: " + String.join(", ", outcome.failed()));
             }
-        }));
+        });
     }
 
     /**

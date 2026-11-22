@@ -542,6 +542,17 @@ wird automatisch verwaltet.
     Fortsetzen holt nur, was fehlt; die Anhangsliste samt Rechten liefert die App, nach einem Neustart setzt deshalb
     der Benutzer fort. „Neu erzwingen“ und „Nur Fehler“ der Anhangbeschaffung eines Exports gelten hier nicht.
 
+17. **Quelle entfernen als Auftrag** (Angelo 21.11.2026, Fundstelle 22, Entwurf vom Architekten bestätigt). Entfernen
+    und Umstellen auf ein neues Ziel löschen die Daten der Quelle nicht mehr im aufrufenden Thread, sondern als
+    Auftrag „Daten bereinigen“ (`PURGE`, `purge.reason` = `removed` oder `moved`, `SourceDataPurge#startWithdrawal`)
+    mit denselben Ablagen wie „Daten bereinigen“, KI-Ergebnisse und Caches eingeschlossen.
+    - Der Auftrag trägt `Jobs.SURVIVES_SHUTDOWN`: Endet der Dienst, etwa weil die App nach dem Entfernen neu lädt, gilt
+      er wie ein Hintergrundauftrag als unterbrochen, nicht als abgebrochen. Der nächste Start setzt ihn mit einem
+      neuen Auftrag derselben Angaben fort (`SourceManagement#resumeWithdrawals`), außer die entfernte Quelle ist
+      inzwischen wieder eingerichtet.
+    - Bis er endet, lässt sich dieselbe Kennung nicht neu anlegen (`SourceRemovalPendingException`); das Formular zeigt
+      unter der Kennung einen gelben Hinweis, der den Auftrag öffnet.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel

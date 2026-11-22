@@ -1547,6 +1547,13 @@ public final class Harvester implements AutoCloseable {
                     .build(), sourceId -> catalog.config(sourceId).isPresent(),
                     sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
             this.sourceManagement = new SourceManagement(catalog, jobs, purge);
+            try {
+                // Fundstelle 22: Löschen entfernter oder umgestellter Quellen setzt nach dem Neustart fort.
+                sourceManagement.resumeWithdrawals();
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Löschen entfernter Quellen nicht fortgesetzt ({0})",
+                        e.getClass().getName());
+            }
             start.step("Exporte, Bilder und Aussagen");
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);

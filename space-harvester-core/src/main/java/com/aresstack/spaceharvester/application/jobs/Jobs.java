@@ -262,6 +262,13 @@ public class Jobs implements AutoCloseable {
     public static final String OWN_LANE = "jobs.ownLane";
 
     /**
+     * Angabe eines Auftrags, der wie ein Hintergrundauftrag das Ende des Dienstes übersteht: Er gilt danach als
+     * unterbrochen ({@code INTERRUPTED}), nicht als abgebrochen, damit ihn der nächste Start fortsetzt, etwa das
+     * Löschen der Daten einer entfernten Quelle (Fundstelle 22), das ein Neuladen der App nicht beenden darf.
+     */
+    public static final String SURVIVES_SHUTDOWN = "jobs.survivesShutdown";
+
+    /**
      * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)} für einen Klick des Benutzers, etwa
      * „Bilder beschreiben“ je Seite oder „Fachbegriffe ermitteln“: Ein Klick wartet nie hinter Hintergrund. Er nimmt
      * den nächsten freien Platz vor jedem wartenden Hintergrundteil, und laufende Hintergrundteile zählen für ihn nicht
@@ -1477,7 +1484,7 @@ public class Jobs implements AutoCloseable {
             // Ab jetzt startet kein Hintergrundteil mehr und keiner wird angenommen (Abnahme #1030).
             backgroundStopped = true;
             for (Job job : open.values()) {
-                if (job.type.background() && !job.cancelRequested && !job.pauseRequested) {
+                if (survivesShutdown(job) && !job.cancelRequested && !job.pauseRequested) {
                     job.shutdownInterrupted = true;
                 }
             }
@@ -1494,7 +1501,7 @@ public class Jobs implements AutoCloseable {
                 open.remove(job.id);
                 job.cancelRequested = true;
                 job.stopRequested();
-                if (job.type.background()) {
+                if (survivesShutdown(job)) {
                     // Hintergrund: unterbrochen statt abgebrochen, damit er nach dem Neustart von selbst fortsetzt.
                     job.finish(JobState.FAILED, new JobError(INTERRUPTED, SHUTDOWN_INTERRUPTED), now);
                 } else {
@@ -1506,7 +1513,7 @@ public class Jobs implements AutoCloseable {
             // Weckt, wer auf das Ende eines wartenden Auftrags wartet ({@link #await}).
             lock.notifyAll();
             for (Job job : open.values()) {
-                if (job.type.background()) {
+                if (survivesShutdown(job)) {
                     // Abgelegt wird, was der Benutzer wollte: so erkennt der nächste Start ein Anhalten oder einen
                     // Abbruch des Benutzers ({@link #markInterrupted}) und setzt nur Unterbrochenes fort.
                     store.save(job.snapshot());
@@ -1816,6 +1823,11 @@ public class Jobs implements AutoCloseable {
     }
 
     /** Ob der Auftrag auf eigener Spur läuft ({@value #OWN_LANE}). */
+    private static boolean survivesShutdown(Job job) {
+        return job.type.background()
+                || job.parameters != null && "true".equals(job.parameters.get(SURVIVES_SHUTDOWN));
+    }
+
     private static boolean ownLane(Job job) {
         return job.type.background() && job.parameters != null && "true".equals(job.parameters.get(OWN_LANE));
     }

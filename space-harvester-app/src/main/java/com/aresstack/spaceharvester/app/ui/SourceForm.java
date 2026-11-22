@@ -133,6 +133,12 @@ final class SourceForm {
     /** Was beim Speichern wohin kommt (Datei, Tresor, Sicherung); unter „Erweitert“. */
     final JTextArea notes = Comic.wrapped("", Comic.TEXT, 12.5f);
     private final Form form = new Form();
+    /** Anfang der Meldung, wenn eine entfernte Quelle dieser ID noch gelöscht wird (Fundstelle 22). */
+    static final String REMOVAL_PENDING = "Die Quelle mit der ID ";
+    /** Der gelbe Hinweis unter der Kennung; ein Klick öffnet den Auftrag. */
+    static final String REMOVAL_HINT = "Diese Kennung wird noch entfernt; Fortschritt unter Aufträge (klicken).";
+    /** Der Auftrag, der die Daten der entfernten Quelle dieser ID löscht; sonst {@code null}. */
+    private String removalJob;
     private final JLabel loginSection = Form.section("Anmeldung");
     private final JLabel sourceSection = Form.section("Quelle");
     private final JLabel aiSection = Form.section("KI-Dienst");
@@ -939,7 +945,12 @@ final class SourceForm {
             if (advancedField(field) && !sourceAdvancedOpen) {
                 sourceAdvanced(true);
             }
-            if (form.has(field)) {
+            if (problem.startsWith(REMOVAL_PENDING) && form.has(id)) {
+                // Gelb, kein Fehler: Es wartet nur; der Hinweis öffnet den Auftrag (AT zu Fundstelle 22).
+                String job = removalJob;
+                form.warn(id, REMOVAL_HINT, job == null ? null : () -> context.navigator().showJob(job));
+                first = first == null ? id : first;
+            } else if (form.has(field)) {
                 form.error(field, shortly(problem));
                 first = first == null ? field : first;
             } else {
@@ -1235,6 +1246,15 @@ final class SourceForm {
         if (editing == null && source.id() != null && context.settings() != null
                 && context.settings().sources().stream().anyMatch(s -> s.id().equals(source.id()))) {
             problems.add("Eine Quelle mit der ID " + source.id() + " gibt es schon.");
+        }
+        removalJob = null;
+        if (editing == null && source.id() != null && context.runtime() != null) {
+            // Fundstelle 22: Die Daten einer entfernten Quelle dieser ID werden noch gelöscht.
+            removalJob = context.runtime().workspace().sourceRemovalPending(source.id()).map(job -> job.id())
+                    .orElse(null);
+            if (removalJob != null) {
+                problems.add(REMOVAL_PENDING + source.id() + " wird noch entfernt.");
+            }
         }
         return problems;
     }
@@ -1804,6 +1824,8 @@ final class SourceForm {
             return field != null && rows.stream().anyMatch(row -> row.key() == field && row.field().isVisible());
         }
 
+        private static final String LINK = "sourceForm.hintLink";
+
         void error(JComponent field, String message) {
             for (Row row : rows) {
                 if (row.key() == field) {
@@ -1811,6 +1833,28 @@ final class SourceForm {
                     row.hint().setToolTipText(message);
                     row.hint().setForeground(Comic.RED);
                     row.label().setForeground(Comic.RED);
+                }
+            }
+        }
+
+        /** Ein gelber Hinweis unter dem Feld, der beim Klick {@code link} ausführt (ohne Link nur gelb). */
+        void warn(JComponent field, String message, Runnable link) {
+            for (Row row : rows) {
+                if (row.key() == field) {
+                    row.hint().setText(message);
+                    row.hint().setToolTipText(message);
+                    row.hint().setForeground(com.aresstack.spaceharvester.app.ui.controls.StatusLabel.WARNING_COLOR);
+                    if (link != null) {
+                        java.awt.event.MouseAdapter click = new java.awt.event.MouseAdapter() {
+                            @Override
+                            public void mouseClicked(java.awt.event.MouseEvent e) {
+                                link.run();
+                            }
+                        };
+                        row.hint().putClientProperty(LINK, click);
+                        row.hint().addMouseListener(click);
+                        row.hint().setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+                    }
                 }
             }
         }
@@ -1829,6 +1873,11 @@ final class SourceForm {
         }
 
         private void clear(Row row) {
+            if (row.hint().getClientProperty(LINK) instanceof java.awt.event.MouseListener click) {
+                row.hint().removeMouseListener(click);
+                row.hint().putClientProperty(LINK, null);
+                row.hint().setCursor(java.awt.Cursor.getDefaultCursor());
+            }
             row.hint().setText(row.text());
             row.hint().setToolTipText(null);
             row.hint().setForeground(Comic.MUTED);

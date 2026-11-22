@@ -71,6 +71,14 @@ class SourceManagementTest {
             assertThat(sources.remove("wiki")).isFalse();
             assertThatThrownBy(() -> harvester.sources().partitions("wiki"))
                     .isInstanceOf(UnknownSourceException.class);
+            // Fundstelle 22: Die Daten löscht ein Auftrag; bis er endet, ist die ID gesperrt.
+            String removal = sources.removalPending("wiki").map(job -> job.id()).orElse(null);
+            if (removal != null) {
+                assertThatThrownBy(() -> sources.add(wiki(SERVER.baseUrl())))
+                        .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceRemovalPendingException.class);
+                assertThat(harvester.await(removal, Duration.ofSeconds(30)).state()).isEqualTo(JobState.COMPLETED);
+            }
+            assertThat(sources.removalPending("wiki")).isEmpty();
 
             // Wieder hinzugefügt ist die Quelle leer: Cache und Abgleichstand sind mit ihr gegangen.
             sources.add(wiki(SERVER.baseUrl()));
@@ -96,6 +104,10 @@ class SourceManagementTest {
 
             URI elsewhere = URI.create(SERVER.baseUrl().toString().replace("127.0.0.1", "localhost"));
             assertThat(sources.change(wiki(elsewhere))).isTrue();
+            // Fundstelle 22: Die alten Daten löscht ein Auftrag „Daten bereinigen“.
+            for (var job : harvester.jobs().listAll(com.aresstack.spaceharvester.application.jobs.JobType.PURGE)) {
+                assertThat(harvester.await(job.id(), Duration.ofSeconds(30)).state()).isEqualTo(JobState.COMPLETED);
+            }
             assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10))
                     .isInstanceOf(CacheMissException.class);
 

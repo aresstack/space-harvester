@@ -663,6 +663,13 @@ class WorkspaceTest {
 
         assertThat(workspace.sources()).extracting(HarvestSource::id).containsExactly("handbuch");
         assertThat(workspace.removeSource("wiki")).isFalse();
+        // Fundstelle 22: Die Daten löscht ein Auftrag in der Auftragsliste; bis er endet, ist die Kennung gesperrt.
+        JobStatus removal = workspace.jobs().stream()
+                .filter(job -> job.type() == com.aresstack.spaceharvester.application.jobs.JobType.PURGE)
+                .findFirst().orElseThrow();
+        assertThat(removal.sourceId()).isEqualTo("wiki");
+        assertThat(await(workspace, removal).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(workspace.sourceRemovalPending("wiki")).isEmpty();
     }
 
     @Test

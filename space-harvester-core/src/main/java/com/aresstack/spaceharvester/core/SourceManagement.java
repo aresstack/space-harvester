@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceDataPurge;
 import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
+import com.aresstack.spaceharvester.application.sources.SourceRemovalPendingException;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceCertificates;
@@ -144,6 +145,9 @@ public final class SourceManagement {
      * @throws InvalidSourceConfigurationException mit den Problemen; dann ändert sich nichts
      */
     public synchronized void add(SourceSettingsConfig config) {
+        purge.withdrawing(config.id()).ifPresent(job -> {
+            throw new SourceRemovalPendingException(config.id(), job.id());
+        });
         catalog.add(config);
         LOG.log(System.Logger.Level.INFO, "Quelle {0} hinzugefügt", config.id());
     }
@@ -162,7 +166,8 @@ public final class SourceManagement {
                 || !Objects.equals(previous.baseUrl(), config.baseUrl());
         LOG.log(System.Logger.Level.INFO, "Quelle {0} geändert{1}", config.id(), moved ? ", neues Ziel" : "");
         if (moved) {
-            withdraw(config.id());
+            // Fundstelle 22: als Auftrag „Daten bereinigen“, sichtbar und fortsetzbar.
+            purge.startWithdrawal(config.id(), Harvester.OWNER, SourceDataPurge.MOVED);
         }
         return moved;
     }
@@ -201,8 +206,10 @@ public final class SourceManagement {
         if (removed.isEmpty()) {
             return false;
         }
-        withdraw(sourceId);
-        LOG.log(System.Logger.Level.INFO, "Quelle {0} entfernt", sourceId);
+        // Fundstelle 22: Die Daten löscht ein Auftrag im Core; er läuft weiter, wenn die App neu lädt, und setzt nach
+        // einem Neustart fort. Bis dahin lässt sich dieselbe ID nicht neu anlegen ({@link #removalPending}).
+        purge.startWithdrawal(sourceId, Harvester.OWNER, SourceDataPurge.REMOVED);
+        LOG.log(System.Logger.Level.INFO, "Quelle {0} entfernt; ihre Daten werden gelöscht", sourceId);
         return true;
     }
 
@@ -219,15 +226,22 @@ public final class SourceManagement {
         return started;
     }
 
+    /**
+     * Der Auftrag, der die Daten einer entfernten Quelle dieser ID noch löscht; solange lässt sich die ID nicht neu
+     * anlegen (Fundstelle 22).
+     */
+    public Optional<JobStatus> removalPending(String sourceId) {
+        return purge.withdrawing(sourceId);
+    }
+
+    /** Beim Start: setzt unterbrochenes Löschen entfernter oder umgestellter Quellen fort. */
+    public List<JobStatus> resumeWithdrawals() {
+        return purge.resumeInterrupted();
+    }
+
     /** Die Ablagen, die {@link #purge} und das Entfernen leeren, in ihrer Reihenfolge. */
     public List<String> purgedStores() {
         return purge.stores();
-    }
-
-    private void withdraw(String sourceId) {
-        SourceDataPurge.Outcome outcome = purge.purge(sourceId);
-        LOG.log(System.Logger.Level.INFO, "Daten der Quelle {0} entfernt ({1} von {2} Ablagen)", sourceId,
-                outcome.cleared().size(), outcome.cleared().size() + outcome.failed().size());
     }
 
     private void stopJobs(String sourceId) {

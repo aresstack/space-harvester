@@ -732,6 +732,14 @@ public final class Workspace {
     }
 
     /**
+     * Der Auftrag, der die Daten einer entfernten Quelle dieser ID noch löscht (Fundstelle 22); solange lässt sich die
+     * Kennung nicht neu vergeben.
+     */
+    public java.util.Optional<JobStatus> sourceRemovalPending(String sourceId) {
+        return harvester.sourceManagement().removalPending(sourceId);
+    }
+
+    /**
      * „Daten bereinigen“: löscht als Auftrag alle lokal gespeicherten Daten dieser einen Quelle (Seiten, Katalog,
      * Suchindex, Analysen, Anhänge, Begriffsbeziehungen, geprüfte Fakten, Aussagen); die Quelle bleibt eingerichtet,
      * andere Quellen bleiben unberührt ({@code SourceManagement.purge}, {@code DELETE /api/v1/sources/{id}/data}).
