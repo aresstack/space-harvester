@@ -200,6 +200,53 @@ public final class UpdatePodcasts {
         }
     }
 
+    /**
+     * Ein fertiges Bild eines Themas für den Bericht (Angelo 22.11.2026: rechtsbündig neben seinem Thema, per Klick im
+     * Bildbetrachter). Die Ansicht stellt es neben die erste Meldung, deren Seiten sich mit {@code pageIds}
+     * überschneiden, sonst neben die erste Meldung mit einem der {@code storyTitles}.
+     *
+     * @param topicTitle  Titel des Podcast-Themas
+     * @param pageIds     die Seiten der Meldungen dieses Themas, ohne Doppelte
+     * @param storyTitles die Titel dieser Meldungen
+     */
+    public record TopicPicture(String topicTitle, List<String> pageIds, List<String> storyTitles,
+                               Podcast.Picture picture) {
+        public TopicPicture {
+            Objects.requireNonNull(picture, "picture");
+            pageIds = List.copyOf(pageIds);
+            storyTitles = List.copyOf(storyTitles);
+        }
+    }
+
+    /** Die fertigen Bilder der Themen zum Podcast dieser Zusammenfassung, in Themenreihenfolge; leer ohne Podcast. */
+    public List<TopicPicture> topicPictures(UpdateSummary summary) {
+        Objects.requireNonNull(summary, "summary");
+        String key = key(summary);
+        Optional<PodcastPlan> plan = production.store().plan(key);
+        if (plan.isEmpty()) {
+            return List.of();
+        }
+        PodcastWriter.Material material = material(summary, page -> null);
+        List<TopicPicture> pictures = new ArrayList<>();
+        for (int t = 0; t < plan.get().topics().size(); t++) {
+            Optional<PodcastPictures.Picture> stored = PodcastPictures.stored(production.store(), key, t)
+                    .filter(found -> found.file() != null);
+            if (stored.isEmpty()) {
+                continue;
+            }
+            PodcastPlan.Topic topic = plan.get().topics().get(t);
+            Set<String> pageIds = new LinkedHashSet<>();
+            List<String> titles = new ArrayList<>();
+            for (PodcastWriter.Story story : material.stories(topic)) {
+                pageIds.addAll(story.pageIds());
+                titles.add(story.title());
+            }
+            pictures.add(new TopicPicture(topic.title(), List.copyOf(pageIds), titles, new Podcast.Picture(
+                    stored.get().file(), stored.get().mediaType(), stored.get().caption())));
+        }
+        return pictures;
+    }
+
     /** Meldet jede abgelegte Stufe dieses Podcasts. */
     public Subscription subscribe(String key, Runnable listener) {
         return production.subscribe(key, listener);
