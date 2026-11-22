@@ -115,9 +115,9 @@ class TermGraphViewStatementsTest {
         });
         assertThat(seen).containsExactly(
                 "Plan – Ziel", 5,
-                List.of("▾ nicht prüfen", "▸ prüfen"), 5,
-                List.of("▾ nicht prüfen", "▾ prüfen"),
-                List.of("▾ muss prüfen", "▸ prüfen (früher)", "▸ prüfen", "▸ nicht prüfen"),
+                List.of("auf: nicht prüfen", "zu: prüfen"), 5,
+                List.of("auf: nicht prüfen", "auf: prüfen"),
+                List.of("auf: muss prüfen", "zu: prüfen (früher)", "zu: prüfen", "zu: nicht prüfen"),
                 "Plan – starten – Nachtlauf", List.of());
     }
 
@@ -208,7 +208,7 @@ class TermGraphViewStatementsTest {
             seen.add(popup.statementHeadings());
         });
         assertThat(seen).as("die Lage hält die alten Kanten; die geklickte steht trotzdem nur einmal da")
-                .containsExactly(false, "Plan – Ziel", 5, List.of("▾ nicht prüfen", "▸ prüfen"));
+                .containsExactly(false, "Plan – Ziel", 5, List.of("auf: nicht prüfen", "zu: prüfen"));
     }
 
     @Test

@@ -2590,7 +2590,7 @@ class KnowledgeGraphTabTest {
         com.aresstack.spaceharvester.app.ui.EvidencePopup popup = tab.evidencePopup();
         assertThat(popup.headingText()).as("Kopf nennt das Paar, nicht eine Aussage").isEqualTo("Plan – Ziel");
         assertThat(popup.countValue()).as("Summe aller Aussagen des Paars").isEqualTo(5);
-        assertThat(popup.statementHeadings()).containsExactly("▾ prüfen", "▸ nicht prüfen");
+        assertThat(popup.statementHeadings()).containsExactly("auf: prüfen", "zu: nicht prüfen");
     }
 
     @Test

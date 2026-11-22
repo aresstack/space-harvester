@@ -1206,9 +1206,9 @@ public final class EvidencePopup extends JPopupMenu {
 
     // ---- für Tests
 
-    /** Die Überschriften der Aussagen, davor „▾ “ (aufgeklappt) oder „▸ “ (zu); leer bei nur einer Aussage. */
+    /** Die Überschriften der Aussagen, davor „auf: “ (aufgeklappt) oder „zu: “; leer bei nur einer Aussage. */
     public List<String> statementHeadings() {
-        return sections.stream().map(section -> (section.expanded() ? "▾ " : "▸ ") + section.header.title())
+        return sections.stream().map(section -> (section.expanded() ? "auf: " : "zu: ") + section.header.title())
                 .toList();
     }
 
