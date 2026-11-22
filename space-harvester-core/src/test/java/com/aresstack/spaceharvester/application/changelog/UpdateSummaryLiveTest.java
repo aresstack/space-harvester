@@ -86,7 +86,7 @@ class UpdateSummaryLiveTest {
                 "BMS", "Betrieb Musterstadt");
 
         String model = System.getProperty("summary.live.model", "gemma4:12b");
-        UpdateSummarizer.Result result = new UpdateSummarizer(model(model), key -> true).summarize(report,
+        UpdateSummarizer.Result result = new UpdateSummarizer(model(model), key -> true).withPlanner(model(model)).summarize(report,
                 page -> paths.getOrDefault(page.pageId(), List.of()),
                 page -> Optional.ofNullable(texts.get(page.pageId())), names, context());
 
@@ -130,7 +130,7 @@ class UpdateSummaryLiveTest {
         com.aresstack.spaceharvester.source.ai.LiveSummaryModel.summaryMaxTokens(limit);
         try {
             String model = System.getProperty("summary.live.model", "gemma4:12b");
-            UpdateSummarizer.Result result = new UpdateSummarizer(model(model), key -> true).summarize(report,
+            UpdateSummarizer.Result result = new UpdateSummarizer(model(model), key -> true).withPlanner(model(model)).summarize(report,
                     page -> paths.getOrDefault(page.pageId(), List.of()),
                     page -> Optional.ofNullable(texts.get(page.pageId())),
                     Map.of("PBA", "Projekt Beispielarchiv"), context());

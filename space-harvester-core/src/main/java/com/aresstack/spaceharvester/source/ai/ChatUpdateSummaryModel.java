@@ -25,6 +25,8 @@ public final class ChatUpdateSummaryModel implements SummaryModel {
 
     private final Supplier<AiServiceSettings> settings;
     private final Function<AiServiceSettings, RemoteAi> remote;
+    /** Welche Zeile der Einstellungen gilt: Teilaufgaben ({@code summary()}) oder Plan ({@code summaryPlan()}). */
+    private final java.util.function.UnaryOperator<AiServiceSettings> use;
 
     public ChatUpdateSummaryModel(Supplier<AiServiceSettings> settings, ConfiguredSourceCatalog catalog,
                                   TrustBundles trustBundles, String userAgent) {
@@ -35,14 +37,43 @@ public final class ChatUpdateSummaryModel implements SummaryModel {
     }
 
     ChatUpdateSummaryModel(Supplier<AiServiceSettings> settings, Function<AiServiceSettings, RemoteAi> remote) {
+        this(settings, remote, AiServiceSettings::summary);
+    }
+
+    ChatUpdateSummaryModel(Supplier<AiServiceSettings> settings, Function<AiServiceSettings, RemoteAi> remote,
+                           java.util.function.UnaryOperator<AiServiceSettings> use) {
         this.settings = Objects.requireNonNull(settings, "settings");
         this.remote = Objects.requireNonNull(remote, "remote");
+        this.use = Objects.requireNonNull(use, "use");
+    }
+
+    /**
+     * Dasselbe Verfahren für den Plan der Zusammenfassung (Angelo 22.11.2026): Modell, Tokenlänge und Nachdenken aus
+     * der Zeile „Zusammenfassung – Plan“ ({@link AiServiceSettings#summaryPlan()}, Schlüssel
+     * {@code ai.summary-plan-model}, {@code -max-tokens}, {@code -thinking}).
+     */
+    public static ChatUpdateSummaryModel plan(Supplier<AiServiceSettings> settings, ConfiguredSourceCatalog catalog,
+                                              TrustBundles trustBundles, String userAgent) {
+        Objects.requireNonNull(catalog, "catalog");
+        Objects.requireNonNull(trustBundles, "trustBundles");
+        Objects.requireNonNull(userAgent, "userAgent");
+        return new ChatUpdateSummaryModel(settings, current -> RemoteAi.of(current, catalog, trustBundles, userAgent),
+                AiServiceSettings::summaryPlan);
+    }
+
+    /**
+     * Die Einstellungen der Zusammenfassung (Angelo 22.11.2026): eigenes Modell, eigene Tokenlänge und eigenes
+     * Nachdenken ({@link AiServiceSettings#summary()}); {@code null} ohne Dienst.
+     */
+    AiServiceSettings effective() {
+        AiServiceSettings current = settings.get();
+        return current == null ? null : use.apply(current);
     }
 
     /** Modell und ein Fingerabdruck der Dienstadresse; nie die Adresse selbst. */
     @Override
     public String version() {
-        AiServiceSettings current = settings.get();
+        AiServiceSettings current = effective();
         if (current == null || current.chatModel() == null) {
             return ID + ":none";
         }
@@ -60,7 +91,7 @@ public final class ChatUpdateSummaryModel implements SummaryModel {
 
     @Override
     public boolean available() {
-        AiServiceSettings current = settings.get();
+        AiServiceSettings current = effective();
         return current != null && current.chat();
     }
 
@@ -78,7 +109,7 @@ public final class ChatUpdateSummaryModel implements SummaryModel {
 
     @Override
     public String complete(String instructions, String input) {
-        AiServiceSettings current = settings.get();
+        AiServiceSettings current = effective();
         if (current == null || !current.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "Kein Chat-Modell eingestellt");
         }

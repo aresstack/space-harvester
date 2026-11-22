@@ -26,6 +26,23 @@ public interface FindingCatalog {
     void offer(AccessContext finder, String sourceId, List<Finding> findings);
 
     /**
+     * Wie {@link #offer}, nennt dazu die angenommenen Seiten (Abnahme #1082): Was nicht angenommen ist, etwa weil die
+     * Warteschlange voll ist, bietet der Anbietende später wieder an. Ohne eigene Umsetzung gilt alles als angenommen.
+     */
+    default java.util.Set<String> accept(AccessContext finder, String sourceId, List<Finding> findings) {
+        offer(finder, sourceId, findings);
+        java.util.Set<String> all = new java.util.LinkedHashSet<>();
+        if (findings != null) {
+            findings.forEach(finding -> {
+                if (finding != null) {
+                    all.add(finding.pageId());
+                }
+            });
+        }
+        return all;
+    }
+
+    /**
      * Ein Fund, so wie die Suche ihn liefert.
      *
      * @param pageId  ID der Seite in der Quelle

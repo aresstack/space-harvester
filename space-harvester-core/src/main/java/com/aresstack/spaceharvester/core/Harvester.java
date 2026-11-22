@@ -754,6 +754,10 @@ public final class Harvester implements AutoCloseable {
                         }
                     }, clock);
             opened.add(findings);
+            if (backgroundJobs != null) {
+                // Fundstelle 14: Funde katalogisieren als Hintergrundart „Funde katalogisieren“.
+                findings.background(backgroundJobs);
+            }
             this.navigation = new PageNavigation(catalog, reader, access, findings, pageLinks);
             this.search = new PageSearch(catalog, index, access);
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
@@ -1029,7 +1033,10 @@ public final class Harvester implements AutoCloseable {
                             summaryRelease::mayProcess, clock,
                             // Worum es geht (Angelo, 21.11.2026): Lesetext und Space-Namen aus dem Cache.
                             new com.aresstack.spaceharvester.application.changelog.SnapshotSummaryMaterial(
-                                    cache::find, pageTexts)))
+                                    cache::find, pageTexts),
+                            // Plan vorab (Angelo 22.11.2026), Zeile „Zusammenfassung – Plan“.
+                            ChatUpdateSummaryModel.plan(() -> liveAi ? this.settings.ai() : startAi, catalog,
+                                    trustBundles, builder.userAgent)))
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault());
             opened.add(changeLog);
@@ -1037,9 +1044,15 @@ public final class Harvester implements AutoCloseable {
             // TTS-Modelle des Dienstes; Ablage unter data/podcasts, damit ein neuer Lauf dort weitermacht.
             java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastAi =
                     () -> liveAi ? this.settings.ai() : startAi;
+            // Plan und Sprechertexte mit eigener Zeile „Podcast“ (Angelo 22.11.2026): ai.podcast-model,
+            // ai.podcast-max-tokens, ai.podcast-thinking; Sprache (TTS) bleibt bei podcastAi.
+            java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastText = () -> {
+                com.aresstack.spaceharvester.ai.AiServiceSettings ai = podcastAi.get();
+                return ai == null ? null : ai.podcast();
+            };
             this.podcasts = new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts(jobs,
                     new ChatStepModel(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.VERSION,
-                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                            podcastText, () -> null, catalog, trustBundles, builder.userAgent),
                     new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
                             builder.userAgent, sentences),
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(
@@ -1059,7 +1072,7 @@ public final class Harvester implements AutoCloseable {
             ChangeLog podcastChangeLog = this.changeLog;
             this.pagePodcasts = new com.aresstack.spaceharvester.application.podcast.PagePodcasts(jobs,
                     new ChatStepModel(com.aresstack.spaceharvester.application.podcast.PagePodcasts.VERSION,
-                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                            podcastText, () -> null, catalog, trustBundles, builder.userAgent),
                     new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
                             builder.userAgent, sentences),
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(

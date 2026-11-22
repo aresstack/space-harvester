@@ -129,6 +129,246 @@ class FindingCatalogingTest {
         assertThat(asked).isEmpty();
     }
 
+    /** Aufträge mit gehaltenem Ausführer, alle Plätze belegt: Ein Hintergrundteil wartet. */
+    private static com.aresstack.spaceharvester.application.jobs.Jobs busyJobs(java.util.Queue<Runnable> held,
+                                                                             int slots) {
+        return busyJobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), held, slots);
+    }
+
+    private static com.aresstack.spaceharvester.application.jobs.Jobs busyJobs(
+            com.aresstack.spaceharvester.application.jobs.JobStore store, java.util.Queue<Runnable> held, int slots) {
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs.Jobs(
+                store, held::add,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(slots, 10, Duration.ofHours(1)),
+                Clock.systemUTC());
+        for (int i = 0; i < slots; i++) {
+            jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "andere", null, "app",
+                    com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+                    }));
+        }
+        return jobs;
+    }
+
+    /** Wartet, bis die Bedingung gilt; Teile legt der Arbeiter nach dem Bündelungsabstand an. */
+    private static void await(java.util.function.BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + WAIT.toNanos();
+        while (!condition.getAsBoolean()) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("Bedingung nicht eingetreten");
+            }
+            Thread.sleep(20);
+        }
+    }
+
+    private static List<com.aresstack.spaceharvester.application.jobs.JobStatus> queued(
+            com.aresstack.spaceharvester.application.background.BackgroundJobs background) {
+        return background.parts(FindingCataloging.KIND).stream().filter(part -> part.state()
+                == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED).toList();
+    }
+
+    private static void runAll(java.util.Queue<Runnable> held) {
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+    }
+
+    private static List<FindingCatalog.Finding> findings(int from, int to) {
+        List<FindingCatalog.Finding> list = new ArrayList<>();
+        for (int i = from; i < to; i++) {
+            list.add(new FindingCatalog.Finding("p" + i, "1"));
+        }
+        return list;
+    }
+
+    @Test
+    void asAJobTheFindingsOfASourceAreOneVisiblePartAndANewOfferReplacesTheWaitingOne() throws Exception {
+        // Fundstelle 14, Abnahme PR 4/#1082: sichtbar, höchstens ein wartender Teil je Quelle, ohne Neues kein Teil.
+        page("1", "DEV", "3");
+        page("2", "DEV", "7");
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(held, 2);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        cataloging.background(background);
+        try {
+            assertThat(cataloging.accept(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3"))))
+                    .containsExactly("1");
+            await(() -> queued(background).size() == 1);
+            String first = queued(background).getFirst().id();
+
+            cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("2", "7")));
+            await(() -> background.parts(FindingCataloging.KIND).size() == 2 && queued(background).size() == 1
+                    && !queued(background).getFirst().id().equals(first));
+            // Erst der Ersatz, dann der alte abgebrochen; der Ersatz nimmt dessen Funde hinter den neuen mit.
+            assertThat(background.part(first).orElseThrow().state())
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED);
+            com.aresstack.spaceharvester.application.jobs.JobStatus waiting = queued(background).getFirst();
+            assertThat(waiting.parameter(FindingCataloging.PAGES)).isEqualTo("2\t7\n1\t3");
+            assertThat(waiting.parameter(FindingCataloging.FINDER)).isEqualTo("app");
+            assertThat(waiting.parameter(FindingCataloging.CHANGE_TRIGGER)).isEqualTo("SEARCH");
+
+            // Dieselbe Suche neu sortiert: alles angenommen, weil der wartende Teil es schon hat; kein neuer Teil.
+            assertThat(cataloging.accept(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3"),
+                    new FindingCatalog.Finding("2", "7")))).containsExactly("1", "2");
+            Thread.sleep(600);
+            assertThat(background.parts(FindingCataloging.KIND)).hasSize(2);
+            assertThat(asked).as("noch nichts gefragt").isEmpty();
+
+            runAll(held);
+
+            assertThat(asked).containsExactlyInAnyOrder("1", "2");
+            assertThat(store.headers).containsOnlyKeys("1", "2");
+            assertThat(gaps).extracting(gap -> gap.key().pageId()).containsExactlyInAnyOrder("1", "2");
+            com.aresstack.spaceharvester.application.jobs.JobStatus done = background.part(waiting.id())
+                    .orElseThrow();
+            assertThat(done.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+            assertThat(done.progress().written()).isEqualTo(2);
+
+            // Eben geprüft: Ein neues Angebot ist angenommen und legt vor RECHECK keinen Teil an.
+            assertThat(cataloging.accept(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3"))))
+                    .containsExactly("1");
+            Thread.sleep(600);
+            assertThat(background.parts(FindingCataloging.KIND)).hasSize(2);
+        } finally {
+            jobs.close();
+        }
+    }
+
+    @Test
+    void aFullPartAcceptsOnlyWhatFitsAndLosesNothingAccepted() throws Exception {
+        // Abnahme #1082, Punkt 1: über 1000 fällt kein angenommener Fund weg; der Rest bleibt unangenommen.
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(held, 2);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        cataloging.background(background);
+        try {
+            int capacity = FindingCataloging.CAPACITY;
+            assertThat(cataloging.accept(APP, "wiki", findings(0, capacity - 2))).hasSize(capacity - 2);
+            await(() -> queued(background).size() == 1);
+            String first = queued(background).getFirst().id();
+
+            Set<String> taken = cataloging.accept(APP, "wiki", findings(capacity - 2, capacity + 3));
+            assertThat(taken).containsExactly("p" + (capacity - 2), "p" + (capacity - 1));
+            await(() -> queued(background).size() == 1 && !queued(background).getFirst().id().equals(first));
+
+            String pages = queued(background).getFirst().parameter(FindingCataloging.PAGES);
+            List<String> ids = pages.lines().map(line -> line.substring(0, line.indexOf('\t'))).toList();
+            assertThat(ids).hasSize(capacity).containsAll(findings(0, capacity).stream()
+                    .map(FindingCatalog.Finding::pageId).toList());
+
+            // Voll: nichts Neues angenommen, schon Angenommenes weiter angenommen.
+            assertThat(cataloging.accept(APP, "wiki", findings(capacity, capacity + 3))).isEmpty();
+            assertThat(cataloging.accept(APP, "wiki", findings(0, 1))).containsExactly("p0");
+        } finally {
+            jobs.close();
+        }
+    }
+
+    @Test
+    void aFailedStartKeepsTheWaitingPartAndTheAcceptedFindings() throws Exception {
+        // Abnahme #1082, Punkt 3: erst der Ersatz, dann der alte; scheitert der Start, bleibt der alte stehen.
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        java.util.concurrent.atomic.AtomicBoolean refuse = new java.util.concurrent.atomic.AtomicBoolean();
+        com.aresstack.spaceharvester.application.jobs.InMemoryJobStore refusing =
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore() {
+                    @Override
+                    public void save(com.aresstack.spaceharvester.application.jobs.JobStatus status) {
+                        if (refuse.get() && find(status.id()).isEmpty()) {
+                            throw new IllegalStateException("Speicher voll");
+                        }
+                        super.save(status);
+                    }
+                };
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(refusing, held, 2);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        cataloging.background(background);
+        try {
+            cataloging.offer(APP, "wiki", findings(0, 1));
+            await(() -> queued(background).size() == 1);
+            String first = queued(background).getFirst().id();
+            refuse.set(true);
+
+            assertThat(cataloging.accept(APP, "wiki", findings(1, 2))).containsExactly("p1");
+            Thread.sleep(600);
+            assertThat(background.part(first).orElseThrow().state())
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.QUEUED);
+            assertThat(background.parts(FindingCataloging.KIND)).hasSize(1);
+
+            // Wieder möglich: Das nächste Angebot nimmt die angenommenen Funde mit.
+            refuse.set(false);
+            cataloging.offer(APP, "wiki", findings(2, 3));
+            await(() -> queued(background).size() == 1 && !queued(background).getFirst().id().equals(first));
+            assertThat(queued(background).getFirst().parameter(FindingCataloging.PAGES))
+                    .isEqualTo("p1\t1\np2\t1\np0\t1");
+            assertThat(background.part(first).orElseThrow().state())
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED);
+        } finally {
+            jobs.close();
+        }
+    }
+
+    @Test
+    void aNewVersionOfACataloguedPageIsAcceptedAgain() throws Exception {
+        // Abnahme #1082, Punkt 4: offene Teile zählen nach Seite und Fassung, erledigte Seiten nicht.
+        page("1", "DEV", "4");
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(held, 2);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        cataloging.background(background);
+        try {
+            cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3")));
+            await(() -> queued(background).size() == 1);
+            String first = queued(background).getFirst().id();
+
+            // Eine neue Fassung ersetzt die alte im wartenden Teil.
+            assertThat(cataloging.accept(APP, "wiki", List.of(new FindingCatalog.Finding("1", "4"))))
+                    .containsExactly("1");
+            await(() -> queued(background).size() == 1 && !queued(background).getFirst().id().equals(first));
+            String second = queued(background).getFirst().id();
+            assertThat(queued(background).getFirst().parameter(FindingCataloging.PAGES)).isEqualTo("1\t4");
+
+            runAll(held);
+            await(() -> background.part(second).orElseThrow().state()
+                    == com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+
+            // Erledigt in Fassung 4: eine spätere Fassung 5 ist neu.
+            page("1", "DEV", "5");
+            assertThat(cataloging.accept(APP, "wiki", List.of(new FindingCatalog.Finding("1", "5"))))
+                    .containsExactly("1");
+            // Die Plätze sind jetzt frei: Der neue Teil startet gleich, statt zu warten.
+            await(() -> background.parts(FindingCataloging.KIND).size() == 3);
+            assertThat(background.parts(FindingCataloging.KIND).stream()
+                    .filter(part -> !part.id().equals(first) && !part.id().equals(second)).findFirst().orElseThrow()
+                    .parameter(FindingCataloging.PAGES)).isEqualTo("1\t5");
+        } finally {
+            jobs.close();
+        }
+    }
+
+    @Test
+    void withASingleSlotFindingsAreCataloguedTheFormerWay() throws Exception {
+        // Abnahme #1077/#1080: Bei nur einem Platz liefe kein Hintergrundteil.
+        page("1", "DEV", "3");
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(held, 1);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        cataloging.background(background);
+        try {
+            cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3")));
+            assertThat(cataloging.awaitIdle(WAIT)).isTrue();
+
+            assertThat(background.parts(FindingCataloging.KIND)).isEmpty();
+            assertThat(asked).containsExactly("1");
+        } finally {
+            jobs.close();
+        }
+    }
+
     private void page(String pageId, String spaceKey, String version) {
         spaces.put(pageId, spaceKey);
         versions.put(pageId, version);
