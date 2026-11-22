@@ -362,6 +362,7 @@ public final class Harvester implements AutoCloseable {
     private final ChangeLog changeLog;
     /** Die Update-Zusammenfassung als Podcast (Angelo 21.11.2026). */
     private final com.aresstack.spaceharvester.application.podcast.UpdatePodcasts podcasts;
+    private final com.aresstack.spaceharvester.application.podcast.PagePodcasts pagePodcasts;
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
     private final ChangeEvents changeEvents;
@@ -1010,6 +1011,56 @@ public final class Harvester implements AutoCloseable {
                         com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
                         return current == null ? 1 : current.parallel();
                     });
+            // Erklär-Podcast einer Seite (Angelo 21.11.2026): derselbe Ablauf, Eingabe die Seite und ihre Unterseiten;
+            // an das Modell nur lokal liegende, lesbare Seiten mit KI-Freigabe (ADR 0028), wie das Wissen des Chats.
+            PageQueries podcastPages = this.pages;
+            AiRelease podcastRelease = this.aiRelease;
+            PageTextProjector podcastTexts = this.pageTexts;
+            LucenePageCache podcastCache = this.pageCache;
+            ChangeLog podcastChangeLog = this.changeLog;
+            this.pagePodcasts = new com.aresstack.spaceharvester.application.podcast.PagePodcasts(jobs,
+                    new ChatStepModel(com.aresstack.spaceharvester.application.podcast.PagePodcasts.VERSION,
+                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                    new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
+                            builder.userAgent, sentences),
+                    new com.aresstack.spaceharvester.application.podcast.PodcastStore(
+                            builder.dataDirectory.resolve("podcasts")),
+                    com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled(),
+                    new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Pages() {
+                        @Override
+                        public Optional<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Page> page(
+                                AccessContext who, String sourceId, String pageId) {
+                            try {
+                                return podcastPages.cached(who, sourceId, pageId)
+                                        .map(com.aresstack.spaceharvester.application.query.DeliveredPage::snapshot)
+                                        .filter(snapshot -> podcastRelease.mayProcess(snapshot.key()))
+                                        .flatMap(snapshot -> podcastTexts.project(snapshot).map(text ->
+                                                new com.aresstack.spaceharvester.application.podcast.PagePodcasts
+                                                        .Page(pageId, snapshot.metadata().title(),
+                                                        snapshot.spaceKey(), text)));
+                            } catch (RuntimeException e) {
+                                return Optional.empty();
+                            }
+                        }
+
+                        @Override
+                        public List<String> children(AccessContext who, String sourceId, String pageId) {
+                            return podcastCache.children(new PageKey(sourceId, pageId), 200).stream()
+                                    .map(com.aresstack.spaceharvester.persistence.lucene.CachedPageHeader::header)
+                                    .sorted(java.util.Comparator.comparing(header -> header.metadata().title(),
+                                            String.CASE_INSENSITIVE_ORDER))
+                                    .map(header -> header.metadata().pageId()).toList();
+                        }
+
+                        @Override
+                        public List<String> ancestors(AccessContext who, String sourceId, String pageId) {
+                            return podcastChangeLog.ancestors(who, sourceId, pageId);
+                        }
+                    },
+                    () -> {
+                        com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
+                        return current == null ? 1 : current.parallel();
+                    });
             start.step("Änderungsprotokoll");
             if (manager != null) {
                 // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
@@ -1152,6 +1203,8 @@ public final class Harvester implements AutoCloseable {
                 this.glossaryClassification.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
+                // Erklär-Podcasts, in die eine solche Seite einging, entfallen (ADR 0028).
+                this.pagePodcasts.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // Podcasts, deren Zusammenfassung dabei wegfiel, entfallen mit ihr.
                 podcastsAfterWithdrawal.prune(meta -> cache.summary(meta.sourceId(), meta.updateId(), meta.spaceKey())
                         .map(stored -> com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.key(
@@ -2540,6 +2593,11 @@ public final class Harvester implements AutoCloseable {
     /** Änderungsprotokoll und Updates je Quelle (ADR 0030), mit den Rechten des Aufrufers je Seite. */
     public ChangeLog changeLog() {
         return changeLog;
+    }
+
+    /** Der Erklär-Podcast einer Seite (Angelo 21.11.2026). */
+    public com.aresstack.spaceharvester.application.podcast.PagePodcasts pagePodcasts() {
+        return pagePodcasts;
     }
 
     /** Die Update-Zusammenfassung als Podcast (Angelo 21.11.2026). */

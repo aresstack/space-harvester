@@ -45,13 +45,33 @@ public final class PodcastStore {
         this.directory = Objects.requireNonNull(directory, "directory");
     }
 
-    /** Wofür ein Podcast entstand; der Schlüssel folgt aus der Zusammenfassung. */
-    public record Meta(String key, String sourceId, String updateId, String spaceKey, String model, String host,
-                       String cohost) {
+    /**
+     * Wofür ein Podcast entstand: eine Update-Zusammenfassung ({@code updateId}) oder eine Seite ({@code pageId}, der
+     * Erklär-Podcast); der Schlüssel folgt aus dem Material.
+     *
+     * @param input die Fassung des Inhalts beim Erklär-Podcast (ändert sich der Inhalt, ist er veraltet)
+     * @param pages die Seiten, deren Text in den Podcast einging (fällt eine davon aus der KI-Freigabe, fällt er mit)
+     */
+    public record Meta(String key, String sourceId, String updateId, String spaceKey, String pageId, String input,
+                       List<String> pages, String model, String host, String cohost) {
         public Meta {
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(sourceId, "sourceId");
-            Objects.requireNonNull(updateId, "updateId");
+            if (updateId == null && pageId == null) {
+                throw new IllegalArgumentException("Podcast ohne Update und ohne Seite");
+            }
+            pages = pages == null ? List.of() : List.copyOf(pages);
+        }
+
+        /** Der Podcast einer Update-Zusammenfassung. */
+        public Meta(String key, String sourceId, String updateId, String spaceKey, String model, String host,
+                    String cohost) {
+            this(key, sourceId, updateId, spaceKey, null, null, List.of(), model, host, cohost);
+        }
+
+        /** Dieselbe Herkunft mit Modell und Stimmen. */
+        Meta voiced(String model, String host, String cohost) {
+            return new Meta(key, sourceId, updateId, spaceKey, pageId, input, pages, model, host, cohost);
         }
     }
 
@@ -63,9 +83,18 @@ public final class PodcastStore {
     }
 
     public Optional<Meta> meta(String key) {
-        return read(folder(key).resolve("podcast.json")).map(node -> new Meta(key, text(node, "sourceId"),
-                text(node, "updateId"), nullable(node, "spaceKey"), nullable(node, "model"), nullable(node, "host"),
-                nullable(node, "cohost")));
+        return read(folder(key).resolve("podcast.json")).map(node -> {
+            List<String> pages = new ArrayList<>();
+            node.path("pages").forEach(page -> pages.add(page.asString()));
+            String updateId = nullable(node, "updateId");
+            String pageId = nullable(node, "pageId");
+            if (updateId == null && pageId == null) {
+                return null; // unlesbar: zählt als fehlend
+            }
+            return new Meta(key, text(node, "sourceId"), updateId, nullable(node, "spaceKey"), pageId,
+                    nullable(node, "input"), pages,
+                    nullable(node, "model"), nullable(node, "host"), nullable(node, "cohost"));
+        });
     }
 
     public void saveMeta(Meta meta) {
@@ -73,6 +102,10 @@ public final class PodcastStore {
         node.put("sourceId", meta.sourceId());
         node.put("updateId", meta.updateId());
         node.put("spaceKey", meta.spaceKey());
+        node.put("pageId", meta.pageId());
+        node.put("input", meta.input());
+        ArrayNode pages = node.putArray("pages");
+        meta.pages().forEach(pages::add);
         node.put("model", meta.model());
         node.put("host", meta.host());
         node.put("cohost", meta.cohost());
