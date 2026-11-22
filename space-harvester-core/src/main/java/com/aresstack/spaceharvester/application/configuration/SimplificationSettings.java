@@ -11,15 +11,19 @@ import java.util.Locale;
  *                 nur Stichpunkte, Kennungszeilen und Sätze ohne sichere Aussage, {@code always} alle
  * @param parallel so viele Abschnitte einer Seite höchstens zugleich beim Modell, mindestens 1 (Standard 2)
  * @param model    eigenes Chat-Modell für diesen Schritt oder {@code null} für {@code ai.chat-model}
+ * @param maxTokens Tokenlänge (Ausgabelimit) dieses Schritts oder {@code null} für {@code ai.chat-max-tokens}
  */
-public record SimplificationSettings(Mode mode, int parallel, String model) {
+public record SimplificationSettings(Mode mode, int parallel, String model, Integer maxTokens,
+                                     String thinking) {
 
     public static final String MODE = "statements.simplification.mode";
     public static final String PARALLEL = "statements.simplification.parallel";
     public static final String MODEL = "statements.simplification.model";
+    public static final String MAX_TOKENS = "statements.simplification.max-tokens";
+    public static final String THINKING = "statements.simplification.thinking";
     public static final int DEFAULT_PARALLEL = 2;
     public static final SimplificationSettings DEFAULT = new SimplificationSettings(Mode.WHERE_NEEDED,
-            DEFAULT_PARALLEL, null);
+            DEFAULT_PARALLEL, null, null, null);
 
     /** Betriebsart der Vorstufe. */
     public enum Mode {
@@ -64,5 +68,29 @@ public record SimplificationSettings(Mode mode, int parallel, String model) {
             throw new IllegalArgumentException("Mindestens ein Abschnitt zugleich");
         }
         model = model == null || model.isBlank() ? null : model.strip();
+        if (maxTokens != null && (maxTokens < 1 || maxTokens > 1_000_000)) {
+            throw new IllegalArgumentException("Tokenlänge zwischen 1 und 1000000");
+        }
+        thinking = StepThinking.normalize(thinking);
+    }
+
+    /** Ohne eigene Tokenlänge. */
+    public SimplificationSettings(Mode mode, int parallel, String model) {
+        this(mode, parallel, model, null);
+    }
+
+    /** Ohne eigenes Nachdenken (wie das Text-Modell). */
+    public SimplificationSettings(Mode mode, int parallel, String model, Integer maxTokens) {
+        this(mode, parallel, model, maxTokens, null);
+    }
+
+    /** Dieselben Einstellungen mit anderem Nachdenken; {@code null} heißt wie das Text-Modell. */
+    public SimplificationSettings withThinking(String value) {
+        return new SimplificationSettings(mode, parallel, model, maxTokens, value);
+    }
+
+    /** Dieselben Einstellungen mit anderer Tokenlänge; {@code null} heißt {@code ai.chat-max-tokens}. */
+    public SimplificationSettings withMaxTokens(Integer value) {
+        return new SimplificationSettings(mode, parallel, model, value, thinking);
     }
 }

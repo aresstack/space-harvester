@@ -467,6 +467,63 @@ class StatementAnalysisJobsTest {
         });
     }
 
+    /** AT zu #1059: „Prüfen“ einer Seite im Reiter ist ein Klick-Auftrag mit der gezeigten Fassung. */
+    @Test
+    void checkingTheShownPageIsAnInteractiveJobWithoutFetchingAndCountsWhatItLeftOut() {
+        StepModel model = new StepModel() {
+            @Override
+            public String version() {
+                return "fake:m1";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String complete(String instructions, String input) {
+                return "1|STIMMT\n";
+            }
+        };
+        com.aresstack.spaceharvester.application.check.StatementChecks checks =
+                new com.aresstack.spaceharvester.application.check.StatementChecks(model,
+                        new com.aresstack.spaceharvester.application.check.StatementCheckStore(
+                                new InMemoryEnrichmentStore(), StatementAnalysisTest.clock()),
+                        page -> !page.pageId().equals("2"));
+        StatementAnalysis withCheck = new StatementAnalysis(snapshot -> Optional.of(StatementAnalysisTest
+                .text(snapshot)), store, access, configured::get, StatementAnalysisTest.clock(), null, checks);
+        List<String> checkFetched = new ArrayList<>();
+        StatementAnalysisJobs checkJobs = new StatementAnalysisJobs(jobs, tree, (caller, sourceId, pageId) -> {
+            checkFetched.add(pageId);
+            return page(sourceId, pageId);
+        }, withCheck, access, "desktop");
+        tree.space("wiki", "DEV", "1", "2", "3");
+        run(new StatementAnalysisJobs.Scope.SinglePage("wiki", "DEV", "1"), StatementAnalysisJobs.Options.DEFAULT);
+        run(new StatementAnalysisJobs.Scope.SinglePage("wiki", "DEV", "2"), StatementAnalysisJobs.Options.DEFAULT);
+        StatementAnalysisJobs.CheckOptions options = new StatementAnalysisJobs.CheckOptions(0,
+                com.aresstack.spaceharvester.application.check.CheckScope.ALL, 2);
+
+        JobStatus checked = jobs.status(checkJobs.startCheckShown(CALLER, page("wiki", "1"), options).id());
+        JobStatus notReleased = jobs.status(checkJobs.startCheckShown(CALLER, page("wiki", "2"), options).id());
+        JobStatus notCurrent = jobs.status(checkJobs.startCheckShown(CALLER, page("wiki", "3"), options).id());
+
+        assertThat(checked.type()).isEqualTo(JobType.STATEMENT_CHECK);
+        assertThat(checked.parameters()).as("ein Klick wartet nie hinter Hintergrund").containsEntry(Jobs.INTERACTIVE,
+                "true");
+        assertThat(checked.progress()).isEqualTo(new JobProgress(1, 1, 1, 0));
+        assertThat(checkFetched).as("die gezeigte Fassung, kein erneuter Abruf").isEmpty();
+        assertThat(jobs.events(notReleased.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(StatementAnalysisJobs.CHECK_NOT_RELEASED);
+            assertThat(event.message()).startsWith("1 ");
+        });
+        assertThat(notCurrent.progress().written()).isZero();
+        assertThat(jobs.events(notCurrent.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(StatementAnalysisJobs.CHECK_NOT_CURRENT);
+            assertThat(event.message()).isEqualTo("1 Seiten ohne aktuelle Analyse nicht geprüft");
+        });
+    }
+
     @Test
     void withoutAModelTheCheckJobDoesNotStart() {
         assertThat(batch.checkAvailable()).isFalse();

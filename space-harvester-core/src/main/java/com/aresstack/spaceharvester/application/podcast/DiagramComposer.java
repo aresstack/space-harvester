@@ -216,7 +216,16 @@ public final class DiagramComposer {
         }
         List<String> drawn = new ArrayList<>();
         for (CompletableFuture<String> icon : icons) {
-            drawn.add(icon.join());
+            try {
+                drawn.add(icon.get());
+            } catch (InterruptedException e) {
+                // Lauf abgebrochen: nicht auf die übrigen Symbole warten
+                icons.forEach(other -> other.cancel(true));
+                Thread.currentThread().interrupt();
+                return Optional.empty();
+            } catch (java.util.concurrent.ExecutionException e) {
+                drawn.add(null);
+            }
         }
         String svg = assemble(plan, drawn);
         try {
@@ -226,6 +235,26 @@ public final class DiagramComposer {
             svg = assemble(plan, new ArrayList<>(java.util.Collections.nCopies(plan.elements().size(), null)));
         }
         return Optional.of(new Diagram(svg, plan, repairs));
+    }
+
+    /**
+     * Ein Modellaufruf über den begrenzten Pool, damit auch Plan und Auswahl die Parallel-Einstellung einhalten.
+     * Nur aus Fäden außerhalb des Pools rufen. Wird der wartende Faden unterbrochen, wirft er und bleibt unterbrochen.
+     */
+    static String call(Executor parts, java.util.function.Supplier<String> call) {
+        CompletableFuture<String> future = CompletableFuture.supplyAsync(call, parts);
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new java.util.concurrent.CancellationException("Lauf abgebrochen");
+        } catch (java.util.concurrent.ExecutionException e) {
+            if (e.getCause() instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new IllegalStateException(e.getCause());
+        }
     }
 
     // --- Stufe 1: Plan ------------------------------------------------------------------------------------------
@@ -242,8 +271,11 @@ public final class DiagramComposer {
                 + "JSON-Objekt: {\"title\":\"...\",\"form\":\"flow\",\"elements\":[{\"label\":\"...\",\"note\":\"...\","
                 + "\"icon\":\"...\"}]}";
         for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            if (Thread.currentThread().isInterrupted()) {
+                return null;
+            }
             try {
-                Plan plan = readPlan(model.complete(PLAN_SYSTEM, prompt), repairs);
+                Plan plan = readPlan(call(parts, () -> model.complete(PLAN_SYSTEM, prompt)), repairs);
                 if (plan != null) {
                     return plan;
                 }

@@ -39,12 +39,36 @@ public record Podcast(String key, String title, List<Part> parts, boolean runnin
      * @param topicTitle   Titel des Themas (für die gelben Marken der Zeitleiste)
      * @param segmentTitle Titel des Abschnitts, {@code null} beim Platzhalter
      * @param audio        die WAV-Datei, {@code null}, solange sie fehlt
+     * @param picture      das Bild des Themas, {@code null}, solange keins da ist (oder keins passt)
      */
-    public record Part(int topic, int segment, String topicTitle, String segmentTitle, Path audio) {
+    public record Part(int topic, int segment, String topicTitle, String segmentTitle, Path audio, Picture picture) {
+
+        public Part(int topic, int segment, String topicTitle, String segmentTitle, Path audio) {
+            this(topic, segment, topicTitle, segmentTitle, audio, null);
+        }
 
         /** Ob der Abschnitt ein Thema beginnt (dort steht eine Marke). */
         public boolean startsTopic() {
             return segment <= 0;
+        }
+    }
+
+    /**
+     * Das Bild eines Themas, das der Inhaltsbereich zeigt, während das Thema läuft.
+     *
+     * @param file      PNG, JPEG, GIF oder SVG
+     * @param mediaType etwa {@code image/png} oder {@code image/svg+xml}
+     * @param caption   Bildunterschrift, kann leer sein
+     */
+    public record Picture(Path file, String mediaType, String caption) {
+        public Picture {
+            Objects.requireNonNull(file, "file");
+            caption = caption == null ? "" : caption;
+        }
+
+        /** Ob es ein gezeichnetes Schaubild ist (SVG). */
+        public boolean vector() {
+            return "image/svg+xml".equals(mediaType);
         }
     }
 }

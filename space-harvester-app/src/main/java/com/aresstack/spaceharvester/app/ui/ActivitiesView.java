@@ -753,7 +753,7 @@ public final class ActivitiesView implements View {
         JobStatus status = current.get();
         title.setText(Texts.type(status) + " " + where(status));
         JobProgress p = status.progress();
-        Counters counters = Counters.of(status.type());
+        Counters counters = Counters.of(Texts.kind(status));
         boolean waiting = waitingForSignIn(status.id());
         facts.add("Zustand", waiting ? SIGN_IN : Texts.state(status),
                         waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status)))
@@ -1107,7 +1107,7 @@ public final class ActivitiesView implements View {
     static List<RowActions.Action> progressSlots(JobStatus job, java.time.Duration remaining) {
         JobProgress p = job.progress();
         String eta = remaining == null ? null : remainingText(remaining);
-        Counters counters = Counters.of(job.type());
+        Counters counters = Counters.of(Texts.kind(job));
         long skipped = skipped(job);
         String tip = p.discovered() == 0 ? "Noch nichts gefunden"
                 : p.processed() + " von " + p.discovered() + " " + counters.processed().toLowerCase(java.util.Locale.GERMAN)

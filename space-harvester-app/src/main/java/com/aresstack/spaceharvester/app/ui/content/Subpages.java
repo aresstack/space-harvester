@@ -65,6 +65,8 @@ final class Subpages {
     private Below announced;
     /** Ein Beobachter meldete geänderten Bestand: Die Reiter laden neu, auch wenn die Seitenmenge gleich blieb. */
     private boolean refresh;
+    /** Zählt die Ergebnisse der Abfrage der Nachfahren; siehe {@link #revision()}. */
+    private int revision;
 
     Subpages() {
         box.setSelected(false);
@@ -131,14 +133,28 @@ final class Subpages {
         return box.isSelected() && box.isEnabled() ? below : null;
     }
 
+    /** Ob „mit Unterseiten“ angehakt und wählbar ist (für „Analysieren“ im Reiter Aussagen). */
+    boolean active() {
+        return box.isSelected() && box.isEnabled();
+    }
+
     /** Ob die Checkbox angehakt ist, auch wenn sie gerade gesperrt ist. */
     boolean checked() {
         return box.isSelected();
     }
 
-    /** Für Tests: die ermittelten Nachfahren, unabhängig von der Checkbox. */
+    /** Die ermittelten Nachfahren, unabhängig von der Checkbox und davon, ob sie gerade gesperrt ist. */
     Below known() {
         return below;
+    }
+
+    /**
+     * Zählt jedes neue Ergebnis der Abfrage der Nachfahren, auch bei gleicher Seitenmenge (dann hat sich der Bestand
+     * geändert). So unterscheidet ein Reiter eine solche Meldung von einer, die nur das Sperren der Checkbox durch
+     * „Absätze“ auslöst.
+     */
+    int revision() {
+        return revision;
     }
 
     private void watch(Workspace workspace, String sourceId, String spaceKey) {
@@ -186,6 +202,7 @@ final class Subpages {
             }
             resolving = false;
             below = new Below(source, space, page, found);
+            revision++;
             boolean reload = refresh && !again;
             if (reload) {
                 refresh = false;

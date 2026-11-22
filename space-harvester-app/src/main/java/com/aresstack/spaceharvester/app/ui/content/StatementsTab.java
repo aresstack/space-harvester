@@ -1,15 +1,18 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
+import com.aresstack.spaceharvester.app.runtime.Cancellation;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
+import com.aresstack.spaceharvester.app.ui.Explorer;
 import com.aresstack.spaceharvester.app.ui.Glyph;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.controls.ActionChip;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
+import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.ParserModelSetup;
 import com.aresstack.spaceharvester.app.ui.Problems;
@@ -79,6 +82,13 @@ final class StatementsTab extends JPanel {
     static final String NOT_AVAILABLE = "In dieser Installation ist kein Parsermodell hinterlegt.";
     static final String CHECKING = "Aussagen werden geprüft …";
     static final String RUNNING = "Wird analysiert … (beim ersten Mal wird das Modell geladen)";
+    static final String COUNTING = "Umfang wird ermittelt …";
+    /** Nach dem Start mit „mit Unterseiten“: der Auftrag läuft im Hintergrund weiter (Fahrplan D3). */
+    static final String STARTED_BELOW = "Analyse der Seite samt Unterseiten gestartet; Fortschritt und Abbruch unter "
+            + "Aufträge.";
+    /** Das Link-Wort der Meldungen zu „mit Unterseiten“: öffnet die Auftragsverwaltung im Reiter „Hintergrund“. */
+    static final String JOBS_LINK = "Aufträge";
+    static final String BELOW = "Analyse der Seite samt Unterseiten";
     static final String NO_PAGE = "Keine Seite geladen.";
     static final String LOADING_PAGE = "Seite wird geladen …";
     static final String PAGE_UNAVAILABLE = "Seite nicht geladen – Aussagen nicht verfügbar.";
@@ -126,6 +136,8 @@ final class StatementsTab extends JPanel {
     private Predicate<String> confirmDelete = question -> Dialogs.confirm(this,
             question.equals(DELETE_EVERYTHING_QUESTION) ? StandingTab.DELETE_EVERYTHING_TITLE
                     : "Aussagen-Analyse löschen?", question);
+    /** Rückfrage vor „mit Unterseiten“ mit „wirklich“, Ja oder Nein, wie im Baum; Tests antworten ohne Dialog. */
+    private Predicate<String> confirmBelow = question -> Dialogs.confirm(this, ANALYZE, question);
     /** Ob eine Analyse gespeichert ist (aktuell oder veraltet): nur dann lässt sie sich löschen. */
     private boolean stored;
     /** Ob die angezeigte Analyse aktuell ist: nur dann lässt sie sich prüfen. */
@@ -143,6 +155,21 @@ final class StatementsTab extends JPanel {
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
     private Runnable onAnalysed = () -> { };
     private Consumer<String> onStatus = text -> { };
+    /** Meldungen mit Ampel und Link; ohne Abnehmer gehen sie als Text an {@link #onStatus}. */
+    private Consumer<StatusNote> onNote;
+    private Consumer<String> showJob = jobId -> { };
+    /** Verfolgt die Hintergrundgruppe von „mit Unterseiten“ (Observer, kein Abfragen), bis sie fertig ist. */
+    private AutoCloseable belowWatch;
+    /** Die Seite, für die „mit Unterseiten“ lief; ihr gehören {@link #belowWatch} und {@link #keep}. */
+    private com.aresstack.spaceharvester.application.snapshot.PageKey belowKey;
+    /** Gruppe von „mit Unterseiten“ und ihr zuletzt gemeldeter Stand. */
+    private String belowGroupId;
+    private com.aresstack.spaceharvester.application.background.BackgroundGroup belowLast;
+    private Runnable belowJobs;
+    /** Das Ende der Gruppe wird nur einmal ausgewertet. */
+    private boolean belowEnded;
+    /** Das Ergebnis von „mit Unterseiten“ bleibt in der Statuszeile, bis eine neuere Meldung oder Seite kommt. */
+    private StatusNote keep;
     /** Die Aussagen als Text für die Zwischenablage, wie angezeigt. */
     private final StringBuilder copyText = new StringBuilder();
 
@@ -160,6 +187,10 @@ final class StatementsTab extends JPanel {
     private int syntaxGeneration;
     /** Laufende Analyse; bleibt nach „Abbrechen“ gesetzt, bis ihr Lauf wirklich endet. */
     private AtomicBoolean running;
+    /** Abbruch des laufenden Auftrags; meldet sich beim Core, statt abgefragt zu werden. */
+    private Cancellation runningCancellation;
+    /** Ob „mit Unterseiten“ in der Reiterzeile angehakt und wählbar ist (Fahrplan D3). */
+    private java.util.function.BooleanSupplier withSubpages = () -> false;
 
     /** @param workspace die Aktionen der laufenden App oder {@code null}, solange keine läuft */
     StatementsTab(Supplier<Workspace> workspace, ParserModelSetup setup,
@@ -194,7 +225,13 @@ final class StatementsTab extends JPanel {
         delete.setEnabled(false);
         check.addActionListener(e -> check());
         check.setEnabled(false);
-        cancel.addActionListener(e -> cancelRun());
+        cancel.addActionListener(e -> {
+            if (running != null) {
+                cancelRun();
+            } else {
+                cancelBelow();
+            }
+        });
         cancel.setVisible(false);
         list.setOpaque(false);
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
@@ -310,7 +347,7 @@ final class StatementsTab extends JPanel {
         if (status.state() == ParserModelSetup.State.INSTALLED && NOT_AVAILABLE_MODEL.equals(hint.getText())) {
             hint.setText(status.message() == null ? " " : status.message());
         }
-        analyze.setEnabled(running == null && snapshot != null && !show);
+        analyze.setEnabled(running == null && snapshot != null && !show && !belowBlocks());
         modelBanner.revalidate();
         modelBanner.repaint();
     }
@@ -341,6 +378,11 @@ final class StatementsTab extends JPanel {
         }
     }
 
+    /** Woher der Reiter weiß, ob „mit Unterseiten“ gilt: dann startet „Analysieren“ die Gruppe über den Teilbaum. */
+    void withSubpages(java.util.function.BooleanSupplier active) {
+        withSubpages = Objects.requireNonNull(active, "active");
+    }
+
     /** Meldet eine neu gespeicherte Analyse (etwa damit der Graph-Reiter neu lädt). */
     void onAnalysed(Runnable listener) {
         onAnalysed = Objects.requireNonNull(listener, "listener");
@@ -349,6 +391,16 @@ final class StatementsTab extends JPanel {
     /** {@code listener} bekommt die Erläuterung zur gezeigten Analyse für die Statuszeile des Hauptfensters. */
     void onStatus(Consumer<String> listener) {
         onStatus = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Wie {@link #onStatus}, mit Ampelton und Link ({@link StatusNote}); ersetzt dann {@link #onStatus}. */
+    void onNote(Consumer<StatusNote> listener) {
+        onNote = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** {@code listener} öffnet einen Auftrag in der Auftragsverwaltung (Link „Aufträge“). */
+    void onShowJob(Consumer<String> listener) {
+        showJob = Objects.requireNonNull(listener, "listener");
     }
 
     /** {@code listener} springt zu Fundstellen im Reiter „Text“ ({@code PageDetailPanel#jumpTo}). */
@@ -376,6 +428,11 @@ final class StatementsTab extends JPanel {
         if (setup != null) {
             // Ein von Hand entpacktes Modell gilt ab der nächsten Seite ohne Neustart.
             setup.refresh();
+        }
+        if (belowKey != null && !belowKey.equals(page.key())) {
+            // Andere Seite: Beobachtung und Ergebnis von „mit Unterseiten“ gehören zur vorigen. Dieselbe Seite erneut
+            // (Klick im Baum, Ablage umschalten, Neuladen) lässt beides stehen.
+            forgetBelow();
         }
         generation++;
         syntaxGeneration++;
@@ -405,12 +462,14 @@ final class StatementsTab extends JPanel {
                 analyze.setEnabled(false);
                 hint.setText(NOT_AVAILABLE);
             }
+            showBelow();
         }, error -> {
             if (mine != generation) {
                 return;
             }
             render(PageStatements.missing(PageStatements.NOT_ANALYSED), List.of());
             hint.setText("Aussagen nicht geladen: " + Problems.describe(error).title());
+            showBelow();
         });
     }
 
@@ -468,6 +527,9 @@ final class StatementsTab extends JPanel {
         delete.setEnabled(false);
         list.revalidate();
         list.repaint();
+        // Fortschritt und „Abbrechen“ der Gruppe gehören zu ihrer Seite: ohne gezeigte Seite verborgen, die
+        // Beobachtung bleibt (dieselbe Seite erneut zeigt sie wieder).
+        showBelow();
     }
 
     private void analyze() {
@@ -478,12 +540,41 @@ final class StatementsTab extends JPanel {
         }
         int mine = generation;
         AtomicBoolean cancelled = new AtomicBoolean();
+        Cancellation cancellation = new Cancellation();
         running = cancelled;
+        runningCancellation = cancellation;
         analyze.setEnabled(false);
         check.setEnabled(false);
+        boolean withStage = simplify.isSelected();
+        keep = null;
+        if (withSubpages.getAsBoolean()) {
+            // Seite samt Unterseiten wie im Baum: erst zählen und mit „wirklich“ fragen, dann eine Hintergrundgruppe;
+            // der Reiter wartet nicht, das Ende der Gruppe meldet der Core.
+            progress.setText(COUNTING);
+            runner.run(() -> actions.estimateBelow(page, Explorer.ANALYSIS_LIMIT), estimate -> {
+                if (mine != generation) {
+                    finished(cancelled);
+                    return;
+                }
+                String title = page.metadata() == null ? null : page.metadata().title();
+                String where = (title == null ? "Diese Seite" : "Seite „" + title + "“") + " mit allen Unterseiten";
+                if (!confirmBelow.test(Explorer.analysisQuestion(estimate, where, actions.analyzer()))) {
+                    finished(cancelled);
+                    return;
+                }
+                progress.setText(RUNNING);
+                startBelow(actions, page, withStage, estimate.exceeded() ? 0 : Explorer.ANALYSIS_LIMIT, mine,
+                        cancelled);
+            }, error -> {
+                finished(cancelled);
+                if (mine == generation) {
+                    hint.setText("Analyse ließ sich nicht starten: " + Problems.describe(error).title() + ".");
+                }
+            });
+            return;
+        }
         cancel.setVisible(true);
         progress.setText(RUNNING);
-        boolean withStage = simplify.isSelected();
         String[] stageNote = new String[1];
         runner.run(() -> {
             PageStatements result;
@@ -491,9 +582,9 @@ final class StatementsTab extends JPanel {
                 // Vor dem Lauf gefragt: Der Core analysiert sonst still ohne Vorstufe, und der Benutzer wüsste es nicht.
                 stageNote[0] = actions.simplificationUnavailable(page.key()).map(StatementsTab::stageNote)
                         .orElse(null);
-                result = actions.analyzeSimplified(page, cancelled::get);
+                result = actions.analyzeSimplified(page, cancellation);
             } else {
-                result = actions.analyzeStatements(page, cancelled::get);
+                result = actions.analyzeStatements(page, cancellation);
             }
             return new Loaded(result, true, actions.statementLinks(page.key()));
         }, loaded -> {
@@ -550,7 +641,9 @@ final class StatementsTab extends JPanel {
         }
         int mine = generation;
         AtomicBoolean cancelled = new AtomicBoolean();
+        Cancellation cancellation = new Cancellation();
         running = cancelled;
+        runningCancellation = cancellation;
         analyze.setEnabled(false);
         check.setEnabled(false);
         cancel.setVisible(true);
@@ -561,7 +654,7 @@ final class StatementsTab extends JPanel {
             if (unavailable.isPresent()) {
                 throw new CheckUnavailableException(unavailable.get());
             }
-            return new Loaded(actions.checkStatements(page, cancelled::get), true,
+            return new Loaded(actions.checkStatements(page, cancellation), true,
                     actions.statementLinks(page.key()));
         }, loaded -> {
             finished(cancelled);
@@ -648,6 +741,11 @@ final class StatementsTab extends JPanel {
         confirmDelete = Objects.requireNonNull(confirm, "confirm");
     }
 
+    /** Für Tests: beantwortet die Rückfrage vor „mit Unterseiten“ ohne Dialog. */
+    void confirmBelowWith(Predicate<String> confirm) {
+        confirmBelow = Objects.requireNonNull(confirm, "confirm");
+    }
+
     IconButton deleteButton() {
         return delete;
     }
@@ -656,20 +754,264 @@ final class StatementsTab extends JPanel {
         return moreDelete;
     }
 
+    /** Startet die Gruppe von „mit Unterseiten“ nach der Rückfrage. */
+    private void startBelow(Actions actions, PageSnapshot page, boolean withStage, int maxPages, int mine,
+                            AtomicBoolean cancelled) {
+        runner.run(() -> actions.startBelow(page, withStage, maxPages), started -> {
+            finished(cancelled);
+            if (mine != generation) {
+                return;
+            }
+            String jobId = started == null ? null : started.id();
+            Runnable openJobs = jobId == null ? null : () -> showJob.accept(jobId);
+            forgetBelow();
+            belowKey = page.key();
+            belowGroupId = started == null ? null : com.aresstack.spaceharvester.application.knowledge
+                    .StatementAnalysisJobs.groupOf(started).orElse(null);
+            belowJobs = openJobs;
+            note(new StatusNote(STARTED_BELOW, StatusNote.Tone.PLAIN, JOBS_LINK, openJobs));
+            // Fortschritt und Abbrechen im Reiter; endet die Gruppe, ersetzt das Ergebnis die Meldung „gestartet“
+            // (UX, D3). Alles gemeldet vom Core, auch nach dem Anhalten, bis die Gruppe fertig ist.
+            belowWatch = actions.watchBelow(started, this::belowChanged);
+        }, error -> {
+            finished(cancelled);
+            if (mine == generation) {
+                hint.setText("Analyse ließ sich nicht starten: " + Problems.describe(error).title() + ".");
+            }
+        });
+    }
+
     private void status(String message) {
         explanation = message;
+        keep = null;
         onStatus.accept(message);
+    }
+
+    /** Die Erläuterung zur gezeigten Analyse, außer ein Ergebnis von „mit Unterseiten“ steht noch ({@link #keep}). */
+    private void pageStatus(String message) {
+        if (keep != null) {
+            note(keep);
+        } else {
+            onStatus.accept(message);
+        }
+    }
+
+    private void note(StatusNote note) {
+        if (onNote != null) {
+            onNote.accept(note);
+        } else {
+            onStatus.accept(note.text());
+        }
+    }
+
+    /** Ein neuer Stand der Gruppe von „mit Unterseiten“, auf dem Event Dispatch Thread. */
+    private void belowChanged(com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+        if (belowGroupId == null || !belowGroupId.equals(group.groupId()) || belowEnded) {
+            return;
+        }
+        boolean wasPaused = belowLast != null && belowLast.paused();
+        belowLast = group;
+        if (!group.finished()) {
+            if (wasPaused) {
+                // Unter Aufträge fortgesetzt: wieder „gestartet“ statt „angehalten“
+                keep = null;
+                if (showingBelow()) {
+                    note(new StatusNote(STARTED_BELOW, StatusNote.Tone.PLAIN, JOBS_LINK, belowJobs));
+                }
+            }
+            showBelow();
+            return;
+        }
+        if (group.paused()) {
+            // Angehalten: gelb, und weiter beobachten, bis die Gruppe fertig ist
+            keep = belowResult(BelowOutcome.of(group, 0), belowJobs);
+            showBelow();
+            if (showingBelow()) {
+                note(keep);
+            }
+            return;
+        }
+        belowEnded = true;
+        closeBelowWatch();
+        Actions actions = workspace.get();
+        com.aresstack.spaceharvester.application.snapshot.PageKey key = belowKey;
+        Runnable openJobs = belowJobs;
+        // Die Auftragsereignisse (bewusst ausgelassene Seiten) liest der Reiter abseits des EDT.
+        runner.run(() -> actions == null ? BelowOutcome.of(group, 0) : actions.belowOutcome(group),
+                outcome -> belowEnded(key, outcome, openJobs),
+                error -> belowEnded(key, BelowOutcome.of(group, 0), openJobs));
+    }
+
+    private void belowEnded(com.aresstack.spaceharvester.application.snapshot.PageKey key, BelowOutcome outcome,
+                            Runnable openJobs) {
+        if (!key.equals(belowKey)) {
+            return; // inzwischen eine andere Seite
+        }
+        keep = belowResult(outcome, openJobs);
+        showBelow();
+        if (showingBelow()) {
+            note(keep);
+            // Die Gruppe hat auch diese Seite analysiert: Reiter und Graph lesen die Ablage neu.
+            reload();
+        }
+        onAnalysed.run();
+    }
+
+    /** Ob gerade die Seite von „mit Unterseiten“ gezeigt wird. */
+    private boolean showingBelow() {
+        return belowKey != null && snapshot != null && snapshot.key().equals(belowKey);
+    }
+
+    /** Ob die laufende Gruppe der gezeigten Seite „Analysieren“ und „Prüfen“ sperrt: nie zwei Läufe zugleich. */
+    private boolean belowBlocks() {
+        return belowRunning() && showingBelow();
+    }
+
+    /** Ob die Gruppe von „mit Unterseiten“ noch wartet oder läuft. */
+    private boolean belowRunning() {
+        return belowLast != null && !belowLast.finished() && !belowEnded;
+    }
+
+    /** Fortschritt und „Abbrechen“ der Gruppe im Reiter, solange sie läuft und ihre Seite gezeigt wird. */
+    private void showBelow() {
+        if (running != null) {
+            return; // ein eigener Lauf zeigt seinen Fortschritt selbst
+        }
+        if (belowRunning() && showingBelow()) {
+            long processed = belowLast.parts().stream().mapToLong(part -> part.progress().processed()).sum();
+            long discovered = belowLast.parts().stream().mapToLong(part -> part.progress().discovered()).sum();
+            progress.setText(discovered == 0 ? BELOW + " läuft …"
+                    : BELOW + ": " + processed + " von " + discovered + " Seiten …");
+            cancel.setVisible(true);
+            analyze.setEnabled(false);
+            check.setEnabled(false);
+        } else if (cancel.isVisible() || !" ".equals(progress.getText())) {
+            cancel.setVisible(false);
+            progress.setText(" ");
+            analyze.setEnabled(snapshot != null && !modelMissing());
+            check.setEnabled(snapshot != null && current);
+        }
+    }
+
+    /** „Abbrechen“ für die Gruppe von „mit Unterseiten“; die fertigen Analysen bleiben. */
+    private void cancelBelow() {
+        Actions actions = workspace.get();
+        String groupId = belowGroupId;
+        if (actions == null || groupId == null || !belowRunning() || !showingBelow()) {
+            return; // nie die Gruppe einer anderen als der gezeigten Seite
+        }
+        cancel.setVisible(false);
+        progress.setText("Wird abgebrochen …");
+        runner.run(() -> {
+            actions.cancelBelow(groupId);
+            return null;
+        }, ignored -> { }, error -> {
+            if (showingBelow()) {
+                hint.setText("Abbrechen ging nicht: " + Problems.describe(error).title() + ".");
+            }
+        });
+    }
+
+    /** Vergisst „mit Unterseiten“ der vorigen Seite: Beobachtung, Stand und Ergebnis. */
+    private void forgetBelow() {
+        closeBelowWatch();
+        boolean shown = belowRunning();
+        belowKey = null;
+        belowGroupId = null;
+        belowLast = null;
+        belowJobs = null;
+        belowEnded = false;
+        keep = null;
+        if (shown && running == null) {
+            cancel.setVisible(false);
+            progress.setText(" ");
+        }
+    }
+
+    private void closeBelowWatch() {
+        AutoCloseable watch = belowWatch;
+        belowWatch = null;
+        if (watch != null) {
+            try {
+                watch.close();
+            } catch (Exception e) {
+                // schon beendet
+            }
+        }
+    }
+
+    /**
+     * Das Ergebnis von „mit Unterseiten“ für die Statuszeile: grau ohne Auffälligkeit, gelb mit Zahl, wenn Seiten
+     * bewusst ausgelassen wurden oder die Gruppe angehalten ist, rot nur bei Fehlern; „Aufträge“ bleibt ein Link.
+     */
+    static StatusNote belowResult(BelowOutcome outcome, Runnable openJobs) {
+        String pages = pages(outcome.pages());
+        String analysed = outcome.analysed() == outcome.pages() ? "" : ", davon " + outcome.analysed()
+                + " neu analysiert";
+        String details = "; Einzelheiten unter " + JOBS_LINK + ".";
+        return switch (outcome.end()) {
+            case FAILED -> new StatusNote(BELOW + " gescheitert nach " + pages + details, StatusNote.Tone.ERROR,
+                    JOBS_LINK, openJobs);
+            case CANCELLED -> new StatusNote(BELOW + " abgebrochen nach " + pages
+                    + "; die fertigen Analysen bleiben. Einzelheiten unter " + JOBS_LINK + ".", StatusNote.Tone.PLAIN,
+                    JOBS_LINK, openJobs);
+            case PAUSED -> new StatusNote(BELOW + " angehalten nach " + pages + "; fortsetzen unter " + JOBS_LINK
+                    + ".", StatusNote.Tone.WARNING, JOBS_LINK, openJobs);
+            case DONE -> {
+                if (outcome.failed() > 0) {
+                    yield new StatusNote(BELOW + " fertig: " + pages + analysed + ", " + pages(outcome.failed())
+                            + " mit Fehler" + details, StatusNote.Tone.ERROR, JOBS_LINK, openJobs);
+                }
+                if (outcome.omitted() > 0) {
+                    yield new StatusNote(BELOW + " fertig: " + pages + analysed + ", " + pages(outcome.omitted())
+                            + " bewusst ausgelassen (ohne KI-Freigabe oder Modell)" + details,
+                            StatusNote.Tone.WARNING, JOBS_LINK, openJobs);
+                }
+                yield new StatusNote(BELOW + " fertig: " + pages + analysed + details, StatusNote.Tone.PLAIN,
+                        JOBS_LINK, openJobs);
+            }
+        };
+    }
+
+    private static String pages(long count) {
+        return count == 1 ? "1 Seite" : count + " Seiten";
+    }
+
+    /**
+     * Das Ende der Hintergrundgruppe von „mit Unterseiten“.
+     *
+     * @param pages    bearbeitete Seiten, auch schon aktuelle
+     * @param analysed davon neu analysiert
+     * @param failed   Seiten mit Fehler
+     * @param omitted  vom KI-Analysator bewusst ausgelassen (ohne KI-Freigabe, ohne Modell)
+     */
+    record BelowOutcome(long pages, long analysed, long failed, long omitted, End end) {
+
+        /** Wie die Gruppe endete. */
+        enum End { DONE, CANCELLED, PAUSED, FAILED }
+
+        /** Das Ergebnis einer fertigen oder angehaltenen Gruppe mit der Zahl der bewusst ausgelassenen Seiten. */
+        static BelowOutcome of(com.aresstack.spaceharvester.application.background.BackgroundGroup group,
+                               long omitted) {
+            long pages = group.parts().stream().mapToLong(part -> part.progress().processed()).sum();
+            End end = group.parts().stream().anyMatch(part -> part.state()
+                    == com.aresstack.spaceharvester.application.jobs.JobState.FAILED) ? End.FAILED
+                    : group.paused() ? End.PAUSED : group.completed() ? End.DONE : End.CANCELLED;
+            return new BelowOutcome(pages, group.written(), group.failed(), omitted, end);
+        }
     }
 
     /** Der Lauf ist wirklich zu Ende: erst jetzt ist „Analysieren“ wieder möglich. */
     private void finished(AtomicBoolean run) {
         if (running == run) {
             running = null;
-            analyze.setEnabled(snapshot != null && !modelMissing());
-            check.setEnabled(snapshot != null && current);
+            runningCancellation = null;
+            analyze.setEnabled(snapshot != null && !modelMissing() && !belowBlocks());
+            check.setEnabled(snapshot != null && current && !belowBlocks());
             delete.setEnabled(snapshot != null && stored);
             cancel.setVisible(false);
             progress.setText(" ");
+            showBelow(); // eine noch laufende Gruppe zeigt wieder ihren Fortschritt
         }
     }
 
@@ -681,6 +1023,14 @@ final class StatementsTab extends JPanel {
         AtomicBoolean run = running;
         if (run != null && !run.get()) {
             run.set(true);
+            Cancellation cancellation = runningCancellation;
+            if (cancellation != null) {
+                // Sofort abgebrochen; den Auftrag im Core erreicht der Abbruch abseits des EDT.
+                cancellation.request(work -> runner.run(() -> {
+                    work.run();
+                    return null;
+                }, ignored -> { }, error -> { }));
+            }
             analyze.setEnabled(false);
             check.setEnabled(false);
             cancel.setVisible(false);
@@ -747,10 +1097,10 @@ final class StatementsTab extends JPanel {
 
     /** Zeigt Stand, Aussagen und Verbindungen; veraltete Aussagen bleiben lesbar, aber ausgegraut. */
     void render(PageStatements statements, List<KnowledgeGraph.Link> links) {
-        analyze.setEnabled(running == null && snapshot != null && !modelMissing());
+        analyze.setEnabled(running == null && snapshot != null && !modelMissing() && !belowBlocks());
         current = statements.state() == PageStatements.State.CURRENT && statements.analysis() != null;
         stored = statements.analysis() != null;
-        check.setEnabled(running == null && snapshot != null && current);
+        check.setEnabled(running == null && snapshot != null && current && !belowBlocks());
         delete.setEnabled(running == null && snapshot != null && stored);
         list.removeAll();
         lines.clear();
@@ -788,11 +1138,11 @@ final class StatementsTab extends JPanel {
             links(links, mentions, offsets);
             // Mit Aussagen steht die Erläuterung („Analysiert am …“) in der Statuszeile, nicht über der Liste.
             explanation = hint.getText();
-            onStatus.accept(explanation);
+            pageStatus(explanation);
             hint.setText(" ");
         } else {
             explanation = hint.getText();
-            onStatus.accept(" ");
+            pageStatus(" ");
         }
         list.revalidate();
         list.repaint();
@@ -1216,7 +1566,7 @@ final class StatementsTab extends JPanel {
         head.status(SKIPPED, Comic.ORANGE, skipReason(reason));
         hint.setText(" ");
         explanation = "";
-        onStatus.accept(" ");
+        pageStatus(" ");
         list.removeAll();
         list.revalidate();
         list.repaint();
@@ -1260,6 +1610,43 @@ final class StatementsTab extends JPanel {
         /** Wie {@link #analyzeStatements}, mit der Vorstufe „Sätze vereinfachen“ nach den Einstellungen. */
         default PageStatements analyzeSimplified(PageSnapshot page, java.util.function.BooleanSupplier cancelled) {
             return analyzeStatements(page, cancelled);
+        }
+
+        /**
+         * Seite samt Unterseiten analysieren (Fahrplan D3): startet die Hintergrundgruppe und kehrt sofort zurück.
+         *
+         * @param withStage mit der Vorstufe „Sätze vereinfachen“ nach den Einstellungen
+         */
+        default com.aresstack.spaceharvester.application.jobs.JobStatus startBelow(PageSnapshot page,
+                                                                                   boolean withStage, int maxPages) {
+            throw new UnsupportedOperationException("Analysieren samt Unterseiten");
+        }
+
+        /** Zählt Seite samt Unterseiten höchstens {@code limit + 1} weit für die Rückfrage; nie auf dem EDT. */
+        default com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.Estimate estimateBelow(
+                PageSnapshot page, int limit) {
+            throw new UnsupportedOperationException("Analysieren samt Unterseiten");
+        }
+
+        /**
+         * Verfolgt die mit {@link #startBelow} gestartete Gruppe: meldet ihren Stand auf dem Event Dispatch Thread
+         * sofort und nach jeder Änderung, über Meldungen des Core, ohne Abfragen, auch nach dem Anhalten.
+         *
+         * @return beendet das Verfolgen
+         */
+        default AutoCloseable watchBelow(com.aresstack.spaceharvester.application.jobs.JobStatus started,
+                                         Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup>
+                                                 listener) {
+            return () -> { };
+        }
+
+        /** Das Ergebnis der fertigen Gruppe samt bewusst ausgelassener Seiten; liest Auftragsereignisse, nie auf dem EDT. */
+        default BelowOutcome belowOutcome(com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+            return BelowOutcome.of(group, 0);
+        }
+
+        /** Bricht die Gruppe von „mit Unterseiten“ ab; die fertigen Analysen bleiben. */
+        default void cancelBelow(String groupId) {
         }
 
         /** Der eingestellte Aussagenanalysator (Fahrplan A3); ohne Angabe der MaltParser. */
@@ -1319,6 +1706,42 @@ final class StatementsTab extends JPanel {
                 @Override
                 public AnalyzerChoice analyzer() {
                     return workspace.statementAnalyzer();
+                }
+
+                @Override
+                public com.aresstack.spaceharvester.application.jobs.JobStatus startBelow(PageSnapshot page,
+                                                                                          boolean withStage,
+                                                                                          int maxPages) {
+                    return workspace.startStatementAnalysisBelow(page, withStage ? simplification.get() : null,
+                            maxPages);
+                }
+
+                @Override
+                public com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.Estimate
+                        estimateBelow(PageSnapshot page, int limit) {
+                    return workspace.estimateStatementAnalysisBelow(page, limit);
+                }
+
+                @Override
+                public AutoCloseable watchBelow(com.aresstack.spaceharvester.application.jobs.JobStatus started,
+                        Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+                    String group = com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs
+                            .groupOf(started).orElse(null);
+                    if (group == null) {
+                        return () -> { };
+                    }
+                    return workspace.watchBackground(group, listener);
+                }
+
+                @Override
+                public BelowOutcome belowOutcome(
+                        com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+                    return BelowOutcome.of(group, workspace.statementGroupOmitted(group));
+                }
+
+                @Override
+                public void cancelBelow(String groupId) {
+                    workspace.cancelStatementGroup(groupId);
                 }
 
                 @Override

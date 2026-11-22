@@ -130,7 +130,7 @@ public final class BackgroundJobs {
                 parameters.put(GROUP, groupId);
                 parameters.put(TITLE, title);
                 started.add(jobs.submit(JobType.BACKGROUND, draft.sourceId(), draft.partitionKey(), null, owner,
-                        parameters, task(false)));
+                        parameters, task(false, false)));
             }
         } catch (RuntimeException e) {
             // Ganz oder gar nicht (wie GlossaryClassification): keine Teile ohne ihre Gruppe.
@@ -220,7 +220,7 @@ public final class BackgroundJobs {
                             .map(name -> "„" + name + "“").collect(java.util.stream.Collectors.joining(", ")));
                 }
                 started.add(jobs.submit(JobType.BACKGROUND, step.draft().sourceId(), step.draft().partitionKey(),
-                        null, owner, parameters, task(false)));
+                        null, owner, parameters, task(false, false)));
             }
         } catch (RuntimeException e) {
             // Nachfolger zuerst, damit keiner dazwischen frei wird und startet (Abnahme D1).
@@ -523,14 +523,14 @@ public final class BackgroundJobs {
             throw new JobNotResumableException(jobId, "die Art „" + kind + "“ ist nicht angemeldet");
         }
         if (!registered.exclusive()) {
-            return jobs.rerun(jobId, owner, task(true));
+            return jobs.rerun(jobId, owner, task(true, false));
         }
         synchronized (startLock(kind)) {
             Optional<JobStatus> open = openOther(kind, current.sourceId(), current.partitionKey(), jobId);
             if (open.isPresent()) {
                 throw new BackgroundPartOpenException(jobId, open.get().id());
             }
-            return jobs.rerun(jobId, owner, task(true));
+            return jobs.rerun(jobId, owner, task(true, false));
         }
     }
 
@@ -582,7 +582,7 @@ public final class BackgroundJobs {
             }
             try {
                 if (!kind.exclusive()) {
-                    resumed.add(jobs.rerun(status.id(), owner, task(true)));
+                    resumed.add(jobs.rerun(status.id(), owner, task(true, true)));
                     continue;
                 }
                 List<JobStatus> siblings = exclusiveParts.get(PartKey.of(status));
@@ -627,7 +627,7 @@ public final class BackgroundJobs {
                 siblings.forEach(sibling -> retire(sibling, SUPERSEDED_BY_OPEN));
                 return Optional.empty();
             }
-            JobStatus resumed = jobs.rerun(youngest.id(), owner, task(true));
+            JobStatus resumed = jobs.rerun(youngest.id(), owner, task(true, true));
             older.forEach(sibling -> retire(sibling, SUPERSEDED_BY_YOUNGER));
             return Optional.of(resumed);
         }
@@ -785,8 +785,12 @@ public final class BackgroundJobs {
         }
     }
 
-    /** Die Arbeit eines Unterauftrags, beim Start aus seinen abgelegten Angaben gebaut. */
-    private JobTask task(boolean resumed) {
+    /**
+     * Die Arbeit eines Unterauftrags, beim Start aus seinen abgelegten Angaben gebaut.
+     *
+     * @param automatic von {@link #resumeInterrupted()} fortgesetzt, nicht vom Benutzer
+     */
+    private JobTask task(boolean resumed, boolean automatic) {
         return context -> {
             try {
                 JobStatus status = jobs.status(context.jobId(), owner);
@@ -794,7 +798,7 @@ public final class BackgroundJobs {
                 Map<String, String> own = new HashMap<>(status.parameters());
                 own.keySet().removeIf(key -> key.startsWith(PREFIX));
                 BackgroundPart part = new BackgroundPart(status.id(), groupOf(status), kind.id(), status.sourceId(),
-                        status.partitionKey(), own, resumed);
+                        status.partitionKey(), own, resumed, automatic);
                 notePredecessors(status, context);
                 return kind.work().apply(part).start(context);
             } catch (RuntimeException e) {

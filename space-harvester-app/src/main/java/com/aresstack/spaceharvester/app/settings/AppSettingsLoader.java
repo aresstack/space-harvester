@@ -287,7 +287,10 @@ public final class AppSettingsLoader {
             problems.add(ROOT + "." + AnalyzerSettings.ANALYZER + ": " + e.getMessage());
         }
         Object model = get(statements, "analyzer-model");
-        return new AnalyzerSettings(choice, model == null ? null : model.toString());
+        return new AnalyzerSettings(choice, model == null ? null : model.toString(),
+                tokenLength(get(statements, "analyzer-max-tokens"), ROOT + "." + AnalyzerSettings.MAX_TOKENS,
+                        problems), thinkingLevel(get(statements, "analyzer-thinking"),
+                        ROOT + "." + AnalyzerSettings.THINKING, problems));
     }
 
     /**
@@ -421,7 +424,44 @@ public final class AppSettingsLoader {
             parallel = SimplificationSettings.DEFAULT_PARALLEL;
         }
         Object model = get(simplification, "model");
-        return new SimplificationSettings(mode, (int) parallel, model == null ? null : model.toString());
+        return new SimplificationSettings(mode, (int) parallel, model == null ? null : model.toString(),
+                tokenLength(get(simplification, "max-tokens"), ROOT + "." + SimplificationSettings.MAX_TOKENS,
+                        problems), thinkingLevel(get(simplification, "thinking"),
+                        ROOT + "." + SimplificationSettings.THINKING, problems));
+    }
+
+    /**
+     * Das Nachdenken eines Schritts ({@code none}, {@code low}, {@code medium}, {@code high}) oder {@code null}, wenn
+     * leer; ein unbekannter Wert ist ein Problem und lässt das Nachdenken des Text-Modells gelten.
+     */
+    private static String thinkingLevel(Object value, String key, List<String> problems) {
+        if (value == null || value.toString().isBlank()) {
+            return null;
+        }
+        String level = AiDraft.level(value.toString().strip());
+        if (level == null) {
+            problems.add(key + ": Nachdenken ist none, low, medium oder high");
+        }
+        return level;
+    }
+
+    /**
+     * Die Tokenlänge eines Schritts ({@code max-tokens}, 1 bis 1000000) oder {@code null}, wenn leer; ein unlesbarer
+     * Wert ist ein Problem und lässt {@code ai.chat-max-tokens} gelten.
+     */
+    private static Integer tokenLength(Object value, String key, List<String> problems) {
+        if (value == null || value.toString().isBlank()) {
+            return null;
+        }
+        String text = value.toString().strip();
+        if (text.matches("\\d{1,7}")) {
+            int tokens = Integer.parseInt(text);
+            if (tokens >= 1 && tokens <= AiDraft.MAX_CHAT_MAX_TOKENS) {
+                return tokens;
+            }
+        }
+        problems.add(key + ": Tokenlänge ist eine ganze Zahl von 1 bis " + AiDraft.MAX_CHAT_MAX_TOKENS);
+        return null;
     }
 
     /**
@@ -443,7 +483,9 @@ public final class AppSettingsLoader {
             parallel = CheckSettings.DEFAULT_PARALLEL;
         }
         Object model = get(check, "model");
-        return new CheckSettings(scope, (int) parallel, model == null ? null : model.toString());
+        return new CheckSettings(scope, (int) parallel, model == null ? null : model.toString(),
+                tokenLength(get(check, "max-tokens"), ROOT + "." + CheckSettings.MAX_TOKENS, problems),
+                thinkingLevel(get(check, "thinking"), ROOT + "." + CheckSettings.THINKING, problems));
     }
 
     /**
@@ -1170,7 +1212,10 @@ public final class AppSettingsLoader {
                 seconds(optionalDuration(get(ai, "load-timeout"), "space-harvester.ai.load-timeout", problems)),
                 text(get(ai, "retries"), problems),
                 seconds(optionalDuration(get(ai, "load-poll-interval"), "space-harvester.ai.load-poll-interval",
-                        problems)), text(get(ai, "step-thinking"), problems), text(get(ai, "parallel"), problems));
+                        problems)), text(get(ai, "step-thinking"), problems), text(get(ai, "parallel"), problems),
+                text(get(ai, "vision-max-tokens"), problems), text(get(ai, "image-model"), problems),
+                text(get(ai, "image-max-tokens"), problems), text(get(ai, "vision-thinking"), problems),
+                text(get(ai, "image-thinking"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1180,7 +1225,8 @@ public final class AppSettingsLoader {
                 draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
                 draft.tokens(), draft.overlap(), draft.visionModel(), draft.maxTokens(), draft.provider(),
                 draft.context(), draft.loadDuration(), draft.retryCount(),
-                draft.pollDuration(), draft.thinking(), draft.parallelCount());
+                draft.pollDuration(), draft.thinking(), draft.parallelCount(), draft.visionTokens(),
+                draft.imageModel(), draft.imageTokens(), draft.visionLevel(), draft.imageLevel());
     }
 
     /** Eine Dauer als Sekunden, wie das Feld der Einstellungen sie zeigt; {@code null} bleibt. */
