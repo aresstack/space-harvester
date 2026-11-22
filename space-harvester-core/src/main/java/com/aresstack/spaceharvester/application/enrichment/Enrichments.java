@@ -132,10 +132,16 @@ public class Enrichments {
     private final Map<String, Pending> pending = new HashMap<>();
     /** Je Gruppe ihre wartenden Berechnungen, auch die eines laufenden oder angehaltenen Teils; unter {@link #pendingLock}. */
     private final Map<String, Pending> groups = new HashMap<>();
+    /**
+     * Je Gruppe die gescheiterten Berechnungen ihres Teils, für „Nur Fehler neu versuchen“ (↻, Angelo 22.11.2026);
+     * bis der Teil gelöscht wird oder sie wiederholt; unter {@link #pendingLock}.
+     */
+    private final Map<String, Failed> failed = new HashMap<>();
     private final Object pendingLock = new Object();
     /** Laufende Teile der Warteschlange; {@link #closeBackground} wartet auf sie. */
     private final ActiveParts parts = new ActiveParts();
     private volatile boolean closed;
+    private volatile Subscription removedParts = Subscription.NONE;
 
     /** Die Fakten aus den Ergebnissen dieser Ablage (#182), wenn sie welche führt. */
     public java.util.Optional<com.aresstack.spaceharvester.application.facts.FactStore> facts() {
@@ -715,6 +721,101 @@ public class Enrichments {
     record Work(String processorId, PageKey key, boolean force) {
     }
 
+    /** Die gescheiterten Berechnungen eines Teils. */
+    private static final class Failed {
+
+        final String sourceId;
+        final Set<Work> work = new java.util.LinkedHashSet<>();
+
+        Failed(String sourceId) {
+            this.sourceId = sourceId;
+        }
+    }
+
+    /**
+     * „Nur Fehler neu versuchen“ (↻): Die gescheiterten Berechnungen des Teils werden seine neue Warteschlange, im
+     * selben Eintrag. Gerechnet wird wie beim ersten Lauf ({@link #drain}, {@link #computeQueued}): mit der KI-Freigabe
+     * je Seite, geprüft bei der Ausführung, und denselben Einstellungen.
+     */
+    private final class RetryFailed implements BackgroundJobs.Retry {
+
+        private final BackgroundJobs jobs;
+        /** Was {@link #prepare} bereitlegte, bis der erneute Lauf angenommen ist; unter {@link #pendingLock}. */
+        private final Map<String, Prepared> prepared = new HashMap<>();
+
+        private record Prepared(Failed work, List<Work> retry, boolean created) {
+        }
+
+        RetryFailed(BackgroundJobs jobs) {
+            this.jobs = jobs;
+        }
+
+        @Override
+        public boolean prepare(BackgroundPart part) {
+            synchronized (pendingLock) {
+                Failed previous = failed.remove(part.groupId());
+                if (previous == null || previous.work.isEmpty()) {
+                    return false;
+                }
+                // Erzwungen: Ein gescheitertes Ergebnis gilt bei gleichem Text und gleicher Version sonst als aktuell.
+                List<Work> retry = previous.work.stream()
+                        .map(work -> new Work(work.processorId(), work.key(), true)).toList();
+                Pending existing = groups.get(part.groupId());
+                if (existing != null) {
+                    // Angehalten mit Rest: Das Gescheiterte kommt zum Rest, beides läuft im selben Eintrag weiter.
+                    retry.forEach(existing::add);
+                    prepared.put(part.groupId(), new Prepared(previous, retry, false));
+                    return true;
+                }
+                Pending again = new Pending(part.groupId(), previous.sourceId);
+                // Nimmt nichts Neues auf: Neue Berechnungen der Quelle bekommen wie immer einen eigenen Teil.
+                again.sealed = true;
+                again.partId = part.jobId();
+                again.work.addAll(retry);
+                groups.put(part.groupId(), again);
+                prepared.put(part.groupId(), new Prepared(previous, retry, true));
+                return true;
+            }
+        }
+
+        @Override
+        public void started(BackgroundPart part) {
+            String groupId = part.groupId();
+            Prepared done;
+            synchronized (pendingLock) {
+                done = prepared.remove(groupId);
+            }
+            if (done == null || !done.created()) {
+                // Die Gruppe hatte schon ihre Beobachtung (angehalten mit Rest).
+                return;
+            }
+            Subscription[] subscription = new Subscription[1];
+            subscription[0] = jobs.watch(groupId, group -> ended(part.sourceId(), groupId, group, subscription));
+            // Was schon vor dem Anmelden endete, meldet sich nicht mehr von selbst.
+            ended(part.sourceId(), groupId, jobs.group(groupId).orElse(new BackgroundGroup(groupId, null, null,
+                    List.of())), subscription);
+        }
+
+        @Override
+        public void abandoned(BackgroundPart part) {
+            synchronized (pendingLock) {
+                Prepared undone = prepared.remove(part.groupId());
+                if (undone == null) {
+                    return;
+                }
+                if (undone.created()) {
+                    groups.remove(part.groupId());
+                } else {
+                    Pending existing = groups.get(part.groupId());
+                    if (existing != null) {
+                        undone.retry().forEach(existing.work::remove);
+                    }
+                }
+                failed.put(part.groupId(), undone.work());
+            }
+        }
+    }
+
     /** Die wartenden Berechnungen einer Quelle und die Gruppe, deren Teil sie abholt. */
     private static final class Pending {
 
@@ -777,6 +878,17 @@ public class Enrichments {
                 parts.run(() -> closed, () -> {
                     throw new JobCancelledException(context.jobId());
                 }, () -> drain(part, context)))));
+        background.registerRetry(BACKGROUND_KIND, new RetryFailed(background));
+        // Gelöschte Teile brauchen ihre gescheiterten Berechnungen nicht mehr.
+        this.removedParts = background.subscribe(BACKGROUND_KIND, changed -> {
+        }, removed -> {
+            String groupId = removed.parameter(BackgroundJobs.GROUP);
+            if (groupId != null) {
+                synchronized (pendingLock) {
+                    failed.remove(groupId);
+                }
+            }
+        });
         // Abnahme #1077: Ein angehaltener Teil von vorher hätte keine Arbeit mehr, hielte aber jeden neuen auf.
         List<JobStatus> retired = background.retireResumable(BACKGROUND_KIND, EMPTY_AFTER_RESTART);
         if (!retired.isEmpty()) {
@@ -968,6 +1080,9 @@ public class Enrichments {
             Outcome outcome = queued.outcome();
             if (outcome == Outcome.FAILED) {
                 context.record(failure(next, mine.sourceId, queued.cause()));
+                synchronized (pendingLock) {
+                    failed.computeIfAbsent(groupId, ignored -> new Failed(mine.sourceId)).work.add(next);
+                }
             }
             switch (outcome) {
                 case WRITTEN -> context.written(1);
@@ -1045,6 +1160,7 @@ public class Enrichments {
      */
     public void closeBackground(Duration wait) throws InterruptedException {
         closed = true;
+        removedParts.close();
         if (!parts.await(wait)) {
             LOG.log(System.Logger.Level.WARNING, "KI-Anreicherung beim Beenden nicht rechtzeitig fertig");
         }

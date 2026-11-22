@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.enrichment;
 
 import static com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages.text;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
@@ -432,6 +433,48 @@ class EnrichmentsBackgroundJobsTest {
         }
     }
 
+    @Test
+    void retryingComputesOnlyTheFailedPagesAgainInTheSameEntry() throws Exception {
+        // Angelo 22.11.2026: ↻ wiederholt im Hintergrund das Gescheiterte wie im Vordergrund.
+        Remote remote = new Remote();
+        remote.failing.add("wiki/2");
+        remote.failing.add("wiki/3");
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.refresh(page("wiki", "1", "Eins"));
+            enrichments.refresh(page("wiki", "2", "Zwei"));
+            enrichments.refresh(page("wiki", "3", "Drei"));
+            runAll(held);
+            JobStatus first = part(background, "wiki");
+            assertThat(first.lifecycle().allows(com.aresstack.spaceharvester.application.jobs.JobAction.RETRY_FAILED))
+                    .isTrue();
+
+            remote.failing.clear();
+            // Die KI-Freigabe gilt je Seite neu: Seite 3 ist inzwischen ausgenommen.
+            remote.blocked.add("wiki/3");
+            JobStatus again = background.retryFailed(first.id());
+            runAll(held);
+
+            assertThat(again.id()).isEqualTo(first.id());
+            JobStatus retried = part(background, "wiki");
+            assertThat(background.parts(Enrichments.BACKGROUND_KIND)).hasSize(1);
+            assertThat(retried.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(retried.progress().written()).isEqualTo(1);
+            assertThat(retried.progress().failed()).isZero();
+            assertThat(remote.calls.get("wiki/1").get()).isEqualTo(1);
+            assertThat(remote.calls.get("wiki/2").get()).isEqualTo(2);
+            assertThat(remote.calls.get("wiki/3").get()).as("ohne Freigabe nichts an den Dienst").isEqualTo(1);
+            assertThatThrownBy(() -> background.retryFailed(first.id()))
+                    .isInstanceOf(com.aresstack.spaceharvester.application.background.NothingToRetryException.class);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     private Enrichments enrichments(Remote remote, ExecutorService executor, BackgroundJobs background) {
         Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
         enrichments.background(background, key -> Optional.ofNullable(cache.get(key)));
@@ -475,6 +518,13 @@ class EnrichmentsBackgroundJobsTest {
         private final java.util.List<String> order = new java.util.concurrent.CopyOnWriteArrayList<>();
         /** Läuft während der Berechnung dieser Seite, etwa ein neuer Zufluss. */
         private final Map<String, Runnable> during = new ConcurrentHashMap<>();
+        /** Seiten ohne KI-Freigabe. */
+        private final java.util.Set<String> blocked = ConcurrentHashMap.newKeySet();
+
+        @Override
+        public boolean appliesTo(PageKey key) {
+            return !blocked.contains(key.sourceId() + "/" + key.pageId());
+        }
 
         @Override
         public String id() {

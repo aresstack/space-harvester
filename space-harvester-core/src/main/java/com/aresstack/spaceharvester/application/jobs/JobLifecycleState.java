@@ -34,6 +34,12 @@ public sealed interface JobLifecycleState {
      * (ADR 0029). Er hat keinen neuen Stand zu erzwingen; „Nur Fehler neu versuchen“ bleibt.
      */
     String HOLDINGS = "holdings";
+    /**
+     * Angabe eines Hintergrundteils ({@code "true"}, {@code BackgroundJobs#RETRYABLE}): Seine Art wiederholt
+     * Gescheitertes gezielt. „Nur Fehler neu versuchen“ gibt es dann bei Fehlern, sobald er angehalten oder beendet ist,
+     * nicht während des Laufs (Angelo 22.11.2026).
+     */
+    String RETRYABLE = "background.retryable";
 
     /** Stabiler Schlüssel des Zustands, etwa für Texte und REST, z. B. {@code WAITING}. */
     String key();
@@ -66,6 +72,9 @@ public sealed interface JobLifecycleState {
                 || status.type().presentation();
         // Gescheitertes gezielt nachladen geht, sobald etwas gescheitert ist, in jedem Zustand (Angelo 11.11.2026).
         boolean failures = (forceable || query) && status.progress().failed() > 0;
+        // Hintergrundteile, deren Art Gescheitertes wiederholt (Angelo 22.11.2026), sobald sie stehen.
+        boolean background = status.type() == JobType.BACKGROUND && "true".equals(status.parameter(RETRYABLE))
+                && status.progress().failed() > 0;
         // Eine Ausgabe aus dem Bestand und ihre Bilder und Anhänge fragen die Quelle nie (ADR 0029).
         boolean refreshable = forceable && !Boolean.parseBoolean(status.parameter(HOLDINGS));
         return switch (status.state()) {
@@ -75,16 +84,18 @@ public sealed interface JobLifecycleState {
                     : status.stage() == JobStage.PREPARING ? new Preparing(failures)
                     : status.stage() == JobStage.PREPARED ? new Prepared()
                     : new Running(resumable, failures);
-            case PAUSED -> new Paused(status.pauseReason(), failures);
+            case PAUSED -> new Paused(status.pauseReason(), failures || background);
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0
-                    ? new CompletedWithErrors(download || files || query, (download || files) && refreshable)
+                    ? new CompletedWithErrors(download || files || query || background,
+                            (download || files) && refreshable)
                     : new Completed(refreshable);
             // Ein Abgleich, der seine Generation bestätigt hat, aber Seiten nicht laden konnte, ist fertig mit Fehlern.
             case FAILED -> sync && status.error() != null && SYNC_PARTIAL.equals(status.error().code())
                     ? new CompletedWithErrors(true, true)
-                    : new Stopped(status.state(), resumable, refreshable, failures && resumable,
+                    : new Stopped(status.state(), resumable, refreshable, failures && resumable || background,
                             status.error() != null && INTERRUPTED.equals(status.error().code()));
-            case CANCELLED -> new Stopped(status.state(), resumable, refreshable, failures && resumable);
+            case CANCELLED -> new Stopped(status.state(), resumable, refreshable,
+                    failures && resumable || background);
         };
     }
 
