@@ -170,9 +170,79 @@ class TermKnowledgeTest {
         assertThat(shown.getFirst().omittedPages()).isEqualTo(1);
         assertThat(answer.limits().omittedEvidencePages()).isEqualTo(1);
         assertThat(answer.neighbours()).hasSize(TermKnowledge.MAX_NEIGHBOURS).startsWith("Start");
-        assertThat(answer.limits().omittedNeighbours()).isEqualTo(objects.size() + 1 - TermKnowledge.MAX_NEIGHBOURS);
+        assertThat(answer.limits().omittedNeighbours()).as("Nachbarn nur aus den 20 gelieferten Aussagen")
+                .isEqualTo(TermKnowledge.MAX_STATEMENTS - TermKnowledge.MAX_NEIGHBOURS);
         assertThat(answer.limits().cut()).isTrue();
         assertThat(delivered).as("nur genannte Belegseiten").containsExactly(key("2"), key("3"), key("4"), key("1"));
+    }
+
+    @Test
+    void neighboursComeOnlyFromDeliveredStatements() {
+        term("Plan");
+        List<String> objects = IntStream.range(0, TermKnowledge.MAX_STATEMENTS + 1)
+                .mapToObj(i -> "Ziel" + (char) ('a' + i / 26) + (char) ('a' + i % 26)).toList();
+        objects.forEach(this::term);
+        StringBuilder strong = new StringBuilder();
+        objects.subList(0, TermKnowledge.MAX_STATEMENTS)
+                .forEach(object -> strong.append("Der Plan prüft das ").append(object).append(". "));
+        analyse("1", strong.toString());
+        analyse("2", strong.toString());
+        String weak = objects.getLast();
+        analyse("3", "Der Plan sendet das " + weak + ".");
+
+        TermKnowledge.Answer answer = knowledge().answer(CALLER, "Plan", pages("1", "2", "3"), recording,
+                () -> false);
+
+        assertThat(answer.terms().getFirst().statements()).hasSize(TermKnowledge.MAX_STATEMENTS)
+                .noneMatch(statement -> statement.object().equals(weak));
+        assertThat(answer.limits().omittedStatements()).isEqualTo(1);
+        assertThat(answer.neighbours()).doesNotContain(weak);
+        assertThat(answer.neighbours().size() + answer.limits().omittedNeighbours())
+                .as("die 21. Aussage trägt keinen Nachbarn bei").isEqualTo(TermKnowledge.MAX_STATEMENTS);
+        assertThat(delivered).doesNotContain(key("3"));
+    }
+
+    @Test
+    void theGraphCountsAsCutOnlyWhenEdgesOfTheTermAreMissing() {
+        term("Plan");
+        term("Ziel");
+        List<String> far = IntStream.range(0, DomainTermGraph.MAX_NODES + 5)
+                .mapToObj(i -> "Fern" + (char) ('a' + i / 26) + (char) ('a' + i % 26)).toList();
+        far.forEach(this::term);
+        StringBuilder text = new StringBuilder("Der Plan prüft das Ziel. ");
+        far.forEach(object -> text.append("Das Ziel sendet das ").append(object).append(". "));
+        analyse("1", text.toString());
+
+        TermKnowledge.Answer complete = knowledge().answer(CALLER, "Plan", pages("1"), recording, () -> false);
+        assertThat(complete.terms().getFirst().statements()).singleElement()
+                .satisfies(statement -> assertThat(statement.object()).isEqualTo("Ziel"));
+        assertThat(complete.limits().graphTruncated()).as("Nachbarn des Nachbarn fehlen, die des Begriffs nicht")
+                .isFalse();
+        assertThat(complete.limits().cut()).isFalse();
+
+        TermKnowledge.Answer crowded = knowledge().answer(CALLER, "Ziel", pages("1"), recording, () -> false);
+        assertThat(crowded.limits().graphTruncated()).as("dem Begriff selbst fehlen Kanten").isTrue();
+    }
+
+    @Test
+    void aSourceWhoseDataIsBeingWithdrawnGivesNothingAndIsNotDelivered() {
+        term("Plan");
+        term("Ziel");
+        java.util.Set<String> withdrawing = new java.util.HashSet<>();
+        KnowledgeGraph guarded = new KnowledgeGraph(store, access, key -> Optional.ofNullable(cache.get(key)),
+                snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)), statements,
+                KnowledgeGraph.TermExpansion.NONE, sourceId -> !withdrawing.contains(sourceId));
+        analyse("1", "Der Plan prüft das Ziel.");
+        TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(guarded, vocabulary()));
+        assertThat(knowledge.answer(CALLER, "Plan", pages("1"), recording, () -> false).pages())
+                .as("Gegenprobe").hasSize(1);
+        delivered.clear();
+
+        withdrawing.add("wiki");
+        TermKnowledge.Answer answer = knowledge.answer(CALLER, "Plan", pages("1"), recording, () -> false);
+
+        assertThat(answer.terms().getFirst().statements()).isEmpty();
+        assertThat(delivered).isEmpty();
     }
 
     @Test

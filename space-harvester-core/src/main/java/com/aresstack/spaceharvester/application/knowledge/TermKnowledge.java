@@ -19,8 +19,9 @@ import java.util.function.BooleanSupplier;
 /**
  * Begriffswissen für Chat und Suche (Paket W6): Was der Wissensgraph zu einem bestätigten Fachbegriff in einem Bereich
  * weiß, als knappe, begrenzte Antwort. Nur lesen, kein KI-Aufruf, nichts wird gespeichert. Die Antwort baut auf der
- * Fachsicht ({@link DomainTermGraph#around}) auf und zählt genau wie sie: Standardansicht, verworfene Aussagen nie
- * ({@link CountedStatements}), veraltete Seiten nicht, Vertrauensstufe je Aussage (W2).
+ * Begriffsgruppe der Fachsicht auf ({@code DomainTermGraph#group}, derselbe Aufbau wie {@link DomainTermGraph#around})
+ * und zählt genau wie sie: Standardansicht, verworfene Aussagen nie ({@link CountedStatements}), veraltete Seiten
+ * nicht, Vertrauensstufe je Aussage (W2).
  *
  * <p>Erzwungen im Kern, damit kein Aufrufer es vergessen kann:
  * <ul>
@@ -142,7 +143,8 @@ public final class TermKnowledge {
      * @param omittedNeighbours Nachbarbegriffe über {@link #MAX_NEIGHBOURS} hinaus
      * @param omittedEvidencePages Belegseiten über {@link #MAX_PAGES_PER_STATEMENT} hinaus, über alle gelieferten
      *                          Aussagen ({@link Statement#omittedPages()})
-     * @param graphTruncated    ob die Fachsicht selbst gekappt war ({@link DomainTermGraph#MAX_NODES})
+     * @param graphTruncated    ob Verb-Kanten des Begriffs oder seiner Synonyme fehlen, weil die Fachsicht
+     *                          {@link DomainTermGraph#MAX_NODES} Knoten erreicht hat
      * @param skippedStale      ausgelassene Aussagen veralteter Seiten
      */
     public record Limits(int pagesInScope, int pagesRead, int omittedTerms, int omittedStatements,
@@ -161,7 +163,7 @@ public final class TermKnowledge {
      * Die Antwort.
      *
      * @param terms      der Fachbegriff zuerst, dann seine Synonyme; leer außer bei {@link Outcome#FOUND}
-     * @param neighbours Nachbarbegriffe über Aussagen, nach Zahl der Belege
+     * @param neighbours Nachbarbegriffe aus den gelieferten Aussagen, nach Zahl der Belege
      * @param candidates ähnliche Fachbegriffe bei {@link Outcome#NOT_A_TERM}
      * @param pages      jede Seite, deren Aussagen geliefert werden, einmal; genau diese wurden an die
      *                   {@link Delivery} gemeldet
@@ -209,8 +211,8 @@ public final class TermKnowledge {
             return Answer.of(Outcome.EMPTY_SCOPE, List.of(), Limits.NONE);
         }
         PageSet read = capped(scope);
-        DomainTermGraph.View view = graph.around(caller, query,
-                new DomainTermGraph.Options(2, false, read, false), cancelled);
+        DomainTermGraph.View view = graph.group(caller, query, new DomainTermGraph.Options(2, false, read, false),
+                cancelled);
         if (view.outcome() != DomainTermGraph.Outcome.FOUND) {
             return Answer.of(view.outcome() == DomainTermGraph.Outcome.EMPTY_START ? Outcome.EMPTY_QUERY
                             : Outcome.NOT_A_TERM, graph.suggestions(caller, query, MAX_CANDIDATES),
@@ -264,7 +266,6 @@ public final class TermKnowledge {
         // Je Begriff seine Verb-Kanten, jede Kante nur beim ersten Begriff der Gruppe, den sie berührt.
         Map<String, List<DomainTermGraph.Edge>> byTerm = new LinkedHashMap<>();
         shown.forEach(node -> byTerm.put(node.key(), new ArrayList<>()));
-        Map<String, Integer> neighbourWeight = new LinkedHashMap<>();
         for (DomainTermGraph.Edge edge : view.edges()) {
             if (edge.kind() != DomainTermGraph.EdgeKind.VERB) {
                 continue;
@@ -275,11 +276,6 @@ public final class TermKnowledge {
                 continue;
             }
             byTerm.get(owner).addAll(byFeatures(edge));
-            for (String end : List.of(edge.from(), edge.to())) {
-                if (!groupKeys.contains(end)) {
-                    neighbourWeight.merge(end, edge.count(), Integer::sum);
-                }
-            }
         }
 
         // Aussagen über alle Begriffe nach Stufe und Belegen ordnen, dann kappen.
@@ -292,6 +288,8 @@ public final class TermKnowledge {
         Map<String, List<Statement>> statements = new LinkedHashMap<>();
         shown.forEach(node -> statements.put(node.key(), new ArrayList<>()));
         Map<PageKey, Page> delivered = new LinkedHashMap<>();
+        // Nachbarn nur aus gelieferten Aussagen: Was die Kappung weglässt, erreicht den Aufrufer auch so nicht.
+        Map<String, Integer> neighbourWeight = new LinkedHashMap<>();
         int omittedEvidencePages = 0;
         for (Map.Entry<String, DomainTermGraph.Edge> entry : ranked.subList(0, ranked.size() - omittedStatements)) {
             DomainTermGraph.Edge edge = entry.getValue();
@@ -304,6 +302,11 @@ public final class TermKnowledge {
                     MAX_PAGES_PER_STATEMENT));
             named.forEach(page -> delivered.putIfAbsent(page.key(), page));
             omittedEvidencePages += pages.size() - named.size();
+            for (String end : List.of(edge.from(), edge.to())) {
+                if (!groupKeys.contains(end)) {
+                    neighbourWeight.merge(end, edge.count(), Integer::sum);
+                }
+            }
             ParsedStatements.Features features = features(edge.evidence().getFirst());
             statements.get(entry.getKey()).add(new Statement(label(nodes, edge.from()), edge.verb(),
                     label(nodes, edge.to()), features.negation(), features.modality(), features.temporality(),
