@@ -403,6 +403,35 @@ class PageLoadsTest {
     }
 
     @Test
+    void joinsRacingOnVirtualThreadsThroughBothOverloadsStartTheSamePagesOnlyOnce() throws Exception {
+        int callers = 64;
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        List<java.util.concurrent.Future<PageLoads.Joined>> joins = new java.util.ArrayList<>();
+        try (java.util.concurrent.ExecutorService threads =
+                     java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < callers; i++) {
+                boolean plain = i % 2 == 0;
+                joins.add(threads.submit(() -> {
+                    go.await();
+                    return plain
+                            ? loads.join(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("1", "3"))
+                            : loads.join(AccessContext.technicalClient("app"), "Nachbarseiten laden", pages("1", "3"),
+                                    false, null);
+                }));
+            }
+            go.countDown();
+        }
+        long started = 0;
+        for (java.util.concurrent.Future<PageLoads.Joined> join : joins) {
+            if (join.get().started().isPresent()) {
+                started++;
+            }
+        }
+        assertThat(started).isEqualTo(1);
+        assertThat(background.groups()).filteredOn(group -> PageLoads.KIND.equals(group.kind())).hasSize(1);
+    }
+
+    @Test
     void pagesThatAnOpenPartAlreadyLoadsStartNoSecondGroup() {
         BackgroundGroup first = loads.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
                 pages("1", "3")).orElseThrow();
