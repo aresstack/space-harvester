@@ -715,6 +715,41 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void whileThePodcastTellsATopicTheReportMarksItYellowLikeTheSearch() throws Exception {
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, null, "Zwei Neuerungen im Beispielarchiv.",
+                List.of(new SummaryStatement("Das Archiv wird auf ein neues Format umgestellt.",
+                                List.of(new SummaryPage("20", "Neue Seite", "BAU")), "Archivumstellung", null),
+                        new SummaryStatement("Die Suche findet jetzt auch Anhänge.",
+                                List.of(new SummaryPage("21", "Suche", "BAU")), "Suche in Anhängen", null)),
+                "update-summary-v2:gpt-test", SECOND, 0, false, Map.of("BAU", "Bauwesen Beispiel"));
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("Seit dem letzten Update");
+
+        summary.followPodcast(List.of(1));
+
+        assertThat(summary.podcastMarked()).containsExactlyInAnyOrder("Suche in Anhängen",
+                "Die Suche findet jetzt auch Anhänge.");
+
+        // ein Abgleich zeichnet den Bericht neu, während der Podcast läuft: die Markierung bleibt
+        int renders = summary.reportRenders();
+        actions.openGrows = true;
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(summary.reportRenders()).isGreaterThan(renders);
+        assertThat(summary.podcastMarked()).containsExactlyInAnyOrder("Suche in Anhängen",
+                "Die Suche findet jetzt auch Anhänge.");
+
+        summary.followPodcast(List.of(0));
+
+        assertThat(summary.podcastMarked()).as("nur das laufende Thema").containsExactlyInAnyOrder(
+                "Archivumstellung", "Das Archiv wird auf ein neues Format umgestellt.");
+
+        summary.followPodcast(List.of());
+
+        assertThat(summary.podcastMarked()).isEmpty();
+    }
+
+    @Test
     void anOldCountingSummaryStaysVisibleAndIsReplacedOnceByATopicalOne() {
         actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, "Eine neue Seite.", List.of(
                 new SummaryStatement("Eine neue Seite.", List.of(new SummaryPage("20", "Neue Seite")))),

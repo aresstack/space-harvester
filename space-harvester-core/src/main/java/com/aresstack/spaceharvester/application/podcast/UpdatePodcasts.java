@@ -142,6 +142,35 @@ public final class UpdatePodcasts {
     }
 
     /**
+     * Wovon ein Thema des Podcasts erzählt, als Nummern der Themen der Zusammenfassung
+     * ({@link UpdateSummary#statements()}, ab 0): Die Leseansicht rollt dorthin und markiert sie, solange das Thema
+     * läuft (Angelo 22.11.2026). Leer für Einstieg und Abschluss, ohne Plan oder bei älteren Zusammenfassungen ohne
+     * Themen. Liest eine Datei, nie auf dem EDT.
+     */
+    public List<Integer> statements(UpdateSummary summary, int topic) {
+        Objects.requireNonNull(summary, "summary");
+        Optional<PodcastPlan> plan = production.store().plan(key(summary));
+        if (plan.isEmpty() || topic < 0 || topic >= plan.get().topics().size()) {
+            return List.of();
+        }
+        // Meldung n (ab 1) ist das n-te Thema mit Text, wie material() sie zählt
+        List<Integer> told = new ArrayList<>();
+        for (int i = 0; i < summary.statements().size(); i++) {
+            SummaryStatement statement = summary.statements().get(i);
+            if (!blank(blank(statement.details()) ? statement.text() : statement.details())) {
+                told.add(i);
+            }
+        }
+        List<Integer> statements = new ArrayList<>();
+        for (int story : plan.get().topics().get(topic).stories()) {
+            if (story >= 1 && story <= told.size() && !statements.contains(told.get(story - 1))) {
+                statements.add(told.get(story - 1));
+            }
+        }
+        return List.copyOf(statements);
+    }
+
+    /**
      * Startet die Erzeugung oder setzt sie fort; wartet oder läuft für diesen Podcast schon ein Auftrag, ist er die
      * Antwort. Podcasts älterer Zusammenfassungen derselben Ebene fallen weg.
      *

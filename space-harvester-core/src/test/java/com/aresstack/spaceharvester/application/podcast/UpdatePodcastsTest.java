@@ -168,6 +168,23 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void pointsEachTopicToTheStatementsOfTheSummaryItTells() throws Exception {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        // die erste Aussage ohne Text zählt nicht als Meldung: Meldung 1 ist Aussage 1
+        UpdateSummary summary = new UpdateSummary("wiki", "u-1", "DEMO", "Neue Startseite",
+                List.of(new SummaryStatement(" ", List.of()),
+                        new SummaryStatement("Das Projekt Nordlicht hat eine neue Startseite.", List.of())),
+                "test", Instant.parse("2026-11-21T17:00:00Z"), 0, false);
+        assertThat(podcasts.statements(summary, 1)).as("ohne Plan").isEmpty();
+
+        podcasts.start(caller, summary);
+
+        assertThat(podcasts.statements(summary, 0)).as("Einstieg").isEmpty();
+        assertThat(podcasts.statements(summary, 1)).containsExactly(1);
+        assertThat(podcasts.statements(summary, 7)).isEmpty();
+    }
+
+    @Test
     void speaksSeveralSegmentsAtOnceSoPlaybackNeverWaits() throws Exception {
         FakeSpeech speech = new FakeSpeech(voice -> false, 150);
         UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");

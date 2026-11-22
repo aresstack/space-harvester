@@ -3298,6 +3298,15 @@ public final class Workspace {
         return harvester.podcasts().subscribe(key, listener);
     }
 
+    /**
+     * Wovon Thema {@code topic} des Podcasts erzählt, als Nummern der Themen der Zusammenfassung; die Leseansicht
+     * rollt dorthin und markiert sie. Liest eine Datei, nie auf dem EDT.
+     */
+    public List<Integer> podcastStatements(com.aresstack.spaceharvester.application.changelog.UpdateSummary summary,
+                                           int topic) {
+        return harvester.podcasts().statements(summary, topic);
+    }
+
     /** Ob der Erklär-Podcast einer Seite erzeugt werden kann: Chat-Modell und Sprachausgabe (TTS) eingerichtet. */
     public boolean pagePodcastsAvailable() {
         return harvester.pagePodcasts().available();
