@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.holdings;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -50,8 +51,24 @@ public record PageSelection(PageSet pages, HoldingCounts counts, List<SpaceSumma
         return pages.pagesOf(sourceId);
     }
 
-    /** Anzahl der Seiten über alle Quellen. */
+    /** Anzahl der Seiten über alle Quellen, gesperrte eingeschlossen. */
     public int size() {
         return pages.size();
+    }
+
+    /**
+     * Anzahl der Seiten ohne die gesperrten ({@link #locked()}): Nur sie haben Inhalt. Sind alle gesperrt, ist eine
+     * Auswahl für Ansichten über Inhalte so gut wie leer.
+     */
+    public int unlockedSize() {
+        int locked = 0;
+        for (Map.Entry<String, Set<String>> source : this.locked.asMap().entrySet()) {
+            for (String pageId : source.getValue()) {
+                if (pages.contains(source.getKey(), pageId)) {
+                    locked++;
+                }
+            }
+        }
+        return pages.size() - locked;
     }
 }

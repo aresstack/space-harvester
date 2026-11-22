@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /** Seitengraph über eine Seite samt Unterseiten (Checkbox „mit Unterseiten“), erfundene Testseiten. */
@@ -34,7 +36,9 @@ class GraphNeighbourhoodStackTest {
     private static final PageKey ALPHA = new PageKey("wiki", "12");
     private static final PageKey BETA = new PageKey("wiki", "11");
 
-    private final InMemoryKnowledgeGraphStore store = new InMemoryKnowledgeGraphStore();
+    /** Zählt die Durchgänge über alle Analysen ({@link KnowledgeGraphStore#all()}). */
+    private final AtomicInteger passes = new AtomicInteger();
+    private final KnowledgeGraphStore store = new Counting(new InMemoryKnowledgeGraphStore(), passes);
     private final FakeStatementAnalyzer parser = new FakeStatementAnalyzer();
     private final Map<PageKey, PageSnapshot> cache = new HashMap<>();
     private final Set<String> deniedSources = new HashSet<>();
@@ -209,17 +213,25 @@ class GraphNeighbourhoodStackTest {
         analyse("handbuch", "7", "Handbuch", "Die Buchhaltung prüft den Beleg.");
         GraphNeighbourhood.Subgraph page = neighbourhood.page(CALLER, PAGE, GraphNeighbourhood.Options.DEFAULT);
 
+        GraphNeighbourhood.Subgraph alone = neighbourhood.page(CALLER, PAGE,
+                GraphNeighbourhood.Options.DEFAULT.within(PageSet.ofKeys(List.of(PAGE))));
+
         PageKey locked = new PageKey("wiki", "14");
-        for (PageSelection none : new PageSelection[] {null, below(), below(PAGE),
+        assertThat(neighbourhood.pages(CALLER, PAGE, null, GraphNeighbourhood.Options.DEFAULT))
+                .isEqualTo(GraphNeighbourhood.Stack.of(page));
+        // Mit Unterseiten, die nichts beitragen, bleibt der Graph in der Menge aus nur der Seite.
+        for (PageSelection none : new PageSelection[] {below(), below(PAGE),
                 below(List.of(locked), List.of(locked))}) {
             GraphNeighbourhood.Stack stack = neighbourhood.pages(CALLER, PAGE, none,
                     GraphNeighbourhood.Options.DEFAULT);
-            assertThat(stack.graph()).isEqualTo(page);
+            assertThat(stack.graph()).isEqualTo(alone);
             assertThat(stack.missing()).isEmpty();
             assertThat(stack.skippedStale()).isZero();
             assertThat(stack.considered()).isZero();
+            assertThat(stack.notConsidered()).isZero();
         }
         assertThat(page.edges()).as("Verbindung zu anderen Seiten wie bisher").anyMatch(edge -> edge.type().crossPage());
+        assertThat(alone.edges()).noneMatch(edge -> edge.type().crossPage());
     }
 
     @Test
@@ -285,6 +297,188 @@ class GraphNeighbourhoodStackTest {
         assertThat(stack.missing()).isEmpty();
     }
 
+    /**
+     * Architektenvorgabe zu W4, Punkt 1: Sind alle Unterseiten gesperrt, bleibt der Graph trotzdem in der Menge. Eine
+     * gesperrte Seite, die noch eine Analyse von früher hat, kommt nicht als Ziel einer Verbindung herein.
+     */
+    @Test
+    void aLockedSubpageNeverComesInAsTargetOfALinkEvenIfAllSubpagesAreLocked() {
+        analyse("wiki", "1", "Plan", "Der Nachtlauf prüft den Beleg.");
+        PageKey locked = new PageKey("wiki", "14");
+        PageKey open = new PageKey("wiki", "15");
+        analyse("wiki", "14", "Ziel", "Die Revision prüft den Beleg.");
+        cache.remove(locked); // gesperrte Seiten haben kein Seitendokument mehr, die Analyse liegt noch
+        assertThat(neighbourhood.page(CALLER, PAGE, GraphNeighbourhood.Options.DEFAULT).nodes())
+                .as("Voraussetzung: ohne Menge ist die gesperrte Seite ein Ziel")
+                .anyMatch(node -> node.page().key().equals(locked));
+
+        for (PageSelection subpages : new PageSelection[] {below(List.of(locked), List.of(locked)),
+                below(List.of(locked, open), List.of(locked))}) {
+            GraphNeighbourhood.Stack stack = neighbourhood.pages(CALLER, PAGE, subpages,
+                    GraphNeighbourhood.Options.DEFAULT);
+
+            assertThat(stack.graph().nodes()).isNotEmpty().allMatch(node -> node.page().key().equals(PAGE));
+            assertThat(stack.graph().edges()).noneMatch(edge -> edge.type().crossPage());
+            assertThat(stack.graph().hidden()).isZero();
+        }
+    }
+
+    /**
+     * Architektenvorgabe zu W4, Punkt 2: Die Verbindungen aller Seiten der Menge entstehen in einem Durchgang über den
+     * Graphen, nicht in einem je Unterseite – auch nicht bei jedem Filterwechsel.
+     */
+    @Test
+    void linksOfTheWholeSetComeFromASinglePassOverTheGraph() {
+        analyse("wiki", "1", "Plan", "Der Nachtlauf prüft den Beleg.");
+        analyse("wiki", "12", "Ziel", "Die Revision bucht den Beleg.");
+        analyse("wiki", "11", "Start", "Der Start sendet den Beleg.");
+        analyse("wiki", "13", "Nachtlauf", "Der Nachtlauf sendet den Bericht.");
+        PageSelection subpages = below(ALPHA, BETA, new PageKey("wiki", "13"));
+
+        passes.set(0);
+        GraphNeighbourhood.Subgraph subgraph = neighbourhood.pages(CALLER, PAGE, subpages,
+                GraphNeighbourhood.Options.DEFAULT).graph();
+
+        assertThat(passes).as("ein Durchgang über alle Analysen für vier Seiten").hasValue(1);
+        assertThat(subgraph.edges()).filteredOn(edge -> edge.type().crossPage())
+                .as("Beleg auf Plan, Ziel und Start, Nachtlauf auf Plan und Nachtlauf, je Paar einmal").hasSize(4);
+
+        // Dieselben Verbindungen wie einzeln abgefragt, je in derselben Reihenfolge.
+        List<DocumentKey> documents = List.of(PAGE, ALPHA, BETA).stream().map(DocumentKey::page).toList();
+        passes.set(0);
+        Map<DocumentKey, List<KnowledgeGraph.Link>> together = graph.links(CALLER, documents, target -> true);
+        assertThat(passes).hasValue(1);
+        for (DocumentKey document : documents) {
+            assertThat(together.get(document)).isEqualTo(graph.links(CALLER, document)).isNotEmpty();
+        }
+    }
+
+    /**
+     * Architektenvorgabe zu W4, Punkt 2: Höchstens {@link GraphNeighbourhood#MAX_SUBPAGES} Unterseiten mit Analyse
+     * gehen ein, die ersten nach Titel; die übrigen nennt der Stapel als „nicht berücksichtigt“.
+     */
+    @Test
+    void atMostMaxSubpagesAreProjectedAndTheRestIsCountedAsNotConsidered() {
+        analyse("wiki", "1", "Plan", "Der Nachtlauf prüft den Beleg.");
+        List<PageKey> keys = new java.util.ArrayList<>();
+        int count = GraphNeighbourhood.MAX_SUBPAGES + 3;
+        for (int i = 0; i < count; i++) {
+            String pageId = String.valueOf(1000 + i);
+            analyse("wiki", pageId, "Nachtlauf " + pageId, "Der Start prüft den Beleg.");
+            keys.add(new PageKey("wiki", pageId));
+        }
+        PageKey unanalysed = new PageKey("wiki", "9999");
+        keys.add(unanalysed);
+        GraphNeighbourhood.Options options = new GraphNeighbourhood.Options(GraphNeighbourhood.MAX_LIMIT,
+                GraphNeighbourhood.MAX_LIMIT, EnumSet.allOf(PageGraph.NodeKind.class),
+                EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true, null, null);
+
+        passes.set(0);
+        GraphNeighbourhood.Stack stack = neighbourhood.pages(CALLER, PAGE, below(keys, List.of()), options);
+
+        assertThat(stack.notConsidered()).isEqualTo(3);
+        assertThat(stack.considered()).as("200 mit Analyse und die ohne").isEqualTo(GraphNeighbourhood.MAX_SUBPAGES + 1);
+        assertThat(stack.missing()).containsExactly(unanalysed);
+        Set<PageKey> last = Set.of(new PageKey("wiki", "1200"), new PageKey("wiki", "1201"),
+                new PageKey("wiki", "1202"));
+        assertThat(stack.graph().nodes()).as("die letzten drei nach Titel fehlen ganz")
+                .noneMatch(node -> last.contains(node.page().key()));
+        assertThat(passes).hasValue(1);
+
+        // Nur Dokumente: genau die Seite und die ersten 200 Unterseiten nach Titel.
+        GraphNeighbourhood.Options documentsOnly = new GraphNeighbourhood.Options(GraphNeighbourhood.MAX_LIMIT,
+                GraphNeighbourhood.MAX_LIMIT, EnumSet.of(PageGraph.NodeKind.DOCUMENT),
+                EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true, null, null);
+        GraphNeighbourhood.Stack documents = neighbourhood.pages(CALLER, PAGE, below(keys, List.of()),
+                documentsOnly);
+        Set<PageKey> expected = new HashSet<>(keys.subList(0, GraphNeighbourhood.MAX_SUBPAGES));
+        expected.add(PAGE);
+        assertThat(documents.graph().nodes()).extracting(node -> node.page().key())
+                .containsExactlyInAnyOrderElementsOf(expected);
+        assertThat(documents.graph().hidden()).isZero();
+        assertThat(documents.notConsidered()).isEqualTo(3);
+
+        GraphNeighbourhood.Stack few = neighbourhood.pages(CALLER, PAGE, below(keys.subList(0, 5), List.of()),
+                options);
+        assertThat(few.notConsidered()).isZero();
+        assertThat(few.considered()).isEqualTo(5);
+    }
+
+    /**
+     * Review zu W4, Punkte 2 und 3: Eine Unterseite jenseits von {@link GraphNeighbourhood#MAX_SUBPAGES} kommt auch
+     * nicht als Ziel einer Verbindung herein – keine Erwähnung ohne ihr Dokument, obwohl sie als „nicht
+     * berücksichtigt“ zählt. Die übrigen Unterseiten haben keine Erwähnungen, damit Knoten- und Kantengrenze reichlich
+     * Platz lassen und nicht verdecken, ob die Grenze greift.
+     */
+    @Test
+    void aSubpageBeyondMaxSubpagesDoesNotComeInAsTargetOfALink() {
+        analyse("wiki", "1", "Plan", "Der Nachtlauf prüft den Beleg.");
+        List<PageKey> keys = new java.util.ArrayList<>();
+        for (int i = 0; i < GraphNeighbourhood.MAX_SUBPAGES; i++) {
+            String pageId = String.valueOf(1000 + i);
+            analyse("wiki", pageId, "Start " + pageId, "noch leer.");
+            keys.add(new PageKey("wiki", pageId));
+        }
+        PageKey last = new PageKey("wiki", "2000");
+        analyse("wiki", "2000", "Ziel", "Der Nachtlauf bucht den Beleg.");
+        GraphNeighbourhood.Options options = new GraphNeighbourhood.Options(GraphNeighbourhood.MAX_LIMIT,
+                GraphNeighbourhood.MAX_LIMIT, EnumSet.allOf(PageGraph.NodeKind.class),
+                EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true, null, null);
+        List<PageKey> fitting = new java.util.ArrayList<>(keys.subList(1, keys.size()));
+        fitting.add(last);
+        assertThat(neighbourhood.pages(CALLER, PAGE, below(fitting, List.of()), options).graph().nodes())
+                .as("Voraussetzung: innerhalb der Grenze kommt Ziel mit Dokument und Erwähnungen")
+                .filteredOn(node -> node.page().key().equals(last)).hasSizeGreaterThan(1);
+        keys.add(last);
+
+        GraphNeighbourhood.Stack stack = neighbourhood.pages(CALLER, PAGE, below(keys, List.of()), options);
+
+        assertThat(stack.notConsidered()).isEqualTo(1);
+        assertThat(stack.graph().truncated()).isFalse();
+        assertThat(stack.graph().nodes()).noneMatch(node -> node.page().key().equals(last));
+        assertThat(stack.graph().edges()).noneMatch(edge -> edge.type().crossPage());
+    }
+
+    /**
+     * Architektenvorgabe zu W4, Punkt 3: Findet das Dokument einer Unterseite keinen Platz, kommen auch ihre Aussagen
+     * und Erwähnungen nicht – auch nicht nach dem Freigeben des Platzes für Verbindungen. Jeder Knoten einer Unterseite
+     * steht mit dem Dokument seiner Seite im Bild, bei jeder Grenze.
+     */
+    @Test
+    void noStatementOrMentionOfASubpageAppearsWithoutItsDocument() {
+        analyse("wiki", "1", "Plan", "Der Nachtlauf prüft den Beleg. Der Start sendet den Bericht.");
+        List<PageKey> keys = new java.util.ArrayList<>();
+        String[] titles = {"Ziel", "Start", "Nachtlauf"};
+        for (int i = 0; i < 6; i++) {
+            String pageId = String.valueOf(20 + i);
+            analyse("wiki", pageId, titles[i % 3] + " " + pageId, "Der Nachtlauf bucht den Beleg " + pageId + ".");
+            keys.add(new PageKey("wiki", pageId));
+        }
+        PageSelection subpages = below(keys, List.of());
+        GraphNeighbourhood.Options all = new GraphNeighbourhood.Options(GraphNeighbourhood.MAX_LIMIT,
+                GraphNeighbourhood.MAX_LIMIT, EnumSet.allOf(PageGraph.NodeKind.class),
+                EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true, null, null);
+        int total = neighbourhood.pages(CALLER, PAGE, subpages, all).graph().nodes().size();
+        boolean cut = false;
+
+        for (int maxNodes = 1; maxNodes <= total; maxNodes++) {
+            for (int maxEdges : new int[] {0, 1, 3, 8, 20, GraphNeighbourhood.MAX_LIMIT}) {
+                GraphNeighbourhood.Subgraph subgraph = neighbourhood.pages(CALLER, PAGE, subpages,
+                        new GraphNeighbourhood.Options(maxNodes, maxEdges, all.kinds(), all.types(), true, null,
+                                null)).graph();
+                Set<PageKey> documents = new HashSet<>();
+                subgraph.nodes().stream().filter(node -> node.kind() == PageGraph.NodeKind.DOCUMENT)
+                        .forEach(node -> documents.add(node.page().key()));
+                assertThat(subgraph.nodes()).as("Grenzen %d/%d", maxNodes, maxEdges)
+                        .allMatch(node -> documents.contains(node.page().key()));
+                cut |= keys.stream().anyMatch(key -> !documents.contains(key))
+                        && subgraph.nodes().size() < maxNodes;
+            }
+        }
+        assertThat(cut).as("Voraussetzung: freier Platz, den Unterseiten ohne Dokument nicht als Inseln füllen")
+                .isTrue();
+    }
+
     private static PageSelection below(PageKey... keys) {
         return below(List.of(keys), List.of());
     }
@@ -319,5 +513,55 @@ class GraphNeighbourhoodStackTest {
                 EnrichmentTestPages.RETRIEVED);
         cache.put(snapshot.key(), snapshot);
         statements.analyze(CALLER, snapshot, () -> false);
+    }
+
+    /** Eine Ablage, die ihre Durchgänge über alle Analysen zählt. */
+    private record Counting(KnowledgeGraphStore delegate, AtomicInteger passes) implements KnowledgeGraphStore {
+
+        @Override
+        public List<PageStatementAnalysis> all() {
+            passes.incrementAndGet();
+            return delegate.all();
+        }
+
+        @Override
+        public List<PageStatementAnalysis> documents() {
+            return delegate.documents();
+        }
+
+        @Override
+        public Optional<PageStatementAnalysis> find(PageKey key) {
+            return delegate.find(key);
+        }
+
+        @Override
+        public Optional<PageStatementAnalysis> find(DocumentKey document) {
+            return delegate.find(document);
+        }
+
+        @Override
+        public Optional<String> conllu(PageKey key) {
+            return delegate.conllu(key);
+        }
+
+        @Override
+        public Optional<String> conllu(DocumentKey document) {
+            return delegate.conllu(document);
+        }
+
+        @Override
+        public void replace(PageStatementAnalysis analysis) {
+            delegate.replace(analysis);
+        }
+
+        @Override
+        public void remove(PageKey key) {
+            delegate.remove(key);
+        }
+
+        @Override
+        public void removeDocument(DocumentKey document) {
+            delegate.removeDocument(document);
+        }
     }
 }
