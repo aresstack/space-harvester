@@ -105,6 +105,11 @@ class TabHeaderTest {
                     button.getToolTipText()).isCloseTo(fieldCentre, org.assertj.core.data.Offset.offset(1.0));
         }
 
+        if (title.width > 0) {
+            assertThat(title.getCenterY()).as("Titel senkrecht mittig zum Suchfeld bei %d px", width)
+                    .isCloseTo(fieldCentre, org.assertj.core.data.Offset.offset(1.0));
+        }
+
         String shown = header.titleShown();
         if (shown != null && !shown.equals(HEADING)) {
             assertThat(shown).endsWith(TabHeader.ELLIPSIS);

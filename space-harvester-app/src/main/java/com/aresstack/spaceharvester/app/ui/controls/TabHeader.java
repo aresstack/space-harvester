@@ -398,7 +398,8 @@ public final class TabHeader extends JPanel {
         public void layoutContainer(java.awt.Container parent) {
             java.awt.Insets insets = parent.getInsets();
             int right = parent.getWidth() - insets.right;
-            int rowHeight = preferredLayoutSize(parent).height - insets.top - insets.bottom;
+            // Mittig in der ganzen Höhe der linken Seite, damit der Titel auf der Linie von Suchfeld und Werkzeugen steht.
+            int rowHeight = Math.max(preferredLayoutSize(parent).height, parent.getHeight()) - insets.top - insets.bottom;
             int x = insets.left + gap;
             boolean first = true;
             boolean full = false;
