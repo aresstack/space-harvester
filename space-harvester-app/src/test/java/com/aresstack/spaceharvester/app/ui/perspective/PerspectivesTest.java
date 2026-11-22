@@ -15,9 +15,9 @@ class PerspectivesTest {
     void theFirstPerspectiveIsCurrentAndSelectingNotifiesOnceInOrder() {
         List<String> events = new ArrayList<>();
         Perspectives perspectives = new Perspectives()
-                .add(new Perspective("a", "A", "", true, null, new JPanel(), null,
+                .add(new Perspective("a", "A", "", true, null, new JPanel(), null, null,
                         () -> events.add("a shown"), () -> events.add("a hidden")))
-                .add(new Perspective("b", "B", "", false, null, new JPanel(), null,
+                .add(new Perspective("b", "B", "", false, null, new JPanel(), null, null,
                         () -> events.add("b shown"), () -> events.add("b hidden")));
         perspectives.onChange(next -> events.add("change " + next.id()));
 

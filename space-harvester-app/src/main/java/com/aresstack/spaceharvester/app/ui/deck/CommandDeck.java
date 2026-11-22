@@ -5,6 +5,8 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
+import com.aresstack.spaceharvester.deck.ftp.FtpSessions;
+import com.aresstack.spaceharvester.deck.ftp.commonsnet.CommonsNetFtpConnector;
 import com.aresstack.spaceharvester.deck.ndv.NdvSessions;
 import com.aresstack.spaceharvester.deck.ndv.pal.PalNdvConnector;
 import com.aresstack.spaceharvester.deck.terminal.TerminalSessions;
@@ -45,6 +47,10 @@ public final class CommandDeck {
     private final FilesWorkspace files;
     /** Freigegebene Ordner aus Einstellungen › Dateizugriff, als Orte im Bereich Dateien. */
     private volatile java.util.function.Supplier<java.util.List<java.nio.file.Path>> sharedFolders = java.util.List::of;
+    private final FtpSessions ftpSessions = new FtpSessions(new CommonsNetFtpConnector(), connecting);
+    private final FtpWorkspace ftp;
+    /** Oben rechts in der Titelleiste: die Bedienelemente des gewählten Bereichs (FTP: Datasets | JES-Jobs). */
+    private final JPanel tools = new JPanel(new BorderLayout());
     private final NdvWorkspace ndv;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
@@ -62,6 +68,8 @@ public final class CommandDeck {
         files = new FilesWorkspace(new com.aresstack.spaceharvester.deck.files.FileBrowser(
                 new com.aresstack.spaceharvester.deck.files.local.LocalFileSource(() -> sharedFolders.get()),
                 connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore());
+        ftp = new FtpWorkspace(ftpSessions, accounts);
+        tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts);
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
@@ -80,6 +88,7 @@ public final class CommandDeck {
             workspace.add(switch (candidate) {
                 case TERMINAL -> terminal;
                 case FILES -> files;
+                case FTP -> ftp;
                 case NDV -> ndv;
                 default -> placeholder(candidate);
             }, candidate.name());
@@ -87,7 +96,7 @@ public final class CommandDeck {
         show(DeckArea.TERMINAL);
         perspective = Perspective.of(Perspectives.COMMAND_DECK, "Command Deck",
                 "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", true, navigation,
-                workspace, null);
+                workspace, null, tools);
     }
 
     public Perspective perspective() {
@@ -123,6 +132,12 @@ public final class CommandDeck {
         area = next;
         buttons.get(next).setSelected(true);
         cards.show(workspace, next.name());
+        tools.removeAll();
+        if (next == DeckArea.FTP) {
+            tools.add(ftp.tools(), BorderLayout.CENTER);
+        }
+        tools.revalidate();
+        tools.repaint();
     }
 
     public DeckArea area() {
@@ -132,6 +147,7 @@ public final class CommandDeck {
     /** Trennt alle Sitzungen (Programmende). */
     public void shutdown() {
         sessions.closeAll();
+        ftpSessions.closeAll();
         ndvSessions.closeAll();
         connecting.shutdownNow();
     }
@@ -154,6 +170,18 @@ public final class CommandDeck {
 
     FilesWorkspace files() {
         return files;
+    }
+
+    public FtpSessions ftpSessions() {
+        return ftpSessions;
+    }
+
+    FtpWorkspace ftp() {
+        return ftp;
+    }
+
+    JComponent tools() {
+        return tools;
     }
 
     TerminalWorkspace terminal() {
