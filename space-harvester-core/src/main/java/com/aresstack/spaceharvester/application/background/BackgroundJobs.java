@@ -396,6 +396,24 @@ public final class BackgroundJobs {
     }
 
     /**
+     * Startet eine Gruppe mit einem Teil hinter jedem schon offenen Teil der Art ({@link Jobs#AFTER}, nur der Reihe
+     * wegen, {@value #ORDER_ONLY}): Für Arten, deren Teile eine Arbeit nacheinander abholen, die erst nach dem Start
+     * dazukommt, etwa die KI-Anreicherung je Quelle. Ein offener Teil derselben Quelle hält ihn nicht auf; ob es einen
+     * braucht, entscheidet der Aufrufer.
+     *
+     * @param groupId vorher vergeben ({@link #newGroupId()}), denn der Teil kann schon während des Starts laufen
+     */
+    public BackgroundGroup startBehindOpen(String groupId, String kind, String title, BackgroundPart.Draft part) {
+        Objects.requireNonNull(part, "part");
+        Objects.requireNonNull(title, "title");
+        synchronized (startLock(kind)) {
+            List<String> openIds = openParts(kind).map(JobStatus::id).toList();
+            return startSteps(groupId, kind, title, List.of(new Step(kind, title, part, openIds, List.of(),
+                    openIds.isEmpty() ? List.of() : List.of(title))), true);
+        }
+    }
+
+    /**
      * Angabe eines Teils, der nur der Reihenfolge wegen auf seinen Vorgänger wartet
      * ({@link #startInSequenceUnlessRunning}): Dessen Ergebnis braucht er nicht.
      */
@@ -419,6 +437,21 @@ public final class BackgroundJobs {
         Objects.requireNonNull(part, "part");
         return part.type() == JobType.BACKGROUND && (USER.equals(part.parameter(TRIGGER))
                 || STARTER.stream().anyMatch(key -> part.parameter(key) != null));
+    }
+
+    /** Der Stand eines Unterauftrags; leer, wenn es ihn nicht (mehr) gibt. */
+    public Optional<JobStatus> part(String jobId) {
+        Objects.requireNonNull(jobId, "jobId");
+        try {
+            return Optional.of(jobs.status(jobId, owner));
+        } catch (UnknownJobException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Ob ein Unterauftrag wartet, angehalten ist oder läuft, also seine Arbeit noch tun wird. */
+    public static boolean open(JobStatus part) {
+        return isOpen(part.state());
     }
 
     /** Alle Teile dieser Art, älteste zuerst, in jedem Zustand; etwa für Teile, die der Start zu Ende führt. */

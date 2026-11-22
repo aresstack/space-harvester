@@ -391,6 +391,27 @@ wird automatisch verwaltet.
 
    Ohne Hintergrundaufträge (Dienst) bleibt es beim bisherigen Weg.
 
+10. **KI-Anreicherung** (Angelo 21.11.2026, Fundstelle 5). Die Warteschlange der Prozessoren, die über das Netz
+    rechnen (Embeddings, Absätze und Navigation mit Modell, Satzanalyse `statements`), lief bisher auf einem Thread
+    mit 1.000 Plätzen und verwarf still, was nicht mehr hineinpasste. Mit Hintergrundaufträgen ist sie die Art
+    `enrichment` „KI-Anreicherung“ (`Enrichments#background`):
+    - Je Quelle ein Teil, der die Berechnungen seiner Quelle nacheinander abholt, auch die, die erst während seines
+      Laufs dazukommen (jede abgelegte Seite, Öffnen, Freigabe- und Update-Neuberechnung). Gewartet wird nur mit
+      Prozessor und Seite, ohne Grenze und ohne Verwerfen; den Snapshot liest der Teil erst beim Rechnen, die
+      KI-Freigabe prüft wie bisher jede Berechnung bei der Ausführung.
+    - Die Teile laufen hintereinander (`BackgroundJobs#startBehindOpen`, `Jobs#AFTER`), wie vorher der eine Thread;
+      die Logik der Berechnung bleibt gleich.
+    - Anhalten: Der Teil sammelt weiter und rechnet beim Fortsetzen; solange er angehalten ist, warten die Teile
+      anderer Quellen („wartet auf …“). Abbrechen verwirft die wartenden Berechnungen der Quelle, das Ereignis des
+      Abbruchs sagt es (`Jobs#CANCEL_NOTE`); fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf
+      nach. Scheitert ein Teil (etwa Laufzeitgrenze), übernimmt ein neuer Teil, was liegen blieb.
+    - Erzwungene Neuberechnungen (`recomputeInBackground`) warten nicht mehr auf einen der 50 Plätze: Ein Teil wie
+      „KI-Freigabe nachziehen“, der dort wartete, hielte einen Platz des Hintergrunds, den die KI-Anreicherung zum
+      Freigeben braucht.
+    - Grenze: Die Warteschlange lebt im Speicher. Nach einem Neustart ist sie leer, ein fortgesetzter Teil endet
+      sofort; fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach, erzwungene nicht (wie
+      bisher). Nimmt der Hintergrund einen Teil nicht an (voll, beim Beenden), rechnet der bisherige Weg.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel
