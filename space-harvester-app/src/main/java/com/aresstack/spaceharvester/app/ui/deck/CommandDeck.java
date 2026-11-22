@@ -5,6 +5,8 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
+import com.aresstack.spaceharvester.deck.ndv.NdvSessions;
+import com.aresstack.spaceharvester.deck.ndv.pal.PalNdvConnector;
 import com.aresstack.spaceharvester.deck.terminal.TerminalSessions;
 import com.aresstack.spaceharvester.deck.terminal.openterm.OpenTermConnector;
 import java.awt.BorderLayout;
@@ -35,7 +37,9 @@ public final class CommandDeck {
     private final JPanel workspace = new JPanel(cards);
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
+    private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(), connecting);
     private final TerminalWorkspace terminal;
+    private final NdvWorkspace ndv;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
 
@@ -45,10 +49,11 @@ public final class CommandDeck {
     }
 
     /**
-     * @param accounts Host-Zugänge (KeePass), gemeinsam für Terminal und später FTP und NDV
+     * @param accounts Host-Zugänge (KeePass), gemeinsam für Terminal, NDV und später FTP
      */
     public CommandDeck(com.aresstack.spaceharvester.deck.access.ServerAccounts accounts) {
         terminal = new TerminalWorkspace(sessions, accounts);
+        ndv = new NdvWorkspace(ndvSessions, accounts);
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
@@ -63,7 +68,11 @@ public final class CommandDeck {
             group.add(button);
             buttons.put(candidate, button);
             navigation.add(button);
-            workspace.add(candidate == DeckArea.TERMINAL ? terminal : placeholder(candidate), candidate.name());
+            workspace.add(switch (candidate) {
+                case TERMINAL -> terminal;
+                case NDV -> ndv;
+                default -> placeholder(candidate);
+            }, candidate.name());
         }
         show(DeckArea.TERMINAL);
         perspective = Perspective.of(Perspectives.COMMAND_DECK, "Command Deck",
@@ -77,6 +86,11 @@ public final class CommandDeck {
 
     public TerminalSessions sessions() {
         return sessions;
+    }
+
+    /** Die NDV-Sitzungen; sie überleben jeden Wechsel von Bereich und Perspektive. */
+    public NdvSessions ndvSessions() {
+        return ndvSessions;
     }
 
     /** Zeigt einen Arbeitsbereich; offene Sitzungen der anderen bleiben, wie sie sind. */
@@ -93,11 +107,16 @@ public final class CommandDeck {
     /** Trennt alle Sitzungen (Programmende). */
     public void shutdown() {
         sessions.closeAll();
+        ndvSessions.closeAll();
         connecting.shutdownNow();
     }
 
     TerminalWorkspace terminal() {
         return terminal;
+    }
+
+    NdvWorkspace ndv() {
+        return ndv;
     }
 
     JComponent navigation() {

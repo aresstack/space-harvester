@@ -9,7 +9,7 @@ import javax.swing.Icon;
 public enum DeckArea {
     TERMINAL("Terminal", "Interaktive TN3270-Sitzungen", true),
     FTP("FTP", "MVS-Datasets und Members, Transfers, JES-Jobs und Spool", false),
-    NDV("NDV", "Natural Development Server", false),
+    NDV("NDV", "Natural Development Server: Bibliotheken, Objekte, Quelltext", true),
     BETAVIEW("BetaView", "Beleg- und Dokumentserver", false),
     FILES("Dateien", "Lokale Dateien, SharePoint und weitere Dateisysteme", false);
 
