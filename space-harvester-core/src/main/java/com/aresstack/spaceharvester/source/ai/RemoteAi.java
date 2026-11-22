@@ -891,32 +891,26 @@ public final class RemoteAi {
 
             @Override
             public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
-                java.util.concurrent.atomic.AtomicReference<ChatTask> current =
-                        new java.util.concurrent.atomic.AtomicReference<>();
-                start(request, listener, thinking, current);
-                return new ChatTask() {
-                    @Override
-                    public void cancel() {
-                        current.get().cancel();
-                    }
-
-                    @Override
-                    public boolean isDone() {
-                        return current.get().isDone();
-                    }
-
-                    @Override
-                    public boolean isCancelled() {
-                        return current.get().isCancelled();
-                    }
-                };
+                Handoff handoff = new Handoff();
+                start(request, listener, thinking, handoff);
+                return handoff;
             }
 
-            private void start(ChatRequest request, ChatStreamListener listener, String effort,
-                               java.util.concurrent.atomic.AtomicReference<ChatTask> current) {
+            /**
+             * Startet einen Versuch. Der Dienst darf schon während {@code port.stream} zurückrufen; ein Ausweichversuch
+             * aus {@code onError} hat dann die höhere Nummer, und der ältere Griff überschreibt ihn nicht. Ein Abbruch
+             * zwischen zwei Versuchen gilt auch für den nächsten.
+             */
+            private void start(ChatRequest request, ChatStreamListener listener, String effort, Handoff handoff) {
+                int attempt = handoff.next();
+                if (handoff.cancelled()) {
+                    handoff.finish();
+                    listener.onCancelled();
+                    return;
+                }
                 ChatRequest limited = withLimit(request, maxTokens, effort);
                 java.util.concurrent.atomic.AtomicBoolean received = new java.util.concurrent.atomic.AtomicBoolean();
-                current.set(port.stream(limited, new ChatStreamListener() {
+                ChatTask task = port.stream(limited, new ChatStreamListener() {
                     @Override
                     public void onStart() {
                         listener.onStart();
@@ -930,25 +924,87 @@ public final class RemoteAi {
 
                     @Override
                     public void onComplete(ChatResponse response) {
+                        handoff.finish();
                         listener.onComplete(response);
                     }
 
                     @Override
                     public void onError(ChatCompletionException error) {
                         if (effort != null && !received.get() && rejectedEffort(error, request, limited)) {
-                            start(request, listener, fallbackEffort(effort), current);
+                            start(request, listener, fallbackEffort(effort), handoff);
                             return;
                         }
+                        handoff.finish();
                         listener.onError(error);
                     }
 
                     @Override
                     public void onCancelled() {
+                        handoff.finish();
                         listener.onCancelled();
                     }
-                }));
+                });
+                handoff.install(attempt, task);
             }
         };
+    }
+
+    /** Der Griff einer Anfrage über mehrere Versuche: immer der jüngste, Abbruch auch für spätere. */
+    private static final class Handoff implements ChatTask {
+        private int attempts;
+        private int installed = -1;
+        private ChatTask current;
+        private boolean cancelled;
+        private boolean finished;
+
+        synchronized int next() {
+            return ++attempts;
+        }
+
+        synchronized boolean cancelled() {
+            return cancelled;
+        }
+
+        synchronized void finish() {
+            finished = true;
+        }
+
+        void install(int attempt, ChatTask task) {
+            boolean cancel;
+            synchronized (this) {
+                if (attempt < installed) {
+                    return;
+                }
+                installed = attempt;
+                current = task;
+                cancel = cancelled;
+            }
+            if (cancel) {
+                task.cancel();
+            }
+        }
+
+        @Override
+        public void cancel() {
+            ChatTask task;
+            synchronized (this) {
+                cancelled = true;
+                task = current;
+            }
+            if (task != null) {
+                task.cancel();
+            }
+        }
+
+        @Override
+        public synchronized boolean isDone() {
+            return finished;
+        }
+
+        @Override
+        public synchronized boolean isCancelled() {
+            return cancelled;
+        }
     }
 
     /**

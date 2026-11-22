@@ -692,7 +692,7 @@ public final class ChangeLog implements AutoCloseable {
                                     return;
                                 }
                                 child.discovered(1);
-                                execute(item, work, child, results.get(index));
+                                execute(item, work, reporting(child, context), results.get(index));
                             })).id();
                     try {
                         jobs.prioritize(children[i], owner);
@@ -712,6 +712,10 @@ public final class ChangeLog implements AutoCloseable {
                     boolean anyRunning = false;
                     Integer takeOver = null;
                     for (int i = 0; i < size; i++) {
+                        if (results.get(i).isCompletedExceptionally()) {
+                            // Ein Teil scheiterte endgültig (etwa Anmeldung): die übrigen sofort beenden.
+                            break;
+                        }
                         if (results.get(i).isDone()) {
                             if (children[i] != null && counted.add(i)) {
                                 context.processed(1);
@@ -731,7 +735,8 @@ public final class ChangeLog implements AutoCloseable {
                             anyRunning = true;
                         }
                     }
-                    if (!open) {
+                    if (!open || results.stream().anyMatch(
+                            java.util.concurrent.CompletableFuture::isCompletedExceptionally)) {
                         break;
                     }
                     context.checkpoint();
@@ -781,6 +786,19 @@ public final class ChangeLog implements AutoCloseable {
             } catch (Exception e) {
                 throw new IllegalStateException(e);
             }
+            for (java.util.concurrent.CompletableFuture<R> result : results) {
+                if (result.isCompletedExceptionally()) {
+                    cancelAll(children);
+                    try {
+                        result.join();
+                    } catch (java.util.concurrent.CompletionException e) {
+                        if (e.getCause() instanceof RuntimeException cause) {
+                            throw cause;
+                        }
+                        throw e;
+                    }
+                }
+            }
             List<R> answers = new ArrayList<>(size);
             for (java.util.concurrent.CompletableFuture<R> result : results) {
                 try {
@@ -816,6 +834,28 @@ public final class ChangeLog implements AutoCloseable {
             } finally {
                 lanes.release();
             }
+        }
+
+        /**
+         * Der Unterauftrag, der Ausgelassenes und Unvollständiges auch dem Oberauftrag meldet: Sonst stünde
+         * „Zusammenfassen“ als vollständig da, obwohl ein Teil eine Seite verlor (wie ohne Unteraufträge).
+         */
+        private static com.aresstack.spaceharvester.application.jobs.JobContext reporting(
+                com.aresstack.spaceharvester.application.jobs.JobContext child,
+                com.aresstack.spaceharvester.application.jobs.JobContext parent) {
+            return (com.aresstack.spaceharvester.application.jobs.JobContext) java.lang.reflect.Proxy.newProxyInstance(
+                    com.aresstack.spaceharvester.application.jobs.JobContext.class.getClassLoader(),
+                    new Class<?>[] {com.aresstack.spaceharvester.application.jobs.JobContext.class},
+                    (proxy, method, args) -> {
+                        if (method.getName().equals("failed") || method.getName().equals("incomplete")) {
+                            method.invoke(parent, args);
+                        }
+                        try {
+                            return method.invoke(child, args);
+                        } catch (java.lang.reflect.InvocationTargetException e) {
+                            throw e.getCause();
+                        }
+                    });
         }
 
         private static JobStatus status(Jobs jobs, String id) {

@@ -844,6 +844,8 @@ class UpdateSummaryTest {
      */
     @Test
     void thePartsRunAsChildJobsOfTheSummary() throws Exception {
+        long backoff = UpdateSummarizer.backoffMillis;
+        UpdateSummarizer.backoffMillis = 1;
         parallel = 3;
         delayMillis = 100;
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
@@ -870,10 +872,14 @@ class UpdateSummaryTest {
             answer = """
                     {"zusammenfassung": "Überblick.", "themen": [{"titel": "Seiten", "text": "Inhalt.", "seiten": ["p0"]}]}""";
 
+            // Eine Seite nimmt der Dienst nie an: der Unterauftrag lässt sie aus, der Oberauftrag gilt als unvollständig.
+            failWhen = "\"Seite 5\"";
             JobStatus parent = parentLog.summarize(CALLER, "wiki", ChangeUpdate.OPEN);
             JobStatus done = wide.await(parent.id(), CALLER.jobOwner(), Duration.ofSeconds(60));
 
             assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(done.incomplete()).as("Ausgelassenes eines Unterauftrags meldet auch der Oberauftrag").isTrue();
+            assertThat(done.progress().failed()).isEqualTo(1);
             List<JobStatus> children = wide.listAll(JobType.UPDATE_SUMMARY).stream()
                     .filter(job -> parent.id().equals(job.parameters().get(ChangeLog.PARENT_PARAMETER)))
                     .toList();
@@ -886,6 +892,8 @@ class UpdateSummaryTest {
                     assertThat(child.parameters().get(ChangeLog.STEP_PARAMETER)).startsWith("Teil 1 von "));
             assertThat(mostAtOnce.get()).as("gleichzeitig, nie mehr als ai.parallel").isBetween(2, 3);
         } finally {
+            failWhen = null;
+            UpdateSummarizer.backoffMillis = backoff;
             parentLog.close();
             wide.close();
             pool.shutdownNow();

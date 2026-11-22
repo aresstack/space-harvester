@@ -555,6 +555,77 @@ class RemoteAiTest {
         assertThat(seen.get(2).options().reasoningEffort()).isNull();
     }
 
+    /** Lehnt der Dienst schon während stream() ab, bleibt der Ausweichversuch der Griff, den ein Abbruch trifft. */
+    @Test
+    void anEarlyRejectionKeepsTheRetryAsTheHandleThatIsCancelled() {
+        List<ChatRequest> seen = new CopyOnWriteArrayList<>();
+        java.util.concurrent.atomic.AtomicBoolean retryCancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        ChatCompletionPort port = new ChatCompletionPort() {
+            @Override
+            public ChatResponse complete(ChatRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
+                seen.add(request);
+                boolean first = seen.size() == 1;
+                if (first) {
+                    listener.onError(new com.aresstack.enterpriseai.chat.api.ChatCompletionException(
+                            com.aresstack.enterpriseai.chat.api.ChatErrorKind.INVALID_REQUEST, "HTTP 400"));
+                }
+                return new ChatTask() {
+                    @Override
+                    public void cancel() {
+                        if (!first) {
+                            retryCancelled.set(true);
+                        }
+                    }
+
+                    @Override
+                    public boolean isDone() {
+                        return first;
+                    }
+
+                    @Override
+                    public boolean isCancelled() {
+                        return false;
+                    }
+                };
+            }
+        };
+        ChatStreamListener quiet = new ChatStreamListener() {
+            @Override
+            public void onStart() {
+            }
+
+            @Override
+            public void onDelta(String text) {
+            }
+
+            @Override
+            public void onComplete(ChatResponse response) {
+            }
+
+            @Override
+            public void onError(com.aresstack.enterpriseai.chat.api.ChatCompletionException error) {
+            }
+
+            @Override
+            public void onCancelled() {
+            }
+        };
+
+        ChatTask task = RemoteAi.limited(port, 1024, "none").stream(
+                new ChatRequest(List.of(ChatMessage.user("Hallo")), ChatOptions.defaults()), quiet);
+
+        assertThat(seen).hasSize(2);
+        assertThat(seen.get(1).options().reasoningEffort()).isEqualTo(RemoteAi.MIN_REASONING_EFFORT);
+        assertThat(task.isDone()).as("der Ausweichversuch läuft noch").isFalse();
+        task.cancel();
+        assertThat(retryCancelled).isTrue();
+    }
+
     @Test
     void streamsTheOllamaChatLineByLine() throws Exception {
         // Ein Ollama-Server meldet die geladenen Modelle; hier läuft das Chat-Modell schon.
