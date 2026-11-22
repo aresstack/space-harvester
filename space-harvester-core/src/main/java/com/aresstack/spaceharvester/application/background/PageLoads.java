@@ -82,6 +82,23 @@ public final class PageLoads {
      * {@link Wake} hat seine eigene Sperre.
      */
     private final java.util.concurrent.locks.ReentrantLock joining = new java.util.concurrent.locks.ReentrantLock();
+    /**
+     * Die offenen Teile dieser Art (wartend, laufend, angehalten) mit ihrem jüngsten Stand, je Teil-ID: ein Abbild aus
+     * den Auftragsmeldungen (ADR 0027, Abnahme #1132), damit {@link #join} auf dem Weg der Suchtreffer nie den
+     * Auftragsspeicher liest. Nur beim Start einmal aus dem Speicher gefüllt.
+     */
+    private final Map<String, com.aresstack.spaceharvester.application.jobs.JobStatus> open =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * Gruppen, die {@link #join} gerade startet, bis ihre Teile im Abbild stehen. Endet ein Teil vorher, merkt sich
+     * {@link #gone} das, damit der Stand aus {@code start()} ihn nicht als offen zurückbringt.
+     */
+    private final Set<String> starting = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Teile, die beim Füllen oder Starten schon beendet gemeldet wurden; siehe {@link #starting}. */
+    private final Map<String, String> gone = new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile boolean seeding = true;
+    /** Die Auftragsmeldungen für {@link #open}; lebt so lange wie der Dienst. */
+    private final com.aresstack.spaceharvester.application.observe.Subscription parts;
 
     /**
      * @param technical der technische Aufrufer des Dienstes, für fortgesetzte Unteraufträge nach einem Neustart
@@ -96,6 +113,52 @@ public final class PageLoads {
         this.cached = Objects.requireNonNull(cached, "cached");
         this.space = Objects.requireNonNull(space, "space");
         background.register(new BackgroundKind(KIND, this::work));
+        this.parts = background.subscribe(KIND, this::track, this::untrack);
+        // Einmal beim Start: was vor dem Neustart offen war. Meldungen währenddessen gehen vor (gone, compute).
+        for (BackgroundGroup group : background.groups()) {
+            if (KIND.equals(group.kind())) {
+                group.parts().forEach(part -> adopt(part));
+            }
+        }
+        seeding = false;
+        gone.clear();
+    }
+
+    /** Auftragsmeldung: der jüngste Stand eines Teils dieser Art. */
+    private void track(com.aresstack.spaceharvester.application.jobs.JobStatus status) {
+        if (!loading(status.state())) {
+            untrack(status);
+            return;
+        }
+        open.put(status.id(), status);
+    }
+
+    /** Auftragsmeldung: Der Teil lädt nicht mehr oder ist gelöscht. */
+    private void untrack(com.aresstack.spaceharvester.application.jobs.JobStatus last) {
+        open.compute(last.id(), (id, current) -> {
+            if (seeding || starting.contains(groupOf(last))) {
+                gone.put(id, groupOf(last));
+            }
+            return null;
+        });
+    }
+
+    /** Übernimmt einen Stand aus dem Speicher oder aus {@code start()}, ohne einen jüngeren aus Meldungen zu ersetzen. */
+    private void adopt(com.aresstack.spaceharvester.application.jobs.JobStatus status) {
+        open.compute(status.id(), (id, current) -> {
+            if (current != null) {
+                return current;
+            }
+            if (gone.remove(id) != null || !loading(status.state())) {
+                return null;
+            }
+            return status;
+        });
+    }
+
+    private static String groupOf(com.aresstack.spaceharvester.application.jobs.JobStatus status) {
+        String group = status.parameter(BackgroundJobs.GROUP);
+        return group != null ? group : status.id();
     }
 
     /**
@@ -208,13 +271,23 @@ public final class PageLoads {
             }
         }));
         BackgroundGroup started;
+        starting.add(groupId);
         try {
-            started = background.start(groupId, KIND, title, parts);
-        } catch (RuntimeException e) {
-            forget(groupId, held);
-            throw e;
+            try {
+                started = background.start(groupId, KIND, title, parts);
+            } catch (RuntimeException e) {
+                forget(groupId, held);
+                throw e;
+            }
+            // Sofort ins Abbild, nicht erst mit der Meldung: Der nächste join sieht die Seiten schon als geladen.
+            started.parts().forEach(this::adopt);
+        } finally {
+            starting.remove(groupId);
+            gone.values().removeIf(groupId::equals);
         }
-        background.group(groupId).filter(PageLoads::ended).ifPresent(group -> forget(groupId, held));
+        if (ended(started)) {
+            forget(groupId, held);
+        }
         return new Joined(Optional.of(started), joined);
     }
 
@@ -269,20 +342,19 @@ public final class PageLoads {
      */
     private Map<PageKey, String> queued(boolean refreshing) {
         Map<PageKey, String> queued = new java.util.HashMap<>();
-        for (BackgroundGroup group : background.groups()) {
-            if (!KIND.equals(group.kind())) {
+        List<com.aresstack.spaceharvester.application.jobs.JobStatus> parts = new ArrayList<>(open.values());
+        // Jüngste zuerst, wie zuvor die Gruppen ({@link BackgroundJobs#groups()}): eine Seite zählt zur jüngsten Gruppe.
+        parts.sort(java.util.Comparator.comparing(
+                com.aresstack.spaceharvester.application.jobs.JobStatus::createdAt).reversed());
+        for (com.aresstack.spaceharvester.application.jobs.JobStatus part : parts) {
+            String pages = part.parameter(PAGES);
+            if (!loading(part.state()) || pages == null || part.sourceId() == null
+                    || refreshing && (!"true".equals(part.parameter(REFRESH)) || part.state().terminal())) {
                 continue;
             }
-            for (com.aresstack.spaceharvester.application.jobs.JobStatus part : group.parts()) {
-                String pages = part.parameter(PAGES);
-                if (!loading(part.state()) || pages == null || part.sourceId() == null
-                        || refreshing && (!"true".equals(part.parameter(REFRESH)) || part.state().terminal())) {
-                    continue;
-                }
-                for (String pageId : pages.split(SEPARATOR)) {
-                    if (!pageId.isBlank()) {
-                        queued.putIfAbsent(new PageKey(part.sourceId(), pageId), group.groupId());
-                    }
+            for (String pageId : pages.split(SEPARATOR)) {
+                if (!pageId.isBlank()) {
+                    queued.putIfAbsent(new PageKey(part.sourceId(), pageId), groupOf(part));
                 }
             }
         }
