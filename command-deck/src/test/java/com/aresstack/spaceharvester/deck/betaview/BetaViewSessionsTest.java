@@ -19,7 +19,7 @@ class BetaViewSessionsTest {
             "pilot");
 
     /** Merkt sich die Aufrufe; „öffnet“ Dokumente über ihre Aktion. */
-    private static final class Recording implements BetaViewConnection {
+    private static class Recording implements BetaViewConnection {
         final List<String> calls = new ArrayList<>();
 
         @Override
@@ -167,5 +167,29 @@ class BetaViewSessionsTest {
         assertThat(session.state()).isEqualTo(ConnectionState.DISCONNECTED);
         assertThatThrownBy(() -> session.savedSearches().get()).isInstanceOf(ExecutionException.class)
                 .hasMessageContaining("Nicht angemeldet");
+    }
+
+    @Test
+    void callsRunInTheOrderTheyWereRequested() throws Exception {
+        List<String> done = java.util.Collections.synchronizedList(new ArrayList<>());
+        BetaViewConnection connection = new Recording() {
+            @Override
+            public void saveSearch(NameAndDescription search) {
+                done.add(search.name());
+            }
+        };
+        try (var background = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            BetaViewSession queued = new BetaViewSession("q", PROFILE, background);
+            queued.connected(connection);
+            List<java.util.concurrent.CompletableFuture<Void>> calls = new ArrayList<>();
+            List<String> expected = new ArrayList<>();
+            for (int i = 0; i < 300; i++) {
+                expected.add("S" + i);
+                calls.add(queued.saveSearch(new NameAndDescription("S" + i, "")));
+            }
+            java.util.concurrent.CompletableFuture.allOf(calls.toArray(new java.util.concurrent.CompletableFuture[0]))
+                    .get(20, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(done).containsExactlyElementsOf(expected);
+        }
     }
 }

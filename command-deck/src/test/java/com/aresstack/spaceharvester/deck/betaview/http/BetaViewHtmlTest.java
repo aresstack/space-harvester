@@ -13,6 +13,19 @@ class BetaViewHtmlTest {
     }
 
     @Test
+    void openTabsSurviveBracketsInTitles() {
+        String json = "{\"dbbookmarks\":[{\"fav\":\"<docbrowsertab>\",\"link\":\"docid=D1&favid=F1\","
+                + "\"linkID\":\"L1\",\"name\":\"Bericht [täglich]\",\"description\":\"21.11.2026 06:12\"},"
+                + "{\"fav\":\"anderes\",\"name\":\"x\"},"
+                + "{\"fav\":\"<docbrowsertab>\",\"link\":\"docid=D2&favid=F1\",\"linkID\":\"L2\","
+                + "\"name\":\"Lauf {B}\",\"description\":\"\"}]}";
+        var tabs = BetaViewHtml.openTabs(json);
+        assertThat(tabs).extracting(t -> t.title()).containsExactly("Bericht [täglich]", "Lauf {B}");
+        assertThat(tabs).extracting(t -> t.docId()).containsExactly("D1", "D2");
+        assertThat(BetaViewHtml.openTabs("kein json")).isEmpty();
+    }
+
+    @Test
     void withoutTextTheAnswerStays() {
         assertThat(BetaViewHtml.pageText("{\"error\":\"x\"}")).isEqualTo("{\"error\":\"x\"}");
     }

@@ -112,6 +112,7 @@ final class SearchPane extends JPanel {
     private final Actions actions;
     private boolean savedLoaded;
     private boolean bookmarksLoaded;
+    private boolean searching;
     private boolean filling;
 
     SearchPane(Actions actions) {
@@ -149,7 +150,8 @@ final class SearchPane extends JPanel {
         table.setRowSorter(sorter);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.getSelectionModel().addListSelectionListener(event -> {
-            if (!event.getValueIsAdjusting() && !filling) {
+            // Während einer Suche gehört die alte Trefferliste nicht mehr zum Server (Treffer gehen über ihre Nummer).
+            if (!event.getValueIsAdjusting() && !filling && !searching) {
                 int view = table.getSelectedRow();
                 if (view >= 0) {
                     ResultTable.Row row = model.row(table.convertRowIndexToModel(view));
@@ -342,9 +344,11 @@ final class SearchPane extends JPanel {
     }
 
     void busy(boolean on, String text) {
+        searching = on;
         busy.setText(text);
         busy.setBusy(on);
         searchButton.setEnabled(!on);
+        table.setEnabled(!on);
     }
 
     void show(ResultTable result) {

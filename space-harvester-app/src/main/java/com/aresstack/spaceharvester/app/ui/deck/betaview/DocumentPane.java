@@ -59,7 +59,10 @@ final class DocumentPane extends JPanel {
     static final class Doc {
         DocumentTab tab;
         OpenedDocument opened;
+        /** Die Seite, deren Text {@link #text} ist (0 = noch keine geladen). */
         int page = 1;
+        /** Die zuletzt angeforderte Seite; erst wenn ihr Text da ist, wird sie zu {@link #page}. */
+        int requested = 1;
         String text = "";
 
         Doc(DocumentTab tab) {
@@ -110,8 +113,8 @@ final class DocumentPane extends JPanel {
         });
         refresh.addActionListener(e -> withCurrent(doc -> actions.open(doc.tab)));
         first.addActionListener(e -> go(1));
-        previous.addActionListener(e -> withCurrent(doc -> go(doc.page - 1)));
-        next.addActionListener(e -> withCurrent(doc -> go(doc.page + 1)));
+        previous.addActionListener(e -> withCurrent(doc -> go(doc.requested - 1)));
+        next.addActionListener(e -> withCurrent(doc -> go(doc.requested + 1)));
         last.addActionListener(e -> withCurrent(doc -> go(doc.pages())));
         download.addActionListener(e -> withCurrent(doc -> actions.download(doc.tab)));
         downloadOptions.addActionListener(e -> withCurrent(doc -> actions.downloadWithOptions(doc.tab)));
@@ -164,11 +167,12 @@ final class DocumentPane extends JPanel {
         }
         int target = Math.max(1, Math.min(current.pages(), page));
         if (target == current.page && !current.text.isEmpty()) {
+            current.requested = target;
             pageField.setText(String.valueOf(target));
             return;
         }
-        current.page = target;
-        showCurrent();
+        current.requested = target;
+        pageField.setText(String.valueOf(target));
         actions.page(current.tab, target);
     }
 
@@ -189,6 +193,7 @@ final class DocumentPane extends JPanel {
         Doc doc = doc(opened.document());
         doc.opened = opened;
         doc.page = 1;
+        doc.requested = 1;
         doc.text = "";
         select(doc, false);
         actions.page(doc.tab, 1);
@@ -200,12 +205,31 @@ final class DocumentPane extends JPanel {
         if (doc == null) {
             return;
         }
-        if (doc.page == page) {
+        if (doc.requested == page) {
+            doc.page = page;
             doc.text = content;
         }
         if (doc == current) {
             showCurrent();
         }
+    }
+
+    /** Eine Seite kam nicht: angezeigt bleibt die zuletzt geladene, ein neuer Versuch lädt erneut. */
+    void pageFailed(DocumentTab tab, int page) {
+        Doc doc = docs.get(tab.key());
+        if (doc == null || doc.requested != page) {
+            return;
+        }
+        doc.requested = doc.page;
+        if (doc == current) {
+            showCurrent();
+        }
+    }
+
+    /** Die Seite, die für {@code tab} gerade zu sehen ist (für „Aktuelle Seite“ beim Herunterladen). */
+    int shownPage(DocumentTab tab) {
+        Doc doc = docs.get(tab.key());
+        return doc == null ? 1 : Math.max(1, doc.page);
     }
 
     void removed(DocumentTab tab) {
@@ -225,10 +249,17 @@ final class DocumentPane extends JPanel {
         showCurrent();
     }
 
+    /** Alle Dokumente sind geschlossen: alles leeren, ohne ein anderes auszuwählen oder zu laden. */
     void clear() {
-        for (DocumentTab tab : docs.values().stream().map(doc -> doc.tab).toList()) {
-            removed(tab);
+        for (ComposerToggleButton pill : pills.values()) {
+            group.remove(pill);
+            pillRow.remove(pill);
         }
+        pills.clear();
+        docs.clear();
+        current = null;
+        refreshPills();
+        showCurrent();
     }
 
     void busy(boolean on, String message) {
@@ -320,7 +351,7 @@ final class DocumentPane extends JPanel {
                 text.setText(current.text);
                 text.setCaretPosition(0);
             }
-            pageField.setText(String.valueOf(current.page));
+            pageField.setText(String.valueOf(current.requested));
             pageCount.setText("/ " + current.pages());
         } else {
             text.setText("");

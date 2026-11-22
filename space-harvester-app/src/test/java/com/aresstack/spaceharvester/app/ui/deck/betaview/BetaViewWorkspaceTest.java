@@ -68,6 +68,13 @@ class BetaViewWorkspaceTest {
                 panel.search.search();
             });
             await(() -> panel.search.table.getRowCount() == 3, "drei Treffer");
+            // Während einer neuen Suche lässt sich die alte Trefferliste nicht anklicken.
+            SwingUtilities.invokeAndWait(() -> {
+                panel.search.busy(true, "Suche läuft …");
+                assertThat(panel.search.table.isEnabled()).isFalse();
+                panel.search.busy(false, null);
+                assertThat(panel.search.table.isEnabled()).isTrue();
+            });
 
             SwingUtilities.invokeAndWait(() -> panel.search.table.setRowSelectionInterval(0, 0));
             await(() -> panel.documents.text.getText().contains("LAUF"), "Seite 1 im Text");

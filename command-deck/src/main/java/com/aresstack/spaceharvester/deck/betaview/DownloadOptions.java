@@ -37,6 +37,19 @@ public record DownloadOptions(Pages pages, int from, int to, Format format, Deli
                 false, Notes.TEXT_ONLY, NoteKind.ALL);
     }
 
+    /**
+     * Macht aus „Aktuelle Seite“ den ausdrücklichen Bereich {@code page}–{@code page}: Der Server merkt sich die
+     * angezeigte Seite nicht, wenn das Dokument zwischendurch neu geöffnet wurde.
+     */
+    public DownloadOptions withCurrentPage(int page) {
+        if (pages != Pages.CURRENT) {
+            return this;
+        }
+        int shown = Math.max(1, page);
+        return new DownloadOptions(Pages.RANGE, shown, shown, format, delimiter, split, csvValue, csvTrim, notes,
+                noteKind);
+    }
+
     public enum Pages {
         ALL("printAllPages", "Alle Seiten"),
         CURRENT("printCurrentPage", "Aktuelle Seite"),

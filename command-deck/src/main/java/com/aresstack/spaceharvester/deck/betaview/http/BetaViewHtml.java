@@ -7,6 +7,8 @@ import com.aresstack.spaceharvester.deck.betaview.NameAndDescription;
 import com.aresstack.spaceharvester.deck.betaview.OpenedDocument;
 import com.aresstack.spaceharvester.deck.betaview.ResultTable;
 import com.aresstack.spaceharvester.deck.betaview.SavedSearch;
+import com.fasterxml.jackson.jr.ob.JSON;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -224,53 +226,13 @@ final class BetaViewHtml {
         if (json == null) {
             return "";
         }
-        int textIndex = json.indexOf("\"text\"");
-        if (textIndex < 0) {
-            return json;
-        }
-        int start = json.indexOf('[', textIndex);
-        if (start < 0) {
+        Object text = jsonObject(json).get("text");
+        if (!(text instanceof List<?> lines)) {
             return json;
         }
         StringBuilder out = new StringBuilder();
-        StringBuilder line = new StringBuilder();
-        boolean inString = false;
-        boolean escaped = false;
-        for (int i = start + 1; i < json.length(); i++) {
-            char c = json.charAt(i);
-            if (escaped) {
-                switch (c) {
-                    case 'n' -> line.append('\n');
-                    case 't' -> line.append('\t');
-                    case 'r' -> { }
-                    case 'u' -> {
-                        if (i + 4 < json.length()) {
-                            try {
-                                line.append((char) Integer.parseInt(json.substring(i + 1, i + 5), 16));
-                                i += 4;
-                            } catch (NumberFormatException e) {
-                                line.append('u');
-                            }
-                        }
-                    }
-                    default -> line.append(c);
-                }
-                escaped = false;
-            } else if (inString && c == '\\') {
-                escaped = true;
-            } else if (c == '"') {
-                inString = !inString;
-            } else if (!inString && c == ',') {
-                out.append(line).append('\n');
-                line.setLength(0);
-            } else if (!inString && c == ']') {
-                break;
-            } else if (inString) {
-                line.append(c);
-            }
-        }
-        if (line.length() > 0) {
-            out.append(line).append('\n');
+        for (Object line : lines) {
+            out.append(line == null ? "" : String.valueOf(line).replace("\r", "")).append('\n');
         }
         return out.toString();
     }
@@ -352,30 +314,17 @@ final class BetaViewHtml {
      */
     static List<DocumentTab> openTabs(String json) {
         List<DocumentTab> result = new ArrayList<>();
-        if (json == null || json.isEmpty()) {
+        if (json == null || json.isBlank()) {
             return result;
         }
-        int key = json.indexOf("\"dbbookmarks\"");
-        if (key < 0) {
+        if (!(jsonObject(json).get("dbbookmarks") instanceof List<?> entries)) {
             return result;
         }
-        int start = json.indexOf('[', key);
-        int end = start < 0 ? -1 : json.indexOf(']', start);
-        if (end < 0) {
-            return result;
-        }
-        for (String object : json.substring(start + 1, end).split("\\},\\s*\\{")) {
-            String entry = object.trim();
-            if (entry.startsWith("{")) {
-                entry = entry.substring(1);
-            }
-            if (entry.endsWith("}")) {
-                entry = entry.substring(0, entry.length() - 1);
-            }
-            if (!"<docbrowsertab>".equals(jsonString(entry, "fav"))) {
+        for (Object item : entries) {
+            if (!(item instanceof Map<?, ?> entry) || !"<docbrowsertab>".equals(text(entry, "fav"))) {
                 continue;
             }
-            String link = jsonString(entry, "link");
+            String link = text(entry, "link");
             String docId = "";
             String favId = "";
             for (String part : link.split("&")) {
@@ -385,10 +334,25 @@ final class BetaViewHtml {
                     favId = part.substring(6);
                 }
             }
-            result.add(new DocumentTab(docId, favId, jsonString(entry, "linkID"), jsonString(entry, "name"),
-                    jsonString(entry, "description"), "opendocumentlink.action?" + link, false));
+            result.add(new DocumentTab(docId, favId, text(entry, "linkID"), text(entry, "name"),
+                    text(entry, "description"), "opendocumentlink.action?" + link, false));
         }
         return result;
+    }
+
+    /** Ein JSON-Objekt als Map; kein oder kaputtes JSON ergibt eine leere Map. */
+    private static Map<String, Object> jsonObject(String json) {
+        try {
+            Map<String, Object> map = JSON.std.mapFrom(json);
+            return map == null ? Map.of() : map;
+        } catch (IOException | RuntimeException e) {
+            return Map.of();
+        }
+    }
+
+    private static String text(Map<?, ?> entry, String key) {
+        Object value = entry.get(key);
+        return value == null ? "" : String.valueOf(value);
     }
 
     /** Dokumentinformationen ({@code .row} mit {@code .el_label_desc}/{@code .el_label_value}). */
@@ -423,16 +387,6 @@ final class BetaViewHtml {
                 description == null ? "" : description.attr("value"));
     }
 
-    private static String jsonString(String object, String key) {
-        String search = "\"" + key + "\":\"";
-        int start = object.indexOf(search);
-        if (start < 0) {
-            return "";
-        }
-        start += search.length();
-        int end = object.indexOf('"', start);
-        return end > start ? object.substring(start, end) : "";
-    }
 
     private static String first(Pattern pattern, String text) {
         if (text == null) {

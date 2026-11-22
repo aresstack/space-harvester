@@ -22,6 +22,8 @@ dependencies {
     implementation libs.openterm
     // BetaView-Seiten lesen wie in MainframeMate (betaview-integration nutzt ebenfalls jsoup)
     implementation libs.jsoup
+    // JSON-Antworten (offene Reiter, Seitentext) mit einem echten Parser statt Klammersuche
+    implementation libs.jackson.jr.objects
 
     testImplementation platform(libs.junit.bom)
     testImplementation 'org.junit.jupiter:junit-jupiter'

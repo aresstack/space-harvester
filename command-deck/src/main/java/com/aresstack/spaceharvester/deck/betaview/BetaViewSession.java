@@ -27,6 +27,9 @@ public final class BetaViewSession {
     private final ReentrantLock stateLock = new ReentrantLock();
     /** Reiht die Aufrufe an den Server nacheinander ein (ein Vorgang zur Zeit). */
     private final ReentrantLock serverLock = new ReentrantLock();
+    /** Schützt {@link #tail}, das Ende der Warteschlange der Serveraufrufe. */
+    private final ReentrantLock queueLock = new ReentrantLock();
+    private CompletableFuture<Void> tail = CompletableFuture.completedFuture(null);
     private BetaViewConnection connection;
     private ConnectionState state = ConnectionState.CONNECTING;
     private String failure;
@@ -234,32 +237,52 @@ public final class BetaViewSession {
         });
     }
 
+    /**
+     * Stellt einen Serveraufruf hinten an: die Aufrufe einer Sitzung laufen strikt in der Reihenfolge, in der sie
+     * angefordert wurden (der Server merkt sich die letzte Suche und das aktuelle Dokument, „Suche speichern“ nach
+     * „Suchen“ muss also auch danach laufen). Ein Lock allein garantiert diese Reihenfolge nicht.
+     */
     private <T> CompletableFuture<T> call(ServerCall<T> work) {
         CompletableFuture<T> result = new CompletableFuture<>();
-        background.execute(() -> {
-            serverLock.lock();
-            try {
-                BetaViewConnection current;
-                stateLock.lock();
-                try {
-                    current = connection;
-                } finally {
-                    stateLock.unlock();
+        queueLock.lock();
+        try {
+            tail = tail.handleAsync((ignored, previous) -> {
+                run(work, result);
+                return null;
+            }, background);
+            // Nimmt der Executor nichts mehr an (Programmende), bleibt der Aufruf nicht hängen.
+            tail.whenComplete((ignored, rejected) -> {
+                if (rejected != null) {
+                    result.completeExceptionally(rejected);
                 }
-                if (current == null) {
-                    throw new IOException("Nicht angemeldet");
-                }
-                result.complete(work.on(current));
-            } catch (Exception | Error e) {
-                result.completeExceptionally(e);
-            } finally {
-                serverLock.unlock();
-            }
-        });
+            });
+        } finally {
+            queueLock.unlock();
+        }
         return result;
     }
 
-    @FunctionalInterface
+    private <T> void run(ServerCall<T> work, CompletableFuture<T> result) {
+        serverLock.lock();
+        try {
+            BetaViewConnection current;
+            stateLock.lock();
+            try {
+                current = connection;
+            } finally {
+                stateLock.unlock();
+            }
+            if (current == null) {
+                throw new IOException("Nicht angemeldet");
+            }
+            result.complete(work.on(current));
+        } catch (Exception | Error e) {
+            result.completeExceptionally(e);
+        } finally {
+            serverLock.unlock();
+        }
+    }
+
     private interface ServerCall<T> {
         T on(BetaViewConnection connection) throws IOException;
     }

@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
 import com.aresstack.spaceharvester.deck.betaview.Bookmark;
 import com.aresstack.spaceharvester.deck.betaview.ConnectionState;
 import com.aresstack.spaceharvester.deck.betaview.DocumentTab;
+import com.aresstack.spaceharvester.deck.betaview.DownloadOptions;
 import com.aresstack.spaceharvester.deck.betaview.DownloadedFile;
 import com.aresstack.spaceharvester.deck.betaview.ResultTable;
 import com.aresstack.spaceharvester.deck.betaview.SavedSearch;
@@ -206,13 +207,16 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
         after(session.page(document, page), content -> {
             documents.busy(false, null);
             documents.page(document, page, content);
-        }, "Seite " + page + " nicht lesbar", () -> documents.busy(false, null));
+        }, "Seite " + page + " nicht lesbar", () -> {
+            documents.busy(false, null);
+            documents.pageFailed(document, page);
+        });
     }
 
     @Override
     public void download(DocumentTab document) {
         info("Lade " + document.label() + " herunter …");
-        after(session.download(document, com.aresstack.spaceharvester.deck.betaview.DownloadOptions.quick()),
+        after(session.download(document, DownloadOptions.quick()),
                 file -> save(document, file), "Herunterladen gescheitert");
     }
 
@@ -220,7 +224,9 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
     public void downloadWithOptions(DocumentTab document) {
         after(session.downloadChoices(document), choices -> prompts.download(this, choices).ifPresent(options -> {
             info("Lade " + document.label() + " herunter …");
-            after(session.download(document, options), file -> save(document, file), "Herunterladen gescheitert");
+            // „Aktuelle Seite“ = die hier angezeigte; der Server kennt sie nach einem Wiederöffnen nicht mehr.
+            DownloadOptions chosen = options.withCurrentPage(documents.shownPage(document));
+            after(session.download(document, chosen), file -> save(document, file), "Herunterladen gescheitert");
         }), "Download-Dialog nicht lesbar");
     }
 
