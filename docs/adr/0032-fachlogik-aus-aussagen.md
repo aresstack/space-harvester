@@ -364,10 +364,16 @@ Tests; den Chat-Anschluss (Werkzeug, System-Prompt) baut der Chat-Strang, die zu
 - Nachtrag (Abnahme W7): Auch „ist ein Fachbegriff“, Synonyme und Vorschläge entscheidet der Kern nur nach dem
   Bereich (`DomainTermGraph#groupWithin`, die Seiten werden einmal gelesen): Ein Eintrag zählt nur, wenn einer seiner
   Geltungsbereiche global ist oder eine lesbare Seite des Bereichs abdeckt (Quelle, Space), auch eine noch nicht
-  analysierte (Space aus dem Bestand, `KnowledgeGraph#place`, nur nachgeschlagen wenn nötig). Dazu die KI-Freigabe
+  analysierte (Space aus den Kopfdaten des Bestands, `KnowledgeGraph#place`, nie der ganze Snapshot; nur
+  nachgeschlagen wenn nötig, ein Abbruch wirkt schon dabei). Dazu die KI-Freigabe
   (`AiRelease`): Ein Name, der nur in Quellen ohne Freigabe gilt, geht nur mit, wenn eine schon freigegebene Seite des
   Bereichs darin liegt oder die Antwort eine Seite darin liefert und damit freigibt; global geltende Einträge bleiben.
   Mit `Delivery.NONE` (Suche, nichts geht an ein Modell) entfällt nur diese Freigabe-Prüfung, der Bereich gilt
   trotzdem. Ein Synonym zählt nach dem Geltungsbereich seiner Beziehung zum gesuchten Begriff, nicht nach seinen
   übrigen Einträgen. Ein Fachbegriff, der nur außerhalb des Bereichs gilt, wird auch über ein Synonym kein Knoten
-  (gezählt wird wie in der Fachsicht). Erst filtern, dann auf fünf Begriffe kappen und Ausgelassenes zählen.
+  (gezählt wird wie in der Fachsicht). Erst filtern, dann auf fünf Begriffe kappen und Ausgelassenes zählen; als
+  ausgelassen zählt nur, wer auch ohne Seiten unfreigegebener Quellen nennbar wäre. Für „schon freigegebene Seite des
+  Bereichs“ prüft der Kern alle Bereichsseiten der Quelle (`Area#coveredReleased`), nicht nur die zufällig schon
+  nachgeschlagenen. Fällt ein Name erst an den tatsächlich gelieferten Seiten durch (seine Seite fiel einer Grenze
+  zum Opfer), wird ohne ihn neu gebaut; geliefert werden nur die Seiten des letzten Baus, und scheitert der gesuchte
+  Begriff selbst, gibt es keine Antwort und keine Lieferung.

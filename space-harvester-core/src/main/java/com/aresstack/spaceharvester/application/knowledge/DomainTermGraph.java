@@ -536,11 +536,31 @@ public final class DomainTermGraph {
             return false;
         }
 
-        /** Die bekannten lesbaren Seiten des Bereichs (analysierte und schon nachgeschlagene). */
-        List<KnowledgeGraph.Place> places() {
-            List<KnowledgeGraph.Place> all = new ArrayList<>(known);
-            resolved.values().forEach(place -> place.ifPresent(all::add));
-            return all;
+        /**
+         * Ob eine lesbare Seite des Bereichs in {@code scope} liegt, für die {@code released} gilt (KI-Freigabe). Anders
+         * als {@link #test} bricht das nicht bei der ersten deckenden Seite ab: Alle Seiten der Quelle des
+         * Geltungsbereichs werden geprüft und dafür nötigenfalls nachgeschlagen (je Seite einmal, durch die Kappung
+         * des Bereichs begrenzt), damit das Ergebnis nicht davon abhängt, was {@link #test} zuvor schon aufgelöst hat.
+         */
+        boolean coveredReleased(RelationScope scope, java.util.function.Predicate<PageKey> released) {
+            for (KnowledgeGraph.Place place : known) {
+                if (scope.covers(place.key().sourceId(), place.spaceKey()) && released.test(place.key())) {
+                    return true;
+                }
+            }
+            for (PageKey key : rest) {
+                if (scope.sourceId() != null && !key.sourceId().equals(scope.sourceId())) {
+                    continue;
+                }
+                if (!released.test(key)) {
+                    continue; // nicht freigegeben: muss gar nicht nachgeschlagen werden
+                }
+                java.util.Optional<KnowledgeGraph.Place> place = resolved.computeIfAbsent(key, resolve);
+                if (place.isPresent() && scope.covers(key.sourceId(), place.get().spaceKey())) {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
@@ -563,10 +583,18 @@ public final class DomainTermGraph {
                 : analysed.apply(caller)).stream().filter(page -> options.pages().contains(page.page().key()))
                 .toList();
         // Auch Seiten ohne Analyse gehören zum Bereich: ihr Space kommt aus dem Bestand (nur wenn nötig).
-        Area area = new Area(source.stream().map(KnowledgeGraph.AnalysedPage::page).toList(), options.pages(),
-                key -> places.apply(caller, key));
+        // Nachschlagen nur, solange nicht abgebrochen: Der Aufbau des Lexikons kann viele Seiten auflösen.
+        Area area = new Area(source.stream().map(KnowledgeGraph.AnalysedPage::page).toList(), options.pages(), key -> {
+            if (cancelled.getAsBoolean()) {
+                throw new java.util.concurrent.CancellationException();
+            }
+            return places.apply(caller, key);
+        });
         Lexicon lexicon = new Lexicon(vocabulary.terms(caller), vocabulary.synonyms(caller),
                 vocabulary.technical(caller), area);
+        if (cancelled.getAsBoolean()) {
+            throw new java.util.concurrent.CancellationException();
+        }
         String centre = start == null ? "" : TermText.normalize(start).strip();
         if (centre.isEmpty()) {
             return new Within(View.of(Outcome.EMPTY_START), area, lexicon);

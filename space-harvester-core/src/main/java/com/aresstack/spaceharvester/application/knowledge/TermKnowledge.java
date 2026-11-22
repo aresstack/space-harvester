@@ -231,7 +231,7 @@ public final class TermKnowledge {
             String centre = view.centre().key();
             Answer answer = build(view, scope.size(), read.size(), (key, delivered) -> mayName(within,
                     key.equals(centre) ? within.lexicon().scopes(key) : within.lexicon().edgeScopes(centre, key),
-                    delivery, delivered));
+                    delivery, delivered), delivery == Delivery.NONE ? key -> true : ai::mayProcess);
             if (answer != null) {
                 return deliver(answer, delivery);
             }
@@ -253,10 +253,9 @@ public final class TermKnowledge {
             if (scope.global() || delivery == Delivery.NONE || ai.sourceReleased(scope.sourceId())) {
                 return true;
             }
-            for (KnowledgeGraph.Place place : within.area().places()) {
-                if (scope.covers(place.key().sourceId(), place.spaceKey()) && ai.mayProcess(place.key())) {
-                    return true;
-                }
+            // Alle Seiten des Bereichs in der Quelle des Geltungsbereichs, nicht nur die zufällig schon aufgelösten.
+            if (within.area().coveredReleased(scope, ai::mayProcess)) {
+                return true;
             }
             for (Page page : delivered) {
                 if (scope.covers(page.key().sourceId(), page.spaceKey())) {
@@ -291,14 +290,18 @@ public final class TermKnowledge {
      * gelieferten Seiten). {@code null}, wenn der gesuchte Begriff selbst nicht genannt werden darf.
      */
     private static Answer build(DomainTermGraph.View view, int inScope, int read,
-                                java.util.function.BiPredicate<String, java.util.Collection<Page>> mayName) {
-        return build(view, inScope, read, mayName, Set.of());
+                                java.util.function.BiPredicate<String, java.util.Collection<Page>> mayName,
+                                java.util.function.Predicate<PageKey> released) {
+        return build(view, inScope, read, mayName, released, Set.of());
     }
 
-    /** Wie oben, ohne die Begriffe {@code dropped}; baut neu, bis jeder genannte Begriff genannt werden darf. */
+    /**
+     * Wie oben, ohne die Begriffe {@code dropped}; baut neu, bis jeder genannte Begriff genannt werden darf.
+     * {@code released}: Seiten, die ohne Lieferung schon freigegeben sind (für die Zählung der Ausgelassenen).
+     */
     private static Answer build(DomainTermGraph.View view, int inScope, int read,
                                 java.util.function.BiPredicate<String, java.util.Collection<Page>> mayName,
-                                Set<String> dropped) {
+                                java.util.function.Predicate<PageKey> released, Set<String> dropped) {
         DomainTermGraph.Node centre = view.centre();
         Map<String, DomainTermGraph.Node> nodes = new LinkedHashMap<>();
         view.nodes().forEach(node -> nodes.put(node.key(), node));
@@ -333,7 +336,11 @@ public final class TermKnowledge {
         if (!allowed.contains(centre)) {
             return null;
         }
-        int omittedTerms = Math.max(0, allowed.size() - MAX_TERMS);
+        // Hinter der Kappung zählt nur, wer auch ohne Seiten unfreigegebener Quellen nennbar wäre: Seine Aussagen
+        // kämen sonst nie mit, ein Hinweis auf ihn verriete nur, dass es ihn gibt.
+        List<Page> releasedPossible = possible.values().stream().filter(page -> released.test(page.key())).toList();
+        int omittedTerms = (int) allowed.stream().skip(MAX_TERMS)
+                .filter(node -> mayName.test(node.key(), releasedPossible)).count();
         List<DomainTermGraph.Node> shown = allowed.subList(0, Math.min(allowed.size(), MAX_TERMS));
         Set<String> groupKeys = new LinkedHashSet<>();
         group.forEach(node -> groupKeys.add(node.key()));
@@ -398,7 +405,7 @@ public final class TermKnowledge {
         if (!failing.isEmpty()) {
             Set<String> more = new LinkedHashSet<>(dropped);
             more.addAll(failing);
-            return build(view, inScope, read, mayName, more);
+            return build(view, inScope, read, mayName, released, more);
         }
         List<Term> terms = shown.stream().map(node -> new Term(node.label(), node.kind(), statements.get(node.key())))
                 .toList();

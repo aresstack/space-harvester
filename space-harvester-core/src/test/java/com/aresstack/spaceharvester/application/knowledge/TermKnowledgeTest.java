@@ -555,6 +555,106 @@ class TermKnowledgeTest {
         assertThat(delivered).isEmpty();
     }
 
+    @Test
+    void theReleaseCheckSeesEveryUnanalysedPageOfTheScopeNotOnlyTheFirstThatCoversIt() {
+        term("Plan");
+        terms.add(new DomainTermGraph.Term("Aktenplan", new RelationScope("akte", "DEV")));
+        analyse("1", "Der Text ist kurz.");
+        for (String pageId : List.of("9", "10")) {
+            PageSnapshot unanalysed = EnrichmentTestPages.text("akte", pageId, "1", "Noch nicht analysiert.");
+            cache.put(unanalysed.key(), unanalysed);
+        }
+        PageSet scope = PageSet.ofKeys(List.of(key("1"), new PageKey("akte", "9"), new PageKey("akte", "10")));
+        PageReleases released = PageReleases.inMemory();
+        released.add(List.of(new PageReleases.Entry(new PageKey("akte", "10"), "DEV", "10", "chat",
+                java.time.Instant.EPOCH)));
+        TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(graph, vocabulary()),
+                new AiRelease("wiki"::equals, released));
+
+        assertThat(knowledge.answer(CALLER, "Aktenplan", scope, recording, () -> false).outcome())
+                .as("Seite 9 deckt den Bereich zuerst, ist aber nicht freigegeben; Seite 10 ist es")
+                .isEqualTo(TermKnowledge.Outcome.FOUND);
+        assertThat(knowledge.answer(CALLER, "Akten", scope, recording, () -> false).candidates())
+                .contains("Aktenplan");
+        assertThat(delivered).isEmpty();
+    }
+
+    @Test
+    void aCancelWhileTheLexiconIsBuiltStopsBeforeAnyStatementIsRead() {
+        term("Plan");
+        analyse("1", "Der Text ist kurz.");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> knowledge().answer(CALLER, "Unbekannt",
+                pages("1"), recording, () -> true)).isInstanceOf(java.util.concurrent.CancellationException.class);
+        assertThat(delivered).isEmpty();
+    }
+
+    @Test
+    void aSynonymAllowedOnlyByAPageOfACutStatementIsDroppedAndTheNextMovesUp() {
+        term("Plan");
+        term("Ziel");
+        term("Start");
+        synonyms.add(new DomainTermGraph.Synonym("Plan", "Vorhaben", new RelationScope("akte", null)));
+        for (String open : List.of("Weg1", "Weg2", "Weg3", "Weg4", "Weg5")) {
+            synonyms.add(new DomainTermGraph.Synonym("Plan", open, new RelationScope(null, null)));
+        }
+        List<String> objects = IntStream.range(0, TermKnowledge.MAX_STATEMENTS)
+                .mapToObj(i -> "Ziel" + (char) ('a' + i)).toList();
+        objects.forEach(this::term);
+        StringBuilder text = new StringBuilder();
+        objects.forEach(object -> text.append("Der Plan prüft das ").append(object).append(". Der Plan prüft das ")
+                .append(object).append(". "));
+        analyse("1", text.toString());
+        analyse("2", "Der Plan prüft das Ziel.");
+        analyse("akte", "7", "Das Vorhaben sendet den Start.");
+        AiRelease wikiOnly = AiRelease.ofSources("wiki"::equals);
+
+        TermKnowledge.Answer small = knowledge(wikiOnly).answer(CALLER, "Plan",
+                PageSet.ofKeys(List.of(key("2"), new PageKey("akte", "7"))), recording, () -> false);
+        assertThat(small.terms()).extracting(TermKnowledge.Term::term)
+                .as("ohne Kappung trägt Vorhaben seine Aussage, deren Seite geliefert wird")
+                .containsExactly("Plan", "Vorhaben", "Weg1", "Weg2", "Weg3");
+        assertThat(small.limits().omittedTerms()).isEqualTo(2);
+        delivered.clear();
+
+        TermKnowledge.Answer cut = knowledge(wikiOnly).answer(CALLER, "Plan",
+                PageSet.ofKeys(List.of(key("1"), new PageKey("akte", "7"))), recording, () -> false);
+        assertThat(cut.terms().getFirst().statements()).as("die 20 Aussagen von Plan füllen die Grenze; die von "
+                + "Vorhaben fiel im ersten Bau weg").hasSize(TermKnowledge.MAX_STATEMENTS)
+                .allSatisfy(statement -> assertThat(statement.subject()).isEqualTo("Plan"));
+        assertThat(cut.limits().omittedStatements()).as("nach dem Neubau ohne Vorhaben nichts mehr gekappt").isZero();
+        assertThat(cut.terms()).extracting(TermKnowledge.Term::term)
+                .as("Vorhaben ist nicht mehr nennbar, Weg4 rückt nach")
+                .containsExactly("Plan", "Weg1", "Weg2", "Weg3", "Weg4");
+        assertThat(cut.limits().omittedTerms()).as("neu gezählt: nur noch Weg5").isEqualTo(1);
+        assertThat(delivered).as("nur die Seiten des letzten Baus").containsExactly(key("1"));
+    }
+
+    @Test
+    void theAskedTermFailingOnlyOnTheDeliveredPagesGivesNoAnswerAndNoDelivery() {
+        term("Plan");
+        term("Start");
+        terms.add(new DomainTermGraph.Term("Aktenplan", new RelationScope("akte", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Aktenplan", "Plan", new RelationScope(null, null)));
+        List<String> objects = IntStream.range(0, TermKnowledge.MAX_STATEMENTS)
+                .mapToObj(i -> "Ziel" + (char) ('a' + i)).toList();
+        objects.forEach(this::term);
+        StringBuilder text = new StringBuilder();
+        objects.forEach(object -> text.append("Der Plan prüft das ").append(object).append(". Der Plan prüft das ")
+                .append(object).append(". "));
+        analyse("1", text.toString());
+        analyse("akte", "7", "Der Aktenplan sendet den Start.");
+
+        TermKnowledge.Answer answer = knowledge(AiRelease.ofSources("wiki"::equals)).answer(CALLER, "Aktenplan",
+                PageSet.ofKeys(List.of(key("1"), new PageKey("akte", "7"))), recording, () -> false);
+
+        assertThat(answer.outcome()).as("die einzige Seite, die Aktenplan nennbar machte, wird nicht geliefert")
+                .isEqualTo(TermKnowledge.Outcome.NOT_A_TERM);
+        assertThat(answer.terms()).isEmpty();
+        assertThat(answer.candidates()).doesNotContain("Aktenplan");
+        assertThat(delivered).isEmpty();
+    }
+
     private TermKnowledge knowledge() {
         return knowledge(ALL);
     }
