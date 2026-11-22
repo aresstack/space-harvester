@@ -2125,7 +2125,7 @@ public class ExportAssetCollection {
             context.phase(COMPONENT, SIGN_IN_PHASE);
             SignInRequests.Outcome outcome;
             try {
-                outcome = signIns.await(sourceId, context.jobId(), e.challenge(), started, context::checkpoint);
+                outcome = signIns.await(sourceId, context.jobId(), e.challenge(), started, context);
             } finally {
                 context.phase(COMPONENT, scope.phase);
             }
