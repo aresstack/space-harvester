@@ -632,7 +632,10 @@ public final class Harvester implements AutoCloseable {
                 // ADR 0025 Nachtrag, Punkt 10: die Warteschlange der Netz-Prozessoren als „KI-Anreicherung“ je Quelle;
                 // schließt nach den Komponenten, die einreihen, und vor der Ablage.
                 Enrichments hostedEnrichments = enrichments;
-                hostedEnrichments.background(backgroundJobs, cache::find);
+                // Angelo 22.11.2026: Die Warteschlange überlebt den Neustart (nur Schlüssel, nie Text).
+                hostedEnrichments.background(backgroundJobs, cache::find,
+                        new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(
+                                cacheDirectory.resolve("enrichment-queue")));
                 opened.add(() -> hostedEnrichments.closeBackground(Duration.ofSeconds(10)));
             }
             this.pageRecomputation = new com.aresstack.spaceharvester.application.enrichment.PageRecomputation(jobs,
@@ -1561,6 +1564,7 @@ public final class Harvester implements AutoCloseable {
                             fillQueue.removeSource(sourceId);
                         }
                     })
+                    .enrichmentQueue(background != null ? enrichments::forgetQueued : null)
                     .pageReleases(pageReleases)
                     .pageCache(cache)
                     .fullText(textIndex)

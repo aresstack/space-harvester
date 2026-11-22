@@ -130,10 +130,19 @@ public final class BackgroundJobs {
      * @return die abgeschlossenen Teile
      */
     public List<JobStatus> retireResumable(String kind, String reason) {
+        return retireResumable(kind, reason, part -> false);
+    }
+
+    /**
+     * Wie oben, nur ohne die Teile, für die {@code keep} zustimmt: etwa die, deren Arbeit eine Art über den Neustart
+     * hinweg abgelegt hat.
+     */
+    public List<JobStatus> retireResumable(String kind, String reason, java.util.function.Predicate<JobStatus> keep) {
         Objects.requireNonNull(reason, "reason");
+        Objects.requireNonNull(keep, "keep");
         List<JobStatus> retired = new ArrayList<>();
         for (JobStatus part : parts(kind)) {
-            if (part.state() != JobState.PAUSED && part.state() != JobState.FAILED) {
+            if (part.state() != JobState.PAUSED && part.state() != JobState.FAILED || keep.test(part)) {
                 continue;
             }
             try {
@@ -942,7 +951,7 @@ public final class BackgroundJobs {
     }
 
     /** Vom Beenden des Dienstes oder von einer verlorenen Verbindung unterbrochen, nicht vom Benutzer. */
-    static boolean interrupted(JobStatus status) {
+    public static boolean interrupted(JobStatus status) {
         if (status.state() == JobState.FAILED) {
             return status.error() != null && INTERRUPTED.equals(status.error().code());
         }

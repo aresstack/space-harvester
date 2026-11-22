@@ -57,7 +57,15 @@ public final class SourceDataStores {
         return removeSource == null ? this : add("Warteschlange der Hintergrundfüllung", removeSource::accept);
     }
 
-    /** Für die KI freigegebene Seiten der Quelle (ADR 0028). {@code null} ohne Liste. */
+    /**
+     * Wartende und gescheiterte Berechnungen der KI-Anreicherung, auch die über einen Neustart abgelegten (Abnahme
+     * 22.11.2026); früh, damit kein Teil der Quelle danach noch rechnet. {@code null} ohne Warteschlange.
+     */
+    public SourceDataStores enrichmentQueue(Consumer<String> removeSource) {
+        return removeSource == null ? this : add("Warteschlange der KI-Anreicherung", removeSource::accept);
+    }
+
+        /** Für die KI freigegebene Seiten der Quelle (ADR 0028). {@code null} ohne Liste. */
     public SourceDataStores pageReleases(PageReleases releases) {
         return releases == null ? this : add("Für die KI freigegebene Seiten", releases::removeSource);
     }
