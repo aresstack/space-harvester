@@ -225,6 +225,11 @@ final class KnowledgeGraphTab extends JPanel {
     /** Was die Statuszeile zur Seitenansicht mit Unterseiten sagt; {@code null} ohne Unterseiten. */
     private Coverage coverage;
     private Consumer<GraphNeighbourhood.Stack> onSubpages = stack -> { };
+    /** {@link #generation} des laufenden Ladens einer Seitenansicht mit Unterseiten, sonst -1. */
+    private int subpagesLoad = -1;
+    /** Später auf dem EDT ausführen; Tests führen von Hand aus. */
+    private Consumer<Runnable> later = javax.swing.SwingUtilities::invokeLater;
+    private boolean showingForTests;
     private final IconButton pageButton = new IconButton(Glyph.CROSSHAIR, "Diese Seite: Teilgraph der geöffneten Seite");
     private final IconButton expand = new IconButton(Glyph.NEIGHBOURS,
             "Nachbarn erweitern: lädt die direkten Nachbarn des gewählten Knotens dazu (auch Doppelklick)");
@@ -530,7 +535,7 @@ final class KnowledgeGraphTab extends JPanel {
         expansions.clear();
         requested.clear();
         loading = false;
-        if (isShowing() && page != null) {
+        if (showing() && page != null) {
             showPage();
         } else {
             refresh();
@@ -546,7 +551,7 @@ final class KnowledgeGraphTab extends JPanel {
             return;
         }
         boolean domainShown = domainLoaded;
-        if (isShowing()) {
+        if (showing()) {
             if (entry != null) {
                 reloadFocus();
             } else {
@@ -588,8 +593,21 @@ final class KnowledgeGraphTab extends JPanel {
         // gerade gezeigte, die das nächste Laden sonst in die Historie legt.
         history.clear();
         dropHistory = true;
-        if (isShowing() && pageLoaded) {
+        if (below != null && showing() && pageLoaded) {
             showPage();
+        } else if (below == null && showing() && pageLoaded) {
+            // Abgeschaltet: nichts sofort laden. Kommt die Meldung beim Verlassen der Seite (Seitenwechsel, keine Seite
+            // mehr), folgt im selben Durchlauf page(…) und zählt die Generation weiter; dann lädt hier nichts für die
+            // alte Seite. Nur wenn die Seite bleibt (Checkbox abgehakt), danach wieder die Seite allein.
+            int mine = ++generation;
+            PageKey shown = page;
+            loading = false;
+            pageLoaded = false;
+            later.accept(() -> {
+                if (mine == generation && Objects.equals(shown, page) && subpages == null && showing()) {
+                    showPage();
+                }
+            });
         } else {
             // Eine noch laufende Abfrage galt der alten Menge.
             generation++;
@@ -600,7 +618,7 @@ final class KnowledgeGraphTab extends JPanel {
             requested.clear();
         }
         // Die Fachsicht rechnet über die neue Menge; eine Mitte bleibt (nur ein Seitenwechsel beginnt seitenweit).
-        if (domainMode() && isShowing() && domainLoaded) {
+        if (domainMode() && showing() && domainLoaded) {
             loadDomain(domainCentre);
         } else {
             domainRequest++;
@@ -622,7 +640,8 @@ final class KnowledgeGraphTab extends JPanel {
 
     /**
      * {@code listener} bekommt jedes Ergebnis der Seitenansicht mit Unterseiten, auch das bei „Zurück“
-     * wiederhergestellte; bei einem Fehler nur dann {@code null}, wenn es noch kein Ergebnis für diese Unterseiten gibt.
+     * wiederhergestellte; bei einem Fehler oder wenn eine andere Ansicht das Laden ersetzt nur dann {@code null}, wenn
+     * es noch kein Ergebnis für diese Unterseiten gibt.
      */
     void onSubpages(Consumer<GraphNeighbourhood.Stack> listener) {
         onSubpages = Objects.requireNonNull(listener, "listener");
@@ -631,6 +650,46 @@ final class KnowledgeGraphTab extends JPanel {
     /** Das letzte Ergebnis der Seitenansicht über die aktuellen Unterseiten oder {@code null}. */
     GraphNeighbourhood.Stack subpageStack() {
         return subpageStack;
+    }
+
+    /**
+     * Der Abschnitt „Aus Unterseiten“ wartet auf ein Ergebnis über die aktuellen Unterseiten: Liegt eins vor, bekommt
+     * {@link #onSubpages} es sofort; läuft das Laden noch oder folgt es beim Anzeigen, kommt es von selbst. Sonst (etwa
+     * nach einem gescheiterten Laden, danach „Absätze“ und zurück) lädt die Seitenansicht neu; ohne Unterseiten oder
+     * wenn gerade eine andere Ansicht (Begriff, Knoten) steht, meldet sie sofort {@code null}, damit der Abschnitt
+     * nicht ewig lädt.
+     */
+    void requestSubpages() {
+        if (subpages == null || page == null) {
+            onSubpages.accept(null);
+        } else if (subpageStack != null) {
+            onSubpages.accept(subpageStack);
+        } else if (loading && subpagesLoad == generation) {
+            return; // kommt mit dem laufenden Laden, dessen Fehler oder als null, wenn es ersetzt wird
+        } else if (!pageLoaded) {
+            if (showing()) {
+                showPage();
+            }
+        } else if (entry == null || entry instanceof Entry.Page) {
+            reloadFocus();
+        } else {
+            onSubpages.accept(null);
+        }
+    }
+
+    /** Für Tests: was {@code SwingUtilities.invokeLater} sonst täte. */
+    void later(Consumer<Runnable> later) {
+        this.later = Objects.requireNonNull(later, "later");
+    }
+
+    /** Für Tests ohne Bildschirm: der Reiter gilt als sichtbar. */
+    void showingForTests(boolean showing) {
+        showingForTests = showing;
+    }
+
+    /** Ob der Reiter zu sehen ist; sichtbar lädt er sofort, sonst beim nächsten Anzeigen. */
+    private boolean showing() {
+        return showingForTests || isShowing();
     }
 
     // ---- Laden
@@ -668,8 +727,14 @@ final class KnowledgeGraphTab extends JPanel {
             return;
         }
         requested.add(nodeId);
-        boolean current = !loading && filters().equals(appliedFilters);
-        load(entry, List.copyOf(requested), !current);
+        Entry from = entry;
+        if (entry instanceof Entry.Page shown && shown.subpages() != subpages) {
+            // Wie reloadFocus: Die Seitenansicht gilt immer der aktuellen Menge, auch wenn ihr erstes Laden gescheitert
+            // oder ersetzt worden ist; dann muss der Einstieg neu.
+            from = new Entry.Page(shown.key(), subpages);
+        }
+        boolean current = from == entry && !loading && filters().equals(appliedFilters);
+        load(from, List.copyOf(requested), !current);
     }
 
     /** Die Ablage der Aussagenanalyse wurde umgeschaltet (Fahrplan A3): dieselbe Ansicht aus der neuen Ablage. */
@@ -698,12 +763,22 @@ final class KnowledgeGraphTab extends JPanel {
      */
     private void load(Entry start, List<String> expanded, boolean replay) {
         GraphNeighbourhood.Options options = options();
+        // Erweiterungen in der Ansicht mit Unterseiten bleiben in derselben Menge wie der Einstieg: Sonst kämen
+        // gesperrte Unterseiten und fremde Seiten über „Nachbarn erweitern“ doch als Ziele von Verbindungen herein.
+        GraphNeighbourhood.Options expand = start instanceof Entry.Page shown && shown.subpages() != null
+                ? GraphNeighbourhood.inSet(shown.key(), shown.subpages(), options) : options;
         Filters filters = filters();
         List<String> steps = List.copyOf(expanded);
         List<String> run = replay || steps.isEmpty() ? steps : List.of(steps.getLast());
+        boolean delivers = replay && start instanceof Entry.Page shown && shown.subpages() != null
+                && Objects.equals(shown.subpages(), subpages);
+        if (!delivers) {
+            dropPendingSubpages();
+        }
         int mine = ++generation;
         loading = true;
         requestedFilters = filters;
+        subpagesLoad = delivers ? mine : -1;
         if (replay && start != entry) {
             requested.clear();
             requested.addAll(steps);
@@ -715,7 +790,7 @@ final class KnowledgeGraphTab extends JPanel {
             GraphNeighbourhood.Subgraph base = stack == null ? null : stack.graph();
             List<GraphNeighbourhood.Subgraph> more = new ArrayList<>();
             for (String nodeId : run) {
-                more.add(current.node(nodeId, options));
+                more.add(current.node(nodeId, expand));
             }
             String hint = null;
             if (replay && base.nodes().isEmpty() && more.stream().allMatch(sub -> sub.nodes().isEmpty())) {
@@ -787,6 +862,18 @@ final class KnowledgeGraphTab extends JPanel {
                 status("Graph nicht geladen: " + Problems.describe(error).title());
             }
         });
+    }
+
+    /**
+     * Ein laufendes Laden der Seitenansicht mit Unterseiten wird durch ein anderes ersetzt (Begriff, Erweiterung,
+     * „Zurück“), das kein Ergebnis über die Unterseiten liefert: Gibt es noch keins, bekommt {@link #onSubpages}
+     * {@code null}, damit der Abschnitt „Aus Unterseiten“ nicht ewig lädt.
+     */
+    private void dropPendingSubpages() {
+        if (loading && subpagesLoad == generation && subpageStack == null) {
+            subpagesLoad = -1;
+            onSubpages.accept(null);
+        }
     }
 
     private Actions actionsOrThrow() {
@@ -998,6 +1085,7 @@ final class KnowledgeGraphTab extends JPanel {
         if (history.isEmpty()) {
             return;
         }
+        dropPendingSubpages();
         generation++;
         View previous = history.pop();
         nodes.clear();
@@ -1322,7 +1410,7 @@ final class KnowledgeGraphTab extends JPanel {
         shownCentre = null;
         evidence.setVisible(false);
         if (domainMode()) {
-            if (page != null && (isShowing() || pageLoaded)) {
+            if (page != null && (showing() || pageLoaded)) {
                 loadDomain(null);
             } else {
                 domainLoaded = false;
@@ -1332,7 +1420,7 @@ final class KnowledgeGraphTab extends JPanel {
             domainRequest++;
             domainLoaded = false;
             domainView = null;
-            if (page != null && isShowing() && !pageLoaded) {
+            if (page != null && showing() && !pageLoaded) {
                 showPage();
             } else if (page != null && pageLoaded
                     && !filters().equals(loading ? requestedFilters : appliedFilters)) {
@@ -1350,7 +1438,7 @@ final class KnowledgeGraphTab extends JPanel {
         if (!domainMode() || page == null) {
             return;
         }
-        if (domainLoaded || isShowing()) {
+        if (domainLoaded || showing()) {
             loadDomain(domainCentre);
         }
         refreshButtons();
@@ -2074,7 +2162,7 @@ final class KnowledgeGraphTab extends JPanel {
      * ({@link GraphNeighbourhood.Stack#considered()}: lesbar, nicht gesperrt, innerhalb der Filter), die Titel der
      * Seiten ohne Analyse und wie viele veraltete Seiten der Filter „Veraltete zeigen“ ausblendet.
      */
-    record Coverage(int subpages, List<String> missing, int skippedStale) {
+    record Coverage(int subpages, List<String> missing, int skippedStale, int notConsidered) {
 
         /** Höchstens so viele Titel ohne Analyse in der Statuszeile, danach „und K weitere“. */
         static final int NAMED = 3;
@@ -2083,10 +2171,22 @@ final class KnowledgeGraphTab extends JPanel {
             missing = List.copyOf(missing);
         }
 
-        /** „ · mit 2 Unterseiten · ohne Analyse: A, B, C und 2 weitere · 1 veraltete Seite(n) ausgeblendet“. */
+        /** Ohne Unterseiten jenseits von {@link GraphNeighbourhood#MAX_SUBPAGES}. */
+        Coverage(int subpages, List<String> missing, int skippedStale) {
+            this(subpages, missing, skippedStale, 0);
+        }
+
+        /**
+         * „ · mit 200 Unterseiten · 3 Unterseiten nicht berücksichtigt · ohne Analyse: A, B, C und 2 weitere · 1
+         * veraltete Seite(n) ausgeblendet“.
+         */
         String text() {
             StringBuilder text = new StringBuilder(" · mit ").append(subpages)
                     .append(subpages == 1 ? " Unterseite" : " Unterseiten");
+            if (notConsidered > 0) {
+                text.append(" · ").append(com.aresstack.spaceharvester.app.ui.Texts.count(notConsidered,
+                        "Unterseite", "Unterseiten")).append(" nicht berücksichtigt");
+            }
             if (!missing.isEmpty()) {
                 text.append(" · ohne Analyse: ").append(String.join(", ", missing.subList(0,
                         Math.min(NAMED, missing.size()))));
@@ -2140,7 +2240,7 @@ final class KnowledgeGraphTab extends JPanel {
                 Map<PageKey, String> titles = stack.missing().isEmpty() ? Map.of() : actions.titles(stack.missing());
                 List<String> missing = stack.missing().stream()
                         .map(key -> titles.getOrDefault(key, "Seite " + key.pageId())).toList();
-                return new Coverage(stack.considered(), missing, stack.skippedStale());
+                return new Coverage(stack.considered(), missing, stack.skippedStale(), stack.notConsidered());
             }
 
             @Override

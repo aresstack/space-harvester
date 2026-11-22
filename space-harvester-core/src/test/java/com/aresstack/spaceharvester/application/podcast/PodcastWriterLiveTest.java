@@ -31,46 +31,132 @@ class PodcastWriterLiveTest {
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     @Test
-    void plansAndWritesAConversationWithoutFallbacks() {
+    void plansAndWritesANewsConversationWithoutFallbacksOrMetadata() {
         StepModel model = ollama(System.getProperty("podcast.live.ollama"),
                 System.getProperty("podcast.live.model", "gemma4:12b"));
         PodcastWriter writer = new PodcastWriter(model, attempt -> { });
+        // Der Überblick spricht absichtlich von Seitenzahlen und Größen: genau das soll der Podcast nicht erzählen.
         PodcastWriter.Material material = new PodcastWriter.Material("""
-                Im Space DEMO wurde das Betriebshandbuch für den fiktiven Nachtlauf „Nordlicht“ überarbeitet: Der \
-                Abbruch bei vollem Spool-Bereich wird jetzt mit einer Prüfung vor dem Start verhindert, und es gibt \
-                eine neue Seite mit den Eskalationsstufen.
-
-                Zwei neue Seiten beschreiben die Umstellung der Testumgebung auf die neue Datenbankversion; der \
-                Termin ist für das nächste Quartal geplant.
-
-                Auf der Startseite stehen neu die Ansprechstellen je Team und ein Glossar mit zwölf Begriffen.""",
-                List.of("Nachtlauf Nordlicht: Prüfung vor dem Start verhindert Abbruch bei vollem Spool-Bereich",
-                        "Umstellung der Testumgebung auf neue Datenbankversion im nächsten Quartal",
-                        "Startseite mit Ansprechstellen und Glossar"), "Space DEMO");
+                Im Space DEMO gibt es 100 neue Seiten mit zusammen 840 Kilobyte, dazu 37 geänderte Seiten. Im \
+                Mittelpunkt stehen der Nachtlauf Nordlicht, die Umstellung der Testumgebung und die Startseite.""",
+                List.of(new PodcastWriter.Story("Nachtlauf Nordlicht bricht nicht mehr ab", """
+                                Das Betriebshandbuch für den fiktiven Nachtlauf Nordlicht wurde überarbeitet. Vor dem \
+                                Start prüft der Lauf jetzt, ob im Spool-Bereich genug Platz ist; ist er zu voll, startet \
+                                er gar nicht erst und meldet das der Bereitschaft. Bisher brach der Lauf mitten in der \
+                                Nacht ab und musste von Hand neu angestoßen werden. Neu ist auch eine Seite mit drei \
+                                Eskalationsstufen: erst die Bereitschaft, nach einer Stunde das Betriebsteam, ab zwei \
+                                Stunden die Leitung.""",
+                                List.of("auf der Seite „Nachtlauf Nordlicht“, unter Betriebshandbuch",
+                                        "auf der Seite „Eskalationsstufen“, unter Betriebshandbuch")),
+                        new PodcastWriter.Story("Testumgebung zieht auf neue Datenbank um", """
+                                Die Testumgebung wird im nächsten Quartal auf die neue Datenbankversion umgestellt. \
+                                Zwei neue Seiten beschreiben den Ablauf: Testdaten werden vorher gesichert, die \
+                                Umstellung läuft an einem Wochenende, und am Montag danach prüfen die Teams ihre \
+                                Anwendungen anhand einer Checkliste.""",
+                                List.of("auf der Seite „Umstellung Testdatenbank“, unter Testumgebung")),
+                        new PodcastWriter.Story("Startseite mit Ansprechstellen und Glossar", """
+                                Auf der Startseite stehen jetzt die Ansprechstellen je Team, damit man schneller \
+                                weiß, wen man fragt. Dazu kommt ein Glossar mit zwölf Fachbegriffen, etwa was ein \
+                                Spool-Bereich ist.""",
+                                List.of("auf der Seite „Start“"))),
+                "Space DEMO");
         PodcastWriter.Voices voices = new PodcastWriter.Voices("Jana", "Thomas");
 
         PodcastPlan plan = writer.outline(material);
-        System.out.println("[live] Titel: " + plan.title() + ", Themen: " + plan.topics().size()
-                + ", Reparaturen: " + plan.repairs());
+        System.out.println("[live] Titel: " + plan.title() + ", Reparaturen: " + plan.repairs());
+        plan.topics().forEach(topic -> System.out.println("[live] Thema: " + topic.title() + " " + topic.stories()));
         List<String> repairs = new ArrayList<>(plan.repairs());
+        List<String> spoken = new ArrayList<>();
+        List<String> ends = new ArrayList<>();
         Segment before = null;
-        int segments = 0;
         for (int t = 0; t < plan.topics().size(); t++) {
-            List<Segment> planned = writer.segments(plan, t, voices, repairs);
+            List<Segment> planned = writer.segments(material, plan, t, voices, repairs);
             for (int s = 0; s < planned.size(); s++) {
                 boolean last = t == plan.topics().size() - 1 && s == planned.size() - 1;
-                List<Turn> turns = writer.script(plan, t, planned.get(s), before, last, voices, repairs);
+                List<Turn> turns = writer.script(material, plan, t, planned, s, before, last, voices, repairs);
                 System.out.println("[live] == " + plan.topics().get(t).title() + " / " + planned.get(s).title());
                 turns.forEach(turn -> System.out.println("[live] " + turn.speaker() + ": " + turn.text()));
-                assertThat(turns).allSatisfy(turn -> assertThat(turn.text().length())
-                        .isLessThanOrEqualTo(PodcastWriter.MAX_TURN_CHARS * 2));
+                turns.forEach(turn -> spoken.add(turn.text()));
+                ends.add(turns.get(turns.size() - 1).text().strip());
                 before = planned.get(s);
-                segments++;
             }
         }
-        System.out.println("[live] Abschnitte: " + segments + ", Reparaturen: " + repairs);
-        assertThat(plan.topics().size()).isBetween(2, PodcastPlan.MAX_TOPICS);
+        System.out.println("[live] Reparaturen: " + repairs);
+        String all = String.join("\n", spoken);
         assertThat(repairs).noneMatch(repair -> repair.contains("ohne Modell"));
+        assertThat(all).as("keine Metadaten").doesNotContainIgnoringCase("kilobyte")
+                .doesNotContain("100 neue Seiten", "hundert neue Seiten", "37 geänderte");
+        assertThat(all).as("Inhalt kommt vor").contains("Spool").containsIgnoringCase("Checkliste");
+        assertThat(all).as("Die Eskalationsstufen kommen vor").containsAnyOf("Eskalation", "Stufe", "Leitung");
+        assertThat(ends).as("Kein Abschnitt endet mit einer offenen Frage").noneMatch(text -> text.endsWith("?"));
+        assertThat(spoken.stream().filter(text -> text.contains("Datenbank")).count())
+                .as("Die Datenbank-Meldung wird nicht in jedem Abschnitt neu erzählt").isLessThan(spoken.size() / 2);
+    }
+
+    @Test
+    void explainsAPageWithItsSubpagesWithoutReadingNumberTables() {
+        StepModel model = ollama(System.getProperty("podcast.live.ollama"),
+                System.getProperty("podcast.live.model", "gemma4:12b"));
+        PodcastWriter writer = new PodcastWriter(model, attempt -> { });
+        String text = """
+                Der fiktive Nachtlauf Nordlicht verdichtet jede Nacht die Buchungen des Tages zu Monatsständen, damit \
+                die Auswertungen am Morgen bereitstehen.
+                Ablauf
+                Um 22 Uhr startet die Vorabprüfung: Ist im Spool-Bereich genug Platz, folgen Verdichtung, Abgleich und \
+                Bericht. Ist er zu voll, startet der Lauf nicht und meldet das der Bereitschaft.
+                Laufzeiten der letzten Monate
+                Monat | Start | Ende | Dauer | Sätze
+                Juli | 22:00 | 01:12 | 3:12 | 1.204.332
+                August | 22:00 | 01:40 | 3:40 | 1.388.120
+                September | 22:00 | 01:05 | 3:05 | 1.150.876
+                Oktober | 22:00 | 02:10 | 4:10 | 1.612.004
+                Wer hilft
+                Bei Fragen zur Verdichtung hilft das Fachteam Buchhaltung, bei technischen Störungen die Bereitschaft.""";
+        int ablauf = text.indexOf("Ablauf");
+        int zeiten = text.indexOf("Laufzeiten");
+        int hilfe = text.indexOf("Wer hilft");
+        PagePodcasts.Page page = new PagePodcasts.Page("1", "Nachtlauf Nordlicht", "DEMO",
+                new com.aresstack.spaceharvester.application.enrichment.PageText("test/v1", text, List.of(
+                        new com.aresstack.spaceharvester.application.enrichment.PageText.Section("Ablauf", 2, ablauf,
+                                zeiten),
+                        new com.aresstack.spaceharvester.application.enrichment.PageText.Section(
+                                "Laufzeiten der letzten Monate", 2, zeiten, hilfe),
+                        new com.aresstack.spaceharvester.application.enrichment.PageText.Section("Wer hilft", 2,
+                                hilfe, text.length()))));
+        PagePodcasts.Page escalation = new PagePodcasts.Page("2", "Eskalationsstufen", "DEMO",
+                new com.aresstack.spaceharvester.application.enrichment.PageText("test/v1", """
+                        Bleibt eine Störung offen, gelten drei Stufen: erst die Bereitschaft, nach einer Stunde das \
+                        Betriebsteam, ab zwei Stunden die Leitung.""", List.of()));
+        PodcastWriter.Material material = PagePodcasts.material(page,
+                List.of(new PagePodcasts.Subpage(escalation, List.of())), List.of("Betriebshandbuch"));
+        PodcastWriter.Voices voices = new PodcastWriter.Voices("Jana", "Thomas");
+
+        PodcastPlan plan = writer.outline(material);
+        System.out.println("[live-page] Titel: " + plan.title() + ", Reparaturen: " + plan.repairs());
+        plan.topics().forEach(topic -> System.out.println("[live-page] Thema: " + topic.title() + " "
+                + topic.stories()));
+        List<String> repairs = new ArrayList<>(plan.repairs());
+        List<String> spoken = new ArrayList<>();
+        Segment before = null;
+        for (int t = 0; t < plan.topics().size(); t++) {
+            List<Segment> planned = writer.segments(material, plan, t, voices, repairs);
+            for (int s = 0; s < planned.size(); s++) {
+                boolean last = t == plan.topics().size() - 1 && s == planned.size() - 1;
+                List<Turn> turns = writer.script(material, plan, t, planned, s, before, last, voices, repairs);
+                System.out.println("[live-page] == " + plan.topics().get(t).title() + " / " + planned.get(s).title());
+                turns.forEach(turn -> System.out.println("[live-page] " + turn.speaker() + ": " + turn.text()));
+                turns.forEach(turn -> spoken.add(turn.text()));
+                before = planned.get(s);
+            }
+        }
+        System.out.println("[live-page] Reparaturen: " + repairs);
+        String all = String.join("\n", spoken);
+        assertThat(repairs).noneMatch(repair -> repair.contains("ohne Modell"));
+        assertThat(all).as("keine Zahlenkolonnen").doesNotContain("1.204.332", "1.388.120", "3:12", "01:40");
+        assertThat(all).as("das Wesentliche").contains("Spool").containsAnyOf("Monatsst", "Auswertung")
+                .containsAnyOf("Eskalation", "Stufe", "Leitung");
+        assertThat(spoken.stream().filter(turn -> turn.contains("Seite Nachtlauf Nordlicht")).count())
+                .as("die erklärte Seite wird nicht in jedem Thema neu genannt").isLessThanOrEqualTo(1);
     }
 
     private static StepModel ollama(String base, String name) {
