@@ -92,7 +92,13 @@ public class Jobs implements AutoCloseable {
     private final JobLimits limits;
     private final Clock clock;
 
-    private final Object lock = new Object();
+    /**
+     * Das Sperrobjekt; eine {@link java.util.concurrent.locks.ReentrantLock}, kein {@code synchronized} (Architekt
+     * 22.11.2026): Wer wartet ({@link #cancelSource}), gibt auf einem virtuellen Thread seinen Träger frei.
+     */
+    private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+    /** Ein Auftrag endete, ein Platz oder eine Sperre wurde frei. */
+    private final java.util.concurrent.locks.Condition changed = lock.newCondition();
     private final Deque<Job> queued = new ArrayDeque<>();
     private final Map<String, Job> open = new HashMap<>();
     /**
@@ -317,7 +323,8 @@ public class Jobs implements AutoCloseable {
         Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner,
                 Map.copyOf(parameters), task, clock.instant());
         JobStatus status;
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
@@ -333,6 +340,8 @@ public class Jobs implements AutoCloseable {
             queued.addLast(job);
             status = job.snapshot();
             store.save(status);
+        } finally {
+            lock.unlock();
         }
         dispatch();
         return status;
@@ -356,7 +365,8 @@ public class Jobs implements AutoCloseable {
                 Map.copyOf(parameters), task, clock.instant());
         job.starting = true;
         JobStatus status;
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
@@ -371,6 +381,8 @@ public class Jobs implements AutoCloseable {
             queued.addLast(job);
             status = job.snapshot();
             store.save(status);
+        } finally {
+            lock.unlock();
         }
         try {
             prepare.accept(status);
@@ -378,8 +390,11 @@ public class Jobs implements AutoCloseable {
             LOG.log(System.Logger.Level.WARNING, "Vorbereitung von Auftrag {0} gescheitert ({1})", job.id,
                     e.getClass().getName());
         } finally {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 job.starting = false;
+            } finally {
+                lock.unlock();
             }
             dispatch();
         }
@@ -409,7 +424,8 @@ public class Jobs implements AutoCloseable {
         Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner,
                 Map.copyOf(withAwaited), task, clock.instant());
         job.awaiting = awaited;
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
@@ -425,6 +441,8 @@ public class Jobs implements AutoCloseable {
             JobStatus status = job.snapshot();
             store.save(status);
             return status;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -458,7 +476,8 @@ public class Jobs implements AutoCloseable {
             throw new IllegalArgumentException("Mindestens ein Vorgänger");
         }
         JobStatus status;
-        synchronized (lock) {
+        lock.lock();
+        try {
             java.util.ArrayDeque<String> pending = new java.util.ArrayDeque<>();
             for (String id : awaited) {
                 Objects.requireNonNull(id, "awaited");
@@ -481,6 +500,8 @@ public class Jobs implements AutoCloseable {
             }
             status = job.snapshot();
             store.save(status);
+        } finally {
+            lock.unlock();
         }
         dispatch();
         return status;
@@ -518,13 +539,16 @@ public class Jobs implements AutoCloseable {
      * @return ob es den Auftrag noch wartend gab; {@code false}, wenn er gelöscht, abgebrochen oder schon frei ist
      */
     public boolean releaseAwaiting(String jobId) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             Job job = open.get(jobId);
             if (job == null || job.awaiting == null || job.state != JobState.QUEUED) {
                 return false;
             }
             job.awaiting = null;
             store.save(job.snapshot());
+        } finally {
+            lock.unlock();
         }
         dispatch();
         return true;
@@ -621,14 +645,17 @@ public class Jobs implements AutoCloseable {
             throws java.util.concurrent.TimeoutException, InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();
         JobStatus status = await(jobId, owner, timeout);
-        synchronized (lock) {
+        lock.lock();
+        try {
             while (lingering.contains(jobId)) {
                 long left = deadline - System.nanoTime();
                 if (left <= 0) {
                     throw new java.util.concurrent.TimeoutException("Auftrag " + jobId + " beendet noch seinen hängenden Schritt");
                 }
-                TimeUnit.NANOSECONDS.timedWait(lock, left);
+                changed.awaitNanos(left);
             }
+        } finally {
+            lock.unlock();
         }
         return status;
     }
@@ -651,15 +678,18 @@ public class Jobs implements AutoCloseable {
             if (status.state().terminal()) {
                 return status;
             }
-            synchronized (lock) {
+            lock.lock();
+            try {
                 if (open.containsKey(jobId)) {
                     long left = deadline - System.nanoTime();
                     if (left <= 0) {
                         throw new java.util.concurrent.TimeoutException("Auftrag " + jobId + " läuft nach " + timeout
                                 + " noch");
                     }
-                    TimeUnit.NANOSECONDS.timedWait(lock, left);
+                    changed.awaitNanos(left);
                 }
+            } finally {
+                lock.unlock();
             }
         }
     }
@@ -716,7 +746,8 @@ public class Jobs implements AutoCloseable {
         boolean detached = false;
         JobStatus status = null;
         JobTimer restart = null;
-        synchronized (lock) {
+        lock.lock();
+        try {
             Job job = open.get(jobId);
             if (job != null) {
                 detached = detachIfStuck(job);
@@ -729,6 +760,8 @@ public class Jobs implements AutoCloseable {
                     restart = timer();
                 }
             }
+        } finally {
+            lock.unlock();
         }
         if (detached) {
             dispatch();
@@ -767,7 +800,7 @@ public class Jobs implements AutoCloseable {
         job.finish(end, null, clock.instant());
         release(job);
         open.remove(job.id);
-        lock.notifyAll();
+        changed.signalAll();
         JobStatus finished = job.snapshot();
         job.emit(true, JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, end.name(),
                 (end == JobState.PAUSED ? "Auftrag angehalten: " : "Auftrag abgebrochen: ") + why, null, null, null,
@@ -829,7 +862,8 @@ public class Jobs implements AutoCloseable {
         if (!current.type().resumable()) {
             throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht anhalten");
         }
-        synchronized (lock) {
+        lock.lock();
+        try {
             Job job = open.get(jobId);
             if (job != null) {
                 if (job.cancelRequested && !job.pauseRequested) {
@@ -853,7 +887,7 @@ public class Jobs implements AutoCloseable {
                 if (wasQueued) {
                     queued.remove(job);
                     open.remove(jobId);
-                    lock.notifyAll();
+                    changed.signalAll();
                     job.finish(JobState.PAUSED, null, clock.instant());
                     stopped.put(jobId, job);
                 }
@@ -864,6 +898,8 @@ public class Jobs implements AutoCloseable {
                 store.save(status);
                 return status;
             }
+        } finally {
+            lock.unlock();
         }
         return current;
     }
@@ -877,7 +913,8 @@ public class Jobs implements AutoCloseable {
      */
     public JobStatus prioritize(String jobId, String owner) {
         JobStatus current = requireOwner(status(jobId), owner);
-        synchronized (lock) {
+        lock.lock();
+        try {
             Job job = open.get(jobId);
             if (job != null && job.stage == JobStage.PREPARED && prepared.remove(job)) {
                 // Vorbereitet: bekommt den nächsten freien Download-Platz.
@@ -889,6 +926,8 @@ public class Jobs implements AutoCloseable {
             }
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag vorgezogen", null,
                     null, null, null);
+        } finally {
+            lock.unlock();
         }
         dispatch();
         return status(jobId);
@@ -924,7 +963,8 @@ public class Jobs implements AutoCloseable {
                     : "der Auftrag wartet oder läuft noch");
         }
         JobStatus status;
-        synchronized (lock) {
+        lock.lock();
+        try {
             requireNotLingering(jobId);
             Job job = stopped.get(jobId);
             if (job == null) {
@@ -949,6 +989,8 @@ public class Jobs implements AutoCloseable {
             queued.addLast(job);
             status = job.snapshot();
             store.save(status);
+        } finally {
+            lock.unlock();
         }
         dispatch();
         return status;
@@ -986,7 +1028,8 @@ public class Jobs implements AutoCloseable {
             throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht erneut starten");
         }
         JobStatus status;
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
@@ -1023,6 +1066,8 @@ public class Jobs implements AutoCloseable {
             queued.addLast(job);
             status = job.snapshot();
             store.save(status);
+        } finally {
+            lock.unlock();
         }
         dispatch();
         return status;
@@ -1041,7 +1086,8 @@ public class Jobs implements AutoCloseable {
         if (!current.type().resumable()) {
             throw new JobNotResumableException(jobId, "diese Auftragsart lässt sich nicht erneut starten");
         }
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
@@ -1053,6 +1099,8 @@ public class Jobs implements AutoCloseable {
             }
             requireNotLingering(jobId);
             requireCapacity(current.type(), current.owner(), jobId, current.sourceId());
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1077,8 +1125,11 @@ public class Jobs implements AutoCloseable {
      */
     public boolean resumable(String jobId, String owner) {
         JobStatus current = requireOwner(status(jobId), owner);
-        synchronized (lock) {
+        lock.lock();
+        try {
             return current.type().resumable() && resumableState(current.state()) && stopped.containsKey(jobId);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1109,8 +1160,11 @@ public class Jobs implements AutoCloseable {
         }
         // Je eigenem Auftrag lesen statt global und dann filtern: fremde Ereignisse dürfen eigene nicht verdrängen.
         Set<String> mine = new LinkedHashSet<>();
-        synchronized (lock) {
+        lock.lock();
+        try {
             open.values().stream().filter(job -> Objects.equals(job.owner, owner)).forEach(job -> mine.add(job.id));
+        } finally {
+            lock.unlock();
         }
         store.all().stream().filter(status -> Objects.equals(status.owner(), owner))
                 .forEach(status -> mine.add(status.id()));
@@ -1132,7 +1186,8 @@ public class Jobs implements AutoCloseable {
         boolean freed = false;
         try {
             // Unter dem Sperrobjekt, damit kein gleichzeitiges Fortsetzen einen gerade gelöschten Auftrag wieder öffnet.
-            synchronized (lock) {
+            lock.lock();
+            try {
                 Job open = this.open.get(jobId);
                 JobStatus status = requireOwner(open != null ? open.snapshot()
                         : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
@@ -1180,6 +1235,8 @@ public class Jobs implements AutoCloseable {
                 // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der Fehler kommt beim Aufrufer an.
                 events.delete(status.id());
                 store.delete(status.id());
+            } finally {
+                lock.unlock();
             }
         } finally {
             if (freed) {
@@ -1204,7 +1261,7 @@ public class Jobs implements AutoCloseable {
         job.pauseRequested = false;
         job.detach();
         open.remove(jobId);
-        lock.notifyAll();
+        changed.signalAll();
         boolean wasRunning = job.state != JobState.QUEUED;
         if (!wasRunning) {
             queued.remove(job);
@@ -1375,10 +1432,13 @@ public class Jobs implements AutoCloseable {
                 || ALL_SOURCES.equals(job.sourceId)) && !job.id.equals(exceptJobId) && !job.id.equals(withdrawal)
                 && (createdBefore == null || job.createdAt.isBefore(createdBefore));
         List<String> ids;
-        synchronized (lock) {
+        lock.lock();
+        try {
             ids = open.values().stream().filter(affected).map(job -> job.id).toList();
             // Ohne Quelle gibt es nichts fortzusetzen.
             stopped.values().removeIf(affected);
+        } finally {
+            lock.unlock();
         }
         for (String id : ids) {
             try {
@@ -1388,14 +1448,17 @@ public class Jobs implements AutoCloseable {
             }
         }
         long deadline = System.nanoTime() + timeout.toNanos();
-        synchronized (lock) {
+        lock.lock();
+        try {
             while (open.values().stream().anyMatch(affected)) {
                 long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
                 if (left <= 0) {
                     return false;
                 }
-                lock.wait(left);
+                changed.await(left, TimeUnit.MILLISECONDS);
             }
+        } finally {
+            lock.unlock();
         }
         return true;
     }
@@ -1429,7 +1492,8 @@ public class Jobs implements AutoCloseable {
      */
     public Optional<JobStatus> retire(String jobId, String owner, String reason) {
         Objects.requireNonNull(reason, "reason");
-        synchronized (lock) {
+        lock.lock();
+        try {
             Job running = open.get(jobId);
             JobStatus current = requireOwner(running != null ? running.snapshot()
                     : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
@@ -1451,6 +1515,8 @@ public class Jobs implements AutoCloseable {
                     current.parameters(), current.incomplete(), false, null, null);
             store.save(retired);
             return Optional.of(retired);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1483,7 +1549,8 @@ public class Jobs implements AutoCloseable {
     }
 
     private JobStatus cancel(String jobId, String reason, boolean onlyIfWaiting, boolean[] release) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             Job job = open.get(jobId);
             if (onlyIfWaiting && (job == null || job.state != JobState.QUEUED)) {
                 return null;
@@ -1504,7 +1571,7 @@ public class Jobs implements AutoCloseable {
                 if (wasQueued) {
                     queued.remove(job);
                     open.remove(jobId);
-                    lock.notifyAll();
+                    changed.signalAll();
                     job.finish(JobState.CANCELLED, null, clock.instant());
                     keepResumable(job);
                     release[0] = awaitedAsPredecessor(jobId);
@@ -1521,6 +1588,8 @@ public class Jobs implements AutoCloseable {
                 store.save(status);
                 return status;
             }
+        } finally {
+            lock.unlock();
         }
         return store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId));
     }
@@ -1536,7 +1605,8 @@ public class Jobs implements AutoCloseable {
      * setzen nach dem Neustart fort.
      */
     public void interruptBackground() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             // Ab jetzt startet kein Hintergrundteil mehr und keiner wird angenommen (Abnahme #1030).
             backgroundStopped = true;
             for (Job job : open.values()) {
@@ -1544,13 +1614,16 @@ public class Jobs implements AutoCloseable {
                     job.shutdownInterrupted = true;
                 }
             }
+        } finally {
+            lock.unlock();
         }
     }
 
     @Override
     public void close() {
         interruptBackground();
-        synchronized (lock) {
+        lock.lock();
+        try {
             closed = true;
             Instant now = clock.instant();
             for (Job job : queued) {
@@ -1567,7 +1640,7 @@ public class Jobs implements AutoCloseable {
             }
             queued.clear();
             // Weckt, wer auf das Ende eines wartenden Auftrags wartet ({@link #await}).
-            lock.notifyAll();
+            changed.signalAll();
             for (Job job : open.values()) {
                 if (survivesShutdown(job)) {
                     // Abgelegt wird, was der Benutzer wollte: so erkennt der nächste Start ein Anhalten oder einen
@@ -1585,6 +1658,8 @@ public class Jobs implements AutoCloseable {
             if (ownTimer != null) {
                 ownTimer.shutdownNow();
             }
+        } finally {
+            lock.unlock();
         }
         notifier.close();
     }
@@ -1665,13 +1740,16 @@ public class Jobs implements AutoCloseable {
     private boolean deleteIfFinished(String jobId, boolean quietly) {
         boolean release = false;
         try {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 boolean deleted = deleteIfFinishedLocked(jobId, quietly);
                 if (deleted) {
                     predecessors.remove(jobId);
                     release = awaitedAsPredecessor(jobId);
                 }
                 return deleted;
+            } finally {
+                lock.unlock();
             }
         } finally {
             if (release) {
@@ -1682,7 +1760,8 @@ public class Jobs implements AutoCloseable {
     }
 
     private boolean deleteIfFinishedLocked(String jobId, boolean quietly) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (open.containsKey(jobId)) {
                 return false;
             }
@@ -1701,6 +1780,8 @@ public class Jobs implements AutoCloseable {
             stopped.remove(jobId);
             store.delete(jobId);
             return true;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1725,7 +1806,8 @@ public class Jobs implements AutoCloseable {
 
     private void dispatch() {
         List<Job> toStart = new ArrayList<>();
-        synchronized (lock) {
+        lock.lock();
+        try {
             Job job;
             while ((job = next()) != null) {
                 if (job.type.download()) {
@@ -1754,6 +1836,8 @@ public class Jobs implements AutoCloseable {
                 toStart.add(job);
             }
             grantDownloads();
+        } finally {
+            lock.unlock();
         }
         for (Job job : toStart) {
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag gestartet", null, null,
@@ -1839,8 +1923,11 @@ public class Jobs implements AutoCloseable {
     /** Setzt, wann ein Vorgänger seinen Nachfolger hält ({@link #AFTER}); die Hintergrundaufträge setzen das. */
     public void predecessorGate(PredecessorGate gate) {
         this.gate = Objects.requireNonNull(gate, "gate");
-        synchronized (lock) {
-            lock.notifyAll();
+        lock.lock();
+        try {
+            changed.signalAll();
+        } finally {
+            lock.unlock();
         }
         dispatch();
     }
@@ -1960,8 +2047,11 @@ public class Jobs implements AutoCloseable {
 
     /** Ein Löschen hat begonnen oder ist durch: wartende Aufträge neu prüfen. */
     public void holdsChanged() {
-        synchronized (lock) {
-            lock.notifyAll();
+        lock.lock();
+        try {
+            changed.signalAll();
+        } finally {
+            lock.unlock();
         }
         dispatch();
     }
@@ -2065,24 +2155,33 @@ public class Jobs implements AutoCloseable {
 
     /** Höchstens gleichzeitig vorbereitende Downloads ({@code jobs.parallel-preparations}). */
     public int parallelPreparations() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             return parallelPreparations;
+        } finally {
+            lock.unlock();
         }
     }
 
     /** Ändert {@link #parallelPreparations()} sofort; laufende Vorbereitungen laufen zu Ende. */
     public void parallelPreparations(int value) {
         JobLimits.requirePreparations(value);
-        synchronized (lock) {
+        lock.lock();
+        try {
             parallelPreparations = value;
+        } finally {
+            lock.unlock();
         }
         dispatch();
     }
 
     /** Höchstens gleichzeitig ladende Downloads ({@code jobs.parallel-downloads}); 0 bereitet nur vor. */
     public int parallelDownloads() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             return parallelDownloads;
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -2091,16 +2190,22 @@ public class Jobs implements AutoCloseable {
      * Restläufer).
      */
     public int downloadingNow() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             return downloading;
+        } finally {
+            lock.unlock();
         }
     }
 
     /** Ändert {@link #parallelDownloads()} sofort; laufende Downloads laufen zu Ende. */
     public void parallelDownloads(int value) {
         JobLimits.requireDownloads(value);
-        synchronized (lock) {
+        lock.lock();
+        try {
             parallelDownloads = value;
+        } finally {
+            lock.unlock();
         }
         dispatch();
     }
@@ -2148,10 +2253,11 @@ public class Jobs implements AutoCloseable {
         int reconnectAttempt;
         boolean retryFailed;
         JobTimer later;
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (job.state.terminal()) {
                 if (job.detached && lingering.remove(job.id)) {
-                    lock.notifyAll();
+                    changed.signalAll();
                 }
                 return;
             }
@@ -2171,7 +2277,7 @@ public class Jobs implements AutoCloseable {
             keepResumable(job);
             release(job);
             open.remove(job.id);
-            lock.notifyAll();
+            changed.signalAll();
             finished = job.snapshot();
             if (cause != null && !(cause instanceof JobCancelledException) && finished.state() != JobState.FAILED) {
                 // Nach Abbruch oder Anhalten anders gescheitert: nur die Klasse als Hinweis, kein Fehler am Auftrag.
@@ -2196,6 +2302,8 @@ public class Jobs implements AutoCloseable {
                 job.retryFailedRequested = false;
             }
             later = retryFailed ? timer() : null;
+        } finally {
+            lock.unlock();
         }
         dispatch();
         if (reconnectAttempt >= 0) {
@@ -2232,12 +2340,15 @@ public class Jobs implements AutoCloseable {
         }
         Duration delay;
         JobTimer current;
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed || recovery == null) {
                 return;
             }
             delay = limits.retry().resumeDelay(attempt);
             current = timer();
+        } finally {
+            lock.unlock();
         }
         current.schedule(delay, () -> retryAfterPass(ended, attempt + 1));
     }
@@ -2278,9 +2389,12 @@ public class Jobs implements AutoCloseable {
     /** Wie {@link #recovery(JobRecovery)}, mit eigener Zeitsteuerung, etwa in Tests; {@code null} für die eigene. */
     public void recovery(JobRecovery recovery, JobTimer timer) {
         Objects.requireNonNull(recovery, "recovery");
-        synchronized (lock) {
+        lock.lock();
+        try {
             this.recovery = recovery;
             this.timer = timer;
+        } finally {
+            lock.unlock();
         }
         for (JobStatus status : store.all()) {
             if (status.state() == JobState.PAUSED && status.pauseReason() == PauseReason.CONNECTION_LOST) {
@@ -2291,9 +2405,12 @@ public class Jobs implements AutoCloseable {
 
     /** Wann ein wegen fehlender Verbindung angehaltener Auftrag das nächste Mal von selbst anläuft, sonst leer. */
     public Optional<Instant> reconnectAt(String jobId) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             Reconnect pending = reconnects.get(jobId);
             return pending == null ? Optional.empty() : Optional.of(pending.at());
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -2301,7 +2418,8 @@ public class Jobs implements AutoCloseable {
         Duration delay;
         Reconnect pending;
         JobTimer current;
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed || recovery == null) {
                 return;
             }
@@ -2310,18 +2428,23 @@ public class Jobs implements AutoCloseable {
             reconnects.put(jobId, pending);
             reconnectAttempts.put(jobId, attempt + 1);
             current = timer();
+        } finally {
+            lock.unlock();
         }
         current.schedule(delay, () -> reconnect(jobId, pending.token()));
     }
 
     /** Ein geplanter Wiederanlauf; nur, wenn er noch gilt und der Auftrag noch so angehalten ist. */
     private void reconnect(String jobId, Object token) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             Reconnect pending = reconnects.get(jobId);
             if (closed || pending == null || pending.token() != token) {
                 return;
             }
             reconnects.remove(jobId);
+        } finally {
+            lock.unlock();
         }
         JobStatus status;
         try {
@@ -2336,17 +2459,23 @@ public class Jobs implements AutoCloseable {
         }
         if (!perform(status, JobAction.RESUME)) {
             int attempt;
-            synchronized (lock) {
+            lock.lock();
+            try {
                 attempt = reconnectAttempts.getOrDefault(jobId, 0);
+            } finally {
+                lock.unlock();
             }
             scheduleReconnect(jobId, attempt);
         }
     }
 
     private void forgetReconnect(String jobId) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             reconnects.remove(jobId);
             reconnectAttempts.remove(jobId);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -2405,7 +2534,8 @@ public class Jobs implements AutoCloseable {
      */
     public JobStatus requestRetryFailed(String jobId, String owner) {
         requireOwner(status(jobId), owner);
-        synchronized (lock) {
+        lock.lock();
+        try {
             Job job = open.get(jobId);
             if (job == null) {
                 throw new JobNotResumableException(jobId, "der Auftrag läuft nicht mehr");
@@ -2443,6 +2573,8 @@ public class Jobs implements AutoCloseable {
                         null);
             }
             return job.snapshot();
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -2649,7 +2781,8 @@ public class Jobs implements AutoCloseable {
         @Override
         public void awaitDownloadSlot() {
             CompletableFuture<Void> granted;
-            synchronized (lock) {
+            lock.lock();
+            try {
                 if (stage != JobStage.PREPARING || detached) {
                     return;
                 }
@@ -2659,8 +2792,10 @@ public class Jobs implements AutoCloseable {
                 granted = new CompletableFuture<>();
                 slot = granted;
                 prepared.addLast(this);
-                lock.notifyAll();
+                changed.signalAll();
                 store.save(snapshot());
+            } finally {
+                lock.unlock();
             }
             emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, "Vorbereitet",
                     "Vorbereitet: " + discovered.get() + " Verweise; wartet auf einen Download-Platz", null, null,
@@ -2687,7 +2822,8 @@ public class Jobs implements AutoCloseable {
 
         @Override
         public void pause(PauseReason reason) {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 // Ein angeforderter Abbruch bleibt ein Abbruch.
                 if (!cancelRequested || pauseRequested) {
                     pauseReason = reason == null ? PauseReason.USER : reason;
@@ -2700,6 +2836,8 @@ public class Jobs implements AutoCloseable {
                         retryFailedRequested = false;
                     }
                 }
+            } finally {
+                lock.unlock();
             }
             throw new JobCancelledException(id);
         }
