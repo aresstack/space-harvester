@@ -182,15 +182,12 @@ public final class PodcastPlayer {
         }
     }
 
-    /** Wie weit der Abschnitt an {@code millis} gespielt ist, 0 bis 1; 0 außerhalb. */
-    public double shareInTrack(long millis) {
+    /** Wo {@code millis} im eigenen Abschnitt liegt: {@code [Stelle, Länge]} in Millisekunden; {0, 0} außerhalb. */
+    public long[] inTrack(long millis) {
         synchronized (lock) {
             int index = indexAt(millis);
-            if (index < 0) {
-                return 0;
-            }
-            long length = durationAt(index);
-            return length <= 0 ? 0 : Math.max(0, Math.min(1, (millis - startOf(index)) / (double) length));
+            return index < 0 ? new long[] {0, 0}
+                    : new long[] {Math.max(0, millis - startOf(index)), Math.max(0, durationAt(index))};
         }
     }
 

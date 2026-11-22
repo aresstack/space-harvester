@@ -46,6 +46,28 @@ class PodcastSubtitlesTest {
     }
 
     @Test
+    void measuredStartsOfTheTurnsDecideTheTurnExactly() {
+        // Der zweite Beitrag beginnt erst bei 12 s, obwohl der erste nach Textlänge viel früher zu Ende wäre.
+        List<Podcast.Line> measured = List.of(
+                new Podcast.Line(true, LINES.get(0).text(), 0),
+                new Podcast.Line(false, LINES.get(1).text(), 12_000));
+        assertThat(PodcastSubtitles.at(measured, 0, 20_000).text()).isEqualTo("Willkommen bei Nordlicht.");
+        assertThat(PodcastSubtitles.at(measured, 11_000, 20_000).text())
+                .isEqualTo("Heute geht es um die neue Startseite!");
+        // In der Pause vor dem nächsten Beitrag bleibt der letzte Satz stehen.
+        assertThat(PodcastSubtitles.at(measured, 11_900, 20_000).text())
+                .isEqualTo("Heute geht es um die neue Startseite!");
+        assertThat(PodcastSubtitles.at(measured, 12_000, 20_000).text())
+                .isEqualTo("Was ist denn neu, z. B. beim Glossar?");
+        assertThat(PodcastSubtitles.at(measured, 19_900, 20_000).text()).isEqualTo("Das würde mich interessieren.");
+        // Fehlt eine Zeit (älteres Audio), gilt die Schätzung nach Textlänge über den ganzen Abschnitt.
+        List<Podcast.Line> partly = List.of(measured.get(0), LINES.get(1));
+        assertThat(PodcastSubtitles.at(partly, 11_000, 20_000).text())
+                .isEqualTo(PodcastSubtitles.at(LINES, 0.55).text());
+        assertThat(PodcastSubtitles.at(LINES, 5_000, 0)).isEqualTo(PodcastSubtitles.at(LINES, 0));
+    }
+
+    @Test
     void aLongSentenceIsShownInPagesOfTwoLinesThatFollowTheSpeech() {
         SubtitleLine line = new SubtitleLine();
         line.setSize(260, line.getPreferredSize().height);

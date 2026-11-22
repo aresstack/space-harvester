@@ -264,8 +264,8 @@ final class PodcastControl<S> {
             subtitle.show("", 0);
             return;
         }
-        PodcastSubtitles.Cue cue = PodcastSubtitles.at(podcast.parts().get(track).lines(),
-                player.shareInTrack(millis));
+        long[] within = player.inTrack(millis);
+        PodcastSubtitles.Cue cue = PodcastSubtitles.at(podcast.parts().get(track).lines(), within[0], within[1]);
         subtitle.show(cue.text(), cue.share());
     }
     /**
