@@ -510,7 +510,9 @@ final class StandingTab extends JPanel {
         reading.pageControls(this::pageControls);
         reading.onStatus(text -> {
             if (READING.equals(tabs.selected())) {
-                onStatus.accept(watchFailed ? text + " · " + NOT_WATCHING : text);
+                // Eine Ablehnung des Core (gesperrt) bleibt auch nach dem neuen Lesen vor der Zählung stehen.
+                String counted = watchFailed ? text + " · " + NOT_WATCHING : text;
+                onStatus.accept(writeNotice == null ? counted : writeNotice + " · " + counted);
             }
         });
         reading.onOpen(page -> onJump.accept(new Target(page.key().sourceId(), page.key().pageId(), -1, -1)));

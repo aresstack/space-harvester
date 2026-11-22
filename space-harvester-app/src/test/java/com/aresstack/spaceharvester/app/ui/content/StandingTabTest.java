@@ -517,6 +517,26 @@ class StandingTabTest {
     }
 
     @Test
+    void aPageLockedMeanwhileKeepsTheRefusalInReadingFirstAfterTheReread() {
+        Fixture fixture = new Fixture(view());
+        fixture.lockedMeanwhile = true;
+        StandingTab tab = fixture.shownTab();
+        tab.tabs().select(StandingTab.READING);
+        tab.reading().clickRow(0, false);
+        StatusQuoView base = view();
+        fixture.view = new StatusQuoView(base.entries(), base.states(), base.pages(), base.counts(),
+                base.certainCounts(), base.staleDecisions(), base.staleEntries(), base.rejectedDecisions(),
+                java.util.Set.of(new PageKey("wiki", "1")));
+
+        tab.decisionChip(Standing.UEBERHOLT).doClick();
+
+        assertThat(fixture.writes).containsExactly("decide 1 null UEBERHOLT 0");
+        assertThat(fixture.reads.get()).isEqualTo(2);
+        assertThat(fixture.status.get()).as("die Zählung von „Zuerst lesen“ überschreibt die Ablehnung nicht")
+                .isEqualTo(StandingTab.LOCKED_REFUSED + " · 2 Seiten nach Lesewert");
+    }
+
+    @Test
     void aConflictRereadsAndSaysSo() {
         Fixture fixture = new Fixture(view());
         fixture.conflict = true;
