@@ -4,6 +4,10 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.background.BackgroundGroup;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
+import com.aresstack.spaceharvester.application.background.BackgroundKind;
+import com.aresstack.spaceharvester.application.background.BackgroundPart;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -120,6 +124,16 @@ public class SynonymDiscovery {
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
     /** Ob eine Seite auf der Liste freigegebener Seiten steht (ADR 0028); ohne Liste keine. */
     private volatile Predicate<PageKey> pageReleases = key -> false;
+    /**
+     * Hintergrundaufträge (ADR 0025 Nachtrag) für den automatischen Lauf; ohne sie (Dienst) bleibt es beim eigenen
+     * Auftrag {@code ENRICHMENT} des Eigentümers aus {@link #owner}.
+     */
+    private volatile BackgroundJobs background;
+
+    /** Art des automatischen Laufs als Hintergrundauftrag (Angelo 21.11.2026: nichts läuft unsichtbar). */
+    public static final String BACKGROUND_KIND = "synonyms";
+    /** Titel der Gruppe in der Auftragsliste. */
+    public static final String BACKGROUND_TITLE = "Synonyme erkennen";
 
     /** Angabe am Auftrag, woran die Auftragsliste den Lauf erkennt (D4.4, wie die Bildbeschreibung). */
     public static final String TASK_PARAMETER = "task";
@@ -168,6 +182,36 @@ public class SynonymDiscovery {
     public void pageReleases(Predicate<PageKey> released) {
         this.pageReleases = Objects.requireNonNull(released, "released");
         candidates.pageReleases(released);
+    }
+
+    /**
+     * Lässt den automatischen Lauf ({@link #automatic}) als Hintergrundauftrag laufen (Art {@value #BACKGROUND_KIND},
+     * ein Teil je Quelle): sichtbar im Reiter „Hintergrund“, nachrangig, anhaltbar, und nach einem Neustart setzt er
+     * fort, solange {@code terms.synonyms.automatic} an ist. Der Teil baut seine Arbeit allein aus der Quelle.
+     */
+    public void background(BackgroundJobs background) {
+        Objects.requireNonNull(background, "background");
+        background.register(new BackgroundKind(BACKGROUND_KIND, this::automaticWork, () -> budget.get().automatic()));
+        this.background = background;
+    }
+
+    private JobTask automaticWork(BackgroundPart part) {
+        String sourceId = part.sourceId();
+        return JobTask.blocking(context -> runAutomatic(sourceId, budget.get(), context));
+    }
+
+    /** Der automatische Lauf einer Quelle, im Auftragsthread. */
+    private void runAutomatic(String sourceId, SynonymBudget chosen, JobContext context) {
+        SynonymScope scope = SynonymScope.source(sourceId);
+        synchronized (lock(scope)) {
+            // Der Stand vor dem Lauf: Was sich währenddessen ändert, löst den nächsten Lauf aus.
+            String before = candidates.state(sourceId, chosen.glossaryTermsOnly());
+            // SY2: Der Stand gilt nur, wenn jeder Begriff einen Vektor hat; sonst holt der nächste Anlass die übrigen
+            // nach.
+            if (run(scope, chosen, context).complete()) {
+                candidates.vectors().state(sourceId, before);
+            }
+        }
     }
 
     public Availability availability(SynonymScope scope) {
@@ -258,10 +302,11 @@ public class SynonymDiscovery {
 
     /**
      * Automatischer Lauf für eine Quelle (SY1, ADR 0019): Folgeschritt nach der Anreicherung einer Quelle, wie die
-     * Abkürzungsregel, als eigener Auftrag. Kein Zeitgeber. Nichts geschieht, wenn {@code terms.synonyms.automatic}
-     * aus ist, die Quelle unbekannt ist, schon ein Lauf für sie wartet oder sich seit dem letzten vollständigen Lauf
-     * nichts geändert hat ({@link SynonymCandidates#state}). Ohne Embedding-Modell oder Freigabe bleibt es bei
-     * Regelvorschlägen, ohne Fehler; der Abgleich lässt Bestätigtes und Abgelehntes stehen.
+     * Abkürzungsregel, als Hintergrundauftrag ({@link #background}), sonst als eigener Auftrag. Kein Zeitgeber. Nichts
+     * geschieht, wenn {@code terms.synonyms.automatic} aus ist, die Quelle unbekannt ist, schon ein Lauf für sie wartet
+     * oder sich seit dem letzten vollständigen Lauf nichts geändert hat ({@link SynonymCandidates#state}). Ohne
+     * Embedding-Modell oder Freigabe bleibt es bei Regelvorschlägen, ohne Fehler; der Abgleich lässt Bestätigtes und
+     * Abgelehntes stehen.
      *
      * @return der Auftrag, oder leer, wenn keiner nötig ist
      */
@@ -275,6 +320,18 @@ public class SynonymDiscovery {
         if (state.equals(candidates.vectors().state(sourceId).orElse(null))) {
             return Optional.empty();
         }
+        BackgroundJobs hosted = background;
+        if (hosted != null) {
+            // Ein wartender Teil der Quelle nimmt die Änderung mit; ein laufender nicht, dann folgt ein neuer.
+            Optional<BackgroundGroup> group = hosted.startUnlessWaiting(BACKGROUND_KIND, BACKGROUND_TITLE,
+                    new BackgroundPart.Draft(sourceId, null, Map.of(TASK_PARAMETER, TASK)));
+            group.ifPresent(begun -> {
+                started.addAll(begun.jobIds());
+                LOG.log(System.Logger.Level.INFO, "Synonymerkennung für {0} als Hintergrundauftrag eingeplant",
+                        sourceId);
+            });
+            return group.map(begun -> begun.parts().get(0));
+        }
         synchronized (waiting) {
             String pending = waiting.get(sourceId);
             // Der Auftrag nimmt sich beim Start selbst heraus; steht er noch hier und ist nicht beendet, wartet er.
@@ -282,19 +339,10 @@ public class SynonymDiscovery {
                 return Optional.empty();
             }
             waiting.remove(sourceId);
-            SynonymScope scope = SynonymScope.source(sourceId);
             JobStatus status = jobs.submit(JobType.ENRICHMENT, sourceId, null, null, owner,
                     Map.of(TASK_PARAMETER, TASK), JobTask.blocking(context -> {
                 waiting.remove(sourceId, context.jobId());
-                synchronized (lock(scope)) {
-                    // Der Stand vor dem Lauf: Was sich währenddessen ändert, löst den nächsten Lauf aus.
-                    String before = candidates.state(sourceId, chosen.glossaryTermsOnly());
-                    // SY2: Der Stand gilt nur, wenn jeder Begriff einen Vektor hat; sonst holt der nächste Anlass
-                    // die übrigen nach.
-                    if (run(scope, chosen, context).complete()) {
-                        candidates.vectors().state(sourceId, before);
-                    }
-                }
+                runAutomatic(sourceId, chosen, context);
             }));
             started.add(status.id());
             if (!finishedState(status.state())) {

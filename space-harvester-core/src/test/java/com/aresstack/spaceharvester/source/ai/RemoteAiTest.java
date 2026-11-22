@@ -69,7 +69,16 @@ class RemoteAiTest {
         });
         server.createContext("/v1/chat/completions", exchange -> {
             authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
-            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            bodies.add(request);
+            if (status == 200 && ChatSse.wanted(request)) {
+                byte[] bytes = ChatSse.of(chatAnswer).getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+                return;
+            }
             respond(exchange, chatAnswer);
         });
         // Ollama: Modelle und Fähigkeiten nur über die eigene Schnittstelle, Chat und Embeddings unter /v1.
@@ -302,8 +311,8 @@ class RemoteAiTest {
             authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
             chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             respond(exchange, """
-                    {"model":"gemma4:12b","message":{"role":"assistant","content":"fertig"},"done":true,
-                     "done_reason":"stop","prompt_eval_count":12,"eval_count":3}""");
+                    {"model":"gemma4:12b","message":{"role":"assistant","content":"fertig"},"done":true,\
+                    "done_reason":"stop","prompt_eval_count":12,"eval_count":3}""");
         });
         // Mit Schrägstrich am Ende oder der Adresse der OpenAI-Schnittstelle eingetragen: dieselben Pfade.
         for (URI address : List.of(ollama(), URI.create(ollama() + "/"), URI.create(ollama() + "/v1"))) {
@@ -320,7 +329,7 @@ class RemoteAiTest {
         assertThat(authorizations).hasSize(9).containsOnly("null");
         assertThat(bodies).as("Embeddings über /v1").hasSize(3).allMatch(body -> body.contains("bge-m3:latest"));
         assertThat(chats).hasSize(6);
-        assertThat(chats.get(0)).contains("\"model\":\"gemma4:12b\"", "\"stream\":false", "\"role\":\"system\"",
+        assertThat(chats.get(0)).contains("\"model\":\"gemma4:12b\"", "\"stream\":true", "\"role\":\"system\"",
                 "\"content\":\"Anweisung\"", "\"num_ctx\":8192", "\"num_predict\":8192", "\"temperature\":0.0");
         assertThat(chats.get(1)).contains("\"images\":[\"AQID\"]", "\"num_ctx\":8192")
                 .doesNotContain("image_url");
@@ -379,8 +388,8 @@ class RemoteAiTest {
         server.createContext("/api/chat", exchange -> {
             chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             respond(exchange, """
-                    {"message":{"role":"assistant","content":"%s"},"done":true,"done_reason":"%s",
-                     "prompt_eval_count":3593,"eval_count":4599}""".formatted(
+                    {"message":{"role":"assistant","content":"%s"},"done":true,"done_reason":"%s",\
+                    "prompt_eval_count":3593,"eval_count":4599}""".formatted(
                     "stop".equals(reason.get()) ? "Vortragstext" : "", reason.get()));
         });
         AiServiceSettings settings = new AiServiceSettings(ollama(), null, null, null, null, null, null, Set.of())

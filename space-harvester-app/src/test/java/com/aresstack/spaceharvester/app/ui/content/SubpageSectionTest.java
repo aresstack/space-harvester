@@ -2,9 +2,19 @@ package com.aresstack.spaceharvester.app.ui.content;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
+import com.aresstack.spaceharvester.application.holdings.PageSelection;
+import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
+import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
+import com.aresstack.spaceharvester.application.knowledge.PageGraph;
+import com.aresstack.spaceharvester.application.knowledge.PageStatements;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
 
@@ -60,5 +70,54 @@ class SubpageSectionTest {
             section.open(0, 0);
         });
         assertThat(opened).containsExactly("11");
+    }
+
+    /**
+     * Architektenvorgabe zu W4, Punkt 1: Sind alle Unterseiten gesperrt, rechnet der Graph wie ohne Unterseiten; der
+     * Abschnitt unter dem Graph zählt nur nicht gesperrte Unterseiten, auch wenn eine gesperrte (aus einer Analyse von
+     * früher) Knoten hätte.
+     */
+    @Test
+    void theGraphSectionCountsOnlyUnlockedSubpagesAndAllLockedIsLikeNone() {
+        PageKey plan = new PageKey("wiki", "11");
+        PageKey locked = new PageKey("wiki", "12");
+        PageKey lockedToo = new PageKey("wiki", "13");
+        PageKey start = new PageKey("wiki", "14");
+        Subpages.Below below = below(List.of(plan, locked, lockedToo, start), List.of(locked, lockedToo));
+        GraphNeighbourhood.Stack stack = new GraphNeighbourhood.Stack(new GraphNeighbourhood.Subgraph("wiki/1@a",
+                List.of(node("wiki/11@b", plan), node("wiki/11@b#s1.t1", plan), node("wiki/12@c", locked)), List.of(),
+                false, 0), List.of(lockedToo, start), 0, 2);
+        List<PageKey> asked = new ArrayList<>();
+
+        PageDetailPanel.BelowRows rows = PageDetailPanel.belowGraphRows(keys -> {
+            asked.addAll(keys);
+            Map<PageKey, PageNode> nodes = new LinkedHashMap<>();
+            keys.forEach(key -> nodes.put(key, new PageNode(key.pageId(), key.equals(plan) ? "Plan" : "Ziel", "DEV",
+                    null)));
+            return nodes;
+        }, below, stack);
+
+        assertThat(rows.rows()).singleElement().satisfies(row -> assertThat(row.origin().title()).isEqualTo("Plan"));
+        assertThat(rows.rows().getFirst().badge()).isEqualTo(2);
+        assertThat(rows.missing()).as("nur „Start“, nicht die gesperrte").isEqualTo(1);
+        assertThat(asked).containsExactly(plan);
+
+        assertThat(PageDetailPanel.graphSubpages(below)).isEqualTo(below.pages());
+        assertThat(PageDetailPanel.graphSubpages(below(List.of(locked, lockedToo), List.of(locked, lockedToo))))
+                .as("alle gesperrt: wie keine Unterseiten").isNull();
+        assertThat(PageDetailPanel.graphSubpages(below(List.of(), List.of()))).isNull();
+        assertThat(PageDetailPanel.graphSubpages(null)).isNull();
+    }
+
+    private static Subpages.Below below(List<PageKey> keys, List<PageKey> locked) {
+        return new Subpages.Below("wiki", "DEV", "1", new PageSelection(PageSet.ofKeys(keys), HoldingCounts.ZERO,
+                List.of(), true, PageSet.ofKeys(locked)));
+    }
+
+    private static GraphNeighbourhood.Node node(String id, PageKey key) {
+        boolean document = !id.contains("#");
+        return new GraphNeighbourhood.Node(id, document ? PageGraph.NodeKind.DOCUMENT : PageGraph.NodeKind.MENTION,
+                "Nachtlauf", null, new KnowledgeGraph.PageRef(key, "DEV", "Plan", PageStatements.State.CURRENT, null),
+                document ? -1 : 0, document ? -1 : 9, false);
     }
 }

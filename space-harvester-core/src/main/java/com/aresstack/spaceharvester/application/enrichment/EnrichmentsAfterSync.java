@@ -38,7 +38,10 @@ import java.util.function.Consumer;
  * Anreicherungen, bevor er den Auftrag einplant.
  *
  * <p>Mit {@link DocumentEnrichments} holt derselbe Auftrag danach die Analysen der Anhänge dieser Seiten nach, deren
- * Stand fehlt oder veraltet ist (ADR 0026, AP9a, Phase {@value DocumentEnrichments#PHASE}).
+ * Stand fehlt oder veraltet ist (ADR 0026, AP9a, Phase {@value DocumentEnrichments#PHASE}); mit Hintergrundaufträgen
+ * vermerkt er nur, dass es im Space Arbeit gibt, und der Teil „Anhänge analysieren“ rechnet nach seinem Ende
+ * ({@link DocumentEnrichments#afterSync}, Abnahme #1052). Der Auftrag trägt dafür {@value #TASK_PARAMETER} =
+ * {@value #TASK}.
  *
  * <p>Sind alle Prozessoren durchgelaufen, ruft derselbe Auftrag die Folgeschritte je Quelle auf (Phase
  * {@code Folgeschritte}), etwa die Akronym-Regel der Begriffsbeziehungen (#120). Nach einem Abbruch entfallen sie bis
@@ -48,6 +51,13 @@ public class EnrichmentsAfterSync implements SyncCommitted {
 
     private static final System.Logger LOG = System.getLogger(EnrichmentsAfterSync.class.getName());
     private static final String COMPONENT = "Enrichments";
+    /** Angabe am Auftrag {@link JobType#ENRICHMENT}: welche Arbeit er tut. */
+    public static final String TASK_PARAMETER = "task";
+    /**
+     * Wert von {@link #TASK_PARAMETER}: die Anreicherung nach dem Abgleich ihres Space; bis zu ihrem Ende startet dort
+     * kein Teil „Anhänge analysieren“ ({@link DocumentEnrichments}).
+     */
+    public static final String TASK = "after-sync";
 
     private final Enrichments enrichments;
     private final SnapshotRepository snapshots;
@@ -116,8 +126,8 @@ public class EnrichmentsAfterSync implements SyncCommitted {
             return;
         }
         try {
-            jobs.submit(JobType.ENRICHMENT, sourceId, spaceKey, owner, JobTask.blocking(context -> refresh(run,
-                    context, removed)));
+            jobs.submit(JobType.ENRICHMENT, sourceId, spaceKey, null, owner, java.util.Map.of(TASK_PARAMETER, TASK),
+                    JobTask.blocking(context -> refresh(run, context, removed)));
         } catch (JobCapacityExceededException | IllegalStateException e) {
             LOG.log(System.Logger.Level.INFO, "Anreicherung nach Abgleich {0}/{1} nicht eingeplant ({2}); der "
                     + "nächste Abgleich holt sie nach", sourceId, spaceKey, e.getClass().getSimpleName());
@@ -200,7 +210,7 @@ public class EnrichmentsAfterSync implements SyncCommitted {
                 enrichments.flush();
             }
             if (documents != null) {
-                documents.catchUp(sourceId, run.plan().inventory().spaceKey(),
+                documents.afterSync(sourceId, run.plan().inventory().spaceKey(),
                         pages.stream().map(PageKey::pageId).toList(), context);
             }
             followUps(sourceId, context);

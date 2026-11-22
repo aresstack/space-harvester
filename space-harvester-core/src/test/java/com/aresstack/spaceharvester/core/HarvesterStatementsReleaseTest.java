@@ -159,11 +159,13 @@ class HarvesterStatementsReleaseTest {
 
     private void chat(HttpExchange exchange) throws IOException {
         calls.incrementAndGet();
-        exchange.getRequestBody().readAllBytes();
-        byte[] bytes = ("{\"id\":\"c1\",\"object\":\"chat.completion\",\"model\":\"chat-a\",\"choices\":[{\"index\":0,"
-                + "\"message\":{\"role\":\"assistant\",\"content\":\"" + EMPTY + "\"},\"finish_reason\":\"stop\"}]}")
+        boolean stream = com.aresstack.spaceharvester.source.ai.ChatSse.wanted(
+                new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        String answer = "{\"id\":\"c1\",\"object\":\"chat.completion\",\"model\":\"chat-a\",\"choices\":[{\"index\":0,"
+                + "\"message\":{\"role\":\"assistant\",\"content\":\"" + EMPTY + "\"},\"finish_reason\":\"stop\"}]}";
+        byte[] bytes = (stream ? com.aresstack.spaceharvester.source.ai.ChatSse.of(answer) : answer)
                 .getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.getResponseHeaders().add("Content-Type", stream ? "text/event-stream" : "application/json");
         exchange.sendResponseHeaders(200, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();

@@ -501,6 +501,9 @@ public final class Harvester implements AutoCloseable {
             this.jobs = new Jobs(jobStore, eventStore, catalog::route, executor, builder.jobLimits,
                     Clock.systemUTC());
             opened.add(jobs);
+            // Hintergrundaufträge (ADR 0025 Nachtrag): was die App von sich aus anstößt, nachrangig und nach einem
+            // Neustart fortgesetzt. Früh, damit sich jeder Baustein mit seiner Art anmelden kann.
+            this.backgroundJobs = new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, OWNER);
 
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
@@ -799,6 +802,8 @@ public final class Harvester implements AutoCloseable {
             synonymDiscovery.pageReleases(pageReleases::contains);
             // D4.4: Der automatische Lauf gehört wie die übrigen Hintergrundaufträge dem Core.
             synonymDiscovery.owner(OWNER);
+            // Der automatische Lauf ist ein Hintergrundauftrag (Angelo 21.11.2026: nichts läuft unsichtbar).
+            synonymDiscovery.background(backgroundJobs);
             // SY1: Neue KI-Freigaben von Seiten lösen den automatischen Lauf ihrer Quelle aus.
             opened.add(pageReleases.subscribe(synonymDiscovery::releasesChanged));
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
@@ -823,8 +828,6 @@ public final class Harvester implements AutoCloseable {
                     null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
             opened.add(scheduler);
             this.acquisition = scheduler;
-            // Hintergrundaufträge: was die App von sich aus anstößt, nachrangig und nach einem Neustart fortgesetzt.
-            this.backgroundJobs = new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, OWNER);
             this.pageLoads = new com.aresstack.spaceharvester.application.background.PageLoads(backgroundJobs,
                     scheduler, AccessContext.technicalClient(OWNER),
                     key -> texts.cachedVersion(key, cache::findHeader, cache::find).isPresent(),
@@ -952,10 +955,15 @@ public final class Harvester implements AutoCloseable {
             EnrichmentSettings startEnrichment = builder.enrichment;
             DocumentEnrichments documentEnrichments = new DocumentEnrichments(enrichments, jobs,
                     () -> this.settings != null ? this.settings.enrichment() : startEnrichment);
+            // Als Hintergrundauftrag „Anhänge analysieren“, sichtbar im Reiter „Hintergrund“ (Angelo 21.11.2026): je
+            // Space höchstens ein Teil, Arbeit aus den Anhängen der Seiten des Space, Start erst nach dem Abgleich.
+            documentEnrichments.background(backgroundJobs, (sourceId, spaceKey) -> spaceKey == null ? List.of()
+                    : cache.knownPages(sourceId, spaceKey).keySet());
+            opened.add(documentEnrichments);
             sectionTexts.set(documentEnrichments);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
-                    // SY1: danach der automatische Synonymlauf der Quelle als eigener Auftrag.
+                    // SY1: danach der automatische Synonymlauf der Quelle als Hintergrundauftrag.
                     // B1: danach die automatische Bildbeschreibung der Quelle als eigener Auftrag (Standard aus).
                     // K4: danach die Fachbegriffe der Quelle als Hintergrundauftrag (Standard aus).
                     List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId),

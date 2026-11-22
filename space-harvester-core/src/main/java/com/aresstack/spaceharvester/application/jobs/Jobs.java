@@ -1327,6 +1327,47 @@ public class Jobs implements AutoCloseable {
         return Optional.ofNullable(cancel(jobId, Objects.requireNonNull(reason, "reason"), true));
     }
 
+    /** Code des Info-Ereignisses von {@link #retire}. */
+    public static final String RETIRED = "RETIRED";
+
+    /**
+     * Schließt einen eigenen beendeten Auftrag, der sich noch fortsetzen ließe ({@link JobState#PAUSED} oder
+     * {@link JobState#FAILED}), als {@link JobState#CANCELLED} ab, mit einem Info-Ereignis: Er setzt danach weder nach
+     * einem Neustart noch nach einer wiedergefundenen Verbindung von selbst fort. Für einen Teil, dessen Arbeit ein
+     * jüngerer mitnimmt (Nachprüfung #1052). Wartet oder läuft er, läuft seine abgekoppelte Arbeit noch nach oder ist
+     * er schon abgebrochen oder fertig, ändert sich nichts.
+     *
+     * @param reason Text des Info-Ereignisses, etwa „durch jüngeren Teil ersetzt“
+     * @return der abgeschlossene Auftrag, leer wenn sich nichts geändert hat
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     */
+    public Optional<JobStatus> retire(String jobId, String owner, String reason) {
+        Objects.requireNonNull(reason, "reason");
+        synchronized (lock) {
+            Job running = open.get(jobId);
+            JobStatus current = requireOwner(running != null ? running.snapshot()
+                    : store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId)), owner);
+            if (running != null || lingering.contains(jobId)
+                    || current.state() != JobState.PAUSED && current.state() != JobState.FAILED) {
+                return Optional.empty();
+            }
+            stopped.remove(jobId);
+            reconnects.remove(jobId);
+            reconnectAttempts.remove(jobId);
+            Instant now = clock.instant();
+            long sequence = events.events(jobId).stream().mapToLong(JobEvent::sequence).max().orElse(0) + 1;
+            appendQuietly(new JobEvent(jobId, sequence, now, current.type(), current.sourceId(),
+                    current.partitionKey(), JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, RETIRED,
+                    reason, null, null, null, null));
+            JobStatus retired = new JobStatus(current.id(), current.type(), current.sourceId(),
+                    current.partitionKey(), current.owner(), JobState.CANCELLED, current.progress(), null, false,
+                    current.createdAt(), current.startedAt(), now, current.rootPageId(), current.rootTitle(),
+                    current.parameters(), current.incomplete(), false, null, null);
+            store.save(retired);
+            return Optional.of(retired);
+        }
+    }
+
     /**
      * Fordert den Abbruch an. Ein wartender Auftrag ist danach {@link JobState#CANCELLED}, ein laufender trägt
      * {@link JobStatus#cancelRequested()} bis zu seinem nächsten {@link JobContext#checkpoint()}. Für einen beendeten
