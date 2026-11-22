@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.application.knowledge;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
+import com.aresstack.spaceharvester.application.terms.RelationScope;
 import com.aresstack.spaceharvester.application.terms.TermText;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -186,9 +188,12 @@ public final class TermKnowledge {
     }
 
     private final DomainTermGraph graph;
+    private final AiRelease ai;
 
-    public TermKnowledge(DomainTermGraph graph) {
+    /** @param ai KI-Freigabe je Quelle und Seite (ADR 0028): Begriffsnamen nur aus freigegebenen Quellen */
+    public TermKnowledge(DomainTermGraph graph, AiRelease ai) {
         this.graph = Objects.requireNonNull(graph, "graph");
+        this.ai = Objects.requireNonNull(ai, "ai");
     }
 
     /**
@@ -211,14 +216,50 @@ public final class TermKnowledge {
             return Answer.of(Outcome.EMPTY_SCOPE, List.of(), Limits.NONE);
         }
         PageSet read = capped(scope);
-        DomainTermGraph.View view = graph.group(caller, query, new DomainTermGraph.Options(2, false, read, false),
-                cancelled);
-        if (view.outcome() != DomainTermGraph.Outcome.FOUND) {
-            return Answer.of(view.outcome() == DomainTermGraph.Outcome.EMPTY_START ? Outcome.EMPTY_QUERY
-                            : Outcome.NOT_A_TERM, graph.suggestions(caller, query, MAX_CANDIDATES),
-                    new Limits(scope.size(), read.size(), 0, 0, 0, 0, false, 0));
+        // Nur Einträge, die im Bereich gelten: „ist ein Fachbegriff“, Synonyme und Vorschläge nie aus dem ganzen
+        // Glossar (Auftrag Architekt nach W7).
+        DomainTermGraph.Within within = graph.groupWithin(caller, query,
+                new DomainTermGraph.Options(2, false, read, false), cancelled);
+        DomainTermGraph.View view = within.view();
+        Limits none = new Limits(scope.size(), read.size(), 0, 0, 0, 0, false, 0);
+        if (view.outcome() == DomainTermGraph.Outcome.EMPTY_START) {
+            return Answer.of(Outcome.EMPTY_QUERY, List.of(), none);
         }
-        return deliver(build(view, scope.size(), read.size()), delivery);
+        if (view.outcome() == DomainTermGraph.Outcome.FOUND) {
+            Answer answer = build(view, scope.size(), read.size(),
+                    (key, delivered) -> mayName(within, key, delivery, delivered));
+            if (answer != null) {
+                return deliver(answer, delivery);
+            }
+        }
+        return Answer.of(Outcome.NOT_A_TERM, DomainTermGraph.suggestions(within.lexicon(), query, MAX_CANDIDATES,
+                key -> mayName(within, key, delivery, List.of())), none);
+    }
+
+    /**
+     * Ob der Name eines Eintrags den Aufrufer erreichen darf (KI-Freigabe, ADR 0028): wenn einer seiner
+     * Geltungsbereiche im Bereich global ist, nichts an ein Modell geht ({@link Delivery#NONE}), seine Quelle
+     * freigegeben ist, eine schon freigegebene Seite des Bereichs darin liegt oder die Antwort eine Seite darin
+     * liefert (und damit freigibt). Einträge, die nur in Quellen ohne Freigabe gelten, bleiben sonst draußen.
+     */
+    private boolean mayName(DomainTermGraph.Within within, String key, Delivery delivery,
+                            java.util.Collection<Page> delivered) {
+        for (RelationScope scope : within.lexicon().scopes(key)) {
+            if (scope.global() || delivery == Delivery.NONE || ai.sourceReleased(scope.sourceId())) {
+                return true;
+            }
+            for (KnowledgeGraph.PageRef ref : within.area()) {
+                if (scope.covers(ref.key().sourceId(), ref.spaceKey()) && ai.mayProcess(ref.key())) {
+                    return true;
+                }
+            }
+            for (Page page : delivered) {
+                if (scope.covers(page.key().sourceId(), page.spaceKey())) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Die ersten {@link #MAX_PAGES} Seiten in fester Ordnung (Quelle, Seite), damit die Kappung stabil ist. */
@@ -240,7 +281,12 @@ public final class TermKnowledge {
         return PageSet.of(kept);
     }
 
-    private static Answer build(DomainTermGraph.View view, int inScope, int read) {
+    /**
+     * Die Antwort; {@code mayName} entscheidet je Begriff ohne gelieferte Aussage, ob sein Name mitgeht (mit den
+     * gelieferten Seiten). {@code null}, wenn der gesuchte Begriff selbst nicht genannt werden darf.
+     */
+    private static Answer build(DomainTermGraph.View view, int inScope, int read,
+                                java.util.function.BiPredicate<String, java.util.Collection<Page>> mayName) {
         DomainTermGraph.Node centre = view.centre();
         Map<String, DomainTermGraph.Node> nodes = new LinkedHashMap<>();
         view.nodes().forEach(node -> nodes.put(node.key(), node));
@@ -312,7 +358,13 @@ public final class TermKnowledge {
                     label(nodes, edge.to()), features.negation(), features.modality(), features.temporality(),
                     trust(edge), edge.count(), named, pages.size() - named.size()));
         }
-        List<Term> terms = shown.stream().map(node -> new Term(node.label(), node.kind(), statements.get(node.key())))
+        // Ein Begriff ohne gelieferte Aussage geht nur mit, wenn sein Name den Aufrufer erreichen darf.
+        List<DomainTermGraph.Node> named = shown.stream().filter(node -> !statements.get(node.key()).isEmpty()
+                || mayName.test(node.key(), delivered.values())).toList();
+        if (!named.contains(centre)) {
+            return null;
+        }
+        List<Term> terms = named.stream().map(node -> new Term(node.label(), node.kind(), statements.get(node.key())))
                 .toList();
         List<String> neighbours = neighbourWeight.entrySet().stream()
                 .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()

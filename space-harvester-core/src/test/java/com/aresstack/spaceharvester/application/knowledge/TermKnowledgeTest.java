@@ -7,6 +7,8 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentTestPages;
+import com.aresstack.spaceharvester.application.release.AiRelease;
+import com.aresstack.spaceharvester.application.release.PageReleases;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -26,6 +28,8 @@ import org.junit.jupiter.api.Test;
 class TermKnowledgeTest {
 
     private static final AccessContext CALLER = AccessContext.technicalClient("desktop");
+    /** Alle Quellen für die KI freigegeben. */
+    private static final AiRelease ALL = AiRelease.ofSources(sourceId -> true);
 
     private final InMemoryKnowledgeGraphStore store = new InMemoryKnowledgeGraphStore();
     private final FakeStatementAnalyzer parser = new FakeStatementAnalyzer();
@@ -98,7 +102,7 @@ class TermKnowledgeTest {
             return graph.analysed(caller, pages);
         }, vocabulary(), () -> null, DomainTermGraph.Comparison.NONE);
 
-        TermKnowledge.Answer answer = new TermKnowledge(fachsicht).answer(CALLER, "Plan", pages("1"), recording,
+        TermKnowledge.Answer answer = new TermKnowledge(fachsicht, ALL).answer(CALLER, "Plan", pages("1"), recording,
                 () -> false);
 
         assertThat(asked).singleElement().isEqualTo(pages("1"));
@@ -131,7 +135,7 @@ class TermKnowledgeTest {
                     return differs;
                 });
 
-        TermKnowledge.Answer answer = new TermKnowledge(fachsicht).answer(CALLER, "Plan",
+        TermKnowledge.Answer answer = new TermKnowledge(fachsicht, ALL).answer(CALLER, "Plan",
                 pages("1", "2", "3", "4"), recording, () -> false);
 
         assertThat(answer.terms().getFirst().statements())
@@ -233,7 +237,7 @@ class TermKnowledgeTest {
                 snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)), statements,
                 KnowledgeGraph.TermExpansion.NONE, sourceId -> !withdrawing.contains(sourceId));
         analyse("1", "Der Plan prüft das Ziel.");
-        TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(guarded, vocabulary()));
+        TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(guarded, vocabulary()), ALL);
         assertThat(knowledge.answer(CALLER, "Plan", pages("1"), recording, () -> false).pages())
                 .as("Gegenprobe").hasSize(1);
         delivered.clear();
@@ -284,7 +288,7 @@ class TermKnowledgeTest {
             return page.equals("2") ? changed.withReview(ParsedStatements.Review.CONFIRMED) : changed;
         }), vocabulary());
 
-        TermKnowledge.Answer answer = new TermKnowledge(fachsicht).answer(CALLER, "Plan", pages("1", "2", "3"),
+        TermKnowledge.Answer answer = new TermKnowledge(fachsicht, ALL).answer(CALLER, "Plan", pages("1", "2", "3"),
                 recording, () -> false);
 
         assertThat(answer.terms().getFirst().statements())
@@ -369,8 +373,83 @@ class TermKnowledgeTest {
                 .containsExactly(key("1"));
     }
 
+    @Test
+    void termSynonymsAndCandidatesCountOnlyWhereTheirScopeMeetsTheAskedScope() {
+        term("Plan");
+        term("Ziel");
+        terms.add(new DomainTermGraph.Term("Aktenplan", new RelationScope("akte", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Plan", "Vorhaben", new RelationScope("akte", null)));
+        analyse("1", "Der Plan prüft das Ziel.");
+        analyse("akte", "7", "Der Text ist kurz.");
+
+        TermKnowledge.Answer inA = knowledge().answer(CALLER, "Plan", pages("1"), recording, () -> false);
+        assertThat(inA.terms()).extracting(TermKnowledge.Term::term)
+                .as("Synonym nur in Quelle „akte“, Bereich nur „wiki“: nicht geliefert").containsExactly("Plan");
+        TermKnowledge.Answer synonym = knowledge().answer(CALLER, "Vorhaben", pages("1"), recording, () -> false);
+        assertThat(synonym.outcome()).as("auch „ist ein Synonym“ gilt nur im Bereich")
+                .isEqualTo(TermKnowledge.Outcome.NOT_A_TERM);
+        assertThat(synonym.candidates()).isEmpty();
+        TermKnowledge.Answer akte = knowledge().answer(CALLER, "Akten", pages("1"), recording, () -> false);
+        assertThat(akte.candidates()).as("Kandidat aus einer Quelle außerhalb des Bereichs").isEmpty();
+
+        PageSet both = PageSet.ofKeys(List.of(key("1"), new PageKey("akte", "7")));
+        assertThat(knowledge().answer(CALLER, "Plan", both, recording, () -> false).terms())
+                .extracting(TermKnowledge.Term::term).containsExactly("Plan", "Vorhaben");
+        assertThat(knowledge().answer(CALLER, "Akten", both, recording, () -> false).candidates())
+                .containsExactly("Aktenplan");
+        assertThat(delivered).containsOnly(key("1"));
+    }
+
+    @Test
+    void namesThatOnlyHoldInSourcesWithoutAiReleaseStayOutUntilAPageOfThemIsDelivered() {
+        term("Plan");
+        term("Ziel");
+        term("Start");
+        terms.add(new DomainTermGraph.Term("Aktenplan", new RelationScope("akte", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Plan", "Vorhaben", new RelationScope("akte", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Plan", "Entwurf", new RelationScope("ablage", "DEV")));
+        analyse("1", "Der Plan prüft das Ziel.");
+        analyse("akte", "7", "Das Vorhaben sendet den Start.");
+        analyse("ablage", "8", "Der Text ist kurz.");
+        PageSet both = PageSet.ofKeys(List.of(key("1"), new PageKey("akte", "7"), new PageKey("ablage", "8")));
+        AiRelease wikiOnly = AiRelease.ofSources("wiki"::equals);
+
+        TermKnowledge.Answer chat = knowledge(wikiOnly).answer(CALLER, "Plan", both, recording, () -> false);
+        assertThat(chat.terms()).extracting(TermKnowledge.Term::term)
+                .as("„Vorhaben“ trägt eine Aussage, deren Seite geliefert und damit freigegeben wird; „Entwurf“ nicht")
+                .containsExactly("Plan", "Vorhaben");
+        assertThat(knowledge(wikiOnly).answer(CALLER, "Akten", both, recording, () -> false).candidates())
+                .as("Kandidat nur aus einer Quelle ohne KI-Freigabe").isEmpty();
+        assertThat(knowledge(wikiOnly).answer(CALLER, "Akten", both, TermKnowledge.Delivery.NONE, () -> false)
+                .candidates()).as("die Suche gibt nichts an ein Modell").containsExactly("Aktenplan");
+
+        PageReleases released = PageReleases.inMemory();
+        released.add(List.of(new PageReleases.Entry(new PageKey("akte", "7"), "DEV", "7", "chat",
+                java.time.Instant.EPOCH)));
+        assertThat(new TermKnowledge(new DomainTermGraph(graph, vocabulary()), new AiRelease("wiki"::equals,
+                released)).answer(CALLER, "Akten", both, recording, () -> false).candidates())
+                .as("eine schon freigegebene Seite der Quelle im Bereich").containsExactly("Aktenplan");
+    }
+
+    @Test
+    void aGlobalTermIsDeliveredEvenWithoutAnyAiRelease() {
+        term("Plan");
+        analyse("1", "Der Text ist kurz.");
+
+        TermKnowledge.Answer answer = knowledge(AiRelease.ofSources(sourceId -> false)).answer(CALLER, "Plan",
+                pages("1"), recording, () -> false);
+
+        assertThat(answer.outcome()).isEqualTo(TermKnowledge.Outcome.FOUND);
+        assertThat(answer.terms()).extracting(TermKnowledge.Term::term).containsExactly("Plan");
+        assertThat(delivered).isEmpty();
+    }
+
     private TermKnowledge knowledge() {
-        return new TermKnowledge(new DomainTermGraph(graph, vocabulary()));
+        return knowledge(ALL);
+    }
+
+    private TermKnowledge knowledge(AiRelease ai) {
+        return new TermKnowledge(new DomainTermGraph(graph, vocabulary()), ai);
     }
 
     /** Die gespeicherten Analysen mit umgeschriebenen Aussagen je Seite. */
@@ -422,7 +501,11 @@ class TermKnowledgeTest {
     }
 
     private void analyse(String pageId, String text) {
-        PageSnapshot snapshot = EnrichmentTestPages.text("wiki", pageId, "1", text);
+        analyse("wiki", pageId, text);
+    }
+
+    private void analyse(String sourceId, String pageId, String text) {
+        PageSnapshot snapshot = EnrichmentTestPages.text(sourceId, pageId, "1", text);
         cache.put(snapshot.key(), snapshot);
         statements.analyze(CALLER, snapshot, () -> false);
     }

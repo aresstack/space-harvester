@@ -408,8 +408,20 @@ public final class DomainTermGraph {
         if (wanted.isEmpty() || limit < 1) {
             return List.of();
         }
-        Lexicon lexicon = lexicon(caller);
-        return lexicon.labels.keySet().stream().filter(key -> key.contains(wanted))
+        return suggestions(lexicon(caller), wanted, limit, key -> true);
+    }
+
+    /**
+     * Vorschläge aus {@code lexicon} (wie {@link #suggestions(AccessContext, String, int)}), nur Einträge, die
+     * {@code allowed} (Schlüssel) zulässt; gekappt wird erst danach.
+     */
+    static List<String> suggestions(Lexicon lexicon, String query, int limit,
+                                    java.util.function.Predicate<String> allowed) {
+        String wanted = query == null ? "" : TermText.normalize(query).strip();
+        if (wanted.isEmpty() || limit < 1) {
+            return List.of();
+        }
+        return lexicon.labels.keySet().stream().filter(key -> key.contains(wanted)).filter(allowed)
                 .sorted(java.util.Comparator.<String>comparingInt(key -> key.startsWith(wanted) ? 0 : 1)
                         .thenComparing(key -> lexicon.kinds.get(key))
                         .thenComparing(lexicon.labels::get, String.CASE_INSENSITIVE_ORDER))
@@ -463,6 +475,48 @@ public final class DomainTermGraph {
     }
 
     /**
+     * Ergebnis von {@link #groupWithin}: die Begriffsgruppe, die gelesenen Seiten des Bereichs und das Lexikon, das nur
+     * Einträge kennt, deren Geltungsbereich den Bereich schneidet.
+     */
+    record Within(View view, List<KnowledgeGraph.PageRef> area, Lexicon lexicon) {
+    }
+
+    /**
+     * Die Begriffsgruppe wie {@link #group}, aber nur mit Einträgen, die im Bereich {@code options.pages()} gelten
+     * (für {@link TermKnowledge}): Ein Fachbegriff oder Synonym zählt nur, wenn einer seiner Geltungsbereiche global
+     * ist oder eine lesbare Seite des Bereichs abdeckt (Quelle, Space). So entscheiden auch „ist ein Fachbegriff“,
+     * Synonyme und Vorschläge nur nach dem Bereich, nie nach dem ganzen Glossar. Die Seiten werden einmal gelesen.
+     *
+     * @throws IllegalArgumentException ohne Seitenauswahl
+     */
+    Within groupWithin(AccessContext caller, String start, Options options, BooleanSupplier cancelled) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(cancelled, "cancelled");
+        if (options.pages() == null) {
+            throw new IllegalArgumentException("Das Begriffswissen braucht einen Bereich");
+        }
+        List<KnowledgeGraph.AnalysedPage> source = (analysedOn != null ? analysedOn.apply(caller, options.pages())
+                : analysed.apply(caller)).stream().filter(page -> options.pages().contains(page.page().key()))
+                .toList();
+        List<KnowledgeGraph.PageRef> area = source.stream().map(KnowledgeGraph.AnalysedPage::page).toList();
+        java.util.function.Predicate<RelationScope> within = scope -> scope.global() || area.stream()
+                .anyMatch(ref -> scope.covers(ref.key().sourceId(), ref.spaceKey()));
+        Lexicon lexicon = new Lexicon(vocabulary.terms(caller), vocabulary.synonyms(caller),
+                vocabulary.technical(caller), within);
+        String centre = start == null ? "" : TermText.normalize(start).strip();
+        if (centre.isEmpty()) {
+            return new Within(View.of(Outcome.EMPTY_START), area, lexicon);
+        }
+        if (!lexicon.labels.containsKey(centre)) {
+            return new Within(View.of(Outcome.NOT_A_TERM), area, lexicon);
+        }
+        View view = collect(caller, lexicon, options, cancelled, source)
+                .finish(edges -> groupLayout(centre, lexicon, edges), selected);
+        return new Within(view, area, lexicon);
+    }
+
+    /**
      * Die seitenweite Fachsicht ohne Startbegriff (Paket W4b): alle bestätigten Fachbegriffe und Synonyme der Seiten
      * {@code options.pages()}, die dort mit einem anderen Knoten durch ein Verb verbunden sind, höchstens
      * {@link #MAX_NODES}. Gezählt wird genau wie in {@link #around} (derselbe Aufbau): Standardansicht,
@@ -508,6 +562,14 @@ public final class DomainTermGraph {
      * @param cancelled bricht zwischen zwei Seiten ab ({@link java.util.concurrent.CancellationException})
      */
     private Collected collect(AccessContext caller, Lexicon lexicon, Options options, BooleanSupplier cancelled) {
+        // Mit Auswahl nur deren Seiten lesen, nicht die ganze Ablage; der Filter unten bleibt als Absicherung.
+        return collect(caller, lexicon, options, cancelled, options.pages() != null && analysedOn != null
+                ? analysedOn.apply(caller, options.pages()) : analysed.apply(caller));
+    }
+
+    /** Wie oben, über schon gelesene Analysen {@code source}. */
+    private Collected collect(AccessContext caller, Lexicon lexicon, Options options, BooleanSupplier cancelled,
+                              List<KnowledgeGraph.AnalysedPage> source) {
         Map<String, EdgeBuilder> edges = new LinkedHashMap<>();
         // Dieselbe Sicht, als wären die veralteten Aussagen aktuell, in derselben Reihenfolge wie mit „veraltete
         // zeigen“ (Synonyme zuerst, dann Seite für Seite): nur was dort läge, zählt als ausgelassen.
@@ -520,9 +582,6 @@ public final class DomainTermGraph {
         // Je ausgelassener veralteter Aussage die Paare, die sie verbände; gezählt wird erst nach dem Aufbau der Sicht.
         List<Set<String>> stale = new ArrayList<>();
         Set<String> analyzers = new LinkedHashSet<>();
-        // Mit Auswahl nur deren Seiten lesen, nicht die ganze Ablage; der Filter unten bleibt als Absicherung.
-        List<KnowledgeGraph.AnalysedPage> source = options.pages() != null && analysedOn != null
-                ? analysedOn.apply(caller, options.pages()) : analysed.apply(caller);
         for (KnowledgeGraph.AnalysedPage page : source) {
             if (cancelled.getAsBoolean()) {
                 throw new java.util.concurrent.CancellationException("Fachsicht abgebrochen");
@@ -887,11 +946,17 @@ public final class DomainTermGraph {
         private final List<String[]> synonymEdges = new ArrayList<>();
 
         private Lexicon(List<Term> terms, List<Synonym> synonyms, List<Term> technical) {
+            this(terms, synonyms, technical, scope -> true);
+        }
+
+        /** Nur Geltungsbereiche, die {@code within} zulässt (Bereich des Begriffswissens). */
+        private Lexicon(List<Term> terms, List<Synonym> synonyms, List<Term> technical,
+                        java.util.function.Predicate<RelationScope> within) {
             Set<String> technisch = new java.util.HashSet<>();
             technical.forEach(term -> technisch.add(TermText.normalize(term.term()).strip()));
             for (Term term : terms) {
                 String key = TermText.normalize(term.term()).strip();
-                if (key.isEmpty()) {
+                if (key.isEmpty() || !within.test(term.scope())) {
                     continue;
                 }
                 labels.putIfAbsent(key, term.term().strip());
@@ -928,6 +993,7 @@ public final class DomainTermGraph {
                     }
                     shared = both;
                 }
+                shared.removeIf(scope -> !within.test(scope));
                 if (shared.isEmpty()) {
                     continue;
                 }
@@ -938,6 +1004,11 @@ public final class DomainTermGraph {
                 }
                 synonymEdges.add(new String[] {term, other});
             }
+        }
+
+        /** Die Geltungsbereiche eines Knotens (leer, wenn er nicht im Lexikon steht). */
+        List<RelationScope> scopes(String key) {
+            return List.copyOf(scopes.getOrDefault(key, List.of()));
         }
 
         /** Wo beide Geltungsbereiche gelten, oder leer, wenn sie sich nicht überschneiden. */

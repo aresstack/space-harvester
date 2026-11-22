@@ -2377,7 +2377,7 @@ public final class Harvester implements AutoCloseable {
      * die Meldung des Aufrufers. Liest nur.
      */
     public com.aresstack.spaceharvester.application.knowledge.TermKnowledge termKnowledge() {
-        return new com.aresstack.spaceharvester.application.knowledge.TermKnowledge(domainTermGraph());
+        return new com.aresstack.spaceharvester.application.knowledge.TermKnowledge(domainTermGraph(), aiRelease);
     }
 
     /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */
