@@ -253,6 +253,31 @@ public final class UpdatePodcasts {
         return pictures;
     }
 
+    /**
+     * Erstellt den Podcast neu (Angelo 22.11.2026, „Podcast neu erstellen“): Plan, Texte, Audio und Bilder fallen weg,
+     * dann beginnt ein neuer Auftrag. Während ein Auftrag dieses Podcasts läuft, geht das nicht: er würde mitten im
+     * Ablegen seine Grundlage verlieren.
+     *
+     * @throws IllegalStateException ohne Chat-Modell oder Sprachausgabe oder während der Podcast entsteht
+     */
+    public JobStatus renew(AccessContext caller, UpdateSummary summary) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(summary, "summary");
+        if (!available()) {
+            throw new IllegalStateException("Kein Chat-Modell oder keine Sprachausgabe eingerichtet");
+        }
+        String key = key(summary);
+        synchronized (starting) {
+            if (open(key) != null) {
+                throw new IllegalStateException("Der Podcast entsteht gerade; neu erstellen geht, sobald er fertig "
+                        + "ist oder abgebrochen wurde");
+            }
+            store.delete(meta -> meta.key().equals(key));
+        }
+        production.notify(key);
+        return start(caller, summary);
+    }
+
     /** Meldet jede abgelegte Stufe dieses Podcasts. */
     public Subscription subscribe(String key, Runnable listener) {
         return production.subscribe(key, listener);

@@ -472,7 +472,7 @@ final class PodcastProduction {
         }
     }
 
-    private void notify(String key) {
+    void notify(String key) {
         listeners.deliver(key, Runnable::run);
     }
 

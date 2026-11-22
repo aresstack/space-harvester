@@ -268,6 +268,75 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void aResummarizedUpdateLeavesTheOldPodcastAndItsPicturesBehind() throws Exception {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        AtomicInteger drawn = new AtomicInteger();
+        podcasts.pictures(DiagramComposerTest.model(DiagramComposerTest.PLAN, DiagramComposerTest.ICON, drawn),
+                PodcastPictures.PageImageSource.NONE);
+        UpdateSummary old = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        podcasts.start(caller, old);
+        assertThat(podcasts.topicPictures(old)).isNotEmpty();
+        // „Neu zusammenfassen“ legt eine neue Zusammenfassung mit neuem Zeitpunkt ab, auch bei gleichem Text
+        UpdateSummary renewed = new UpdateSummary(old.sourceId(), old.updateId(), old.spaceKey(), old.text(),
+                old.statements(), old.model(), old.createdAt().plusSeconds(60), 0, false);
+
+        assertThat(UpdatePodcasts.key(renewed)).isNotEqualTo(UpdatePodcasts.key(old));
+        assertThat(podcasts.podcast(renewed)).as("der neue Podcast entsteht erst beim Abspielen").isEmpty();
+        assertThat(podcasts.topicPictures(renewed)).as("keine Bilder der alten Zusammenfassung").isEmpty();
+        int before = drawn.get();
+        podcasts.start(caller, renewed);
+        assertThat(drawn.get()).as("die Bilder entstehen neu").isGreaterThan(before);
+        assertThat(podcasts.podcast(old)).as("der alte Podcast samt Bildern ist weg").isEmpty();
+        assertThat(podcasts.topicPictures(old)).isEmpty();
+    }
+
+    @Test
+    void renewingAPodcastDrawsPlanTextAudioAndPicturesAgain() throws Exception {
+        FakeModel model = new FakeModel();
+        UpdatePodcasts podcasts = podcasts(model, new FakeSpeech(voice -> false));
+        AtomicInteger drawn = new AtomicInteger();
+        podcasts.pictures(DiagramComposerTest.model(DiagramComposerTest.PLAN, DiagramComposerTest.ICON, drawn),
+                PodcastPictures.PageImageSource.NONE);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        podcasts.start(caller, summary);
+        int pictures = drawn.get();
+        int calls = model.inputs.size();
+        java.nio.file.Path firstAudio = podcasts.podcast(summary).orElseThrow().parts().getFirst().audio();
+        long firstWritten = Files.getLastModifiedTime(firstAudio).toMillis();
+
+        JobStatus renewed = podcasts.renew(caller, summary);
+
+        assertThat(jobs.status(renewed.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(drawn.get()).as("die Bilder entstehen neu").isEqualTo(2 * pictures);
+        assertThat(model.inputs.size()).as("Plan und Texte entstehen neu").isGreaterThanOrEqualTo(2 * calls);
+        Podcast again = podcasts.podcast(summary).orElseThrow();
+        assertThat(again.complete()).isTrue();
+        assertThat(Files.getLastModifiedTime(again.parts().getFirst().audio()).toMillis())
+                .isGreaterThanOrEqualTo(firstWritten);
+    }
+
+    @Test
+    void aPodcastStillBeingMadeIsNotRenewed() {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        java.util.concurrent.atomic.AtomicReference<Throwable> refused = new java.util.concurrent.atomic
+                .AtomicReference<>();
+        // Die Aufträge laufen hier sofort: Der laufende Auftrag selbst versucht das Neuerstellen.
+        jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.UPDATE_PODCAST, summary.sourceId(),
+                summary.spaceKey(), null, caller.jobOwner(), java.util.Map.of(UpdatePodcasts.PODCAST_PARAMETER,
+                        UpdatePodcasts.key(summary)), com.aresstack.spaceharvester.application.jobs.JobTask.blocking(
+                        context -> {
+                            try {
+                                podcasts.renew(caller, summary);
+                            } catch (IllegalStateException e) {
+                                refused.set(e);
+                            }
+                        }));
+
+        assertThat(refused.get()).isInstanceOf(IllegalStateException.class).hasMessageContaining("entsteht gerade");
+    }
+
+    @Test
     void prunesPodcastsWhoseSummaryIsGone() throws Exception {
         UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
         UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");

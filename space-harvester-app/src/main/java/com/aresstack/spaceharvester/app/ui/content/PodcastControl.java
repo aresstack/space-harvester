@@ -68,6 +68,20 @@ final class PodcastControl<S> {
 
         JobStatus start(S subject);
 
+        /**
+         * Erstellt den Podcast neu: alles Abgelegte fällt weg, ein neuer Auftrag beginnt (Angelo 22.11.2026).
+         *
+         * @throws IllegalStateException während der Podcast entsteht
+         */
+        default JobStatus renew(S subject) {
+            throw new UnsupportedOperationException("Dieser Podcast kann nicht neu erstellt werden");
+        }
+
+        /** Ob {@link #renew} geht. */
+        default boolean renewable() {
+            return false;
+        }
+
         Subscription subscribe(String key, Runnable listener);
 
         Subscription subscribeJobs(JobListener listener);
@@ -600,6 +614,42 @@ final class PodcastControl<S> {
         }, failure -> {
             if (mine == generation) {
                 failed("Podcast nicht gestartet: " + Problems.describe(failure).title());
+            }
+        });
+    }
+
+    /** Ob „Podcast neu erstellen“ für das Gezeigte geht: Laufzeit, Chat-Modell und Sprachausgabe, kein laufender Auftrag. */
+    boolean renewable() {
+        Podcast podcast = last;
+        return summary != null && source.renewable() && available(source) && (podcast == null || !podcast.running());
+    }
+
+    /**
+     * „Podcast neu erstellen“ (Angelo 22.11.2026): hält die Wiedergabe an, lässt Plan, Texte, Audio und Bilder neu
+     * entstehen und spielt ab, sobald der erste Abschnitt hörbar ist.
+     */
+    void renew() {
+        if (summary == null) {
+            return;
+        }
+        stop();
+        last = null;
+        runningPicture = null;
+        loaded.clear();
+        resumeAt = 0;
+        retrying = false;
+        orb.setState(PodcastOrb.State.WAITING);
+        orb.setToolTipText("Podcast wird neu erstellt");
+        Source<S> current = source;
+        S shown = summary;
+        int mine = generation;
+        runner.run(() -> current.renew(shown), started -> {
+            if (mine == generation) {
+                play(0);
+            }
+        }, failure -> {
+            if (mine == generation) {
+                failed("Podcast nicht neu erstellt: " + Problems.describe(failure).title());
             }
         });
     }

@@ -95,6 +95,28 @@ class PodcastControlTest {
     }
 
     @Test
+    void renewingStartsAFreshPodcastAndPlaysItButNotWhileOneIsBeingMade() throws Exception {
+        onEdt(() -> {
+            control = control();
+            control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+            assertTrue(control.renewable());
+
+            control.renew();
+
+            assertEquals(1, source.renews);
+            assertEquals(PodcastOrb.State.WAITING, control.orb().state());
+            assertTrue(control.timelineShown(), "spielt ab, sobald der erste Abschnitt hörbar ist");
+            assertFalse(control.renewable(), "während der Podcast entsteht, geht neu erstellen nicht");
+
+            source.failRenew = true;
+            control.summary(summary("Das Projekt Nordlicht hat ein Glossar."));
+            control.renew();
+            assertEquals(PodcastOrb.State.FAILED, control.orb().state());
+            assertTrue(control.orb().getToolTipText().startsWith("Podcast nicht neu erstellt"));
+        });
+    }
+
+    @Test
     void anotherSummaryStopsPlaybackAndHidesTheTimeline() throws Exception {
         onEdt(() -> {
             control = control();
@@ -231,7 +253,9 @@ class PodcastControlTest {
 
         boolean available = true;
         boolean failStart;
+        boolean failRenew;
         int starts;
+        int renews;
         List<Podcast.Part> parts = List.of();
 
         @Override
@@ -257,6 +281,21 @@ class PodcastControlTest {
                 throw new IllegalStateException("Dienst nicht erreichbar");
             }
             return null;
+        }
+
+        @Override
+        public JobStatus renew(UpdateSummary summary) {
+            renews++;
+            if (failRenew) {
+                throw new IllegalStateException("Der Podcast entsteht gerade");
+            }
+            starts++;
+            return null;
+        }
+
+        @Override
+        public boolean renewable() {
+            return true;
         }
 
         @Override
