@@ -2519,6 +2519,24 @@ public final class Workspace {
     }
 
     /**
+     * Wiederholt einzelne Unteraufträge einer Hintergrundgruppe (W5: der Kreispfeil hinter einer gescheiterten Stufe
+     * von „Wissensgraph erzeugen“): nur die aus {@code jobIds}, die zu dieser Gruppe gehören, gescheitert oder
+     * abgebrochen sind und sich fortsetzen lassen, über denselben Weg wie ▶ in der Auftragsverwaltung
+     * ({@link #performJobAction}, mit den Rechten des Aufrufers; ein fremder Teil hält dort wieder gelb an). Andere
+     * Teile der Gruppe bleiben, wie sie sind. Nie auf dem EDT.
+     */
+    public AllJobs.Outcome retryBackgroundParts(String groupId, java.util.Collection<String> jobIds) {
+        java.util.Set<String> wanted = java.util.Set.copyOf(jobIds);
+        List<JobStatus> parts = harvester.backgroundJobs().group(groupId)
+                .map(com.aresstack.spaceharvester.application.background.BackgroundGroup::parts).orElse(List.of());
+        return AllJobs.apply(parts.stream().filter(job -> wanted.contains(job.id()))
+                .filter(job -> job.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED
+                        || job.state() == com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED)
+                .filter(job -> job.lifecycle().allows(JobAction.RESUME)).toList(),
+                job -> performJobAction(job.id(), JobAction.RESUME));
+    }
+
+    /**
      * „Alle fortsetzen“: setzt alle angehaltenen Aufträge im selben Eintrag fort ({@link AllJobs#toResume}), älteste
      * zuerst; fertige, gescheiterte und abgebrochene bleiben, wie sie sind.
      */

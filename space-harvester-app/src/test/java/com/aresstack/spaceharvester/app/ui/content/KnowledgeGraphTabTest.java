@@ -45,6 +45,8 @@ class KnowledgeGraphTabTest {
     private static final KnowledgeGraph.PageRef SUB_REF = new KnowledgeGraph.PageRef(new PageKey("wiki", "2"), "DEV",
             "Anhang Alpha", PageStatements.State.CURRENT, null);
     private static final String SUB_DOC = "wiki/2@fedcba987654";
+    /** Ein Knoten, den erst „Wissensgraph erzeugen“ bringt (erfunden). */
+    private static final String NACHTLAUF = DOC + "#s2.t4";
 
     private final FakeActions actions = new FakeActions();
     private final DeferredRunner runner = new DeferredRunner();
@@ -979,11 +981,12 @@ class KnowledgeGraphTabTest {
         runner.runAll();
 
         assertThat(asked).hasSize(1);
-        assertThat(GraphGeneration.lines(asked.get(0))).containsExactly(
-                new GraphGeneration.Line("Bilder beschreiben", "abgeschaltet (wird ausgelassen)", true),
-                new GraphGeneration.Line("Aussagenanalyse · 12 Seiten", "4 erst laden", false),
-                new GraphGeneration.Line("Glossar · 3 Seiten", "läuft schon", false),
-                new GraphGeneration.Line("Wissensgraph · 16 Seiten", "", false));
+        assertThat(GraphGeneration.lines(asked.get(0))).as("Stufe, Zahl, Zusatz je in eigener Spalte").containsExactly(
+                new GraphGeneration.Line("Bilder beschreiben", "", "abgeschaltet (wird ausgelassen)", true),
+                new GraphGeneration.Line("Aussagenanalyse", "12 Seiten", "4 erst laden", false),
+                new GraphGeneration.Line("Glossar", "3 Seiten", "läuft schon", false),
+                new GraphGeneration.Line("Wissensgraph", "16 Seiten", "", false));
+        assertThat(GraphGeneration.text(asked.get(0))).contains("\nAussagenanalyse · 12 Seiten · 4 erst laden\n");
         assertThat(GraphGeneration.text(asked.get(0))).startsWith("Wissensgraph wirklich erzeugen?")
                 .doesNotContain("Indexieren").doesNotContain("KI-Dienst");
         assertThat(GraphGeneration.body(asked.get(0)).getAccessibleContext().getAccessibleName())
@@ -1179,9 +1182,12 @@ class KnowledgeGraphTabTest {
         assertThat(tab.generateNoteForTests().text()).startsWith("Wissensgraph erzeugt");
     }
 
-    /** Hinweise des Planers, eine gescheiterte Stufe und fehlende Abdeckung stehen gelb in der Statuszeile. */
+    /**
+     * Hinweise des Planers und fehlende Abdeckung stehen gelb in der Statuszeile, eine gescheiterte Vorstufe rot mit
+     * dem Kreispfeil zum Wiederholen; der Verweis auf die Einzelheiten bleibt grau.
+     */
     @Test
-    void planNotesAFailedStageAndMissingCoverageAreYellow() {
+    void planNotesAndMissingCoverageAreYellowAndAFailedStageIsRed() {
         tab.confirmGenerateWith(preview -> true);
         showPage();
         actions.preview = missing();
@@ -1201,10 +1207,364 @@ class KnowledgeGraphTabTest {
         runner.runAll();
 
         StatusNote end = tab.generateNoteForTests();
-        assertThat(end.tone()).isEqualTo(StatusNote.Tone.WARNING);
-        assertThat(end.text()).startsWith("Wissensgraph mit Fehler beendet").contains(skipped)
-                .contains("„Aussagenanalyse“ gescheitert (DEV)")
-                .contains("DEV: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden");
+        String failed = "Vorstufe „Aussagenanalyse“ gescheitert (DEV)";
+        String coverage = "DEV: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden";
+        assertThat(end.tone()).as("die Zeile hat einen Fehler").isEqualTo(StatusNote.Tone.ERROR);
+        assertThat(end.text()).startsWith("Wissensgraph mit Fehler beendet").contains(skipped).contains(failed)
+                .contains(coverage).endsWith("Einzelheiten unter Hintergrund");
+        assertThat(end.toneOf("Wissensgraph mit Fehler beendet")).isEqualTo(StatusNote.Tone.ERROR);
+        assertThat(end.toneOf(failed)).isEqualTo(StatusNote.Tone.ERROR);
+        assertThat(end.toneOf(skipped)).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(end.toneOf(coverage)).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(end.toneOf("Einzelheiten unter Hintergrund")).isEqualTo(StatusNote.Tone.PLAIN);
+        assertThat(end.icon()).isNotNull();
+        assertThat(end.icon().glyph()).isEqualTo(com.aresstack.spaceharvester.app.ui.Glyph.REFRESH);
+        assertThat(end.icon().after()).as("der Kreispfeil steht direkt hinter der gescheiterten Stufe").isEqualTo(failed);
+        assertThat(end.icon().tooltip()).isEqualTo("„Aussagenanalyse“ wiederholen");
+        assertThat(end.link()).isEqualTo(KnowledgeGraphTab.JOBS_LINK);
+    }
+
+    /**
+     * Der Kreispfeil wiederholt nur die gescheiterten und abgebrochenen Teile der gescheiterten Stufe (über den Weg von
+     * ▶), keine anderen Stufen; der Reiter verfolgt die Gruppe wieder, zeigt Fortschritt mit ✕ und lädt am Ende neu.
+     */
+    @Test
+    void theRetryArrowRetriesOnlyTheFailedStageAndFollowsTheGroupAgain() {
+        int[] generated = {0};
+        tab.onGenerated(() -> generated[0]++);
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-3", JobState.QUEUED, "Aussagenanalyse"), part("p-4", JobState.QUEUED, "Bilder beschreiben"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+        actions.watcher.accept(group(part("p-1", JobState.FAILED, "Aussagenanalyse"),
+                part("p-3", JobState.CANCELLED, "Aussagenanalyse"), part("p-4", JobState.FAILED, "Bilder beschreiben"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        assertThat(actions.watchesClosed).isEqualTo(1);
+        assertThat(generated[0]).isEqualTo(1);
+        assertThat(tab.generateOffered()).isTrue();
+        StatusNote end = tab.generateNoteForTests();
+        assertThat(end.text()).contains("Vorstufe „Aussagenanalyse“ gescheitert (DEV)")
+                .contains("Vorstufe „Bilder beschreiben“ gescheitert (DEV)");
+        assertThat(end.icon().after()).isEqualTo("Vorstufe „Aussagenanalyse“ gescheitert (DEV)");
+        actions.calls.clear();
+
+        end.icon().action().run();
+        assertThat(tab.generateOffered()).as("gesperrt, solange wiederholt wird").isFalse();
+        runner.runAll();
+
+        assertThat(actions.retried).as("nur die gescheiterten und abgebrochenen Teile dieser Stufe")
+                .containsExactly("g-1 [p-1, p-3]");
+        assertThat(actions.watched).as("die Gruppe wird wieder verfolgt").containsExactly("g-1", "g-1");
+        actions.watcher.accept(group(part("p-1", JobState.RUNNING, "Aussagenanalyse"),
+                part("p-3", JobState.QUEUED, "Aussagenanalyse"), part("p-4", JobState.FAILED, "Bilder beschreiben"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        assertThat(tab.generateNoteForTests().text())
+                .startsWith("Wissensgraph wird erzeugt · Aussagenanalyse: 2 von 4 Teilen fertig ✕");
+        assertThat(tab.generateNoteForTests().link()).isEqualTo(KnowledgeGraphTab.CANCEL_LINK);
+        assertThat(tab.generateOffered()).isFalse();
+
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-3", JobState.COMPLETED, "Aussagenanalyse"), part("p-4", JobState.FAILED, "Bilder beschreiben"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        assertThat(actions.watchesClosed).isEqualTo(2);
+        assertThat(actions.calls).as("am Ende wieder neu geladen").containsExactly("page wiki/1");
+        assertThat(generated[0]).isEqualTo(2);
+        StatusNote again = tab.generateNoteForTests();
+        assertThat(again.text()).doesNotContain("„Aussagenanalyse“ gescheitert")
+                .contains("Vorstufe „Bilder beschreiben“ gescheitert (DEV)");
+        assertThat(again.icon().tooltip()).as("jetzt wiederholt der Pfeil die übrige Stufe")
+                .isEqualTo("„Bilder beschreiben“ wiederholen");
+
+        again.icon().action().run();
+        runner.runAll();
+        assertThat(actions.retried).containsExactly("g-1 [p-1, p-3]", "g-1 [p-4]");
+    }
+
+    /**
+     * „ohne Zugriff“ ist rot, Ausgelassenes gelb, auch im Fortschritt; der Fortschritt selbst bleibt grau mit ✕. Am
+     * Ende ohne Fehler bleibt „Wissensgraph erzeugt“ grau.
+     */
+    @Test
+    void withoutAccessIsRedAndLeftOutIsYellowWhileTheProgressStaysPlain() {
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        String hidden = "2 Seiten ohne Zugriff ausgelassen";
+        String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(skipped, hidden), 2);
+        tab.clickGenerate();
+        runner.runAll();
+
+        StatusNote progress = tab.generateNoteForTests();
+        String head = "Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig ✕";
+        assertThat(progress.text()).isEqualTo(head + " · " + skipped + " · " + hidden);
+        assertThat(progress.tone()).isEqualTo(StatusNote.Tone.ERROR);
+        assertThat(progress.toneOf(head)).isEqualTo(StatusNote.Tone.PLAIN);
+        assertThat(progress.toneOf(skipped)).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(progress.toneOf(hidden)).isEqualTo(StatusNote.Tone.ERROR);
+        assertThat(progress.link()).isEqualTo(KnowledgeGraphTab.CANCEL_LINK);
+        assertThat(progress.icon()).as("kein Kreispfeil ohne gescheiterte Stufe").isNull();
+
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        StatusNote end = tab.generateNoteForTests();
+        assertThat(end.text()).startsWith("Wissensgraph erzeugt · " + skipped + " · " + hidden);
+        assertThat(end.toneOf("Wissensgraph erzeugt")).isEqualTo(StatusNote.Tone.PLAIN);
+        assertThat(end.toneOf(hidden)).isEqualTo(StatusNote.Tone.ERROR);
+        assertThat(end.toneOf(skipped)).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(end.icon()).isNull();
+    }
+
+    /** „Wissensgraph ist vollständig“ steht nur kurz: der einmalige Timer räumt es weg, aber keine neuere Meldung. */
+    @Test
+    void theCompleteMessageIsShownBrieflyAndClearedOnce() {
+        List<Runnable> timers = new ArrayList<>();
+        tab.clearSoon(timers::add);
+        List<StatusNote> notes = new ArrayList<>();
+        tab.onNote(notes::add);
+        showPage();
+        actions.preview = preview(AnalyzerChoice.PARSER, 0, List.of(),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.NOTHING_MISSING, 0, 0, 0, 0), goal(2));
+
+        tab.clickGenerate();
+        runner.runAll();
+        assertThat(tab.generateNoteForTests().text()).isEqualTo(KnowledgeGraphTab.COMPLETE);
+        assertThat(notes.get(notes.size() - 1).text()).startsWith(KnowledgeGraphTab.COMPLETE + " · 3 Knoten");
+        assertThat(timers).as("ein einmaliger Timer, kein Abfragen").hasSize(1);
+
+        timers.get(0).run();
+        assertThat(tab.generateNoteForTests()).isNull();
+        assertThat(notes.get(notes.size() - 1).text()).startsWith("3 Knoten");
+
+        // Ein später Timer räumt keine neuere Meldung weg.
+        tab.clickGenerate();
+        runner.runAll();
+        assertThat(timers).hasSize(2);
+        actions.preview = preview(AnalyzerChoice.MODEL, 3, List.of(),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.NOTHING_MISSING, 0, 0, 0, 0), goal(3));
+        tab.clickGenerate();
+        runner.runAll();
+        assertThat(timers).as("gelb „nichts zu rechnen“ bleibt stehen").hasSize(2);
+        timers.get(1).run();
+        assertThat(tab.generateNoteForTests().text()).startsWith(KnowledgeGraphTab.NOTHING_TO_DO);
+
+        // Mit der nächsten Seite ist auch „vollständig“ weg.
+        actions.preview = preview(AnalyzerChoice.PARSER, 0, List.of(),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.NOTHING_MISSING, 0, 0, 0, 0), goal(2));
+        tab.clickGenerate();
+        runner.runAll();
+        tab.page(new PageKey("wiki", "2"));
+        assertThat(tab.generateNoteForTests()).isNull();
+    }
+
+    /**
+     * Am Ende lädt der Graph neu, ohne zu verspringen: Zoom und Ausschnitt bleiben, vorhandene Knoten behalten ihren
+     * Platz, neue kommen dazu, die Auswahl bleibt; „Zurück“ bekommt keinen Eintrag. Ist der gewählte Knoten weg, ist
+     * auch die Auswahl weg.
+     */
+    @Test
+    void theReloadAtTheEndKeepsViewportPositionsAndSelection() {
+        tab.setSize(900, 600);
+        layoutTree(tab);
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        tab.zoomAt(1.3, 120, 80);
+        tab.selectNode(BELEG);
+        double[] viewport = tab.viewport();
+        java.awt.geom.Point2D doc = tab.positionOf(DOC);
+        java.awt.geom.Point2D beleg = tab.positionOf(BELEG);
+        boolean back = tab.backOffered();
+
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+        actions.calls.clear();
+        actions.grown = true;
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+
+        assertThat(actions.calls).containsExactly("page wiki/1");
+        assertThat(tab.nodeIds()).as("der neue Knoten ist da").contains(NACHTLAUF);
+        assertThat(tab.viewport()).as("Zoom und Ausschnitt bleiben").containsExactly(viewport);
+        assertThat(tab.positionOf(DOC)).isEqualTo(doc);
+        assertThat(tab.positionOf(BELEG)).isEqualTo(beleg);
+        assertThat(tab.positionOf(NACHTLAUF)).isNotNull().isNotEqualTo(doc).isNotEqualTo(beleg);
+        assertThat(tab.selectedNode()).as("die Auswahl bleibt").isEqualTo(BELEG);
+        assertThat(tab.detailsText()).contains("den Beleg");
+        assertThat(tab.backOffered()).as("kein neuer Eintrag für „Zurück“").isEqualTo(back);
+
+        // Nächster Lauf: der gewählte Knoten ist weg, also auch die Auswahl; der Ausschnitt bleibt trotzdem.
+        tab.clickGenerate();
+        runner.runAll();
+        actions.dropBeleg = true;
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        assertThat(tab.nodeIds()).doesNotContain(BELEG);
+        assertThat(tab.selectedNode()).isNull();
+        assertThat(tab.viewport()).containsExactly(viewport);
+        assertThat(tab.positionOf(DOC)).isEqualTo(doc);
+    }
+
+    /** Unsichtbar am Ende: Der Reiter lädt beim nächsten Anzeigen neu, ebenfalls ohne zu verspringen. */
+    @Test
+    void finishedWhileHiddenReloadsInPlaceWhenShownAgain() {
+        tab.setSize(900, 600);
+        layoutTree(tab);
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        tab.zoomAt(0.8, 40, 40);
+        tab.selectNode(STATEMENT);
+        double[] viewport = tab.viewport();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+        actions.calls.clear();
+
+        tab.showingForTests(false);
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        assertThat(actions.calls).as("unsichtbar lädt nichts").isEmpty();
+
+        tab.showingForTests(true);
+        tab.reloadInPlace();
+        runner.runAll();
+        assertThat(actions.calls).containsExactly("page wiki/1");
+        assertThat(tab.viewport()).containsExactly(viewport);
+        assertThat(tab.selectedNode()).isEqualTo(STATEMENT);
+    }
+
+    /**
+     * Kopfleiste bei 900 px (UX): eine Zeile, nichts überdeckt sich; der Hinweis läuft nicht ins Suchfeld, die Knöpfe
+     * samt „Wissensgraph erzeugen“ behalten ihre volle Breite. Auch schmaler bleibt es dabei.
+     */
+    @Test
+    void atNineHundredPixelsTheHeaderStaysOneLineWithoutOverlap() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            tab.page(WIKI);
+            tab.refreshNow();
+            com.aresstack.spaceharvester.app.ui.controls.TabHeader header = tab.header();
+            for (int width : new int[] {900, 760, 640}) {
+                header.setSize(width, header.getPreferredSize().height);
+                layoutTree(header);
+                layoutTree(header);
+                java.awt.Component left = header.getComponent(0);
+                java.awt.Component search = header.getComponent(1);
+                java.awt.Component right = header.getComponent(2);
+                int row = Math.max(left.getPreferredSize().height, Math.max(search.getPreferredSize().height,
+                        right.getPreferredSize().height));
+                assertThat(header.getPreferredSize().height).as("eine Zeile bei %d px", width).isEqualTo(row);
+                for (java.awt.Component part : new java.awt.Component[] {left, search, right}) {
+                    assertThat(part.getY()).isGreaterThanOrEqualTo(0);
+                    assertThat(part.getY() + part.getHeight()).as("innerhalb der Zeile bei %d px", width)
+                            .isLessThanOrEqualTo(header.getHeight());
+                }
+                assertThat(left.getBounds().intersects(search.getBounds())).as("links vor dem Suchfeld").isFalse();
+                assertThat(search.getBounds().intersects(right.getBounds())).as("Suchfeld vor den Knöpfen").isFalse();
+                assertThat(left.getX() + left.getWidth()).isLessThanOrEqualTo(search.getX());
+                assertThat(search.getWidth()).as("Suchfeld bei %d px", width).isGreaterThanOrEqualTo(
+                        Math.min(160, search.getPreferredSize().width));
+                for (java.awt.Component shown : ((java.awt.Container) left).getComponents()) {
+                    if (shown.getWidth() > 0) {
+                        java.awt.Rectangle at = javax.swing.SwingUtilities.convertRectangle(left, shown.getBounds(),
+                                header);
+                        assertThat(at.x + at.width).as("Titel, Abzeichen und Hinweis enden vor dem Suchfeld")
+                                .isLessThanOrEqualTo(search.getX());
+                    }
+                }
+                List<java.awt.Rectangle> buttons = new ArrayList<>();
+                collectButtons(right, header, buttons);
+                assertThat(buttons).as("Aktionen, Kopieren und Werkzeuge").hasSizeGreaterThanOrEqualTo(10);
+                for (int i = 0; i < buttons.size(); i++) {
+                    assertThat(buttons.get(i).getCenterY()).as("alle Knöpfe auf einer Linie")
+                            .isCloseTo(buttons.get(0).getCenterY(), org.assertj.core.data.Offset.offset(1.0));
+                    for (int j = i + 1; j < buttons.size(); j++) {
+                        assertThat(buttons.get(i).intersects(buttons.get(j))).isFalse();
+                    }
+                }
+                assertThat(tab.generateOffered()).isTrue();
+            }
+        });
+    }
+
+    private static void collectButtons(java.awt.Component component, java.awt.Component header,
+                                       List<java.awt.Rectangle> into) {
+        if (component instanceof javax.swing.AbstractButton button && button.isVisible()) {
+            assertThat(button.getWidth()).as("volle Breite: %s", button.getToolTipText())
+                    .isEqualTo(button.getPreferredSize().width);
+            into.add(javax.swing.SwingUtilities.convertRectangle(button.getParent(), button.getBounds(), header));
+            return;
+        }
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                collectButtons(child, header, into);
+            }
+        }
+    }
+
+    private static void layoutTree(java.awt.Component component) {
+        if (component instanceof java.awt.Container container) {
+            container.doLayout();
+            for (java.awt.Component child : container.getComponents()) {
+                layoutTree(child);
+            }
+        }
+    }
+
+    /** Die Rückfrage hat keinen Bildlauf; der Satz zum KI-Dienst steht als letzte Zeile direkt über Ja/Nein. */
+    @Test
+    void theQuestionHasNoScrollingAndTheAiSentenceIsTheLastLineAboveTheButtons() {
+        GraphGeneration.Preview model = preview(AnalyzerChoice.MODEL, 3, List.of(),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 12, 0, 0, 1), goal(15));
+        model = new GraphGeneration.Preview(new ServicePreview(model.plan().stages(), List.of(), 1),
+                AnalyzerChoice.MODEL, 3);
+        javax.swing.JComponent body = GraphGeneration.body(model);
+        java.awt.Component last = body.getComponent(body.getComponentCount() - 1);
+        assertThat(((javax.swing.JLabel) last).getText()).isEqualTo("12 Seiten gehen an den KI-Dienst.");
+        javax.swing.JLabel notReleased = label(body, "3 ohne KI-Freigabe (werden ausgelassen)");
+        javax.swing.JLabel hidden = label(body, "1 Seite ohne Zugriff (wird ausgelassen)");
+        assertThat(notReleased.getForeground()).as("gelb").isEqualTo(com.aresstack.spaceharvester.app.ui.Comic
+                .STANDING_UNCLEAR);
+        assertThat(hidden.getForeground()).as("rot").isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.RED);
+        assertThat(label(body, "12 Seiten")).as("die Zahl in eigener Spalte").isNotNull();
+        assertThat(scrolls(body)).isFalse();
+    }
+
+    private static javax.swing.JLabel label(java.awt.Container container, String text) {
+        for (java.awt.Component c : container.getComponents()) {
+            if (c instanceof javax.swing.JLabel label && text.equals(label.getText())) {
+                return label;
+            }
+        }
+        throw new AssertionError("keine Zeile „" + text + "“");
+    }
+
+    private static boolean scrolls(java.awt.Component component) {
+        if (component instanceof javax.swing.JScrollPane) {
+            return true;
+        }
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                if (scrolls(child)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Ein abgeschaltetes Ziel startet nichts; die Statuszeile sagt gelb, warum. */
@@ -1254,20 +1614,30 @@ class KnowledgeGraphTabTest {
         return new BackgroundGroup("g-1", "knowledge-graph", "Wissensgraph", List.of(parts));
     }
 
-    /** Ein Teil der Gruppe in Space „DEV“ der Quelle „wiki“, mit dem Titel seiner Stufe. */
+    /** Ein Teil der Gruppe in Space „DEV“ der Quelle „wiki“, mit dem Titel seiner Stufe (auch ihre Art). */
     private static JobStatus part(String id, JobState state, String stage) {
         return new JobStatus(id, JobType.BACKGROUND, "wiki", "DEV", "app", state, JobProgress.NONE,
                 state == JobState.FAILED ? new com.aresstack.spaceharvester.application.jobs.JobError("TEST", "Fehler")
                         : null, false,
                 Instant.EPOCH, null, null, "1", null, Map.of(BackgroundJobs.GROUP, "g-1", BackgroundJobs.STEP_TITLE,
-                stage), false, false, null);
+                stage, BackgroundJobs.KIND, kind(stage)), false, false, null);
+    }
+
+    /** Die Art einer Stufe im Dienst-Planer: der Abschlussteil „Wissensgraph“ oder eine Vorstufe. */
+    private static String kind(String stage) {
+        return switch (stage) {
+            case "Wissensgraph" -> com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND;
+            case "Aussagenanalyse" -> "statements";
+            default -> "images";
+        };
     }
 
     /** Wie {@link #part(String, JobState, String)}, wartend hinter {@code after} ({@code Jobs#AFTER}). */
     private static JobStatus part(String id, JobState state, String stage, String after) {
         return new JobStatus(id, JobType.BACKGROUND, "wiki", "DEV", "app", state, JobProgress.NONE, null, false,
                 Instant.EPOCH, null, null, "1", null, Map.of(BackgroundJobs.GROUP, "g-1", BackgroundJobs.STEP_TITLE,
-                stage, com.aresstack.spaceharvester.application.jobs.Jobs.AFTER, after), false, false, null);
+                stage, BackgroundJobs.KIND, kind(stage), com.aresstack.spaceharvester.application.jobs.Jobs.AFTER,
+                after), false, false, null);
     }
 
     /** Unterseiten wie aus {@code Holdings#descendants}, erfundene Seiten-IDs der Quelle „wiki“. */
@@ -1303,6 +1673,16 @@ class KnowledgeGraphTabTest {
         Consumer<BackgroundGroup> watcher;
         int watchesClosed;
         List<String> graphNotes = List.of();
+        final List<String> retried = new ArrayList<>();
+        /** Nach „Wissensgraph erzeugen“: ein neuer Knoten „Nachtlauf“ auf der Seite. */
+        boolean grown;
+        /** Der Knoten „den Beleg“ fehlt (etwa nach einer neuen Analyse). */
+        boolean dropBeleg;
+
+        @Override
+        public void retryGraph(String groupId, List<String> jobIds) {
+            retried.add(groupId + " " + jobIds);
+        }
 
         @Override
         public GraphGeneration.Preview previewGraph(PageSet pages) {
@@ -1369,6 +1749,23 @@ class KnowledgeGraphTabTest {
                     "übermittelt", "übermitteln", WIKI_REF, 19, 30, true);
             GraphNeighbourhood.Node beleg = new GraphNeighbourhood.Node(BELEG, PageGraph.NodeKind.MENTION, "den Beleg",
                     "Beleg", WIKI_REF, 58, 67, false);
+            if (grown || dropBeleg) {
+                List<GraphNeighbourhood.Node> nodes = new ArrayList<>(List.of(doc, statement));
+                List<GraphNeighbourhood.Edge> edges = new ArrayList<>(List.of(new GraphNeighbourhood.Edge(DOC,
+                        STATEMENT, GraphNeighbourhood.EdgeType.CONTAINS, "STRUCTURE", null, null, null, true)));
+                if (!dropBeleg) {
+                    nodes.add(beleg);
+                    edges.add(new GraphNeighbourhood.Edge(DOC, BELEG, GraphNeighbourhood.EdgeType.CONTAINS,
+                            "STRUCTURE", null, null, null, true));
+                }
+                if (grown) {
+                    nodes.add(new GraphNeighbourhood.Node(NACHTLAUF, PageGraph.NodeKind.MENTION, "den Nachtlauf",
+                            "Nachtlauf", WIKI_REF, 80, 93, false));
+                    edges.add(new GraphNeighbourhood.Edge(DOC, NACHTLAUF, GraphNeighbourhood.EdgeType.CONTAINS,
+                            "STRUCTURE", null, null, null, true));
+                }
+                return new GraphNeighbourhood.Subgraph(DOC, nodes, edges, false, 0);
+            }
             return new GraphNeighbourhood.Subgraph(DOC, List.of(doc, statement, beleg), List.of(
                     new GraphNeighbourhood.Edge(DOC, STATEMENT, GraphNeighbourhood.EdgeType.CONTAINS, "STRUCTURE", null,
                             null, null, true),

@@ -1072,6 +1072,65 @@ class WorkspaceTest {
         }
     }
 
+    /**
+     * W5: Der Kreispfeil hinter einer gescheiterten Stufe setzt nur deren gescheiterte und abgebrochene Teile fort, über
+     * denselben Weg wie ▶; Teile anderer Stufen, fremde Kennungen und fertige Teile bleiben, wie sie sind.
+     */
+    @Test
+    void retryingAStageResumesOnlyItsFailedOrCancelledPartsOfTheGroup() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL)).state())
+                .isEqualTo(JobState.COMPLETED);
+        var pages = com.aresstack.spaceharvester.application.snapshot.PageSet.of(Map.of("wiki", List.of("100", "102")));
+        var group = workspace.startKnowledgeGraph(pages).group().orElseThrow();
+        workspace.performBackgroundGroupAction(group.groupId(),
+                com.aresstack.spaceharvester.application.jobs.JobAction.CANCEL);
+        var ended = finished(workspace, group.groupId());
+        var open = ended.parts().stream().filter(part -> part.state() == JobState.CANCELLED
+                || part.state() == JobState.FAILED).toList();
+        assertThat(open).as("sofort abgebrochen: mindestens ein Teil ist abgebrochen").isNotEmpty();
+        String stage = open.get(0).parameter(BackgroundJobs.KIND);
+        List<String> mine = open.stream().filter(part -> stage.equals(part.parameter(BackgroundJobs.KIND)))
+                .map(JobStatus::id).toList();
+        Map<String, JobState> others = new java.util.LinkedHashMap<>();
+        ended.parts().stream().filter(part -> !mine.contains(part.id()))
+                .forEach(part -> others.put(part.id(), part.state()));
+        List<String> asked = new ArrayList<>(mine);
+        asked.add("unbekannt");
+        ended.parts().stream().filter(part -> part.state() == JobState.COMPLETED).findFirst()
+                .ifPresent(done -> asked.add(done.id()));
+
+        var outcome = workspace.retryBackgroundParts(group.groupId(), asked);
+
+        assertThat(outcome.changed()).as("genau die abgebrochenen und gescheiterten Teile der Stufe")
+                .isEqualTo(mine.size());
+        assertThat(outcome.failed()).isZero();
+        var again = finished(workspace, group.groupId());
+        for (JobStatus part : again.parts()) {
+            if (others.containsKey(part.id())) {
+                assertThat(part.state()).as("Teil %s einer anderen Stufe bleibt", part.id())
+                        .isEqualTo(others.get(part.id()));
+            } else if (open.stream().anyMatch(was -> was.id().equals(part.id())
+                    && was.state() == JobState.CANCELLED)) {
+                assertThat(part.state()).as("abgebrochener Teil %s wurde fortgesetzt", part.id())
+                        .isNotEqualTo(JobState.CANCELLED);
+            }
+        }
+        assertThat(workspace.retryBackgroundParts("keine-gruppe", mine).changed()).as("nur Teile dieser Gruppe")
+                .isZero();
+    }
+
+    /** Wartet auf das Ende einer Hintergrundgruppe über die Meldung des Core. */
+    private static com.aresstack.spaceharvester.application.background.BackgroundGroup finished(Workspace workspace,
+            String groupId) throws Exception {
+        java.util.concurrent.CompletableFuture<com.aresstack.spaceharvester.application.background.BackgroundGroup>
+                done = new java.util.concurrent.CompletableFuture<>();
+        try (var watch = workspace.whenBackgroundFinished(groupId, done::complete)) {
+            return done.get(60, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
     private AppRuntime start() throws Exception {
         runtime = AppRuntime.start(settings(Map.of("WIKI_TOKEN", TOKEN,
                 "CLIENT_PASSWORD", TestCertificates.CLIENT_PASSWORD)), new AppRuntime.SessionSecrets(), "test");

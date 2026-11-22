@@ -15,11 +15,12 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Die Rückfrage von „Wissensgraph erzeugen“ im Reiter „Graph“ (W5): „Wissensgraph wirklich erzeugen?“, darunter je
- * Stufe des Dienst-Planers eine Zeile mit der Zahl der Seiten und gedämpft in eigener Spalte, was dazu gehört („4 erst
- * laden“, „läuft schon“), bewusst abgeschaltete Stufen gelb. Mit dem KI-Analysator steht direkt über Ja/Nein, wie
- * viele Seiten an den KI-Dienst gehen (nur die Zahl, kein Geldbetrag), und gelb, wie viele ohne KI-Freigabe ausgelassen
- * werden. Stufen, die noch keine Arbeit haben, erscheinen nicht.
+ * Die Rückfrage von „Wissensgraph erzeugen“ im Reiter „Graph“ (W5, UX 22.11.2026): „Wissensgraph wirklich erzeugen?“,
+ * darunter eine Tabelle je Stufe des Dienst-Planers: Stufe, Zahl der Seiten und gedämpft in eigener Spalte, was dazu
+ * gehört („4 erst laden“, „läuft schon“), bewusst abgeschaltete Stufen gelb „abgeschaltet (wird ausgelassen)“. Darunter
+ * gelb, wie viele Seiten ohne KI-Freigabe ausgelassen werden, rot die ohne Zugriff; mit dem KI-Analysator steht in
+ * eigener Zeile direkt über Ja/Nein, wie viele Seiten an den KI-Dienst gehen (nur die Zahl, kein Geldbetrag; Seiten
+ * ohne KI-Freigabe zählen nicht mit). Stufen, die noch keine Arbeit haben, erscheinen nicht.
  */
 final class GraphGeneration {
 
@@ -67,11 +68,12 @@ final class GraphGeneration {
     /**
      * Eine Zeile der Rückfrage.
      *
-     * @param stage   Stufe und Zahl, etwa „Aussagenanalyse · 12 Seiten“
+     * @param stage   die Stufe, etwa „Aussagenanalyse“
+     * @param count   ihre Zahl, etwa „12 Seiten“, oder leer (abgeschaltet, nichts zu tun)
      * @param extra   gedämpfter Zusatz („4 erst laden“) oder leer
      * @param warning ob der Zusatz gelb ist (bewusst ausgelassen)
      */
-    record Line(String stage, String extra, boolean warning) {
+    record Line(String stage, String count, String extra, boolean warning) {
     }
 
     /** Je Stufe mit Arbeit eine Zeile, Vorstufen zuerst, das Ziel zuletzt; Stufen ohne Arbeit fehlen. */
@@ -82,11 +84,11 @@ final class GraphGeneration {
                 case NOT_WIRED -> {
                     // noch keine Arbeit: weder zu rechnen noch auszulassen
                 }
-                case DISABLED -> lines.add(new Line(stage.title(), DISABLED, true));
-                case RUNNING -> lines.add(new Line(stage.title() + " · " + pages(stage.reused()),
-                        extras(stage, RUNNING), false));
-                case NOTHING_MISSING -> lines.add(new Line(stage.title(), extras(stage, NOTHING), false));
-                case PLANNED -> lines.add(new Line(stage.title() + " · " + pages(stage.pages()),
+                case DISABLED -> lines.add(new Line(stage.title(), "", DISABLED, true));
+                case RUNNING -> lines.add(new Line(stage.title(), pages(stage.reused()), extras(stage, RUNNING),
+                        false));
+                case NOTHING_MISSING -> lines.add(new Line(stage.title(), "", extras(stage, NOTHING), false));
+                case PLANNED -> lines.add(new Line(stage.title(), pages(stage.pages()),
                         extras(stage, stage.reused() > 0 ? stage.reused() + " " + RUNNING : ""), false));
             }
         }
@@ -106,7 +108,7 @@ final class GraphGeneration {
                 + " ausgelassen)";
     }
 
-    /** Gelb: Seiten ohne Zugriff, die ausgelassen werden; {@code null} ohne. */
+    /** Rot (fehlender Zugriff): Seiten ohne Zugriff, die ausgelassen werden; {@code null} ohne. */
     static String inaccessibleLine(Preview preview) {
         int hidden = preview.plan().inaccessible();
         return hidden <= 0 ? null : pages(hidden) + " ohne Zugriff (" + (hidden == 1 ? "wird" : "werden")
@@ -117,9 +119,10 @@ final class GraphGeneration {
     static String text(Preview preview) {
         StringBuilder text = new StringBuilder(QUESTION);
         for (Line line : lines(preview)) {
-            text.append('\n').append(line.stage()).append(line.extra().isEmpty() ? "" : " · " + line.extra());
+            text.append('\n').append(line.stage()).append(line.count().isEmpty() ? "" : " · " + line.count())
+                    .append(line.extra().isEmpty() ? "" : " · " + line.extra());
         }
-        for (String extra : new String[] {inaccessibleLine(preview), notReleasedLine(preview), modelLine(preview)}) {
+        for (String extra : new String[] {notReleasedLine(preview), inaccessibleLine(preview), modelLine(preview)}) {
             if (extra != null) {
                 text.append('\n').append(extra);
             }
@@ -127,7 +130,10 @@ final class GraphGeneration {
         return text.toString();
     }
 
-    /** Der Inhalt des Overlays: Frage, Tabelle der Stufen, gelbe Zeilen, ganz unten der Satz zum KI-Dienst. */
+    /**
+     * Der Inhalt des Overlays: Frage, Tabelle der Stufen (Stufe, Zahl rechtsbündig, Zusatz gedämpft), gelb die Seiten
+     * ohne KI-Freigabe, rot die ohne Zugriff, ganz unten in eigener Zeile der Satz zum KI-Dienst, direkt über Ja/Nein.
+     */
     static JComponent body(Preview preview) {
         JPanel body = new JPanel(new GridBagLayout());
         body.setOpaque(false);
@@ -135,7 +141,7 @@ final class GraphGeneration {
         c.anchor = GridBagConstraints.WEST;
         c.gridx = 0;
         c.gridy = 0;
-        c.gridwidth = 2;
+        c.gridwidth = 3;
         c.weightx = 1;
         c.fill = GridBagConstraints.HORIZONTAL;
         c.insets = new Insets(0, 0, 10, 0);
@@ -147,9 +153,13 @@ final class GraphGeneration {
             c.gridy++;
             c.gridx = 0;
             c.weightx = 0;
-            c.insets = new Insets(2, 0, 2, 18);
+            c.insets = new Insets(2, 0, 2, 14);
             body.add(Comic.text(line.stage()), c);
             c.gridx = 1;
+            JLabel count = Comic.text(line.count().isEmpty() ? " " : line.count());
+            count.setHorizontalAlignment(JLabel.RIGHT);
+            body.add(count, c);
+            c.gridx = 2;
             c.weightx = 1;
             c.insets = new Insets(2, 0, 2, 0);
             JLabel extra = Comic.muted(line.extra().isEmpty() ? " " : line.extra());
@@ -159,15 +169,17 @@ final class GraphGeneration {
             body.add(extra, c);
         }
         c.gridx = 0;
-        c.gridwidth = 2;
+        c.gridwidth = 3;
         c.weightx = 1;
         boolean first = true;
-        for (String warning : new String[] {inaccessibleLine(preview), notReleasedLine(preview)}) {
+        String inaccessible = inaccessibleLine(preview);
+        for (String warning : new String[] {notReleasedLine(preview), inaccessible}) {
             if (warning != null) {
                 c.gridy++;
                 c.insets = new Insets(first ? 10 : 2, 0, 0, 0);
                 JLabel label = Comic.muted(warning);
-                label.setForeground(Comic.STANDING_UNCLEAR);
+                // Gelb heißt bewusst ausgelassen, Rot fehlender Zugriff (Projektregel).
+                label.setForeground(warning.equals(inaccessible) ? Comic.RED : Comic.STANDING_UNCLEAR);
                 body.add(label, c);
                 first = false;
             }

@@ -23,6 +23,7 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
+import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
 import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
@@ -104,8 +105,11 @@ import java.util.function.Supplier;
  * <p>„Wissensgraph erzeugen“ (W5, Knopf vor dem Export) ist der einzige Weg aus diesem Reiter, der Analysen anstößt: über
  * die Seite und, mit „mit Unterseiten“, ihre nicht gesperrten Unterseiten startet der Dienst-Planer die fehlenden
  * Vorstufen und je Space den Abschlussteil als eine Hintergrundgruppe, nach einer Rückfrage mit den Zahlen je Stufe;
- * fehlt nichts, lädt der Reiter nur neu. Die Statuszeile folgt der Gruppe über Meldungen des Core (kein Abfragen) mit
- * Fortschritt und ✕, bleibt nach dem Anhalten gelb dran und lädt am Ende neu.
+ * fehlt nichts, lädt der Reiter nur neu und sagt kurz „Wissensgraph ist vollständig“. Die Statuszeile folgt der Gruppe
+ * über Meldungen des Core (kein Abfragen) mit Fortschritt und ✕, bleibt nach dem Anhalten gelb dran und lädt am Ende neu,
+ * ohne zu verspringen (Ausschnitt, Zoom und Auswahl bleiben, solange der Knoten noch da ist). Ausgelassenes ist gelb,
+ * fehlender Zugriff und gescheiterte Stufen rot; hinter einer gescheiterten Stufe wiederholt der Kreispfeil nur deren
+ * gescheiterte und abgebrochene Teile (UX 22.11.2026).
  *
  * <p>Alle Methoden nur auf dem EDT; Core-Aufrufe laufen im Hintergrund, späte Ergebnisse werden verworfen.
  */
@@ -121,8 +125,12 @@ final class KnowledgeGraphTab extends JPanel {
     static final String EXPORT_STARTED = "Graph-Export gestartet – Fortschritt unter Aufträge";
     static final String GENERATE_TIP = "Wissensgraph erzeugen";
     static final String GENERATE_BUSY_TIP = "Wissensgraph wird schon erzeugt";
-    /** Fehlt nichts, sagt die Statuszeile nur das; der Graph lädt neu. */
+    /** Fehlt nichts, sagt die Statuszeile nur das, kurz ({@link #COMPLETE_MILLIS}); der Graph lädt neu. */
     static final String COMPLETE = "Wissensgraph ist vollständig";
+    /** So lange steht „vollständig“ in der Statuszeile, dann verschwindet es (ein einmaliger Timer, kein Abfragen). */
+    static final int COMPLETE_MILLIS = 4000;
+    /** Tooltip des Kreispfeils hinter einer gescheiterten Stufe: „„Aussagenanalyse“ wiederholen“. */
+    static final String RETRY_TIP = "wiederholen";
     /**
      * Nichts zu rechnen, aber nicht vollständig: Seiten bleiben ausgelassen (erst laden, ohne KI-Freigabe, ohne Zugriff,
      * abgeschaltete Stufe); gelb mit den Hinweisen, der Graph lädt neu.
@@ -219,6 +227,17 @@ final class KnowledgeGraphTab extends JPanel {
     /** Was die Statuszeile zu „Wissensgraph erzeugen“ sagt, vor dem Stand des Graphen; {@code null} ohne. */
     private StatusNote generateNote;
     private Consumer<StatusNote> onNote;
+    /** Führt etwas einmal nach {@link #COMPLETE_MILLIS} aus (ein einmaliger Swing-Timer); Tests führen von Hand aus. */
+    private Consumer<Runnable> clearSoon = run -> {
+        javax.swing.Timer timer = new javax.swing.Timer(COMPLETE_MILLIS, e -> run.run());
+        timer.setRepeats(false);
+        timer.start();
+    };
+    /**
+     * Ob die gezeigte Ansicht nach dem Ende einer Gruppe veraltet ist, während der Reiter nicht zu sehen war: Beim
+     * nächsten Anzeigen lädt er sie an Ort und Stelle neu ({@link #reloadInPlace()}).
+     */
+    private boolean staleView;
     private Consumer<String> showJob = jobId -> { };
     private Runnable onGenerated = () -> { };
     /** Rückmeldung zum Export, in der Statuszeile hinter dem Stand des Graphen; leer ohne. */
@@ -374,8 +393,12 @@ final class KnowledgeGraphTab extends JPanel {
         add(head, BorderLayout.NORTH);
         add(cards, BorderLayout.CENTER);
         addHierarchyListener(e -> {
-            if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing() && !pageLoaded) {
-                showPage();
+            if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                if (!pageLoaded) {
+                    showPage();
+                } else if (staleView) {
+                    reloadInPlace();
+                }
             }
         });
         refresh();
@@ -483,6 +506,7 @@ final class KnowledgeGraphTab extends JPanel {
         }
         exportNote("");
         pageLoaded = false;
+        staleView = false;
         generation++;
         history.clear();
         clear();
@@ -641,6 +665,7 @@ final class KnowledgeGraphTab extends JPanel {
             return;
         }
         pageLoaded = true;
+        staleView = false;
         start(new Entry.Page(page, subpages));
     }
 
@@ -695,11 +720,40 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     /**
+     * Dieselbe Ansicht neu laden, ohne zu verspringen (W5, nach „Wissensgraph erzeugen“): Ausschnitt und Zoom bleiben,
+     * vorhandene Knoten behalten ihren Platz, neue kommen an freie Plätze dazu, die Auswahl bleibt, solange ihr Knoten
+     * (oder ihre Kante) noch da ist; „Zurück“ bekommt keinen neuen Eintrag. Unsichtbar erst beim nächsten Anzeigen.
+     */
+    void reloadInPlace() {
+        if (page == null) {
+            return;
+        }
+        if (!showing()) {
+            staleView = pageLoaded;
+            return;
+        }
+        staleView = false;
+        if (entry instanceof Entry.Page shown && shown.subpages() != subpages) {
+            entry = new Entry.Page(shown.key(), subpages);
+        }
+        if (entry != null) {
+            load(entry, List.copyOf(requested), true, true);
+        } else if (pageLoaded) {
+            showPage();
+        }
+    }
+
+    /**
      * Lädt im Hintergrund; späte Ergebnisse werden verworfen. {@code replay}: Einstiegsabfrage und alle
      * {@code expanded} neu (neue Ansicht oder andere Filter); sonst nur die letzte Erweiterung, dazugemischt. Ist eine
      * neue Ansicht leer, unterscheidet eine Probe ohne Filter „nichts da“ von „durch Filter ausgeblendet“.
      */
     private void load(Entry start, List<String> expanded, boolean replay) {
+        load(start, expanded, replay, false);
+    }
+
+    /** Wie {@link #load(Entry, List, boolean)}; {@code inPlace}: ohne zu verspringen ({@link #reloadInPlace()}). */
+    private void load(Entry start, List<String> expanded, boolean replay, boolean inPlace) {
         GraphNeighbourhood.Options options = options();
         // Erweiterungen in der Ansicht mit Unterseiten bleiben in derselben Menge wie der Einstieg: Sonst kämen
         // gesperrte Unterseiten und fremde Seiten über „Nachbarn erweitern“ doch als Ziele von Verbindungen herein.
@@ -741,19 +795,23 @@ final class KnowledgeGraphTab extends JPanel {
                 return;
             }
             loading = false;
+            // An Ort und Stelle nur, wenn schon etwas zu sehen ist und es dieselbe Ansicht bleibt.
+            Map<String, Point2D> kept = inPlace && start == entry && !nodes.isEmpty() ? copy(positions) : null;
+            String wasSelected = selected;
+            GraphNeighbourhood.Edge wasEdge = selectedEdge;
             if (dropHistory) {
                 // Nach „Alle Aussagen löschen“: frühere Ansichten zeigen gelöschte Analysen, „Zurück“ darf sie nicht
                 // wiederherstellen.
                 dropHistory = false;
                 history.clear();
-            } else if (!nodes.isEmpty() || entry != null) {
+            } else if (kept == null && (!nodes.isEmpty() || entry != null)) {
                 history.push(snapshot());
             }
             entry = start;
             expansions.clear();
             this.appliedFilters = filters;
             if (loaded.stack() != null) {
-                apply(loaded.stack().graph(), false);
+                apply(loaded.stack().graph(), false, kept);
                 coverage = loaded.coverage();
             }
             for (int i = 0; i < loaded.more().size(); i++) {
@@ -772,7 +830,16 @@ final class KnowledgeGraphTab extends JPanel {
             requested.addAll(expansions);
             emptyHint = loaded.emptyHint();
             refresh();
-            canvas.fit();
+            if (kept == null) {
+                canvas.fit();
+            } else {
+                // Ausschnitt und Zoom bleiben; die Auswahl, solange es ihren Knoten oder ihre Kante noch gibt.
+                GraphNeighbourhood.Edge edge = wasEdge == null ? null : edges.get(key(wasEdge));
+                String node = wasSelected != null && nodes.containsKey(wasSelected) ? wasSelected : null;
+                if (node != null || edge != null) {
+                    select(node, edge);
+                }
+            }
             if (loaded.coverage() != null && start instanceof Entry.Page shown
                     && Objects.equals(shown.subpages(), subpages)) {
                 subpageStack = loaded.stack();
@@ -890,8 +957,21 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     private void apply(GraphNeighbourhood.Subgraph subgraph, boolean merge) {
+        apply(subgraph, merge, null);
+    }
+
+    /** Wie {@link #apply(GraphNeighbourhood.Subgraph, boolean)}; Knoten aus {@code kept} behalten dort ihren Platz. */
+    private void apply(GraphNeighbourhood.Subgraph subgraph, boolean merge, Map<String, Point2D> kept) {
         if (!merge) {
             clear();
+            if (kept != null) {
+                for (GraphNeighbourhood.Node node : subgraph.nodes()) {
+                    Point2D at = kept.get(node.id());
+                    if (at != null) {
+                        positions.put(node.id(), at);
+                    }
+                }
+            }
         }
         String anchor = merge ? subgraph.focus() : null;
         Set<String> before = new java.util.HashSet<>(positions.keySet());
@@ -1303,7 +1383,9 @@ final class KnowledgeGraphTab extends JPanel {
         deleteAll.setEnabled(actions.get() != null && !deleting);
         boolean busy = preparing || graphAttached();
         generate.setEnabled(actions.get() != null && page != null && !busy);
-        generate.setToolTipText(graphAttached() ? GENERATE_BUSY_TIP : GENERATE_TIP);
+        // Zählen, Starten, Wiederholen und der Lauf selbst: gesperrt mit „wird schon erzeugt“; der Name bleibt.
+        generate.setToolTipText(busy ? GENERATE_BUSY_TIP : GENERATE_TIP);
+        generate.getAccessibleContext().setAccessibleDescription(busy ? GENERATE_BUSY_TIP : null);
     }
 
     /** Umfänge des Exports, in dieser Reihenfolge; ohne geöffnete Seite nur der gesamte Graph. */
@@ -1429,8 +1511,17 @@ final class KnowledgeGraphTab extends JPanel {
                 return;
             }
             if (preview.nothingMissing()) {
-                generateNote(nothingMissing(preview));
-                reloadFocus();
+                StatusNote note = nothingMissing(preview);
+                generateNote(note);
+                if (COMPLETE.equals(note.text())) {
+                    // Nur kurz: verschwindet nach ein paar Sekunden, oder früher mit der nächsten Meldung oder Seite.
+                    clearSoon.accept(() -> {
+                        if (generateNote == note) {
+                            generateNote(null);
+                        }
+                    });
+                }
+                reloadInPlace();
                 return;
             }
             generateNote(null);
@@ -1447,12 +1538,12 @@ final class KnowledgeGraphTab extends JPanel {
 
     /**
      * Die Statuszeile, wenn nichts zu rechnen ist: grau „vollständig“ nur, wenn auch nichts ausgelassen bleibt; sonst
-     * gelb „nichts zu rechnen“ mit den Hinweisen des Planers und den Seiten ohne KI-Freigabe.
+     * gelb „nichts zu rechnen“ mit den Hinweisen des Planers und den Seiten ohne KI-Freigabe, „ohne Zugriff“ rot.
      */
     private static StatusNote nothingMissing(GraphGeneration.Preview preview) {
         boolean off = preview.plan().goal().filter(goal -> goal.state() == ServicePreview.State.DISABLED).isPresent();
         if (off) {
-            return notes(NOT_GENERATED, preview.plan().notes(), StatusNote.Tone.PLAIN);
+            return notes(NOT_GENERATED, StatusNote.Tone.PLAIN, preview.plan().notes());
         }
         List<String> all = new ArrayList<>(preview.plan().notes());
         String notReleased = GraphGeneration.notReleasedLine(preview);
@@ -1462,8 +1553,8 @@ final class KnowledgeGraphTab extends JPanel {
         boolean outstanding = !all.isEmpty() || preview.plan().inaccessible() > 0
                 || preview.plan().stages().stream().anyMatch(stage -> stage.toLoad() > 0
                 || stage.state() == ServicePreview.State.DISABLED);
-        return outstanding ? notes(NOTHING_TO_DO, all, StatusNote.Tone.WARNING)
-                : notes(COMPLETE, all, StatusNote.Tone.PLAIN);
+        return outstanding ? notes(NOTHING_TO_DO, StatusNote.Tone.WARNING, all)
+                : notes(COMPLETE, StatusNote.Tone.PLAIN, all);
     }
 
     /** Startet die Gruppe nach „Ja“ und verfolgt sie. */
@@ -1477,8 +1568,8 @@ final class KnowledgeGraphTab extends JPanel {
             if (group.isEmpty()) {
                 // Nichts angelegt (etwa das Ziel abgeschaltet): die Hinweise sagen, warum.
                 refreshButtons();
-                generateNote(notes(NOT_GENERATED, plan.notes(), StatusNote.Tone.PLAIN));
-                reloadFocus();
+                generateNote(notes(NOT_GENERATED, StatusNote.Tone.PLAIN, plan.notes()));
+                reloadInPlace();
                 return;
             }
             attach(current, group.get(), plan.notes());
@@ -1560,13 +1651,16 @@ final class KnowledgeGraphTab extends JPanel {
                 notes -> graphFinished(group, notes), error -> graphFinished(group, List.of()));
     }
 
-    /** Das Ende der Gruppe: Ergebnis in die Statuszeile, dann neu laden (sichtbar sofort, sonst beim Anzeigen). */
+    /**
+     * Das Ende der Gruppe: Ergebnis in die Statuszeile („gestartet“ und Fortschritt weichen ihm), dann neu laden, ohne zu
+     * verspringen (sichtbar sofort, sonst beim Anzeigen).
+     */
     private void graphFinished(BackgroundGroup group, List<String> notes) {
         if (!group.groupId().equals(graphGroupId)) {
             return;
         }
         generateNote(result(group, notes));
-        analysisChanged();
+        reloadInPlace();
         onGenerated.run();
     }
 
@@ -1611,10 +1705,9 @@ final class KnowledgeGraphTab extends JPanel {
                 .or(() -> group.parts().stream().filter(part -> !part.state().terminal()).findFirst())
                 .map(part -> part.parameter(BackgroundJobs.STEP_TITLE)).orElse(null);
         String text = GENERATING + (stage == null ? "" : " · " + stage) + ": " + done + " von "
-                + GraphGeneration.parts(group.parts().size()) + " fertig";
-        String joined = planNotes.isEmpty() ? "" : " · " + String.join(" · ", planNotes);
-        generateNote(new StatusNote(text + " " + CANCEL_LINK + joined, planNotes.isEmpty() ? StatusNote.Tone.PLAIN
-                : StatusNote.Tone.WARNING, CANCEL_LINK, this::cancelGraph));
+                + GraphGeneration.parts(group.parts().size()) + " fertig " + CANCEL_LINK;
+        StatusNote note = notes(text, StatusNote.Tone.PLAIN, planNotes);
+        generateNote(new StatusNote(note.text(), note.tone(), CANCEL_LINK, this::cancelGraph, note.marks(), null));
     }
 
     /**
@@ -1623,10 +1716,19 @@ final class KnowledgeGraphTab extends JPanel {
      */
     private StatusNote result(BackgroundGroup group, List<String> eventNotes) {
         List<String> all = new ArrayList<>(planNotes);
-        group.parts().stream().filter(part -> part.state() == JobState.FAILED)
-                .map(part -> "„" + Objects.requireNonNullElse(part.parameter(BackgroundJobs.STEP_TITLE), "Teil")
-                        + "“ gescheitert" + (part.partitionKey() == null ? "" : " (" + part.partitionKey() + ")"))
-                .forEach(all::add);
+        // Gescheiterte Teile rot; hinter dem ersten der Kreispfeil, der genau dessen Stufe wiederholt.
+        JobStatus firstFailed = null;
+        String failedNote = null;
+        for (JobStatus part : group.parts()) {
+            if (part.state() == JobState.FAILED) {
+                String note = failedNote(part);
+                all.add(note);
+                if (firstFailed == null) {
+                    firstFailed = part;
+                    failedNote = note;
+                }
+            }
+        }
         all.addAll(eventNotes);
         String jobId = group.parts().isEmpty() ? null : group.parts().get(0).id();
         Runnable open = jobId == null ? null : () -> showJob.accept(jobId);
@@ -1642,19 +1744,121 @@ final class KnowledgeGraphTab extends JPanel {
             head = "Wissensgraph erzeugt";
         } else if (group.parts().stream().anyMatch(part -> part.state() == JobState.FAILED)) {
             head = "Wissensgraph mit Fehler beendet";
+            tone = StatusNote.Tone.ERROR;
         } else {
             head = "Wissensgraph abgebrochen; fertige Teilergebnisse bleiben";
         }
-        StatusNote note = notes(head, all, tone);
-        String text = paused ? note.text() : note.text() + " · Einzelheiten unter " + JOBS_LINK;
-        return new StatusNote(text, note.tone(), JOBS_LINK, open);
+        StatusNote note = notes(head, tone, all);
+        String tail = " · Einzelheiten unter " + JOBS_LINK;
+        String text = paused ? note.text() : note.text() + tail;
+        List<StatusNote.Mark> marks = new ArrayList<>(note.marks());
+        if (!paused && note.tone() != StatusNote.Tone.PLAIN) {
+            // Der Verweis auf die Einzelheiten ist kein Hinweis: grau.
+            marks.add(new StatusNote.Mark(tail.substring(3), StatusNote.Tone.PLAIN));
+        }
+        StatusNote.IconLink retry = null;
+        if (firstFailed != null) {
+            String groupId = group.groupId();
+            String stage = stageKey(firstFailed);
+            List<String> ids = group.parts().stream().filter(part -> stage.equals(stageKey(part)))
+                    .filter(part -> part.state() == JobState.FAILED || part.state() == JobState.CANCELLED)
+                    .map(JobStatus::id).toList();
+            String title = stageTitle(firstFailed);
+            retry = new StatusNote.IconLink(Glyph.REFRESH, failedNote, "„" + title + "“ " + RETRY_TIP,
+                    () -> retryStage(groupId, ids, title));
+        }
+        return new StatusNote(text, note.tone(), JOBS_LINK, open, marks, retry);
     }
 
-    /** {@code head}, dahinter die Hinweise; mit Hinweisen gelb, sonst {@code tone}. */
-    private static StatusNote notes(String head, List<String> notes, StatusNote.Tone tone) {
+    /** „Vorstufe „Aussagenanalyse“ gescheitert (DEV)“, beim Abschlussteil ohne „Vorstufe“. */
+    private static String failedNote(JobStatus part) {
+        boolean goal = KnowledgeGraphJobs.KIND.equals(part.parameter(BackgroundJobs.KIND));
+        return (goal ? "" : "Vorstufe ") + "„" + stageTitle(part) + "“ gescheitert"
+                + (part.partitionKey() == null ? "" : " (" + part.partitionKey() + ")");
+    }
+
+    private static String stageTitle(JobStatus part) {
+        return Objects.requireNonNullElse(part.parameter(BackgroundJobs.STEP_TITLE), "Teil");
+    }
+
+    /** Die Stufe eines Teils: seine Art im Dienst-Planer, ohne sie sein Titel. */
+    private static String stageKey(JobStatus part) {
+        String kind = part.parameter(BackgroundJobs.KIND);
+        return kind != null ? kind : stageTitle(part);
+    }
+
+    /**
+     * Der Ton eines Hinweises: rot fehlender Zugriff und Gescheitertes (Projektregel: Rot nur für Fehler und fehlenden
+     * Zugriff), alles andere ist bewusst ausgelassen und gelb.
+     */
+    static StatusNote.Tone noteTone(String note) {
+        return note.contains("ohne Zugriff") || note.contains("gescheitert") ? StatusNote.Tone.ERROR
+                : StatusNote.Tone.WARNING;
+    }
+
+    /**
+     * {@code head} in {@code tone}, dahinter die Hinweise je in ihrem Ton ({@link #noteTone}). Die Zeile hat den
+     * stärksten Ton; Teile mit schwächerem behalten ihren eigenen ({@link StatusNote.Mark}).
+     */
+    private static StatusNote notes(String head, StatusNote.Tone tone, List<String> notes) {
         List<String> distinct = notes.stream().distinct().toList();
         String text = distinct.isEmpty() ? head : head + " · " + String.join(" · ", distinct);
-        return new StatusNote(text, distinct.isEmpty() ? tone : StatusNote.Tone.WARNING, null, null);
+        StatusNote.Tone line = tone;
+        for (String note : distinct) {
+            line = stronger(line, noteTone(note));
+        }
+        List<StatusNote.Mark> marks = new ArrayList<>();
+        if (tone != line) {
+            marks.add(new StatusNote.Mark(head, tone));
+        }
+        for (String note : distinct) {
+            if (noteTone(note) != line) {
+                marks.add(new StatusNote.Mark(note, noteTone(note)));
+            }
+        }
+        return new StatusNote(text, line, null, null, marks, null);
+    }
+
+    private static StatusNote.Tone stronger(StatusNote.Tone a, StatusNote.Tone b) {
+        return a.ordinal() >= b.ordinal() ? a : b;
+    }
+
+    /**
+     * Der Kreispfeil hinter einer gescheiterten Stufe: setzt genau deren gescheiterte und abgebrochene Teile über den
+     * Weg der Auftragsverwaltung fort (▶, mit den Rechten des Aufrufers, Eigentümerregeln wie dort) und verfolgt die
+     * Gruppe wieder bis zum Ende; andere Stufen bleiben, wie sie sind.
+     */
+    void retryStage(String groupId, List<String> jobIds, String title) {
+        Actions current = actions.get();
+        if (current == null || !groupId.equals(graphGroupId) || preparing || jobIds.isEmpty()) {
+            return;
+        }
+        preparing = true;
+        refreshButtons();
+        generateNote(StatusNote.plain("„" + title + "“ wird wiederholt …"));
+        runner.run(() -> {
+            current.retryGraph(groupId, jobIds);
+            return null;
+        }, ignored -> {
+            preparing = false;
+            if (!groupId.equals(graphGroupId)) {
+                refreshButtons();
+                return;
+            }
+            if (graphEnded) {
+                // Die Beobachtung war zu: wieder anlegen; sie meldet den jetzigen Stand sofort.
+                closeGraphWatch();
+                graphEnded = false;
+                graphOrigin = current.origin();
+                graphWatch = current.watchGraph(groupId, this::graphChanged);
+            }
+            refreshButtons();
+        }, error -> {
+            preparing = false;
+            refreshButtons();
+            generateNote(new StatusNote("„" + title + "“ ließ sich nicht wiederholen: "
+                    + Problems.describe(error).title(), StatusNote.Tone.ERROR, null, null));
+        });
     }
 
     /** ✕ in der Statuszeile: bricht die verfolgte Gruppe ab; fertige Teilergebnisse bleiben. */
@@ -2331,6 +2535,13 @@ final class KnowledgeGraphTab extends JPanel {
         }
 
         /**
+         * Setzt die gescheiterten und abgebrochenen Teile {@code jobIds} der Gruppe fort, wie ▶ in der
+         * Auftragsverwaltung (mit den Rechten des Aufrufers); nie auf dem EDT.
+         */
+        default void retryGraph(String groupId, List<String> jobIds) {
+        }
+
+        /**
          * Wofür die Aktionen stehen (in der App die Laufzeit): eine andere heißt, eine Beobachtung neu anzulegen
          * ({@link KnowledgeGraphTab#runtimeChanged()}).
          */
@@ -2413,6 +2624,11 @@ final class KnowledgeGraphTab extends JPanel {
                 public List<String> graphNotes(BackgroundGroup group) {
                     return workspace.knowledgeGraphNotes(group);
                 }
+
+                @Override
+                public void retryGraph(String groupId, List<String> jobIds) {
+                    workspace.retryBackgroundParts(groupId, jobIds);
+                }
             };
         }
     }
@@ -2454,6 +2670,32 @@ final class KnowledgeGraphTab extends JPanel {
     /** Was die Statuszeile zu „Wissensgraph erzeugen“ sagt, oder {@code null}. */
     StatusNote generateNoteForTests() {
         return generateNote;
+    }
+
+    /** Für Tests: was der einmalige Timer nach {@link #COMPLETE_MILLIS} sonst täte. */
+    void clearSoon(Consumer<Runnable> clear) {
+        clearSoon = Objects.requireNonNull(clear, "clear");
+    }
+
+    /** Für Tests: Zoom und Verschiebung der Zeichenfläche, {@code {scale, dx, dy}}. */
+    double[] viewport() {
+        return new double[] {canvas.scale, canvas.dx, canvas.dy};
+    }
+
+    /** Für Tests: wie Mausrad an der Stelle {@code (x, y)} der Fläche. */
+    void zoomAt(double factor, double x, double y) {
+        canvas.zoom(factor, x, y);
+    }
+
+    /** Für Tests: der Platz eines Knotens in Weltkoordinaten oder {@code null}. */
+    Point2D positionOf(String nodeId) {
+        Point2D at = positions.get(nodeId);
+        return at == null ? null : new Point2D.Double(at.getX(), at.getY());
+    }
+
+    /** Für Tests: die Kopfleiste. */
+    TabHeader header() {
+        return head;
     }
 
     boolean deleteAllOffered() {
