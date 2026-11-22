@@ -279,8 +279,9 @@ wird automatisch verwaltet.
    als eigene Art an. Gegen doppelte Anläufe gibt es neben `running` `BackgroundJobs#waiting` (ein noch nicht
    gestarteter oder angehaltener Teil), `#startUnlessWaiting` (für Arten, die ihre Arbeit erst beim Start aus dem
    Bestand bestimmen: ein laufender Teil sieht einen neuen Anlass nicht mehr) und `#startUnlessRunning` (für Arten,
-   deren laufender Teil sich neue Arbeit selbst abholt). Ein angehaltener Teil zählt in allen dreien mit: Er hält neue
-   Anlässe zurück, beim Fortsetzen rechnet er sie mit (Abnahme #1052). Bisher umgestellt:
+   deren laufender Teil sich neue Arbeit selbst abholt). Ein angehaltener Teil zählt in diesen dreien mit (für
+   `#startUnlessRunning` über `#open`): Er hält neue Anlässe zurück, beim Fortsetzen rechnet er sie mit (Abnahme
+   #1052). `running` zählt ihn nicht, denn der Planer nimmt dessen Treffer als Vorgänger. Bisher umgestellt:
    - `synonyms` „Synonyme erkennen“ (`SynonymDiscovery#automatic`, ein Teil je Quelle; vorher ein Auftrag
      `ENRICHMENT` ohne Auftraggeber, den die App nie zeigte). Fortsetzen nach Neustart nur bei
      `terms.synonyms.automatic`.
@@ -325,6 +326,31 @@ wird automatisch verwaltet.
    einem Neustart setzt nur ein schon angelegter, unterbrochener Teil von selbst fort (nur bei
    `enrichment.documents.enabled`). Die Ablage der Anhänge kennt keinen Space: Ein Teil liest die Anhangseinträge der
    ganzen Quelle und behält die der Seiten seines Space.
+
+   Abgleiche beim Start (vorher je ein eigener Thread ohne Eintrag in der Auftragsliste). Sie beginnen erst nach
+   `resumeInterrupted`; eine Quelle mit schon offenem Teil derselben Art fällt heraus
+   (`BackgroundJobs#startUnlessRunning` für mehrere Teile, eine Gruppe je Anlass):
+   - `release` „KI-Freigabe prüfen“ (`ReleaseRecomputation#reconcileOnStart`, ein Teil je Quelle, nur mit Modell),
+     „KI-Freigabe nachziehen“ (nach einem Wechsel der Freigabe einer Quelle, Angabe `mode` = `grant`, `withdraw`
+     oder `images`) und `page-release` „Seitenfreigabe nachziehen“ (nach einer geänderten Liste freigegebener Seiten;
+     die Seiten-IDs stehen als Angaben `pages` und, nur wenn es welche gibt, `removed` am Teil). Die Freigabe fragt
+     jeder Teil wie bisher je Seite bei der Ausführung. Ein fortgesetzter Teil nach neuer Freigabe rechnet nur noch,
+     was nicht zur Freigabe passt (wie der Abgleich beim Start); nach einem Entzug nimmt er die Rücknahme erneut
+     vor. Nicht exklusiv: Prüfen und Nachziehen derselben Quelle sind verschiedene Arbeit.
+   - `versions` „Analysen nach Update nachrechnen“ (`VersionRecomputation`, lokale Prozessoren einer älteren
+     Version, ein Teil je Quelle, exklusiv).
+   - `links` „Verweise abgleichen“ (`PageLinks#reconcileOnStart`, ein Teil je Quelle, exklusiv). Der Abgleich nach
+     einer Änderung eines ganzen Space oder einer ganzen Quelle und einzelne Seiten bleiben beim Bündler, sonst gäbe
+     jeder Abgleich eine eigene Gruppe. Bis der erste Abgleich einer Quelle seit dem Start endet, gilt sie als nicht
+     vollständig; wird der Teil abgebrochen, holt das der nächste Abgleich eines Space nach.
+
+   Jeder dieser Teile baut seine Arbeit allein aus Quelle, Angaben und Cache und meldet die bekannten Seiten der
+   Quelle als Fortschritt. Ein Teil, den das Beenden des Dienstes unterbricht, gilt nicht als fertig und setzt nach
+   dem Neustart von vorn fort; Aktuelles kostet dann nur den Blick in die Ablage. Grenzen: Mit nur einem Platz für
+   Vorbereitungen laufen sie nicht und warten gelb (wie jeder Hintergrundauftrag); länger als die Laufzeitgrenze
+   eines Auftrags (`JobLimits#maxRunTime`) endet ein Teil mit Zeitüberschreitung und lässt sich fortsetzen. Das
+   Aufräumen des Änderungsprotokolls und das Nachtragen der Update-Marken beim Start bleiben ohne Auftrag: kurze
+   Arbeit in der eigenen Ablage, ohne Netz und ohne Modell.
 
    Ohne Hintergrundaufträge (Dienst) bleibt es beim bisherigen Weg.
 

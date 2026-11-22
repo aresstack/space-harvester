@@ -284,6 +284,45 @@ class PageLinksTest {
     }
 
     @Test
+    void withBackgroundJobsTheStartReconcileIsAVisiblePartAndASpaceChangeStaysWithTheBundler()
+            throws InterruptedException {
+        // ADR 0025 Nachtrag, Punkt 9: der Abgleich beim Start als „Verweise abgleichen“; nach einem Abgleich eines
+        // Space bleibt es beim Bündler, sonst gäbe jeder Abgleich eine Gruppe.
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10, Duration.ofHours(1)),
+                java.time.Clock.systemUTC());
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        links.background(background);
+        pages.page("1", "DEV", "Start", "id:2");
+        pages.page("2", "DEV", "Ziel", "");
+
+        links.reconcileOnStart(List.of("wiki"));
+
+        assertThat(background.groups()).singleElement().satisfies(group -> {
+            assertThat(group.title()).isEqualTo(PageLinks.BACKGROUND_TITLE);
+            assertThat(group.parts()).singleElement().satisfies(part -> {
+                assertThat(part.parameter(com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND))
+                        .isEqualTo(PageLinks.BACKGROUND_KIND);
+                assertThat(part.sourceId()).isEqualTo("wiki");
+                assertThat(part.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+            });
+        });
+        assertThat(links.links(CALLER, key("1")).outgoing()).containsExactly(key("2"));
+        assertThat(links.links(CALLER, key("1")).complete()).isTrue();
+
+        CountDownLatch delivered = new CountDownLatch(1);
+        links.subscribe(event -> delivered.countDown());
+        pages.page("2", "DEV", "Ziel", "id:1");
+        links.spaceChanged("wiki", "DEV");
+        assertThat(delivered.await(5, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(links.links(CALLER, key("2")).outgoing()).containsExactly(key("1"));
+        assertThat(background.groups()).as("kein Hintergrundauftrag je Abgleich").hasSize(1);
+    }
+
+    @Test
     void changesAreAnnouncedByTheObserverWithoutPolling() throws InterruptedException {
         pages.page("1", "DEV", "Start", "");
         pages.page("2", "DEV", "Ziel", "");

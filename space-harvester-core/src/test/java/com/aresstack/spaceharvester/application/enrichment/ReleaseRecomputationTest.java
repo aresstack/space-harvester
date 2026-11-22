@@ -192,6 +192,121 @@ class ReleaseRecomputationTest {
         assertThat(withdrawn).containsExactly("alt");
     }
 
+    @Test
+    void withBackgroundJobsTheStartCheckIsAVisiblePartPerSourceAndWithoutModelNone() throws Exception {
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = List.of(text("wiki", "p1", "1", "Eins"), text("wiki", "p2", "1", "Zwei"));
+        enrichments.recompute(pages.get(0), null);
+        navigation.calls.clear();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs(Runnable::run);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> true, List.of("navigation"))) {
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 2);
+            recomputation.reconcileOnStart(List.of("wiki"), () -> false, NOT_APPROVED);
+            assertThat(background.groups()).as("ohne Modell keine Gruppe").isEmpty();
+
+            recomputation.reconcileOnStart(List.of("wiki"), () -> true, NOT_APPROVED);
+            awaitUntil(() -> navigation.count("p2") > 0);
+        }
+
+        assertThat(background.groups()).singleElement().satisfies(group -> {
+            assertThat(group.title()).isEqualTo(ReleaseRecomputation.CHECK_TITLE);
+            assertThat(group.parts()).singleElement().satisfies(part -> {
+                assertThat(part.parameter(com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND))
+                        .isEqualTo(ReleaseRecomputation.BACKGROUND_KIND);
+                assertThat(part.parameter(ReleaseRecomputation.MODE)).isEqualTo(ReleaseRecomputation.CHECK);
+                assertThat(part.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+                assertThat(part.progress().processed()).isEqualTo(2);
+            });
+        });
+        assertThat(navigation.calls).containsOnlyKeys("p2");
+    }
+
+    @Test
+    void aResumedGrantPartRecomputesOnlyWhatDoesNotFitTheRelease() throws Exception {
+        // Ein fortgesetzter Teil nach neuer Freigabe rechnet nicht alle Seiten erneut, nur nicht passende.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = List.of(text("wiki", "p1", "1", "Eins"), text("wiki", "p2", "1", "Zwei"));
+        enrichments.recompute(pages.get(0), null);
+        navigation.calls.clear();
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs(held::add);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> true, List.of("navigation"))) {
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 2);
+            String groupId = background.start(ReleaseRecomputation.BACKGROUND_KIND, ReleaseRecomputation.CHANGE_TITLE,
+                    List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", null,
+                            Map.of(ReleaseRecomputation.MODE, ReleaseRecomputation.GRANT)))).groupId();
+            background.pause(groupId);
+            runAll(held);
+            assertThat(navigation.calls).as("angehalten rechnet nichts").isEmpty();
+
+            background.resume(groupId);
+            runAll(held);
+            awaitUntil(() -> navigation.count("p2") > 0
+                    && background.group(groupId).orElseThrow().finished());
+        }
+
+        assertThat(navigation.calls).as("p1 passt schon").containsOnlyKeys("p2");
+    }
+
+    @Test
+    void withBackgroundJobsChangedPagesOfTheReleaseListTravelAsParametersAndNoEmptyRemovedOne() throws Exception {
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        PageSnapshot added = text("intern", "neu", "1", "Neu");
+        PageSnapshot removed = text("ops", "alt", "1", "Alt");
+        Map<PageKey, PageSnapshot> cache = Map.of(added.key(), added, removed.key(), removed);
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs(Runnable::run), "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> List.<PageSnapshot>of().iterator(), sourceId -> false, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.background(background, key -> Optional.ofNullable(cache.get(key)), () -> true, NOT_APPROVED,
+                    sourceId -> 0);
+            recomputation.recomputePages(List.of(added.key()), List.of(removed.key()), key -> Optional.empty());
+            awaitUntil(() -> !withdrawn.isEmpty());
+        }
+
+        assertThat(background.groups()).singleElement().satisfies(group -> {
+            assertThat(group.title()).isEqualTo(ReleaseRecomputation.PAGES_TITLE);
+            assertThat(group.parts()).hasSize(2);
+            assertThat(group.parts()).filteredOn(part -> part.sourceId().equals("intern")).singleElement()
+                    .satisfies(part -> {
+                        assertThat(part.parameter(ReleaseRecomputation.PAGES)).isEqualTo("neu");
+                        assertThat(part.parameters()).as("ohne entfernte Seiten keine leere Angabe")
+                                .doesNotContainKey(ReleaseRecomputation.REMOVED);
+                    });
+            assertThat(group.parts()).filteredOn(part -> part.sourceId().equals("ops")).singleElement()
+                    .satisfies(part -> assertThat(part.parameter(ReleaseRecomputation.REMOVED)).isEqualTo("alt"));
+        });
+        assertThat(withdrawn).containsExactly("alt");
+    }
+
+    private static com.aresstack.spaceharvester.application.jobs.Jobs jobs(java.util.concurrent.Executor executor) {
+        return new com.aresstack.spaceharvester.application.jobs.Jobs(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), executor,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+    }
+
+    private static void runAll(java.util.Queue<Runnable> held) {
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+    }
+
     private static void awaitUntil(java.util.function.BooleanSupplier condition) {
         long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (!condition.getAsBoolean() && System.nanoTime() < end) {

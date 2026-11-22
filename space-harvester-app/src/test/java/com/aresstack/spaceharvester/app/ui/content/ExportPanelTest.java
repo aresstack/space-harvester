@@ -392,7 +392,9 @@ class ExportPanelTest {
             panel[0].output("docx");
             assertThat(asked).hasSize(1).first().asString().contains("Word-Dokument für alle Wissensquellen")
                     .contains("jeden ihrer 2 Spaces").contains("je Space entsteht eine eigene Datei");
-            assertThat(workspace.jobs()).as("Nein startet nichts").isEmpty();
+            // Hintergrundaufträge des Starts (Verweise, Analysen nach Update) zählen nicht.
+            assertThat(workspace.jobs()).filteredOn(job -> !job.type().background()).as("Nein startet nichts")
+                    .isEmpty();
             panel[0].output("pdf");
             assertThat(panel[0].exportBlocked("pdf")).contains(ExportPanel.IN_PROGRESS);
         });

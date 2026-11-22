@@ -318,6 +318,22 @@ public final class BackgroundJobs {
         }
     }
 
+    /**
+     * Wie {@link #startUnlessRunning(String, String, BackgroundPart.Draft)} für alle Teile eines Anlasses in einer
+     * Gruppe, etwa die Abgleiche beim Start nach {@link #resumeInterrupted}: Teile, für deren Quelle und Space schon
+     * einer wartet, angehalten ist oder läuft, fallen heraus.
+     *
+     * @return die neue Gruppe mit den übrigen Teilen, oder leer, wenn keiner übrig bleibt
+     */
+    public Optional<BackgroundGroup> startUnlessRunning(String kind, String title, List<BackgroundPart.Draft> parts) {
+        Objects.requireNonNull(parts, "parts");
+        synchronized (startLock(kind)) {
+            List<BackgroundPart.Draft> missing = parts.stream()
+                    .filter(part -> open(kind, part.sourceId(), part.partitionKey()).isEmpty()).toList();
+            return missing.isEmpty() ? Optional.empty() : Optional.of(start(kind, title, missing));
+        }
+    }
+
     private Object startLock(String kind) {
         return startLocks.computeIfAbsent(Objects.requireNonNull(kind, "kind"), ignored -> new Object());
     }

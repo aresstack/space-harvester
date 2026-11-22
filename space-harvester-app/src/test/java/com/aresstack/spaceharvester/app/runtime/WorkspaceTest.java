@@ -599,7 +599,8 @@ class WorkspaceTest {
         runtime.close();
         runtime = null;
 
-        assertThat(start().workspace().jobs()).filteredOn(job -> !job.type().followUp())
+        // Folge- und Hintergrundaufträge (etwa die Abgleiche beim Start) zählen nicht.
+        assertThat(start().workspace().jobs()).filteredOn(job -> !job.type().followUp() && !job.type().background())
                 .extracting(JobStatus::id).containsExactly(id);
     }
 
@@ -931,8 +932,10 @@ class WorkspaceTest {
                 "background-group:" + group.groupId());
         @SuppressWarnings("unchecked")
         List<JobStatus> jobs = (List<JobStatus>) read[0];
-        assertThat(jobs).filteredOn(job -> job.type() == com.aresstack.spaceharvester.application.jobs.JobType
-                .BACKGROUND).extracting(JobStatus::id).containsExactlyInAnyOrderElementsOf(group.jobIds());
+        // Neben der Gruppe stehen auch die Hintergrundaufträge des Starts in der Liste.
+        assertThat(jobs).filteredOn(job -> group.groupId().equals(job.parameter(
+                com.aresstack.spaceharvester.application.background.BackgroundJobs.GROUP)))
+                .extracting(JobStatus::id).containsExactlyInAnyOrderElementsOf(group.jobIds());
         assertThat(read[1]).as("kein Detail aus dem Core für eine Gruppenzeile").isNull();
 
         JobStatus sync = await(workspace, workspace.startSync("handbuch", workspace.spaces("handbuch").get(0).key()));
