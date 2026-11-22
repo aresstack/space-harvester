@@ -474,6 +474,19 @@ wird automatisch verwaltet.
       angenommen sind: Neusortieren allein erzeugt keinen Teil, holt aber Abgewiesenes nach.
     - Bei nur einem Platz unter „Vorbereitung“ bleibt es beim bisherigen Weg im Speicher.
 
+13. **Suchtreffer laden** (Angelo 21.11.2026, Fundstelle 13, Entwurf vom Architekten bestätigt).
+    - Kehrt die Suche eines technischen Aufrufers zurück, bevor die Treffer eines Stapels geladen sind
+      (`technicalWait`, in der App null), wird, was noch lädt oder wartet, die Gruppe „Suchtreffer laden“ der Art
+      `pages` (`PageLoads#adopt`), je Quelle und Space ein Teil. Das gilt für jede Schlagwortsuche, auch aus Chat und
+      progressiver Suche.
+    - Die Abrufe bleiben dieselben: Vorrang des Vordergrunds, Platz im Planer, kein zweiter Abruf. Der Teil wartet auf
+      sie und zählt sie; `progress()` der Suche zählt dieselben Abrufe, beide Anzeigen stimmen also überein. Abbrechen
+      in der Auftragsliste zieht die Abrufe zurück, Abbrechen in der Trefferliste bricht auch die Gruppe ab.
+    - Erst nach einem Neustart oder Fortsetzen fordert der Teil an, was noch fehlt, mit `refresh` (auch Seiten mit
+      älterer Fassung im Cache) und dem Anlass `SEARCH`. Seiten, die schon ein offener Teil lädt, fallen heraus.
+    - Delegierte Benutzer laden wie bisher nur während ihres Aufrufs, ohne Auftrag. Bei nur einem Platz unter
+      „Vorbereitung“ bleibt es beim bisherigen Weg.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel

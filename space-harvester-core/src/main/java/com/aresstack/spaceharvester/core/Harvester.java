@@ -877,6 +877,8 @@ public final class Harvester implements AutoCloseable {
                 prefetch = new SearchHitPrefetch(key -> texts.cachedVersion(key, cache::findHeader, cache::find),
                         key -> cache.findHeader(key).map(PageHeader::metadata), scheduler,
                         SearchHitPrefetch.DEFAULT_WAIT, builder.searchWait);
+                // Fundstelle 13: Was nach der Rückkehr der Suche weiterlädt, steht als „Suchtreffer laden“ in der Liste.
+                prefetch.pageLoads(pageLoads);
             }
             SearchReranker reranker = builder.reranker;
             SwappableReranker swappable = null;
