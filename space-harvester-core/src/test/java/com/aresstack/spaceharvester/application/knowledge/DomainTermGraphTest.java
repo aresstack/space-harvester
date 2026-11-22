@@ -936,7 +936,8 @@ class DomainTermGraphTest {
         DomainTermGraph split = new DomainTermGraph(caller -> withFeatures(caller, page -> {
             ParsedStatements.Features chosen = features.get(page);
             return statement -> {
-                ParsedStatements.Statement changed = rebuilt(statement, chosen);
+                // Grundform „prüfen“; Seite 3 ohne Grundform (nur die gebeugte Form aus dem Text)
+                ParsedStatements.Statement changed = rebuilt(statement, chosen, page.equals("3") ? "" : "prüfen");
                 return page.equals("2") ? changed.withReview(ParsedStatements.Review.CONFIRMED) : changed;
             };
         }), vocabulary());
@@ -947,10 +948,10 @@ class DomainTermGraphTest {
                 .extracting(DomainTermGraph.Edge::phrase, DomainTermGraph.Edge::count, DomainTermGraph.Edge::trust)
                 .as("„nicht bestimmt“ zählt wie schlicht; „nicht prüfen“ ist nie Beleg für „prüfen“")
                 .containsExactlyInAnyOrder(
-                        org.assertj.core.groups.Tuple.tuple("prüft", 3, DomainTermGraph.Trust.UNGEPRUEFT),
-                        org.assertj.core.groups.Tuple.tuple("nicht prüft", 1, DomainTermGraph.Trust.GEPRUEFT),
-                        org.assertj.core.groups.Tuple.tuple("muss nicht prüft (geplant)", 1,
-                                DomainTermGraph.Trust.UNGEPRUEFT));
+                        org.assertj.core.groups.Tuple.tuple("prüfen", 3, DomainTermGraph.Trust.UNGEPRUEFT),
+                        org.assertj.core.groups.Tuple.tuple("nicht prüfen", 1, DomainTermGraph.Trust.GEPRUEFT),
+                        // ohne Grundform kein „muss nicht prüft“: Modalverb und Verneinung entfallen im Wortlaut
+                        org.assertj.core.groups.Tuple.tuple("prüft (geplant)", 1, DomainTermGraph.Trust.UNGEPRUEFT));
         assertThat(split.around(CALLER, "Plan", new DomainTermGraph.Options(2, false, null, true), () -> false)
                 .edges()).as("„nur geprüft“ je Teil").singleElement()
                 .satisfies(edge -> assertThat(edge.qualifiers().negated()).isTrue());
@@ -994,6 +995,9 @@ class DomainTermGraphTest {
                 ParsedStatements.Temporality.UNKNOWN).phrase("prüfen")).isEqualTo("kann prüfen");
         assertThat(new DomainTermGraph.Qualifiers(true, ParsedStatements.Modality.MUSS,
                 ParsedStatements.Temporality.GEPLANT).phrase("prüfen")).isEqualTo("muss nicht prüfen (geplant)");
+        assertThat(new DomainTermGraph.Qualifiers(true, ParsedStatements.Modality.MUSS,
+                ParsedStatements.Temporality.GEPLANT).phrase("prüft", false))
+                .as("ohne Grundform kein Vorsatz vor der gebeugten Form").isEqualTo("prüft (geplant)");
         DomainTermGraph.Qualifiers earlier = new DomainTermGraph.Qualifiers(false, ParsedStatements.Modality.NONE,
                 ParsedStatements.Temporality.FRUEHER);
         assertThat(earlier.phrase("prüfen")).isEqualTo("prüfen (früher)");
@@ -1016,8 +1020,13 @@ class DomainTermGraphTest {
 
     private static ParsedStatements.Statement rebuilt(ParsedStatements.Statement statement,
                                                       ParsedStatements.Features features) {
+        return rebuilt(statement, features, statement.predicateLemma());
+    }
+
+    private static ParsedStatements.Statement rebuilt(ParsedStatements.Statement statement,
+                                                      ParsedStatements.Features features, String lemma) {
         return new ParsedStatements.Statement(statement.id(), statement.sentence(), statement.start(),
-                statement.end(), statement.predicateText(), statement.predicateLemma(), statement.voice(),
+                statement.end(), statement.predicateText(), lemma, statement.voice(),
                 statement.clause(), statement.core(), statement.arguments(), statement.findings(),
                 statement.paragraph(), statement.quality(), statement.qualityReasons(), statement.review(), features,
                 statement.derivation(), statement.check());

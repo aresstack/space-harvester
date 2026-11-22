@@ -634,7 +634,8 @@ public final class TermGraphView {
                 : new ArrayList<>(List.of(clicked));
         List<GraphSource.Edge> rest = new ArrayList<>();
         for (GraphSource.Edge edge : graph.edges()) {
-            if (edge == clicked || edge.style() != GraphSource.Style.VERB || !edge.from().equals(clicked.from())
+            // Gleich, nicht dieselbe: Nach einem Neuladen mit gleichem Inhalt hält die Lage die alten Kanten.
+            if (edge.equals(clicked) || edge.style() != GraphSource.Style.VERB || !edge.from().equals(clicked.from())
                     || !edge.to().equals(clicked.to())) {
                 continue;
             }
@@ -1699,10 +1700,20 @@ public final class TermGraphView {
                     if (domain && pairs.get(pair) > 1) {
                         // Mehrere Aussagen zwischen denselben Knoten (UX W9): nebeneinander gebogen, jede Beschriftung
                         // auf ihrem eigenen Bogen; die Seiten gelten für beide Richtungen gleich.
-                        double bend = (index - (pairs.get(pair) - 1) / 2.0) * arcGap(pair, boxes);
+                        double gap = arcGap(pair, boxes);
+                        double bend = (index - (pairs.get(pair) - 1) / 2.0) * gap;
+                        boolean flip = edge.from().compareTo(edge.to()) > 0;
+                        Rectangle2D first = flip ? to : from;
+                        Rectangle2D second = flip ? from : to;
+                        double outward = outward(first, second, centre, edge);
+                        if (outward != 0) {
+                            // Zwischen zwei Nachbarn durch die Mitte: der ganze Fächer außen um die Mitte, der
+                            // innerste Bogen wie eine einzelne Kante dort, die übrigen weiter außen.
+                            bend = outward + Math.signum(outward) * index * gap;
+                        }
                         Segment arc = new Segment(edge, exit(from, to), exit(to, from), null, null);
                         if (bend != 0) {
-                            arc = bowed(arc, boxes, edge.from().compareTo(edge.to()) > 0 ? -bend : bend);
+                            arc = bowed(arc, boxes, flip ? -bend : bend);
                         }
                         segments.add(arc);
                         continue;
@@ -1781,6 +1792,30 @@ public final class TermGraphView {
 
             /** Je Knotenpaar der Abstand seiner Bögen für die aktuelle Lage ({@link #arcGap}). */
             private final Map<String, Double> arcGaps = new java.util.HashMap<>();
+
+            /**
+             * Scheitelabstand, mit dem eine Kante zwischen zwei Nachbarn außen um die Mitte biegt (dieselbe Regel wie
+             * für einzelne Kanten), mit Vorzeichen in Richtung von {@code first} nach {@code second} wie bei
+             * {@link #bowed}; 0, wenn sie nicht durch die Mitte liefe.
+             */
+            private double outward(Rectangle2D first, Rectangle2D second, Point2D centre, GraphSource.Edge edge) {
+                if (!domain || centre == null || depthOf(edge.from()) == 0 || depthOf(edge.to()) == 0) {
+                    return 0;
+                }
+                Point2D a = new Point2D.Double(first.getCenterX(), first.getCenterY());
+                Point2D b = new Point2D.Double(second.getCenterX(), second.getCenterY());
+                if (new Line2D.Double(exit(first, second), exit(second, first)).ptSegDist(centre) >= 60) {
+                    return 0;
+                }
+                double dx = b.getX() - a.getX();
+                double dy = b.getY() - a.getY();
+                double length = Math.max(1, Math.hypot(dx, dy));
+                double nx = -dy / length;
+                double ny = dx / length;
+                double side = ((a.getX() + b.getX()) / 2 - centre.getX()) * nx
+                        + ((a.getY() + b.getY()) / 2 - centre.getY()) * ny;
+                return (side < 0 ? -1 : 1) * Math.max(45, length * 0.22);
+            }
 
             /** Wie viele Knoten außer ihren eigenen Enden die Kante kreuzt; hört bei {@code limit} auf zu zählen. */
             private int foreignHits(Segment segment, Map<String, Rectangle2D> boxes, int limit) {

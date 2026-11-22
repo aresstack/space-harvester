@@ -222,11 +222,19 @@ public final class DomainTermGraph {
          * (geplant)“, „prüfen (früher)“; „gilt“ wird nicht angeschrieben.
          */
         public String phrase(String verb) {
+            return phrase(verb, true);
+        }
+
+        /**
+         * Wie {@link #phrase(String)}; ohne Grundform ({@code base} falsch: {@code verb} ist die gebeugte Form aus dem
+         * Text) ohne Modalverb und „nicht“ davor, sonst entstünde „muss nicht prüft“. Der Zeitbezug bleibt.
+         */
+        public String phrase(String verb, boolean base) {
             StringBuilder text = new StringBuilder();
-            if (modality != ParsedStatements.Modality.NONE) {
+            if (base && modality != ParsedStatements.Modality.NONE) {
                 text.append(modality.name().toLowerCase(Locale.ROOT)).append(' ');
             }
-            if (negated) {
+            if (base && negated) {
                 text.append("nicht ");
             }
             text.append(verb == null ? "" : verb);
@@ -326,7 +334,12 @@ public final class DomainTermGraph {
 
         /** Der Wortlaut der Aussage mit ihren Merkmalen ({@link Qualifiers#phrase}); bei Synonymen {@code null}. */
         public String phrase() {
-            return kind == EdgeKind.VERB ? qualifiers.phrase(verb) : null;
+            if (kind != EdgeKind.VERB) {
+                return null;
+            }
+            boolean base = evidence.isEmpty() || evidence.stream().anyMatch(item -> item.statement().predicateLemma()
+                    != null && !item.statement().predicateLemma().isBlank());
+            return qualifiers.phrase(verb, base);
         }
 
         private static Trust rank(List<Evidence> evidence) {

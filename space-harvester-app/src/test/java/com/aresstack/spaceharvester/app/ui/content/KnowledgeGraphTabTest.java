@@ -2563,6 +2563,37 @@ class KnowledgeGraphTabTest {
     }
 
     @Test
+    void theOverlayOfAPairWithSeveralStatementsNamesThePairAndSumsAllEvidence() {
+        DomainTermGraph.Qualifiers not = new DomainTermGraph.Qualifiers(true,
+                com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Modality.NONE,
+                com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Temporality.GILT);
+        List<DomainTermGraph.Evidence> three = List.of(evidence(new PageKey("wiki", "1"), "Plan"),
+                evidence(new PageKey("wiki", "2"), "Plan"), evidence(new PageKey("wiki", "3"), "Plan"));
+        List<DomainTermGraph.Evidence> two = List.of(evidence(new PageKey("wiki", "4"), "Plan"),
+                evidence(new PageKey("wiki", "5"), "Plan"));
+        actions.pagesView = new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND, List.of(
+                new DomainTermGraph.Node("plan", "Plan", DomainTermGraph.NodeKind.TERM, 0, null),
+                new DomainTermGraph.Node("ziel", "Ziel", DomainTermGraph.NodeKind.TERM, 0, null)),
+                List.of(new DomainTermGraph.Edge("plan", "ziel", DomainTermGraph.EdgeKind.VERB, "prüfen", 3, three,
+                                DomainTermGraph.Trust.UNGEPRUEFT, false, null),
+                        new DomainTermGraph.Edge("plan", "ziel", DomainTermGraph.EdgeKind.VERB, "prüfen", 2, two,
+                                DomainTermGraph.Trust.UNGEPRUEFT, false, not)), false, 0, java.util.Set.of());
+        tab.page(WIKI);
+        tab.showingForTests(true);
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        runner.runAll();
+
+        tab.clickDomainEdge();
+        runner.runAll();
+
+        com.aresstack.spaceharvester.app.ui.EvidencePopup popup = tab.evidencePopup();
+        assertThat(popup.headingText()).as("Kopf nennt das Paar, nicht eine Aussage").isEqualTo("Plan – Ziel");
+        assertThat(popup.countValue()).as("Summe aller Aussagen des Paars").isEqualTo(5);
+        assertThat(popup.statementHeadings()).containsExactly("▾ prüfen", "▸ nicht prüfen");
+    }
+
+    @Test
     void aReviewNoticeWhileTheEvidenceIsStillLoadingWaitsAndTheOverlayStillOpens() {
         List<Runnable> deferred = new ArrayList<>();
         tab.later(deferred::add);
@@ -3150,6 +3181,8 @@ class KnowledgeGraphTabTest {
         /** Je Abfrage der Fachsicht, ob sie beim Rechnen schon überholt war. */
         final List<Boolean> cancelledSeen = new ArrayList<>();
         boolean domainEmpty;
+        /** Statt der festen seitenweiten Fachsicht diese ({@code null}: die feste). */
+        DomainTermGraph.View pagesView;
         /** Die Mitte ohne Verbindung (around liefert nur sie). */
         boolean aroundAlone;
         RuntimeException domainFailure;
@@ -3163,6 +3196,9 @@ class KnowledgeGraphTabTest {
             cancelledSeen.add(cancelled.getAsBoolean());
             if (domainFailure != null) {
                 throw domainFailure;
+            }
+            if (pagesView != null) {
+                return pagesView;
             }
             if (domainEmpty) {
                 return new DomainTermGraph.View(DomainTermGraph.Outcome.NO_EDGES, List.of(), List.of(), false, 0,

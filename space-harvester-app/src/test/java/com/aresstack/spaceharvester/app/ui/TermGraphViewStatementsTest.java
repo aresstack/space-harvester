@@ -179,6 +179,91 @@ class TermGraphViewStatementsTest {
         assertThat(TermGraphView.Canvas.PALE.getRGB() & 0xFFFFFF).isEqualTo(Comic.INK.getRGB() & 0xFFFFFF);
     }
 
+    @Test
+    void aClickAfterAReloadWithTheSameContentShowsEveryStatementOnce() throws Exception {
+        GraphSource.Graph first = GraphSource.ofDomainView(view(), "Plan", id -> "MaltParser");
+        GraphSource.Graph again = GraphSource.ofDomainView(view(), "Plan", id -> "MaltParser");
+        assertThat(again).isEqualTo(first).isNotSameAs(first);
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView view = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY,
+                    GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> view(), id -> "MaltParser"));
+            view.domainChoice().doClick();
+            view.show(first);
+            TermGraphView.Canvas canvas = view.canvas();
+            canvas.setSize(900, 560);
+            canvas.layout(900, 560);
+            view.show(again);
+            TermGraphView.Canvas.Segment negated = canvas.segments(canvas.layout(900, 560)).stream()
+                    .filter(segment -> segment.edge().to().equals("ziel") && segment.edge().qualifiers().negated())
+                    .findFirst().orElseThrow();
+            Rectangle2D tag = negated.tag();
+            GraphSource.Edge clicked = canvas.edgeAt(new java.awt.Point((int) tag.getCenterX(),
+                    (int) tag.getCenterY()));
+            seen.add(again.edges().stream().anyMatch(edge -> edge == clicked));
+            view.showEvidenceFor(clicked);
+            EvidencePopup popup = view.evidencePopup();
+            seen.add(popup.headingText());
+            seen.add(popup.countValue());
+            seen.add(popup.statementHeadings());
+        });
+        assertThat(seen).as("die Lage hält die alten Kanten; die geklickte steht trotzdem nur einmal da")
+                .containsExactly(false, "Plan – Ziel", 5, List.of("▾ nicht prüfen", "▸ prüfen"));
+    }
+
+    @Test
+    void statementsBetweenTwoNeighboursBendAroundTheCentreInsteadOfThroughIt() throws Exception {
+        DomainTermGraph.View around = new DomainTermGraph.View(DomainTermGraph.Outcome.FOUND, List.of(
+                new DomainTermGraph.Node("plan", "Plan", DomainTermGraph.NodeKind.TERM, 0, null),
+                new DomainTermGraph.Node("ziel", "Ziel", DomainTermGraph.NodeKind.TERM, 1, "plan"),
+                new DomainTermGraph.Node("start", "Start", DomainTermGraph.NodeKind.TERM, 1, "plan")),
+                List.of(edge("plan", "ziel", "prüfen", List.of(evidence("1", DomainTermGraph.Trust.UNGEPRUEFT)),
+                                DomainTermGraph.Trust.UNGEPRUEFT, null),
+                        edge("plan", "start", "prüfen", List.of(evidence("2", DomainTermGraph.Trust.UNGEPRUEFT)),
+                                DomainTermGraph.Trust.UNGEPRUEFT, null),
+                        edge("ziel", "start", "melden", List.of(evidence("3", DomainTermGraph.Trust.UNGEPRUEFT),
+                                evidence("4", DomainTermGraph.Trust.UNGEPRUEFT)), DomainTermGraph.Trust.UNGEPRUEFT,
+                                null),
+                        edge("ziel", "start", "melden", List.of(evidence("5", DomainTermGraph.Trust.UNGEPRUEFT)),
+                                DomainTermGraph.Trust.UNGEPRUEFT, NOT)),
+                false, 0, Set.of("maltparser-de"));
+        GraphSource.Graph graph = GraphSource.ofDomainView(around, "Plan", id -> "MaltParser");
+        Rectangle2D plan = new Rectangle2D.Double(410, 265, 80, 30);
+        java.util.Map<String, Rectangle2D> boxes = new java.util.LinkedHashMap<>();
+        boxes.put("plan", plan);
+        boxes.put("ziel", new Rectangle2D.Double(110, 265, 80, 30));
+        boxes.put("start", new Rectangle2D.Double(710, 265, 80, 30));
+        List<TermGraphView.Canvas.Segment> segments = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermGraphView view = new TermGraphView(null, (start, depth, proposals) -> GraphSource.Graph.EMPTY,
+                    GraphSource.ofDomainTerms((start, depth, checkedOnly, cancelled) -> around, id -> id));
+            view.domainChoice().doClick();
+            view.show(graph);
+            TermGraphView.Canvas canvas = view.canvas();
+            canvas.setSize(900, 560);
+            segments.addAll(canvas.segments(boxes));
+        });
+        List<TermGraphView.Canvas.Segment> outer = segments.stream()
+                .filter(segment -> segment.edge().from().equals("ziel")).toList();
+        assertThat(outer).as("Ziel – Start: zwei Aussagen, beide gebogen").hasSize(2)
+                .allSatisfy(segment -> assertThat(segment.control()).isNotNull());
+        Rectangle2D kept = new Rectangle2D.Double(plan.getX() - 3, plan.getY() - 3, plan.getWidth() + 6,
+                plan.getHeight() + 6);
+        for (TermGraphView.Canvas.Segment segment : outer) {
+            for (int i = 0; i <= 200; i++) {
+                assertThat(kept.contains(segment.at(i / 200.0))).as("%s läuft nicht durch Plan",
+                        segment.edge().label()).isFalse();
+            }
+            assertThat(segment.tag().intersects(kept)).as("Beschriftung %s nicht auf Plan", segment.edge().label())
+                    .isFalse();
+        }
+        assertThat(Math.signum(outer.get(0).at(0.5).getY() - plan.getCenterY()))
+                .as("beide Bögen auf derselben Seite, außen um die Mitte")
+                .isEqualTo(Math.signum(outer.get(1).at(0.5).getY() - plan.getCenterY()));
+        assertThat(outer.get(0).at(0.5).distance(outer.get(1).at(0.5))).as("nebeneinander, nicht übereinander")
+                .isGreaterThan(10);
+    }
+
     /** Auf welcher Seite der Verbindung der Knotenmitten der Scheitel liegt. */
     private static double side(TermGraphView.Canvas.Segment segment) {
         Point2D a = segment.a();

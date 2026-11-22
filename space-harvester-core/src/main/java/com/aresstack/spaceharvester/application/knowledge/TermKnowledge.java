@@ -318,9 +318,21 @@ public final class TermKnowledge {
                 }
             }
             DomainTermGraph.Qualifiers qualifiers = edge.qualifiers();
+            // Die Kante faltet „nicht bestimmt“ in „schlicht“; dem Chat bleibt es „nicht bestimmt“, solange keine
+            // Belegstelle das Merkmal bestimmt (bei gemischten Belegen gilt der bestimmte Wert).
+            List<ParsedStatements.Features> features = edge.evidence().stream().map(TermKnowledge::features).toList();
+            ParsedStatements.Negation negation = features.stream()
+                    .anyMatch(item -> item.negation() != ParsedStatements.Negation.UNKNOWN)
+                    ? qualifiers.negated() ? ParsedStatements.Negation.NEGATED : ParsedStatements.Negation.AFFIRMED
+                    : ParsedStatements.Negation.UNKNOWN;
+            ParsedStatements.Modality modality = features.stream()
+                    .anyMatch(item -> item.modality() != ParsedStatements.Modality.UNKNOWN)
+                    ? qualifiers.modality() : ParsedStatements.Modality.UNKNOWN;
+            ParsedStatements.Temporality temporality = features.stream()
+                    .anyMatch(item -> item.temporality() != ParsedStatements.Temporality.UNKNOWN)
+                    ? qualifiers.temporality() : ParsedStatements.Temporality.UNKNOWN;
             statements.get(entry.getKey()).add(new Statement(label(nodes, edge.from()), edge.verb(),
-                    label(nodes, edge.to()), qualifiers.negated() ? ParsedStatements.Negation.NEGATED
-                    : ParsedStatements.Negation.AFFIRMED, qualifiers.modality(), qualifiers.temporality(),
+                    label(nodes, edge.to()), negation, modality, temporality,
                     trust(edge), edge.count(), named, pages.size() - named.size()));
         }
         List<Term> terms = shown.stream().map(node -> new Term(node.label(), node.kind(), statements.get(node.key())))
@@ -333,6 +345,11 @@ public final class TermKnowledge {
         return new Answer(Outcome.FOUND, terms, neighbours.subList(0, neighbours.size() - omittedNeighbours),
                 List.of(), List.copyOf(delivered.values()), new Limits(inScope, read, omittedTerms,
                 omittedStatements, omittedNeighbours, omittedEvidencePages, view.truncated(), view.skippedStale()));
+    }
+
+    private static ParsedStatements.Features features(DomainTermGraph.Evidence item) {
+        ParsedStatements.Features features = item.statement().features();
+        return features == null ? ParsedStatements.Features.UNKNOWN : features;
     }
 
     /** Erst melden, dann herausgeben: Wirft die Meldung, gibt es keine Antwort. */

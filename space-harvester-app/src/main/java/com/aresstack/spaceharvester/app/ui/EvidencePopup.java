@@ -392,7 +392,7 @@ public final class EvidencePopup extends JPopupMenu {
                 section.body.add(row.panel);
                 section.body.add(Box.createVerticalStrut(10));
             }
-            section.body.setVisible(section.expanded);
+            section.body.setVisible(section.expanded());
             rows.add(section.body);
             rows.add(Box.createVerticalStrut(8));
         }
@@ -409,72 +409,44 @@ public final class EvidencePopup extends JPopupMenu {
     /** Überschrift einer Aussage samt ihren Belegen (UX W9). */
     private final class Section {
         final Statement statement;
-        final JPanel head = new JPanel(new BorderLayout(8, 0));
-        final JLabel toggle = new JLabel();
+        final JPanel head = new JPanel();
+        /** Aufklappbare Überschrift der Bibliothek: Fokusring, Maus, Leertaste/Enter, zugänglicher Name. */
+        final com.aresstack.spaceharvester.app.ui.controls.SectionHeader header;
         final JPanel body = new JPanel();
-        boolean expanded;
 
         Section(Statement statement, boolean expanded) {
             this.statement = statement;
-            this.expanded = expanded;
+            header = new com.aresstack.spaceharvester.app.ui.controls.SectionHeader(statement.heading(), expanded,
+                    this::toggled);
             head.setOpaque(false);
             head.setAlignmentX(LEFT_ALIGNMENT);
-            toggle.setFont(Comic.semiBold(13.5f));
-            toggle.setForeground(Comic.INK);
-            toggle.setFocusable(true);
-            // Etwas Luft rechts: doppelt aufgelöst misst die halbfette Schrift breiter, sonst fehlt der letzte Buchstabe.
-            toggle.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 4));
-            toggle.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            JPanel title = new JPanel();
-            title.setOpaque(false);
-            title.setLayout(new BoxLayout(title, BoxLayout.X_AXIS));
-            title.add(toggle);
-            title.add(Box.createHorizontalStrut(8));
+            head.setLayout(new BoxLayout(head, BoxLayout.X_AXIS));
+            header.setMaximumSize(header.getPreferredSize());
+            head.add(header);
+            head.add(Box.createHorizontalStrut(8));
             CountChip number = new CountChip("Belege", Comic.MUTED);
             number.setFocusable(false);
             number.count(statement.total());
-            title.add(number);
+            head.add(number);
             if (statement.stage() != null && !statement.stage().isBlank()) {
-                title.add(Box.createHorizontalStrut(6));
+                head.add(Box.createHorizontalStrut(6));
                 CountChip stage = CountChip.tag(statement.stage(), Comic.MUTED, "Stufe der Aussage");
                 stage.setFocusable(false);
-                title.add(stage);
+                head.add(stage);
             }
-            title.add(Box.createHorizontalGlue());
-            head.add(title, BorderLayout.CENTER);
+            head.add(Box.createHorizontalGlue());
             body.setOpaque(false);
             body.setAlignmentX(LEFT_ALIGNMENT);
             body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
             body.setBorder(BorderFactory.createEmptyBorder(0, 14, 0, 0));
-            text();
-            toggle.addMouseListener(new MouseAdapter() {
-                @Override
-                public void mouseClicked(MouseEvent e) {
-                    flip();
-                }
-            });
-            toggle.addKeyListener(new KeyAdapter() {
-                @Override
-                public void keyPressed(KeyEvent e) {
-                    if (e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_SPACE) {
-                        flip();
-                    }
-                }
-            });
         }
 
-        private void text() {
-            // Pfeil als Vektorsymbol (Pfeil rechts: zu, Pfeil unten: auf); die Schrift hat keine Dreiecke.
-            toggle.setIcon(expanded ? Glyph.COLLAPSE : Glyph.EXPAND);
-            toggle.setIconTextGap(4);
-            toggle.setText(statement.heading());
-            toggle.setToolTipText(expanded ? "Belege zuklappen" : "Belege aufklappen");
+        boolean expanded() {
+            return header.isOpen();
         }
 
-        void flip() {
-            expanded = !expanded;
-            body.setVisible(expanded);
-            text();
+        private void toggled() {
+            body.setVisible(header.isOpen());
             relayout();
         }
     }
@@ -1235,13 +1207,14 @@ public final class EvidencePopup extends JPopupMenu {
     // ---- für Tests
 
     /** Die Überschriften der Aussagen, davor „▾ “ (aufgeklappt) oder „▸ “ (zu); leer bei nur einer Aussage. */
-    List<String> statementHeadings() {
-        return sections.stream().map(section -> (section.expanded ? "▾ " : "▸ ") + section.toggle.getText()).toList();
+    public List<String> statementHeadings() {
+        return sections.stream().map(section -> (section.expanded() ? "▾ " : "▸ ") + section.header.title())
+                .toList();
     }
 
     /** Ein Klick auf die Überschrift der Aussage {@code index}. */
     void clickStatement(int index) {
-        sections.get(index).flip();
+        sections.get(index).header.toggle();
     }
 
     /** Die Überschrift (auch für Tests der Reiter in anderen Paketen). */
@@ -1249,7 +1222,7 @@ public final class EvidencePopup extends JPopupMenu {
         return heading.getText();
     }
 
-    int countValue() {
+    public int countValue() {
         return count.count();
     }
 
