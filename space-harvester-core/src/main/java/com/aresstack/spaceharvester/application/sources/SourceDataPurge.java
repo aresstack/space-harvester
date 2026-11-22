@@ -228,6 +228,17 @@ public final class SourceDataPurge {
         return status != null && pending(status) ? status.id() : null;
     }
 
+    /** Die Quellen, deren Löschen gerade offen ist ({@link #openWithdrawal}); aus dem Speicher. */
+    public java.util.Set<String> openWithdrawals() {
+        java.util.Set<String> open = new java.util.HashSet<>();
+        withdrawals.forEach((sourceId, status) -> {
+            if (pending(status)) {
+                open.add(sourceId);
+            }
+        });
+        return open;
+    }
+
     /**
      * Wird aufgerufen, sobald das Löschen einer Quelle aus {@link #startWithdrawal} nicht mehr offen ist: gelungen
      * oder vom Benutzer abgebrochen.

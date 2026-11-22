@@ -1843,8 +1843,8 @@ public final class ActivitiesView implements View {
 
     /** Gelb, wenn der Besen ein offenes Löschen der Daten einer Quelle stehen lässt (Fundstelle 22). */
     static final String WITHDRAWAL_KEPT = "Löschen der Quelle läuft noch";
-    static final String WITHDRAWAL_KEPT_TEXT = "Das Löschen der Daten einer entfernten Quelle bleibt in der Liste, bis "
-            + "es gelingt; es wiederholt sich von selbst.";
+    static final String WITHDRAWAL_KEPT_TEXT = "Das Löschen der alten Daten einer Quelle bleibt in der Liste, bis es "
+            + "gelingt oder abgebrochen wird; gescheitert wiederholt es sich von selbst.";
 
     private static boolean openWithdrawal(AppRuntime runtime, JobStatus job) {
         try {
@@ -1862,9 +1862,17 @@ public final class ActivitiesView implements View {
     void deleteAll() {
         AppRuntime runtime = context.runtime();
         // Genau die echten Aufträge des Reiters, die der Dialog zählt, werden gelöscht; der andere Reiter bleibt.
-        List<JobStatus> own = tabJobs(lastJobs, backgroundTab());
+        List<JobStatus> all = tabJobs(lastJobs, backgroundTab());
+        // Wie beim Besen: Ein offenes Löschen der Daten einer Quelle bleibt (Fundstelle 22, Abnahme #1090).
+        List<String> withdrawing = runtime == null ? List.of() : all.stream()
+                .filter(job -> openWithdrawal(runtime, job)).map(JobStatus::id).toList();
+        List<JobStatus> own = all.stream().filter(job -> !withdrawing.contains(job.id())).toList();
         List<String> ids = own.stream().map(JobStatus::id).toList();
         int count = own.size();
+        if (runtime != null && count == 0 && !withdrawing.isEmpty()) {
+            feedback.warning(WITHDRAWAL_KEPT, WITHDRAWAL_KEPT_TEXT);
+            return;
+        }
         if (runtime == null || count == 0) {
             return;
         }
@@ -1885,7 +1893,12 @@ public final class ActivitiesView implements View {
             detail = null;
             table.clearSelection();
             render();
-            feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            if (withdrawing.isEmpty()) {
+                feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            } else {
+                feedback.warning(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht; " + WITHDRAWAL_KEPT,
+                        WITHDRAWAL_KEPT_TEXT);
+            }
             poll();
         }, feedback::problem);
     }

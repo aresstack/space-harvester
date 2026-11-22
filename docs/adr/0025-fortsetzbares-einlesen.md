@@ -568,13 +568,18 @@ wird automatisch verwaltet.
       ausstehender Selbstheilung. Daran hängen Halten, Sperre der Kennung, Abschalten und Löschschutz.
     - Halten: Solange das Löschen offen ist, startet kein anderer Auftrag der Quelle (`Jobs#sourceHold`, auf jedem Weg:
       Annahme, Fortsetzen, ↻, Hintergrund); er wartet und meldet einmal „wartet auf das Löschen der Daten der Quelle“
-      (`Jobs.WAITING_FOR_WITHDRAWAL`). Aufträge über alle Quellen überspringen die Quelle (`AccessGuard#withhold`).
+      (`Jobs.WAITING_FOR_WITHDRAWAL`). Gehaltene Aufträge belegen keinen Platz in der Warteschlange, und Fortsetzen
+      und Selbstheilung eines offenen Löschens umgehen die Grenze (angenommene Arbeit). Aufträge über alle Quellen lassen
+      die Quellen aus, deren Löschen bei ihrem Start offen war (`Jobs#withheldSources`, am Auftrag festgehalten und an
+      seine Arbeiter-Threads mitgegeben, `Jobs#carryingWithheld`; `AccessGuard#withhold`; ausdrücklich gefiltert in
+      Suchtreffer-Vorbereitung, Synonymsuche und Knowledge-Graph-Export). `Jobs#cancelSource`, etwa
+      beim Abschalten der Quelle, lässt ihr offenes Löschen stehen.
       Das Löschen beendet nur Aufträge, die vor ihm angenommen wurden, auch nach Anhalten und Fortsetzen (Annahmezeit
       des Eintrags).
     - Die Selbstheilung plant nach einem abgelehnten neuen Versuch (etwa volle Warteschlange) weiter; beim Start bekommt
       jedes offene gescheiterte Löschen seinen Zeitgeber.
     - Löschschutz: Der Besen („Abgeschlossene löschen“) lässt offenes Löschen stehen und meldet gelb „Löschen der Quelle
-      läuft noch“; einzeln lässt es sich nicht löschen (`JobStillRunningException`), die Aufbewahrungsfrist nimmt es
+      läuft noch“, ebenso „Alle Aufträge löschen“; einzeln lässt es sich nicht löschen (`JobStillRunningException`), die Aufbewahrungsfrist nimmt es
       nicht mit. „Daten bereinigen …“ ist bis dahin gesperrt, mit Hinweis.
     - Eine bis zum Ende des Löschens abgeschaltete Quelle merkt sich den Schalter des Benutzers getrennt; schaltet er
       sie in der Zeit aus, bleibt sie danach aus. Freigegeben wird bei `COMPLETED` und `CANCELLED`. Beim Start wird

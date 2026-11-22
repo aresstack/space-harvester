@@ -99,6 +99,33 @@ class SourceManagementWithdrawalTest {
         }
     }
 
+    @Test
+    void turningAMovedSourceOffKeepsDeletingItsOldData() throws Exception {
+        Jobs jobs = jobs();
+        try (ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(handbuch()), "test")) {
+            SourceManagement sources = new SourceManagement(catalog, jobs,
+                    new SourceDataPurge(jobs, heldStores(), id -> catalog.config(id).isPresent()));
+            SourceSettingsConfig moved = new SourceSettingsConfig("handbuch", "confluence", "Handbuch",
+                    URI.create("http://127.0.0.1:2/wiki"), SourceSettingsConfig.Auth.anonymous(),
+                    Map.of("connectTimeoutMillis", "2000"));
+            assertThat(sources.change(moved)).isTrue();
+            assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+            String withdrawal = sources.withdrawalOpen("handbuch");
+
+            // Abschalten beendet die Aufträge der Quelle, nicht aber das Löschen ihrer alten Daten (Abnahme #1090).
+            assertThat(sources.setEnabled("handbuch", false)).isTrue();
+            assertThat(jobs.status(withdrawal).state()).isEqualTo(JobState.RUNNING);
+
+            release.countDown();
+            assertThat(jobs.await(withdrawal, Harvester.OWNER, Duration.ofSeconds(30)).state())
+                    .isEqualTo(JobState.COMPLETED);
+            assertThat(cleared).containsExactly("handbuch");
+            assertThat(sources.enabled("handbuch")).isFalse();
+        } finally {
+            jobs.close();
+        }
+    }
+
     /** Entfernt die Quelle mitten im Löschen und beendet die App; danach steht sie per YAML wieder da. */
     private String removedBeforeTheRestart() throws InterruptedException {
         Jobs before = jobs();

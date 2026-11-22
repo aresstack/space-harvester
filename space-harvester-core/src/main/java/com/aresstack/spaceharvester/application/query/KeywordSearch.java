@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
@@ -647,15 +648,18 @@ public class KeywordSearch {
                 expanded.forEach(extra -> all.add(new SourceQuery(extra.query(), extra.relation())));
                 asked.put(search.source().id(), List.copyOf(all));
                 for (SourceQuery sent : all) {
-                    perQuery.add(searching.submit(() -> search.source().searchPages(sent.text(), search.wanted(),
-                            query.spaces())));
+                    perQuery.add(searching.submit(Jobs.carryingWithheld(() -> search.source().searchPages(sent.text(),
+                            search.wanted(), query.spaces()))));
                 }
                 calls.add(perQuery);
                 if (observer != null) {
                     // Sobald diese Quelle geantwortet hat, erfährt es der Beobachter, auch wenn andere noch suchen.
                     List<Future<List<SourceSearchMatch>>> answers = List.copyOf(perQuery);
                     List<SourceQuery> sent = List.copyOf(all);
-                    searching.submit(() -> report(observer, caller, query, search, answers, sent, limit));
+                    searching.submit(Jobs.carryingWithheld(() -> {
+                        report(observer, caller, query, search, answers, sent, limit);
+                        return null;
+                    }));
                 }
             }
         }
@@ -1093,14 +1097,15 @@ public class KeywordSearch {
         List<Future<Optional<Hit>>> futures = new ArrayList<>();
         try (ExecutorService checks = Executors.newVirtualThreadPerTaskExecutor()) {
             for (Candidate candidate : candidates) {
-                futures.add(checks.submit(() -> {
+                // Die ausgelassenen Quellen eines quellenübergreifenden Auftrags gelten auch hier (Abnahme #1090).
+                futures.add(checks.submit(Jobs.carryingWithheld(() -> {
                     slots.acquireUninterruptibly();
                     try {
                         return hit(caller, query, candidate);
                     } finally {
                         slots.release();
                     }
-                }));
+                })));
             }
         }
         List<Hit> hits = new ArrayList<>();

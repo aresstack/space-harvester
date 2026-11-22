@@ -90,6 +90,17 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
         long failed;
         long processed;
         long discovered;
+        /**
+         * Unter {@link #monitor}: Der Teil bestellt gleich eine Suche ({@link BackgroundFill#scanFor}); bis dahin
+         * beendet ihn kein „leer“, das noch aus der Zeit vor seinem Start stammt (etwa die letzte Seite, die nach dem
+         * Abbrechen endete). Die Suche meldet danach selbst „leer“ oder lädt in ihn.
+         */
+        boolean scanAhead;
+        /**
+         * Unter {@link #monitor}: In der Zeit von {@link #scanAhead} kam ein „leer“. Es kann auch schon das der eben
+         * bestellten Suche gewesen sein; dann sucht der Teil einmal neu, und deren „leer“ beendet ihn.
+         */
+        boolean idleWhileScanAhead;
 
         Live(JobContext context) {
             this.context = context;
@@ -395,6 +406,13 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     public void idle(BackgroundFill.Where where) {
         Live part;
         synchronized (monitor) {
+            Live current = live.get(where);
+            if (current != null && current.scanAhead) {
+                // Vielleicht ein „leer“ von vor dem Start des Teils: Seine Suche ist bestellt und meldet danach selbst;
+                // war es schon ihres, sucht er einmal neu (CI #1092).
+                current.idleWhileScanAhead = true;
+                return;
+            }
             part = live.remove(where);
             if (part != null) {
                 // Gleich frei für die nächste Welle: Nicht erst die verzögerte Auftragsmeldung abwarten, sonst legte
@@ -424,6 +442,13 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
             Live mine = new Live(context);
             boolean woke;
             Early tally;
+            BackgroundFill current = fill;
+            boolean active = current != null && current.enabled();
+            // Fortgesetzt (die Schlange des Space wurde beim Anhalten geräumt) oder dort wartet nichts: Der Teil setzt
+            // seine Arbeit fort, die Füllung sucht für ihn sofort im Katalog und meldet „leer“, wenn sie nichts (mehr)
+            // findet; keine neue Gruppe je Pause (Abnahme #1087).
+            boolean rescan = active && (part.resumed() || current.waiting(where) == 0);
+            mine.scanAhead = rescan;
             synchronized (monitor) {
                 Live before = live.put(where, mine);
                 if (before != null) {
@@ -462,8 +487,7 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                     mine.done.completeExceptionally(e);
                 }
             });
-            BackgroundFill current = fill;
-            if (current == null || !current.enabled()) {
+            if (!active) {
                 // Ohne laufende Füllung gibt es nichts zu zeigen.
                 synchronized (monitor) {
                     live.remove(where, mine);
@@ -472,11 +496,17 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                 finish(mine);
             } else {
                 count(mine, where, 0);
-                if (part.resumed() || current.waiting(where) == 0) {
-                    // Fortgesetzt (die Schlange des Space wurde beim Anhalten geräumt) oder dort wartet nichts: Der Teil
-                    // setzt seine Arbeit fort, die Füllung sucht für ihn sofort im Katalog und meldet „leer“, wenn sie
-                    // nichts (mehr) findet; keine neue Gruppe je Pause (Abnahme #1087).
+                if (rescan) {
                     current.scanFor(where);
+                    boolean again;
+                    synchronized (monitor) {
+                        mine.scanAhead = false;
+                        again = mine.idleWhileScanAhead;
+                        mine.idleWhileScanAhead = false;
+                    }
+                    if (again) {
+                        current.scanFor(where);
+                    }
                 }
             }
             if (woke) {

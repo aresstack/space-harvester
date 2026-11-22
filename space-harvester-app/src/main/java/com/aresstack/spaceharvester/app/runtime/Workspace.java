@@ -3228,7 +3228,8 @@ public final class Workspace {
 
     /**
      * Wie {@link #deleteAllJobs()}, nur für die genannten Aufträge, etwa die eines Reiters der Auftragsliste: laufende
-     * und wartende werden vorher abgebrochen. @return Anzahl
+     * und wartende werden vorher abgebrochen. Ein offenes Löschen der Daten einer Quelle bleibt (Fundstelle 22, Abnahme
+     * #1090); die übrigen werden trotzdem gelöscht. @return Anzahl
      */
     public int deleteAllJobs(java.util.Collection<String> jobIds) {
         int deleted = 0;
@@ -3238,6 +3239,8 @@ public final class Workspace {
                 deleted++;
             } catch (UnknownJobException e) {
                 activities.forget(id);
+            } catch (JobStillRunningException e) {
+                // ein offenes Löschen der Daten einer Quelle bleibt
             }
         }
         return deleted;
