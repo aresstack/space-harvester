@@ -26,9 +26,18 @@ import java.util.regex.Pattern;
 final class SpeakableText {
 
     private static final Pattern SOFT_HYPHEN = Pattern.compile("\\x{00AD}");
-    private static final Pattern TYPOGRAPHIC_HYPHEN = Pattern.compile("[\\x{2010}\\x{2011}\\x{2212}\\x{FE63}\\x{FF0D}]");
+    private static final Pattern TYPOGRAPHIC_HYPHEN = Pattern.compile("[\\x{2010}\\x{2011}\\x{FE63}\\x{FF0D}]");
+    /** Ein echtes Minuszeichen bleibt eine Rechnung: „10 − 5“ heißt „10 minus 5“. */
+    private static final Pattern MINUS = Pattern.compile("\\s*\\x{2212}\\s*");
+    /** Adressen spricht niemand vor; sie fallen weg, bevor ihre Schrägstriche zu Leerzeichen würden. */
+    private static final Pattern URL = Pattern.compile("(?:https?://|www\\.)\\S+");
     private static final Pattern ISO_DATE = Pattern.compile("\\b(\\d{4})-(\\d{2})-(\\d{2})\\b");
-    private static final Pattern NUMBER_RANGE = Pattern.compile("(\\d)\\s*[-\\x{2012}\\x{2013}\\x{2014}]\\s*(\\d)");
+    /**
+     * Zahlenbereiche: mit Bis-Strich (Halbgeviert, Ziffernstrich) immer, mit einfachem Bindestrich nur zwischen zwei
+     * alleinstehenden Zahlen („801-805“), nie in Kennungen wie „CVE-2026-1234“ oder Rechnungen.
+     */
+    private static final Pattern NUMBER_RANGE = Pattern.compile(
+            "(\\d)\\s*[\\x{2012}\\x{2013}]\\s*(\\d)|(?<![\\p{L}\\p{N}]-)\\b(\\d{1,4})-(\\d{1,4})\\b(?!-)");
     private static final Pattern DASH = Pattern.compile("\\s*[\\x{2012}\\x{2013}\\x{2014}\\x{2015}]\\s*|\\s+--?\\s+");
     private static final Pattern ARROW = Pattern.compile("\\s*(?:[\\x{2190}-\\x{21FF}\\x{27F5}-\\x{27FF}]|->|=>)\\s*");
     /** Ergänzungsstrich vor „und“, „oder“, „bis“, „sowie“, Komma: „Gelände- und Gewässerdaten“. */
@@ -57,7 +66,8 @@ final class SpeakableText {
             Pattern.compile("\\b[dD]\\.\\s?[hH]\\."), "das heißt",
             Pattern.compile("\\bbzw\\."), "beziehungsweise",
             Pattern.compile("\\bca\\.(?=\\s)"), "circa",
-            Pattern.compile("\\busw\\."), "und so weiter",
+            Pattern.compile("\\busw\\.(?!\\s+\\p{Lu}|\\s*$)"), "und so weiter",
+            Pattern.compile("\\busw\\.(?=\\s+\\p{Lu}|\\s*$)"), "und so weiter.",
             Pattern.compile("\\bu\\.\\s?a\\."), "unter anderem",
             Pattern.compile("\\bNr\\.(?=\\s)"), "Nummer",
             Pattern.compile("\\bggf\\."), "gegebenenfalls",
@@ -76,9 +86,11 @@ final class SpeakableText {
             return "";
         }
         String result = SOFT_HYPHEN.matcher(text).replaceAll("");
+        result = URL.matcher(result).replaceAll("");
         result = TYPOGRAPHIC_HYPHEN.matcher(result).replaceAll("-");
+        result = MINUS.matcher(result).replaceAll(" minus ");
         result = ISO_DATE.matcher(result).replaceAll("$3.$2.$1");
-        result = NUMBER_RANGE.matcher(result).replaceAll("$1 bis $2");
+        result = numberRanges(result);
         result = ARROW.matcher(result).replaceAll(", dann ");
         result = DASH.matcher(result).replaceAll(", ");
         result = HEX.matcher(result).replaceAll("hexadezimal $1");
@@ -103,6 +115,18 @@ final class SpeakableText {
             result = result.substring(1).strip();
         }
         return result;
+    }
+
+    private static String numberRanges(String text) {
+        Matcher matcher = NUMBER_RANGE.matcher(text);
+        StringBuilder out = new StringBuilder();
+        while (matcher.find()) {
+            String replacement = matcher.group(1) != null ? matcher.group(1) + " bis " + matcher.group(2)
+                    : matcher.group(3) + " bis " + matcher.group(4);
+            matcher.appendReplacement(out, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(out);
+        return out.toString();
     }
 
     private static String joinThousands(String text) {

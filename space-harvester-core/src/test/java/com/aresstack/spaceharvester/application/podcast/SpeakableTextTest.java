@@ -47,9 +47,22 @@ class SpeakableTextTest {
     @Test
     void abbreviationsAreWrittenOutAndAcronymsSpelled() {
         assertThat(SpeakableText.of("Etwa z. B. Karten, d.h. ca. 5 Stück bzw. mehr usw."))
-                .isEqualTo("Etwa zum Beispiel Karten, das heißt circa 5 Stück beziehungsweise mehr und so weiter");
+                .isEqualTo("Etwa zum Beispiel Karten, das heißt circa 5 Stück beziehungsweise mehr und so weiter.");
         assertThat(SpeakableText.of("Willkommen zum BSCW" + NB + "Update!")).isEqualTo(
                 "Willkommen zum Be Es Ze We Update!");
+    }
+
+    @Test
+    void subtractionIdentifiersUrlsAndSentenceEndsKeepTheirMeaning() {
+        // Codex-Review #1161
+        assertThat(SpeakableText.of("10 \u2212 5 ergibt 5.")).isEqualTo("10 minus 5 ergibt 5.");
+        assertThat(SpeakableText.of("Die Lücke CVE-2026-1234 ist geschlossen.")).isEqualTo(
+                "Die Lücke CVE 2026 1234 ist geschlossen.");
+        assertThat(SpeakableText.of("Bereiche 801-805 helfen.")).isEqualTo("Bereiche 801 bis 805 helfen.");
+        assertThat(SpeakableText.of("Mehr unter https://example.org/info steht da.")).isEqualTo(
+                "Mehr unter steht da.");
+        assertThat(SpeakableText.of("Wir brauchen Karten usw. Danach geht es weiter.")).isEqualTo(
+                "Wir brauchen Karten und so weiter. Danach geht es weiter.");
     }
 
     @Test
