@@ -108,6 +108,33 @@ class ActivitiesBackgroundTabTest {
         assertThat(rows.get(0).lifecycle().actions()).contains(JobAction.CANCEL);
     }
 
+    /** Eine Meldung ohne gewählten Auftrag (z. B. „Nicht übernommen“) öffnet den Detailbereich, ihr ✕ schließt ihn. */
+    @Test
+    void aMessageWithoutASelectionOpensTheDetailAreaAndClosesItAgain() throws Exception {
+        Path home = Files.createTempDirectory("bgfeedback");
+        AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home),
+                home.resolve("app.yml"), "test");
+        try {
+            ActivitiesView[] view = new ActivitiesView[1];
+            SwingUtilities.invokeAndWait(() -> {
+                view[0] = new ActivitiesView(context, null);
+                view[0].showJobsForTest(sample());
+                assertThat(view[0].detailsShown()).isFalse();
+                view[0].feedbackForTest().warning("Nicht übernommen", "Erlaubt sind 1 bis 16.");
+            });
+            // Das Erscheinen meldet AWT über die Ereignisschlange.
+            SwingUtilities.invokeAndWait(() -> { });
+            SwingUtilities.invokeAndWait(() -> {
+                assertThat(view[0].detailsShown()).isTrue();
+                view[0].feedbackForTest().clear();
+            });
+            SwingUtilities.invokeAndWait(() -> { });
+            SwingUtilities.invokeAndWait(() -> assertThat(view[0].detailsShown()).isFalse());
+        } finally {
+            context.shutdown();
+        }
+    }
+
     @Test
     void theViewShowsTheTabsAndCountsRunningBackgroundJobs() throws Exception {
         Path home = Files.createTempDirectory("bgtab");
