@@ -36,16 +36,26 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     private final transient Terminal terminal;
     private final TerminalModel model;
     private final transient java.util.List<Runnable> screenListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
-    private final transient java.util.concurrent.CountDownLatch firstScreen = new java.util.concurrent.CountDownLatch(1);
+    /** Bereit = Tastatur frei UND das Bild danach fertig gezeichnet (Felder aufgebaut). */
+    private final transient java.util.concurrent.locks.ReentrantLock readyLock = new java.util.concurrent.locks.ReentrantLock();
+    private final transient java.util.concurrent.locks.Condition readyChanged = readyLock.newCondition();
+    private boolean ready;
+    private volatile boolean hostWrote;
+    private volatile long lastRefresh = System.nanoTime();
+    /** So lange ohne neues Zeichnen gilt ein Bild als fertig gelesen. */
+    private static final long SETTLE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(150);
     private final transient IntConsumer statusListener;
 
     OpenTermScreen(Terminal terminal, TerminalModel model, IntConsumer statusListener) {
         super(terminal, hiddenToolbar());
         this.terminal = terminal;
-        // Erst das erste Bild vom Host macht die Tastatur wirklich bereit; vorher verwirft OpenTerm Tasten still.
+        // Erst ein fertiges Bild vom Host macht die Tastatur wirklich bereit: OpenTerm gibt die Tastatur schon beim
+        // Lesen des Kopfs frei, die Eingabefelder stehen aber erst am Ende (refresh). Vorher verwirft es Tasten still.
         terminal.addKbdLockListener(changed -> {
-            if (!changed.isKeyboardLocked()) {
-                firstScreen.countDown();
+            if (changed.isKeyboardLocked()) {
+                setReady(false);
+            } else {
+                hostWrote = true; // nur ein Bild des Hosts gibt die Tastatur frei
             }
         });
         this.model = model;
@@ -251,31 +261,56 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
 
     @Override
     public boolean awaitUnlocked(java.time.Duration timeout) throws InterruptedException {
-        long until = System.nanoTime() + timeout.toNanos();
-        if (!firstScreen.await(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
-            return false;
-        }
-        timeout = java.time.Duration.ofNanos(Math.max(0, until - System.nanoTime()));
-        java.util.concurrent.CountDownLatch unlocked = new java.util.concurrent.CountDownLatch(1);
-        com.ascert.open.term.core.KbdLockListener listener = changed -> {
-                if (!changed.isKeyboardLocked()) {
-                unlocked.countDown();
-            }
-        };
-        terminal.addKbdLockListener(listener);
+        long remaining = timeout.toNanos();
+        readyLock.lock();
         try {
-            // Erst anmelden, dann prüfen: so geht kein Wechsel dazwischen verloren.
-            if (!terminal.isKeyboardLocked()) {
-                return true;
+            while (true) {
+                if (ready && !terminal.isKeyboardLocked()) {
+                    // Das Bild muss auch zur Ruhe gekommen sein: Während OpenTerm einen Datenstrom liest, zeichnet es
+                    // zwischendurch (Schreibmarke), bevor die Felder stehen.
+                    long quiet = System.nanoTime() - lastRefresh;
+                    if (quiet >= SETTLE_NANOS) {
+                        return true;
+                    }
+                    if (remaining <= 0) {
+                        return false;
+                    }
+                    long wait = Math.min(remaining, SETTLE_NANOS - quiet);
+                    remaining -= wait;
+                    readyChanged.awaitNanos(wait);
+                    continue;
+                }
+                if (remaining <= 0) {
+                    return false;
+                }
+                remaining = readyChanged.awaitNanos(remaining);
             }
-            return unlocked.await(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
         } finally {
-            terminal.removeKbdLockListener(listener);
+            readyLock.unlock();
+        }
+    }
+
+    private void setReady(boolean value) {
+        readyLock.lock();
+        try {
+            ready = value;
+            readyChanged.signalAll();
+        } finally {
+            readyLock.unlock();
         }
     }
 
     @Override
     public void press(AidKey key) {
+        if (key == AidKey.CLEAR) {
+            // OpenTerm schickt CLEAR erst und löscht danach das Bild. Antwortet der Host schneller, löscht es sein neues
+            // Bild mit (dann stehen Felder ohne Zeichen da). Der Parser liest Antworten nur mit seinem eigenen Monitor;
+            // ihn halten wir, bis das Löschen durch ist. Kurz und ohne Warten auf den Host, daher hier synchronized.
+            synchronized (terminal.getStreamParser()) {
+                terminal.Fkey(aid(key));
+            }
+            return;
+        }
         terminal.Fkey(aid(key));
     }
 
@@ -297,6 +332,10 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
         super.refresh();
         if (screenListeners == null) {
             return; // Aufruf aus dem Konstruktor der Oberklasse
+        }
+        lastRefresh = System.nanoTime();
+        if (hostWrote && !terminal.isKeyboardLocked()) {
+            setReady(true);
         }
         for (Runnable listener : screenListeners) {
             listener.run();
