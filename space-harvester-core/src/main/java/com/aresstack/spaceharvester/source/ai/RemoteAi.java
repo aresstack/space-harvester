@@ -226,18 +226,21 @@ public final class RemoteAi {
      * Verbindung ab (HTTP 504, Angelo 22.11.2026). Die Antwort trägt den vollen Text und den {@code finish_reason}.
      */
     static ChatResponse streamed(ChatCompletionPort adapter, ChatRequest request) {
-        try {
-            return streamedOnce(adapter, request);
-        } catch (ChatCompletionException e) {
-            ChatOptions options = request.options();
-            String effort = options == null ? null : options.reasoningEffort();
-            // Ein Modell ohne Nachdenken lehnt reasoning_effort ab: dieselbe Anfrage einmal ohne. „none“ bleibt, denn
-            // ohne think:false würde Ollama gerade nachdenken.
-            if (e.kind() != ChatErrorKind.INVALID_REQUEST || effort == null || "none".equals(effort)) {
-                throw e;
+        ChatRequest current = request;
+        while (true) {
+            try {
+                return streamedOnce(adapter, current);
+            } catch (ChatCompletionException e) {
+                ChatOptions options = current.options();
+                String effort = options == null ? null : options.reasoningEffort();
+                // Lehnt der Dienst das eingestellte Nachdenken technisch ab (HTTP 400), weicht die Anfrage aus:
+                // „none“ zum kleinsten Nachdenken, sonst ohne Angabe (Angelo 22.11.2026).
+                if (e.kind() != ChatErrorKind.INVALID_REQUEST || effort == null) {
+                    throw e;
+                }
+                current = new ChatRequest(current.messages(),
+                        options.toBuilder().reasoningEffort(fallbackEffort(effort)).build(), current.tools());
             }
-            return streamedOnce(adapter, new ChatRequest(request.messages(),
-                    options.toBuilder().reasoningEffort(null).build()));
         }
     }
 
@@ -408,11 +411,11 @@ public final class RemoteAi {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
         int maxTokens = settings.chatMaxTokens();
-        // Nachdenken der Analyseschritte (ai.step-thinking, Standard aus): Bei Ollama geht es als think mit; ein
-        // OpenAI-kompatibler Dienst kennt „none“ oft nicht und bekommt dann keine Vorgabe.
+        // Nachdenken der Analyseschritte (ai.step-thinking, Standard aus): genau der eingestellte Wert geht mit, bei
+        // Ollama als think, sonst als reasoning_effort; lehnt der Dienst ihn ab, weicht streamed() aus.
         String thinking = settings.stepThinking();
         ChatOptions.Builder builder = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens);
-        builder.reasoningEffort(effort(thinking));
+        builder.reasoningEffort(thinking);
         ChatOptions options = builder.build();
         return (instructions, input) -> {
             ChatCompletionPort adapter = chatPort(settings.chatModel(),
@@ -447,7 +450,7 @@ public final class RemoteAi {
                 : Math.max(settings.chatMaxTokens(), SUMMARY_MIN_TOKENS);
         String thinking = settings.stepThinking();
         ChatOptions.Builder builder = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens);
-        builder.reasoningEffort(effort(thinking));
+        builder.reasoningEffort(thinking);
         ChatOptions options = builder.build();
         int timeout = (int) Math.min(Integer.MAX_VALUE, Math.max(SUMMARY_TIMEOUT.toMillis(), timeoutMillis()));
         return (instructions, input) -> {
@@ -816,7 +819,7 @@ public final class RemoteAi {
     private ChatOptions visionOptions() {
         String thinking = settings.visionThinkingLevel();
         ChatOptions.Builder builder = ChatOptions.builder().model(settings.visionModel());
-        builder.reasoningEffort(effort(thinking));
+        builder.reasoningEffort(thinking);
         return builder.build();
     }
 
@@ -862,33 +865,56 @@ public final class RemoteAi {
      * Wie {@link #limited(ChatCompletionPort, int)}, dazu das Nachdenken (Angelo 22.11.2026: „überall das Nachdenken
      * einstellbar, sonst nimmt er irgendwas Standardmäßiges“): Eine Anfrage ohne eigenes {@code reasoningEffort}
      * bekommt {@code thinking}. Legt ein Aufruf das Nachdenken aus gutem Grund selbst fest, bleibt es. Für einen
-     * OpenAI-kompatiblen Dienst; {@code none} geht dort nicht mit, weil viele Dienste den Wert ablehnen (bei Ollama
-     * schickt {@link OllamaChatAdapter} {@code think: false}).
+     * OpenAI-kompatiblen Dienst; auch {@code none} geht mit (ohne Angabe dächte etwa gpt-oss mit seiner Vorgabe bis ans
+     * Ausgabelimit). Lehnt der Dienst den Wert ab, weicht die Anfrage aus ({@link #fallbackEffort}); bei Ollama
+     * schickt {@link OllamaChatAdapter} {@code think: false}.
      */
     static ChatCompletionPort limited(ChatCompletionPort port, int maxTokens, String thinking) {
-        // Angelo 22.11.2026: „aus“ heißt bei einem OpenAI-kompatiblen Dienst das kleinste Nachdenken. Ohne Angabe denkt
-        // ein Modell wie gpt-oss mit seiner Vorgabe (medium) und braucht für eine Zusammenfassung ewig. Lehnt ein Dienst
-        // den Wert ab (Modell ohne Nachdenken), geht dieselbe Anfrage einmal ohne ihn.
-        String effort = thinking == null ? null : "none".equals(thinking) ? MIN_REASONING_EFFORT : thinking;
+        // Angelo 22.11.2026: genau der eingestellte Wert geht mit, auch „none“. Nur wenn der Dienst ihn technisch
+        // ablehnt, weicht die Anfrage aus ({@link #fallbackEffort}).
         return new ChatCompletionPort() {
             @Override
             public ChatResponse complete(ChatRequest request) {
-                ChatRequest limited = withLimit(request, maxTokens, effort);
-                try {
-                    return port.complete(limited);
-                } catch (ChatCompletionException e) {
-                    if (!rejectedEffort(e, request, limited)) {
-                        throw e;
+                String effort = thinking;
+                while (true) {
+                    ChatRequest limited = withLimit(request, maxTokens, effort);
+                    try {
+                        return port.complete(limited);
+                    } catch (ChatCompletionException e) {
+                        if (effort == null || !rejectedEffort(e, request, limited)) {
+                            throw e;
+                        }
+                        effort = fallbackEffort(effort);
                     }
-                    return port.complete(withLimit(request, maxTokens, null));
                 }
             }
 
             @Override
             public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
-                ChatRequest limited = withLimit(request, maxTokens, effort);
                 java.util.concurrent.atomic.AtomicReference<ChatTask> current =
                         new java.util.concurrent.atomic.AtomicReference<>();
+                start(request, listener, thinking, current);
+                return new ChatTask() {
+                    @Override
+                    public void cancel() {
+                        current.get().cancel();
+                    }
+
+                    @Override
+                    public boolean isDone() {
+                        return current.get().isDone();
+                    }
+
+                    @Override
+                    public boolean isCancelled() {
+                        return current.get().isCancelled();
+                    }
+                };
+            }
+
+            private void start(ChatRequest request, ChatStreamListener listener, String effort,
+                               java.util.concurrent.atomic.AtomicReference<ChatTask> current) {
+                ChatRequest limited = withLimit(request, maxTokens, effort);
                 java.util.concurrent.atomic.AtomicBoolean received = new java.util.concurrent.atomic.AtomicBoolean();
                 current.set(port.stream(limited, new ChatStreamListener() {
                     @Override
@@ -909,8 +935,8 @@ public final class RemoteAi {
 
                     @Override
                     public void onError(ChatCompletionException error) {
-                        if (!received.get() && rejectedEffort(error, request, limited)) {
-                            current.set(port.stream(withLimit(request, maxTokens, null), listener));
+                        if (effort != null && !received.get() && rejectedEffort(error, request, limited)) {
+                            start(request, listener, fallbackEffort(effort), current);
                             return;
                         }
                         listener.onError(error);
@@ -921,42 +947,19 @@ public final class RemoteAi {
                         listener.onCancelled();
                     }
                 }));
-                return new ChatTask() {
-                    @Override
-                    public void cancel() {
-                        current.get().cancel();
-                    }
-
-                    @Override
-                    public boolean isDone() {
-                        return current.get().isDone();
-                    }
-
-                    @Override
-                    public boolean isCancelled() {
-                        return current.get().isCancelled();
-                    }
-                };
             }
         };
     }
 
-
     /**
-     * Das Nachdenken, wie es an den Dienst geht. Ollama versteht „none“ ({@code think: false}). Ein OpenAI-kompatibler
-     * Dienst kennt „none“ oft nicht; ohne Angabe denkt ein Modell wie gpt-oss aber mit seiner Vorgabe (medium) und
-     * schrieb für eine Zusammenfassung bis ans Ausgabelimit (Angelo 22.11.2026: finish_reason=length bei 32768). Daher
-     * geht „aus“ dort als das kleinste Nachdenken {@link #MIN_REASONING_EFFORT}; lehnt ein Modell ohne Nachdenken den
-     * Wert ab, wiederholt {@link #streamed} die Anfrage einmal ohne ihn.
+     * Ausweichwert, wenn der Dienst das eingestellte Nachdenken technisch ablehnt (HTTP 400): „none“ kennen etwa
+     * gpt-oss-Modelle nicht, dann das kleinste Nachdenken {@link #MIN_REASONING_EFFORT}; sonst ohne Angabe.
      */
-    private String effort(String thinking) {
-        if (thinking == null) {
-            return null;
-        }
-        return settings.provider() != AiProvider.OLLAMA && "none".equals(thinking) ? MIN_REASONING_EFFORT : thinking;
+    static String fallbackEffort(String effort) {
+        return "none".equals(effort) ? MIN_REASONING_EFFORT : null;
     }
 
-    /** Das kleinste Nachdenken, das OpenAI-kompatible Dienste annehmen ({@code reasoning_effort}). */
+    /** Das kleinste Nachdenken, das OpenAI-kompatible Dienste wie gpt-oss annehmen ({@code reasoning_effort}). */
     static final String MIN_REASONING_EFFORT = "low";
 
     /** Ob der Dienst die Anfrage nur wegen des hier ergänzten {@code reasoning_effort} abgelehnt hat. */

@@ -496,7 +496,7 @@ class RemoteAiTest {
     }
 
     @Test
-    void anOpenAiCompatibleServiceGetsTheSmallestReasoningEffortWhenThinkingIsOff() {
+    void anOpenAiCompatibleServiceGetsExactlyTheConfiguredReasoningEffortAlsoNone() {
         ChatRequest plain = new ChatRequest(List.of(ChatMessage.user("Hallo")), ChatOptions.defaults());
         List<ChatRequest> seen = new CopyOnWriteArrayList<>();
         ChatCompletionPort port = new ChatCompletionPort() {
@@ -517,14 +517,14 @@ class RemoteAiTest {
         RemoteAi.limited(port, 1024, "high").complete(new ChatRequest(List.of(ChatMessage.user("Hallo")),
                 ChatOptions.builder().reasoningEffort("low").build()));
 
-        // Angelo 22.11.2026: ohne Angabe dachte gpt-oss mit seiner Vorgabe bis ans Ausgabelimit.
-        assertThat(seen.get(0).options().reasoningEffort()).isEqualTo(RemoteAi.MIN_REASONING_EFFORT);
+        // Angelo 22.11.2026: genau der eingestellte Wert; ohne Angabe dachte gpt-oss mit seiner Vorgabe bis ans Limit.
+        assertThat(seen.get(0).options().reasoningEffort()).isEqualTo("none");
         assertThat(seen.get(1).options().reasoningEffort()).isEqualTo("high");
         assertThat(seen.get(2).options().reasoningEffort()).isEqualTo("low");
         assertThat(seen).allSatisfy(request -> assertThat(request.options().maxTokens()).isEqualTo(1024));
     }
 
-    /** Ein Modell ohne Nachdenken lehnt reasoning_effort ab: dieselbe Anfrage geht einmal ohne. */
+    /** Lehnt der Dienst das Nachdenken technisch ab, weicht die Anfrage aus: „none“ → „low“ → ohne Angabe. */
     @Test
     void aServiceThatRejectsTheReasoningEffortIsAskedOnceMoreWithoutIt() {
         ChatRequest plain = new ChatRequest(List.of(ChatMessage.user("Hallo")), ChatOptions.defaults());
@@ -548,8 +548,11 @@ class RemoteAiTest {
 
         RemoteAi.limited(port, 1024, "none").complete(plain);
 
-        assertThat(seen).hasSize(2);
-        assertThat(seen.get(1).options().reasoningEffort()).isNull();
+        // Erst genau „none“, abgelehnt: das kleinste Nachdenken, abgelehnt: ohne Angabe.
+        assertThat(seen).hasSize(3);
+        assertThat(seen.get(0).options().reasoningEffort()).isEqualTo("none");
+        assertThat(seen.get(1).options().reasoningEffort()).isEqualTo(RemoteAi.MIN_REASONING_EFFORT);
+        assertThat(seen.get(2).options().reasoningEffort()).isNull();
     }
 
     @Test
