@@ -73,9 +73,11 @@ public final class ChangeLog implements AutoCloseable {
      *
      * @param released ob eine Seite an den KI-Dienst darf ({@code AiRelease::mayProcess}, ADR 0028)
      * @param material Lesetext und Space-Namen, damit die Zusammenfassung sagt, worum es geht (Angelo, 21.11.2026)
+     * @param planner  Modell des Plan-Schritts vorab (Angelo 22.11.2026: erst planen, dann in kleine Teilaufgaben
+     *                 zerlegen), Einstellungszeile „Zusammenfassung – Plan“; {@code null} heißt ohne Plan
      */
     public record Summaries(Jobs jobs, SummaryModel model, Predicate<PageKey> released, Clock clock,
-                            SummaryMaterial material) {
+                            SummaryMaterial material, SummaryModel planner) {
 
         public Summaries {
             Objects.requireNonNull(jobs, "jobs");
@@ -83,6 +85,12 @@ public final class ChangeLog implements AutoCloseable {
             Objects.requireNonNull(released, "released");
             Objects.requireNonNull(clock, "clock");
             material = material == null ? SummaryMaterial.NONE : material;
+        }
+
+        /** Ohne Plan-Schritt. */
+        public Summaries(Jobs jobs, SummaryModel model, Predicate<PageKey> released, Clock clock,
+                         SummaryMaterial material) {
+            this(jobs, model, released, clock, material, null);
         }
 
         /** Ohne Lesetext und Space-Namen: nur Titel, Pfade und Unterschiede. */
@@ -607,6 +615,7 @@ public final class ChangeLog implements AutoCloseable {
                     Map<String, String> names = spaceNames(sourceId, reportSpaces);
                     UpdateSummarizer.Result result = new UpdateSummarizer(runtime.model(), runtime.released(),
                             new ChildJobs(runtime, context.jobId(), sourceId, spaceKey, caller.jobOwner()))
+                            .withPlanner(runtime.planner())
                             .summarize(report, page -> releasedPath(page, visible, runtime.released()), text, names,
                                     context);
                     Instant now = runtime.clock().instant();

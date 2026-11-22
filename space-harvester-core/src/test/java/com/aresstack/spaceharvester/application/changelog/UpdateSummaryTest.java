@@ -750,6 +750,94 @@ class UpdateSummaryTest {
         assertThat(log.summary(CALLER, "wiki", id)).isPresent();
     }
 
+    /** Ein Planer, der für den Plan-Schritt {@code plan} antwortet oder, wenn gesetzt, immer abschneidet. */
+    private SummaryModel planner(List<String> asked, String plan, boolean truncate) {
+        return new SummaryModel() {
+            @Override
+            public String version() {
+                return "test-plan:1";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String complete(String given, String input) {
+                asked.add(given);
+                if (truncate) {
+                    throw new com.aresstack.spaceharvester.ai.AiOutputTruncatedException("abgeschnitten");
+                }
+                return plan;
+            }
+        };
+    }
+
+    private ChangeLog planned(SummaryModel planner) {
+        return new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)), () -> List.of("wiki"),
+                new ChangeLog.Summaries(jobs, model, key -> released.contains(key.pageId()),
+                        Clock.fixed(T0.plusSeconds(7200), ZoneOffset.UTC), material, planner));
+    }
+
+    private void fourNewPages() {
+        row(1, "100", "DEV", ChangeKind.NEW, "Start");
+        mark(10, true);
+        for (String id : List.of("201", "202", "203", "204")) {
+            row(12, id, "DEV", ChangeKind.NEW, "Seite " + id);
+            released.add(id);
+        }
+        answer = """
+                {"zusammenfassung": "Neu.", "themen": [{"titel": "Neu", "text": "Neu.", "seiten": ["201"]}]}""";
+    }
+
+    /**
+     * Angelo 22.11.2026: erst ein Plan (eigenes Modell), dann je geplantem Thema eine kleine Teilaufgabe; was der
+     * Plan nicht zuordnet, kommt in „Weitere Änderungen“.
+     */
+    @Test
+    void aPlanSplitsThePagesIntoOneSmallTaskPerTopic() {
+        fourNewPages();
+        List<String> asked = new CopyOnWriteArrayList<>();
+        ChangeLog withPlan = planned(planner(asked, """
+                {"themen": [{"titel": "Erstes Thema", "seiten": ["201", "202"]},
+                            {"titel": "Zweites Thema", "seiten": ["203", "999"]}]}""", false));
+        try {
+            assertThat(run(withPlan.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state())
+                    .isEqualTo(JobState.COMPLETED);
+        } finally {
+            withPlan.close();
+        }
+
+        assertThat(asked).containsExactly(UpdateSummarizer.PLAN);
+        List<String> parts = inputs.stream().filter(input -> input.contains("\"aenderungen\"")).toList();
+        assertThat(parts).hasSize(3);
+        assertThat(parts).anySatisfy(input -> assertThat(input).contains("\"geplantesThema\":\"Erstes Thema\"")
+                .contains("Seite 201").contains("Seite 202").doesNotContain("Seite 203"));
+        assertThat(parts).anySatisfy(input -> assertThat(input).contains("\"geplantesThema\":\"Zweites Thema\"")
+                .contains("Seite 203").doesNotContain("Seite 204"));
+        assertThat(parts).anySatisfy(input -> assertThat(input)
+                .contains("\"geplantesThema\":\"Weitere Änderungen\"").contains("Seite 204"));
+    }
+
+    /** Kommt der Plan auch mit Grund nicht zustande (abgeschnitten), teilt der Auftrag wie bisher und scheitert nicht. */
+    @Test
+    void aPlanThatNeverFitsFallsBackToTheUsualParts() {
+        fourNewPages();
+        List<String> asked = new CopyOnWriteArrayList<>();
+        ChangeLog withPlan = planned(planner(asked, null, true));
+        try {
+            assertThat(run(withPlan.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state())
+                    .isEqualTo(JobState.COMPLETED);
+        } finally {
+            withPlan.close();
+        }
+
+        assertThat(asked).hasSize(UpdateSummarizer.ATTEMPTS);
+        assertThat(asked.get(1)).contains("am Ausgabelimit abgeschnitten");
+        assertThat(inputs).isNotEmpty().noneSatisfy(input -> assertThat(input).contains("geplantesThema"));
+    }
+
     /**
      * Angelo 22.11.2026: „Zusammenfassen“ ist ein Oberauftrag; seine Teile laufen als eigene Unteraufträge in der
      * Auftragsliste, so viele zugleich, wie die Job-Einstellungen und ai.parallel zulassen.
