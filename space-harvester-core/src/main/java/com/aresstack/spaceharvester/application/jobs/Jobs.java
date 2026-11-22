@@ -252,6 +252,14 @@ public class Jobs implements AutoCloseable {
      * Ereignis des Abbruchs nennt es (Abnahme #1073), ob der Auftrag wartete oder lief.
      */
     public static final String CANCEL_NOTE = "jobs.cancelNote";
+    /**
+     * Angabe eines Hintergrundauftrags auf eigener Spur (Abnahme Fundstellen 12 und 13): Er belegt keinen Platz unter
+     * „Vorbereitung“, zählt nicht gegen die Plätze von Folge- und Hintergrundaufträgen und hat keine Laufzeitgrenze. Nur
+     * für Teile, die selbst nichts rechnen, sondern die Arbeit eines eigenen, begrenzten Ausführers sichtbar machen,
+     * etwa die Suchtreffer oder die Hintergrundfüllung über den Planer ({@code BackgroundKind#ownLane()}). Wie jeder
+     * Hintergrund startet er nicht bei nur einem Platz und nicht nach {@link #interruptBackground()}.
+     */
+    public static final String OWN_LANE = "jobs.ownLane";
 
     /**
      * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)} für einen Klick des Benutzers, etwa
@@ -1646,7 +1654,7 @@ public class Jobs implements AutoCloseable {
                 if (job.type.download()) {
                     preparing++;
                     job.stage = JobStage.PREPARING;
-                } else {
+                } else if (!ownLane(job)) {
                     running++;
                     if (job.type.followUp()) {
                         runningFollowUps++;
@@ -1664,7 +1672,7 @@ public class Jobs implements AutoCloseable {
                 }
                 // Bilder und Anhänge: die Laufzeitgrenze gilt erst ab dem Download-Platz (grantDownloads), nicht für
                 // Vorbereitung und Warten.
-                job.deadline = job.type.download() ? null : job.startedAt.plus(limits.maxRunTime());
+                job.deadline = job.type.download() || ownLane(job) ? null : job.startedAt.plus(limits.maxRunTime());
                 store.save(job.snapshot());
                 toStart.add(job);
             }
@@ -1711,9 +1719,14 @@ public class Jobs implements AutoCloseable {
                 continue;
             }
             if (job.type.background()) {
+                if (ownLane(job) && parallelPreparations > 1 && !backgroundStopped && !held(job)) {
+                    // Eigene Spur: ohne Platz, sofort; sie hält keinen anderen Auftrag auf.
+                    pick = job;
+                    break;
+                }
                 // Gesperrt zählt nicht als wartend und hält keinen anderen auf (Abnahme D1); geprüft wird nur, solange
                 // der Hintergrund starten darf und noch kein Kandidat gefunden ist.
-                if (backgroundPick == null && background && !backgroundStopped && !held(job)) {
+                if (backgroundPick == null && background && !backgroundStopped && !ownLane(job) && !held(job)) {
                     backgroundPick = job;
                 }
                 if (parallelPreparations <= 1 && !job.singleSlotNoted) {
@@ -1802,8 +1815,16 @@ public class Jobs implements AutoCloseable {
         return job.parameters != null && "true".equals(job.parameters.get(INTERACTIVE));
     }
 
+    /** Ob der Auftrag auf eigener Spur läuft ({@value #OWN_LANE}). */
+    private static boolean ownLane(Job job) {
+        return job.type.background() && job.parameters != null && "true".equals(job.parameters.get(OWN_LANE));
+    }
+
     /** Unter dem Sperrobjekt: gibt den Platz eines beendeten Auftrags frei. */
     private void release(Job job) {
+        if (ownLane(job)) {
+            return;
+        }
         if (!job.type.download()) {
             running--;
             if (job.type.followUp()) {

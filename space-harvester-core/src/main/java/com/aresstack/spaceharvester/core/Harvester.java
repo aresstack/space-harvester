@@ -878,7 +878,12 @@ public final class Harvester implements AutoCloseable {
                         key -> cache.findHeader(key).map(PageHeader::metadata), scheduler,
                         SearchHitPrefetch.DEFAULT_WAIT, builder.searchWait);
                 // Fundstelle 13: Was nach der Rückkehr der Suche weiterlädt, steht als „Suchtreffer laden“ in der Liste.
-                prefetch.pageLoads(pageLoads);
+                com.aresstack.spaceharvester.application.background.SearchHitLoads hitLoads =
+                        new com.aresstack.spaceharvester.application.background.SearchHitLoads(backgroundJobs,
+                                scheduler, AccessContext.technicalClient(OWNER),
+                                key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
+                opened.add(hitLoads);
+                prefetch.hitLoads(hitLoads);
             }
             SearchReranker reranker = builder.reranker;
             SwappableReranker swappable = null;

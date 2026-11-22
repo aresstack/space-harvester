@@ -180,6 +180,9 @@ public final class BackgroundJobs {
                 parameters.put(KIND, registered.id());
                 parameters.put(GROUP, groupId);
                 parameters.put(TITLE, title);
+                if (registered.ownLane()) {
+                    parameters.put(Jobs.OWN_LANE, "true");
+                }
                 started.add(jobs.submit(JobType.BACKGROUND, draft.sourceId(), draft.partitionKey(), null, owner,
                         parameters, task(false, false)));
             }

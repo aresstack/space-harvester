@@ -142,11 +142,12 @@ class SearchHitPrefetchTest {
         assertThat(loaded).extracting(PageKey::pageId).containsExactly("8");
     }
 
-    /** Planer, Aufträge und „Seiten nachladen“ wie in der App, mit gehaltenem Ausführer der Aufträge. */
+    /** Planer, Aufträge und „Suchtreffer laden“ wie in der App. */
     private final class Visible implements AutoCloseable {
 
         final CountDownLatch release = new CountDownLatch(1);
-        final java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        final java.util.concurrent.ExecutorService executor =
+                java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
         final com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler scheduler =
                 new com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler((caller, key) -> {
                     try {
@@ -158,34 +159,41 @@ class SearchHitPrefetchTest {
                 }, new com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler.Limits(1, 0, 1, 50));
         final com.aresstack.spaceharvester.application.jobs.Jobs jobs =
                 new com.aresstack.spaceharvester.application.jobs.Jobs(
-                        new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), held::add,
+                        new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), executor,
                         new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10, Duration.ofHours(1)),
                         java.time.Clock.systemUTC());
         final com.aresstack.spaceharvester.application.background.BackgroundJobs background =
                 new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
-        final com.aresstack.spaceharvester.application.background.PageLoads loads =
-                new com.aresstack.spaceharvester.application.background.PageLoads(background, scheduler, APP,
-                        key -> false, key -> Optional.of("DEV"));
+        final com.aresstack.spaceharvester.application.background.SearchHitLoads loads =
+                new com.aresstack.spaceharvester.application.background.SearchHitLoads(background, scheduler, APP,
+                        key -> Optional.of("DEV"));
         final SearchHitPrefetch prefetch = new SearchHitPrefetch(key -> Optional.empty(), key -> Optional.empty(),
                 scheduler, HANG_LIMIT, Duration.ZERO);
 
         Visible() {
-            prefetch.pageLoads(loads);
+            prefetch.hitLoads(loads);
         }
 
-        void runAll() {
-            Runnable next;
-            while ((next = held.poll()) != null) {
-                next.run();
-            }
+        List<com.aresstack.spaceharvester.application.background.BackgroundGroup> groups() {
+            return background.groups();
         }
 
         @Override
         public void close() throws Exception {
             release.countDown();
             prefetch.close();
+            loads.close();
             scheduler.close();
             jobs.close();
+            executor.shutdownNow();
+        }
+    }
+
+    private static void eventually(java.util.function.BooleanSupplier condition) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (!condition.getAsBoolean()) {
+            assertThat(System.nanoTime()).as("Bedingung nach 30 s nicht erfüllt").isLessThan(deadline);
+            TimeUnit.MILLISECONDS.sleep(10);
         }
     }
 
@@ -196,25 +204,20 @@ class SearchHitPrefetchTest {
             KeywordSearch.Prefetch.Fill fill = visible.prefetch.prefetch(APP, List.of(hit("5", "1"), hit("6", "1")));
             assertThat(fill.pending()).extracting(KeywordSearch.Hit::pageId).containsExactly("5", "6");
 
-            List<com.aresstack.spaceharvester.application.background.BackgroundGroup> groups =
-                    visible.background.groups();
-            assertThat(groups).singleElement().satisfies(group -> {
-                assertThat(group.title()).isEqualTo(SearchHitPrefetch.TITLE);
-                assertThat(group.parts()).singleElement().satisfies(part -> assertThat(part.parameter(
-                        com.aresstack.spaceharvester.application.background.PageLoads.PAGES)).isEqualTo("5\n6"));
-            });
+            eventually(() -> !visible.groups().isEmpty());
+            com.aresstack.spaceharvester.application.background.BackgroundGroup group =
+                    visible.groups().getFirst();
+            assertThat(group.title()).isEqualTo(com.aresstack.spaceharvester.application.background.SearchHitLoads
+                    .TITLE);
+            assertThat(group.parts()).singleElement().satisfies(part -> assertThat(part.parameter(
+                    com.aresstack.spaceharvester.application.background.SearchHitLoads.PAGES)).isEqualTo("5\n6"));
 
             visible.release.countDown();
-            visible.runAll();
+            eventually(() -> visible.background.group(group.groupId()).orElseThrow().completed());
 
-            com.aresstack.spaceharvester.application.background.BackgroundGroup done =
-                    visible.background.group(groups.getFirst().groupId()).orElseThrow();
-            assertThat(done.completed()).isTrue();
-            assertThat(done.written()).isEqualTo(2);
-            // Der Auftrag wartet auf die Abrufe der Suche, statt neu anzufordern.
+            assertThat(visible.background.group(group.groupId()).orElseThrow().written()).isEqualTo(2);
             assertThat(loaded).extracting(PageKey::pageId).containsExactlyInAnyOrder("5", "6");
-            KeywordSearch.Progress progress = visible.prefetch.progress(fill.progressId()).orElseThrow();
-            assertThat(progress.loaded()).isEqualTo(2);
+            eventually(() -> visible.prefetch.progress(fill.progressId()).orElseThrow().loaded() == 2);
         }
     }
 
@@ -222,14 +225,14 @@ class SearchHitPrefetchTest {
     void cancellingInTheHitListAlsoCancelsTheJob() throws Exception {
         try (Visible visible = new Visible()) {
             KeywordSearch.Prefetch.Fill fill = visible.prefetch.prefetch(APP, List.of(hit("5", "1"), hit("6", "1")));
-            String groupId = visible.background.groups().getFirst().groupId();
+            eventually(() -> !visible.groups().isEmpty());
+            String groupId = visible.groups().getFirst().groupId();
 
             assertThat(visible.prefetch.cancel(fill.progressId())).isTrue();
-            visible.runAll();
 
-            assertThat(visible.background.group(groupId).orElseThrow().parts()).extracting(
-                    com.aresstack.spaceharvester.application.jobs.JobStatus::state)
-                    .containsOnly(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED);
+            eventually(() -> visible.background.group(groupId).orElseThrow().parts().stream()
+                    .allMatch(part -> part.state() == com.aresstack.spaceharvester.application.jobs.JobState
+                            .CANCELLED));
         }
         // Höchstens der schon laufende Abruf endet regulär.
         assertThat(loaded).hasSizeLessThanOrEqualTo(1);
@@ -240,8 +243,9 @@ class SearchHitPrefetchTest {
         AccessContext user = AccessContext.endUser("u", "app", new UserCredential("wiki", "t"));
         try (Visible visible = new Visible()) {
             visible.prefetch.prefetch(user, List.of(hit("5", "1")));
+            TimeUnit.MILLISECONDS.sleep(500);
 
-            assertThat(visible.background.groups()).isEmpty();
+            assertThat(visible.groups()).isEmpty();
         }
     }
 

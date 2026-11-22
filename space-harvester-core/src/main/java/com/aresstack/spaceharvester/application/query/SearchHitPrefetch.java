@@ -74,10 +74,7 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
     private final Coalescer<String, Object> notifier = new Coalescer<>("search-progress",
             (id, ignored) -> deliver(id));
     /** Hintergrundaufträge für Treffer, die nach der Rückkehr der Suche weiterladen (Fundstelle 13); sonst {@code null}. */
-    private volatile com.aresstack.spaceharvester.application.background.PageLoads loads;
-
-    /** Titel der Gruppe in der Auftragsliste (Fundstelle 13). */
-    public static final String TITLE = "Suchtreffer laden";
+    private volatile com.aresstack.spaceharvester.application.background.SearchHitLoads loads;
 
     /**
      * @param cachedVersion Version der Seite im Cache, leer, wenn sie dort fehlt
@@ -174,12 +171,11 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
 
     /**
      * Führt Treffer, die nach der Rückkehr der Suche eines technischen Aufrufers weiterladen, als Hintergrundauftrag
-     * „{@value #TITLE}“ (Fundstelle 13, Angelo 21.11.2026: nichts läuft unsichtbar). Die Abrufe bleiben dieselben, mit
-     * Vorrang des Vordergrunds; der Auftrag wartet auf sie und zählt sie, Abbrechen dort zieht sie zurück. Bei nur einem
-     * Platz ({@link com.aresstack.spaceharvester.application.background.PageLoads#canRun()}) bleibt es beim bisherigen
-     * Weg.
+     * „Suchtreffer laden“ (Fundstelle 13, Angelo 21.11.2026: nichts läuft unsichtbar). Die Abrufe bleiben dieselben,
+     * mit Vorrang des Vordergrunds; der Auftrag zählt sie, Abbrechen dort zieht sie zurück. Die Übergabe kehrt sofort
+     * zurück und hält die Suche nie auf.
      */
-    public void pageLoads(com.aresstack.spaceharvester.application.background.PageLoads loads) {
+    public void hitLoads(com.aresstack.spaceharvester.application.background.SearchHitLoads loads) {
         this.loads = loads;
     }
 
@@ -273,19 +269,13 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
      * Abrufe wie bisher weiter; die Suche scheitert daran nie.
      */
     private void handOver(AccessContext caller, Map<PageKey, AcquisitionScheduler.Ticket> continuing, Batch batch) {
-        com.aresstack.spaceharvester.application.background.PageLoads visible = loads;
+        com.aresstack.spaceharvester.application.background.SearchHitLoads visible = loads;
         if (visible == null || continuing.isEmpty()) {
             return;
         }
-        // Schon Fertiges zählt die Suche selbst; übernommen wird nur, was noch lädt oder wartet.
-        continuing.values().removeIf(ticket -> ticket.done().isDone());
-        if (continuing.isEmpty() || !visible.canRun()) {
-            return;
-        }
         try {
-            com.aresstack.spaceharvester.application.background.PageLoads.Joined joined = visible.adopt(caller, TITLE,
-                    continuing, com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH);
-            joined.started().ifPresent(group -> batch.groups.add(group.groupId()));
+            // Kehrt sofort zurück: Die Gruppe legt ein eigener Arbeiter an (Abnahme #1085).
+            visible.offer(batch.id, caller, continuing);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.INFO, "Suchtreffer nicht als Auftrag geführt ({0})", e.getClass().getName());
         }
@@ -309,19 +299,17 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         if (batch == null) {
             return false;
         }
-        batch.cancel();
-        com.aresstack.spaceharvester.application.background.PageLoads visible = loads;
+        com.aresstack.spaceharvester.application.background.SearchHitLoads visible = loads;
         if (visible != null) {
-            // Abbrechen in der Trefferliste bricht auch den Auftrag ab, sonst endete er mit Fehlern.
-            for (String groupId : batch.groups) {
-                try {
-                    visible.cancel(groupId);
-                } catch (RuntimeException e) {
-                    LOG.log(System.Logger.Level.DEBUG, "Auftrag der Suchtreffer nicht abgebrochen ({0})",
-                            e.getClass().getName());
-                }
+            // Erst der Auftrag, dann die Abrufe: Sonst zählte er die zurückgezogenen als gescheitert.
+            try {
+                visible.cancel(id);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.DEBUG, "Auftrag der Suchtreffer nicht abgebrochen ({0})",
+                        e.getClass().getName());
             }
         }
+        batch.cancel();
         return true;
     }
 
@@ -361,8 +349,6 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         private final List<AcquisitionScheduler.Ticket> own;
         /** Meldet eine Änderung (ADR 0027); nie unter der Sperre des Stapels gerufen. */
         private final Consumer<String> changed;
-        /** Gruppen „Suchtreffer laden“, die Abrufe dieses Stapels übernommen haben (Fundstelle 13). */
-        private final List<String> groups = new java.util.concurrent.CopyOnWriteArrayList<>();
         private int loaded;
         private int failed;
         private boolean cancelled;

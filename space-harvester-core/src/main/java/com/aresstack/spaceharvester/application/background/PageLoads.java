@@ -75,12 +75,6 @@ public final class PageLoads {
     private final Map<String, AccessContext> callers = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, com.aresstack.spaceharvester.application.observe.Subscription> watched =
             new java.util.concurrent.ConcurrentHashMap<>();
-    /**
-     * Übernommene Abrufe je Gruppe (Fundstelle 13, {@link #adopt}): Ein Teil wartet auf sie, statt die Seite neu
-     * anzufordern. Was er nicht genommen hat, wenn die Gruppe endet, wird zurückgezogen.
-     */
-    private final Map<String, Map<PageKey, AcquisitionScheduler.Ticket>> adopted =
-            new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * @param technical der technische Aufrufer des Dienstes, für fortgesetzte Unteraufträge nach einem Neustart
@@ -143,33 +137,6 @@ public final class PageLoads {
      */
     public synchronized Joined join(AccessContext caller, String title, Collection<PageKey> keys, boolean refresh,
                                     ChangeTrigger trigger) {
-        return join(caller, title, keys, refresh, trigger, Map.of());
-    }
-
-    /**
-     * Übernimmt laufende oder wartende Abrufe des Planers als Gruppe (Fundstelle 13): etwa die Suchtreffer, die nach
-     * der Rückkehr der Suche weiterladen. Die Abrufe bleiben, wie sie sind (Weg, Vorrang, Platz im Planer); der Teil
-     * wartet auf sie und zählt sie, statt die Seiten neu anzufordern. Erst nach einem Neustart oder Fortsetzen fordert er
-     * an, was noch fehlt, wie {@link #join} mit {@code refresh}: Die Abrufe laden auch Seiten, deren ältere Fassung im
-     * Cache liegt. Seiten, die schon ein offener Teil lädt, fallen heraus; ihr Abruf bleibt beim Aufrufer. Endet die
-     * Gruppe, bevor ein Teil einen Abruf genommen hat (etwa abgebrochen, solange er wartet), wird der Abruf
-     * zurückgezogen.
-     *
-     * @param caller  technischer Aufrufer (ohne Benutzeranmeldung), dessen Rechte gelten
-     * @param tickets die Abrufe je Seite
-     * @throws IllegalArgumentException wenn der Aufrufer eine Benutzeranmeldung durchreicht
-     */
-    public synchronized Joined adopt(AccessContext caller, String title,
-                                     Map<PageKey, AcquisitionScheduler.Ticket> tickets, ChangeTrigger trigger) {
-        Objects.requireNonNull(caller, "caller");
-        if (caller.credential() != null) {
-            throw new IllegalArgumentException("Der Hintergrund lädt nie mit der Anmeldung eines Benutzers");
-        }
-        return join(caller, title, tickets.keySet(), true, trigger, tickets);
-    }
-
-    private Joined join(AccessContext caller, String title, Collection<PageKey> keys, boolean refresh,
-                        ChangeTrigger trigger, Map<PageKey, AcquisitionScheduler.Ticket> tickets) {
         Objects.requireNonNull(caller, "caller");
         // Ein Teil ohne refresh überspränge eine veraltete Seite im Cache: Nachladen schließt sich nur seinesgleichen an.
         Map<PageKey, String> queued = queued(refresh);
@@ -203,17 +170,6 @@ public final class PageLoads {
         List<String> held = new ArrayList<>();
         held.add(groupId);
         callers.put(groupId, caller);
-        if (!tickets.isEmpty()) {
-            Map<PageKey, AcquisitionScheduler.Ticket> taken = new java.util.concurrent.ConcurrentHashMap<>();
-            bySpace.forEach((where, pageIds) -> pageIds.forEach(pageId -> {
-                PageKey key = new PageKey(where.get(0), pageId);
-                AcquisitionScheduler.Ticket ticket = tickets.get(key);
-                if (ticket != null) {
-                    taken.put(key, ticket);
-                }
-            }));
-            adopted.put(groupId, taken);
-        }
         if (caller.credential() != null) {
             String token = java.util.UUID.randomUUID().toString();
             callers.put(token, caller);
@@ -244,11 +200,6 @@ public final class PageLoads {
         return new Joined(Optional.of(started), joined);
     }
 
-    /** Bricht eine Gruppe dieser Art ab, etwa wenn der Benutzer das Laden der Suchtreffer abbricht. */
-    public Optional<BackgroundGroup> cancel(String groupId) {
-        return background.cancel(groupId);
-    }
-
     /** Wie viele Aufrufer dieser Prozess gerade hält; für Tests. */
     int heldCallers() {
         return callers.size();
@@ -262,11 +213,6 @@ public final class PageLoads {
     /** Lässt den Aufrufer einer beendeten Gruppe los (Abnahme #1080: erst jetzt, nie vorher). */
     private void forget(String groupId, List<String> held) {
         held.forEach(callers::remove);
-        Map<PageKey, AcquisitionScheduler.Ticket> left = adopted.remove(groupId);
-        if (left != null) {
-            // Kein Teil hat sie mehr genommen: wartende Abrufe entfallen, ein laufender endet regulär.
-            left.values().forEach(AcquisitionScheduler.Ticket::cancel);
-        }
         com.aresstack.spaceharvester.application.observe.Subscription subscription = watched.remove(groupId);
         if (subscription != null) {
             subscription.close();
@@ -362,8 +308,7 @@ public final class PageLoads {
         }
         String named = part.parameter(CHANGE_TRIGGER);
         ChangeTrigger trigger = named == null ? null : trigger(named);
-        Map<PageKey, AcquisitionScheduler.Ticket> tickets = adopted.getOrDefault(part.groupId(), Map.of());
-        return JobTask.blocking(context -> run(context, caller, keys, refresh, trigger, tickets));
+        return JobTask.blocking(context -> run(context, caller, keys, refresh, trigger));
     }
 
     private static ChangeTrigger trigger(String named) {
@@ -375,8 +320,7 @@ public final class PageLoads {
     }
 
     private void run(JobContext context, AccessContext caller, List<PageKey> keys, boolean refresh,
-                     ChangeTrigger trigger, Map<PageKey, AcquisitionScheduler.Ticket> tickets)
-            throws InterruptedException {
+                     ChangeTrigger trigger) throws InterruptedException {
         AcquisitionScheduler.Priority priority = priority(caller);
         // Im Vordergrund ist das Nachladen nachrangig (Abnahme #1080): Seiten einer Suche gehen vor, ein Platz.
         AcquisitionScheduler.Mode mode = new AcquisitionScheduler.Mode(refresh,
@@ -399,12 +343,6 @@ public final class PageLoads {
                     if (open.size() >= WINDOW) {
                         failed += finish(context, open.pollFirst(), wake);
                         continue;
-                    }
-                    // Ein übernommener Abruf (Fundstelle 13) zählt, statt neu anzufordern; nur einmal genommen.
-                    AcquisitionScheduler.Ticket taken = tickets.isEmpty() ? null : tickets.remove(key);
-                    if (taken != null) {
-                        open.addLast(taken);
-                        break;
                     }
                     long seen = wake.mark();
                     try {
