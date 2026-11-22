@@ -236,7 +236,9 @@ public final class TermKnowledge {
                 return deliver(answer, delivery);
             }
         }
-        return Answer.of(Outcome.NOT_A_TERM, DomainTermGraph.suggestions(within.lexicon(), query, MAX_CANDIDATES,
+        // Die Suche (Delivery.NONE) zeigt keine Kandidaten: dann werden sie gar nicht erst berechnet.
+        return Answer.of(Outcome.NOT_A_TERM, delivery == Delivery.NONE ? List.of()
+                : DomainTermGraph.suggestions(within.lexicon(), query, MAX_CANDIDATES,
                 key -> mayName(within, within.lexicon().scopes(key), delivery, List.of())), none);
     }
 

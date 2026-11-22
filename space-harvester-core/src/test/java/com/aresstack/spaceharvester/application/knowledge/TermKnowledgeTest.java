@@ -421,7 +421,7 @@ class TermKnowledgeTest {
         assertThat(knowledge(wikiOnly).answer(CALLER, "Akten", both, recording, () -> false).candidates())
                 .as("Kandidat nur aus einer Quelle ohne KI-Freigabe").isEmpty();
         assertThat(knowledge(wikiOnly).answer(CALLER, "Akten", both, TermKnowledge.Delivery.NONE, () -> false)
-                .candidates()).as("die Suche gibt nichts an ein Modell").containsExactly("Aktenplan");
+                .candidates()).as("die Suche zeigt keine Kandidaten, also berechnet sie keine").isEmpty();
 
         PageReleases released = PageReleases.inMemory();
         released.add(List.of(new PageReleases.Entry(new PageKey("akte", "7"), "DEV", "7", "chat",
@@ -444,7 +444,7 @@ class TermKnowledgeTest {
         TermKnowledge.Answer found = knowledge().answer(CALLER, "Aktenplan", scope, recording, () -> false);
         assertThat(found.outcome()).as("Space „DEV“ der nicht analysierten Seite liegt im Bereich")
                 .isEqualTo(TermKnowledge.Outcome.FOUND);
-        assertThat(knowledge().answer(CALLER, "lan", scope, TermKnowledge.Delivery.NONE, () -> false).candidates())
+        assertThat(knowledge().answer(CALLER, "lan", scope, recording, () -> false).candidates())
                 .as("„Altplan“ gilt nur im Space „ALT“").containsExactlyInAnyOrder("Plan", "Aktenplan");
         assertThat(knowledge().answer(CALLER, "Aktenplan", pages("1"), recording, () -> false).outcome())
                 .isEqualTo(TermKnowledge.Outcome.NOT_A_TERM);
