@@ -1922,11 +1922,14 @@ final class KnowledgeGraphTab extends JPanel {
 
     /** Overlay „Belege“ einer Verb-Kante: Sätze im Hintergrund lesen, dann zeigen. */
     private void showEvidence(GraphSource.Edge edge, int x, int y) {
-        String title = TermGraphView.evidenceTitle(domainCanvas, edge);
-        int total = TermGraphView.edgeCount(edge);
+        // Alle Aussagen des Knotenpaars in dieser Richtung, die geklickte oben (UX W9).
+        List<EvidencePopup.Statement> statements = TermGraphView.statements(domainCanvas.graph(), edge);
+        String title = statements.size() == 1 ? TermGraphView.evidenceTitle(domainCanvas, edge)
+                : domainCanvas.label(edge.from()) + " – " + domainCanvas.label(edge.to());
+        int total = statements.stream().mapToInt(EvidencePopup.Statement::total).sum();
         Map<KnowledgeGraph.PageRef, List<ParsedStatements.Statement>> byPage = new LinkedHashMap<>();
-        edge.evidence().forEach(item -> byPage.computeIfAbsent(item.page(), unused -> new ArrayList<>())
-                .add(item.statement()));
+        statements.forEach(statement -> statement.evidence().forEach(item -> byPage.computeIfAbsent(item.page(),
+                unused -> new ArrayList<>()).add(item.statement())));
         int mine = ++evidenceRequest;
         int shown = domainRequest;
         evidencePending = true;
@@ -1936,7 +1939,7 @@ final class KnowledgeGraphTab extends JPanel {
             }
             evidencePending = false;
             if (shown == domainRequest && domainMode()) {
-                evidence.fill(title, total, edge.evidence(), sentences, false).showAt(domainCanvas, x, y);
+                evidence.fillStatements(title, total, statements, sentences, false).showAt(domainCanvas, x, y);
             }
             evidenceSettled();
         }, failure -> {
@@ -1945,7 +1948,7 @@ final class KnowledgeGraphTab extends JPanel {
             }
             evidencePending = false;
             if (shown == domainRequest && domainMode()) {
-                evidence.fill(title, total, edge.evidence(), Map.of(), true).showAt(domainCanvas, x, y);
+                evidence.fillStatements(title, total, statements, Map.of(), true).showAt(domainCanvas, x, y);
             }
             evidenceSettled();
         });

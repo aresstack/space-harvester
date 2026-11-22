@@ -311,6 +311,39 @@ class TermKnowledgeTest {
     }
 
     @Test
+    void undeterminedFeaturesStayUnknownUnlessSomeEvidenceDeterminesThem() {
+        term("Plan");
+        term("Ziel");
+        term("Start");
+        analyse("1", "Der Plan prüft das Ziel.");
+        analyse("2", "Der Plan prüft das Ziel.");
+        analyse("3", "Der Plan prüft den Start.");
+        analyse("4", "Der Plan prüft den Start.");
+        Map<String, ParsedStatements.Features> features = Map.of(
+                "1", new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED,
+                        ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT),
+                "2", ParsedStatements.Features.UNKNOWN,
+                "3", ParsedStatements.Features.UNKNOWN,
+                "4", ParsedStatements.Features.UNKNOWN);
+        DomainTermGraph fachsicht = new DomainTermGraph(caller -> rewrite(caller, page -> statement ->
+                withFeatures(statement, features.get(page))), vocabulary());
+
+        TermKnowledge.Answer answer = new TermKnowledge(fachsicht, ALL).answer(CALLER, "Plan",
+                pages("1", "2", "3", "4"), recording, () -> false);
+
+        assertThat(answer.terms().getFirst().statements())
+                .extracting(TermKnowledge.Statement::object, TermKnowledge.Statement::negation,
+                        TermKnowledge.Statement::modality, TermKnowledge.Statement::temporality,
+                        TermKnowledge.Statement::evidence)
+                .as("gemischt: der bestimmte Wert gilt; nur unbestimmt: der Chat erfährt „nicht bestimmt“")
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("Ziel", ParsedStatements.Negation.AFFIRMED,
+                                ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT, 2),
+                        org.assertj.core.groups.Tuple.tuple("Start", ParsedStatements.Negation.UNKNOWN,
+                                ParsedStatements.Modality.UNKNOWN, ParsedStatements.Temporality.UNKNOWN, 2));
+    }
+
+    @Test
     void aLargeScopeIsCappedInAFixedOrderAndTheCutIsReported() {
         List<PageKey> keys = new ArrayList<>();
         IntStream.range(0, TermKnowledge.MAX_PAGES + 7).forEach(i -> keys.add(new PageKey(i % 2 == 0 ? "wiki"
