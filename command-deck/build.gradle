@@ -1,0 +1,38 @@
+// Command Deck (#1142): interaktive Host-Systeme, zuerst TN3270. Fachmodell und Anwendungsfälle in
+// com.aresstack.spaceharvester.deck.terminal (ohne Swing, ohne OpenTerm), der OpenTerm-Adapter in ...terminal.openterm.
+// Gehört nur zur Desktop-App: Eine Terminal-Sitzung ist keine indizierbare Quelle, deshalb nie im Core oder Dienst.
+// Aufbau nach dem Muster von aresstack/corenth (Ports und Adapter; UI -> Anwendungsfall -> Fachmodell <- Adapter).
+plugins {
+    id 'java-library'
+    // Schein-Host (FakeTn3270Host) auch für die Tests und Bildschirmfotos der App
+    id 'java-test-fixtures'
+}
+
+description = 'Command Deck: interaktive Sitzungen mit Host-Systemen (TN3270 über OpenTerm).'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // TN3270-Emulation wie in MainframeMate (reines Java, LGPL, keine nativen Teile)
+    implementation libs.openterm
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation platform(libs.spring.boot.dependencies)
+    testImplementation 'org.assertj:assertj-core'
+    testImplementation libs.archunit.junit5
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-parameters'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

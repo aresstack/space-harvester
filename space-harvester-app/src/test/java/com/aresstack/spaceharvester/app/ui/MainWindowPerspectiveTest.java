@@ -73,7 +73,7 @@ class MainWindowPerspectiveTest {
                     .isEqualTo("Space Harvester");
             assertThat(((JMenuItem) menu.getComponent(0)).isSelected()).isTrue();
             assertThat(((JMenuItem) menu.getComponent(1)).getAccessibleContext().getAccessibleName())
-                    .startsWith("Command Deck");
+                    .isEqualTo("Command Deck");
             assertThat(((JMenuItem) menu.getComponent(2)).getAccessibleContext().getAccessibleName())
                     .isEqualTo("Mission Protocol, in Vorbereitung");
             assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Space Harvester");
@@ -109,7 +109,11 @@ class MainWindowPerspectiveTest {
             window.toggleDrawer();
             assertThat(window.split().isLeftCollapsed()).isTrue();
             perspectives.select(Perspectives.COMMAND_DECK);
+            assertThat(window.commandDeck().sessions().all()).as("Wechsel verbindet nicht").isEmpty();
+            assertThat(SwingUtilities.isDescendingFrom(window.commandDeck().perspective().navigation(),
+                    window.windowBar())).isTrue();
             perspectives.select(Perspectives.MISSION_PROTOCOL);
+            assertThat(window.commandDeck().perspective().navigation().isShowing()).isFalse();
             perspectives.select(Perspectives.HARVESTER);
             assertThat(window.split().isLeftCollapsed()).isTrue();
             assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);

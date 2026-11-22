@@ -23,7 +23,7 @@ public final class PlaceholderField extends JTextField {
     }
 
     /** Ein anderer Platzhalter, etwa je Art der Quelle; leer heißt keiner. */
-    void setPlaceholder(String placeholder) {
+    public void setPlaceholder(String placeholder) {
         this.placeholder = placeholder == null || placeholder.isEmpty() ? null : placeholder;
         repaint();
     }
