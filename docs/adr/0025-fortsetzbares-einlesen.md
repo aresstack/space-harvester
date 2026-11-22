@@ -418,6 +418,12 @@ wird automatisch verwaltet.
       fortsetzen ließen, werden beim Start abgeschlossen (Info „Warteschlange nach Neustart leer“), damit kein
       angehaltener alle neuen aufhält. Fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach,
       erzwungene der Abgleich beim Start.
+    - Semantische Suche (`SemanticPreparation`, Fundstelle 11): Was nach der Frist von 10 s noch nicht angefangen
+      hat, geht an `recomputeInBackground`, also an die „KI-Anreicherung“; nur die höchstens vier schon laufenden
+      Embeddings enden im Aufruf.
+    - „Neu berechnen“ einer Seite (Fundstelle 21): ein gewöhnlicher Auftrag `ENRICHMENT` (Angabe `task`
+      `recompute-page`, `root` = Seite) über `Jobs#submitInteractive`, sichtbar und abbrechbar
+      (`PageRecomputation`); gerechnet wird wie bisher, der Knopf wartet auf das Ende.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

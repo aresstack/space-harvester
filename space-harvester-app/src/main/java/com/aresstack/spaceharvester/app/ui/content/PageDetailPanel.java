@@ -5099,7 +5099,13 @@ public final class PageDetailPanel extends JPanel {
                 feedback.success(run.computed() + " Analysen berechnet");
             }
         }, error -> {
-            if (current == request) {
+            if (current != request) {
+                return;
+            }
+            if (error instanceof com.aresstack.spaceharvester.application.jobs.JobCancelledException) {
+                // Fundstelle 21: läuft als Auftrag, den der Benutzer in der Auftragsliste abbrechen kann.
+                feedback.info("Neuberechnung abgebrochen", null);
+            } else {
                 feedback.problem(error);
             }
         });

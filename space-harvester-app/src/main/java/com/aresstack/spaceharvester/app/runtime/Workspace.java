@@ -789,13 +789,16 @@ public final class Workspace {
         return harvester.enrichments().view(page.snapshot());
     }
 
-    /** Anreicherungen neu berechnen ({@code POST …/enrichments}); braucht wie im Dienst die sync-Freigabe. */
+    /**
+     * Anreicherungen neu berechnen ({@code POST …/enrichments}); braucht wie im Dienst die sync-Freigabe. Läuft als
+     * Auftrag in der Auftragsliste (Fundstelle 21) und kehrt zurück, wenn er endet.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobCancelledException wenn der Auftrag abgebrochen wurde
+     */
     public Enrichments.Run recomputeEnrichments(String sourceId, String pageId, String processor) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
-        Enrichments.Run run = harvester.enrichments().recompute(page.snapshot(), processor);
-        harvester.enrichments().flush();
-        return run;
+        return harvester.pageRecomputation().recompute(caller.jobOwner(), page.snapshot(), processor);
     }
 
     /** Gespeicherte Bilder und Beschreibungen einer gelieferten Seite ({@code GET …/images}); beschreibt nichts. */

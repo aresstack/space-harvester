@@ -401,6 +401,8 @@ public final class Harvester implements AutoCloseable {
     private final java.nio.file.Path knowledgeGraphExportDirectory;
     private final SignInRequests signIns;
     private final Enrichments enrichments;
+    /** „Neu berechnen“ einer Seite als Auftrag (Fundstelle 21). */
+    private final com.aresstack.spaceharvester.application.enrichment.PageRecomputation pageRecomputation;
     private final ConfiguredSourceCatalog catalog;
     private final SourceManagement sourceManagement;
     private final ExportPackageImport packageImport;
@@ -622,6 +624,8 @@ public final class Harvester implements AutoCloseable {
                 hostedEnrichments.background(backgroundJobs, cache::find);
                 opened.add(() -> hostedEnrichments.closeBackground(Duration.ofSeconds(10)));
             }
+            this.pageRecomputation = new com.aresstack.spaceharvester.application.enrichment.PageRecomputation(jobs,
+                    enrichments);
             this.pageTexts = projector;
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
             // Cache neu, eingeschaltet auch statements (#108); images rechnet nur auf Abruf und prüft die Freigabe dann
@@ -2360,6 +2364,11 @@ public final class Harvester implements AutoCloseable {
     /** Anreicherungen (Akronyme, Gliederung, Sprache, optional Embeddings); nach jedem Abgleich aktualisiert. */
     public Enrichments enrichments() {
         return enrichments;
+    }
+
+    /** „Neu berechnen“ einer Seite als gewöhnlicher Auftrag {@code ENRICHMENT} (Fundstelle 21). */
+    public com.aresstack.spaceharvester.application.enrichment.PageRecomputation pageRecomputation() {
+        return pageRecomputation;
     }
 
     /** Vorgabe für {@link Builder#maxTextFileBytes}: 200 MiB. */

@@ -27,8 +27,10 @@ import java.util.function.Function;
  * Vorbereitung der semantischen Suche (ADR 0013, Punkt 3): Dieselbe Schlagwortsuche wie ohne Haken findet die Seiten
  * und lädt sie mit den Rechten des Aufrufers in den Cache ({@link KeywordSearch}). Für ihre Treffer, also nur Seiten,
  * die der Aufrufer lesen darf, berechnet die Vorbereitung fehlende oder veraltete Embeddings im Aufruf, begrenzt
- * parallel und höchstens {@link #DEFAULT_WAIT} lang. Seiten aus Quellen ohne Freigabe für externe Verarbeitung lässt
- * der Embedding-Prozessor selbst aus.
+ * parallel und höchstens {@link #DEFAULT_WAIT} lang. Was nach der Frist noch nicht angefangen hat, geht an
+ * {@link Enrichments#recomputeInBackground}, mit Hintergrundaufträgen also an die sichtbare „KI-Anreicherung“; nur
+ * die höchstens vier schon laufenden Berechnungen enden im Aufruf. Seiten aus Quellen ohne Freigabe für externe
+ * Verarbeitung lässt der Embedding-Prozessor selbst aus.
  */
 public final class SemanticPreparation implements RelevanceSearch.Preparation {
 
@@ -40,6 +42,8 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
     public static final Duration DEFAULT_WAIT = Duration.ofSeconds(10);
 
     private static final int PARALLEL = 4;
+    /** Ergebnis einer Seite, die nach der Frist an die Hintergrundaufträge ging. */
+    private static final Enrichments.Run HANDED_OVER = new Enrichments.Run(true, 0, 0, 0);
     private static final long POLL_MILLIS = 25;
 
     private final KeywordSearch keywords;
@@ -114,6 +118,12 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
                 runs.add(runner.submit(() -> {
                     slots.acquireUninterruptibly();
                     try {
+                        if (System.nanoTime() >= deadline) {
+                            // Nach der Frist wartet niemand mehr (Fundstelle 11): Was noch nicht angefangen hat,
+                            // rechnet die sichtbare „KI-Anreicherung“ statt eines Threads ohne Auftrag.
+                            enrichments.recomputeInBackground(snapshot, List.of(processorId));
+                            return HANDED_OVER;
+                        }
                         return enrichments.recompute(snapshot, processorId);
                     } finally {
                         slots.release();
@@ -122,7 +132,11 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
             }
             for (Future<Enrichments.Run> run : runs) {
                 try {
-                    if (run.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS).failed() > 0) {
+                    Enrichments.Run result = run.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                    if (result == HANDED_OVER) {
+                        // Rechnet sichtbar weiter und zählt beim nächsten Mal; diese Suche ist unvollständig.
+                        pending++;
+                    } else if (result.failed() > 0) {
                         // Der Dienst hat abgelehnt oder war nicht erreichbar; die nächste Suche versucht es wieder.
                         pending++;
                     }

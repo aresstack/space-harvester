@@ -6,6 +6,8 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +41,20 @@ class SemanticPreparationTest {
         when(enrichments.recompute(snapshot, "embedding")).thenReturn(new Enrichments.Run(true, 1, 0, 1));
 
         assertThat(preparation().prepare(APP, query, "Nachtlauf")).isEqualTo(1);
+    }
+
+    @Test
+    void afterTheDeadlineWhatHasNotStartedGoesToTheVisibleBackgroundJobs() throws Exception {
+        // Fundstelle 11: Nach der Frist rechnet kein Thread ohne Auftrag weiter.
+        found(new KeywordSearch.Results(null, List.of(HIT), List.of(searched()), null, true, 0));
+        when(enrichments.view(snapshot)).thenReturn(List.of());
+
+        int pending = new SemanticPreparation(keywords, key -> Optional.of(snapshot), enrichments, "embedding",
+                Duration.ZERO).prepare(APP, query, "Nachtlauf");
+
+        assertThat(pending).as("diese Suche ist unvollständig").isEqualTo(1);
+        verify(enrichments, timeout(5_000)).recomputeInBackground(snapshot, List.of("embedding"));
+        verify(enrichments, never()).recompute(snapshot, "embedding");
     }
 
     @Test
