@@ -50,7 +50,27 @@ final class FindBar extends JPanel {
     /** Feld mit Zähler und Treffer-Knöpfen; nur aufgeklappt sichtbar. */
     private final JComponent search;
     /** Platz für die Umschalter des Bereichs, mittig. */
-    private final JPanel tools = new JPanel(new BorderLayout());
+    /**
+     * Die Werkzeuge des Bereichs neben der Lupe. Was hier steht, bekommt die ganze Breite, aber nur seine eigene Höhe
+     * und steht senkrecht mittig, auf der Höhe der Lupe. Eine Zeile, die sich nicht selbst mittig stellt (etwa ein
+     * FlowLayout), säße sonst an der Oberkante und damit höher als die Lupe (Angelo 22.11.2026, zum zweiten Mal).
+     */
+    private final JPanel tools = new JPanel(new MiddleLayout());
+
+    /** Volle Breite, eigene Höhe, senkrecht mittig. */
+    static final class MiddleLayout extends BorderLayout {
+
+        @Override
+        public void layoutContainer(java.awt.Container parent) {
+            java.awt.Insets in = parent.getInsets();
+            int width = Math.max(0, parent.getWidth() - in.left - in.right);
+            int height = Math.max(0, parent.getHeight() - in.top - in.bottom);
+            for (java.awt.Component child : parent.getComponents()) {
+                int own = Math.min(height, child.getPreferredSize().height);
+                child.setBounds(in.left, in.top + (height - own) / 2, width, own);
+            }
+        }
+    }
     private boolean open;
 
     FindBar(Supplier<JComponent> area) {
