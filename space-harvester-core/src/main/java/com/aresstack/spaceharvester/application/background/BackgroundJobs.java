@@ -543,6 +543,20 @@ public final class BackgroundJobs {
         return cancelled;
     }
 
+    /**
+     * Bricht diesen Unterauftrag ab, solange er noch wartet, mit gelbem Grund ({@link Jobs#cancelIfWaiting}); ein
+     * laufender bleibt unberührt.
+     *
+     * @return der abgebrochene Unterauftrag, leer wenn er nicht mehr wartete oder fehlt
+     */
+    public Optional<JobStatus> cancelIfWaiting(String jobId, String reason) {
+        try {
+            return jobs.cancelIfWaiting(jobId, owner, reason);
+        } catch (UnknownJobException e) {
+            return Optional.empty();
+        }
+    }
+
     /** Die Gruppe, solange noch einer ihrer Unteraufträge in der Liste steht. */
     public Optional<BackgroundGroup> group(String groupId) {
         List<JobStatus> parts = all().stream().filter(status -> groupId.equals(status.parameter(GROUP)))
@@ -753,6 +767,31 @@ public final class BackgroundJobs {
         }
         return status.state() == JobState.PAUSED && (status.pauseReason() == PauseReason.CONNECTION_LOST
                 || status.pauseReason() == PauseReason.RETRY);
+    }
+
+    /**
+     * Meldet jede Änderung und Löschung eines Unterauftrags dieser Art (ADR 0027), ohne Abfragen: etwa für eine Karte
+     * der offenen Teile, die nie den ganzen Auftragsspeicher liest.
+     */
+    public Subscription subscribe(String kind, Consumer<JobStatus> changed, Consumer<JobStatus> removed) {
+        Objects.requireNonNull(kind, "kind");
+        Objects.requireNonNull(changed, "changed");
+        Objects.requireNonNull(removed, "removed");
+        return jobs.subscribe(owner, new JobListener() {
+            @Override
+            public void changed(JobStatus status) {
+                if (status != null && kind.equals(status.parameter(KIND))) {
+                    changed.accept(status);
+                }
+            }
+
+            @Override
+            public void removed(JobStatus last) {
+                if (last != null && kind.equals(last.parameter(KIND))) {
+                    removed.accept(last);
+                }
+            }
+        });
     }
 
     /**

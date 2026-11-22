@@ -1735,6 +1735,16 @@ public final class Workspace {
     }
 
     /**
+     * Wie {@link #keywordSearch(KeywordSearch.Query, String, int, KeywordSearch.Found)} als Teil der Suche
+     * {@code searchId} der Trefferliste (Fundstelle 23): Ihre Stapel und ihr Neusortieren bieten jeden Fund nur einmal
+     * zum Katalogisieren an. {@code found} darf {@code null} sein.
+     */
+    public KeywordSearch.Results keywordSearchIn(String searchId, KeywordSearch.Query query, String cursor, int limit,
+                                                 KeywordSearch.Found found) {
+        return harvester.keywordSearch().search(caller, query, cursor, limit, null, found, searchId);
+    }
+
+    /**
      * Suchmethode „Synonyme der Fachbegriffe“ (K5a): wie viele Synonymvorschläge die Suche {@code query} je Quelle
      * höchstens stellen würde, vor der Grenze {@code SearchExpansion.MAX_EXPANSIONS}; derselbe Umfang und dieselbe
      * Entdoppelung wie die Suche. Wirft, wenn das Glossar nicht lesbar ist; nie auf dem EDT.

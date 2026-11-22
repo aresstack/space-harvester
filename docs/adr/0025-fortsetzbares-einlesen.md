@@ -454,6 +454,26 @@ wird automatisch verwaltet.
     - Bei nur einem Platz unter „Vorbereitung“ (`BackgroundJobs#canRun()` falsch) nehmen Nachladen und Vorladen ihren
       bisherigen Weg.
 
+12. **Funde katalogisieren** (Angelo 21.11.2026, Fundstellen 14 und 23, Entwurf vom Architekten bestätigt).
+    - `FindingCataloging` ist die Art `catalog` „Funde katalogisieren“: je Angebot und Quelle ein Teil, die Funde als
+      Seiten-ID und Version in den Angaben (`pages`), der technische Aufrufer als Kennung (`finder`) und der Anlass im
+      Änderungsprotokoll (`change-trigger`). So setzt ein Teil auch nach einem Neustart mit denselben Rechten fort.
+    - Höchstens ein wartender Teil je Quelle, Aufrufer und Anlass: Ein neues Angebot ersetzt ihn und nimmt seine Funde
+      hinter den eigenen mit. Erst entsteht der Ersatz, dann wird der alte abgebrochen; scheitert das Anlegen, bleiben
+      der alte Teil und die angenommenen Funde stehen und gehen mit dem nächsten Angebot mit (Abnahme #1082).
+    - Angenommenes fällt nie weg: Ein Teil fasst höchstens 1000 Funde; ist er voll, nimmt er vom neuen Angebot nur, was
+      passt. `FindingCatalog#accept` nennt die angenommenen Seiten; dazu zählen auch eben geprüfte (`RECHECK`, zehn
+      Minuten) und solche, die ein offener Teil noch in derselben Fassung katalogisiert. Erledigte Seiten eines Teils
+      zählen nicht mehr als offen; eine neue Fassung ist ein neuer Fund. Funde von Endnutzern und delegierten Aufrufern
+      zählen wie bisher nicht.
+    - `accept` kehrt sofort zurück: Die Teile legt ein eigener Arbeiter (`Coalescer`, gebündelt je Schlüssel) an. Die
+      offenen Teile führt `FindingCataloging` im Speicher, gepflegt über Anlegen, Arbeit und die Auftragsmeldungen der
+      Art (`BackgroundJobs#subscribe(kind, …)`); den ganzen Auftragsspeicher liest es nur einmal beim Start.
+    - Die Trefferliste sortiert denselben Stapel bei jedem Ladefortschritt neu (`SearchView#refresh`). Sie nennt dabei
+      ihre Suche (`KeywordSearch#search(…, searchId)`), und die Suche bietet nur Funde an, die in dieser Suche noch nicht
+      angenommen sind: Neusortieren allein erzeugt keinen Teil, holt aber Abgewiesenes nach.
+    - Bei nur einem Platz unter „Vorbereitung“ bleibt es beim bisherigen Weg im Speicher.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel
