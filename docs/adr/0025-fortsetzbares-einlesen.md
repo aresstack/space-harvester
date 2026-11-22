@@ -586,9 +586,12 @@ wird automatisch verwaltet.
     bestätigt). Die App prüft Quellen nach jedem Neuladen und Speichern weiter selbst (Spaces live abfragen). Je Prüfung
     läuft ein einmaliger Zeitgeber von einer Sekunde, kein Polling (`AppContext.VisibleCheck`). Läuft die Prüfung dann
     noch, entsteht ein Hintergrundteil „Verbindung prüfen“ (`ConnectionChecks`, Art `connection`), der mit der Prüfung
-    grün oder rot mit Grund (`connection-failed`) endet; endet sie vorher, entsteht kein Teil. Abbrechen blendet den
-    Teil nur aus, die Prüfung selbst läuft zu Ende. Ein Teil von vor einem Neustart endet sofort. Mit nur einem Platz
-    gilt der bisherige Weg.
+    grün oder rot mit Grund (`connection-failed`) endet; endet sie vorher, entsteht kein Teil. Der Grund ist ein Code
+    (`SourceAccessException.Reason`, sonst die Klasse), nie die Nachricht. Nur diese Art läuft zusätzlich auf eigener
+    Spur (`Jobs.OWN_LANE`, `BackgroundKind.OWN_LANE_KINDS`): Der Teil rechnet nichts, die Prüfung hat ihre eigene
+    Zeitgrenze, und so erscheint er auch bei belegten Plätzen während der Prüfung. Abbrechen blendet den Teil nur aus,
+    die Prüfung selbst läuft zu Ende. Ein Teil von vor einem Neustart endet sofort. Mit nur einem Platz gilt der
+    bisherige Weg.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

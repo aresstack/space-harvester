@@ -6,7 +6,9 @@ import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
@@ -65,13 +67,49 @@ class ConnectionChecksTest {
         ConnectionChecks.Check check = checks.begin("wiki").orElseThrow();
         eventually(() -> part().map(p -> p.state() == JobState.RUNNING).orElse(false));
 
-        check.finish("erfundener Grund");
+        check.finish(ConnectionChecks.reasonCode(new RuntimeException("Abruf gescheitert",
+                new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE,
+                        "http://wiki.example.invalid nicht erreichbar", null))));
 
         eventually(() -> part().orElseThrow().state() == JobState.FAILED);
         JobStatus failed = part().orElseThrow();
         assertThat(failed.error().code()).isEqualTo(ConnectionChecks.FAILED);
-        assertThat(failed.error().message()).contains("erfundener Grund");
+        assertThat(failed.error().message()).contains("UNAVAILABLE").doesNotContain("example.invalid");
         assertThat(failed.progress().failed()).isEqualTo(1);
+    }
+
+    @Test
+    void theReasonIsACodeNeverTheMessage() {
+        assertThat(ConnectionChecks.reasonCode(new SourceAccessException("wiki",
+                SourceAccessException.Reason.ACCESS_DENIED, "Host wiki.example.invalid", null))).isEqualTo("ACCESS_DENIED");
+        assertThat(ConnectionChecks.reasonCode(new java.io.UncheckedIOException("Host wiki.example.invalid",
+                new java.io.IOException("x")))).isEqualTo("UncheckedIOException");
+    }
+
+    @Test
+    void theCheckShowsWhileAllBackgroundPlacesAreBusy() throws Exception {
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        background.register(new BackgroundKind("erfunden", part -> JobTask.blocking(context ->
+                release.await(10, TimeUnit.SECONDS)), () -> false));
+        try {
+            background.start("erfunden", "Erfunden", List.of(new BackgroundPart.Draft("wiki", "A", Map.of()),
+                    new BackgroundPart.Draft("wiki", "B", Map.of())));
+            // Ein Platz läuft, der zweite Teil wartet: Alle Hintergrundplätze sind belegt.
+            eventually(() -> background.parts("erfunden").stream().filter(p -> p.state() == JobState.RUNNING)
+                    .count() == 1);
+            TimeUnit.MILLISECONDS.sleep(100);
+            assertThat(background.parts("erfunden")).extracting(JobStatus::state)
+                    .containsExactlyInAnyOrder(JobState.RUNNING, JobState.QUEUED);
+
+            ConnectionChecks.Check check = checks.begin("wiki").orElseThrow();
+            // Auf eigener Spur: sichtbar während der Prüfung, ohne auf einen Platz zu warten.
+            eventually(() -> part().map(p -> p.state() == JobState.RUNNING).orElse(false));
+            assertThat(background.parts("erfunden")).extracting(JobStatus::state).contains(JobState.QUEUED);
+            check.finish(null);
+            eventually(() -> part().orElseThrow().state() == JobState.COMPLETED);
+        } finally {
+            release.countDown();
+        }
     }
 
     @Test

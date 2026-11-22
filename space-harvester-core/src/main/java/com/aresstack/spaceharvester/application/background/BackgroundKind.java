@@ -25,13 +25,16 @@ import java.util.function.Function;
  *                   Platz unter „Vorbereitung“ und ohne Laufzeitgrenze. Kein freier Schalter (Abnahme Fundstelle 12):
  *                   nur für Arten, deren Teil selbst nichts rechnet, sondern die Arbeit eines eigenen, begrenzten
  *                   Ausführers sichtbar macht und über dessen Rückrufe wartet, ohne Thread; heute nur
- *                   {@link #OWN_LANE_KINDS}, beide begrenzt durch den Planer
+ *                   {@link #OWN_LANE_KINDS}, begrenzt durch den Planer bzw. die Zeitgrenze der Prüfung
  */
 public record BackgroundKind(String id, Function<BackgroundPart, JobTask> work, BooleanSupplier autoResume,
                              boolean exclusive, boolean ownLane) {
 
-    /** Arten mit abgenommener eigener Spur: Suchtreffer laden (Fundstelle 13) und Hintergrundfüllung (12). */
-    public static final java.util.Set<String> OWN_LANE_KINDS = java.util.Set.of("search-hits", "fill");
+    /**
+     * Arten mit abgenommener eigener Spur: Suchtreffer laden (Fundstelle 13), Hintergrundfüllung (12) und Verbindung
+     * prüfen (17; die Prüfung läuft beim Aufrufer mit eigener Zeitgrenze).
+     */
+    public static final java.util.Set<String> OWN_LANE_KINDS = java.util.Set.of("search-hits", "fill", "connection");
 
     /** Ohne eigene Spur. */
     public BackgroundKind(String id, Function<BackgroundPart, JobTask> work, BooleanSupplier autoResume,

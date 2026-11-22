@@ -844,7 +844,7 @@ public final class AppContext {
         AppRuntime current = runtime;
         connections.put(sourceId, new Connection(Connection.State.CHECKING, Instant.now(), List.of(), null));
         fire();
-        VisibleCheck visible = new VisibleCheck(() -> current.workspace().beginConnectionCheck(sourceId));
+        VisibleCheck visible = new VisibleCheck(sourceId, () -> current.workspace().beginConnectionCheck(sourceId));
         Background.run(() -> current.workspace().spaces(sourceId),
                 spaces -> {
                     visible.end(null);
@@ -857,7 +857,7 @@ public final class AppContext {
                     done.run();
                 },
                 error -> {
-                    visible.end(error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName());
+                    visible.end(com.aresstack.spaceharvester.application.background.ConnectionChecks.reasonCode(error));
                     if (runtime != current) {
                         return;
                     }
@@ -882,7 +882,7 @@ public final class AppContext {
         private String failure;
         private com.aresstack.spaceharvester.application.background.ConnectionChecks.Check check;
 
-        VisibleCheck(java.util.function.Supplier<java.util.Optional<
+        VisibleCheck(String sourceId, java.util.function.Supplier<java.util.Optional<
                 com.aresstack.spaceharvester.application.background.ConnectionChecks.Check>> begin) {
             threshold = new javax.swing.Timer(THRESHOLD_MILLIS, event -> {
                 synchronized (this) {
@@ -891,7 +891,9 @@ public final class AppContext {
                     }
                 }
                 Background.run(begin::get, started -> started.ifPresent(this::shown),
-                        error -> LOG.debug("Verbindungsprüfung ließ sich nicht anzeigen: {}", error.getMessage()));
+                        // Nur Quelle und Klasse, nie die Nachricht (Abnahme #1091).
+                        error -> LOG.debug("Verbindungsprüfung von {} ließ sich nicht anzeigen ({})", sourceId,
+                                error.getClass().getName()));
             });
             threshold.setRepeats(false);
             threshold.start();
@@ -910,7 +912,7 @@ public final class AppContext {
             }
         }
 
-        /** @param reason der Grund, wenn die Prüfung scheiterte, sonst {@code null} */
+        /** @param reason der Grundcode ({@code ConnectionChecks#reasonCode}) einer gescheiterten Prüfung, sonst null */
         void end(String reason) {
             threshold.stop();
             com.aresstack.spaceharvester.application.background.ConnectionChecks.Check shown;

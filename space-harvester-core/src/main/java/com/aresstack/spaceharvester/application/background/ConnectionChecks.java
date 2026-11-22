@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.background;
 
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -30,13 +31,33 @@ public final class ConnectionChecks {
     /** Eine sichtbare Prüfung; {@link #finish} beendet ihren Teil. */
     public interface Check {
 
-        /** @param failure der Grund, wenn die Prüfung scheiterte, sonst {@code null} */
+        /** @param failure der Grundcode ({@link #reasonCode}), wenn die Prüfung scheiterte, sonst {@code null} */
         void finish(String failure);
+    }
+
+    /**
+     * Der Grund einer gescheiterten Prüfung als Code, wie bei den übrigen Quellenfehlern: der
+     * {@link SourceAccessException.Reason} aus der Ursachenkette, sonst die Klasse; nie die Nachricht, die Hostnamen
+     * oder URL-Teile enthalten kann.
+     */
+    public static String reasonCode(Throwable failure) {
+        Objects.requireNonNull(failure, "failure");
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SourceAccessException source) {
+                return source.reason().name();
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
+        }
+        return failure.getClass().getSimpleName();
     }
 
     public ConnectionChecks(BackgroundJobs background) {
         this.background = Objects.requireNonNull(background, "background");
-        background.register(new BackgroundKind(KIND, this::work, () -> false));
+        // Eigene Spur (Abnahme #1091): Der Teil rechnet nichts und belegt keinen Platz, sonst erschiene er bei vollen
+        // Plätzen erst nach der Prüfung.
+        background.register(new BackgroundKind(KIND, this::work, () -> false, false, true));
     }
 
     /**
@@ -61,7 +82,7 @@ public final class ConnectionChecks {
             if (failure == null) {
                 done.complete(null);
             } else {
-                done.completeExceptionally(new JobFailedException(FAILED, "Verbindung fehlgeschlagen: " + failure));
+                done.completeExceptionally(new JobFailedException(FAILED, "Verbindung fehlgeschlagen (" + failure + ")"));
             }
         });
     }
