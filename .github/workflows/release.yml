@@ -32,10 +32,12 @@ on:
 permissions:
   contents: read
 
-# main und Tags laufen nacheinander (fortlaufende Nummern); alle anderen Branches teilen sich das Snapshot-Release. Ein neuer Branch-Push bricht einen laufenden Snapshot-Lauf ab, main und Tags werden nie abgebrochen.
+# Drei Gruppen: andere Branches teilen sich das Snapshot-Release, Pushes auf main das rollierende „latest“, Tags und
+# manuell angelegte Releases laufen nacheinander. Snapshot und latest: ein neuer Push bricht den laufenden Lauf ab, damit
+# nur der neueste Stand gebaut und veröffentlicht wird (Angelo 22.11.). Getaggte Releases werden nie abgebrochen.
 concurrency:
-  group: release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || 'versioned' }}
-  cancel-in-progress: ${{ github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
+  group: release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || ((github.event_name == 'push' && github.ref == 'refs/heads/main') && 'latest' || 'versioned') }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
 
 env:
   # Rollierend ohne Versionsnummer: main aktualisiert das Release „latest“, andere Branches das Pre-Release „snapshot“.
