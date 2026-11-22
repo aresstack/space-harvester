@@ -98,4 +98,45 @@ class ChatStepModelTest {
         assertThat(own.imageGeneration().stepThinking()).isEqualTo("high");
         assertThat(own.stepThinking()).isEqualTo("medium");
     }
+
+    @Test
+    void summaryPlanAndPodcastHaveTheirOwnLinesWithSensibleStandards() {
+        AiServiceSettings thinking = AI.withStepThinking("high");
+        assertThat(thinking.summary().chatModel()).isEqualTo("chat-model");
+        assertThat(thinking.summary().chatMaxTokens()).isEqualTo(AiServiceSettings.DEFAULT_SUMMARY_MAX_TOKENS)
+                .isEqualTo(32768);
+        assertThat(thinking.summary().stepThinking()).as("Zusammenfassung denkt standardmäßig nicht").isEqualTo("none");
+        assertThat(thinking.summaryPlan().chatMaxTokens()).isEqualTo(16384);
+        assertThat(thinking.summaryPlan().stepThinking()).isEqualTo("none");
+        assertThat(thinking.podcast().chatMaxTokens()).isEqualTo(16384);
+        assertThat(thinking.podcast().stepThinking()).isEqualTo("none");
+
+        AiServiceSettings own = AI.withUses(new AiServiceSettings.ModelUse("teile-modell", 65536, "low"),
+                new AiServiceSettings.ModelUse(null, 8192, "medium"))
+                .withSummaryPlan(new AiServiceSettings.ModelUse("plan-modell", null, "HIGH"));
+        assertThat(own.summary().chatModel()).isEqualTo("teile-modell");
+        assertThat(own.summary().chatMaxTokens()).isEqualTo(65536);
+        assertThat(own.summary().stepThinking()).isEqualTo("low");
+        assertThat(own.summaryPlan().chatModel()).isEqualTo("plan-modell");
+        assertThat(own.summaryPlan().chatMaxTokens()).isEqualTo(16384);
+        assertThat(own.summaryPlan().stepThinking()).isEqualTo("high");
+        assertThat(own.podcast().chatModel()).isEqualTo("chat-model");
+        assertThat(own.podcast().chatMaxTokens()).isEqualTo(8192);
+        assertThat(own.podcast().stepThinking()).isEqualTo("medium");
+        assertThat(own.chatMaxTokens()).isEqualTo(AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS);
+    }
+
+    @Test
+    void theSummaryModelUsesItsOwnLineAndThePlanItsPlanLine() {
+        AiServiceSettings own = AI.withUses(new AiServiceSettings.ModelUse("teile-modell", null, null), null)
+                .withSummaryPlan(new AiServiceSettings.ModelUse("plan-modell", null, null));
+        ChatUpdateSummaryModel parts = new ChatUpdateSummaryModel(() -> own, settings -> {
+            throw new AssertionError("kein Aufruf");
+        });
+        ChatUpdateSummaryModel plan = new ChatUpdateSummaryModel(() -> own, settings -> {
+            throw new AssertionError("kein Aufruf");
+        }, AiServiceSettings::summaryPlan);
+        assertThat(parts.version()).contains(":teile-modell@");
+        assertThat(plan.version()).contains(":plan-modell@");
+    }
 }

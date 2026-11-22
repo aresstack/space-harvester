@@ -1037,9 +1037,15 @@ public final class Harvester implements AutoCloseable {
             // TTS-Modelle des Dienstes; Ablage unter data/podcasts, damit ein neuer Lauf dort weitermacht.
             java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastAi =
                     () -> liveAi ? this.settings.ai() : startAi;
+            // Plan und Sprechertexte mit eigener Zeile „Podcast“ (Angelo 22.11.2026): ai.podcast-model,
+            // ai.podcast-max-tokens, ai.podcast-thinking; Sprache (TTS) bleibt bei podcastAi.
+            java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastText = () -> {
+                com.aresstack.spaceharvester.ai.AiServiceSettings ai = podcastAi.get();
+                return ai == null ? null : ai.podcast();
+            };
             this.podcasts = new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts(jobs,
                     new ChatStepModel(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.VERSION,
-                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                            podcastText, () -> null, catalog, trustBundles, builder.userAgent),
                     new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
                             builder.userAgent, sentences),
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(
@@ -1059,7 +1065,7 @@ public final class Harvester implements AutoCloseable {
             ChangeLog podcastChangeLog = this.changeLog;
             this.pagePodcasts = new com.aresstack.spaceharvester.application.podcast.PagePodcasts(jobs,
                     new ChatStepModel(com.aresstack.spaceharvester.application.podcast.PagePodcasts.VERSION,
-                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                            podcastText, () -> null, catalog, trustBundles, builder.userAgent),
                     new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
                             builder.userAgent, sentences),
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(

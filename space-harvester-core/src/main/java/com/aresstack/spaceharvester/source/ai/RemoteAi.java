@@ -414,20 +414,18 @@ public final class RemoteAi {
 
     /** Frist je Anfrage der Update-Zusammenfassung: lange Eingaben und Antworten mit Themen und Details. */
     public static final Duration SUMMARY_TIMEOUT = Duration.ofMinutes(5);
-    /** Ausgabelimit der Update-Zusammenfassung mindestens, auch wenn {@code ai.chat-max-tokens} kleiner ist. */
-    public static final int SUMMARY_MIN_TOKENS = 32_768;
-
     /**
-     * Wie {@link #termCompletions()} für die Update-Zusammenfassung (ADR 0030, update-summary-v2): Die Antworten tragen
-     * Themen mit ausführlichen Details, denkende Modelle (gpt-oss) verbrauchen zusätzlich Ausgabe fürs Nachdenken. Daher
-     * mindestens {@link #SUMMARY_MIN_TOKENS} und eine Frist von mindestens {@link #SUMMARY_TIMEOUT} (oder
-     * {@code ai.timeout}, wenn länger) statt der 90 Sekunden der Akronymauflösung.
+     * Wie {@link #termCompletions()} für die Update-Zusammenfassung (ADR 0030, update-summary-v2): Tokenlänge und
+     * Nachdenken kommen aus den Einstellungen, mit denen dieser Zugang gebaut ist; der Aufrufer reicht
+     * {@link AiServiceSettings#summary()} (Standard 32768 Tokens, Nachdenken aus; Angelo 22.11.2026: mit Nachdenken lief
+     * die Antwort bei 32768 Tokens ins Limit). Frist mindestens {@link #SUMMARY_TIMEOUT} (oder {@code ai.timeout},
+     * wenn länger) statt der 90 Sekunden der Akronymauflösung.
      */
     public BinaryOperator<String> summaryCompletions() {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        int maxTokens = Math.max(settings.chatMaxTokens(), SUMMARY_MIN_TOKENS);
+        int maxTokens = settings.chatMaxTokens();
         String thinking = settings.stepThinking();
         ChatOptions.Builder builder = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens);
         if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {

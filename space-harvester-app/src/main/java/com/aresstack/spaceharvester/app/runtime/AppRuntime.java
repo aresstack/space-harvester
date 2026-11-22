@@ -392,7 +392,9 @@ public final class AppRuntime implements AutoCloseable {
         service = service.withVisionMaxTokens(ai.visionMaxTokens())
                 .withImageGeneration(ai.imageModel(), ai.imageMaxTokens())
                 // Nachdenken je Modell (Angelo 22.11.2026); ohne Eintrag wie das Text-Modell (step-thinking).
-                .withThinking(ai.visionThinking(), ai.imageThinking());
+                .withThinking(ai.visionThinking(), ai.imageThinking())
+                // Eigene Zeilen für Zusammenfassung, ihren Plan und den Podcast (Angelo 22.11.2026).
+                .withUses(ai.summary(), ai.podcast()).withSummaryPlan(ai.summaryPlan());
         if (ai.visionModel() != null) {
             // Bildbeschreibungen nur auf Abruf im Reiter „Bilder“ (ADR 0021); ohne Modell nennt er den Grund.
             service = service.withVisionModel(ai.visionModel());

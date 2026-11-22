@@ -1155,6 +1155,32 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void summaryPlanAndPodcastHaveTheirOwnLinesInTheAiBlock() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("https://ki.firma.de/v1", "text-modell", null, null, null, java.util.List.of())
+                .withUses(new AiDraft.Use(null, "65536", "low"), new AiDraft.Use("plan-modell", null, "high"),
+                        new AiDraft.Use("podcast-modell", "8192", null));
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("summary-max-tokens: 65536", "summary-thinking: low",
+                "summary-plan-model: \"plan-modell\"", "summary-plan-thinking: high",
+                "podcast-model: \"podcast-modell\"", "podcast-max-tokens: 8192").doesNotContain("summary-model:");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.ai().summary()).isEqualTo(
+                new com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse(null, 65536, "low"));
+        assertThat(settings.ai().summaryPlan().model()).isEqualTo("plan-modell");
+        assertThat(settings.ai().podcast().maxTokens()).isEqualTo(8192);
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(ai.withUses(new AiDraft.Use(null, "viel", null), null, null).problems())
+                .anyMatch(p -> p.contains("„Zusammenfassung“"));
+        assertThat(ai.withUses(null, null, new AiDraft.Use(null, null, "gründlich")).problems())
+                .anyMatch(p -> p.contains("„Podcast“"));
+    }
+
+    @Test
     void rerankModelAndChunkingGoIntoTheAiBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sources: []\n");
