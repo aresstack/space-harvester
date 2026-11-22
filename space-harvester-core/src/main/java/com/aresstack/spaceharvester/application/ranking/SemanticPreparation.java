@@ -3,6 +3,11 @@ package com.aresstack.spaceharvester.application.ranking;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
+import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobTask;
+import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
@@ -27,8 +32,12 @@ import java.util.function.Function;
  * Vorbereitung der semantischen Suche (ADR 0013, Punkt 3): Dieselbe Schlagwortsuche wie ohne Haken findet die Seiten
  * und lädt sie mit den Rechten des Aufrufers in den Cache ({@link KeywordSearch}). Für ihre Treffer, also nur Seiten,
  * die der Aufrufer lesen darf, berechnet die Vorbereitung fehlende oder veraltete Embeddings im Aufruf, begrenzt
- * parallel und höchstens {@link #DEFAULT_WAIT} lang. Seiten aus Quellen ohne Freigabe für externe Verarbeitung lässt
- * der Embedding-Prozessor selbst aus.
+ * parallel und höchstens {@link #DEFAULT_WAIT} lang. Was nach der Frist noch nicht angefangen hat, rechnet mit
+ * {@link Jobs} ein gewöhnlicher Auftrag {@link JobType#ENRICHMENT} „Suchtreffer vorbereiten“ des Aufrufers weiter
+ * (Fundstelle 11, Abnahme #1078): Die Suche ist ein Klick ({@link Jobs#submitInteractive}), wie bisher bis zu vier
+ * parallel, sichtbar, abbrechbar und nur, was dann noch nicht aktuell ist. Nur die höchstens vier schon laufenden
+ * Berechnungen enden im Aufruf. Seiten aus Quellen ohne Freigabe für externe Verarbeitung lässt der
+ * Embedding-Prozessor selbst aus.
  */
 public final class SemanticPreparation implements RelevanceSearch.Preparation {
 
@@ -40,6 +49,8 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
     public static final Duration DEFAULT_WAIT = Duration.ofSeconds(10);
 
     private static final int PARALLEL = 4;
+    /** Ergebnis einer Seite, die nach der Frist an die Hintergrundaufträge ging. */
+    private static final Enrichments.Run HANDED_OVER = new Enrichments.Run(true, 0, 0, 0);
     private static final long POLL_MILLIS = 25;
 
     private final KeywordSearch keywords;
@@ -47,6 +58,14 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
     private final Enrichments enrichments;
     private final String processorId;
     private final Duration wait;
+    /** Für den Rest nach der Frist; ohne sie rechnet er wie früher im Aufruf weiter. */
+    private final Jobs jobs;
+
+    /** Angabe am Auftrag ({@code task}): der Rest der Vorbereitung nach der Frist. */
+    public static final String TASK = "prepare-search-hits";
+    /** Phase des Auftrags für die Auftragsliste. */
+    public static final String PHASE = "Suchtreffer vorbereiten";
+    private static final String COMPONENT = "semantic-preparation";
 
     /**
      * @param snapshots   die abgelegte Seite im Cache
@@ -54,6 +73,13 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
      */
     public SemanticPreparation(KeywordSearch keywords, Function<PageKey, Optional<PageSnapshot>> snapshots,
                                Enrichments enrichments, String processorId, Duration wait) {
+        this(keywords, snapshots, enrichments, processorId, wait, null);
+    }
+
+    /** @param jobs für den Rest nach der Frist ({@value #PHASE}) oder {@code null} */
+    public SemanticPreparation(KeywordSearch keywords, Function<PageKey, Optional<PageSnapshot>> snapshots,
+                               Enrichments enrichments, String processorId, Duration wait, Jobs jobs) {
+        this.jobs = jobs;
         this.keywords = Objects.requireNonNull(keywords, "keywords");
         this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
         this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
@@ -98,22 +124,34 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
             found = keywords.search(caller, keywordQuery, null, MAX_PAGES, partOf);
         }
         int pending = found.loading() + (lostCandidates(found) ? 1 : 0);
-        List<PageSnapshot> missing = new ArrayList<>();
+        // Jede Seite einmal, auch wenn die Schlagwortsuche sie mehrfach liefert.
+        java.util.Map<PageKey, PageSnapshot> unique = new java.util.LinkedHashMap<>();
         for (KeywordSearch.Hit hit : found.hits()) {
-            snapshots.apply(new PageKey(hit.sourceId(), hit.pageId())).filter(this::withoutCurrentEmbedding)
-                    .ifPresent(missing::add);
+            PageKey key = new PageKey(hit.sourceId(), hit.pageId());
+            if (!unique.containsKey(key)) {
+                snapshots.apply(key).filter(this::withoutCurrentEmbedding).ifPresent(page -> unique.put(key, page));
+            }
         }
-        if (missing.isEmpty()) {
+        if (unique.isEmpty()) {
             return pending;
         }
         Semaphore slots = new Semaphore(PARALLEL);
-        List<Future<Enrichments.Run>> runs = new ArrayList<>(missing.size());
+        // Wer eine Seite rechnet: eine Berechnung des Aufrufs oder, nach der Frist, der Auftrag.
+        Set<PageKey> claimed = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        List<Future<Enrichments.Run>> runs = new ArrayList<>(unique.size());
         ExecutorService runner = Executors.newVirtualThreadPerTaskExecutor();
         try {
-            for (PageSnapshot snapshot : missing) {
+            for (java.util.Map.Entry<PageKey, PageSnapshot> entry : unique.entrySet()) {
+                PageKey key = entry.getKey();
+                PageSnapshot snapshot = entry.getValue();
                 runs.add(runner.submit(() -> {
                     slots.acquireUninterruptibly();
                     try {
+                        // Nach der Frist wartet niemand mehr (Fundstelle 11): Was noch nicht angefangen hat, rechnet
+                        // der sichtbare Auftrag statt eines Threads ohne Auftrag.
+                        if (jobs != null && System.nanoTime() >= deadline || !claimed.add(key)) {
+                            return HANDED_OVER;
+                        }
                         return enrichments.recompute(snapshot, processorId);
                     } finally {
                         slots.release();
@@ -122,7 +160,11 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
             }
             for (Future<Enrichments.Run> run : runs) {
                 try {
-                    if (run.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS).failed() > 0) {
+                    Enrichments.Run result = run.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                    if (result == HANDED_OVER) {
+                        // Rechnet sichtbar weiter und zählt beim nächsten Mal; diese Suche ist unvollständig.
+                        pending++;
+                    } else if (result.failed() > 0) {
                         // Der Dienst hat abgelehnt oder war nicht erreichbar; die nächste Suche versucht es wieder.
                         pending++;
                     }
@@ -142,12 +184,85 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
             // Nicht unterbrechen: Ein Abbruch mitten im Schreiben schlösse die Dateikanäle des Lucene-Index.
             runner.shutdown();
         }
+        if (jobs != null) {
+            java.util.Map<PageKey, PageSnapshot> left = new java.util.LinkedHashMap<>();
+            unique.forEach((key, page) -> {
+                if (claimed.add(key)) {
+                    left.put(key, page);
+                }
+            });
+            if (!left.isEmpty()) {
+                handOver(caller, left);
+            }
+        }
+        flush();
+        return pending;
+    }
+
+    private void flush() {
         try {
             enrichments.flush();
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.INFO, "Embeddings nicht dauerhaft gemacht ({0})", e.getClass().getName());
         }
-        return pending;
+    }
+
+    /** Gibt den Rest nach der Frist an einen Auftrag des Aufrufers; nimmt {@link Jobs} ihn nicht an, die nächste Suche. */
+    private void handOver(AccessContext caller, java.util.Map<PageKey, PageSnapshot> left) {
+        Set<String> sources = new java.util.HashSet<>();
+        left.keySet().forEach(key -> sources.add(key.sourceId()));
+        String sourceId = sources.size() == 1 ? sources.iterator().next() : Jobs.ALL_SOURCES;
+        try {
+            jobs.submitInteractive(JobType.ENRICHMENT, sourceId, null, null, caller.jobOwner(),
+                    java.util.Map.of(EnrichmentsAfterSync.TASK_PARAMETER, TASK),
+                    JobTask.blocking(context -> prepareLeft(left, context)));
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "{0} Suchtreffer nicht als Auftrag vorbereitet ({1}); die nächste Suche "
+                    + "versucht es wieder", left.size(), e.getClass().getName());
+        }
+    }
+
+    /** Der Auftrag: bis zu {@value #PARALLEL} parallel, nur was noch nicht aktuell ist; Abbrechen startet keine mehr. */
+    private void prepareLeft(java.util.Map<PageKey, PageSnapshot> left, JobContext context) {
+        context.phase(COMPONENT, PHASE);
+        context.discovered(left.size());
+        Semaphore slots = new Semaphore(PARALLEL);
+        // close() wartet auf die laufenden Berechnungen, ohne sie zu unterbrechen (Lucene-Index).
+        try (ExecutorService runner = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (java.util.Map.Entry<PageKey, PageSnapshot> entry : left.entrySet()) {
+                PageSnapshot snapshot = entry.getValue();
+                String sourceId = entry.getKey().sourceId();
+                context.checkpoint();
+                slots.acquireUninterruptibly();
+                try {
+                    context.checkpoint();
+                } catch (RuntimeException e) {
+                    slots.release();
+                    throw e;
+                }
+                runner.execute(() -> {
+                    try {
+                        if (withoutCurrentEmbedding(snapshot)) {
+                            Enrichments.Run run = enrichments.recompute(snapshot, processorId);
+                            if (run.failed() > 0) {
+                                context.failed(1);
+                            } else if (run.computed() > 0) {
+                                context.written(1);
+                            }
+                        }
+                    } catch (RuntimeException e) {
+                        LOG.log(System.Logger.Level.INFO, "Embedding eines Suchtreffers in {0} gescheitert ({1})",
+                                sourceId, e.getClass().getName());
+                        context.failed(1);
+                    } finally {
+                        context.processed(1);
+                        slots.release();
+                    }
+                });
+            }
+        } finally {
+            flush();
+        }
     }
 
     /** Wartet bis zur Frist, bis die Funde der Suche geladen sind; {@code true}, wenn etwas zu laden war. */

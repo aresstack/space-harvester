@@ -418,6 +418,17 @@ wird automatisch verwaltet.
       fortsetzen ließen, werden beim Start abgeschlossen (Info „Warteschlange nach Neustart leer“), damit kein
       angehaltener alle neuen aufhält. Fehlende oder veraltete Ergebnisse holt der nächste Abgleich oder Abruf nach,
       erzwungene der Abgleich beim Start.
+    - In der Warteschlange ersetzt eine erzwungene Berechnung die gleiche ungezwungene an ihrer Stelle; eine
+      ungezwungene neben der gleichen erzwungenen entfällt.
+    - Semantische Suche (`SemanticPreparation`, Fundstelle 11): Die Suche ist ein Klick. Was nach der Frist von 10 s
+      noch nicht angefangen hat, rechnet ein gewöhnlicher Auftrag `ENRICHMENT` des Aufrufers („Suchtreffer
+      vorbereiten“, Angabe `task` `prepare-search-hits`, `Jobs#submitInteractive`) weiter: wie bisher bis zu vier
+      parallel, sichtbar, abbrechbar, ungezwungen (nur, was dann noch nicht aktuell ist). Nur die höchstens vier schon
+      laufenden Embeddings enden im Aufruf.
+    - „Neu berechnen“ einer Seite (Fundstelle 21): ein gewöhnlicher Auftrag `ENRICHMENT` (Angabe `task`
+      `recompute-page`, `root` = Seite) über `Jobs#submitInteractive` (`PageRecomputation`), sichtbar und abbrechbar
+      vor jedem Prozessor; der Knopf wartet auf das Ende und sagt „Wartet auf freien Platz …“, solange der Auftrag
+      hinter laufenden Folgeaufträgen wartet. Abgebrochen oder angehalten meldet er als Info, gescheitert rot mit Grund.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
