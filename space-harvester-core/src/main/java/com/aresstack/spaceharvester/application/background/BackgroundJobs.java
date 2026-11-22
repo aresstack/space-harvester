@@ -57,6 +57,11 @@ public final class BackgroundJobs {
     public static final String STEP_TITLE = PREFIX + "stepTitle";
     /** Code der Warnung: eine Vorstufe ist gescheitert, abgebrochen oder gelöscht; der Teil läuft über das Vorhandene. */
     public static final String PREDECESSOR_MISSING = "PREDECESSOR_MISSING";
+    /**
+     * Angabe ({@code "true"}) an den Teilen einer Art mit {@link Retry}: Sie wiederholt Gescheitertes gezielt (↻,
+     * {@link #retryFailed}); {@code JobLifecycleState} bietet die Aktion dann an.
+     */
+    public static final String RETRYABLE = com.aresstack.spaceharvester.application.jobs.JobLifecycleState.RETRYABLE;
     /** Fehlercode eines vom Beenden des Dienstes unterbrochenen Auftrags ({@code JobLifecycleState.INTERRUPTED}). */
     static final String INTERRUPTED = com.aresstack.spaceharvester.application.jobs.JobLifecycleState.INTERRUPTED;
 
@@ -65,6 +70,7 @@ public final class BackgroundJobs {
     private final Jobs jobs;
     private final String owner;
     private final Map<String, BackgroundKind> kinds = new ConcurrentHashMap<>();
+    private final Map<String, Retry> retries = new ConcurrentHashMap<>();
     /** Je Art ein Riegel, damit zwei gleichzeitige Anlässe nicht beide einen Teil starten. */
     private final Map<String, Object> startLocks = new ConcurrentHashMap<>();
 
@@ -146,6 +152,108 @@ public final class BackgroundJobs {
         kinds.put(kind.id(), kind);
     }
 
+    /**
+     * Wie eine Art ihre gescheiterte Arbeit wiederholt (↻, Angelo 22.11.2026), im selben Eintrag wie „Fortsetzen“.
+     * Die Wiederholung läuft über die gewöhnliche Arbeit der Art ({@link BackgroundKind#work()}), mit allen ihren
+     * Prüfungen (etwa der KI-Freigabe je Seite) und Einstellungen.
+     */
+    public interface Retry {
+
+        /**
+         * Legt die gescheiterte Arbeit des Teils als seine neue Arbeit bereit.
+         *
+         * @return {@code false}, wenn nichts zu wiederholen ist
+         */
+        boolean prepare(BackgroundPart part);
+
+        /** Der erneute Lauf ist angenommen. */
+        default void started(BackgroundPart part) {
+        }
+
+        /** Der erneute Lauf wurde nicht angenommen: Die bereitgelegte Arbeit gilt wieder als gescheitert. */
+        void abandoned(BackgroundPart part);
+    }
+
+    /** Meldet die Wiederholung einer Art an; vor ihren ersten Teilen, die erst damit {@link #RETRYABLE} tragen. */
+    public void registerRetry(String kind, Retry retry) {
+        Objects.requireNonNull(kind, "kind");
+        retries.put(kind, Objects.requireNonNull(retry, "retry"));
+    }
+
+    /**
+     * „Nur Fehler neu versuchen“ (↻) an einem beendeten oder angehaltenen Teil einer Art mit {@link Retry}: Die Art legt
+     * ihre gescheiterte Arbeit bereit, der Teil läuft damit im selben Eintrag neu, die Zähler beginnen neu.
+     *
+     * @throws NothingToRetryException  wenn die Art nichts mehr zu wiederholen hat
+     * @throws JobNotResumableException wenn die Art nichts wiederholt oder der Teil noch wartet oder läuft
+     */
+    public JobStatus retryFailed(String jobId) {
+        JobStatus current = jobs.status(jobId, owner);
+        if (current.type() != JobType.BACKGROUND) {
+            throw new JobNotResumableException(jobId, "kein Hintergrundauftrag");
+        }
+        String kind = current.parameter(KIND);
+        Retry retry = kind == null ? null : retries.get(kind);
+        BackgroundKind registered = kind == null ? null : kinds.get(kind);
+        if (retry == null || registered == null) {
+            throw new JobNotResumableException(jobId, "diese Art wiederholt Gescheitertes nicht");
+        }
+        if (!current.state().terminal()) {
+            throw new JobNotResumableException(jobId, "der Auftrag wartet oder läuft noch");
+        }
+        Map<String, String> own = new HashMap<>(current.parameters());
+        own.keySet().removeIf(key -> key.startsWith(PREFIX));
+        BackgroundPart part = new BackgroundPart(current.id(), groupOf(current), registered.id(), current.sourceId(),
+                current.partitionKey(), own, true, false);
+        synchronized (startLock(kind)) {
+            if (!retry.prepare(part)) {
+                throw new NothingToRetryException(jobId);
+            }
+            JobStatus rerun;
+            try {
+                // Hinter die offenen Teile der Art, wie beim ersten Lauf (startBehindOpen, Codex #1109); nie hinter einen,
+                // der selbst auf diesen wartet, sonst warteten beide aufeinander.
+                List<String> before = openBefore(kind, jobId);
+                Map<String, String> parameters = new HashMap<>(current.parameters());
+                parameters.remove(Jobs.AFTER);
+                parameters.remove(Jobs.AFTER_TITLES);
+                if (!before.isEmpty()) {
+                    parameters.put(Jobs.AFTER, String.join(",", before));
+                    String title = current.parameter(TITLE);
+                    if (title != null) {
+                        parameters.put(Jobs.AFTER_TITLES, title);
+                    }
+                }
+                rerun = jobs.rerun(jobId, owner, parameters, task(true, false));
+            } catch (RuntimeException e) {
+                retry.abandoned(part);
+                throw e;
+            }
+            retry.started(part);
+            return rerun;
+        }
+    }
+
+    /** Die offenen Teile der Art außer {@code jobId} und denen, die (auch über andere) auf ihn warten. */
+    private List<String> openBefore(String kind, String jobId) {
+        List<JobStatus> open = openParts(kind).filter(part -> !part.id().equals(jobId)).toList();
+        Set<String> waiting = new HashSet<>();
+        waiting.add(jobId);
+        boolean grew = true;
+        while (grew) {
+            grew = false;
+            for (JobStatus part : open) {
+                String after = part.parameter(Jobs.AFTER);
+                if (after != null && !waiting.contains(part.id())
+                        && java.util.Arrays.stream(after.split(",")).anyMatch(waiting::contains)) {
+                    waiting.add(part.id());
+                    grew = true;
+                }
+            }
+        }
+        return open.stream().map(JobStatus::id).filter(id -> !waiting.contains(id)).toList();
+    }
+
     /** Ob eine Art angemeldet ist. */
     public boolean registered(String kind) {
         return kinds.containsKey(kind);
@@ -180,6 +288,9 @@ public final class BackgroundJobs {
                 parameters.put(KIND, registered.id());
                 parameters.put(GROUP, groupId);
                 parameters.put(TITLE, title);
+                if (retries.containsKey(registered.id())) {
+                    parameters.put(RETRYABLE, "true");
+                }
                 if (registered.ownLane()) {
                     parameters.put(Jobs.OWN_LANE, "true");
                 }
@@ -260,6 +371,9 @@ public final class BackgroundJobs {
                 Map<String, String> parameters = new HashMap<>(step.draft().parameters());
                 parameters.put(KIND, step.kind());
                 parameters.put(GROUP, groupId);
+                if (retries.containsKey(step.kind())) {
+                    parameters.put(RETRYABLE, "true");
+                }
                 parameters.put(GROUP_KIND, groupKind);
                 parameters.put(TITLE, title);
                 parameters.put(STEP_TITLE, step.stepTitle());

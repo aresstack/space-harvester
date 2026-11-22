@@ -376,10 +376,16 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
      */
     private void count(Live part, BackgroundFill.Where where, int adjust) {
         BackgroundFill current = fill;
+        // Erst die erledigten, dann die wartenden: Eine Seite verlässt die Schlange, bevor sie als erledigt zählt. So
+        // zählt sie höchstens kurz gar nicht, nie doppelt; „gefunden“ sinkt nie und bliebe sonst zu hoch (CI #1101).
+        long processed;
+        synchronized (monitor) {
+            processed = part.processed;
+        }
         int waiting = current == null ? 0 : Math.max(0, current.waiting(where) + adjust);
         long more;
         synchronized (monitor) {
-            long target = part.processed + waiting;
+            long target = processed + waiting;
             more = target - part.discovered;
             if (more > 0) {
                 part.discovered = target;
