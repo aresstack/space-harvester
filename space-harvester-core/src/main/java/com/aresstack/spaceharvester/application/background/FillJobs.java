@@ -81,6 +81,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private final Subscription parts;
     private final Subscription syncs;
     private volatile Fill fill;
+    private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
+    private volatile Subscription networkWatch = Subscription.NONE;
 
     /**
      * Was die Teile von der Füllung brauchen ({@link BackgroundFill}); eigene Schnittstelle, damit Tests einen Ablauf
@@ -128,6 +130,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
          * bestellten Suche gewesen sein; dann sucht der Teil einmal neu, und deren „leer“ beendet ihn.
          */
         boolean idleWhileScanAhead;
+        /** Unter {@link #monitor}: steht als „Wartet auf Netzverbindung“ ({@link #offline}). */
+        boolean offline;
 
         Live(JobContext context, int attempt) {
             this.context = context;
@@ -220,6 +224,74 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
         };
         fill.observe(spaceOf, this, this::resting);
         restResting();
+    }
+
+    /**
+     * Hängt den Netzzustand an (Angelo 22.11.2026): Scheitert eine Seite am Netz, steht der Teil ihres Space als
+     * „Wartet auf Netzverbindung“ mit dem Grund in der Diagnose, nichts zählt als gescheitert; ist das Netz zurück,
+     * lädt er im selben Auftrag weiter.
+     */
+    public void network(com.aresstack.spaceharvester.application.network.NetworkState network) {
+        this.network = network;
+        Subscription previous = networkWatch;
+        networkWatch = network == null ? Subscription.NONE : network.subscribe(status -> {
+            if (status.online()) {
+                back();
+            }
+        });
+        previous.close();
+    }
+
+    /** Das Netz ist zurück: Jeder wartende Teil läuft wieder sichtbar. */
+    private void back() {
+        List<Live> waiting = new java.util.ArrayList<>();
+        synchronized (monitor) {
+            for (Live part : live.values()) {
+                if (part.offline) {
+                    part.offline = false;
+                    waiting.add(part);
+                }
+            }
+        }
+        for (Live part : waiting) {
+            part.context.awaitingNetwork(false);
+            part.context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.NETWORK, COMPONENT,
+                    com.aresstack.spaceharvester.application.network.NetworkWait.ONLINE,
+                    "Netzverbindung zurück; der Auftrag lädt hier weiter", null, null, null));
+        }
+    }
+
+    @Override
+    public void offline(BackgroundFill.Where where, Throwable cause) {
+        Live part;
+        synchronized (monitor) {
+            part = live.get(where);
+        }
+        if (part != null) {
+            markOffline(part, cause);
+        }
+    }
+
+    /** Einmal je Netzausfall: „Wartet auf Netzverbindung“ und der Grund in der Diagnose. */
+    private void markOffline(Live part, Throwable cause) {
+        synchronized (monitor) {
+            if (part.offline) {
+                return;
+            }
+            part.offline = true;
+        }
+        com.aresstack.spaceharvester.application.network.NetworkState net = network;
+        String why = net != null && net.status().reason() != null ? net.status().reason()
+                : cause == null ? "Netz nicht erreichbar" : cause.getClass().getSimpleName();
+        part.context.awaitingNetwork(true);
+        part.context.record(new JobEvent.Draft(JobEvent.Severity.WARNING, JobEvent.Category.NETWORK, COMPONENT,
+                com.aresstack.spaceharvester.application.network.NetworkWait.OFFLINE, "Keine Netzverbindung (" + why
+                + "): Der Auftrag wartet, bis sie zurück ist, und lädt dann von selbst hier weiter; nichts zählt als "
+                + "gescheitert", null, null, cause));
+        if (net != null && net.online()) {
+            // Inzwischen zurück: Die Meldung darüber kam vielleicht schon vor dem Vermerk.
+            back();
+        }
     }
 
     /** Hängt eine Füllung an, ohne dass sie hierher meldet; für Tests, die Meldungen selbst geben. */
@@ -544,6 +616,11 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                     mine.failed = tally.failed;
                 }
             }
+            com.aresstack.spaceharvester.application.network.NetworkState net = network;
+            if (net != null && !net.online()) {
+                // Schon offline beim Start: Die Füllung übergibt nichts, bis das Netz zurück ist.
+                markOffline(mine, null);
+            }
             if (tally != null) {
                 context.processed(tally.written + tally.failed);
                 context.written(tally.written);
@@ -610,5 +687,6 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     public void close() {
         parts.close();
         syncs.close();
+        networkWatch.close();
     }
 }

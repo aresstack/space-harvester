@@ -249,6 +249,12 @@ class ActivitiesActionsTest {
                 .isEqualTo("Angehalten – Verbindung unterbrochen");
         assertThat(Texts.tone(paused(PauseReason.CONNECTION_LOST))).isEqualTo(Comic.Tone.WARNING);
         assertThat(Texts.state(paused(PauseReason.USER))).isEqualTo("Angehalten");
+        // Ohne Netz läuft der Auftrag weiter und wartet sichtbar (Angelo 22.11.2026); nichts daran ist ein Fehler.
+        JobStatus offline = new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(5, 2, 2, 0), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null, Map.of(),
+                false, false, null, com.aresstack.spaceharvester.application.jobs.JobStage.OFFLINE);
+        assertThat(Texts.state(offline)).isEqualTo("Wartet auf Netzverbindung");
+        assertThat(Texts.tone(offline)).isEqualTo(Comic.Tone.NEUTRAL);
     }
 
     /** ↻ Nur Fehler steht in jedem Zustand bereit, sobald etwas gescheitert ist (Angelo 11.11.2026, Core #634). */

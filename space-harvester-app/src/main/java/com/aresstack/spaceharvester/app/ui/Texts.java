@@ -108,6 +108,8 @@ public final class Texts {
             case "PREPARING" -> "Vorbereitung";
             case "PREPARED" -> "Vorbereitet";
             case "AWAITING_EXPORT" -> "Wartet auf Text";
+            // Kein Fehler: Der Auftrag macht im selben Eintrag weiter, sobald das Netz zurück ist (Angelo 22.11.2026).
+            case "AWAITING_NETWORK" -> "Wartet auf Netzverbindung";
             default -> state(status.state());
         };
     }
@@ -120,7 +122,7 @@ public final class Texts {
                     Comic.Tone.WARNING;
             case "PREPARING" -> Comic.Tone.RUNNING;
             // Vorbereitet und wartend tun gerade nichts: ruhig wie „Angehalten“, bis ein Platz frei ist.
-            case "PREPARED", "AWAITING_EXPORT" -> Comic.Tone.NEUTRAL;
+            case "PREPARED", "AWAITING_EXPORT", "AWAITING_NETWORK" -> Comic.Tone.NEUTRAL;
             default -> tone(status.state());
         };
     }
