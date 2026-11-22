@@ -86,6 +86,7 @@ class PodcastWriterLiveTest {
                 List<Turn> turns = writer.script(material, plan, t, planned, s, before, last, voices, repairs);
                 System.out.println("[live] == " + plan.topics().get(t).title() + " / " + planned.get(s).title());
                 turns.forEach(turn -> System.out.println("[live] " + turn.speaker() + ": " + turn.text()));
+                turns.forEach(turn -> System.out.println("[tts]  " + SpeakableText.of(turn.text())));
                 turns.forEach(turn -> spoken.add(turn.text()));
                 told.addAll(turns);
                 ends.add(turns.get(turns.size() - 1).text().strip());
@@ -94,6 +95,10 @@ class PodcastWriterLiveTest {
         }
         System.out.println("[live] Reparaturen: " + repairs);
         String all = String.join("\n", spoken);
+        // Angelo 22.11.2026: Bindestriche bringen die Stimme aus dem Tritt; die Sprachausgabe bekommt keine mehr.
+        assertThat(told).extracting(turn -> SpeakableText.of(turn.text())).as("Sprechtext ohne Stolpersteine")
+                .allSatisfy(text -> assertThat(text).doesNotContain("\u2011", "\u2010", "\u2013", "\u2014", "/", "→")
+                        .doesNotContainPattern("[\\p{L}\\p{N}]-[\\p{L}\\p{N}]"));
         assertThat(repairs).noneMatch(repair -> repair.contains("ohne Modell"));
         // Angelo 22.11.2026: Begrüßung mit der Art der Quelle, kein erdachter Sendungsname, Rollen stimmen.
         assertThat(String.join(" ", spoken.subList(0, Math.min(3, spoken.size())))).as("Begrüßung")
