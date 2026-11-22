@@ -69,12 +69,31 @@ public final class PodcastSpeaker {
      * @throws IOException wenn ein Beitrag mit keinem Ausweg zu sprechen war; die Meldung nennt nie Text
      */
     public byte[] speak(List<Turn> turns, List<String> repairs) throws IOException {
+        return section(turns, repairs).wav();
+    }
+
+    /**
+     * Ein gesprochener Abschnitt: die WAV-Datei und wo jeder Beitrag darin beginnt (für die Untertitel).
+     *
+     * @param starts je Beitrag in der Reihenfolge der Eingabe der Beginn in Millisekunden; {@code -1} für leere Beiträge
+     */
+    public record Section(byte[] wav, List<Long> starts) {
+        public Section {
+            starts = List.copyOf(starts);
+        }
+    }
+
+    /** Wie {@link #speak}, zusätzlich mit dem gemessenen Beginn jedes Beitrags. */
+    public Section section(List<Turn> turns, List<String> repairs) throws IOException {
         List<AudioInputStream> parts = new ArrayList<>();
+        List<Integer> firstPart = new ArrayList<>();
         AudioFormat format = null;
         for (Turn turn : turns) {
             if (turn.text().isBlank()) {
+                firstPart.add(-1);
                 continue;
             }
+            firstPart.add(parts.size());
             for (byte[] wav : turn(turn, repairs)) {
                 AudioInputStream stream = stream(wav);
                 if (format == null) {
@@ -89,7 +108,14 @@ public final class PodcastSpeaker {
         if (parts.isEmpty() || format == null) {
             throw new IOException("Abschnitt ohne sprechbaren Text");
         }
-        return wav(parts, format);
+        long[] offsets = new long[parts.size()];
+        byte[] wav = wav(parts, format, offsets);
+        double bytesPerMilli = Math.max(1, format.getFrameSize()) * (double) format.getFrameRate() / 1000d;
+        List<Long> starts = new ArrayList<>();
+        for (int first : firstPart) {
+            starts.add(first < 0 ? -1L : Math.round(offsets[first] / bytesPerMilli));
+        }
+        return new Section(wav, starts);
     }
 
     /** Der Text, wie ihn die Sprachausgabe bekommt: Kürzel Buchstabe für Buchstabe. */
@@ -140,10 +166,12 @@ public final class PodcastSpeaker {
         return new AudioInputStream(new ByteArrayInputStream(zeros), format, frames);
     }
 
-    private static byte[] wav(List<AudioInputStream> parts, AudioFormat format) throws IOException {
+    /** @param offsets nimmt je Stück auf, bei welchem Byte der Rohdaten es beginnt */
+    private static byte[] wav(List<AudioInputStream> parts, AudioFormat format, long[] offsets) throws IOException {
         ByteArrayOutputStream pcm = new ByteArrayOutputStream();
-        for (AudioInputStream part : parts) {
-            part.transferTo(pcm);
+        for (int i = 0; i < parts.size(); i++) {
+            offsets[i] = pcm.size();
+            parts.get(i).transferTo(pcm);
         }
         byte[] bytes = pcm.toByteArray();
         AudioInputStream all = new AudioInputStream(new ByteArrayInputStream(bytes), format,

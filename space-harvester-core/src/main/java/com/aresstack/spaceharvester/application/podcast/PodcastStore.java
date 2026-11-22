@@ -196,6 +196,24 @@ public final class PodcastStore {
         write(segmentFile(key, topic, segment, "json"), node);
     }
 
+    /** Wo jeder Beitrag im Audio des Abschnitts beginnt, in Millisekunden ({@code -1} = leer); leer ohne Messung. */
+    public List<Long> starts(String key, int topic, int segment) {
+        return read(segmentFile(key, topic, segment, "times.json")).map(node -> {
+            List<Long> starts = new ArrayList<>();
+            for (JsonNode start : node.path("starts")) {
+                starts.add(start.asLong(-1));
+            }
+            return List.copyOf(starts);
+        }).orElse(List.of());
+    }
+
+    public void saveStarts(String key, int topic, int segment, List<Long> starts) {
+        ObjectNode node = JSON.createObjectNode();
+        ArrayNode list = node.putArray("starts");
+        starts.forEach(list::add);
+        write(segmentFile(key, topic, segment, "times.json"), node);
+    }
+
     /** Die fertige WAV-Datei eines Abschnitts, falls vorhanden. */
     public Optional<Path> audio(String key, int topic, int segment) {
         Path file = segmentFile(key, topic, segment, "wav");
