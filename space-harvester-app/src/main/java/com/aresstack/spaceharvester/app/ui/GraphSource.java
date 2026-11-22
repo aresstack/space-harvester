@@ -80,13 +80,34 @@ public interface GraphSource {
      * @param trust     Vertrauen einer Verb-Kante (Paket W2), sonst {@code null}
      * @param differs   ob ein Beleg der Verb-Kante abweicht und keiner geprüft ist
      * @param tip       Tooltip der Kante oder {@code null}
+     * @param qualifiers Verneinung, Modalverb und Zeitbezug der Aussage einer Verb-Kante (Paket W9), sonst schlicht
+     * @param hidden    beim Bogen „+ n weitere“ die Aussagen, für die er steht (Paket W9), sonst leer
      */
     record Edge(String from, String to, String type, boolean confirmed, boolean directed, Style style, String label,
-                List<DomainTermGraph.Evidence> evidence, DomainTermGraph.Trust trust, boolean differs, String tip) {
+                List<DomainTermGraph.Evidence> evidence, DomainTermGraph.Trust trust, boolean differs, String tip,
+                DomainTermGraph.Qualifiers qualifiers, List<Edge> hidden) {
 
         public Edge {
             style = style == null ? Style.RELATION : style;
             evidence = evidence == null ? List.of() : List.copyOf(evidence);
+            qualifiers = qualifiers == null ? DomainTermGraph.Qualifiers.PLAIN : qualifiers;
+            hidden = hidden == null ? List.of() : List.copyOf(hidden);
+        }
+
+        /** Eine Kante mit schlichter Aussage. */
+        Edge(String from, String to, String type, boolean confirmed, boolean directed, Style style, String label,
+             List<DomainTermGraph.Evidence> evidence, DomainTermGraph.Trust trust, boolean differs, String tip) {
+            this(from, to, type, confirmed, directed, style, label, evidence, trust, differs, tip, null, null);
+        }
+
+        /** Der Bogen „+ n weitere“ (Paket W9): steht für die Aussagen in {@link #hidden}. */
+        boolean bundle() {
+            return !hidden.isEmpty();
+        }
+
+        /** Der Wortlaut der Aussage ohne Zahl und „≠“, etwa „nicht prüfen“; sonst die Beschriftung. */
+        String phrase() {
+            return label == null ? "" : label.replaceFirst("( ≠)? · \\d+$", "");
         }
 
         /** Ohne Vertrauen (Beziehungen, Synonyme). */
@@ -245,15 +266,25 @@ public interface GraphSource {
             nodes.add(new Node(node.key(), node.label(), node.depth(), node.parent(),
                     node.kind() == DomainTermGraph.NodeKind.SYNONYM));
         }
+        Map<String, String> labels = new java.util.HashMap<>();
+        view.nodes().forEach(node -> labels.put(node.key(), node.label()));
+        // Eine Kante je Aussage (Paket W9); je Knotenpaar und Richtung höchstens MAX_ARCS Bögen.
+        Map<String, List<DomainTermGraph.Edge>> directions = new LinkedHashMap<>();
+        for (DomainTermGraph.Edge edge : view.edges()) {
+            if (edge.kind() == DomainTermGraph.EdgeKind.VERB) {
+                directions.computeIfAbsent(edge.from() + "\u0000" + edge.to(), unused -> new ArrayList<>()).add(edge);
+            }
+        }
         List<Edge> edges = new ArrayList<>();
         for (DomainTermGraph.Edge edge : view.edges()) {
             if (edge.kind() == DomainTermGraph.EdgeKind.SYNONYM) {
                 edges.add(new Edge(edge.from(), edge.to(), "SYNONYM", true, false, Style.SYNONYM, null,
                         List.of()));
-            } else {
-                edges.add(new Edge(edge.from(), edge.to(), "VERB", true, true, Style.VERB,
-                        edge.verb() + (edge.differs() ? " ≠" : "") + " · " + edge.count(), edge.evidence(),
-                        edge.trust(), edge.differs(), edgeTip(edge, analyzerName)));
+                continue;
+            }
+            List<DomainTermGraph.Edge> same = directions.remove(edge.from() + "\u0000" + edge.to());
+            if (same != null) {
+                edges.addAll(arcs(same, labels));
             }
         }
         List<String> notes = new ArrayList<>();
@@ -289,18 +320,54 @@ public interface GraphSource {
         };
     }
 
+    /** So viele Bögen zeigt die Fachsicht höchstens je Knotenpaar und Richtung (UX W9). */
+    int MAX_ARCS = 3;
+
     /**
-     * Tooltip einer Verb-Kante: die genauen Stufen ihrer Belege mit Anzahl, im selben Wortlaut wie die Pillen im
-     * Overlay ({@link #stage}); die Linie fasst nur zusammen.
+     * Die Bögen der Aussagen eines Knotenpaars in einer Richtung, die mit den meisten Belegen zuerst: höchstens
+     * {@link #MAX_ARCS}; gibt es mehr, zeigen die zwei stärksten ihre Kante und der dritte Bogen „+ n weitere“.
      */
-    private static String edgeTip(DomainTermGraph.Edge edge,
-                                  java.util.function.Function<String, String> analyzerName) {
-        Map<String, Integer> stages = new LinkedHashMap<>();
-        edge.evidence().forEach(item -> stages.merge(stage(item, analyzerName), 1, Integer::sum));
-        List<String> parts = new ArrayList<>();
-        stages.forEach((stage, count) -> parts.add(stage + " " + count));
-        String head = parts.isEmpty() ? trustText(edge.trust(), edge.differs()) : capitalize(String.join(" · ", parts));
-        return head + " – Klick zeigt die Belege";
+    private static List<Edge> arcs(List<DomainTermGraph.Edge> same, Map<String, String> labels) {
+        List<DomainTermGraph.Edge> sorted = new ArrayList<>(same);
+        sorted.sort(java.util.Comparator.comparingInt(DomainTermGraph.Edge::count).reversed());
+        List<Edge> arcs = new ArrayList<>();
+        int shown = sorted.size() > MAX_ARCS ? MAX_ARCS - 1 : sorted.size();
+        for (int i = 0; i < shown; i++) {
+            arcs.add(verbEdge(sorted.get(i), labels));
+        }
+        if (shown < sorted.size()) {
+            List<Edge> rest = new ArrayList<>();
+            List<DomainTermGraph.Evidence> evidence = new ArrayList<>();
+            int count = 0;
+            for (DomainTermGraph.Edge edge : sorted.subList(shown, sorted.size())) {
+                rest.add(verbEdge(edge, labels));
+                evidence.addAll(edge.evidence());
+                count += edge.count();
+            }
+            DomainTermGraph.Edge first = sorted.getFirst();
+            arcs.add(new Edge(first.from(), first.to(), "VERB", true, true, Style.VERB, moreText(rest.size()), evidence,
+                    null, false, labelOf(labels, first.from()) + " – " + rest.size() + " weitere Aussagen – "
+                    + labelOf(labels, first.to()) + " · " + Texts.count(count, "Beleg", "Belege"), null, rest));
+        }
+        return arcs;
+    }
+
+    /** Eine Aussage als Verb-Kante: „nicht prüfen · 2“, Tooltip „Plan – nicht prüfen – Ziel · 2 Belege“ (UX W9). */
+    private static Edge verbEdge(DomainTermGraph.Edge edge, Map<String, String> labels) {
+        String phrase = edge.phrase();
+        return new Edge(edge.from(), edge.to(), "VERB", true, true, Style.VERB,
+                phrase + (edge.differs() ? " ≠" : "") + " · " + edge.count(), edge.evidence(), edge.trust(),
+                edge.differs(), labelOf(labels, edge.from()) + " – " + phrase + " – " + labelOf(labels, edge.to())
+                + " · " + Texts.count(edge.count(), "Beleg", "Belege"), edge.qualifiers(), null);
+    }
+
+    /** Beschriftung des Bogens, der für {@code n} weitere Aussagen steht. */
+    static String moreText(int n) {
+        return "+ " + n + " weitere";
+    }
+
+    private static String labelOf(Map<String, String> labels, String key) {
+        return labels.getOrDefault(key, key);
     }
 
     /**
@@ -319,10 +386,6 @@ public interface GraphSource {
             }
             case ABWEICHEND -> STAGE_DIFFERS;
         };
-    }
-
-    private static String capitalize(String text) {
-        return text.isEmpty() ? text : Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
     /** Genaue Stufen je Beleg (Paket W2). */

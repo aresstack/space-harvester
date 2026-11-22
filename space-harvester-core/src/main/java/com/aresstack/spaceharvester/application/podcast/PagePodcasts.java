@@ -161,6 +161,14 @@ public final class PagePodcasts {
     }
 
     /**
+     * Der gesprochene Text des Erklär-Podcasts einer Seite, soweit er schon geschrieben ist; leer, wenn es keinen
+     * gültigen Podcast gibt ({@link #podcast}). Liest Seiten und Dateien, nie auf dem EDT.
+     */
+    public Optional<String> transcript(AccessContext caller, String sourceId, String pageId) {
+        return podcast(caller, sourceId, pageId).flatMap(podcast -> production.transcript(podcast.key()));
+    }
+
+    /**
      * Startet die Erzeugung oder setzt sie fort; läuft für diesen Podcast schon ein Auftrag, ist er die Antwort. Ein
      * veralteter Podcast derselben Seite fällt weg.
      *

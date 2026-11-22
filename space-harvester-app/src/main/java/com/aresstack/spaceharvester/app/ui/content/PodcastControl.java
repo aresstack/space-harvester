@@ -4,10 +4,9 @@ import com.aresstack.spaceharvester.app.event.ApplicationEvent;
 import com.aresstack.spaceharvester.app.event.ContentOverlayEvent;
 import com.aresstack.spaceharvester.app.event.TimelineEvent;
 import com.aresstack.spaceharvester.app.speech.PodcastPlayer;
-import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Problems;
-import com.aresstack.spaceharvester.app.ui.WindowSizes;
 import com.aresstack.spaceharvester.app.ui.content.viewer.VideoSeekBar;
+import com.aresstack.spaceharvester.app.ui.controls.CopyButton;
 import com.aresstack.spaceharvester.app.ui.controls.PictureStage;
 import com.aresstack.spaceharvester.app.ui.controls.PodcastOrb;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
@@ -16,7 +15,6 @@ import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.podcast.Podcast;
 
-import javax.swing.Icon;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
@@ -80,6 +78,14 @@ final class PodcastControl<S> {
             return List.of();
         }
 
+        /**
+         * Der gesprochene Text des Podcasts, soweit er schon geschrieben ist; leer ohne. Liest Dateien, nie auf dem
+         * EDT.
+         */
+        default Optional<String> transcript(S subject) {
+            return Optional.empty();
+        }
+
         /** Ohne Laufzeit: der Knopf bleibt aus. */
         @SuppressWarnings("unchecked")
         static <S> Source<S> none() {
@@ -140,16 +146,21 @@ final class PodcastControl<S> {
     private final PodcastOrb orb = new PodcastOrb();
     private final PodcastPlayer player;
     private final VideoSeekBar timeline;
-    /** Die Zeitleiste samt Schalter „Bilder zeigen“; sie steht über der Suchleiste, solange der Podcast spielt. */
+    /** Die Zeitleiste; sie steht über der Suchleiste, solange der Podcast spielt. */
     private final JPanel timelineRow = new JPanel(new BorderLayout(6, 0));
-    private final IconButton picturesToggle = new IconButton(PICTURE_ICON, PICTURES_ON).compact();
+    /**
+     * „Transkript kopieren“ für die Leiste unten neben der Lupe (Angelo 22.11.2026); sichtbar, sobald es zum
+     * Gezeigten einen Podcast gibt.
+     */
+    private final CopyButton transcriptCopy = CopyButton.deferred(COPY_TRANSCRIPT, this::transcript);
     /** Die Bühne für das Bild des laufenden Themas über dem Inhaltsbereich (Angelo 22.11.2026). */
-    private final PictureStage stage = new PictureStage(() -> pictures(false));
+    private final PictureStage stage = new PictureStage(this::hidePicture);
     private final Map<Path, PictureStage.Picture> loaded = new HashMap<>();
     /** Das Bild, das zum laufenden Abschnitt gehört (auch während es lädt); {@code null} ohne. */
     private Podcast.Picture runningPicture;
     private boolean stageShown;
-    private boolean pictures = WindowSizes.recallInt(PICTURES_KEY, 1) == 1;
+    /** Das Bild, das der Benutzer mit „Esc“ von der Bühne genommen hat: es kommt erst mit dem nächsten wieder. */
+    private Podcast.Picture hiddenPicture;
     private Consumer<ApplicationEvent<?>> events = event -> { };
     /** Bekommt die Stellen des laufenden Themas, leer ohne Thema oder nach dem Abspielen (Angelo 22.11.2026). */
     private Consumer<List<Integer>> follower = statements -> { };
@@ -195,12 +206,10 @@ final class PodcastControl<S> {
         orb.addActionListener(event -> clicked());
         timelineRow.setOpaque(false);
         timelineRow.add(timeline, BorderLayout.CENTER);
-        timelineRow.add(picturesToggle, BorderLayout.EAST);
         timelineRow.setName(labels.name() + ".podcastTimelineRow");
-        picturesToggle.setName(labels.name() + ".podcastPictures");
-        picturesToggle.addActionListener(event -> pictures(!pictures));
+        transcriptCopy.setName(labels.name() + ".podcastTranscript");
+        transcriptCopy.setVisible(false);
         stage.setName(labels.name() + ".podcastStage");
-        showPicturesToggle();
         summary(null);
     }
 
@@ -217,58 +226,51 @@ final class PodcastControl<S> {
         return timeline;
     }
 
-    /** Was über der Suchleiste steht: die Zeitleiste und rechts der Schalter für die Bilder. */
+    /** Was über der Suchleiste steht: die Zeitleiste. */
     JComponent timelineRow() {
         return timelineRow;
     }
 
     // --- Bilder der Themen --------------------------------------------------------------------------------------
 
-    static final String PICTURES_KEY = "podcast.pictures";
-    static final String PICTURES_ON = "Bilder zum Podcast ausblenden";
-    static final String PICTURES_OFF = "Bilder zum Podcast zeigen";
-    private static final Icon PICTURE_ICON = com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.picture();
-    /** Bilder aus: dasselbe Symbol, durchgestrichen. */
-    private static final Icon NO_PICTURE_ICON = new Icon() {
-        @Override
-        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
-            PICTURE_ICON.paintIcon(c, g, x, y);
-            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
-            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setColor(c.getForeground());
-            g2.setStroke(new java.awt.BasicStroke(1.6f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
-            g2.drawLine(x + 1, y + getIconHeight() - 1, x + getIconWidth() - 1, y + 1);
-            g2.dispose();
-        }
-
-        @Override
-        public int getIconWidth() {
-            return PICTURE_ICON.getIconWidth();
-        }
-
-        @Override
-        public int getIconHeight() {
-            return PICTURE_ICON.getIconHeight();
-        }
-    };
-
-    /** Schaltet die Bilder ein oder aus (Schalter an der Zeitleiste, „Esc“ auf der Bühne); die Wahl wird gemerkt. */
-    void pictures(boolean show) {
-        pictures = show;
-        WindowSizes.rememberInt(PICTURES_KEY, show ? 1 : 0);
-        showPicturesToggle();
+    /** „Esc“ auf der Bühne: Dieses Bild bleibt weg, das nächste erscheint wieder. */
+    private void hidePicture() {
+        hiddenPicture = runningPicture;
         showPicture();
-        cueAt(player.position());
     }
 
-    boolean pictures() {
-        return pictures;
+    // --- Transkript ---------------------------------------------------------------------------------------------
+
+    static final String COPY_TRANSCRIPT = "Transkript des Podcasts kopieren";
+
+    /** Der Knopf „Transkript kopieren“ für die Leiste unten neben der Lupe. */
+    JComponent transcriptCopy() {
+        return transcriptCopy;
     }
 
-    private void showPicturesToggle() {
-        picturesToggle.setIcon(pictures ? PICTURE_ICON : NO_PICTURE_ICON);
-        picturesToggle.setToolTipText(pictures ? PICTURES_ON : PICTURES_OFF);
-        picturesToggle.getAccessibleContext().setAccessibleName(pictures ? PICTURES_ON : PICTURES_OFF);
+    /** Ob es zum Gezeigten einen Podcast gibt, dessen Text man kopieren oder speichern kann. */
+    boolean hasTranscript() {
+        return transcriptCopy.isVisible();
+    }
+
+    /**
+     * Liest den gesprochenen Text des gezeigten Podcasts im Hintergrund und gibt ihn {@code receiver} auf dem EDT;
+     * leer, wenn noch nichts geschrieben ist. Wechselt inzwischen das Gezeigte, kommt nichts.
+     */
+    void transcript(Consumer<String> receiver) {
+        Objects.requireNonNull(receiver, "receiver");
+        if (summary == null) {
+            return;
+        }
+        Source<S> current = source;
+        S shown = summary;
+        int mine = generation;
+        runner.run(() -> current.transcript(shown).orElse(""), text -> {
+            if (mine == generation) {
+                receiver.accept(text);
+            }
+        }, failure -> LOG.log(System.Logger.Level.INFO, "Transkript nicht gelesen ({0})",
+                failure.getClass().getName()));
     }
 
     /** Das Bild des Abschnitts an {@code millis}; ohne Bild oder ohne Wiedergabe bleibt der Inhalt frei. */
@@ -284,6 +286,7 @@ final class PodcastControl<S> {
                 : podcast.parts().get(index).picture();
         if (!Objects.equals(next, runningPicture)) {
             runningPicture = next;
+            hiddenPicture = null;
             showPicture();
         }
     }
@@ -331,7 +334,7 @@ final class PodcastControl<S> {
             dismissedTopic = -1;
         }
         double share = share(millis, player.topicStarts(), player.total());
-        boolean wantOpen = pictures && topic >= 0 && topic != dismissedTopic && share >= OPEN_SHARE
+        boolean wantOpen = topic >= 0 && topic != dismissedTopic && share >= OPEN_SHARE
                 && share < CLOSE_SHARE;
         if (wantOpen && openedTopic != topic) {
             if (openedTopic >= 0) {
@@ -403,7 +406,8 @@ final class PodcastControl<S> {
     /** Zeigt das Bild des laufenden Abschnitts auf der Bühne oder nimmt die Bühne weg; lädt es bei Bedarf. */
     private void showPicture() {
         // Öffnet die Ansicht die Bilder selbst (cue), bleibt die Bühne aus.
-        Podcast.Picture wantedPicture = pictures && cue == null ? runningPicture : null;
+        Podcast.Picture wantedPicture = cue == null && !Objects.equals(runningPicture, hiddenPicture)
+                ? runningPicture : null;
         if (wantedPicture == null) {
             showStage(false);
             return;
@@ -420,7 +424,7 @@ final class PodcastControl<S> {
                 return;
             }
             loaded.put(wantedPicture.file(), picture);
-            if (pictures && wantedPicture.equals(runningPicture)) {
+            if (wantedPicture.equals(runningPicture) && !wantedPicture.equals(hiddenPicture)) {
                 stage.show(picture);
                 showStage(true);
             }
@@ -485,7 +489,9 @@ final class PodcastControl<S> {
         summary = shown;
         key = shownKey;
         last = null;
+        transcriptCopy.setVisible(false);
         runningPicture = null;
+        hiddenPicture = null;
         loaded.clear();
         showStage(false);
         resumeAt = 0;
@@ -673,6 +679,8 @@ final class PodcastControl<S> {
 
     private void apply(Podcast podcast) {
         last = podcast;
+        // Text gibt es, sobald Abschnitte geplant sind; ob schon einer geschrieben ist, zeigt erst das Lesen.
+        transcriptCopy.setVisible(podcast != null && podcast.parts().stream().anyMatch(part -> part.segment() >= 0));
         timeline.slides(player.topicStarts());
         // Ein Bild, das erst jetzt fertig wurde, erscheint zum laufenden Thema.
         pictureAt(player.position());

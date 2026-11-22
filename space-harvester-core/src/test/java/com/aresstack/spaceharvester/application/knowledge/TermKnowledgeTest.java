@@ -311,6 +311,39 @@ class TermKnowledgeTest {
     }
 
     @Test
+    void undeterminedFeaturesStayUnknownUnlessSomeEvidenceDeterminesThem() {
+        term("Plan");
+        term("Ziel");
+        term("Start");
+        analyse("1", "Der Plan prüft das Ziel.");
+        analyse("2", "Der Plan prüft das Ziel.");
+        analyse("3", "Der Plan prüft den Start.");
+        analyse("4", "Der Plan prüft den Start.");
+        Map<String, ParsedStatements.Features> features = Map.of(
+                "1", new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED,
+                        ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT),
+                "2", ParsedStatements.Features.UNKNOWN,
+                "3", ParsedStatements.Features.UNKNOWN,
+                "4", ParsedStatements.Features.UNKNOWN);
+        DomainTermGraph fachsicht = new DomainTermGraph(caller -> rewrite(caller, page -> statement ->
+                withFeatures(statement, features.get(page))), vocabulary());
+
+        TermKnowledge.Answer answer = new TermKnowledge(fachsicht, ALL).answer(CALLER, "Plan",
+                pages("1", "2", "3", "4"), recording, () -> false);
+
+        assertThat(answer.terms().getFirst().statements())
+                .extracting(TermKnowledge.Statement::object, TermKnowledge.Statement::negation,
+                        TermKnowledge.Statement::modality, TermKnowledge.Statement::temporality,
+                        TermKnowledge.Statement::evidence)
+                .as("gemischt: der bestimmte Wert gilt; nur unbestimmt: der Chat erfährt „nicht bestimmt“")
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("Ziel", ParsedStatements.Negation.AFFIRMED,
+                                ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT, 2),
+                        org.assertj.core.groups.Tuple.tuple("Start", ParsedStatements.Negation.UNKNOWN,
+                                ParsedStatements.Modality.UNKNOWN, ParsedStatements.Temporality.UNKNOWN, 2));
+    }
+
+    @Test
     void aLargeScopeIsCappedInAFixedOrderAndTheCutIsReported() {
         List<PageKey> keys = new ArrayList<>();
         IntStream.range(0, TermKnowledge.MAX_PAGES + 7).forEach(i -> keys.add(new PageKey(i % 2 == 0 ? "wiki"
@@ -421,7 +454,7 @@ class TermKnowledgeTest {
         assertThat(knowledge(wikiOnly).answer(CALLER, "Akten", both, recording, () -> false).candidates())
                 .as("Kandidat nur aus einer Quelle ohne KI-Freigabe").isEmpty();
         assertThat(knowledge(wikiOnly).answer(CALLER, "Akten", both, TermKnowledge.Delivery.NONE, () -> false)
-                .candidates()).as("die Suche gibt nichts an ein Modell").containsExactly("Aktenplan");
+                .candidates()).as("die Suche zeigt keine Kandidaten, also berechnet sie keine").isEmpty();
 
         PageReleases released = PageReleases.inMemory();
         released.add(List.of(new PageReleases.Entry(new PageKey("akte", "7"), "DEV", "7", "chat",
@@ -444,7 +477,7 @@ class TermKnowledgeTest {
         TermKnowledge.Answer found = knowledge().answer(CALLER, "Aktenplan", scope, recording, () -> false);
         assertThat(found.outcome()).as("Space „DEV“ der nicht analysierten Seite liegt im Bereich")
                 .isEqualTo(TermKnowledge.Outcome.FOUND);
-        assertThat(knowledge().answer(CALLER, "lan", scope, TermKnowledge.Delivery.NONE, () -> false).candidates())
+        assertThat(knowledge().answer(CALLER, "lan", scope, recording, () -> false).candidates())
                 .as("„Altplan“ gilt nur im Space „ALT“").containsExactlyInAnyOrder("Plan", "Aktenplan");
         assertThat(knowledge().answer(CALLER, "Aktenplan", pages("1"), recording, () -> false).outcome())
                 .isEqualTo(TermKnowledge.Outcome.NOT_A_TERM);

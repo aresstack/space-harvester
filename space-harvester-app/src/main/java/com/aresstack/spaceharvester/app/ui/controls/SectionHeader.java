@@ -27,6 +27,8 @@ public class SectionHeader extends JPanel {
     private final JLabel count = new JLabel();
     private final Runnable onToggle;
     private boolean open = true;
+    /** Gelber Ring nur bei Fokus über die Tastatur (Tab), nicht nach einem Mausklick. */
+    private final KeyboardFocusRing ring;
 
     /**
      * @param text     Titel der Gruppe
@@ -66,6 +68,28 @@ public class SectionHeader extends JPanel {
             }
         });
         getAccessibleContext().setAccessibleName(text);
+        ring = KeyboardFocusRing.install(this);
+    }
+
+    @Override
+    protected void paintComponent(java.awt.Graphics graphics) {
+        super.paintComponent(graphics);
+        if (ring.shown()) {
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            try {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setColor(Comic.YELLOW);
+                g.setStroke(new java.awt.BasicStroke(2f));
+                g.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 8, 8);
+            } finally {
+                g.dispose();
+            }
+        }
+    }
+
+    /** Ob der Fokus zuletzt über die Tastatur kam (für Tests; gezeichnet wird der Ring nur, solange er da ist). */
+    boolean showsKeyboardFocus() {
+        return ring.fromKeyboard();
     }
 
     /** Klappt um und meldet es. */

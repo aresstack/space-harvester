@@ -34,7 +34,30 @@ class KeyboardFocusRingTest {
         });
     }
 
-    private static void focus(CopyButton button, FocusEvent.Cause cause) {
+    @Test
+    void aSectionHeaderShowsTheRingForTabFocusButNotAfterAClick() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            SectionHeader header = new SectionHeader("prüfen", true, () -> {
+            });
+            assertThat(header.isFocusable()).isTrue();
+
+            for (MouseListener listener : header.getMouseListeners()) {
+                listener.mousePressed(new MouseEvent(header, MouseEvent.MOUSE_PRESSED, 0, 0, 5, 5, 1, false));
+            }
+            focus(header, FocusEvent.Cause.MOUSE_EVENT);
+            assertThat(header.showsKeyboardFocus()).as("kein Ring nach Mausklick").isFalse();
+
+            focus(header, FocusEvent.Cause.TRAVERSAL_FORWARD);
+            assertThat(header.showsKeyboardFocus()).as("Tab zeigt den Ring").isTrue();
+
+            for (FocusListener listener : header.getFocusListeners()) {
+                listener.focusLost(new FocusEvent(header, FocusEvent.FOCUS_LOST));
+            }
+            assertThat(header.showsKeyboardFocus()).isFalse();
+        });
+    }
+
+    private static void focus(java.awt.Component button, FocusEvent.Cause cause) {
         FocusEvent event = new FocusEvent(button, FocusEvent.FOCUS_GAINED, false, null, cause);
         for (FocusListener listener : button.getFocusListeners()) {
             listener.focusGained(event);
