@@ -2371,46 +2371,81 @@ public final class Workspace {
     }
 
     /**
-     * Abonniert das Ende eines eigenen Auftrags (Fundstelle 24): {@code listener} läuft einmal auf dem Event Dispatch
-     * Thread mit dem Endstand (fertig, gescheitert, abgebrochen, angehalten oder gelöscht), sofort, wenn er schon
-     * geendet hat; gemeldet vom Core, ohne Abfragen (ADR 0027).
+     * Folgt einem eigenen Auftrag bis zu seinem Ende (Fundstelle 24): {@code listener} läuft auf dem Event Dispatch
+     * Thread mit dem Stand, wenn er angehalten wird (danach geht es weiter), und einmal mit dem Endstand (fertig,
+     * gescheitert, abgebrochen oder gelöscht); danach ist er abgemeldet. Anmelden und erste Prüfung laufen nicht auf
+     * dem EDT; gemeldet vom Core, ohne Abfragen (ADR 0027).
      */
     public Subscription whenJobFinished(String jobId, java.util.function.Consumer<JobStatus> listener) {
         java.util.Objects.requireNonNull(listener, "listener");
-        java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicBoolean done = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<com.aresstack.spaceharvester.application.jobs.JobState> last =
+                new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.atomic.AtomicReference<Subscription> registered = new java.util.concurrent.atomic
                 .AtomicReference<>();
-        java.util.function.Consumer<JobStatus> once = status -> {
-            if (fired.compareAndSet(false, true)) {
-                // Nach der einen Meldung abgemeldet: Der Zuhörer hielt sonst seinen Aufrufer (etwa ein Panel) fest.
-                Subscription own = registered.getAndSet(Subscription.NONE);
-                if (own != null) {
-                    own.close();
+        Runnable unsubscribe = () -> {
+            Subscription own = registered.getAndSet(Subscription.NONE);
+            if (own != null) {
+                own.close();
+            }
+        };
+        java.util.function.BiConsumer<JobStatus, Boolean> report = (status, removed) -> {
+            if (done.get()) {
+                return;
+            }
+            com.aresstack.spaceharvester.application.jobs.JobState state = status.state();
+            if (!removed && state == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED) {
+                if (last.getAndSet(state) != com.aresstack.spaceharvester.application.jobs.JobState.PAUSED) {
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        if (!done.get()) {
+                            listener.accept(status);
+                        }
+                    });
                 }
+                return;
+            }
+            if (!removed && !state.terminal()) {
+                last.set(state);
+                return;
+            }
+            if (done.compareAndSet(false, true)) {
+                // Nach dem Ende abgemeldet: Der Zuhörer hielt sonst seinen Aufrufer (etwa ein Panel) fest.
+                unsubscribe.run();
                 javax.swing.SwingUtilities.invokeLater(() -> listener.accept(status));
             }
         };
-        Subscription watch = harvester.jobs().subscribe(Harvester.OWNER, new JobListener() {
-            @Override
-            public void changed(JobStatus status) {
-                if (status.id().equals(jobId) && status.state().terminal()) {
-                    once.accept(status);
-                }
-            }
+        Thread.ofVirtual().name("job-watch").start(() -> {
+            try {
+                Subscription watch = harvester.jobs().subscribe(Harvester.OWNER, new JobListener() {
+                    @Override
+                    public void changed(JobStatus status) {
+                        if (status.id().equals(jobId)) {
+                            report.accept(status, false);
+                        }
+                    }
 
-            @Override
-            public void removed(JobStatus last) {
-                if (last.id().equals(jobId)) {
-                    once.accept(last);
+                    @Override
+                    public void removed(JobStatus gone) {
+                        if (gone.id().equals(jobId)) {
+                            report.accept(gone, true);
+                        }
+                    }
+                });
+                if (!registered.compareAndSet(null, watch)) {
+                    // Schon geendet oder vom Aufrufer abgemeldet, bevor die Anmeldung zurückkam.
+                    watch.close();
                 }
+                currentStatus(jobId).ifPresent(status -> report.accept(status, false));
+            } catch (RuntimeException e) {
+                System.getLogger(Workspace.class.getName()).log(System.Logger.Level.DEBUG,
+                        "Auftrag {0} nicht beobachtet ({1})", jobId,
+                        e.getClass().getName());
             }
         });
-        if (!registered.compareAndSet(null, watch)) {
-            // Schon gemeldet, bevor die Anmeldung zurückkam.
-            watch.close();
-        }
-        currentStatus(jobId).filter(status -> status.state().terminal()).ifPresent(once);
-        return watch;
+        return () -> {
+            done.set(true);
+            unsubscribe.run();
+        };
     }
 
     /**

@@ -816,8 +816,11 @@ class WorkspaceTest {
                 .isFalse();
         // Erneut: nichts neu übertragen, der Anhang zählt als bewusst ausgelassen.
         JobStatus again = await(workspace, workspace.startAssetHarvest("wiki", "102"));
+        assertThat(again.state()).as(again.toString()).isEqualTo(JobState.COMPLETED);
         assertThat(again.progress().processed()).isEqualTo(1);
         assertThat(again.progress().written()).isZero();
+        // Bewusst ausgelassen, nicht gescheitert.
+        assertThat(again.progress().failed()).isZero();
         assertThat(workspace.assets("wiki", "102").entries()).singleElement()
                 .satisfies(entry -> assertThat(entry.stored()).isNotNull());
         assertThat(new String(workspace.assetContent("wiki", "102", "att900").content(), StandardCharsets.UTF_8))

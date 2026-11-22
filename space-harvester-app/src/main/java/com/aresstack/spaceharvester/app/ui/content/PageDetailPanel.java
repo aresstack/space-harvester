@@ -216,8 +216,10 @@ public final class PageDetailPanel extends JPanel {
     /** Schließt das Seiteninfo-Popup, sobald die Maus Überschrift und Popup verlassen hat. */
     private final javax.swing.Timer detailsWatch = new javax.swing.Timer(120, e -> hideDetailsWhenLeft());
     private final Feedback feedback = new Feedback();
-    /** Wartet auf das Ende von „Anhänge ablegen“ (Fundstelle 24). */
+    /** Wartet auf das Ende von „Anhänge ablegen“ der gezeigten Seite (Fundstelle 24); nur auf dem EDT. */
     private com.aresstack.spaceharvester.application.observe.Subscription harvestWatch;
+    /** Laufende „Anhänge ablegen“ je Seite (Auftrags-ID): Kehrt man zurück, erscheint die Meldung wieder. EDT. */
+    private final java.util.Map<PageKey, String> harvests = new java.util.HashMap<>();
     /**
      * Hinweis über der Seite, wenn die Quelle einen neueren Stand hat als der sofort gezeigte aus dem Bestand (dieselbe
      * Platte wie in der Leseansicht, Angelo 17.11.2026); „Seite neu laden“ zeigt den schon geladenen neuen Stand.
@@ -853,6 +855,7 @@ public final class PageDetailPanel extends JPanel {
         readingLoaded = false;
         referencesLoaded = false;
         imagesLoaded = false;
+        leaveHarvest();
         readingPane.clear(" ");
         closeOriginalFile();
         breadcrumbs.clear();
@@ -1412,6 +1415,12 @@ public final class PageDetailPanel extends JPanel {
         this.referencesLoaded = false;
         this.imagesLoaded = false;
         this.page = null;
+        // Die Meldung von „Anhänge ablegen“ gehört zu ihrer Seite; läuft hier noch einer, erscheint sie wieder.
+        leaveHarvest();
+        String harvest = harvests.get(new PageKey(sourceId, pageId));
+        if (harvest != null) {
+            watchHarvest(runtime, harvest, sourceId, pageId);
+        }
         // Der Podcast der vorigen Seite endet sofort, nicht erst, wenn die neue geladen ist (oder nie, wenn das scheitert).
         pagePodcast.summary(null);
         closeOriginalFile();
@@ -4641,20 +4650,39 @@ public final class PageDetailPanel extends JPanel {
         // Fundstelle 24: ein Auftrag in der Auftragsliste, mit Fortschritt und Abbrechen dort; das Ergebnis ersetzt die
         // Meldung „gestartet“, gemeldet vom Core (UX, D3).
         Background.run(() -> runtime.workspace().startAssetHarvest(source, id), started -> {
-            Runnable openJob = () -> context.navigator().showJob(started.id());
-            if (harvestWatch != null) {
-                harvestWatch.close();
+            harvests.put(new PageKey(source, id), started.id());
+            if (source.equals(sourceId) && id.equals(pageId)) {
+                leaveHarvest();
+                watchHarvest(runtime, started.id(), source, id);
+            }
+        }, feedback::problem);
+    }
+
+    /** Meldet „gestartet“ und folgt dem Auftrag: „angehalten“ zwischendurch, das Ergebnis am Ende (EDT). */
+    private void watchHarvest(AppRuntime runtime, String jobId, String source, String id) {
+        Runnable openJob = () -> context.navigator().showJob(jobId);
+        tabNote(ATTACHMENTS, new StatusNote(HARVEST_STARTED, StatusNote.Tone.PLAIN, JOBS, openJob));
+        harvestWatch = runtime.workspace().whenJobFinished(jobId, status -> {
+            boolean ended = status.state() != com.aresstack.spaceharvester.application.jobs.JobState.PAUSED;
+            if (ended) {
+                harvests.remove(new PageKey(source, id), jobId);
             }
             if (source.equals(sourceId) && id.equals(pageId)) {
-                tabNote(ATTACHMENTS, new StatusNote(HARVEST_STARTED, StatusNote.Tone.PLAIN, JOBS, openJob));
-            }
-            harvestWatch = runtime.workspace().whenJobFinished(started.id(), done -> {
-                if (source.equals(sourceId) && id.equals(pageId)) {
-                    tabNote(ATTACHMENTS, harvested(done, openJob));
+                tabNote(ATTACHMENTS, harvested(status, openJob));
+                if (ended) {
                     loadAssets(true);
                 }
-            });
-        }, feedback::problem);
+            }
+        });
+    }
+
+    /** Seite verlassen: Meldung und Beobachtung von „Anhänge ablegen“ räumen, der Auftrag läuft weiter. */
+    private void leaveHarvest() {
+        if (harvestWatch != null) {
+            harvestWatch.close();
+            harvestWatch = null;
+        }
+        tabNote(ATTACHMENTS, null);
     }
 
     /** Die Meldung „gestartet“ von „Anhänge ablegen“; „Aufträge“ ist der Link. */

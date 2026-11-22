@@ -397,6 +397,11 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
 
     /** Offene Teile nach ID, gepflegt über Anlegen, Arbeit und Auftragsmeldungen; nie über den ganzen Speicher. */
     private final Map<String, Open> open = new java.util.HashMap<>();
+    /**
+     * Was {@link #flush} gerade als Teil anlegt, je Schlüssel, bis der Teil in {@link #open} steht; unter monitor.
+     * Sonst sähe ein Angebot dazwischen keinen wartenden Teil und nähme über {@link #CAPACITY} hinaus an.
+     */
+    private final Map<BatchKey, LinkedHashMap<String, String>> flushing = new java.util.HashMap<>();
     /** Angenommene Funde je Schlüssel, die der Arbeiter noch in einen Teil legt. */
     private final Map<BatchKey, LinkedHashMap<String, String>> accepted = new java.util.HashMap<>();
     /** Teile, deren Arbeit schon endete; ein spätes Eintragen legt sie nicht wieder an. */
@@ -501,7 +506,10 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
             }
             LinkedHashMap<String, String> pending = accepted.computeIfAbsent(key, ignored -> new LinkedHashMap<>());
             Open waitingPart = waitingFor(key);
-            int room = CAPACITY - (waitingPart == null ? 0 : waitingPart.remaining.size()) - pending.size();
+            // Ein Teil, der gerade angelegt wird, umfasst den bisherigen wartenden samt Angenommenem.
+            Map<String, String> inPart = flushing.containsKey(key) ? flushing.get(key)
+                    : waitingPart == null ? null : waitingPart.remaining;
+            int room = CAPACITY - (inPart == null ? 0 : inPart.size()) - pending.size();
             for (Finding finding : findings) {
                 if (finding == null) {
                     continue;
@@ -514,7 +522,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
                     continue;
                 }
                 boolean counted = pending.containsKey(finding.pageId())
-                        || waitingPart != null && waitingPart.remaining.containsKey(finding.pageId());
+                        || inPart != null && inPart.containsKey(finding.pageId());
                 if (!counted) {
                     if (room <= 0) {
                         // Abnahme #1082: Angenommenes fällt nie weg; ist der Teil voll, bleibt der Rest draußen.
@@ -559,6 +567,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
                 old.remaining.forEach(entries::putIfAbsent);
             }
             replaced = old == null ? null : old.partId;
+            flushing.put(key, entries);
         }
         List<String> lines = new ArrayList<>();
         entries.forEach((pageId, version) -> lines.add(pageId + "\t" + (version == null ? "" : version)));
@@ -572,6 +581,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
                     .BackgroundPart.Draft(key.sourceId(), null, parameters))).parts().getFirst().id();
         } catch (RuntimeException e) {
             synchronized (monitor) {
+                flushing.remove(key);
                 // Nichts geht verloren: Die angenommenen Funde warten weiter, der alte Teil bleibt.
                 LinkedHashMap<String, String> later = accepted.remove(key);
                 if (later != null) {
@@ -584,6 +594,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
             return;
         }
         synchronized (monitor) {
+            flushing.remove(key);
             if (!ended.contains(partId)) {
                 open.putIfAbsent(partId, new Open(partId, key, entries, true));
             }
