@@ -3342,6 +3342,15 @@ public final class Workspace {
         return harvester.podcasts().statements(summary, topic);
     }
 
+    /**
+     * Die fertigen Bilder der Themen des Podcasts einer Zusammenfassung, in Themenreihenfolge; die Leseansicht stellt
+     * sie neben die Meldung, von der sie erzählen. Liest Dateien, nie auf dem EDT.
+     */
+    public List<com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture> podcastPictures(
+            com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().topicPictures(summary);
+    }
+
     /** Ob der Erklär-Podcast einer Seite erzeugt werden kann: Chat-Modell und Sprachausgabe (TTS) eingerichtet. */
     public boolean pagePodcastsAvailable() {
         return harvester.pagePodcasts().available();

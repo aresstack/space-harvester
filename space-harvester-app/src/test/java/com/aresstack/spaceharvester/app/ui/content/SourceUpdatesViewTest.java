@@ -750,6 +750,87 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void eachPodcastPictureStandsOnceBesideTheFirstMessageOfItsTopicNeverCollectedAtTheEnd() {
+        List<SummaryStatement> statements = List.of(
+                new SummaryStatement("Text A.", List.of(new SummaryPage("1", "A", "BAU")), "Archiv", null),
+                new SummaryStatement("Text B.", List.of(new SummaryPage("2", "B", "BAU")), "Suche", null),
+                new SummaryStatement("Text C.", List.of(new SummaryPage("1", "A", "BAU")), "Archiv nochmal", null),
+                new SummaryStatement("Text D.", List.of(), "Neue Vorlage", null));
+        Map<Integer, Integer> at = SourceUpdatesView.placements(List.of(1, 2, 0, 3), statements, List.of(
+                topicPicture(0, List.of("1"), List.of("Archiv"), "Bild Archiv"),
+                topicPicture(1, List.of("1"), List.of("Archiv nochmal"), "Zweites Bild derselben Seite"),
+                topicPicture(2, List.of("99"), List.of("neue  vorlage"), "Bild über den Titel"),
+                topicPicture(3, List.of("98"), List.of("Gibt es nicht"), "Bild ohne Stelle")));
+
+        assertThat(at).as("die erste Meldung in der Reihenfolge des Berichts; jede trägt höchstens ein Bild; "
+                + "sonst über den Titel; ohne Stelle nirgends").containsExactlyInAnyOrderEntriesOf(
+                Map.of(2, 0, 0, 1, 3, 2));
+    }
+
+    @Test
+    void theReportShowsThePodcastPicturesBesideTheirMessagesAndOpensThemInTheViewer() throws Exception {
+        java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("bilder");
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, null, "Zwei Neuerungen im Beispielarchiv.",
+                List.of(new SummaryStatement("Das Archiv wird auf ein neues Format umgestellt.",
+                                List.of(new SummaryPage("20", "Neue Seite", "BAU")), "Archivumstellung", null),
+                        new SummaryStatement("Die Suche findet jetzt auch Anhänge.",
+                                List.of(new SummaryPage("21", "Suche", "BAU")), "Suche in Anhängen", null)),
+                "update-summary-v2:gpt-test", SECOND, 0, false, Map.of("BAU", "Bauwesen Beispiel"));
+        actions.pictures = List.of(
+                new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture(0, "Suche",
+                        List.of("21"), List.of("Suche in Anhängen"), png(dir.resolve("0.png"), "Suchmaske mit Anhang")),
+                new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture(1, "Archiv",
+                        List.of("20"), List.of("Archivumstellung"), png(dir.resolve("1.png"), "Altes und neues Format")));
+        javax.swing.JRootPane root = new javax.swing.JRootPane();
+        root.getContentPane().setLayout(new java.awt.BorderLayout());
+        root.getContentPane().add(summary, java.awt.BorderLayout.CENTER);
+        root.setSize(960, 700);
+        root.getLayeredPane().setSize(960, 700);
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("Seit dem letzten Update");
+        root.validate();
+
+        assertThat(summary.reportPictures()).as("in der Reihenfolge des Berichts, nicht der Themen")
+                .containsExactly("Altes und neues Format", "Suchmaske mit Anhang");
+        assertThat(summary.reportTexts()).containsSubsequence("Das Archiv wird auf ein neues Format umgestellt.",
+                "Altes und neues Format", "Die Suche findet jetzt auch Anhänge.", "Suchmaske mit Anhang");
+
+        // markiert bleibt der ganze Text, auch neben dem Bild
+        summary.followPodcast(List.of(1));
+        assertThat(summary.podcastMarked()).containsExactlyInAnyOrder("Suche in Anhängen",
+                "Die Suche findet jetzt auch Anhänge.");
+
+        // der Podcast öffnet das Bild seines Kapitels aus der Stelle im Text; eines ohne Bild bleibt zu
+        assertThat(summary.cuePicture(0)).isTrue();
+        assertThat(com.aresstack.spaceharvester.app.ui.controls.ViewerPopup.current(summary)).isPresent();
+        assertThat(summary.cuePicture(7)).isFalse();
+        assertThat(summary.clickReportPicture(0)).isTrue();
+        com.aresstack.spaceharvester.app.ui.controls.ViewerPopup.current(summary).orElseThrow().close();
+
+        // ein neu gezeichneter Bericht behält seine Bilder
+        actions.openGrows = true;
+        actions.listener.changed("wiki");
+        javax.swing.SwingUtilities.invokeAndWait(() -> { });
+        assertThat(summary.reportPictures()).containsExactly("Altes und neues Format", "Suchmaske mit Anhang");
+    }
+
+    private static com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture topicPicture(
+            int topic, List<String> pageIds, List<String> titles, String caption) {
+        return new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture(topic, "Thema",
+                pageIds, titles, new com.aresstack.spaceharvester.application.podcast.Podcast.Picture(
+                java.nio.file.Path.of("bild-" + topic + ".png"), "image/png", caption));
+    }
+
+    private static com.aresstack.spaceharvester.application.podcast.Podcast.Picture png(java.nio.file.Path file,
+                                                                                        String caption)
+            throws java.io.IOException {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(160, 90,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+        javax.imageio.ImageIO.write(image, "png", file.toFile());
+        return new com.aresstack.spaceharvester.application.podcast.Podcast.Picture(file, "image/png", caption);
+    }
+
+    @Test
     void anOldCountingSummaryStaysVisibleAndIsReplacedOnceByATopicalOne() {
         actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, "Eine neue Seite.", List.of(
                 new SummaryStatement("Eine neue Seite.", List.of(new SummaryPage("20", "Neue Seite")))),
@@ -959,6 +1040,8 @@ class SourceUpdatesViewTest {
         /** Zustand der Wiederholungsaufträge, wie {@link #job} ihn meldet. */
         final Map<String, JobState> retryJobs = new HashMap<>();
         UpdateSummary stored;
+        /** Die fertigen Bilder des Podcasts zur Zusammenfassung. */
+        List<com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture> pictures = List.of();
         /** Wie das Verlängern des Tages-Updates (DailyUpdateMarks): seine Kennung wechselt auf die der letzten Runde. */
         long secondShift;
 
@@ -1110,6 +1193,12 @@ class SourceUpdatesViewTest {
             return new ReportedPage(p.sourceId(), p.spaceKey(), p.pageId(), p.kind(), p.kinds(), p.title(), p.path(),
                     p.url(), p.oldVersion(), p.newVersion(), p.oldTitle(), p.newTitle(), p.oldParentId(),
                     p.newParentId(), p.oldSpaceKey(), p.newSpaceKey(), p.contentPending(), p.at(), diff);
+        }
+
+        @Override
+        public List<com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture> podcastPictures(
+                UpdateSummary summary) {
+            return pictures;
         }
 
         @Override
