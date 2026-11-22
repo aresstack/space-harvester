@@ -204,11 +204,19 @@ public final class FileEnrichmentQueue implements EnrichmentQueueStore {
         }
         removeTemps();
         for (Path file : files("*" + SUFFIX)) {
-            List<String> lines;
-            try {
-                lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            List<String> lines = new ArrayList<>(2);
+            // Nur die Kopfzeilen, nachsichtig dekodiert: Ein kaputter Rumpf hält die Quelle nicht fest.
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(
+                    Files.newInputStream(file), StandardCharsets.UTF_8))) {
+                for (int i = 0; i < 2; i++) {
+                    String line = reader.readLine();
+                    if (line == null) {
+                        break;
+                    }
+                    lines.add(line);
+                }
             } catch (IOException | RuntimeException e) {
-                // Ganz unlesbar: Beim nächsten Start verwirft all() sie.
+                // Nicht zu öffnen: Beim nächsten Start verwirft all() sie.
                 continue;
             }
             if (sourceOf(lines).filter(sourceId::equals).isPresent()) {

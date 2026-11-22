@@ -105,6 +105,8 @@ public class Enrichments {
     static final String EMPTY_AFTER_RESTART = "Warteschlange nach Neustart leer";
     /** Code des gelben Ereignisses, wenn eine Berechnung des Teils scheitert und er mit der nächsten weitermacht. */
     static final String WORK_FAILED = "ENRICHMENT_WORK_FAILED";
+    /** Info am gescheiterten Teil von vor dem Neustart, dessen Arbeit ein neuer Teil übernommen hat. */
+    static final String HANDED_OVER = "Arbeit nach dem Neustart an einen neuen Teil übergeben";
     /** Code des gelben Ereignisses, wenn ein von einem Benutzer gestarteter Teil nach dem Neustart anhält. */
     static final String RESUME_BY_HAND = "ENRICHMENT_RESUME_BY_HAND";
     /**
@@ -163,8 +165,24 @@ public class Enrichments {
     private final Map<String, Long> written = new HashMap<>();
     /** Je bereinigter Quelle die Folgenummer beim Bereinigen; ältere Stände der Quelle entfallen; unter {@link #writer}. */
     private final Map<String, Long> forgotten = new HashMap<>();
+    /** Wie viele Schnappschüsse gerade außerhalb von {@link #pendingLock} geschrieben werden; unter {@link #pendingLock}. */
+    private int writing;
+    /**
+     * Arbeit gescheiterter Teile von vor dem Neustart, bis ein neuer Teil sie übernimmt ({@link BackgroundJobs#afterResume});
+     * bis dahin bleibt die alte Datei unverändert. Unter {@link #pendingLock}.
+     */
+    private final List<HandOver> handOvers = new ArrayList<>();
     /** Die Wiederholung (↻), damit das Bereinigen auch ihre bereitgelegte Arbeit vergisst. */
     private volatile RetryFailed retryFailed;
+
+    /**
+     * Die Arbeit eines gescheiterten Teils von vor dem Neustart.
+     *
+     * @param starter die Angaben, mit denen ein Benutzer ihn gestartet hat; leer für automatische Teile
+     */
+    private record HandOver(String oldGroupId, String partId, String sourceId, List<Work> work,
+                            Map<String, String> starter) {
+    }
 
     /** Ein Stand einer Gruppe zum Schreiben; ohne {@code saved} wird ihr Eintrag gelöscht. */
     private record Snapshot(long sequence, String sourceId, EnrichmentQueueStore.Saved saved) {
@@ -986,12 +1004,15 @@ public class Enrichments {
                 writeQueue();
             }
         });
-        Map<String, List<Work>> handOver = new LinkedHashMap<>();
-        Map<String, List<Work>> byHand = new LinkedHashMap<>();
-        Set<String> restored = restore(background, handOver, byHand);
-        // Abnahme #1077: Ein angehaltener Teil von vorher ohne Arbeit hielte jeden neuen auf.
+        Set<String> restored = restore(background);
+        Set<String> handingOver;
+        synchronized (pendingLock) {
+            handingOver = handOvers.stream().map(HandOver::partId).collect(java.util.stream.Collectors.toSet());
+        }
+        // Abnahme #1077: Ein angehaltener Teil von vorher ohne Arbeit hielte jeden neuen auf. Ein gescheiterter, dessen
+        // Arbeit noch übergeben wird, bleibt bis dahin stehen, damit ein Absturz davor sie nicht verliert.
         List<JobStatus> retired = background.retireResumable(BACKGROUND_KIND, EMPTY_AFTER_RESTART,
-                part -> restored.contains(part.id()));
+                part -> restored.contains(part.id()) || handingOver.contains(part.id()));
         if (!retired.isEmpty() || !restored.isEmpty()) {
             LOG.log(System.Logger.Level.INFO, "KI-Anreicherung: {0} Teile von vor dem Neustart fortsetzbar, {1} "
                     + "abgeschlossen", restored.size(), retired.size());
@@ -1000,42 +1021,73 @@ public class Enrichments {
         // Was ein gescheiterter Teil vor dem Neustart nicht mehr übergeben konnte, übernimmt ein neuer, aber erst
         // zusammen mit dem Fortsetzen der unterbrochenen (Abnahme #1112): Vorher ist das offene Löschen einer Quelle noch
         // nicht angemeldet (Jobs#sourceHold), und ein neuer Teil liefe an ihm vorbei.
-        if (!handOver.isEmpty() || !byHand.isEmpty()) {
-            background.afterResume(() -> {
-                handOver.forEach((sourceId, left) -> settle(sourceId, JobState.FAILED, left));
-                byHand.forEach(this::handOverByHand);
-            });
+        boolean anyHandOver;
+        synchronized (pendingLock) {
+            anyHandOver = !handOvers.isEmpty();
+        }
+        if (anyHandOver) {
+            background.afterResume(this::handOver);
         }
     }
 
+    /** Übergibt die Arbeit gescheiterter Teile von vor dem Neustart je einem neuen Teil. */
+    private void handOver() {
+        List<HandOver> all;
+        synchronized (pendingLock) {
+            all = List.copyOf(handOvers);
+            handOvers.clear();
+        }
+        all.forEach(this::handOver);
+    }
+
     /**
-     * Die Arbeit eines gescheiterten, von einem Benutzer gestarteten Teils: ein eigener Teil, der beim ersten Lauf gelb
-     * anhält ({@value #RESUME_BY_HAND}), denn ohne den Benutzer fehlen seine Rechte.
+     * Ein eigener Teil für die Arbeit eines gescheiterten. Erst wenn er seinen Stand abgelegt hat, verliert die alte Datei
+     * ihre Arbeit (Abnahme #1112): Endet der Start vorher, steht sie beim nächsten Start noch da. War der alte von einem
+     * Benutzer gestartet, übernimmt der neue dessen Angaben und hält bei jedem Lauf ohne Menschen gelb an
+     * ({@value #RESUME_BY_HAND}). Für eine Quelle, deren Löschen offen ist, entfällt die Arbeit.
      */
-    private void handOverByHand(String sourceId, List<Work> left) {
+    private void handOver(HandOver left) {
         BackgroundJobs jobs = hosted;
-        if (jobs == null || closed || left.isEmpty()) {
+        if (jobs == null || closed || left.work().isEmpty()) {
             return;
         }
-        Pending created = new Pending(BackgroundJobs.newGroupId(), sourceId);
+        if (jobs.withdrawing(left.sourceId())) {
+            LOG.log(System.Logger.Level.INFO, "KI-Anreicherung der Quelle {0}: Löschen offen, {1} übernommene "
+                    + "Berechnungen entfallen", left.sourceId(), left.work().size());
+            persist(left.oldGroupId());
+            retire(jobs, left.partId());
+            return;
+        }
+        Pending created = new Pending(BackgroundJobs.newGroupId(), left.sourceId());
         created.sealed = true;
-        left.forEach(created::add);
+        left.work().forEach(created::add);
         synchronized (pendingLock) {
             groups.put(created.groupId, created);
         }
-        start(jobs, sourceId, created.groupId, Map.of(BY_HAND, "true"));
+        Map<String, String> parameters = new LinkedHashMap<>(left.starter());
+        if (!left.starter().isEmpty()) {
+            parameters.put(BY_HAND, "true");
+        }
+        // start legt den Stand des neuen Teils ab; erst danach die alte Datei ohne die übergebene Arbeit.
+        start(jobs, left.sourceId(), created.groupId, parameters);
+        persist(left.oldGroupId());
+        retire(jobs, left.partId());
+    }
+
+    /** Schließt den gescheiterten Teil ab, dessen Arbeit jetzt ein neuer hat. */
+    private static void retire(BackgroundJobs jobs, String partId) {
+        jobs.retireResumable(BACKGROUND_KIND, HANDED_OVER, part -> !part.id().equals(partId));
     }
 
     /**
      * Holt die abgelegte Warteschlange zurück: die Arbeit unterbrochener, angehaltener oder offener Teile und das
      * Gescheiterte aller Teile, die es noch gibt. Abgelegtes zu gelöschten Teilen entfällt.
      *
-     * @param handOver nimmt die Arbeit gescheiterter Teile auf, je Quelle
-     * @param byHand   ebenso für gescheiterte Teile, die ein Benutzer gestartet hat
+     * Die Arbeit gescheiterter Teile kommt nach {@link #handOvers}.
+     *
      * @return die Teile, die mit ihrer Arbeit weiterlaufen
      */
-    private Set<String> restore(BackgroundJobs background, Map<String, List<Work>> handOver,
-                                Map<String, List<Work>> byHand) {
+    private Set<String> restore(BackgroundJobs background) {
         List<EnrichmentQueueStore.Saved> saved;
         try {
             saved = queueStore.all();
@@ -1073,8 +1125,13 @@ public class Enrichments {
                     groups.put(groupId, waiting);
                     restored.add(entry.partId());
                 } else if (!work.isEmpty() && status.state() == JobState.FAILED) {
-                    (BackgroundJobs.startedByUser(status) ? byHand : handOver)
-                            .computeIfAbsent(entry.sourceId(), ignored -> new ArrayList<>()).addAll(work);
+                    Map<String, String> starter = new LinkedHashMap<>();
+                    if (BackgroundJobs.startedByUser(status)) {
+                        starter.putAll(BackgroundJobs.starter(status));
+                    }
+                    handOvers.add(new HandOver(groupId, entry.partId(), entry.sourceId(), work, starter));
+                    // Die Datei bleibt, wie sie ist, bis der neue Teil seinen Stand abgelegt hat.
+                    continue;
                 }
                 // Was nicht weiterläuft, steht nicht mehr als wartend in der Ablage.
                 persist(groupId);
@@ -1151,6 +1208,7 @@ public class Enrichments {
                 batch = new ArrayList<>();
                 unwritten.forEach((groupId, snapshot) -> batch.add(Map.entry(groupId, snapshot)));
                 unwritten.clear();
+                writing++;
             }
             writer.lock();
             try {
@@ -1177,6 +1235,13 @@ public class Enrichments {
                     }
                 }
             } finally {
+                synchronized (pendingLock) {
+                    // Ohne Stand unterwegs gibt es keinen älteren mehr, den die Folgenummern abweisen müssten.
+                    if (--writing == 0) {
+                        written.clear();
+                        forgotten.clear();
+                    }
+                }
                 writer.unlock();
             }
         }
@@ -1198,6 +1263,7 @@ public class Enrichments {
                 retry.forget(sourceId);
             }
             unwritten.values().removeIf(snapshot -> sourceId.equals(snapshot.sourceId()));
+            handOvers.removeIf(left -> left.sourceId().equals(sourceId));
             sequence = ++persistSequence;
         }
         writer.lock();
@@ -1228,12 +1294,14 @@ public class Enrichments {
         Work work = new Work(processor.id(), key, force);
         settleIfEnded(jobs, key.sourceId());
         String groupId = null;
+        boolean saved = false;
         synchronized (pendingLock) {
             Pending collecting = pending.get(key.sourceId());
             if (collecting != null) {
                 collecting.add(work);
                 if (collecting.work.size() % PERSIST_EVERY == 0) {
                     persist(collecting.groupId);
+                    saved = true;
                 }
             } else {
                 Pending created = new Pending(BackgroundJobs.newGroupId(), key.sourceId());
@@ -1243,7 +1311,9 @@ public class Enrichments {
                 groupId = created.groupId;
             }
         }
-        writeQueue();
+        if (saved) {
+            writeQueue();
+        }
         // Meldungen an die Auftragsverwaltung nie unter dem eigenen Riegel.
         if (groupId != null) {
             start(jobs, key.sourceId(), groupId);
@@ -1381,7 +1451,8 @@ public class Enrichments {
      */
     private void drain(BackgroundPart part, JobContext context) {
         BackgroundJobs jobs = hosted;
-        boolean byHand = !part.resumed() && "true".equals(part.parameter(BY_HAND));
+        // Abnahme #1112: Ein übernommener Teil eines Benutzers rechnet nur, wenn ein Mensch ihn fortsetzt.
+        boolean byHand = "true".equals(part.parameter(BY_HAND)) && (!part.resumed() || part.automatic());
         if (byHand || part.automatic() && jobs != null && jobs.part(part.jobId())
                 .filter(BackgroundJobs::startedByUser).isPresent()) {
             // Abnahme 22.11.2026: Mit dem Benutzer im Speicher fehlen seine Rechte; nie von selbst weiter.
@@ -1486,9 +1557,9 @@ public class Enrichments {
                 }
             }
             context.processed(1);
-            // Erledigte und gescheiterte zählen gleich (Abnahme #1112): Bei toter Gegenstelle schriebe sonst jeder
-            // Fehlschlag die ganze Datei neu.
-            if (++sinceSaved >= PERSIST_EVERY && mineStill) {
+            // Ein Fehlschlag sofort (Nachabnahme #1112): Sein FAILED-Ergebnis gilt schon als aktuell, nach einem Absturz
+            // käme er sonst als gewöhnliche Berechnung zurück und fiele weg. Geschrieben wird außerhalb des Riegels.
+            if ((++sinceSaved >= PERSIST_EVERY || outcome == Outcome.FAILED) && mineStill) {
                 sinceSaved = 0;
                 persist(groupId);
             }

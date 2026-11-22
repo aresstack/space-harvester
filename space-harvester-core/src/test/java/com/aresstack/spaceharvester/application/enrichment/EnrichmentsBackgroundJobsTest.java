@@ -792,50 +792,160 @@ class EnrichmentsBackgroundJobsTest {
         Remote remote = new Remote();
         ExecutorService executor = Enrichments.background(10);
         InMemoryJobStore jobStore = new InMemoryJobStore();
-        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
-        Jobs before = new Jobs(jobStore, held::add, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
-        BackgroundJobs backgroundBefore = new BackgroundJobs(before, "app");
         com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue queue =
                 new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
         try {
-            Enrichments first = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
-            first.background(backgroundBefore, key -> Optional.ofNullable(cache.get(key)), queue);
+            BackgroundJobs backgroundBefore = restart(jobStore, null, remote, executor, queue);
             page("wiki", "1", "Eins");
             page("ops", "1", "Drei");
             JobStatus automatic = failedPart(backgroundBefore, jobStore, queue, "wiki", Map.of());
             JobStatus byUser = failedPart(backgroundBefore, jobStore, queue, "ops", Map.of("owner", "anna"));
 
             Jobs after = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
-            BackgroundJobs backgroundAfter = new BackgroundJobs(after, "app");
-            Enrichments second = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
-            second.background(backgroundAfter, key -> Optional.ofNullable(cache.get(key)), queue);
+            BackgroundJobs backgroundAfter = restart(jobStore, after, remote, executor, queue);
 
             assertThat(backgroundAfter.parts(Enrichments.BACKGROUND_KIND)).as("noch kein neuer Teil")
                     .extracting(JobStatus::id).containsExactlyInAnyOrder(automatic.id(), byUser.id());
             assertThat(remote.calls).isEmpty();
+            assertThat(queue.all()).as("die alten Dateien bleiben, bis übergeben ist")
+                    .allSatisfy(saved -> assertThat(saved.work()).hasSize(1)).hasSize(2);
 
             backgroundAfter.resumeInterrupted();
 
-            awaitUntil(() -> remote.calls.containsKey("wiki/1")
-                    && backgroundAfter.parts(Enrichments.BACKGROUND_KIND).size() == 4);
             assertThat(remote.calls).containsOnlyKeys("wiki/1");
+            assertThat(backgroundAfter.part(automatic.id()).orElseThrow().state()).isEqualTo(JobState.CANCELLED);
             JobStatus handedOver = backgroundAfter.parts(Enrichments.BACKGROUND_KIND).stream()
                     .filter(part -> part.sourceId().equals("ops") && !part.id().equals(byUser.id()))
                     .findFirst().orElseThrow();
-            // Von einem Benutzer gestartet: Der neue Teil hält gelb an und rechnet erst von Hand.
-            awaitUntil(() -> backgroundAfter.part(handedOver.id()).orElseThrow().state() == JobState.PAUSED);
-            assertThat(backgroundAfter.part(handedOver.id()).orElseThrow().pauseReason())
+            // Von einem Benutzer gestartet: Der neue Teil gehört ihm und hält gelb an, bis ein Mensch fortsetzt.
+            assertThat(BackgroundJobs.startedByUser(handedOver)).isTrue();
+            assertThat(handedOver.state()).isEqualTo(JobState.PAUSED);
+            assertThat(handedOver.pauseReason())
                     .isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason.RESUME_BY_HAND);
             assertThat(after.events(handedOver.id())).anySatisfy(event -> {
                 assertThat(event.code()).isEqualTo(Enrichments.RESUME_BY_HAND);
                 assertThat(event.severity()).isEqualTo(JobEvent.Severity.WARNING);
             });
+            assertThat(queue.all()).singleElement().satisfies(saved -> assertThat(saved.partId())
+                    .isEqualTo(handedOver.id()));
 
             backgroundAfter.resume(handedOver.parameter(BackgroundJobs.GROUP));
             assertThat(remote.calls).containsOnlyKeys("wiki/1", "ops/1");
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void aStartThatEndsBeforeTheHandOverKeepsTheWorkForTheNextStart() throws Exception {
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue queue =
+                new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
+        try {
+            BackgroundJobs first = restart(jobStore, null, remote, executor, queue);
+            page("wiki", "1", "Eins");
+            JobStatus failed = failedPart(first, jobStore, queue, "wiki", Map.of());
+
+            // Zweiter Start endet vor dem Fortsetzen (etwa ein Fehler weiter hinten im Start).
+            restart(jobStore, null, remote, executor, queue);
+            assertThat(queue.all()).singleElement().satisfies(saved -> assertThat(saved.work()).hasSize(1));
+
+            Jobs third = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs background = restart(jobStore, third, remote, executor, queue);
+            assertThat(background.part(failed.id()).orElseThrow().state()).isEqualTo(JobState.FAILED);
+            background.resumeInterrupted();
+
+            assertThat(remote.calls).containsOnlyKeys("wiki/1");
+            assertThat(queue.all()).isEmpty();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void aHandedOverPartOfAUserNeverRunsByItselfEvenAfterASecondRestart() throws Exception {
+        // Nachabnahme #1112: Vor seinem ersten Lauf unterbrochen, darf ihn auch resumeInterrupted nicht rechnen lassen.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue queue =
+                new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
+        try {
+            BackgroundJobs first = restart(jobStore, null, remote, executor, queue);
+            page("ops", "1", "Drei");
+            failedPart(first, jobStore, queue, "ops", Map.of("owner", "anna"));
+
+            // Zweiter Start: übergeben, aber der neue Teil kommt nicht mehr dran, das Programm wird beendet.
+            java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+            Jobs second = new Jobs(jobStore, held::add, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs backgroundSecond = restart(jobStore, second, remote, executor, queue);
+            backgroundSecond.resumeInterrupted();
+            JobStatus handedOver = backgroundSecond.parts(Enrichments.BACKGROUND_KIND).stream()
+                    .filter(part -> !part.state().terminal()).findFirst().orElseThrow(() -> new AssertionError(backgroundSecond.parts(Enrichments.BACKGROUND_KIND)));
+            second.interruptBackground();
+            held.clear();
+
+            Jobs third = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs backgroundThird = restart(jobStore, third, remote, executor, queue);
+            backgroundThird.resumeInterrupted();
+
+            JobStatus waiting = backgroundThird.part(handedOver.id()).orElseThrow();
+            assertThat(remote.calls).isEmpty();
+            assertThat(waiting.state()).isEqualTo(JobState.PAUSED);
+            assertThat(waiting.pauseReason())
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.PauseReason.RESUME_BY_HAND);
+            backgroundThird.resume(handedOver.parameter(BackgroundJobs.GROUP));
+            assertThat(remote.calls).containsOnlyKeys("ops/1");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void purgedOrWithdrawnSourcesGetNoHandOverAfterTheRestart() throws Exception {
+        // Nachabnahme #1112: resumeWithdrawals läuft vor resumeInterrupted.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue queue =
+                new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
+        try {
+            BackgroundJobs first = restart(jobStore, null, remote, executor, queue);
+            page("wiki", "1", "Eins");
+            page("ops", "1", "Drei");
+            failedPart(first, jobStore, queue, "wiki", Map.of());
+            failedPart(first, jobStore, queue, "ops", Map.of());
+
+            Jobs after = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            // „ops“ wird noch gelöscht.
+            after.sourceHold(sourceId -> "ops".equals(sourceId) ? "loeschen-1" : null);
+            Enrichments second = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
+            BackgroundJobs background = new BackgroundJobs(after, "app");
+            second.background(background, key -> Optional.ofNullable(cache.get(key)), queue);
+            // „wiki“ ist schon bereinigt.
+            second.forgetQueued("wiki");
+            background.resumeInterrupted();
+
+            assertThat(remote.calls).isEmpty();
+            assertThat(background.parts(Enrichments.BACKGROUND_KIND)).as("kein neuer Teil").hasSize(2)
+                    .allSatisfy(part -> assertThat(part.state().terminal()).isTrue());
+            assertThat(queue.all()).isEmpty();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    /** Ein Start: neue Auftragsverwaltung (ohne {@code jobs} eine, die nichts ausführt) über derselben Ablage. */
+    private BackgroundJobs restart(InMemoryJobStore jobStore, Jobs jobs, Remote remote, ExecutorService executor,
+                                   EnrichmentQueueStore queue) {
+        Jobs used = jobs != null ? jobs : new Jobs(jobStore, task -> { }, new JobLimits(4, 10, Duration.ofHours(1)),
+                CLOCK);
+        BackgroundJobs background = new BackgroundJobs(used, "app");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
+        enrichments.background(background, key -> Optional.ofNullable(cache.get(key)), queue);
+        return background;
     }
 
     @Test
@@ -868,54 +978,30 @@ class EnrichmentsBackgroundJobsTest {
     }
 
     @Test
-    void failuresAreSavedLikeSuccessesEveryTwentyFiveNotEachOnItsOwn() throws Exception {
-        // Abnahme #1112: Bei toter Gegenstelle schriebe sonst jeder Fehlschlag die ganze Datei neu.
+    void aFailureIsSavedAtOnceSoACrashKeepsItForRetry() throws Exception {
+        // Nachabnahme #1112: Das FAILED-Ergebnis gilt schon als aktuell; nach einem Absturz fiele die Seite sonst weg.
         Remote remote = new Remote();
+        remote.failing.add("wiki/1");
         ExecutorService executor = Enrichments.background(10);
         java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
         Jobs jobs = jobs(held::add, 4);
         BackgroundJobs background = new BackgroundJobs(jobs, "app");
-        AtomicInteger saves = new AtomicInteger();
-        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue files =
+        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue queue =
                 new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
-        EnrichmentQueueStore counting = new EnrichmentQueueStore() {
-            @Override
-            public void save(Saved saved) {
-                saves.incrementAndGet();
-                files.save(saved);
-            }
-
-            @Override
-            public void delete(String groupId) {
-                files.delete(groupId);
-            }
-
-            @Override
-            public List<Saved> all() {
-                return files.all();
-            }
-
-            @Override
-            public void removeSource(String sourceId) {
-                files.removeSource(sourceId);
-            }
-        };
+        java.util.List<EnrichmentQueueStore.Saved> afterTheFailure = new java.util.ArrayList<>();
         try {
             Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
-            enrichments.background(background, key -> Optional.ofNullable(cache.get(key)), counting);
-            for (int page = 1; page <= 10; page++) {
-                remote.failing.add("wiki/" + page);
-                enrichments.refresh(page("wiki", String.valueOf(page), "Text " + page));
-            }
-            int[] atStart = new int[1];
-            remote.during.put("wiki/1", () -> atStart[0] = saves.get());
-            int[] atEnd = new int[1];
-            remote.during.put("wiki/10", () -> atEnd[0] = saves.get());
+            enrichments.background(background, key -> Optional.ofNullable(cache.get(key)), queue);
+            enrichments.refresh(page("wiki", "1", "Eins"));
+            enrichments.refresh(page("wiki", "2", "Zwei"));
+            remote.during.put("wiki/2", () -> afterTheFailure.addAll(queue.all()));
 
             runAll(held);
 
-            assertThat(atEnd[0]).as("neun Fehlschläge, keine Ablage dazwischen").isEqualTo(atStart[0]);
-            assertThat(files.all()).singleElement().satisfies(saved -> assertThat(saved.failed()).hasSize(10));
+            assertThat(afterTheFailure).singleElement().satisfies(saved -> {
+                assertThat(saved.failed()).extracting(EnrichmentQueueStore.Entry::pageId).containsExactly("1");
+                assertThat(saved.work()).extracting(EnrichmentQueueStore.Entry::pageId).containsExactly("2");
+            });
         } finally {
             executor.shutdownNow();
         }

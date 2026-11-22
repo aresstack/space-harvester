@@ -73,6 +73,8 @@ public final class BackgroundJobs {
     private final Map<String, Retry> retries = new ConcurrentHashMap<>();
     /** Was nach dem nächsten {@link #resumeInterrupted()} laufen soll, je einmal. */
     private final List<Runnable> afterResume = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Ob {@link #resumeInterrupted()} schon lief; dann läuft {@link #afterResume} sofort. */
+    private volatile boolean resumedOnce;
     /** Je Art ein Riegel, damit zwei gleichzeitige Anlässe nicht beide einen Teil starten. */
     private final Map<String, Object> startLocks = new ConcurrentHashMap<>();
 
@@ -910,6 +912,12 @@ public final class BackgroundJobs {
             LOG.log(System.Logger.Level.INFO, "Hintergrund nach dem Neustart fortgesetzt: {0} Aufträge",
                     resumed.size());
         }
+        resumedOnce = true;
+        runAfterResume();
+        return resumed;
+    }
+
+    private void runAfterResume() {
         for (Runnable action : afterResume) {
             if (afterResume.remove(action)) {
                 try {
@@ -920,7 +928,6 @@ public final class BackgroundJobs {
                 }
             }
         }
-        return resumed;
     }
 
     /**
@@ -930,6 +937,30 @@ public final class BackgroundJobs {
      */
     public void afterResume(Runnable action) {
         afterResume.add(Objects.requireNonNull(action, "action"));
+        if (resumedOnce) {
+            // Schon fortgesetzt: sofort.
+            runAfterResume();
+        }
+    }
+
+    /** Ob das Löschen der Daten der Quelle offen ist ({@link Jobs#sourceHold}). */
+    public boolean withdrawing(String sourceId) {
+        return jobs.sourceHolder(sourceId) != null;
+    }
+
+    /** Die Angaben, mit denen ein Benutzer den Teil gestartet hat ({@link #startedByUser}); sonst leer. */
+    public static Map<String, String> starter(JobStatus part) {
+        Map<String, String> starter = new java.util.LinkedHashMap<>();
+        if (USER.equals(part.parameter(TRIGGER))) {
+            starter.put(TRIGGER, USER);
+        }
+        for (String key : STARTER) {
+            String value = part.parameter(key);
+            if (value != null) {
+                starter.put(key, value);
+            }
+        }
+        return starter;
     }
 
     /**

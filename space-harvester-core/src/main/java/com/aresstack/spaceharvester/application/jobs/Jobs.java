@@ -1917,6 +1917,11 @@ public class Jobs implements AutoCloseable {
      * meldet „wartet auf …“ einmal je Sperre.
      */
     /** Der Auftrag, der die Daten der Quelle gerade löscht ({@link #sourceHold}), sonst {@code null}. */
+    public String sourceHolder(String sourceId) {
+        return holder(sourceId);
+    }
+
+    /** Der Auftrag, der die Daten der Quelle gerade löscht ({@link #sourceHold}), sonst {@code null}. */
     private String holder(String sourceId) {
         try {
             return sourceId == null ? null : sourceHold.apply(sourceId);
