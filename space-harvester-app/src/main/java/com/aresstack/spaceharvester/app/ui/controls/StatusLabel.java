@@ -51,6 +51,11 @@ public final class StatusLabel extends JLabel {
     private boolean[] fullLinked;
     private int fullSlot = -1;
     private int fullLink = -1;
+    /**
+     * Bis wohin im {@link #full} nie gekürzt wird: das Ende des letzten roten Teils samt seinem Symbol (Fehler mit
+     * Kreispfeil bleiben immer ganz, gekürzt wird nur, was dahinter steht, etwa ein gelber Hinweis); 0 ohne Rot.
+     */
+    private int fullKeep;
     /** Ob das Link-Wort ganz zu sehen ist (nicht weggekürzt). */
     private boolean linkShown;
     /** Die Breite, für die der HTML-Text zuletzt gebaut wurde. */
@@ -199,6 +204,7 @@ public final class StatusLabel extends JLabel {
             }
         }
         full = plain.toString();
+        fullKeep = keepEnd(text, slot);
         fullColors = withSlotColors;
         fullLinked = withSlotLinked;
         fullLink = linkAt;
@@ -225,10 +231,14 @@ public final class StatusLabel extends JLabel {
             while (shown > 0 && metrics.stringWidth(full.substring(0, shown)) + ellipsis > room) {
                 shown--;
             }
+            shown = Math.max(shown, fullKeep);
             if (fullSlot >= 0 && shown > fullSlot && shown < fullSlot + slotSpaces) {
                 shown = fullSlot;
             }
-            while (shown > 0 && full.charAt(shown - 1) == ' ') {
+            // Leerzeichen am Ende fallen weg, aber nie der Platz eines ganz gezeigten Symbols oder Rotes.
+            int floor = Math.max(fullKeep,
+                    fullSlot >= 0 && shown >= fullSlot + slotSpaces ? fullSlot + slotSpaces : 0);
+            while (shown > floor && full.charAt(shown - 1) == ' ') {
                 shown--;
             }
         }
@@ -278,12 +288,64 @@ public final class StatusLabel extends JLabel {
                 insets.top + insets.bottom + metrics.getHeight());
     }
 
+    /** Mit HTML so schmal, wie es geht, ohne Rot und sein Symbol zu kürzen ({@link #keptWidth}). */
     @Override
     public java.awt.Dimension getMinimumSize() {
         if (full == null || isMinimumSizeSet()) {
             return super.getMinimumSize();
         }
-        return new java.awt.Dimension(0, getPreferredSize().height);
+        return new java.awt.Dimension(keptWidth(), getPreferredSize().height);
+    }
+
+    /**
+     * Die Breite, unter die die Meldung nie gekürzt wird: der Text bis zum Ende des letzten roten Teils samt seinem
+     * Symbol und, wenn danach noch etwas käme, „…“; 0, wenn die Meldung nichts Rotes hat (oder ohne Töne und Symbol
+     * ist; dann kürzt sie sich wie ein einfaches Label).
+     */
+    public int keptWidth() {
+        if (full == null || fullKeep <= 0) {
+            return 0;
+        }
+        FontMetrics metrics = getFontMetrics(getFont());
+        Insets insets = getInsets();
+        return insets.left + insets.right + metrics.stringWidth(full.substring(0, fullKeep))
+                + (fullKeep < full.length() ? metrics.stringWidth(ELLIPSIS) : 0) + 2;
+    }
+
+    /**
+     * Das Ende des letzten roten Zeichens in {@code text} (Leerzeichen und Trenner „·“ zählen nicht, sie tragen den Ton
+     * der Zeile; das Link-Wort ist blau), im Text mit dem Platz des Symbols an {@code slot}; steht das Symbol direkt hinter oder in Rot, gehört
+     * sein Platz dazu.
+     */
+    private int keepEnd(String text, int slot) {
+        boolean[] red = new boolean[text.length()];
+        if (note.tone() == StatusNote.Tone.ERROR) {
+            java.util.Arrays.fill(red, true);
+        }
+        for (StatusNote.Mark mark : note.marks()) {
+            int at = text.indexOf(mark.part());
+            for (int i = at; i >= 0 && i < at + mark.part().length(); i++) {
+                red[i] = mark.tone() == StatusNote.Tone.ERROR;
+            }
+        }
+        if (note.hasLink()) {
+            // Das Link-Wort ist blau, nicht rot.
+            int at = text.lastIndexOf(note.link());
+            for (int i = at; i >= 0 && i < at + note.link().length(); i++) {
+                red[i] = false;
+            }
+        }
+        int end = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (red[i] && !Character.isWhitespace(c) && c != '·') {
+                end = i + 1;
+            }
+        }
+        if (end > 0 && slot >= 0 && slot <= end) {
+            end += slotSpaces;
+        }
+        return end;
     }
 
     @Override

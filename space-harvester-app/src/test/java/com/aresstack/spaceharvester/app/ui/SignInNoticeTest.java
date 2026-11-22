@@ -123,7 +123,9 @@ class SignInNoticeTest {
             StatusLine line = new StatusLine(new JProgressBar(), alert, lead, west, center, east);
             line.setSize(960, 28);
             layout(line);
-            assertThat(center.getWidth()).as("die Mitte behält Platz").isGreaterThan(100);
+            // Die Mitte behält, was sie braucht; den Rest bis an das Copyright nimmt der linke Teil (UX 22.11.2026).
+            assertThat(center.getWidth()).as("die Mitte behält Platz").isGreaterThanOrEqualTo(
+                    center.getPreferredSize().width);
             assertThat(east.getX() + east.getWidth()).isLessThanOrEqualTo(960);
             assertThat(alert.getWidth()).as("der Hinweis ist nicht leer").isGreaterThan(100);
         });

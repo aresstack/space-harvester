@@ -103,7 +103,7 @@ class StatusLabelTest {
         AtomicInteger opened = new AtomicInteger();
         SwingUtilities.invokeAndWait(() -> {
             StatusLabel label = new StatusLabel();
-            String failed = "Vorstufe „Aussagenanalyse“ gescheitert (DEV)";
+            String failed = "Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘";
             String text = "Wissensgraph mit Fehler beendet · " + failed + " · Einzelheiten unter Hintergrund";
             label.show(new StatusNote(text, StatusNote.Tone.ERROR, "Hintergrund", opened::incrementAndGet,
                     java.util.List.of(), new StatusNote.IconLink(com.aresstack.spaceharvester.app.ui.Glyph.REFRESH,
@@ -147,7 +147,8 @@ class StatusLabelTest {
 
     /**
      * Mit Tönen, Link oder Symbol bleibt die Meldung eine Zeile: schmaler gesetzt endet sie mit „…“ statt umzubrechen;
-     * weggekürzte Symbole und Link-Wörter sind nicht mehr anklickbar, der ganze Text steht im Tooltip.
+     * weggekürzte Symbole und Link-Wörter sind nicht mehr anklickbar, der ganze Text steht im Tooltip. Rot samt
+     * Kreispfeil wird nie gekürzt.
      */
     @Test
     void aLongMarkedNoteStaysOneLineAndEndsWithAnEllipsis() throws Exception {
@@ -156,12 +157,14 @@ class StatusLabelTest {
             StatusLabel plain = new StatusLabel();
             plain.show(StatusNote.plain("Plan"));
             StatusLabel label = new StatusLabel();
-            String failed = "Vorstufe „Aussagenanalyse“ gescheitert (DEV)";
+            String failed = "Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘";
             String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
             String text = "Wissensgraph mit Fehler beendet · " + failed + " · " + skipped
                     + " · Einzelheiten unter Hintergrund";
+            // Wie im Reiter: der Verweis auf die Einzelheiten ist grau.
             label.show(new StatusNote(text, StatusNote.Tone.ERROR, "Hintergrund", () -> { },
-                    java.util.List.of(new StatusNote.Mark(skipped, StatusNote.Tone.WARNING)),
+                    java.util.List.of(new StatusNote.Mark(skipped, StatusNote.Tone.WARNING),
+                            new StatusNote.Mark("Einzelheiten unter Hintergrund", StatusNote.Tone.PLAIN)),
                     new StatusNote.IconLink(com.aresstack.spaceharvester.app.ui.Glyph.REFRESH, failed,
                             "„Aussagenanalyse“ wiederholen", retried::incrementAndGet)));
             FontMetrics metrics = label.getFontMetrics(label.getFont());
@@ -181,14 +184,40 @@ class StatusLabelTest {
             assertThat(retried).hasValue(1);
             assertThat(label.overLink(narrow - 5)).as("das weggekürzte Link-Wort").isFalse();
 
+            // Noch schmaler: Rot samt Kreispfeil bleibt immer ganz (UX 22.11.2026), gekürzt wird nur das Gelbe dahinter.
+            int kept = label.keptWidth();
+            assertThat(kept).as("Rot, Kreispfeil und „…“").isGreaterThan(metrics.stringWidth(
+                    "Wissensgraph mit Fehler beendet · " + failed + "…")).isLessThan(narrow);
+            assertThat(label.getMinimumSize().width).isEqualTo(kept);
             label.setBounds(0, 0, metrics.stringWidth("Wissensgraph mit Fehler beendet · Vorstufe"),
                     label.getPreferredSize().height);
-            assertThat(label.getText()).doesNotContain("&nbsp;");
-            click(label, label.getWidth() - 3);
-            assertThat(retried).as("ein weggekürztes Symbol löst nichts aus").hasValue(1);
+            assertThat(label.getText()).contains(failed).contains("&nbsp;")
+                    .doesNotContain("Bilder").endsWith("…</nobr></html>");
+            int[] still = label.iconSpan();
+            click(label, (still[0] + still[1]) / 2);
+            assertThat(retried).as("der Kreispfeil bleibt anklickbar").hasValue(2);
 
             label.setBounds(0, 0, whole, label.getPreferredSize().height);
             assertThat(label.getText()).doesNotContain("…").contains("<u>").contains("&nbsp;");
+        });
+    }
+
+    /** Ohne Rot kürzt sich die Meldung wie bisher, auch über ihr Symbol (✕) hinweg; nichts ist geschützt. */
+    @Test
+    void withoutRedNothingIsKeptFromTheCut() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            StatusLabel label = new StatusLabel();
+            String progress = "Wissensgraph wird erzeugt · Aussagenanalyse: 1 von 4 Teilen fertig";
+            String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
+            label.show(new StatusNote(progress + " · " + skipped, StatusNote.Tone.PLAIN, null, null,
+                    java.util.List.of(new StatusNote.Mark(skipped, StatusNote.Tone.WARNING)),
+                    new StatusNote.IconLink(com.aresstack.spaceharvester.app.ui.Glyph.CANCEL, progress, "Abbrechen",
+                            () -> { })));
+            assertThat(label.keptWidth()).isZero();
+            assertThat(label.getMinimumSize().width).isZero();
+            FontMetrics metrics = label.getFontMetrics(label.getFont());
+            label.setBounds(0, 0, metrics.stringWidth("Wissensgraph wird erzeugt"), label.getPreferredSize().height);
+            assertThat(label.getText()).doesNotContain("&nbsp;").endsWith("…</nobr></html>");
         });
     }
 

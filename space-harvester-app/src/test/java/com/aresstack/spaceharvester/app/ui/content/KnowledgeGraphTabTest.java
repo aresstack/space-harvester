@@ -1238,7 +1238,7 @@ class KnowledgeGraphTabTest {
         runner.runAll();
 
         StatusNote end = tab.generateNoteForTests();
-        String failed = "Vorstufe „Aussagenanalyse“ gescheitert (DEV)";
+        String failed = "Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘";
         String coverage = "DEV: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden";
         assertThat(end.tone()).as("die Zeile hat einen Fehler").isEqualTo(StatusNote.Tone.ERROR);
         assertThat(end.text()).as("die gescheiterte Stufe mit Kreispfeil gleich hinter dem Ergebnis, dann die Hinweise")
@@ -1285,9 +1285,9 @@ class KnowledgeGraphTabTest {
         assertThat(generated[0]).isEqualTo(1);
         assertThat(tab.generateOffered()).isTrue();
         StatusNote end = tab.generateNoteForTests();
-        assertThat(end.text()).contains("Vorstufe „Aussagenanalyse“ gescheitert (DEV)")
-                .contains("Vorstufe „Bilder beschreiben“ gescheitert (DEV)");
-        assertThat(end.icon().after()).isEqualTo("Vorstufe „Aussagenanalyse“ gescheitert (DEV)");
+        assertThat(end.text()).contains("Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘")
+                .contains("Vorstufe „Bilder beschreiben“ gescheitert in ‚DEV‘");
+        assertThat(end.icon().after()).isEqualTo("Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘");
         actions.calls.clear();
 
         end.icon().action().run();
@@ -1314,7 +1314,7 @@ class KnowledgeGraphTabTest {
         assertThat(generated[0]).isEqualTo(2);
         StatusNote again = tab.generateNoteForTests();
         assertThat(again.text()).doesNotContain("„Aussagenanalyse“ gescheitert")
-                .contains("Vorstufe „Bilder beschreiben“ gescheitert (DEV)");
+                .contains("Vorstufe „Bilder beschreiben“ gescheitert in ‚DEV‘");
         assertThat(again.icon().tooltip()).as("jetzt wiederholt der Pfeil die übrige Stufe")
                 .isEqualTo("„Bilder beschreiben“ wiederholen");
 
@@ -1342,7 +1342,7 @@ class KnowledgeGraphTabTest {
         actions.watcher.accept(group(part("p-1", JobState.FAILED, "Aussagenanalyse"),
                 part("p-2", JobState.COMPLETED, "Wissensgraph")));
         runner.runAll();
-        String failed = "Vorstufe „Aussagenanalyse“ gescheitert (DEV)";
+        String failed = "Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘";
         actions.calls.clear();
 
         actions.retryOutcome = new com.aresstack.spaceharvester.app.runtime.AllJobs.Outcome(0, 0, null);
@@ -1784,6 +1784,12 @@ class KnowledgeGraphTabTest {
         assertThat(hidden.getForeground()).as("rot").isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.RED);
         assertThat(label(body, "12 Seiten")).as("die Zahl in eigener Spalte").isNotNull();
         assertThat(scrolls(body)).isFalse();
+        // Die Frage ist die Überschrift neben dem Esc-Kreis (Dialogs.confirmOverlay), kein eigener Titel darüber und
+        // nicht noch einmal im Inhalt (UX 22.11.2026).
+        for (java.awt.Component c : body.getComponents()) {
+            assertThat(((javax.swing.JLabel) c).getText()).doesNotContain("wirklich").doesNotContain("erzeugen");
+        }
+        assertThat(GraphGeneration.QUESTION).isEqualTo("Wissensgraph wirklich erzeugen?");
     }
 
     private static javax.swing.JLabel label(java.awt.Container container, String text) {

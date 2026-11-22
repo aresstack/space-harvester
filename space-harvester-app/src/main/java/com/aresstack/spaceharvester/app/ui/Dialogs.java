@@ -68,15 +68,16 @@ public final class Dialogs {
     }
 
     /**
-     * Ja/Nein-Rückfrage als Overlay ({@link #escFrame}): {@code body} zeigt Frage und Angaben, darunter „Nein“ und „Ja“
-     * als Pillen im App-Stil; Abbrechen über den Esc-Kreis oben rechts und die Taste Esc heißt „Nein“ (W5, UX
-     * 22.11.2026). Die Frage im {@code body} sagt „wirklich“.
+     * Ja/Nein-Rückfrage als Overlay ({@link #escFrame}): die Frage als Überschrift neben dem Esc-Kreis, ohne eigenen
+     * Titel, der dasselbe noch einmal sagte (UX 22.11.2026); {@code body} zeigt die Angaben, darunter „Nein“ und „Ja“
+     * als Pillen im App-Stil; Abbrechen über den Esc-Kreis oben rechts und die Taste Esc heißt „Nein“ (W5).
      *
+     * @param question die Frage mit „wirklich“, zugleich der Name des Fensters
      * @return {@code true} nur nach „Ja“
      */
-    public static boolean confirmOverlay(Component parent, String title, JComponent body) {
+    public static boolean confirmOverlay(Component parent, String question, JComponent body) {
         boolean[] result = {false};
-        JDialog dialog = dialog(parent, title);
+        JDialog dialog = dialog(parent, question);
         ComposerButton yes = Comic.primary(YES, null);
         ComposerButton no = Comic.button(NO, null);
         yes.addActionListener(e -> {
@@ -84,7 +85,7 @@ public final class Dialogs {
             dialog.dispose();
         });
         no.addActionListener(e -> dialog.dispose());
-        escFrame(dialog, title, confirmStack(body, no, yes), dialog::dispose);
+        escFrame(dialog, question, confirmStack(body, no, yes), dialog::dispose);
         dialog.getRootPane().setDefaultButton(yes);
         present(dialog, new Dimension(420, 0));
         return result[0];

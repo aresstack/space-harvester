@@ -287,7 +287,7 @@ final class KnowledgeGraphTab extends JPanel {
     /** „Wissensgraph erzeugen“ (W5): vor dem Export; gesperrt, solange eine verfolgte Gruppe über die Seiten läuft. */
     private final IconButton generate = new IconButton(Glyph.GRAPH_PLUS, GENERATE_TIP);
     private Predicate<GraphGeneration.Preview> confirmGenerate = preview -> Dialogs.confirmOverlay(this,
-            GraphGeneration.TITLE, GraphGeneration.body(preview));
+            GraphGeneration.QUESTION, GraphGeneration.body(preview));
     /** Ob Vorschau oder Start von „Wissensgraph erzeugen“ gerade laufen. */
     private boolean preparing;
     /** Die verfolgte Gruppe von „Wissensgraph erzeugen“; {@code null} ohne. */
@@ -2235,11 +2235,14 @@ final class KnowledgeGraphTab extends JPanel {
         return new StatusNote(text, note.tone(), JOBS_LINK, open, marks, retry);
     }
 
-    /** „Vorstufe „Aussagenanalyse“ gescheitert (DEV)“, beim Abschlussteil ohne „Vorstufe“. */
+    /**
+     * „Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘“ (der Ort ist der Space, UX 22.11.2026), beim Abschlussteil ohne
+     * „Vorstufe“.
+     */
     private static String failedNote(JobStatus part) {
         boolean goal = KnowledgeGraphJobs.KIND.equals(part.parameter(BackgroundJobs.KIND));
         return (goal ? "" : "Vorstufe ") + "„" + stageTitle(part) + "“ gescheitert"
-                + (part.partitionKey() == null ? "" : " (" + part.partitionKey() + ")");
+                + (part.partitionKey() == null ? "" : " in ‚" + part.partitionKey() + "‘");
     }
 
     private static String stageTitle(JobStatus part) {

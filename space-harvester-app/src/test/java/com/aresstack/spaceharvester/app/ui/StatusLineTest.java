@@ -2,7 +2,11 @@ package com.aresstack.spaceharvester.app.ui;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.app.ui.controls.StatusLabel;
+import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
+import java.util.List;
 import javax.swing.JLabel;
+import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
@@ -72,6 +76,75 @@ class StatusLineTest {
             assertThat(proxy.getParent().getX() + proxy.getX()).isGreaterThan(signIn.getParent().getX()
                     + signIn.getWidth());
             assertThat(hidden.getParent().getWidth()).as("unsichtbar ohne Platz").isZero();
+        });
+    }
+
+    /**
+     * Der Stand des Bereichs reicht bis an das Copyright, solange die Mitte nichts braucht, und kürzt sich erst dort
+     * (UX 22.11.2026: vorher nach etwa der halben Breite gekürzt); Rot samt Kreispfeil bleibt dabei ganz.
+     */
+    @Test
+    void theLeadFillsTheWidthUpToTheCopyrightAndOnlyThenCuts() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            StatusLabel lead = new StatusLabel();
+            String failed = "Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘";
+            String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
+            String tail = "Einzelheiten unter Hintergrund";
+            String text = "Wissensgraph mit Fehler beendet · " + failed + " · " + skipped + " · " + tail;
+            lead.show(new StatusNote(text, StatusNote.Tone.ERROR, "Hintergrund", () -> { },
+                    List.of(new StatusNote.Mark(skipped, StatusNote.Tone.WARNING),
+                            new StatusNote.Mark(tail, StatusNote.Tone.PLAIN)),
+                    new StatusNote.IconLink(Glyph.REFRESH, failed, "„Aussagenanalyse“ wiederholen", () -> { })));
+            JLabel east = new JLabel("© 2026 AresStack");
+            JPanel alert = new JPanel();
+            alert.setOpaque(false);
+            StatusLine line = new StatusLine(new JProgressBar(), alert, lead, new JLabel(" "), new JLabel(" "), east);
+            int whole = lead.getPreferredSize().width;
+
+            // Breit genug: alles steht, nichts gekürzt.
+            line.setSize(whole + east.getPreferredSize().width + 120, 28);
+            layOut(line);
+            assertThat(lead.getWidth()).isEqualTo(whole);
+            assertThat(lead.getText()).doesNotContain("…");
+
+            // Schmaler: der Stand nimmt alles bis an das Copyright (weit über 60 % der Breite) und kürzt sich erst dort.
+            int width = whole * 3 / 4 + east.getPreferredSize().width;
+            line.setSize(width, 28);
+            layOut(line);
+            int leadRight = SwingUtilities.convertRectangle(lead.getParent(), lead.getBounds(), line).x
+                    + lead.getWidth();
+            assertThat(lead.getWidth()).as("mehr als der alte Anteil").isGreaterThan((int) (width * 0.6));
+            assertThat(east.getX() - leadRight).as("bis an das Copyright, nur die Abstände dazwischen")
+                    .isLessThanOrEqualTo(40);
+            assertThat(lead.getText()).contains(failed).contains("&nbsp;").endsWith("…</nobr></html>");
+            assertThat(lead.getToolTipText()).isEqualTo(text);
+
+            // Sehr schmal: das Gelbe ist weg, Rot samt Kreispfeil bleibt ganz.
+            line.setSize(lead.keptWidth() / 2 + east.getPreferredSize().width, 28);
+            layOut(line);
+            assertThat(lead.getWidth()).as("nie schmaler als Rot samt Kreispfeil").isGreaterThanOrEqualTo(
+                    lead.keptWidth());
+            assertThat(lead.getText()).contains(failed).contains("&nbsp;").doesNotContain("Bilder");
+        });
+    }
+
+    /** Braucht die Mitte (Stand der Aufträge) Platz, behält sie ihn; links gilt dann höchstens der alte Anteil. */
+    @Test
+    void aBusyCenterKeepsItsRoom() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            StatusLabel lead = new StatusLabel();
+            String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
+            lead.show(new StatusNote("Wissensgraph wird erzeugt · " + skipped + " · " + skipped.toUpperCase(),
+                    StatusNote.Tone.PLAIN, null, null, List.of(new StatusNote.Mark(skipped, StatusNote.Tone.WARNING)),
+                    null));
+            JLabel center = new JLabel("Download DEV: 3 von 10 Seiten");
+            JLabel east = new JLabel("© 2026 AresStack");
+            StatusLine line = new StatusLine(new JProgressBar(), lead, new JLabel(" "), center, east);
+            line.setSize(900, 28);
+            layOut(line);
+            assertThat(center.getWidth()).as("die Mitte ganz").isGreaterThanOrEqualTo(
+                    center.getPreferredSize().width);
+            assertThat(lead.getText()).endsWith("…</nobr></html>");
         });
     }
 

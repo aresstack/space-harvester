@@ -86,8 +86,12 @@ class GraphGenerationScreenshotTest {
             tab[0] = new KnowledgeGraphTab(() -> actions, new Runner());
             StatusLabel status = new StatusLabel();
             status.setOpaque(false);
-            tab[0].onNote(note -> status.show(note.withText(PageDetailPanel.withStore("Graph", note.text(),
-                    AnalyzerChoice.MODEL))));
+            // Wie im Hauptfenster (PageDetailPanel#showTabStatus): die Ablage dahinter bleibt grau.
+            tab[0].onNote(note -> {
+                String shown = PageDetailPanel.withStore("Graph", note.text(), AnalyzerChoice.MODEL);
+                status.show(shown != null && shown.startsWith(note.text())
+                        ? note.plus(shown.substring(note.text().length())) : note.withText(shown));
+            });
             root[0] = new JPanel(new BorderLayout());
             root[0].setBackground(Comic.SURFACE);
             root[0].add(tab[0], BorderLayout.CENTER);

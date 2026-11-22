@@ -18,8 +18,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Die Rückfrage von „Wissensgraph erzeugen“ im Reiter „Graph“ (W5, UX 22.11.2026): „Wissensgraph wirklich erzeugen?“,
- * darunter eine Tabelle je Stufe des Dienst-Planers: Stufe, Zahl der Seiten und gedämpft in eigener Spalte, was dazu
+ * Die Rückfrage von „Wissensgraph erzeugen“ im Reiter „Graph“ (W5, UX 22.11.2026): „Wissensgraph wirklich erzeugen?“
+ * als Überschrift, darunter eine Tabelle je Stufe des Dienst-Planers: Stufe, Zahl der Seiten und gedämpft in eigener Spalte, was dazu
  * gehört („4 erst laden“, „läuft schon“), bewusst abgeschaltete Stufen gelb „abgeschaltet (wird ausgelassen)“. Darunter
  * gelb, wie viele Seiten ohne KI-Freigabe ausgelassen werden, rot die ohne Zugriff; in eigener Zeile direkt über
  * Ja/Nein steht, wie viele Seiten an den KI-Dienst gehen: die von „Bilder beschreiben“ immer, die der Aussagenanalyse
@@ -28,7 +28,7 @@ import java.util.Set;
  */
 final class GraphGeneration {
 
-    static final String TITLE = "Wissensgraph erzeugen";
+    /** Die Frage, zugleich die Überschrift des Overlays neben dem Esc-Kreis (kein eigener Titel, UX 22.11.2026). */
     static final String QUESTION = "Wissensgraph wirklich erzeugen?";
     static final String RUNNING = "läuft schon";
     static final String DISABLED = "abgeschaltet (wird ausgelassen)";
@@ -153,24 +153,17 @@ final class GraphGeneration {
     }
 
     /**
-     * Der Inhalt des Overlays: Frage, Tabelle der Stufen (Stufe, Zahl rechtsbündig, Zusatz gedämpft), gelb die Seiten
-     * ohne KI-Freigabe, rot die ohne Zugriff, ganz unten in eigener Zeile der Satz zum KI-Dienst, direkt über Ja/Nein.
+     * Der Inhalt des Overlays unter der Frage (sie ist die Überschrift, {@link #QUESTION}): Tabelle der Stufen (Stufe,
+     * Zahl rechtsbündig, Zusatz gedämpft), gelb die Seiten ohne KI-Freigabe, rot die ohne Zugriff, ganz unten in eigener
+     * Zeile der Satz zum KI-Dienst, direkt über Ja/Nein.
      */
     static JComponent body(Preview preview) {
         JPanel body = new JPanel(new GridBagLayout());
         body.setOpaque(false);
         GridBagConstraints c = new GridBagConstraints();
         c.anchor = GridBagConstraints.WEST;
-        c.gridx = 0;
-        c.gridy = 0;
-        c.gridwidth = 3;
-        c.weightx = 1;
         c.fill = GridBagConstraints.HORIZONTAL;
-        c.insets = new Insets(0, 0, 10, 0);
-        JLabel question = Comic.text(QUESTION);
-        question.setFont(Comic.semiBold(14f));
-        body.add(question, c);
-        c.gridwidth = 1;
+        c.gridy = -1;
         for (Line line : lines(preview)) {
             c.gridy++;
             c.gridx = 0;
