@@ -98,6 +98,16 @@ class StatementAnalysisModelTest {
         assertThat(analysis.available(AnalyzerChoice.MODEL)).isTrue();
     }
 
+    /** W5: Die Freigabe gilt unabhängig vom Modell; ohne Freigabe heißt es so, auch ohne Chat-Modell. */
+    @Test
+    void withoutChatModelAPageWithoutReleaseIsStillNotReleased() {
+        chat.available = false;
+
+        assertThat(analysis.modelReady()).isFalse();
+        assertThat(analysis.modelUnavailable(page.key()))
+                .contains(AnalyzerUnavailableException.Reason.NOT_RELEASED);
+    }
+
     @Test
     void aReleaseWithdrawnDuringTheCallWritesNothing() {
         released.add(page.key());

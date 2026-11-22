@@ -11,11 +11,13 @@ import java.util.TreeSet;
  *
  * @param pages        Seiten-IDs je Bereich; leere Bereiche fallen weg
  * @param inaccessible Seiten der Menge, die der Aufrufer nicht sehen darf; nur als Zahl, nie mit Titeln
+ * @param toLoad       Seiten, die der Dienst erst nach dem Laden rechnen könnte (nur in der Quelle bekannt oder im
+ *                     Bestand veraltet); nur als Zahl, sie fehlen in {@code pages} und bleiben ausgelassen (W5)
  */
-public record MissingPages(Map<Scope, Set<String>> pages, int inaccessible) {
+public record MissingPages(Map<Scope, Set<String>> pages, int inaccessible, int toLoad) {
 
     /** Nichts fehlt. */
-    public static final MissingPages NONE = new MissingPages(Map.of(), 0);
+    public static final MissingPages NONE = new MissingPages(Map.of(), 0, 0);
 
     public MissingPages {
         Map<Scope, Set<String>> copy = new LinkedHashMap<>();
@@ -29,6 +31,14 @@ public record MissingPages(Map<Scope, Set<String>> pages, int inaccessible) {
         if (inaccessible < 0) {
             throw new IllegalArgumentException("inaccessible < 0");
         }
+        if (toLoad < 0) {
+            throw new IllegalArgumentException("toLoad < 0");
+        }
+    }
+
+    /** Ohne Seiten, die erst geladen werden müssten. */
+    public MissingPages(Map<Scope, Set<String>> pages, int inaccessible) {
+        this(pages, inaccessible, 0);
     }
 
     /** Ob keine Seite fehlt. */

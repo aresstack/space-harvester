@@ -656,7 +656,8 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    und Bildbeschreibung). Die Aussagenanalyse arbeitet über ihre Art `statements` (D3): `missing` aus
    `StatementAnalysisJobs#missing`, je Quelle und Space nach dem gespeicherten Kopf gruppiert. „Bilder beschreiben“
    arbeitet über seine Art `images` (D2): `missing` sind die freigegebenen Seiten, die ein Lauf an das Modell gäbe
-   (`ImageDescriptionJobs#missing`), je Space und nur sichtbare. Die übrigen Arten bleiben Beschreibung.
+   (`ImageDescriptionJobs#missing`), je Space und nur sichtbare. Der Wissensgraph arbeitet über seine Art
+   `knowledge-graph` (W5, Punkt 8). Die übrigen Arten bleiben Beschreibung.
 7. **Angaben der Teile.** Jeder Teil trägt seine Seiten (`AnalysisService.PAGES`). Ein Dienst kann weitere Angaben
    beisteuern (`AnalysisService#parameters`), einmal je Start und für alle Spaces gleich; `pages` setzt immer der
    Planer. Die Aussagenanalyse legt so Eigentümer, Startzeit und den beim Start eingestellten Analysator fest
@@ -670,3 +671,36 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    Rechten des Start-Aufrufers, nach einem Neustart mit dem aus den Angaben gebauten Eigentümer; lässt der sich nicht
    bauen (Endnutzer ohne Anmeldedaten), hält er gelb mit `IMAGES_RESUME_BY_HAND` an, nie technisch. Je Seite gelten
    Inhaltsrecht und KI-Freigabe zum Zeitpunkt der Arbeit.
+8. **Wissensgraph erzeugen (W5, Angelo 21.11.2026).** Der Graph rechnet nichts Eigenes: `KnowledgeGraph` und seine
+   Sichten leiten alles beim Lesen aus den gespeicherten Aussagenanalysen ab, Bildbeschreibungen gehen nur in den
+   Volltext. Das Ziel `knowledge-graph` ist deshalb ein kurzer **Abschlussteil je Space** der eigenen, nicht exklusiven
+   Art `KnowledgeGraphJobs.KIND`, angemeldet vor `resumeInterrupted`. Er zählt nach seinen Vorstufen die Abdeckung
+   (`StatementAnalysisJobs#coverage`: aktuell, ohne aktuelle Analyse, erst laden, ausgelassen ohne Lesetext oder ohne
+   KI-Freigabe), hält sie als Ereignis `GRAPH_COVERAGE` fest (gelb, sobald eine Seite nicht aktuell ist, sonst Info;
+   nur Zahlen) und ruft danach `KnowledgeGraph#analysesChanged`. Ohne Platzhalterarbeit.
+   `coverage` und `missing` teilen eine Regel (ein privater Klassifizierer), damit Vorschau, Stufe und Abschluss nicht
+   auseinanderlaufen. Mit dem KI-Analysator fehlen Seiten ohne KI-Freigabe nicht mehr in `missing`: Der Teil bekäme
+   sie ohnehin nicht, die Vorschau nennt so nur Seiten, die an den KI-Dienst gehen; gezählt werden sie im Abschluss.
+   **Vorschau.** `ServicePlanner#preview(caller, ziel, PageSet)` → `ServicePreview` zeigt je Stufe Seiten, erst zu
+   laden, schon laufend (Seiten eines wiederverwendeten Teils), abgeschaltet und „nicht angebunden“ (Dienst ohne Art,
+   ohne gelben Hinweis), ohne etwas zu starten. `preview` und `start` teilen eine private Planung; nur `start` holt die
+   Angaben der Dienste (`plannerParameters` legt den Aufrufer ab) und ruft `startSteps`. Stufen, Teile und Hinweise
+   stimmen bei gleichem Stand überein; die App zeigt nach dem Start, was `start` meldet. `MissingPages` trägt die Zahl
+   `toLoad`; der Hinweis „„Titel“: N Seiten erst laden – bleiben ausgelassen“ steht wörtlich gleich in Vorschau und
+   Start. `nothingMissing()` heißt: keine Vorstufe hätte Seiten oder wartet auf einen laufenden Teil.
+   **Eigentümer.** `KnowledgeGraphJobs#plannerParameters` legt Eigentümer, Kennung `caller` und den eingestellten
+   Analysator fest (derselbe, den die Aussagenanalyse im selben Start festlegt), mit der Regel aus Punkt 7: Der erste
+   Lauf rechnet mit den Rechten des Start-Aufrufers, nach einem Neustart nur der gleiche Eigentümer; ein fremder Teil
+   hält gelb mit `RESUME_BY_HAND` an. Er läuft nie mit den Rechten dessen weiter, der ihn fortsetzt: ▶ führt ihn ohne
+   bekannten Aufrufer erneut in dieselbe gelbe Pause, nur sein Eigentümer setzt ihn fort, über
+   `KnowledgeGraphJobs#resume(caller, jobId)` (in der App der Weg für ▶ auf einem Abschlussteil). Ebenso übernimmt
+   `StatementAnalysisJobs#resume(caller, groupId)` bei Teilen des Planers (`caller` in den Angaben) die Rechte des
+   Fortsetzenden nur, wenn er ihr Eigentümer ist; eine Gruppe folgt so einer Regel.
+   **App.** Der Knopf „Wissensgraph erzeugen“ steht im Reiter „Graph“ vor dem Export; die Menge ist die Seite, mit
+   „mit Unterseiten“ dazu ihre nicht gesperrten Unterseiten. Fehlt nach der Vorschau nichts, lädt der Reiter nur neu
+   (grau „vollständig“ nur, wenn auch nichts ausgelassen bleibt; sonst gelb „nichts zu rechnen“ mit erst zu ladenden,
+   nicht freigegebenen oder abgeschalteten Stufen); sonst fragt ein Overlay (Ja/Nein, Esc-Kreis) mit den Zahlen je Stufe, mit dem KI-Analysator auch, wie viele Seiten
+   an den KI-Dienst gehen (nur die Zahl). Die Gruppe steht im Reiter „Hintergrund“; der Reiter „Graph“ folgt ihr über
+   `watchBackground` mit Fortschritt und ✕ (Abbrechen über die Gruppe, vor den Hinweisen), bleibt nach dem Anhalten
+   gelb dran (auch wenn nur eine Vorstufe angehalten ist und der Abschlussteil dahinter wartet), folgt ihr nach einer
+   neuen Laufzeit (etwa nach dem Umschalten der Ablage) auf dieser weiter und lädt am Ende neu. Hinweise des Planers, gescheiterte Stufen und fehlende Abdeckung stehen gelb in der Statuszeile.

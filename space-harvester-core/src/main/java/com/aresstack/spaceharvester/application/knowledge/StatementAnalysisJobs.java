@@ -238,17 +238,27 @@ public class StatementAnalysisJobs {
     }
 
     /**
-     * Setzt eine Gruppe von Hand fort, mit den Rechten des Fortsetzenden; auch nach {@value #RESUME_BY_HAND}.
+     * Setzt eine Gruppe von Hand fort, mit den Rechten des Fortsetzenden; auch nach {@value #RESUME_BY_HAND}. Trägt
+     * die Gruppe Teile des Dienst-Planers ({@value #CALLER}, etwa „Wissensgraph erzeugen“, W5), gelten dessen Rechte
+     * nur, wenn er ihr Eigentümer ({@value #OWNER}) ist; ein fremder Teil läuft nie mit den Rechten dessen weiter, der
+     * ihn fortsetzt, und hält wieder gelb an.
      *
      * @return die Gruppe, leer ohne Hintergrund oder unbekannte Gruppe
      */
     public Optional<BackgroundGroup> resume(AccessContext caller, String groupId) {
         Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(groupId, "groupId");
         BackgroundJobs group = background;
         if (group == null) {
             return Optional.empty();
         }
-        callers.put(Objects.requireNonNull(groupId, "groupId"), caller);
+        boolean foreign = group.group(groupId).stream().flatMap(current -> current.parts().stream())
+                .filter(status -> KIND.equals(status.parameter(BackgroundJobs.KIND))
+                        && status.parameter(CALLER) != null)
+                .anyMatch(status -> !caller.jobOwner().equals(status.parameter(OWNER)));
+        if (!foreign) {
+            callers.put(groupId, caller);
+        }
         return group.resume(groupId);
     }
 
@@ -543,8 +553,9 @@ public class StatementAnalysisJobs {
      * sind und die der Dienst gleich analysieren kann (für den Planer, Fahrplan D1): lokal in aktueller Fassung und
      * ohne Analyse, mit geändertem Text oder nur mit einer Analyse des anderen Analysators. Seiten, die erst geladen
      * werden müssen (nur in der Quelle bekannt oder im Bestand veraltet, {@link HoldingState#OUTDATED}), zählt
-     * {@link Missing#toLoad()}; das Laden ist eine eigene Stufe des Planers. Seiten ohne Leserecht und ohne Lesetext
-     * fallen still heraus. Nur aus Bestand und Cache, keine Quellenabrufe.
+     * {@link Missing#toLoad()}; sie bleiben ausgelassen, bis eine Ladestufe sie holt. Seiten ohne Leserecht und ohne
+     * Lesetext fallen still heraus, mit dem KI-Analysator auch Seiten ohne KI-Freigabe (sie bekäme der Teil ohnehin
+     * nicht; W5). Nur aus Bestand und Cache, keine Quellenabrufe. {@link #coverage} zählt nach derselben Regel.
      *
      * <p>Der Bestand kennt nur Abgeglichenes: Ein nicht abgeglichener Space ist hier leer, der Auftrag findet ihn über
      * die Navigation trotzdem vollständig.
@@ -552,15 +563,86 @@ public class StatementAnalysisJobs {
      * @throws IllegalStateException ohne angeschlossenen Bestand ({@link #local})
      */
     public Missing missing(AccessContext caller, PageSet pages) {
+        Map<String, Set<String>> missing = new LinkedHashMap<>();
+        int toLoad = 0;
+        for (Map.Entry<PageKey, Standing> entry : classify(caller, pages, analysis.selected()).entrySet()) {
+            PageKey key = entry.getKey();
+            switch (entry.getValue()) {
+                case TO_LOAD -> toLoad++;
+                case OPEN -> missing.computeIfAbsent(key.sourceId(), ignored -> new LinkedHashSet<>())
+                        .add(key.pageId());
+                default -> {
+                    // aktuell, ohne Lesetext oder ohne KI-Freigabe: nichts zu tun
+                }
+            }
+        }
+        return new Missing(PageSet.of(missing), toLoad);
+    }
+
+    /**
+     * Die Abdeckung einer Menge durch Analysen eines Analysators (W5, Abschlussteil „Wissensgraph“), nach derselben
+     * Regel wie {@link #missing}: aktuell, ohne aktuelle Analyse, erst zu laden, ausgelassen ohne Lesetext oder ohne
+     * KI-Freigabe. Gesperrte Seiten und Seiten ohne Leserecht zählen nirgends. Nur aus Bestand und Cache, keine
+     * Quellenabrufe; rechnet nie.
+     *
+     * @param choice der Analysator, dessen Ablage zählt, etwa der beim Start festgelegte
+     * @throws IllegalStateException ohne angeschlossenen Bestand ({@link #local})
+     */
+    public Coverage coverage(AccessContext caller, PageSet pages, AnalyzerChoice choice) {
+        int current = 0;
+        int open = 0;
+        int toLoad = 0;
+        int noText = 0;
+        int notReleased = 0;
+        for (Standing standing : classify(caller, pages, Objects.requireNonNull(choice, "choice")).values()) {
+            switch (standing) {
+                case CURRENT -> current++;
+                case OPEN -> open++;
+                case TO_LOAD -> toLoad++;
+                case NO_TEXT -> noText++;
+                case NOT_RELEASED -> notReleased++;
+            }
+        }
+        return new Coverage(current, open, toLoad, noText, notReleased);
+    }
+
+    /**
+     * Die Seiten der Menge, die der KI-Analysator ohne KI-Freigabe ausließe, nach derselben Regel wie {@link #coverage}
+     * (dort {@link Coverage#notReleased()}): für die Rückfrage von „Wissensgraph erzeugen“ (W5), die eine Seite, die
+     * auch beim Bilderbeschreiben ausgelassen wird, nur einmal zählt. Nur aus Bestand und Cache; rechnet nie.
+     *
+     * @throws IllegalStateException ohne angeschlossenen Bestand ({@link #local})
+     */
+    public PageSet notReleased(AccessContext caller, PageSet pages) {
+        List<PageKey> keys = new java.util.ArrayList<>();
+        classify(caller, pages, AnalyzerChoice.MODEL).forEach((key, standing) -> {
+            if (standing == Standing.NOT_RELEASED) {
+                keys.add(key);
+            }
+        });
+        return PageSet.ofKeys(keys);
+    }
+
+    /** Der eingestellte Analysator ({@code statements.analyzer}), aus dessen Ablage Graph und Stand lesen. */
+    public AnalyzerChoice selected() {
+        return analysis.selected();
+    }
+
+    /** Stand einer Seite für {@link #missing} und {@link #coverage}; gesperrte und unlesbare fehlen ganz. */
+    private enum Standing { CURRENT, OPEN, TO_LOAD, NO_TEXT, NOT_RELEASED }
+
+    /**
+     * Die eine Regel hinter {@link #missing} und {@link #coverage}, damit Planer, Stufe und Abschlusszählung nicht
+     * auseinanderlaufen.
+     */
+    private Map<PageKey, Standing> classify(AccessContext caller, PageSet pages, AnalyzerChoice choice) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(pages, "pages");
         LocalPages stock = local;
         if (stock == null) {
             throw new IllegalStateException("Kein Bestand angeschlossen");
         }
-        AnalyzerChoice choice = analysis.selected();
-        Map<String, Set<String>> missing = new LinkedHashMap<>();
-        int toLoad = 0;
+        Map<PageKey, Standing> standings = new LinkedHashMap<>();
         for (Map.Entry<PageKey, Holdings.Located> entry : stock.locate(caller, pages).entrySet()) {
             PageKey key = entry.getKey();
             HoldingState state = entry.getValue().state();
@@ -569,12 +651,12 @@ public class StatementAnalysisJobs {
                 continue; // gesperrt oder ohne Leserecht: still heraus, auch nicht unter „zu laden“
             }
             if (state != HoldingState.LOCAL) {
-                toLoad++;
+                standings.put(key, Standing.TO_LOAD);
                 continue;
             }
             Optional<PageSnapshot> snapshot = stock.stored(key);
             if (snapshot.isEmpty()) {
-                toLoad++;
+                standings.put(key, Standing.TO_LOAD);
                 continue;
             }
             PageStatements read;
@@ -583,13 +665,20 @@ public class StatementAnalysisJobs {
             } catch (AccessDeniedException e) {
                 continue; // ohne Leserecht: still heraus
             }
-            if (read.state() == PageStatements.State.CURRENT
-                    || read.state() == PageStatements.State.MISSING && PageStatements.NO_TEXT.equals(read.reason())) {
-                continue;
+            if (read.state() == PageStatements.State.CURRENT) {
+                standings.put(key, Standing.CURRENT);
+            } else if (read.state() == PageStatements.State.MISSING && PageStatements.NO_TEXT.equals(read.reason())) {
+                standings.put(key, Standing.NO_TEXT);
+            } else if (choice == AnalyzerChoice.MODEL && analysis.modelUnavailable(key)
+                    .filter(reason -> reason == AnalyzerUnavailableException.Reason.NOT_RELEASED).isPresent()) {
+                // wie im Lauf: bewusst ausgelassen, kein Fehler; die Freigabe zählt auch ohne bereites Chat-Modell
+                // (modelUnavailable prüft sie zuerst), damit Vorschau und Lauf dieselben Zahlen nennen
+                standings.put(key, Standing.NOT_RELEASED);
+            } else {
+                standings.put(key, Standing.OPEN);
             }
-            missing.computeIfAbsent(key.sourceId(), ignored -> new LinkedHashSet<>()).add(key.pageId());
         }
-        return new Missing(PageSet.of(missing), toLoad);
+        return standings;
     }
 
     /**
@@ -602,6 +691,33 @@ public class StatementAnalysisJobs {
 
         public Missing {
             Objects.requireNonNull(pages, "pages");
+        }
+    }
+
+    /**
+     * Ergebnis von {@link #coverage}, nur Zahlen.
+     *
+     * @param current     Seiten mit aktueller Analyse
+     * @param stale       Seiten ohne aktuelle Analyse (veraltet oder noch nie analysiert), die der Dienst rechnen könnte
+     * @param toLoad      Seiten, die erst geladen werden müssten
+     * @param noText      Seiten ohne Lesetext, bewusst ausgelassen
+     * @param notReleased Seiten ohne KI-Freigabe beim KI-Analysator, bewusst ausgelassen
+     */
+    public record Coverage(int current, int stale, int toLoad, int noText, int notReleased) {
+
+        /** Alle gezählten Seiten. */
+        public int pages() {
+            return current + stale + toLoad + noText + notReleased;
+        }
+
+        /** Bewusst ausgelassene Seiten (ohne Lesetext oder ohne KI-Freigabe). */
+        public int skipped() {
+            return noText + notReleased;
+        }
+
+        /** Ob jede gezählte Seite eine aktuelle Analyse hat. */
+        public boolean complete() {
+            return current == pages();
         }
     }
 

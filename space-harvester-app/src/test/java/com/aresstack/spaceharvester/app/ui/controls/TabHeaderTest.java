@@ -27,7 +27,7 @@ class TabHeaderTest {
 
     private final List<IconButton> buttons = new ArrayList<>();
 
-    /** Eine Leiste wie die des Wissensgraphen: Titel, Abzeichen, Hinweis, Suche, drei Aktionen, Kopieren, sechs Werkzeuge. */
+    /** Eine Leiste wie die des Wissensgraphen: Titel, Abzeichen, Hinweis, Suche, drei Aktionen, Kopieren, sieben Werkzeuge. */
     private TabHeader header() {
         TabHeader header = new TabHeader(HEADING);
         header.badge("Experimentell", Comic.PETROL)
@@ -39,8 +39,10 @@ class TabHeaderTest {
             header.action(button);
         }
         header.copy(() -> "Text");
-        for (Glyph glyph : new Glyph[] {Glyph.OVERVIEW, Glyph.FILTER, Glyph.FIT, Glyph.TABLE, Glyph.EXPORT,
-                Glyph.TRASH}) {
+        // Wie im Reiter „Graph“: „Zurück zur Gesamtsicht“ (W4b) vorn, „Wissensgraph erzeugen“ (W5) direkt vor dem
+        // Export.
+        for (Glyph glyph : new Glyph[] {Glyph.OVERVIEW, Glyph.FILTER, Glyph.FIT, Glyph.TABLE, Glyph.GRAPH_PLUS,
+                Glyph.EXPORT, Glyph.TRASH}) {
             IconButton button = new IconButton(glyph, glyph.name());
             buttons.add(button);
             header.tool(button);
@@ -209,6 +211,36 @@ class TabHeaderTest {
                 assertThat(status.getCenterY()).as("Stand mittig bei %d px", width)
                         .isCloseTo(field.getCenterY(), org.assertj.core.data.Offset.offset(1.0));
             }
+        });
+    }
+
+    /**
+     * Bei 900 px bleibt die Leiste wie im Reiter „Graph“ mit „Wissensgraph erzeugen“ eine Zeile (W5, UX): Ihre Höhe ist
+     * die einer Zeile, jeder Teil liegt darin, und der Hinweis läuft nicht ins Suchfeld, sondern fällt weg.
+     */
+    @Test
+    void at900PixelsTheHeaderStaysOneLineAndTheNoteNeverRunsIntoTheSearchField() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            TabHeader header = header();
+            check(header, 900);
+            int row = 0;
+            for (JComponent part : new JComponent[] {header.leftPart(), header.searchPart(), header.rightPart()}) {
+                row = Math.max(row, part.getPreferredSize().height);
+                assertThat(part.getY()).isGreaterThanOrEqualTo(0);
+                assertThat(part.getY() + part.getHeight()).isLessThanOrEqualTo(header.getHeight());
+            }
+            assertThat(header.getPreferredSize().height).as("eine Zeile").isEqualTo(row);
+            JComponent left = header.leftPart();
+            Rectangle field = header.searchPart().getBounds();
+            for (Component shown : left.getComponents()) {
+                if (shown.getWidth() > 0) {
+                    assertThat(inHeader(header, shown).intersects(field)).as("%s überdeckt das Suchfeld nicht",
+                            shown).isFalse();
+                }
+            }
+            Rectangle note = inHeader(header, left.getComponent(2));
+            assertThat(note.width == 0 || note.x + note.width <= field.x).as("der Hinweis endet vor dem Suchfeld")
+                    .isTrue();
         });
     }
 

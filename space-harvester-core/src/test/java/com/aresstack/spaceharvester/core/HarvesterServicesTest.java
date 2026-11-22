@@ -22,7 +22,7 @@ class HarvesterServicesTest {
                 java.time.Clock.systemUTC());
         ServicePlanner planner = Harvester.services(
                 new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app"), imagesAutomatic::get,
-                glossaryAutomatic::get, null, key -> Optional.empty(), null, null);
+                glossaryAutomatic::get, null, key -> Optional.empty(), null, null, null);
 
         assertThat(planner.services()).extracting(AnalysisService::id).containsExactlyInAnyOrder("index", "images",
                 "statements", "glossary", "knowledge-graph");
@@ -56,5 +56,32 @@ class HarvesterServicesTest {
                 java.util.Map.entry(new com.aresstack.spaceharvester.application.background.services.MissingPages
                         .Scope("wiki", "BETA"), java.util.Set.of("b1")));
         assertThat(grouped.inaccessible()).as("„zu laden“ ist kein fehlender Zugriff").isZero();
+        assertThat(grouped.toLoad()).as("„erst laden“ geht an den Planer weiter (W5)").isEqualTo(4);
+    }
+
+    @Test
+    void withTheClosingPartTheKnowledgeGraphHasItsKindAndFixesItsParametersAtStart() {
+        var jobs = new com.aresstack.spaceharvester.application.jobs.Jobs(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(2, 10, java.time.Duration.ofHours(1)),
+                java.time.Clock.systemUTC());
+        var statements = org.mockito.Mockito.mock(
+                com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.class);
+        org.mockito.Mockito.when(statements.selected())
+                .thenReturn(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL);
+        var graph = new com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs(statements, () -> { });
+
+        ServicePlanner planner = Harvester.services(
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app"), () -> false,
+                () -> false, null, key -> Optional.empty(), null, null, graph);
+
+        AnalysisService knowledgeGraph = planner.service("knowledge-graph").orElseThrow();
+        assertThat(knowledgeGraph.kind())
+                .isEqualTo(com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND);
+        assertThat(knowledgeGraph.prerequisites()).containsExactly("statements", "images");
+        assertThat(knowledgeGraph.parameters().of(com.aresstack.spaceharvester.application.access.AccessContext
+                .technicalClient("app"))).containsEntry("owner", "TECHNICAL_CLIENT:app")
+                .containsEntry("analyzer", "model").containsKey("caller");
+        jobs.close();
     }
 }

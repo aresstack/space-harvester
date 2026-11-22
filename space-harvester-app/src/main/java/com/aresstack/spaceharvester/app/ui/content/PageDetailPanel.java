@@ -676,15 +676,23 @@ public final class PageDetailPanel extends JPanel {
         if (context != null) {
             context.onChange(ignored -> {
                 standing.settingsChanged();
+                // Eine verfolgte Gruppe „Wissensgraph erzeugen“ auf der neuen Laufzeit weiter verfolgen (W5).
+                graphView.runtimeChanged();
                 storeChanged();
             });
         }
         shownStore = storeSetting();
         storeField.show(shownStore);
         sourceChanges.onStatus(text -> tabStatus(READ, text));
-        graphView.onStatus(text -> {
-            graphStatus = text;
+        // Mit Ampel und Link: „Wissensgraph erzeugen“ (W5) meldet gelbe Hinweise, ✕ und „Hintergrund“.
+        graphView.onNote(note -> {
+            graphStatus = note;
             showGraphStatus();
+        });
+        graphView.onShowJob(jobId -> context.navigator().showJob(jobId));
+        graphView.onGenerated(() -> {
+            statementsView.reload();
+            loadVerbs();
         });
         graphView.onSubpages(this::belowGraphLoaded);
         // Lauf-, Erfolgs- und Infomeldungen gehen in die Statuszeile des Hauptfensters; die Platte zeigt nur Probleme.
@@ -1868,7 +1876,7 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Statuszeile des Seitengraphen; nur sie nennt die Unterseiten ohne Analyse. */
-    private String graphStatus = " ";
+    private StatusNote graphStatus = StatusNote.plain(" ");
     /** Das Ergebnis der Nachfahren ({@link Subpages#revision()}), das der Seitengraph zuletzt bekam. */
     private int graphSubpagesRevision = -1;
     /** Was der Abschnitt „Aus Unterseiten“ unter dem Graph dazu sagt („ · …“), sonst leer. */
@@ -1876,9 +1884,10 @@ public final class PageDetailPanel extends JPanel {
 
     /** Graph und Abschnitt darunter teilen sich eine Statuszeile: erst der Graph, dann der Abschnitt. */
     private void showGraphStatus() {
-        String base = graphStatus == null ? " " : graphStatus;
-        tabStatus(GRAPH, graphBelowNote.isEmpty() ? base
-                : base.isBlank() ? graphBelowNote.substring(3) : base + graphBelowNote);
+        String base = graphStatus.text();
+        // Der Abschnitt dahinter bleibt grau, auch hinter einem gelben oder roten Hinweis von „Wissensgraph erzeugen“.
+        tabNote(GRAPH, graphBelowNote.isEmpty() ? graphStatus : base.isBlank()
+                ? graphStatus.withText(graphBelowNote.substring(3)) : graphStatus.plus(graphBelowNote));
     }
 
     /**
@@ -2161,7 +2170,18 @@ public final class PageDetailPanel extends JPanel {
         String tab = selectedTab();
         StatusNote note = tabStatus.getOrDefault(tab,
                 StatusNote.plain(" "));
-        statusShown.accept(note.withText(withStore(tab, note.text(), shownStore)));
+        statusShown.accept(withStore(tab, note, shownStore));
+    }
+
+    /**
+     * Wie {@link #withStore(String, String, com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice)} für eine
+     * Meldung: Die Ablage dahinter bleibt grau, auch wenn die Meldung gelb oder rot ist ({@link StatusNote#plus}).
+     */
+    static StatusNote withStore(String tab, StatusNote note,
+                                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice store) {
+        String shown = withStore(tab, note.text(), store);
+        return shown != null && shown.startsWith(note.text())
+                ? note.plus(shown.substring(note.text().length())) : note.withText(shown);
     }
 
     /**

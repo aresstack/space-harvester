@@ -9,13 +9,24 @@ import java.util.Objects;
  * Eine Hintergrundgruppe (der „Oberauftrag“): ihre Unteraufträge, je Space einer. Die Gruppe ist kein eigener Auftrag
  * und belegt keinen Platz; ihr Zustand ergibt sich aus den Unteraufträgen.
  *
- * @param parts die Unteraufträge in der Reihenfolge ihres Starts
+ * @param parts        die Unteraufträge in der Reihenfolge ihres Starts
+ * @param predecessors Aufträge außerhalb der Gruppe, auf die ein Unterauftrag wartet
+ *                     ({@link com.aresstack.spaceharvester.application.jobs.Jobs#AFTER}), etwa ein schon laufender Teil
+ *                     einer anderen Gruppe, den der Dienst-Planer als Vorstufe wiederverwendet; sie zählen nicht zu den
+ *                     Unteraufträgen (Fortschritt, fertig, angehalten), sagen aber, worauf ein wartender Teil steht
  */
-public record BackgroundGroup(String groupId, String kind, String title, List<JobStatus> parts) {
+public record BackgroundGroup(String groupId, String kind, String title, List<JobStatus> parts,
+                              List<JobStatus> predecessors) {
 
     public BackgroundGroup {
         Objects.requireNonNull(groupId, "groupId");
         parts = List.copyOf(parts);
+        predecessors = predecessors == null ? List.of() : List.copyOf(predecessors);
+    }
+
+    /** Ohne Vorgänger außerhalb der Gruppe. */
+    public BackgroundGroup(String groupId, String kind, String title, List<JobStatus> parts) {
+        this(groupId, kind, title, parts, List.of());
     }
 
     public List<String> jobIds() {

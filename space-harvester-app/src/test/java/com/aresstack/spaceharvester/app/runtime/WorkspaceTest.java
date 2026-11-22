@@ -1084,6 +1084,148 @@ class WorkspaceTest {
         }
     }
 
+    /**
+     * W5: „Wissensgraph erzeugen“ über Seiten des Space „DEV“. Die Vorschau startet nichts und zählt je Stufe so viele
+     * Teile, wie der Start danach anlegt; der Start legt eine Gruppe der Art „knowledge-graph“ mit dem Abschlussteil je
+     * Space an, und sie lässt sich über die Gruppe abbrechen. Ihr Ende kommt über die Meldung des Core.
+     */
+    @Test
+    void theKnowledgeGraphIsPreviewedWithoutStartingAndStartedAsOneBackgroundGroup() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL)).state())
+                .isEqualTo(JobState.COMPLETED);
+        var pages = com.aresstack.spaceharvester.application.snapshot.PageSet.of(Map.of("wiki", List.of("100", "102")));
+        var background = started.harvester().backgroundJobs();
+        int groups = background.groups().size();
+
+        var preview = workspace.previewKnowledgeGraph(pages);
+
+        assertThat(background.groups()).as("die Vorschau startet nichts").hasSize(groups);
+        var goal = preview.goal().orElseThrow();
+        assertThat(goal.id()).isEqualTo(com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND);
+        assertThat(goal.pages()).as("beide Seiten sichtbar").isEqualTo(2);
+        assertThat(goal.parts()).as("ein Abschlussteil für den Space").isEqualTo(1);
+
+        var plan = workspace.startKnowledgeGraph(pages);
+        var group = plan.group().orElseThrow();
+        assertThat(plan.notes()).isEqualTo(preview.notes());
+        assertThat(group.kind()).isEqualTo(com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND);
+        for (var stage : preview.stages()) {
+            // Die Kennung eines angebundenen Dienstes ist auch seine Art.
+            assertThat(group.parts().stream().filter(part -> stage.id().equals(part.parameter(BackgroundJobs.KIND)))
+                    .count()).as("Teile der Stufe %s wie in der Vorschau", stage.id()).isEqualTo(stage.parts());
+        }
+
+        workspace.performBackgroundGroupAction(group.groupId(),
+                com.aresstack.spaceharvester.application.jobs.JobAction.CANCEL);
+        java.util.concurrent.CompletableFuture<com.aresstack.spaceharvester.application.background.BackgroundGroup>
+                finished = new java.util.concurrent.CompletableFuture<>();
+        try (var watch = workspace.whenBackgroundFinished(group.groupId(), finished::complete)) {
+            var ended = finished.get(60, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(ended.finished()).isTrue();
+            assertThat(workspace.knowledgeGraphNotes(ended)).as("nur Zahlen, keine Seitentitel")
+                    .noneMatch(note -> note.contains("Betrieb und Wartung"));
+            assertThat(workspace.runningKnowledgeGraph(pages)).as("eine beendete Gruppe läuft nicht mehr").isEmpty();
+        }
+        assertThat(workspace.knowledgeGraphNotReleased(pages)).as("ohne KI-Modell nichts ohne Freigabe").isZero();
+    }
+
+    /**
+     * W5 (Auflage 7): Der Kreispfeil hinter einer gescheiterten Stufe setzt nur deren gescheiterte Teile fort, über
+     * denselben Weg wie ▶; vom Benutzer abgebrochene Teile, Teile anderer Stufen, fremde Kennungen und fertige Teile
+     * bleiben, wie sie sind.
+     */
+    @Test
+    void retryingAStageResumesOnlyItsFailedPartsNeverOnesTheUserCancelled() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL)).state())
+                .isEqualTo(JobState.COMPLETED);
+        var pages = com.aresstack.spaceharvester.application.snapshot.PageSet.of(Map.of("wiki", List.of("100", "102")));
+        var group = workspace.startKnowledgeGraph(pages).group().orElseThrow();
+        workspace.performBackgroundGroupAction(group.groupId(),
+                com.aresstack.spaceharvester.application.jobs.JobAction.CANCEL);
+        var ended = finished(workspace, group.groupId());
+        List<String> cancelled = ended.parts().stream().filter(part -> part.state() == JobState.CANCELLED)
+                .map(JobStatus::id).toList();
+        assertThat(cancelled).as("sofort abgebrochen: mindestens ein Teil ist abgebrochen").isNotEmpty();
+        List<String> asked = new ArrayList<>(cancelled);
+        asked.add("unbekannt");
+        ended.parts().stream().filter(part -> part.state() == JobState.COMPLETED).findFirst()
+                .ifPresent(done -> asked.add(done.id()));
+
+        assertThat(workspace.retryBackgroundParts(group.groupId(), asked).changed())
+                .as("vom Benutzer abgebrochene Teile wiederholt der Kreispfeil nie").isZero();
+        assertThat(started.harvester().backgroundJobs().group(group.groupId()).orElseThrow().parts())
+                .filteredOn(part -> cancelled.contains(part.id()))
+                .allSatisfy(part -> assertThat(part.state()).isEqualTo(JobState.CANCELLED));
+
+        // Ein gescheiterter Teil (erfundene Art „Nachtlauf“, die immer scheitert) wird fortgesetzt.
+        var background = started.harvester().backgroundJobs();
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+        background.register(new com.aresstack.spaceharvester.application.background.BackgroundKind("nachtlauf",
+                part -> com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+                    runs.incrementAndGet();
+                    throw new IllegalStateException("Nachtlauf scheitert");
+                })));
+        var broken = background.start(BackgroundJobs.newGroupId(), "nachtlauf", "Nachtlauf",
+                List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", "DEV")));
+        var failed = finished(workspace, broken.groupId());
+        assertThat(failed.parts()).singleElement()
+                .satisfies(part -> assertThat(part.state()).isEqualTo(JobState.FAILED));
+        var outcome = workspace.retryBackgroundParts(broken.groupId(), failed.jobIds());
+        assertThat(outcome.changed()).as("der gescheiterte Teil").isEqualTo(1);
+        assertThat(outcome.failed()).isZero();
+        assertThat(workspace.retryBackgroundParts("keine-gruppe", failed.jobIds()).changed())
+                .as("nur Teile dieser Gruppe").isZero();
+    }
+
+    /**
+     * W5 (Auflage 5): Kennt die Laufzeit eine Gruppe beim Anmelden nicht (etwa nach dem Umschalten der Ablage), sagt die
+     * Beobachtung das einmal auf dem EDT, statt still keinen Stand zu melden.
+     */
+    @Test
+    void watchingAGroupThisRuntimeDoesNotKnowSaysSoOnTheEdt() throws Exception {
+        Workspace workspace = start().workspace();
+        java.util.concurrent.CompletableFuture<Boolean> missing = new java.util.concurrent.CompletableFuture<>();
+        try (var watch = workspace.watchBackground("unbekannte-gruppe", group -> missing.complete(false),
+                () -> missing.complete(javax.swing.SwingUtilities.isEventDispatchThread()))) {
+            assertThat(missing.get(10, java.util.concurrent.TimeUnit.SECONDS)).as("fehlt, gemeldet auf dem EDT")
+                    .isTrue();
+        }
+    }
+
+    /**
+     * W5: Die Abdeckung je Space nennt den Space als Ort („in ‚DEV‘: …“, UX 22.11.2026), nicht als unerklärtes
+     * Kürzel davor.
+     */
+    @Test
+    void theCoverageNoteNamesTheSpaceAsPlace() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL)).state())
+                .isEqualTo(JobState.COMPLETED);
+        var pages = com.aresstack.spaceharvester.application.snapshot.PageSet.of(Map.of("wiki", List.of("100", "102")));
+        var group = workspace.startKnowledgeGraph(pages).group().orElseThrow();
+        var ended = finished(workspace, group.groupId());
+
+        List<String> notes = workspace.knowledgeGraphNotes(ended);
+        assertThat(notes).as("ohne Analyse fehlt die Abdeckung; der Space steht als Ort davor")
+                .anySatisfy(note -> assertThat(note).startsWith("in ‚DEV‘: ").contains("Seiten mit aktueller Analyse"))
+                .noneMatch(note -> note.startsWith("DEV: "));
+    }
+
+    /** Wartet auf das Ende einer Hintergrundgruppe über die Meldung des Core. */
+    private static com.aresstack.spaceharvester.application.background.BackgroundGroup finished(Workspace workspace,
+            String groupId) throws Exception {
+        java.util.concurrent.CompletableFuture<com.aresstack.spaceharvester.application.background.BackgroundGroup>
+                done = new java.util.concurrent.CompletableFuture<>();
+        try (var watch = workspace.whenBackgroundFinished(groupId, done::complete)) {
+            return done.get(60, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
     private AppRuntime start() throws Exception {
         runtime = AppRuntime.start(settings(Map.of("WIKI_TOKEN", TOKEN,
                 "CLIENT_PASSWORD", TestCertificates.CLIENT_PASSWORD)), new AppRuntime.SessionSecrets(), "test");

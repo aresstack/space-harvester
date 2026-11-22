@@ -21,4 +21,20 @@ class StoreStatusLineTest {
         assertThat(PageDetailPanel.withStore("Graph", " ", AnalyzerChoice.MODEL)).isEqualTo(" ");
         assertThat(PageDetailPanel.withStore("Bilder", "4 Bilder", AnalyzerChoice.MODEL)).isEqualTo("4 Bilder");
     }
+
+    /** Die Ablage hinter einer gelben Meldung bleibt grau (derselbe Weg im Hauptfenster und im Bildschirmfoto-Test). */
+    @Test
+    void theStoreBehindAYellowNoteStaysPlain() {
+        com.aresstack.spaceharvester.app.ui.controls.StatusNote note = new com.aresstack.spaceharvester.app.ui
+                .controls.StatusNote("Wissensgraph: nichts zu rechnen", com.aresstack.spaceharvester.app.ui.controls
+                .StatusNote.Tone.WARNING, null, null);
+
+        var shown = PageDetailPanel.withStore("Graph", note, AnalyzerChoice.MODEL);
+
+        assertThat(shown.text()).isEqualTo("Wissensgraph: nichts zu rechnen · Ablage: " + AnalyzerNames.MODEL);
+        assertThat(shown.toneOf("Ablage: " + AnalyzerNames.MODEL))
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.PLAIN);
+        assertThat(shown.toneOf("Wissensgraph: nichts zu rechnen"))
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.WARNING);
+    }
 }

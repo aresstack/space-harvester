@@ -381,6 +381,7 @@ public final class Harvester implements AutoCloseable {
     /** „Seiten nachladen“ als Hintergrundauftrag. */
     private final com.aresstack.spaceharvester.application.background.PageLoads pageLoads;
     private final com.aresstack.spaceharvester.application.background.services.ServicePlanner servicePlanner;
+    private final com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs knowledgeGraphJobs;
     private final Assets assets;
     private final com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses transcriptAnalyses;
     private final ConnectionBudget connections;
@@ -1439,6 +1440,11 @@ public final class Harvester implements AutoCloseable {
                     return cache.find(key);
                 }
             });
+            // W5: „Wissensgraph erzeugen“ als Ziel des Planers, ein Abschlussteil je Space; vor resumeInterrupted
+            // angemeldet, damit unterbrochene Teile weiterlaufen und ihre Vorgänger-Regel gilt.
+            this.knowledgeGraphJobs = new com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs(
+                    this.statementAnalysisJobs, knowledgeGraph::analysesChanged);
+            this.knowledgeGraphJobs.background(backgroundJobs, AccessContext.technicalClient(OWNER));
             // D1 (Nachtrag ADR 0025): Dienst-Planer mit den Beschreibungen der Analysedienste; die Aussagenanalyse
             // arbeitet schon (D3), die übrigen Arten baut B1.
             var imagesStart = startImages;
@@ -1447,7 +1453,7 @@ public final class Harvester implements AutoCloseable {
                     : imagesStart).automatic(), () -> (this.settings != null ? this.settings.terms()
                     : plannerTerms).glossaryAutomatic(), access,
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
-                    this.statementAnalysisJobs, imageDescriptions);
+                    this.statementAnalysisJobs, imageDescriptions, this.knowledgeGraphJobs);
             this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
                     key -> cache.findHeader(key).map(header -> header.metadata().parentPageId()), clock, OWNER);
             this.knowledgeGraphExportDirectory = builder.exportDirectory().resolve("knowledge-graph");
@@ -2545,13 +2551,20 @@ public final class Harvester implements AutoCloseable {
         return servicePlanner;
     }
 
+    /** „Wissensgraph erzeugen“ (W5): der Abschlussteil je Space als Ziel des Dienst-Planers. */
+    public com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs knowledgeGraphJobs() {
+        return knowledgeGraphJobs;
+    }
+
     /**
      * Die Beschreibungen der Analysedienste (D1). Die Aussagenanalyse arbeitet über ihre Art (D3), sofern
      * {@code statements} angeschlossen ist, „Bilder beschreiben“ über seine (D2), sofern {@code images} angeschlossen
-     * ist; die übrigen Arten fehlen noch. Die Starttypen ändern am heutigen Verhalten nichts.
+     * ist, der „Wissensgraph“ als Abschlussteil je Space (W5), sofern {@code graph} angeschlossen ist; die übrigen Arten
+     * fehlen noch. Die Starttypen ändern am heutigen Verhalten nichts.
      *
      * @param statements die Aussagenanalyse oder {@code null}, dann nur als Beschreibung
      * @param images     „Bilder beschreiben“ oder {@code null}, dann nur als Beschreibung
+     * @param graph      der Abschlussteil „Wissensgraph“ oder {@code null}, dann nur als Beschreibung
      */
     static com.aresstack.spaceharvester.application.background.services.ServicePlanner services(
             com.aresstack.spaceharvester.application.background.BackgroundJobs background,
@@ -2559,7 +2572,8 @@ public final class Harvester implements AutoCloseable {
             AccessGuard access,
             java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf,
             StatementAnalysisJobs statements,
-            com.aresstack.spaceharvester.application.images.ImageDescriptionJobs images) {
+            com.aresstack.spaceharvester.application.images.ImageDescriptionJobs images,
+            com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs graph) {
         com.aresstack.spaceharvester.application.background.services.AnalysisService.Missing visibleOf =
                 (caller, pages) -> {
                     Map<com.aresstack.spaceharvester.application.background.services.MissingPages.Scope,
@@ -2613,13 +2627,17 @@ public final class Harvester implements AutoCloseable {
                 : com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL,
                 List.of("index"), null, nothing));
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
-                "knowledge-graph", "Wissensgraph", manual, List.of("statements", "images"), null, nothing));
+                "knowledge-graph", "Wissensgraph", manual, List.of("statements", "images"), graph == null ? null
+                : com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND, nothing,
+                graph == null ? com.aresstack.spaceharvester.application.background.services.AnalysisService
+                        .Parameters.NONE : graph::plannerParameters));
         return planner;
     }
 
     /**
      * Die fehlenden Seiten der Aussagenanalyse je Quelle und Space (D1/D3); den Space nennt der gespeicherte Kopf, denn
-     * fehlend sind nur lokale Seiten.
+     * fehlend sind nur lokale Seiten. Die Zahl der erst zu ladenden Seiten geht mit (W5), ein fehlender Zugriff ist sie
+     * nicht.
      */
     static com.aresstack.spaceharvester.application.background.services.MissingPages missingPerSpace(
             StatementAnalysisJobs.Missing missing,
@@ -2633,12 +2651,47 @@ public final class Harvester implements AutoCloseable {
                         .Scope(source.getKey(), space), ignored -> new java.util.TreeSet<>()).add(pageId);
             }
         }
-        return new com.aresstack.spaceharvester.application.background.services.MissingPages(grouped, 0);
+        return new com.aresstack.spaceharvester.application.background.services.MissingPages(grouped, 0,
+                missing.toLoad());
     }
 
     /** „Bilder beschreiben“ über das Auftragssystem (D2): Hintergrundläufe, Knopf je Seite, fehlende Beschreibungen. */
     public com.aresstack.spaceharvester.application.images.ImageDescriptionJobs imageDescriptions() {
         return imageDescriptions;
+    }
+
+    /**
+     * Die Seiten der Menge, die „Wissensgraph erzeugen“ (W5) ohne KI-Freigabe ausließe, jede nur einmal: mit dem
+     * KI-Analysator die der Aussagenanalyse ({@link StatementAnalysisJobs#notReleased}), dazu immer die mit Bildern,
+     * die „Bilder beschreiben“ ohne Freigabe nicht beschreibt
+     * ({@link com.aresstack.spaceharvester.application.images.ImageDescriptionJobs#missingNotReleased}), nur die, die
+     * der Aufrufer lesen darf. Fragt weder Quelle noch Modell.
+     */
+    public com.aresstack.spaceharvester.application.snapshot.PageSet knowledgeGraphNotReleased(AccessContext caller,
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        java.util.Set<PageKey> keys = new java.util.LinkedHashSet<>();
+        StatementAnalysisJobs statements = statementAnalysisJobs;
+        if (statements != null && statements.selected()
+                == com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL) {
+            keys.addAll(keysOf(statements.notReleased(caller, pages)));
+        }
+        com.aresstack.spaceharvester.application.images.ImageDescriptionJobs images = imageDescriptions;
+        if (images != null) {
+            for (PageKey key : keysOf(images.missingNotReleased(caller, pages))) {
+                String space = pageCache.findHeader(key).map(header -> header.metadata().partitionKey()).orElse(null);
+                if (access.canRead(caller, key.sourceId(), space, key.pageId())) {
+                    keys.add(key);
+                }
+            }
+        }
+        return com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(keys);
+    }
+
+    private static List<PageKey> keysOf(com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        List<PageKey> keys = new java.util.ArrayList<>();
+        pages.asMap().forEach((sourceId, pageIds) -> pageIds.forEach(pageId ->
+                keys.add(new PageKey(sourceId, pageId))));
+        return keys;
     }
 
     /** „Seiten nachladen“ als Hintergrundauftrag, etwa fehlende Nachbarseiten eines Suchtreffers. */

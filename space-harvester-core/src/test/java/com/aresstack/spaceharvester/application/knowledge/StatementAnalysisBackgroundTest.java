@@ -486,11 +486,16 @@ class StatementAnalysisBackgroundTest {
             }
         });
 
-        StatementAnalysisJobs.Missing missing = service.analyses().missing(APP, PageSet.of(Map.of("wiki",
-                List.of("a", "b", "c", "d", "e", "f", "g", "h", "leer", "r", "o"))));
+        PageSet set = PageSet.of(Map.of("wiki", List.of("a", "b", "c", "d", "e", "f", "g", "h", "leer", "r", "o")));
+        StatementAnalysisJobs.Missing missing = service.analyses().missing(APP, set);
+        StatementAnalysisJobs.Coverage coverage = service.analyses().coverage(APP, set, AnalyzerChoice.PARSER);
 
         assertThat(missing.pages().pagesOf("wiki")).containsExactlyInAnyOrder("b", "c", "h");
         assertThat(missing.toLoad()).as("ohne Leserecht nicht unter „zu laden“").isEqualTo(2);
+        assertThat(coverage).as("W5: dieselbe Regel wie missing()")
+                .isEqualTo(new StatementAnalysisJobs.Coverage(1, 3, 2, 1, 0));
+        assertThat(coverage.stale()).isEqualTo(missing.pages().size());
+        assertThat(coverage.toLoad()).isEqualTo(missing.toLoad());
     }
 
     private PageSnapshot page(String sourceId, String pageId) {

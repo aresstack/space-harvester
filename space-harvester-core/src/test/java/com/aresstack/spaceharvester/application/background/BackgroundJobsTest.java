@@ -279,6 +279,88 @@ class BackgroundJobsTest {
         assertThat(reports).last().satisfies(report -> assertThat(report.completed()).isTrue());
     }
 
+    /**
+     * Codex #1081: Ein Teil wartet auf einen wiederverwendeten Teil einer anderen Gruppe ({@link Jobs#AFTER}). Die
+     * Gruppe nennt ihn als Vorgänger (nicht als eigenen Teil), und wird er angehalten, meldet sich auch die Gruppe.
+     */
+    @Test
+    void aReusedPredecessorOfAnotherGroupIsNamedAndItsChangesReachTheWatchersOfTheGroup() throws Exception {
+        Jobs jobs = jobs(executor);
+        BackgroundJobs background = background(jobs, new AtomicBoolean(true));
+        BackgroundGroup reused = background.start("demo", "Plan", List.of(new BackgroundPart.Draft("wiki", "DEV")));
+        String reusedId = reused.parts().get(0).id();
+        BackgroundGroup goal = background.startSteps(BackgroundJobs.newGroupId(), "demo", "Ziel", List.of(
+                new BackgroundJobs.Step("demo", "Ziel", new BackgroundPart.Draft("wiki", "DEV"), List.of(reusedId),
+                        List.of(), List.of("Plan"))));
+        List<BackgroundGroup> reports = new CopyOnWriteArrayList<>();
+
+        BackgroundGroup read = background.group(goal.groupId()).orElseThrow();
+        assertThat(read.parts()).extracting(JobStatus::id).doesNotContain(reusedId);
+        assertThat(read.predecessors()).extracting(JobStatus::id).containsExactly(reusedId);
+        assertThat(background.groups()).filteredOn(listed -> listed.groupId().equals(goal.groupId())).singleElement()
+                .satisfies(listed -> assertThat(listed.predecessors()).extracting(JobStatus::id)
+                        .containsExactly(reusedId));
+
+        java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1);
+        try (var subscription = background.watch(goal.groupId(), report -> {
+            reports.add(report);
+            if (report.predecessors().stream().anyMatch(part -> part.state() == JobState.PAUSED)) {
+                held.countDown();
+            }
+        })) {
+            background.pause(reused.groupId());
+            executor.runAll();
+            assertThat(held.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                    .as("der angehaltene Vorgänger meldet sich bei der wartenden Gruppe").isTrue();
+        }
+        assertThat(reports).allSatisfy(report -> assertThat(report.groupId()).isEqualTo(goal.groupId()));
+    }
+
+    /**
+     * Nacharbeit Codex #1081: Wartet der wiederverwendete Vorgänger selbst auf einen Teil seiner Gruppe („Nachtlauf“:
+     * „Aussagenanalyse“ hinter „Bilder beschreiben“), nennt die Gruppe beide als Vorgänger, und hält man nur den
+     * vorderen an, meldet sich auch die wartende Gruppe.
+     */
+    @Test
+    void aPredecessorOfAReusedPredecessorIsNamedAndItsPauseReachesTheWatchersOfTheGroup() throws Exception {
+        Jobs jobs = jobs(executor);
+        BackgroundJobs background = background(jobs, new AtomicBoolean(true));
+        BackgroundGroup night = background.startSteps(BackgroundJobs.newGroupId(), "demo", "Nachtlauf", List.of(
+                new BackgroundJobs.Step("demo", "Bilder beschreiben", new BackgroundPart.Draft("wiki", "DEV"),
+                        List.of(), List.of(), List.of()),
+                new BackgroundJobs.Step("demo", "Aussagenanalyse", new BackgroundPart.Draft("wiki", "DEV"),
+                        List.of(), List.of(0), List.of("Bilder beschreiben"))));
+        String imagesId = night.parts().get(0).id();
+        String statementsId = night.parts().get(1).id();
+        BackgroundGroup goal = background.startSteps(BackgroundJobs.newGroupId(), "demo", "Ziel", List.of(
+                new BackgroundJobs.Step("demo", "Ziel", new BackgroundPart.Draft("wiki", "DEV"),
+                        List.of(statementsId), List.of(), List.of("Aussagenanalyse"))));
+
+        assertThat(goal.predecessors()).extracting(JobStatus::id).containsExactly(statementsId, imagesId);
+        assertThat(background.group(goal.groupId()).orElseThrow().predecessors()).extracting(JobStatus::id)
+                .containsExactly(statementsId, imagesId);
+        assertThat(background.groups()).filteredOn(listed -> listed.groupId().equals(goal.groupId())).singleElement()
+                .satisfies(listed -> assertThat(listed.predecessors()).extracting(JobStatus::id)
+                        .containsExactly(statementsId, imagesId));
+
+        List<BackgroundGroup> reports = new CopyOnWriteArrayList<>();
+        java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1);
+        try (var subscription = background.watch(goal.groupId(), report -> {
+            reports.add(report);
+            if (report.predecessors().stream().anyMatch(part -> part.id().equals(imagesId)
+                    && part.state() == JobState.PAUSED)) {
+                held.countDown();
+            }
+        })) {
+            jobs.pause(imagesId, OWNER);
+            executor.runAll();
+            assertThat(held.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                    .as("das Anhalten des mittelbaren Vorgängers meldet sich bei der wartenden Gruppe").isTrue();
+        }
+        assertThat(reports).allSatisfy(report -> assertThat(report.groupId()).isEqualTo(goal.groupId()));
+        assertThat(jobs.status(statementsId, OWNER).state()).isEqualTo(JobState.QUEUED);
+    }
+
     @Test
     void whenFinishedTellsOnceAtTheEndAndAtOnceForAFinishedGroup() throws Exception {
         Jobs jobs = jobs(executor);

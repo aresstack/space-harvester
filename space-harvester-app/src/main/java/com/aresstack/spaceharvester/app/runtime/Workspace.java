@@ -1406,6 +1406,14 @@ public final class Workspace {
     }
 
     /**
+     * Ob der KI-Analysator der Aussagenanalyse jetzt rechnen könnte: eingerichtet und ein Chat-Modell bereit (W5, für
+     * die Rückfrage von „Wissensgraph erzeugen“); lädt und ruft kein Modell.
+     */
+    public boolean statementModelReady() {
+        return harvester.statementAnalysis().modelReady();
+    }
+
+    /**
      * Warum der KI-Analysator diese Seite jetzt bewusst auslässt (kein Modell, keine KI-Freigabe); leer, wenn er sie
      * rechnen kann oder der MaltParser eingestellt ist.
      */
@@ -2324,6 +2332,9 @@ public final class Workspace {
         if (imageRun(status)) {
             return harvester.imageDescriptions().resume(caller, jobId);
         }
+        if (graphRun(status)) {
+            return harvester.knowledgeGraphJobs().resume(caller, jobId);
+        }
         return switch (status.type()) {
             case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
             case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
@@ -2340,6 +2351,16 @@ public final class Workspace {
     private boolean imageRun(JobStatus status) {
         return status.type() == JobType.BACKGROUND && harvester.imageDescriptions() != null
                 && com.aresstack.spaceharvester.application.images.ImageDescriptionJobs.KIND.equals(
+                status.parameter(com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND));
+    }
+
+    /**
+     * Ein Abschlussteil „Wissensgraph erzeugen“ (W5): ▶ setzt ihn nur mit den Rechten seines Eigentümers fort, sonst
+     * hält er wieder gelb an.
+     */
+    private boolean graphRun(JobStatus status) {
+        return status.type() == JobType.BACKGROUND && harvester.knowledgeGraphJobs() != null
+                && com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND.equals(
                 status.parameter(com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND));
     }
 
@@ -2372,6 +2393,9 @@ public final class Workspace {
         if (action == JobAction.RESUME && imageRun(current)) {
             // D2: ein vom Benutzer gestarteter Lauf „Bilder beschreiben“ läuft mit dessen Rechten weiter.
             return harvester.imageDescriptions().resume(caller, jobId);
+        }
+        if (action == JobAction.RESUME && graphRun(current)) {
+            return harvester.knowledgeGraphJobs().resume(caller, jobId);
         }
         JobStatus status = Harvester.OWNER.equals(owner) ? harvester.performJobAction(jobId, action)
                 : harvester.jobActions().perform(jobId, owner, action);
@@ -2507,7 +2531,19 @@ public final class Workspace {
      */
     public Subscription watchBackground(String groupId,
             java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+        return watchBackground(groupId, listener, () -> { });
+    }
+
+    /**
+     * Wie {@link #watchBackground(String, java.util.function.Consumer)}; kennt diese Laufzeit die Gruppe beim Anmelden
+     * nicht (etwa nach dem Umschalten der Ablage, W5), läuft stattdessen {@code missing} auf dem Event Dispatch Thread,
+     * einmal, sofern bis dahin keine Änderung gemeldet wurde.
+     */
+    public Subscription watchBackground(String groupId,
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener,
+            Runnable missing) {
         java.util.Objects.requireNonNull(listener, "listener");
+        java.util.Objects.requireNonNull(missing, "missing");
         com.aresstack.spaceharvester.application.background.BackgroundJobs background = harvester.backgroundJobs();
         java.util.concurrent.atomic.AtomicBoolean pushed = new java.util.concurrent.atomic.AtomicBoolean();
         Subscription watch = background.watch(groupId, group -> {
@@ -2516,15 +2552,22 @@ public final class Workspace {
         });
         // Den jetzigen Stand liest ein eigener Thread aus dem Auftragsspeicher, nie der EDT; eine schon gemeldete
         // Änderung ist neuer und gilt.
-        Thread.ofVirtual().name("watch-background").start(() -> background.group(groupId).ifPresent(group -> {
-            if (!pushed.get()) {
-                javax.swing.SwingUtilities.invokeLater(() -> {
-                    if (!pushed.get()) {
-                        listener.accept(group);
-                    }
-                });
+        Thread.ofVirtual().name("watch-background").start(() -> {
+            Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> found =
+                    background.group(groupId);
+            if (pushed.get()) {
+                return;
             }
-        }));
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                if (!pushed.get()) {
+                    if (found.isPresent()) {
+                        listener.accept(found.get());
+                    } else {
+                        missing.run();
+                    }
+                }
+            });
+        });
         return watch;
     }
 
@@ -2569,6 +2612,138 @@ public final class Workspace {
         }
     }
 
+    /**
+     * Was „Wissensgraph erzeugen“ (W5) über {@code pages} jetzt anlegen würde: je Stufe des Dienst-Planers die Zahl der
+     * Seiten, erst zu ladende, schon laufende und abgeschaltete; startet nichts. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.background.services.ServicePreview previewKnowledgeGraph(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.servicePlanner().preview(caller,
+                com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND, pages);
+    }
+
+    /**
+     * Startet „Wissensgraph erzeugen“ (W5) über {@code pages}: die fehlenden Vorstufen und je Space den Abschlussteil als
+     * eine Hintergrundgruppe, sichtbar im Reiter „Hintergrund“. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.background.services.ServicePlan startKnowledgeGraph(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.servicePlanner().start(caller,
+                com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND, pages);
+    }
+
+    /**
+     * Wie viele Seiten von {@code pages} „Wissensgraph erzeugen“ (W5) ohne KI-Freigabe ausließe, jede nur einmal: mit
+     * dem KI-Analysator die der Aussagenanalyse, dazu immer die Seiten mit Bildern, die „Bilder beschreiben“ ohne
+     * Freigabe nicht beschreibt ({@code Harvester#knowledgeGraphNotReleased}). Nie auf dem EDT.
+     */
+    public int knowledgeGraphNotReleased(com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.knowledgeGraphNotReleased(caller, pages).size();
+    }
+
+    /**
+     * Eine laufende oder angehaltene Gruppe von „Wissensgraph erzeugen“ (W5) des Aufrufers, die eine Seite von
+     * {@code pages} betrifft, etwa nach einem Neustart weiterlaufend oder in einem anderen Fenster gestartet; die
+     * jüngste. Des Aufrufers heißt: Ihr Abschlussteil gehört ihm ({@code KnowledgeGraphJobs.OWNER}) und er darf ihn
+     * sehen. Einmal gefragt, danach folgt der Reiter ihr über {@link #watchBackground}; nie auf dem EDT.
+     */
+    public Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> runningKnowledgeGraph(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        String kind = com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND;
+        for (com.aresstack.spaceharvester.application.background.BackgroundGroup group
+                : harvester.backgroundJobs().groups()) {
+            if (!kind.equals(group.kind()) || group.parts().stream().noneMatch(part -> !part.state().terminal()
+                    || part.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED)) {
+                continue;
+            }
+            boolean mine = group.parts().stream()
+                    .filter(part -> kind.equals(part.parameter(
+                            com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND)))
+                    .filter(part -> caller.jobOwner().equals(part.parameter(
+                            com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.OWNER)))
+                    .filter(part -> access.permits(caller, scope(part.sourceId(), part.partitionKey()),
+                            AccessKind.METADATA))
+                    .anyMatch(part -> com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs
+                            .pages(part).asMap().getOrDefault(part.sourceId(), java.util.Set.of()).stream()
+                            .anyMatch(pageId -> pages.contains(part.sourceId(), pageId)));
+            if (mine) {
+                return Optional.of(group);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Die gelben Hinweise aus den Ereignissen einer Gruppe von „Wissensgraph erzeugen“ (W5): die Abdeckung je Space
+     * („in ‚DEV‘: 3 von 5 Seiten …“), wenn etwas fehlt ({@code KnowledgeGraphJobs.COVERAGE}, nur Zahlen), angehaltene
+     * fremde Teile ({@code RESUME_BY_HAND}), die Obergrenze von „Bilder beschreiben“ ({@code LIMIT_REACHED}) und Seiten,
+     * die der KI-Analysator bewusst ausließ. Gelesen mit demselben Recht wie
+     * {@link #statementGroupOmitted}; nie auf dem EDT, ein schon gelöschter Teil zählt nicht.
+     */
+    public List<String> knowledgeGraphNotes(
+            com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+        java.util.Set<String> notes = new java.util.LinkedHashSet<>();
+        long omitted = 0;
+        for (JobStatus part : group.parts()) {
+            if (!access.permits(caller, scope(part.sourceId(), part.partitionKey()), AccessKind.METADATA)) {
+                continue;
+            }
+            List<JobEvent> events = ownEvents(part.id());
+            if (StatementAnalysisJobs.isAnalysis(part)) {
+                omitted += StatementAnalysisJobs.omitted(events);
+            }
+            for (JobEvent event : events) {
+                if (event.severity() != JobEvent.Severity.WARNING || event.message() == null) {
+                    continue;
+                }
+                if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.COVERAGE
+                        .equals(event.code())) {
+                    String coverage = event.message();
+                    if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs
+                            .coverageOutdated(part, group.parts())) {
+                        // Eine Vorstufe wurde nach dem Abschlussteil wiederholt: neu zählen statt des alten Stands.
+                        coverage = currentCoverage(part);
+                    }
+                    if (coverage != null) {
+                        // Der Ort ist der Space, wie bei „gescheitert in ‚DEV‘“ (UX 22.11.2026).
+                        notes.add((part.partitionKey() == null ? "" : "in ‚" + part.partitionKey() + "‘: ")
+                                + coverage);
+                    }
+                } else if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.RESUME_BY_HAND
+                        .equals(event.code())) {
+                    notes.add(event.message());
+                } else if (com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.LIMIT_REACHED
+                        .equals(event.code())) {
+                    // „Bilder beschreiben“ an der Obergrenze: fertig, aber unvollständig (Codex #1081); nur Zahlen.
+                    notes.add((part.partitionKey() == null ? "" : "in ‚" + part.partitionKey() + "‘: ")
+                            + event.message());
+                }
+            }
+        }
+        if (omitted > 0) {
+            notes.add("Aussagenanalyse: " + (omitted == 1 ? "1 Seite" : omitted + " Seiten")
+                    + " bewusst ausgelassen (ohne KI-Freigabe oder Modell)");
+        }
+        return List.copyOf(notes);
+    }
+
+    /**
+     * Die Abdeckung eines Abschlussteils von „Wissensgraph erzeugen“ jetzt, mit seinem Analysator und über seine
+     * Seiten; {@code null}, wenn nichts fehlt (dann gibt es keinen gelben Hinweis) oder sie sich nicht zählen lässt.
+     */
+    private String currentCoverage(JobStatus goal) {
+        try {
+            StatementAnalysisJobs.Coverage coverage = harvester.statementAnalysisJobs().coverage(caller,
+                    com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.pages(goal),
+                    com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.parse(goal.parameter(
+                            com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.ANALYZER)));
+            return coverage.complete() ? null
+                    : com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.message(coverage);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /** Die Aufträge eines Reiters: nur Hintergrundaufträge oder nur die übrigen. */
     private List<JobStatus> jobs(boolean background) {
         return jobs().stream().filter(job -> job.type().background() == background).toList();
@@ -2592,6 +2767,23 @@ public final class Workspace {
                     .toList(), job -> performJobAction(job.id(), action));
             default -> new AllJobs.Outcome(0, 0, null);
         };
+    }
+
+    /**
+     * Wiederholt einzelne Unteraufträge einer Hintergrundgruppe (W5: der Kreispfeil hinter einer gescheiterten Stufe
+     * von „Wissensgraph erzeugen“): nur die aus {@code jobIds}, die zu dieser Gruppe gehören, gescheitert sind (nie
+     * vom Benutzer abgebrochene, Auflage W5) und sich fortsetzen lassen, über denselben Weg wie ▶ in der Auftragsverwaltung
+     * ({@link #performJobAction}, mit den Rechten des Aufrufers; ein fremder Teil hält dort wieder gelb an). Andere
+     * Teile der Gruppe bleiben, wie sie sind. Nie auf dem EDT.
+     */
+    public AllJobs.Outcome retryBackgroundParts(String groupId, java.util.Collection<String> jobIds) {
+        java.util.Set<String> wanted = java.util.Set.copyOf(jobIds);
+        List<JobStatus> parts = harvester.backgroundJobs().group(groupId)
+                .map(com.aresstack.spaceharvester.application.background.BackgroundGroup::parts).orElse(List.of());
+        return AllJobs.apply(parts.stream().filter(job -> wanted.contains(job.id()))
+                .filter(job -> job.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED)
+                .filter(job -> job.lifecycle().allows(JobAction.RESUME)).toList(),
+                job -> performJobAction(job.id(), JobAction.RESUME));
     }
 
     /**
