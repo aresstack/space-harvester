@@ -514,8 +514,10 @@ wird automatisch verwaltet.
     - Ruhen räumt ab (`BackgroundFill#rest`): Was beim Planer noch wartet, wird sofort zurückgezogen, nur im Speicher.
       Die Einträge des Space verlassen die Warteschlange in einem Commit auf dem Arbeiter der Füllung, nie unter der
       Sperre der Aufträge. Laufende Abrufe enden regulär und werden gezählt, rot mit Grund, wenn sie scheitern.
-    - Fortsetzen setzt denselben Teil fort, keine neue Gruppe: Die Füllung sucht sofort im Katalog nach Lücken seines
-      Space (`BackgroundFill#scanFor`), und der Teil endet erst, wenn sie dort nichts mehr findet.
+    - Fortsetzen setzt denselben Teil fort, keine neue Gruppe, auch nach Abbrechen: Die Füllung sucht sofort im
+      Katalog nach Lücken seines Space (`BackgroundFill#scanFor`), und der Teil endet erst, wenn sie dort nichts mehr
+      findet; ohne Space meldet sie gleich „leer“. Was nach dem Abbrechen noch endet, zählt für keinen späteren Teil.
+    - Die Sperre der Füllung gilt nur über ihre Karten im Speicher, nie über Zugriffe auf Warteschlange oder Cache.
     - Wird ein Teil gelöscht, von Hand oder nach der Aufbewahrungsfrist, folgt sein Space den übrigen Teilen. „Daten
       bereinigen“ leert die Warteschlange über die Füllung (`BackgroundFill#removeSource`), damit auch ihr Spiegel
       bereinigt wird. „Wartend“ zeigt bei beendeten und angehaltenen Teilen 0.

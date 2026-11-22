@@ -67,6 +67,11 @@ class FillJobsTest {
     }
 
     private BackgroundFill fill(int background) {
+        return fill(background, BackgroundFill.FillQueue.inMemory(), open);
+    }
+
+    /** Eine Füllung auf {@code queue}; Planer und Füllung schließt, wer {@code closing} schließt. */
+    private BackgroundFill fill(int background, BackgroundFill.FillQueue queue, List<AutoCloseable> closing) {
         AcquisitionScheduler scheduler = new AcquisitionScheduler((caller, key) -> {
             started.add(key.pageId());
             CountDownLatch gate = gates.get(key.pageId());
@@ -85,8 +90,8 @@ class FillJobsTest {
             loaded.add(key.pageId());
             gaps.remove(key.pageId());
         }, new AcquisitionScheduler.Limits(4, background, 4, 50), null, Duration.ZERO);
-        open.add(scheduler);
-        BackgroundFill fill = new BackgroundFill(scheduler, BackgroundFill.FillQueue.inMemory(),
+        closing.add(scheduler);
+        BackgroundFill fill = new BackgroundFill(scheduler, queue,
                 new BackgroundFill.Catalog() {
                     @Override
                     public List<SyncBaselineStore.SpaceRef> spaces() {
@@ -101,7 +106,7 @@ class FillJobsTest {
                         }
                     }
                 }, APP, sourceId -> true, new BackgroundFill.Timing(Duration.ZERO, Duration.ofHours(1), 1000), true);
-        open.add(fill);
+        closing.add(fill);
         return fill;
     }
 
@@ -155,9 +160,14 @@ class FillJobsTest {
         }
     }
 
-    /** Länger als die Ruhe nach einem Wecken ({@code BackgroundFill.SETTLE}): Eine Suche im Katalog wäre gelaufen. */
-    private static void longerThanASearch() throws InterruptedException {
-        TimeUnit.MILLISECONDS.sleep(1500);
+    /** Weckt die Füllung und wartet, bis sie danach im Katalog gesucht hat: Was sie fände, wäre jetzt übergeben. */
+    private static void searchedAgain(BackgroundFill fill) throws InterruptedException {
+        java.time.Instant before = fill.status().lastScan();
+        fill.wake();
+        eventually(() -> {
+            java.time.Instant now = fill.status().lastScan();
+            return now != null && (before == null || now.isAfter(before));
+        });
     }
 
     @Test
@@ -176,8 +186,10 @@ class FillJobsTest {
         assertThat(fillJobs.resting(DEV)).isTrue();
         // Nur der laufende Abruf bleibt eingetragen, damit sein Ende zählt.
         eventually(() -> fill.waiting(DEV) == 1);
-        fill.wake();
-        longerThanASearch();
+        // Seite 1 endet in der Pause und gibt ihren Platz frei; trotzdem beginnt nichts.
+        gates.get("1").countDown();
+        eventually(() -> loaded.contains("1") && fill.waiting(DEV) == 0);
+        searchedAgain(fill);
         assertThat(started).containsExactly("1");
         assertThat(background.parts(FillJobs.KIND)).hasSize(1);
 
@@ -219,8 +231,8 @@ class FillJobsTest {
         assertThat(restarted.resting(new BackgroundFill.Where("wiki", "OPS"))).isFalse();
         // Bis zum Abgleich lädt nichts, auch wenn die Füllung im Katalog sucht.
         gates.get("1").countDown();
-        fill.wake();
-        longerThanASearch();
+        eventually(() -> loaded.contains("1"));
+        searchedAgain(fill);
         assertThat(started).containsExactly("1");
         assertThat(background.parts(FillJobs.KIND)).hasSize(1);
 
@@ -250,6 +262,8 @@ class FillJobsTest {
         gaps.add("3");
         fill.wake();
         eventually(() -> loaded.contains("3"));
+        // Die bereinigte Seite wurde nicht neu angefordert.
+        assertThat(started).doesNotHaveDuplicates();
         eventually(() -> background.parts(FillJobs.KIND).size() == 2 && background.parts(FillJobs.KIND).stream()
                 .allMatch(part -> part.state() == JobState.COMPLETED));
         assertThat(fill.waiting(DEV)).isZero();
@@ -294,6 +308,116 @@ class FillJobsTest {
         JobStatus done = part(JobState.COMPLETED).orElseThrow();
         assertThat(done.progress().written()).isEqualTo(2);
         assertThat(done.progress().processed()).isEqualTo(2);
+    }
+
+    @Test
+    void resumingACancelledPartLoadsOnInTheSamePart() throws Exception {
+        gaps.addAll(List.of("1", "2"));
+        gate("1");
+        BackgroundFill fill = fill(1);
+        FillJobs fillJobs = fillJobs(fill);
+        fill.start();
+        eventually(() -> started.contains("1") && part(JobState.RUNNING).isPresent());
+        String groupId = part(JobState.RUNNING).orElseThrow().parameter(BackgroundJobs.GROUP);
+        background.cancel(groupId);
+        eventually(() -> part(JobState.CANCELLED).isPresent());
+        gates.get("1").countDown();
+        eventually(() -> loaded.contains("1"));
+
+        background.resume(groupId);
+
+        eventually(() -> loaded.contains("2"));
+        eventually(() -> part(JobState.COMPLETED).isPresent());
+        assertThat(background.parts(FillJobs.KIND)).hasSize(1);
+        assertThat(fillJobs.resting(DEV)).isFalse();
+    }
+
+    @Test
+    void aPageEndingAfterACancelIsNoPartOfTheNextPart() throws Exception {
+        // Abnahme #1087: early leckt nicht; die gescheiterte Seite 1 machte sonst den nächsten Teil rot.
+        gaps.addAll(List.of("1", "2"));
+        gate("1");
+        failing.add("1");
+        BackgroundFill fill = fill(1);
+        FillJobs fillJobs = fillJobs(fill);
+        fill.start();
+        eventually(() -> started.contains("1") && part(JobState.RUNNING).isPresent());
+        background.cancel(part(JobState.RUNNING).orElseThrow().parameter(BackgroundJobs.GROUP));
+        eventually(() -> part(JobState.CANCELLED).isPresent());
+        gates.get("1").countDown();
+        eventually(() -> fill.waiting(DEV) == 0);
+        failing.clear();
+        gaps.remove("1");
+
+        jobs.submit(JobType.SYNC, "wiki", "DEV", "app", JobTask.blocking(context -> {
+        }));
+
+        eventually(() -> part(JobState.COMPLETED).isPresent());
+        JobStatus next = part(JobState.COMPLETED).orElseThrow();
+        assertThat(next.progress().failed()).isZero();
+        assertThat(next.progress().written()).isEqualTo(1);
+        assertThat(fillJobs.resting(DEV)).isFalse();
+    }
+
+    @Test
+    void searchingForAPartWithoutASpaceReportsEmptyAndKeepsTheWorkerGoing() throws Exception {
+        BackgroundFill fill = fill(1);
+        Set<BackgroundFill.Where> idle = ConcurrentHashMap.newKeySet();
+        fill.observe(key -> Optional.of("DEV"), new BackgroundFill.Observer() {
+            @Override
+            public void idle(BackgroundFill.Where where) {
+                idle.add(where);
+            }
+        }, where -> false);
+        fill.start();
+        BackgroundFill.Where noSpace = new BackgroundFill.Where("wiki", null);
+
+        fill.scanFor(noSpace);
+
+        eventually(() -> idle.contains(noSpace));
+        gaps.add("1");
+        fill.wake();
+        eventually(() -> loaded.contains("1"));
+    }
+
+    @Test
+    void aPausedSpaceStillRestsAfterARestartAndItsQueueIsCleared() throws Exception {
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        List<AutoCloseable> first = new ArrayList<>();
+        gaps.addAll(List.of("1", "2"));
+        gate("1");
+        BackgroundFill before = fill(1, queue, first);
+        FillJobs beforeJobs = new FillJobs(background, jobs);
+        first.add(beforeJobs);
+        beforeJobs.attach(before, key -> Optional.of("DEV"));
+        before.start();
+        eventually(() -> started.contains("1") && part(JobState.RUNNING).isPresent());
+        String groupId = part(JobState.RUNNING).orElseThrow().parameter(BackgroundJobs.GROUP);
+        background.pause(groupId);
+        eventually(() -> part(JobState.PAUSED).isPresent());
+        gates.get("1").countDown();
+        eventually(() -> loaded.contains("1"));
+        for (AutoCloseable resource : first.reversed()) {
+            resource.close();
+        }
+        // Die dauerhafte Schlange hielt beim Beenden noch eine Seite des Space.
+        queue.add(List.of(new BackgroundFill.Gap(new PageKey("wiki", "2"), BackgroundFill.Kind.NOT_LOADED)));
+
+        BackgroundJobs restartedJobs = new BackgroundJobs(jobs, "app");
+        BackgroundFill after = fill(1, queue, open);
+        FillJobs afterJobs = new FillJobs(restartedJobs, jobs);
+        open.add(afterJobs);
+        afterJobs.attach(after, key -> Optional.of("DEV"));
+        after.start();
+
+        assertThat(afterJobs.resting(DEV)).isTrue();
+        eventually(() -> queue.size() == 0);
+        searchedAgain(after);
+        assertThat(started).containsExactly("1");
+
+        restartedJobs.resume(groupId);
+        eventually(() -> loaded.contains("2"));
+        eventually(() -> !afterJobs.resting(DEV));
     }
 
     @Test

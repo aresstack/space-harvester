@@ -66,6 +66,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private final Set<BackgroundFill.Where> paused = new HashSet<>();
     /** Ende des jüngsten abgebrochenen Teils je Space; unter {@link #monitor}. */
     private final Map<BackgroundFill.Where, Instant> cancelled = new HashMap<>();
+    /** Der zuletzt gemeldete Zustand jedes Teils, aus den Auftragsmeldungen geführt; unter {@link #monitor}. */
+    private final Map<String, JobStatus> known = new HashMap<>();
     /** Ende des jüngsten abgeschlossenen Abgleichs je Quelle und Space ({@code null}: ganze Quelle). */
     private final Map<BackgroundFill.Where, Instant> synced = new HashMap<>();
     private final Subscription parts;
@@ -181,19 +183,29 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
      */
     private void removed(JobStatus last) {
         BackgroundFill.Where where = where(last);
-        List<JobStatus> others = background.parts(KIND).stream()
-                .filter(part -> !part.id().equals(last.id()) && where.equals(where(part))).toList();
         boolean woke;
         synchronized (monitor) {
             boolean wasResting = restingLocked(where);
-            open.remove(where);
-            paused.remove(where);
-            stopping.remove(where);
-            cancelled.remove(where);
-            if (!live.containsKey(where)) {
+            known.remove(last.id());
+            // Aus den Meldungen geführt, ohne die Aufträge zu lesen (Abnahme #1087).
+            List<JobStatus> others = known.values().stream().filter(part -> where.equals(where(part))).toList();
+            boolean otherOpen = others.stream().anyMatch(part -> !part.state().terminal()
+                    && part.state() != JobState.PAUSED);
+            boolean otherPaused = others.stream().anyMatch(part -> part.state() == JobState.PAUSED);
+            if (!otherOpen && !live.containsKey(where)) {
+                open.remove(where);
+            }
+            if (!otherPaused) {
+                paused.remove(where);
+            }
+            if (!otherOpen && !otherPaused && !live.containsKey(where)) {
+                // Nur, wenn kein anderer Teil des Space offen, angehalten oder im Stoppen ist.
+                stopping.remove(where);
                 early.remove(where);
             }
-            others.forEach(this::track);
+            cancelled.remove(where);
+            others.stream().filter(part -> part.state() == JobState.CANCELLED && part.finishedAt() != null)
+                    .forEach(part -> cancelled.merge(where, part.finishedAt(), (a, b) -> a.isAfter(b) ? a : b));
             woke = wasResting && !restingLocked(where);
         }
         if (woke) {
@@ -209,6 +221,7 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private boolean track(JobStatus part) {
         BackgroundFill.Where where = where(part);
         boolean wasResting = restingLocked(where);
+        known.put(part.id(), part);
         switch (part.state()) {
             case QUEUED, RUNNING -> {
                 open.add(where);
@@ -228,6 +241,10 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                 Instant at = part.finishedAt();
                 if (at != null) {
                     cancelled.merge(where, at, (a, b) -> a.isAfter(b) ? a : b);
+                }
+                // Was beim Abbrechen noch endete, gehört keinem späteren Teil (Abnahme #1087).
+                if (!live.containsKey(where)) {
+                    early.remove(where);
                 }
             }
             default -> {
@@ -414,7 +431,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                 }
                 open.add(where);
                 stopping.remove(where);
-                woke = paused.remove(where);
+                // Selbst geräumt, nicht erst über die gebündelten Meldungen (Abnahme #1087): Der Space ruht nicht mehr.
+                woke = paused.remove(where) | cancelled.remove(where) != null;
                 tally = early.remove(where);
                 if (tally != null) {
                     mine.processed = tally.written + tally.failed;
@@ -454,7 +472,7 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                 finish(mine);
             } else {
                 count(mine, where, 0);
-                if (woke || current.waiting(where) == 0) {
+                if (part.resumed() || current.waiting(where) == 0) {
                     // Fortgesetzt (die Schlange des Space wurde beim Anhalten geräumt) oder dort wartet nichts: Der Teil
                     // setzt seine Arbeit fort, die Füllung sucht für ihn sofort im Katalog und meldet „leer“, wenn sie
                     // nichts (mehr) findet; keine neue Gruppe je Pause (Abnahme #1087).
