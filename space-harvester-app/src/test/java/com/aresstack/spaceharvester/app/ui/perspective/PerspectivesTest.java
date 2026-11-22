@@ -15,9 +15,9 @@ class PerspectivesTest {
     void theFirstPerspectiveIsCurrentAndSelectingNotifiesOnceInOrder() {
         List<String> events = new ArrayList<>();
         Perspectives perspectives = new Perspectives()
-                .add(new Perspective("a", "A", "", true, null, new JPanel(), null,
+                .add(new Perspective("a", "A", "", true, null, new JPanel(), null, null,
                         () -> events.add("a shown"), () -> events.add("a hidden")))
-                .add(new Perspective("b", "B", "", false, null, new JPanel(), null,
+                .add(new Perspective("b", "B", "", false, null, new JPanel(), null, null,
                         () -> events.add("b shown"), () -> events.add("b hidden")));
         perspectives.onChange(next -> events.add("change " + next.id()));
 
@@ -41,11 +41,16 @@ class PerspectivesTest {
     }
 
     @Test
-    void missionProtocolIsOnlyAPlaceholderWithoutNavigationOrDrawer() {
-        Perspective mission = Perspectives.missionProtocol();
+    void provingGroundAndMissionControlAreOnlyPlaceholdersWithoutNavigationOrDrawer() {
+        Perspective proving = Perspectives.provingGround();
+        assertThat(proving.ready()).isFalse();
+        assertThat(proving.navigation()).isNull();
+        assertThat(proving.drawer()).isNull();
+        assertThat(proving.title()).isEqualTo("Proving Ground");
+        Perspective mission = Perspectives.missionControl();
         assertThat(mission.ready()).isFalse();
         assertThat(mission.navigation()).isNull();
         assertThat(mission.drawer()).isNull();
-        assertThat(mission.title()).isEqualTo("Mission Protocol");
+        assertThat(mission.title()).isEqualTo("Mission Control");
     }
 }

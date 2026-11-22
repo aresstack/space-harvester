@@ -23,4 +23,23 @@ public interface TerminalView {
 
     /** Ob der Host gerade keine Eingabe annimmt (X-Wait). */
     boolean keyboardLocked();
+
+    /**
+     * Meldet jedes neue Bild vom Host (und jede eigene Änderung an der Anzeige). Der Aufruf kommt vom Terminal selbst,
+     * nicht aus einer Abfrage, und kann auf einem beliebigen Faden stattfinden.
+     */
+    void addScreenListener(Runnable listener);
+
+    void removeScreenListener(Runnable listener);
+
+    /**
+     * Hebt Bereiche des Bildes hervor, etwa die Felder, die der KI-Maskenassistent ausgefüllt hat (#1151), damit der
+     * Mensch sie vor dem Absenden prüft. Eine leere Liste nimmt die Hervorhebung weg.
+     */
+    default void highlight(java.util.List<Span> spans) {
+    }
+
+    /** Ein Bereich ab Pufferposition {@code start}, {@code length} Zellen lang. */
+    record Span(int start, int length) {
+    }
 }

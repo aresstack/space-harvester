@@ -1,7 +1,10 @@
 package com.aresstack.spaceharvester.deck.terminal.openterm;
 
+import com.aresstack.spaceharvester.deck.terminal.AidKey;
+import com.aresstack.spaceharvester.deck.terminal.TerminalKeyboard;
 import com.aresstack.spaceharvester.deck.terminal.TerminalModel;
 import com.aresstack.spaceharvester.deck.terminal.TerminalView;
+import com.ascert.open.ohio.Ohio;
 import com.ascert.open.term.core.Terminal;
 import com.ascert.open.term.gui.JTerminalScreen;
 import java.awt.Dimension;
@@ -25,18 +28,38 @@ import javax.swing.JToolBar;
  * Eingabe und Tabulator verarbeitet OpenTerm selbst. Die Rückmeldungen des Terminals ({@code status}) reicht sie an
  * die Verbindung weiter.
  */
-final class OpenTermScreen extends JTerminalScreen implements TerminalView {
+final class OpenTermScreen extends JTerminalScreen implements TerminalView, TerminalKeyboard {
 
     /** Zeilen der Statuszeile unter dem 3270-Bild. */
     static final int STATUS_ROWS = 2;
 
     private final transient Terminal terminal;
     private final TerminalModel model;
+    private final transient java.util.List<Runnable> screenListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Bereit = Tastatur frei UND das Bild danach fertig gezeichnet (Felder aufgebaut). */
+    private final transient java.util.concurrent.locks.ReentrantLock readyLock = new java.util.concurrent.locks.ReentrantLock();
+    private final transient java.util.concurrent.locks.Condition readyChanged = readyLock.newCondition();
+    private boolean ready;
+    private volatile boolean hostWrote;
+    private volatile long lastRefresh = System.nanoTime();
+    /** So lange ohne neues Zeichnen gilt ein Bild als fertig gelesen. */
+    private static final long SETTLE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(150);
     private final transient IntConsumer statusListener;
+    /** Von der KI ausgefüllte Felder, gelb umrandet bis zum Absenden oder Zurücknehmen (#1151). */
+    private transient volatile java.util.List<Span> highlighted = java.util.List.of();
 
     OpenTermScreen(Terminal terminal, TerminalModel model, IntConsumer statusListener) {
         super(terminal, hiddenToolbar());
         this.terminal = terminal;
+        // Erst ein fertiges Bild vom Host macht die Tastatur wirklich bereit: OpenTerm gibt die Tastatur schon beim
+        // Lesen des Kopfs frei, die Eingabefelder stehen aber erst am Ende (refresh). Vorher verwirft es Tasten still.
+        terminal.addKbdLockListener(changed -> {
+            if (changed.isKeyboardLocked()) {
+                setReady(false);
+            } else {
+                hostWrote = true; // nur ein Bild des Hosts gibt die Tastatur frei
+            }
+        });
         this.model = model;
         this.statusListener = statusListener;
         // OpenTerm füllt nur sein Bild, nicht die ganze Fläche: durchsichtig malt der Hintergrund (Sternenhimmel)
@@ -237,4 +260,177 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView {
     public boolean keyboardLocked() {
         return terminal.isKeyboardLocked();
     }
+
+    @Override
+    public boolean awaitUnlocked(java.time.Duration timeout) throws InterruptedException {
+        long remaining = timeout.toNanos();
+        readyLock.lock();
+        try {
+            while (true) {
+                if (ready && !terminal.isKeyboardLocked()) {
+                    // Das Bild muss auch zur Ruhe gekommen sein: Während OpenTerm einen Datenstrom liest, zeichnet es
+                    // zwischendurch (Schreibmarke), bevor die Felder stehen.
+                    long quiet = System.nanoTime() - lastRefresh;
+                    if (quiet >= SETTLE_NANOS) {
+                        return true;
+                    }
+                    if (remaining <= 0) {
+                        return false;
+                    }
+                    long wait = Math.min(remaining, SETTLE_NANOS - quiet);
+                    remaining -= wait;
+                    readyChanged.awaitNanos(wait);
+                    continue;
+                }
+                if (remaining <= 0) {
+                    return false;
+                }
+                remaining = readyChanged.awaitNanos(remaining);
+            }
+        } finally {
+            readyLock.unlock();
+        }
+    }
+
+    private void setReady(boolean value) {
+        readyLock.lock();
+        try {
+            ready = value;
+            readyChanged.signalAll();
+        } finally {
+            readyLock.unlock();
+        }
+    }
+
+    @Override
+    public void press(AidKey key) {
+        if (key == AidKey.CLEAR) {
+            // OpenTerm schickt CLEAR erst und löscht danach das Bild. Antwortet der Host schneller, löscht es sein neues
+            // Bild mit (dann stehen Felder ohne Zeichen da). Der Parser liest Antworten nur mit seinem eigenen Monitor;
+            // ihn halten wir, bis das Löschen durch ist. Kurz und ohne Warten auf den Host, daher hier synchronized.
+            synchronized (terminal.getStreamParser()) {
+                terminal.Fkey(aid(key));
+            }
+            return;
+        }
+        terminal.Fkey(aid(key));
+    }
+
+    /** Übersetzung in die OHIO-Tasten von OpenTerm (wie pfKeyToAid in MainframeMate). */
+    static Ohio.OHIO_AID aid(AidKey key) {
+        return switch (key) {
+            case ENTER -> Ohio.OHIO_AID.OHIO_AID_3270_ENTER;
+            case CLEAR -> Ohio.OHIO_AID.OHIO_AID_3270_CLEAR;
+            case PA1 -> Ohio.OHIO_AID.OHIO_AID_3270_PA1;
+            case PA2 -> Ohio.OHIO_AID.OHIO_AID_3270_PA2;
+            case PA3 -> Ohio.OHIO_AID.OHIO_AID_3270_PA3;
+            case SYSREQ -> Ohio.OHIO_AID.OHIO_AID_3270_SYSREQ;
+            default -> Ohio.OHIO_AID.valueOf("OHIO_AID_3270_PF" + key.pfNumber());
+        };
+    }
+
+    @Override
+    public void refresh() {
+        super.refresh();
+        if (screenListeners == null) {
+            return; // Aufruf aus dem Konstruktor der Oberklasse
+        }
+        lastRefresh = System.nanoTime();
+        if (hostWrote && !terminal.isKeyboardLocked()) {
+            setReady(true);
+        }
+        for (Runnable listener : screenListeners) {
+            listener.run();
+        }
+    }
+
+    @Override
+    public void addScreenListener(Runnable listener) {
+        screenListeners.add(listener);
+    }
+
+    @Override
+    public void removeScreenListener(Runnable listener) {
+        screenListeners.remove(listener);
+    }
+
+    @Override
+    public boolean firstInputField() {
+        short field = terminal.getNextUnprotectedField(0);
+        if (field < 0) {
+            return false;
+        }
+        terminal.setCursorPosition(field);
+        return true;
+    }
+
+    @Override
+    public boolean nextInputField() {
+        int cursor = terminal.getCursorPosition();
+        short first = terminal.getNextUnprotectedField(0);
+        short field = terminal.getNextUnprotectedField(cursor);
+        // Läuft die Suche zum ersten Feld zurück, gibt es kein weiteres (wie in MainframeMate geprüft).
+        if (field < 0 || field == first || field <= cursor - 1 && field == first) {
+            return false;
+        }
+        terminal.setCursorPosition(field);
+        return true;
+    }
+
+    @Override
+    public void type(char[] text) {
+        var input = terminal.getCharHandler();
+        try {
+            for (char c : text) {
+                input.type(c);
+            }
+        } catch (Exception protectedField) {
+            throw new IllegalStateException("Das Feld unter dem Cursor ist geschützt", protectedField);
+        } finally {
+            refresh();
+        }
+    }
+
+    @Override
+    public void highlight(java.util.List<Span> spans) {
+        highlighted = spans == null ? java.util.List.of() : java.util.List.copyOf(spans);
+        repaint();
+    }
+
+    @Override
+    protected void paintComponent(java.awt.Graphics g) {
+        super.paintComponent(g);
+        java.util.List<Span> spans = highlighted;
+        int columns = terminal.getCols();
+        int rows = terminal.getRows();
+        if (spans.isEmpty() || columns <= 0 || rows <= 0 || getFont() == null) {
+            return;
+        }
+        FontMetrics metrics = getFontMetrics(getFont());
+        int width = metrics.charWidth('M');
+        int height = metrics.getHeight();
+        java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+        g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setStroke(new java.awt.BasicStroke(2f));
+        g2.setColor(ASSIST);
+        int cells = rows * columns;
+        for (Span span : spans) {
+            // Je Zeile ein Rahmen; ein Feld kann über das Zeilenende laufen.
+            int position = span.start();
+            int left = span.length();
+            while (left > 0) {
+                int row = (position % cells) / columns;
+                int column = position % columns;
+                int run = Math.min(left, columns - column);
+                g2.drawRoundRect(MARGIN_X + column * width - 1, MARGIN_Y + row * height, run * width + 2,
+                        height, 6, 6);
+                left -= run;
+                position += run;
+            }
+        }
+        g2.dispose();
+    }
+
+    /** Gelb wie die Griffe der App: Hier hat die KI etwas vorbereitet. */
+    private static final java.awt.Color ASSIST = new java.awt.Color(0xF2, 0xC2, 0x1B);
 }

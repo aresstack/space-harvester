@@ -52,7 +52,8 @@ class CommandDeckTest {
     void aSessionOpenedFromTheFormShowsTheHostScreen() throws Exception {
         try (FakeTn3270Host host = new FakeTn3270Host(List.of(
                 new FakeTn3270Host.Line(1, 2, "TESTHOST BEREIT", false),
-                new FakeTn3270Host.Line(4, 2, "", true)), "Cp273")) {
+                new FakeTn3270Host.Line(4, 2, "", true),
+                new FakeTn3270Host.Line(23, 1, "F3=Ende  F8=Vor  F15=Mehr", false)), "Cp273")) {
             SwingUtilities.invokeAndWait(() -> {
                 deck = new CommandDeck();
                 ConnectForm form = deck.terminal().form();
@@ -71,10 +72,33 @@ class CommandDeckTest {
                 Component screen = session.view(JComponent.class).orElseThrow();
                 assertThat(SwingUtilities.isDescendingFrom(screen, deck.terminal())).isTrue();
                 assertThat(deck.terminal().statusText()).contains("127.0.0.1").contains("Verbunden");
-                // Ein anderer Bereich trennt nichts.
-                deck.show(DeckArea.FTP);
             });
+            // Die PF-Leiste liest die Belegung aus dem Bild; F13–F24 erscheinen, weil F15 belegt ist.
+            waitFor(() -> deck.terminal().functionKeys().legend().containsKey(3), until);
+            SwingUtilities.invokeAndWait(() -> {
+                var keys = deck.terminal().functionKeys();
+                assertThat(keys.isVisible()).isTrue();
+                assertThat(keys.legend()).containsEntry(3, "Ende").containsEntry(8, "Vor").containsEntry(15, "Mehr");
+                assertThat(keys.key(3).getText()).isEqualTo("F3-Ende");
+                assertThat(keys.key(5).getText()).isEqualTo("F5");
+                assertThat(keys.key(24)).isNotNull();
+                keys.key(3).doClick();
+            });
+            waitFor(() -> !host.aids().isEmpty(), until);
+            assertThat(host.aids()).containsExactly(0xF3);
+            SwingUtilities.invokeAndWait(() -> deck.show(DeckArea.FTP)); // ein anderer Bereich trennt nichts
             assertThat(session.state()).isEqualTo(SessionState.CONNECTED);
+        }
+    }
+
+    private static void waitFor(java.util.function.BooleanSupplier condition, long until) throws Exception {
+        while (System.nanoTime() < until) {
+            boolean[] done = new boolean[1];
+            SwingUtilities.invokeAndWait(() -> done[0] = condition.getAsBoolean());
+            if (done[0]) {
+                return;
+            }
+            Thread.sleep(50);
         }
     }
 }

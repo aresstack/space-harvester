@@ -53,11 +53,20 @@ public final class HttpModelDownload implements ParserModelInstaller.Download,
 
     /** Baut den Client erst beim Laden, damit reine Statusabfragen nichts aufbauen. */
     private HttpClient client() {
+        return routed(proxy, tls).followRedirects(HttpClient.Redirect.NORMAL).connectTimeout(CONNECT_TIMEOUT).build();
+    }
+
+    /**
+     * Ein {@link HttpClient.Builder} mit dem Netzweg der App: Proxy-Regel je Ziel ({@link ProxyRoutes}, auch PAC; ohne
+     * gültige Regel nie direkt), Anmeldung am Proxy und die TLS-Vertrauensregel. Weiterleitungen und Zeitlimits setzt
+     * der Aufrufer. Auch für das Command Deck (BetaView), damit es denselben Weg nimmt wie die Quellen.
+     *
+     * @param proxy Proxy-Einstellungen samt Passwort aus Tresor oder Sitzung, {@code null} für keinen Proxy
+     * @param tls   Vertrauensregel der App
+     */
+    public static HttpClient.Builder routed(ProxySettings proxy, TrustSettings tls) {
         ProxyRoutes routes = ProxyRoutes.from(proxy == null ? ProxySettings.disabled() : proxy);
-        HttpClient.Builder builder = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .connectTimeout(CONNECT_TIMEOUT)
-                .proxy(new RouteSelector(routes));
+        HttpClient.Builder builder = HttpClient.newBuilder().proxy(new RouteSelector(routes));
         if (proxy != null && proxy.authentication() != null && proxy.authentication().password() != null) {
             com.aresstack.spaceharvester.source.network.ProxyAuthenticator.allowBasicTunneling();
             String user = proxy.authentication().username();
@@ -77,7 +86,7 @@ public final class HttpModelDownload implements ParserModelInstaller.Download,
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("TLS nicht einrichtbar", e);
         }
-        return builder.build();
+        return builder;
     }
 
     /** Für Hugging Face: jede Antwort samt Status, ab {@code rangeFrom} zum Fortsetzen eines Downloads. */

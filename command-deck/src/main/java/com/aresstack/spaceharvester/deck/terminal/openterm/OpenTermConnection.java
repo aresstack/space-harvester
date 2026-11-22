@@ -21,6 +21,7 @@ final class OpenTermConnection implements TerminalConnection {
     private final Listener listener;
     private final AtomicReference<OpenTermScreen> screen = new AtomicReference<>();
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicReference<OpenTermMask> mask = new AtomicReference<>();
 
     OpenTermConnection(Terminal terminal, TerminalProfile profile, Listener listener) {
         this.terminal = terminal;
@@ -70,10 +71,29 @@ final class OpenTermConnection implements TerminalConnection {
     @Override
     public <T> Optional<T> view(Class<T> type) {
         // Die Anzeige ist eine Swing-Komponente und zugleich die TerminalView.
+        // Der Maskenassistent (#1151) bekommt nur die Maske, nie die Anzeige mit ihren Host-Tasten.
+        if (type == com.aresstack.spaceharvester.deck.terminal.TerminalMask.class) {
+            return Optional.of(type.cast(mask()));
+        }
         if (type.isAssignableFrom(OpenTermScreen.class)) {
             return Optional.of(type.cast(screen()));
         }
         return Optional.empty();
+    }
+
+    /** Die Maske für den KI-Maskenassistenten; ohne Host-Tasten. */
+    OpenTermMask mask() {
+        OpenTermMask current = mask.get();
+        if (current == null) {
+            mask.compareAndSet(null, new OpenTermMask(terminal, () -> {
+                OpenTermScreen view = screen.get();
+                if (view != null) {
+                    view.refresh();
+                }
+            }));
+            current = mask.get();
+        }
+        return current;
     }
 
     /** Die Darstellung; einmal angelegt, auf dem EDT. */

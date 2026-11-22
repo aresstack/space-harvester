@@ -443,6 +443,34 @@ Core selbst.
 - Eine Seite, die nicht im Bestand liegt, holt der Core beim Öffnen bei der Quelle (nach Rechteprüfung an den
   Live-Kopfdaten), legt sie im Bestand ab und liefert sie aus.
 
+## Command Deck: KI-Maskenassistent im Terminal (#1151)
+
+Der eine Chat in der rechten Seitenleiste bleibt in jeder Perspektive derselbe; nur die Werkzeuge kommen je Frage
+aus der aktiven Perspektive (`ChatPanel.ToolScope`, `ChatTurn.withToolset`). Im Command Deck bekommt das Modell die
+drei Werkzeuge des Maskenassistenten für die gerade gewählte TN3270-Sitzung (`TerminalChatTools`):
+
+| Werkzeug | Wirkung |
+|---|---|
+| `maske_lesen` | Bildschirmzeilen, Eingabefelder (Nummer, Position, Länge, Wert, vermutete Beschriftung), Schreibmarke, Revision. Verdeckte und als Kennwort erkannte Felder sind geschwärzt. |
+| `felder_ausfuellen` | Füllt ungeschützte Felder lokal im Emulator (wie MainframeMate tippt: Schreibmarke ans Feld, `InputCharHandler`), alles oder nichts. |
+| `cursor_bewegen` | Schreibmarke lokal: Tab, Backtab, neue Zeile, Anfang, Feld n. |
+
+**Abschicken kann die KI nicht.** ENTER, PF, PA, CLEAR und SysReq drückt nur der Mensch. Erzwungen im Code, nicht
+im Prompt: Der Anwendungsfall `MaskAssistant` (Modul `command-deck`) spricht nur mit dem Port `TerminalMask`, der
+keine Host-Taste kennt; der Adapter `OpenTermMask` ist getrennt von der Anzeige, die als `TerminalKeyboard` Tasten
+drückt. `MaskSafetyArchitectureTest` prüft das (keine Abhängigkeit zu `AidKey`/`TerminalKeyboard`, kein Aufruf von
+`Terminal.Fkey`). Weitere Grenzen: nur verbundene Sitzung, freie Tastatur und die zuletzt gelesene Maske (Revision
+aus Feldaufbau und geschützten Texten – jedes neue Bild vom Host macht sie ungültig); nie länger als das Feld; in
+numerische Felder nur Ziffern; hat der Mensch ein Feld seit dem Lesen geändert, gewinnt er. Wird inzwischen eine
+andere Sitzung gewählt, lehnen die Werkzeuge ab.
+
+Im Terminal sind die von der KI ausgefüllten Felder gelb umrandet; links neben den Aktionen steht „KI hat … Felder
+vorbereitet – prüfen, dann selbst abschicken“ und „KI-Eingaben zurücknehmen“ (setzt nur Felder zurück, die noch den
+Wert der KI haben). Nach dem Abschicken durch den Menschen verschwinden Rahmen und Hinweis mit dem neuen Bild.
+
+Echttest gegen Ollama: `./gradlew :space-harvester-app:test --tests "*TerminalMaskLiveTest"
+-PchatLiveOllama=http://localhost:11434 -PchatLiveModel=gemma4:12b`.
+
 ## Rückverfolgbarkeit REST → Anwendungsfall → App → Test
 
 | REST (Dienst) | Anwendungsfall (Core) | App-Aktion | Test |

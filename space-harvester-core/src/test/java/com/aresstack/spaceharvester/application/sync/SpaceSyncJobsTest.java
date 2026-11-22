@@ -166,6 +166,22 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void aCatchUpStartedWithTheWholeSourceCarriesItsGroupAlsoWhenRunAgain() {
+        // Angelo 22.11.2026: Die Auftragsliste zeigt die Abgleiche einer ganzen Quelle unter einer Zeile.
+        JobStatus accepted = syncs.catchUp("wiki", "DOC", "client:a", null, SyncMode.SYNC_CACHE,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.MANUAL, "sammlung-1");
+        runQueued();
+
+        assertThat(accepted.parameter(SpaceSyncJobs.GROUP)).isEqualTo("sammlung-1");
+        SpaceSyncJobs.SyncJob again = syncs.forceRefresh(accepted.id(), "client:a");
+        assertThat(again.status().parameter(SpaceSyncJobs.GROUP)).isEqualTo("sammlung-1");
+        runQueued();
+        assertThat(syncs.catchUp("wiki", "DOC", "client:a", null, SyncMode.SYNC_CACHE,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.MANUAL, null)
+                .parameter(SpaceSyncJobs.GROUP)).as("ohne Sammlung").isNull();
+    }
+
+    @Test
     void catchingUpWithoutChangeSearchFallsBackToAReconcileWithoutFirstLoad() {
         JobStatus accepted = syncs.catchUp("wiki", "DOC", "client:a", null);
         runQueued();

@@ -20,6 +20,9 @@ public final class TerminalSession {
     private TerminalConnection connection;
     private SessionState state = SessionState.CONNECTING;
     private String failure;
+    private String note;
+    /** Der KI-Maskenassistent dieser Sitzung (#1151); er sieht nur den Port {@link TerminalMask}. */
+    private final MaskAssistant assistant = new MaskAssistant(this, () -> view(TerminalMask.class));
 
     TerminalSession(String id, TerminalProfile profile) {
         this.id = Objects.requireNonNull(id, "id");
@@ -53,6 +56,27 @@ public final class TerminalSession {
         }
     }
 
+    /** Ein Hinweis zur laufenden Sitzung, etwa das Ergebnis der automatischen Anmeldung. */
+    public Optional<String> note() {
+        lock.lock();
+        try {
+            return Optional.ofNullable(note);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Setzt den Hinweis und meldet ihn den Beobachtern. */
+    void note(String text) {
+        lock.lock();
+        try {
+            note = text;
+        } finally {
+            lock.unlock();
+        }
+        observers.forEach(observer -> observer.accept(this));
+    }
+
     /** Die Darstellung des Adapters, sobald die Verbindung angelegt ist. */
     public <T> Optional<T> view(Class<T> type) {
         TerminalConnection current;
@@ -63,6 +87,14 @@ public final class TerminalSession {
             lock.unlock();
         }
         return current == null ? Optional.empty() : current.view(type);
+    }
+
+    /**
+     * Der KI-Maskenassistent dieser Sitzung: Maske lesen, Felder lokal ausfüllen, Schreibmarke lokal bewegen. Er
+     * kann nichts an den Host schicken (#1151).
+     */
+    public MaskAssistant assistant() {
+        return assistant;
     }
 
     /** Meldet künftige Zustandswechsel. */

@@ -179,7 +179,10 @@ public final class MainWindow implements AppContext.Navigator {
     /** Die Perspektiven des Fensters (#1141); entsteht mit {@link #content}. */
     private Perspectives perspectives;
     private PerspectiveSwitcher switcher;
+    private AvengerEasterEgg avenger;
     /** Navigation der gewählten Perspektive rechts neben dem Titel. */
+    /** Bedienelemente der Perspektive oben rechts vor Chat und Aufträgen (Perspective#tools, #1142). */
+    private final JPanel toolsSlot = new JPanel(new BorderLayout());
     private final JPanel navigationSlot = new JPanel(new BorderLayout()) {
         @Override
         public Dimension getPreferredSize() {
@@ -197,8 +200,7 @@ public final class MainWindow implements AppContext.Navigator {
     /** Ob die linke Leiste des Space Harvesters zu war, als er verlassen wurde. */
     private boolean harvesterDrawerCollapsed;
     /** Das Command Deck (#1142); seine Sitzungen leben so lange wie das Fenster, über jeden Wechsel hinweg. */
-    private final com.aresstack.spaceharvester.app.ui.deck.CommandDeck commandDeck =
-            new com.aresstack.spaceharvester.app.ui.deck.CommandDeck();
+    private final com.aresstack.spaceharvester.app.ui.deck.CommandDeck commandDeck;
     private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
@@ -209,6 +211,14 @@ public final class MainWindow implements AppContext.Navigator {
     public MainWindow(AppContext context) {
         this.context = context;
         context.setNavigator(this);
+        // Server des Command Deck aus KeePass, über dieselbe Kopplung wie die Wissensquellen; BetaView zusätzlich
+        // über den Netzweg der App (Proxy, Zertifikate).
+        commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
+                new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
+                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
+        // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
+        commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
+                : context.settings().localFiles().roots());
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
@@ -306,7 +316,7 @@ public final class MainWindow implements AppContext.Navigator {
         frame.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent event) {
-                if (confirmClose(frame)) {
+                if (confirmUnsaved(frame) && confirmClose(frame)) {
                     WindowPlacement.remember(frame);
                     commandDeck.shutdown();
                     frame.dispose();
@@ -394,11 +404,17 @@ public final class MainWindow implements AppContext.Navigator {
         west.setOpaque(false);
         perspectives = new Perspectives();
         switcher = new PerspectiveSwitcher(ApplicationIcons.titleLogo(), perspectives);
+        // Avenger-Easter-Egg (#1141): vorläufiger Auslöser fünf Klicks auf das Logo; Ablauf und Auslöser sind getrennt.
+        avenger = new AvengerEasterEgg(switcher);
+        com.aresstack.spaceharvester.app.ui.controls.ClickBurst.install(switcher.logo(), 5,
+                java.time.Duration.ofMillis(700), avenger::reveal);
         west.add(switcher, BorderLayout.CENTER);
         navigationSlot.setOpaque(false);
         west.add(navigationSlot, BorderLayout.EAST);
         JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
         east.setOpaque(false);
+        toolsSlot.setOpaque(false);
+        east.add(toolsSlot);
         east.add(trailing);
         east.add(administration);
         east.add(Dialogs.closeButton(new ComicWindowHoldCloseButton(Comic.PALETTE, minimize, close, 24)));
@@ -494,9 +510,10 @@ public final class MainWindow implements AppContext.Navigator {
         stage.setBackground(Comic.SURFACE);
         stage.setMinimumSize(new Dimension(320, 0));
         perspectives.add(new Perspective(Perspectives.HARVESTER, "Space Harvester",
-                "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null));
+                "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null, null));
         perspectives.add(commandDeck.perspective());
-        perspectives.add(Perspectives.missionProtocol());
+        perspectives.add(Perspectives.provingGround());
+        perspectives.add(Perspectives.missionControl());
         for (Perspective perspective : perspectives.all()) {
             stage.add(perspective.workspace(), perspective.id());
         }
@@ -839,8 +856,16 @@ public final class MainWindow implements AppContext.Navigator {
         }
         navigationSlot.revalidate();
         navigationSlot.repaint();
+        toolsSlot.removeAll();
+        if (next.tools() != null) {
+            toolsSlot.add(next.tools(), BorderLayout.CENTER);
+        }
+        toolsSlot.revalidate();
+        toolsSlot.repaint();
         // Die Suchleiste gehört zum Space Harvester; für die anderen Perspektiven ist keine Suche festgelegt.
         searchSlot.setVisible(harvester);
+        // Ein Chat für alle Perspektiven; die Werkzeuge kommen je Frage aus der aktiven Perspektive (#1151).
+        if (chatSidebar != null) chatSidebar.chat().toolScope(Perspectives.COMMAND_DECK.equals(next.id()) ? commandDeck::chatScope : null);
         stageCards.show(stage, next.id());
         if (!harvester) {
             // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.
@@ -872,6 +897,10 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /** Der Umschalter im Titel (für Tests). */
+    AvengerEasterEgg avenger() {
+        return avenger;
+    }
+
     PerspectiveSwitcher perspectiveSwitcher() {
         return switcher;
     }
@@ -1322,6 +1351,19 @@ public final class MainWindow implements AppContext.Navigator {
 
     ComposerButton statusClose() {
         return statusClose;
+    }
+
+    /** Fragt nach, wenn Dokumente im Editor des Command Deck ungespeicherte Änderungen haben. */
+    private boolean confirmUnsaved(JFrame frame) {
+        java.util.List<String> unsaved = commandDeck.unsavedDocuments();
+        if (unsaved.isEmpty()) {
+            return true;
+        }
+        String names = String.join(", ", unsaved.subList(0, Math.min(unsaved.size(), 5)))
+                + (unsaved.size() > 5 ? " …" : "");
+        return Dialogs.confirm(frame, "Ungespeicherte Änderungen", (unsaved.size() == 1
+                ? "„" + names + "“ hat" : unsaved.size() + " Dokumente (" + names + ") haben")
+                + " ungespeicherte Änderungen. Space Harvester wirklich beenden und die Änderungen verwerfen?");
     }
 
     private boolean confirmClose(JFrame frame) {

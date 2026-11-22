@@ -999,6 +999,32 @@ class WorkspaceTest {
     }
 
     /**
+     * Angelo 22.11.2026: Der Abgleich einer ganzen Quelle trägt seine Sammlung; die Zeile „Abgleich der Quelle“ wirkt
+     * auf alle ihre Abgleiche, etwa beim Löschen.
+     */
+    @Test
+    void theSyncsOfAWholeSourceAreHandledAsOneGroup() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+
+        JobStatus part = workspace.catchUp("handbuch", space, SyncMode.SYNC_CACHE, "sammlung-1");
+        assertThat(part.parameter(SpaceSyncJobs.GROUP)).isEqualTo("sammlung-1");
+        await(workspace, part);
+        // Codex zu #1162: „Neu erzwingen“ auf der Zeile erreicht die Teile, statt still nichts zu tun.
+        AllJobs.Outcome forced = workspace.performSyncGroupAction("sammlung-1",
+                com.aresstack.spaceharvester.application.jobs.JobAction.FORCE_REFRESH);
+        assertThat(forced.changed()).isEqualTo(1);
+        await(workspace, workspace.job(part.id()));
+
+        AllJobs.Outcome outcome = workspace.performSyncGroupAction("sammlung-1",
+                com.aresstack.spaceharvester.application.jobs.JobAction.DELETE);
+        assertThat(outcome.changed()).isEqualTo(1);
+        assertThat(outcome.failed()).isZero();
+        assertThat(workspace.jobs()).extracting(JobStatus::id).doesNotContain(part.id());
+    }
+
+    /**
      * AT zu #1059: Die Teile der Aussagenanalyse gehören dem Core. Wer lesen, aber nicht abgleichen darf, sieht sie in
      * der Auftragsliste nicht ({@code sync}); das Ergebnis im Reiter „Aussagen“ liest er trotzdem, und verfolgen und
      * abbrechen geht ohne Fehler.

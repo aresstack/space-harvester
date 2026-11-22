@@ -203,6 +203,12 @@ public final class ActivitiesView implements View {
     static final int BACKGROUND_STRIPE = 4;
     /** Kennung der Zeile einer Hintergrundgruppe, die kein eigener Auftrag ist. */
     static final String GROUP_PREFIX = "background-group:";
+    /**
+     * Zeile „Abgleich der Quelle“ (Angelo 22.11.2026): je Sammlung zusammen gestarteter Abgleiche
+     * ({@link SpaceSyncJobs#GROUP}) eine aufklappbare Zeile über ihren Spaces, vom ersten Space an. Wie eine
+     * Hintergrundgruppe kein gespeicherter Auftrag.
+     */
+    static final String SYNC_GROUP_PREFIX = "sync-group:";
     private static final String TAB_PREFERENCE = "activities.tab";
     /** Hilfetext hinter dem ?-Knopf der Auftragsliste. */
     static final String HELP = "Abgleiche startest du unter Wissensquellen verwalten, Downloads im Explorer links "
@@ -817,7 +823,7 @@ public final class ActivitiesView implements View {
             // Markieren der Zeile fest, damit deren Auswahlmeldung keinen weiteren Abruf auslöst.
             boolean shown = java.util.Objects.equals(id, selectedId);
             if (shown) {
-                detail = id == null ? null : id.startsWith(GROUP_PREFIX) ? groupRow(id) : data[1];
+                detail = id == null ? null : synthetic(id) ? groupRow(id) : data[1];
                 phase = (String) data[2];
                 @SuppressWarnings("unchecked")
                 List<Note> notes = (List<Note>) data[3];
@@ -1265,7 +1271,7 @@ public final class ActivitiesView implements View {
     private void updateButtons() {
         Optional<JobStatus> current = currentStatus();
         boolean running = current.map(s -> !s.state().terminal()).orElse(false);
-        again.setVisible(current.map(s -> s.type() == JobType.SYNC).orElse(false));
+        again.setVisible(current.map(s -> s.type() == JobType.SYNC && !groupRow(s)).orElse(false));
         again.setEnabled(!running);
     }
 
@@ -1615,7 +1621,7 @@ public final class ActivitiesView implements View {
         switch (action) {
             case CANCEL -> {
                 if (groupRow(job)) {
-                    if (!Dialogs.confirm(root, "Hintergrundauftrag abbrechen?", groupName(job)
+                    if (!Dialogs.confirm(root, groupKind(job) + " abbrechen?", groupName(job)
                             + " wirklich abbrechen? Bereits Geladenes bleibt erhalten.")) {
                         return;
                     }
@@ -1626,7 +1632,7 @@ public final class ActivitiesView implements View {
             }
             case DELETE -> {
                 if (groupRow(job)) {
-                    if (!Dialogs.confirm(root, "Hintergrundauftrag löschen?", groupName(job) + " wirklich löschen?"
+                    if (!Dialogs.confirm(root, groupKind(job) + " löschen?", groupName(job) + " wirklich löschen?"
                             + (job.state().terminal() ? "" : " Laufende Teilaufträge werden dafür abgebrochen.")
                             + " Die Teilaufträge und ihre Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT)) {
                         return;
@@ -1640,8 +1646,10 @@ public final class ActivitiesView implements View {
             default -> { }
         }
         if (groupRow(job)) {
-            String groupId = job.id().substring(GROUP_PREFIX.length());
-            Background.run(() -> runtime.workspace().performBackgroundGroupAction(groupId, action), outcome -> {
+            boolean sync = syncGroupRow(job);
+            String groupId = job.id().substring((sync ? SYNC_GROUP_PREFIX : GROUP_PREFIX).length());
+            Background.run(() -> sync ? runtime.workspace().performSyncGroupAction(groupId, action)
+                    : runtime.workspace().performBackgroundGroupAction(groupId, action), outcome -> {
                 if (action == JobAction.DELETE && job.id().equals(selectedId)) {
                     selectedId = null;
                     detail = null;
@@ -1761,29 +1769,90 @@ public final class ActivitiesView implements View {
     static List<JobStatus> visible(List<JobStatus> jobs, boolean background) {
         List<JobStatus> own = tabJobs(jobs, background);
         if (!background) {
-            return own;
+            return withSyncGroups(own);
         }
         List<JobStatus> result = new ArrayList<>(groupRows(own));
         result.addAll(own);
         return result;
     }
 
-    /** Ob die Zeile eine Hintergrundgruppe ist, kein eigener Auftrag. */
+    /** Ob die Zeile eine Gruppe ist (Hintergrund oder „Abgleich der Quelle“), kein eigener Auftrag. */
     static boolean groupRow(JobStatus job) {
-        return job.id().startsWith(GROUP_PREFIX);
+        return synthetic(job.id());
+    }
+
+    /** Ob die Zeile „Abgleich der Quelle“ ist ({@value #SYNC_GROUP_PREFIX}…). */
+    static boolean syncGroupRow(JobStatus job) {
+        return job.id().startsWith(SYNC_GROUP_PREFIX);
+    }
+
+    /** Ob die ID zu einer Gruppenzeile gehört; sie geht nie an den Core. */
+    static boolean synthetic(String id) {
+        return id.startsWith(GROUP_PREFIX) || id.startsWith(SYNC_GROUP_PREFIX);
+    }
+
+    /** Wie Rückfragen eine Gruppe nennen. */
+    private static String groupKind(JobStatus row) {
+        return syncGroupRow(row) ? "Abgleich" : "Hintergrundauftrag";
     }
 
     /** „Nachbarseiten laden“ mit 3 Teilaufträgen: Name und Größe einer Gruppe für Rückfragen. */
     private String groupName(JobStatus row) {
-        String groupId = row.id().substring(GROUP_PREFIX.length());
-        long parts = lastJobs.stream().filter(job -> groupId.equals(job.parameter(BackgroundJobs.GROUP))).count();
+        boolean sync = syncGroupRow(row);
+        String groupId = row.id().substring((sync ? SYNC_GROUP_PREFIX : GROUP_PREFIX).length());
+        String key = sync ? SpaceSyncJobs.GROUP : BackgroundJobs.GROUP;
+        long parts = lastJobs.stream().filter(job -> groupId.equals(job.parameter(key))).count();
         return "„" + Texts.type(row) + "“ mit " + Texts.count(parts, "Teilauftrag", "Teilaufträgen");
     }
 
     /** Die Gruppenzeile aus der zuletzt gelesenen Liste, oder {@code null}. */
     private JobStatus groupRow(String id) {
-        return groupRows(tabJobs(lastJobs, true)).stream().filter(row -> row.id().equals(id)).findFirst()
-                .orElse(null);
+        List<JobStatus> rows = new ArrayList<>(groupRows(tabJobs(lastJobs, true)));
+        rows.addAll(syncGroupRows(tabJobs(lastJobs, false)));
+        return rows.stream().filter(row -> row.id().equals(id)).findFirst().orElse(null);
+    }
+
+    /**
+     * Die Aufträge mit je einer Zeile „Abgleich der Quelle“ vor dem ersten Abgleich ihrer Sammlung
+     * ({@link SpaceSyncJobs#GROUP}). Die Zeile steht da, sobald der erste Space gestartet ist, nicht erst, wenn alle
+     * laufen; ihre Abgleiche sortiert {@link #grouped} darunter.
+     */
+    static List<JobStatus> withSyncGroups(List<JobStatus> jobs) {
+        Map<String, JobStatus> rows = new HashMap<>();
+        for (JobStatus row : syncGroupRows(jobs)) {
+            rows.put(row.id(), row);
+        }
+        if (rows.isEmpty()) {
+            return jobs;
+        }
+        List<JobStatus> result = new ArrayList<>(jobs.size() + rows.size());
+        java.util.Set<String> placed = new java.util.HashSet<>();
+        for (JobStatus job : jobs) {
+            String group = job.type() == JobType.SYNC ? job.parameter(SpaceSyncJobs.GROUP) : null;
+            if (group != null && placed.add(SYNC_GROUP_PREFIX + group)) {
+                result.add(rows.get(SYNC_GROUP_PREFIX + group));
+            }
+            result.add(job);
+        }
+        return result;
+    }
+
+    /**
+     * Je Sammlung zusammen gestarteter Abgleiche eine Zeile, gezählt wie eine Hintergrundgruppe ({@link #groupStatus});
+     * auch für einen einzigen Space, der schon läuft, während die übrigen noch starten.
+     */
+    static List<JobStatus> syncGroupRows(List<JobStatus> jobs) {
+        Map<String, List<JobStatus>> byGroup = new java.util.LinkedHashMap<>();
+        for (JobStatus job : jobs) {
+            String group = job.type() == JobType.SYNC && !groupRow(job) ? job.parameter(SpaceSyncJobs.GROUP) : null;
+            if (group != null) {
+                byGroup.computeIfAbsent(group, key -> new ArrayList<>()).add(job);
+            }
+        }
+        List<JobStatus> rows = new ArrayList<>();
+        byGroup.forEach((group, parts) -> rows.add(groupStatus(SYNC_GROUP_PREFIX + group, JobType.SYNC,
+                new String[] {SpaceSyncJobs.GROUP, JobLifecycleState.SYNC_MODE}, parts)));
+        return rows;
     }
 
     /**
@@ -1800,12 +1869,13 @@ public final class ActivitiesView implements View {
             }
         }
         List<JobStatus> rows = new ArrayList<>();
-        byGroup.forEach((group, parts) -> rows.add(groupStatus(group, parts)));
+        byGroup.forEach((group, parts) -> rows.add(groupStatus(GROUP_PREFIX + group, JobType.BACKGROUND,
+                new String[] {BackgroundJobs.GROUP, BackgroundJobs.TITLE, BackgroundJobs.KIND}, parts)));
         rows.sort(Comparator.comparing(JobStatus::createdAt).reversed());
         return rows;
     }
 
-    private static JobStatus groupStatus(String group, List<JobStatus> parts) {
+    private static JobStatus groupStatus(String id, JobType type, String[] keys, List<JobStatus> parts) {
         JobState state = JobState.COMPLETED;
         for (JobState candidate : new JobState[] {JobState.RUNNING, JobState.QUEUED, JobState.PAUSED,
                 JobState.FAILED, JobState.CANCELLED}) {
@@ -1832,7 +1902,7 @@ public final class ActivitiesView implements View {
         Instant finished = state.terminal() ? parts.stream().map(JobStatus::finishedAt).filter(Objects::nonNull)
                 .max(Comparator.naturalOrder()).orElse(null) : null;
         Map<String, String> parameters = new HashMap<>();
-        for (String key : new String[] {BackgroundJobs.GROUP, BackgroundJobs.TITLE, BackgroundJobs.KIND}) {
+        for (String key : keys) {
             String value = first.parameter(key);
             if (value != null) {
                 parameters.put(key, value);
@@ -1851,7 +1921,7 @@ public final class ActivitiesView implements View {
                 .filter(part -> part.state() == JobState.PAUSED).map(JobStatus::pauseReason).filter(Objects::nonNull)
                 .min(Comparator.comparing(reason -> reason == PauseReason.USER)).orElse(PauseReason.USER);
         boolean incomplete = parts.stream().anyMatch(part -> part.incomplete() || part.progress().failed() > 0);
-        return new JobStatus(GROUP_PREFIX + group, JobType.BACKGROUND, String.join(", ", sources), null,
+        return new JobStatus(id, type, String.join(", ", sources), null,
                 first.owner(), state, new JobProgress(discovered, processed, written, failed), error,
                 cancelRequested, first.createdAt(), started, finished, null, null, parameters, incomplete,
                 pauseRequested, pauseReason);
@@ -2201,7 +2271,7 @@ public final class ActivitiesView implements View {
             return;
         }
         boolean selectedGone = selectedId != null && (confirmed.contains(selectedId)
-                || selectedId.startsWith(GROUP_PREFIX));
+                || synthetic(selectedId));
         Background.run(() -> runtime.workspace().deleteJobs(confirmed), deleted -> {
             if (selectedGone) {
                 selectedId = null;
@@ -2636,7 +2706,7 @@ public final class ActivitiesView implements View {
         List<JobStatus> jobs = workspace.jobs();
         Object current = null;
         String currentPhase = null;
-        boolean real = id != null && !id.startsWith(GROUP_PREFIX);
+        boolean real = id != null && !synthetic(id);
         if (real) {
             JobStatus status = workspace.job(id);
             if (!status.state().terminal()) {
@@ -2705,6 +2775,9 @@ public final class ActivitiesView implements View {
 
     /** Unter welchem Schlüssel ein Oberschritt seine Unterzeilen sammelt; {@code null}, wenn er keiner ist. */
     private static String groupKey(JobStatus job) {
+        if (syncGroupRow(job)) {
+            return "sync:" + job.id().substring(SYNC_GROUP_PREFIX.length());
+        }
         if (groupRow(job)) {
             return "background:" + job.id().substring(GROUP_PREFIX.length());
         }
@@ -2722,6 +2795,10 @@ public final class ActivitiesView implements View {
 
     /** Zu welchem Oberschritt ein Auftrag gehört; {@code null}, wenn er eigenständig ist. */
     private static String memberKey(JobStatus job) {
+        if (job.type() == JobType.SYNC && !groupRow(job)) {
+            String group = job.parameter(SpaceSyncJobs.GROUP);
+            return group == null ? null : "sync:" + group;
+        }
         if (job.type() == JobType.BACKGROUND && !groupRow(job)) {
             String group = job.parameter(BackgroundJobs.GROUP);
             return group == null ? null : "background:" + group;

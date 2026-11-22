@@ -32,11 +32,6 @@ public final class PodcastSpeaker {
 
     /** Pause zwischen zwei Beiträgen. */
     static final int PAUSE_MILLIS = 350;
-    /**
-     * Kürzel, die die Sprachausgabe als Wort statt Buchstabe für Buchstabe läse (Angelo 22.11.2026, „BSCW-Update“); nur
-     * für das Audio, der Text im Bericht bleibt, wie er ist.
-     */
-    private static final java.util.regex.Pattern BSCW = java.util.regex.Pattern.compile("\\bBSCW\\b");
 
     private final PodcastSpeech speech;
     private final String model;
@@ -118,18 +113,13 @@ public final class PodcastSpeaker {
         return new Section(wav, starts);
     }
 
-    /** Der Text, wie ihn die Sprachausgabe bekommt: Kürzel Buchstabe für Buchstabe. */
-    static String pronounced(String text) {
-        return BSCW.matcher(text).replaceAll("Be Es Ze We");
-    }
-
     /** Die WAV-Stücke eines Beitrags: mit der Stimme seiner Rolle, absatzweise, sonst Satz für Satz. */
     private List<byte[]> turn(Turn turn, List<String> repairs) throws IOException {
         String voice = turn.speaker() == Speaker.HOST ? pair.host() : pair.cohost();
         String lastProblem = "unbekannt";
         for (boolean sentences : new boolean[] {false, true}) {
             try {
-                List<byte[]> wavs = speech.speak(model, voice, pronounced(turn.text()), sentences);
+                List<byte[]> wavs = speech.speak(model, voice, SpeakableText.of(turn.text()), sentences);
                 if (!wavs.isEmpty()) {
                     if (sentences) {
                         repairs.add("Beitrag Satz für Satz gesprochen");

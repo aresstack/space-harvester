@@ -19,8 +19,32 @@ class LayeringTest {
 
     @Test
     void theTerminalModelKnowsNoUiAndNoEmulator() {
-        noClasses().that().resideInAPackage("com.aresstack.spaceharvester.deck.terminal")
+        noClasses().that().resideInAnyPackage("com.aresstack.spaceharvester.deck.terminal",
+                        "com.aresstack.spaceharvester.deck.access")
                 .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "java.awt..", "com.ascert..")
+                .check(classes);
+    }
+
+    @Test
+    void theFtpModelKnowsNoUiAndNoFtpLibrary() {
+        noClasses().that().resideInAnyPackage("com.aresstack.spaceharvester.deck.ftp",
+                        "com.aresstack.spaceharvester.deck.ftp.jes")
+                .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "java.awt..",
+                        "org.apache.commons.net..")
+                .check(classes);
+    }
+
+    @Test
+    void onlyTheFtpAdapterUsesCommonsNet() {
+        noClasses().that().resideOutsideOfPackage("com.aresstack.spaceharvester.deck.ftp.commonsnet..")
+                .should().dependOnClassesThat().resideInAPackage("org.apache.commons.net..")
+                .check(classes);
+    }
+
+    @Test
+    void jobsKnowNothingOfDatasetSessions() {
+        noClasses().that().resideInAPackage("com.aresstack.spaceharvester.deck.ftp.jes")
+                .should().dependOnClassesThat().resideInAPackage("com.aresstack.spaceharvester.deck.ftp")
                 .check(classes);
     }
 
