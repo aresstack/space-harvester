@@ -339,8 +339,9 @@ public class GlossaryClassification {
     /**
      * Automatischer Lauf für eine Quelle nach ihrer Anreicherung (K4): eine Hintergrundgruppe mit einem Unterauftrag
      * je Space, der analysierte Seiten hat. Nichts geschieht, wenn {@code terms.glossary.automatic} aus ist, nichts
-     * angeschlossen ist, es keine Regelphase gibt, die Quelle unbekannt ist oder für einen Space schon ein Lauf wartet
-     * oder läuft. Ohne Chat-Modell oder Freigabe bleibt es bei Regelvorschlägen; die Modellphase meldet sich gelb.
+     * angeschlossen ist, es keine Regelphase gibt oder die Quelle unbekannt ist; ein Space, für den schon ein Teil
+     * wartet oder angehalten ist, bekommt keinen weiteren (er liest den Bestand erst beim Start), ein laufender Teil
+     * hält einen neuen Anlass nicht auf. Ohne Chat-Modell oder Freigabe bleibt es bei Regelvorschlägen; die Modellphase meldet sich gelb.
      *
      * @return die Gruppe, oder leer, wenn keine nötig ist
      */
@@ -356,7 +357,9 @@ public class GlossaryClassification {
         List<com.aresstack.spaceharvester.application.background.BackgroundPart.Draft> parts = new ArrayList<>();
         GlossaryOverview.inScope(analysed.apply(caller), sourceId, null).stream()
                 .map(page -> page.page().spaceKey()).filter(Objects::nonNull).distinct().sorted()
-                .filter(space -> jobs.running(AUTOMATIC_KIND, sourceId, space).isEmpty())
+                // Wie BackgroundJobs#startUnlessWaiting: Ein wartender oder angehaltener Teil nimmt den neuen Anlass
+                // mit, denn der Lauf liest den Bestand erst beim Start; ein laufender hält ihn nicht auf.
+                .filter(space -> jobs.waiting(AUTOMATIC_KIND, sourceId, space).isEmpty())
                 .forEach(space -> parts.add(new com.aresstack.spaceharvester.application.background.BackgroundPart
                         .Draft(sourceId, space, Map.of())));
         if (parts.isEmpty()) {
