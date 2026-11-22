@@ -333,7 +333,9 @@ Tests; den Chat-Anschluss (Werkzeug, System-Prompt) baut der Chat-Strang, die zu
   Aussagen (`Subjekt —Verb→ Objekt`) mit Vertrauensstufe, Zahl der Belege und Belegseiten als `PageKey` mit Space und
   Titel, außerdem die Nachbarbegriffe. Gezählt wird genau wie in der Fachsicht: Standardansicht, verworfene Aussagen
   nie, veraltete Seiten ausgelassen und gezählt. Nur lesen, kein KI-Aufruf, nichts gespeichert.
-- Stufe je Aussage: `ABWEICHEND`, wenn ein Beleg abweicht und keiner geprüft ist, sonst die höchste Stufe der Belege.
+- Verneinung, Verbindlichkeit (Modalverb) und Zeitbezug trennen Aussagen: Die Belege einer Kante der Fachsicht
+  werden nach diesen Merkmalen geteilt, jede Aussage trägt sie, „prüft“ und „prüft nicht“ sind nie eine Aussage.
+- Stufe je Aussage (je Teil aus dessen Belegen): `ABWEICHEND`, wenn ein Beleg abweicht und keiner geprüft ist, sonst die höchste Stufe der Belege.
   Reihenfolge geprüft, einig, ungeprüft, abweichend, innerhalb der Stufe nach Belegen. Ungeprüftes kommt mit, trägt
   aber seine Stufe („Was ich sehe, sieht der Bot“: Die Fachsicht zeigt es ebenfalls).
 - Bereich im Core erzwungen: Gelesen werden nur die Analysen der Seiten des Bereichs (`KnowledgeGraph#analysed` mit
@@ -344,6 +346,6 @@ Tests; den Chat-Anschluss (Werkzeug, System-Prompt) baut der Chat-Strang, die zu
   Seiten gekappter Aussagen. Wirft die Meldung, gibt es keine Antwort. Wer nichts an ein Modell gibt (Suche), übergibt
   ausdrücklich `Delivery.NONE`.
 - Obergrenzen je Antwort: 5 Begriffe, 20 Aussagen, 3 Belegseiten je Aussage, 10 Nachbarbegriffe; was gekappt wurde,
-  steht in `Limits` (auch eine gekappte Fachsicht und ausgelassene veraltete Aussagen). Ist die Eingabe kein
+  steht in `Limits` (auch gekappte Belegseiten, eine gekappte Fachsicht und ausgelassene veraltete Aussagen). Ist die Eingabe kein
   Fachbegriff, nennt die Antwort bis zu 5 ähnliche (`NOT_A_TERM`) und liefert keine Seite.
 - Zugang: `Harvester#termKnowledge`, `Workspace#termKnowledge`.

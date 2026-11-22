@@ -35,6 +35,9 @@ import java.util.function.BooleanSupplier;
  *   {@link #MAX_NEIGHBOURS} Nachbarbegriffe; was gekappt wurde, steht in {@link Limits}.</li>
  * </ul>
  *
+ * <p>Verneinung, Verbindlichkeit und Zeitbezug trennen Aussagen ({@link Statement}): „prüft“ und „prüft nicht“ sind
+ * zwei Aussagen mit eigenen Belegen und eigener Stufe.
+ *
  * <p>Reihenfolge der Aussagen: geprüfte zuerst, dann einige, dann ungeprüfte, zuletzt abweichende
  * ({@link DomainTermGraph.Trust}); innerhalb einer Stufe die mit mehr Belegen zuerst. Jede Aussage trägt ihre Stufe.
  */
@@ -89,21 +92,31 @@ public final class TermKnowledge {
     }
 
     /**
-     * Eine Aussage zwischen zwei Begriffen: {@code subject —verb→ object}, zusammengefasst über alle Belege.
+     * Eine Aussage zwischen zwei Begriffen: {@code subject —verb→ object} mit ihren Merkmalen, zusammengefasst über
+     * alle Belege mit genau diesen Merkmalen. Verneinung, Verbindlichkeit und Zeitbezug trennen Aussagen: „prüft“ und
+     * „prüft nicht“ sind zwei Aussagen mit eigenen Belegen, nie eine.
      *
+     * @param negation     Verneinung, wie bei der Analyse bestimmt ({@link ParsedStatements.Negation#UNKNOWN}: nicht
+     *                     bestimmt)
+     * @param modality     Verbindlichkeit nach dem Modalverb
+     * @param temporality  Zeitbezug
      * @param trust        {@link DomainTermGraph.Trust#ABWEICHEND}, wenn ein Beleg abweicht und keiner geprüft ist,
      *                     sonst die höchste Stufe der Belege
      * @param evidence     Zahl der Belege (Sätze)
      * @param pages        Belegseiten, höchstens {@link #MAX_PAGES_PER_STATEMENT}
      * @param omittedPages weitere Belegseiten, die nicht genannt sind
      */
-    public record Statement(String subject, String verb, String object, DomainTermGraph.Trust trust, int evidence,
-                            List<Page> pages, int omittedPages) {
+    public record Statement(String subject, String verb, String object, ParsedStatements.Negation negation,
+                            ParsedStatements.Modality modality, ParsedStatements.Temporality temporality,
+                            DomainTermGraph.Trust trust, int evidence, List<Page> pages, int omittedPages) {
 
         public Statement {
             Objects.requireNonNull(subject, "subject");
             Objects.requireNonNull(verb, "verb");
             Objects.requireNonNull(object, "object");
+            Objects.requireNonNull(negation, "negation");
+            Objects.requireNonNull(modality, "modality");
+            Objects.requireNonNull(temporality, "temporality");
             Objects.requireNonNull(trust, "trust");
             pages = List.copyOf(pages);
         }
@@ -127,18 +140,20 @@ public final class TermKnowledge {
      * @param omittedTerms      Synonyme über {@link #MAX_TERMS} hinaus
      * @param omittedStatements Aussagen über {@link #MAX_STATEMENTS} hinaus
      * @param omittedNeighbours Nachbarbegriffe über {@link #MAX_NEIGHBOURS} hinaus
+     * @param omittedEvidencePages Belegseiten über {@link #MAX_PAGES_PER_STATEMENT} hinaus, über alle gelieferten
+     *                          Aussagen ({@link Statement#omittedPages()})
      * @param graphTruncated    ob die Fachsicht selbst gekappt war ({@link DomainTermGraph#MAX_NODES})
      * @param skippedStale      ausgelassene Aussagen veralteter Seiten
      */
     public record Limits(int pagesInScope, int pagesRead, int omittedTerms, int omittedStatements,
-                         int omittedNeighbours, boolean graphTruncated, int skippedStale) {
+                         int omittedNeighbours, int omittedEvidencePages, boolean graphTruncated, int skippedStale) {
 
-        static final Limits NONE = new Limits(0, 0, 0, 0, 0, false, 0);
+        static final Limits NONE = new Limits(0, 0, 0, 0, 0, 0, false, 0);
 
         /** Ob etwas gekappt oder ausgelassen wurde. */
         public boolean cut() {
             return pagesRead < pagesInScope || omittedTerms > 0 || omittedStatements > 0 || omittedNeighbours > 0
-                    || graphTruncated || skippedStale > 0;
+                    || omittedEvidencePages > 0 || graphTruncated || skippedStale > 0;
         }
     }
 
@@ -199,7 +214,7 @@ public final class TermKnowledge {
         if (view.outcome() != DomainTermGraph.Outcome.FOUND) {
             return Answer.of(view.outcome() == DomainTermGraph.Outcome.EMPTY_START ? Outcome.EMPTY_QUERY
                             : Outcome.NOT_A_TERM, graph.suggestions(caller, query, MAX_CANDIDATES),
-                    new Limits(scope.size(), read.size(), 0, 0, 0, false, 0));
+                    new Limits(scope.size(), read.size(), 0, 0, 0, 0, false, 0));
         }
         return deliver(build(view, scope.size(), read.size()), delivery);
     }
@@ -259,7 +274,7 @@ public final class TermKnowledge {
             if (owner == null) {
                 continue;
             }
-            byTerm.get(owner).add(edge);
+            byTerm.get(owner).addAll(byFeatures(edge));
             for (String end : List.of(edge.from(), edge.to())) {
                 if (!groupKeys.contains(end)) {
                     neighbourWeight.merge(end, edge.count(), Integer::sum);
@@ -277,6 +292,7 @@ public final class TermKnowledge {
         Map<String, List<Statement>> statements = new LinkedHashMap<>();
         shown.forEach(node -> statements.put(node.key(), new ArrayList<>()));
         Map<PageKey, Page> delivered = new LinkedHashMap<>();
+        int omittedEvidencePages = 0;
         for (Map.Entry<String, DomainTermGraph.Edge> entry : ranked.subList(0, ranked.size() - omittedStatements)) {
             DomainTermGraph.Edge edge = entry.getValue();
             Map<PageKey, Page> pages = new LinkedHashMap<>();
@@ -287,8 +303,11 @@ public final class TermKnowledge {
             List<Page> named = new ArrayList<>(pages.values()).subList(0, Math.min(pages.size(),
                     MAX_PAGES_PER_STATEMENT));
             named.forEach(page -> delivered.putIfAbsent(page.key(), page));
+            omittedEvidencePages += pages.size() - named.size();
+            ParsedStatements.Features features = features(edge.evidence().getFirst());
             statements.get(entry.getKey()).add(new Statement(label(nodes, edge.from()), edge.verb(),
-                    label(nodes, edge.to()), trust(edge), edge.count(), named, pages.size() - named.size()));
+                    label(nodes, edge.to()), features.negation(), features.modality(), features.temporality(),
+                    trust(edge), edge.count(), named, pages.size() - named.size()));
         }
         List<Term> terms = shown.stream().map(node -> new Term(node.label(), node.kind(), statements.get(node.key())))
                 .toList();
@@ -299,7 +318,30 @@ public final class TermKnowledge {
         int omittedNeighbours = Math.max(0, neighbours.size() - MAX_NEIGHBOURS);
         return new Answer(Outcome.FOUND, terms, neighbours.subList(0, neighbours.size() - omittedNeighbours),
                 List.of(), List.copyOf(delivered.values()), new Limits(inScope, read, omittedTerms,
-                omittedStatements, omittedNeighbours, view.truncated(), view.skippedStale()));
+                omittedStatements, omittedNeighbours, omittedEvidencePages, view.truncated(), view.skippedStale()));
+    }
+
+    /**
+     * Eine Verb-Kante je Merkmalen ihrer Belege (Verneinung, Verbindlichkeit, Zeitbezug), in der Reihenfolge ihres
+     * ersten Belegs; Stufe und Abweichung rechnet {@link DomainTermGraph.Edge} je Teil aus dessen Belegen neu.
+     */
+    private static List<DomainTermGraph.Edge> byFeatures(DomainTermGraph.Edge edge) {
+        Map<List<Object>, List<DomainTermGraph.Evidence>> parts = new LinkedHashMap<>();
+        for (DomainTermGraph.Evidence item : edge.evidence()) {
+            ParsedStatements.Features features = features(item);
+            parts.computeIfAbsent(List.of(features.negation(), features.modality(), features.temporality()),
+                    unused -> new ArrayList<>()).add(item);
+        }
+        if (parts.size() <= 1) {
+            return List.of(edge);
+        }
+        return parts.values().stream().map(part -> new DomainTermGraph.Edge(edge.from(), edge.to(), edge.kind(),
+                edge.verb(), part.size(), part)).toList();
+    }
+
+    private static ParsedStatements.Features features(DomainTermGraph.Evidence item) {
+        ParsedStatements.Features features = item.statement().features();
+        return features == null ? ParsedStatements.Features.UNKNOWN : features;
     }
 
     /** Erst melden, dann herausgeben: Wirft die Meldung, gibt es keine Antwort. */

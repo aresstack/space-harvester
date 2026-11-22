@@ -168,10 +168,72 @@ class TermKnowledgeTest {
         assertThat(shown.getFirst().evidence()).isEqualTo(8);
         assertThat(shown.getFirst().pages()).hasSize(TermKnowledge.MAX_PAGES_PER_STATEMENT);
         assertThat(shown.getFirst().omittedPages()).isEqualTo(1);
+        assertThat(answer.limits().omittedEvidencePages()).isEqualTo(1);
         assertThat(answer.neighbours()).hasSize(TermKnowledge.MAX_NEIGHBOURS).startsWith("Start");
         assertThat(answer.limits().omittedNeighbours()).isEqualTo(objects.size() + 1 - TermKnowledge.MAX_NEIGHBOURS);
         assertThat(answer.limits().cut()).isTrue();
         assertThat(delivered).as("nur genannte Belegseiten").containsExactly(key("2"), key("3"), key("4"), key("1"));
+    }
+
+    @Test
+    void cuttingOnlyEvidencePagesStillCountsAsCut() {
+        term("Plan");
+        term("Start");
+        for (int page = 1; page <= TermKnowledge.MAX_PAGES_PER_STATEMENT + 1; page++) {
+            analyse(String.valueOf(page), "Der Plan sendet den Start.");
+        }
+
+        TermKnowledge.Answer answer = knowledge().answer(CALLER, "Plan", pages("1", "2", "3", "4"), recording,
+                () -> false);
+
+        assertThat(answer.terms().getFirst().statements()).singleElement()
+                .satisfies(statement -> assertThat(statement.omittedPages()).isEqualTo(1));
+        assertThat(answer.limits().omittedStatements()).isZero();
+        assertThat(answer.limits().omittedNeighbours()).isZero();
+        assertThat(answer.limits().omittedEvidencePages()).isEqualTo(1);
+        assertThat(answer.limits().cut()).isTrue();
+        assertThat(delivered).containsExactly(key("1"), key("2"), key("3"));
+    }
+
+    @Test
+    void negationModalityAndTimeSeparateStatementsWithTheirOwnEvidenceAndStage() {
+        term("Plan");
+        term("Ziel");
+        analyse("1", "Der Plan prüft das Ziel.");
+        analyse("2", "Der Plan prüft das Ziel.");
+        analyse("3", "Der Plan prüft das Ziel.");
+        Map<String, ParsedStatements.Features> features = Map.of(
+                "1", new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED,
+                        ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT),
+                "2", new ParsedStatements.Features(ParsedStatements.Negation.NEGATED,
+                        ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT),
+                "3", new ParsedStatements.Features(ParsedStatements.Negation.AFFIRMED,
+                        ParsedStatements.Modality.KANN, ParsedStatements.Temporality.GEPLANT));
+        DomainTermGraph fachsicht = new DomainTermGraph(caller -> rewrite(caller, page -> statement -> {
+            ParsedStatements.Statement changed = withFeatures(statement, features.get(page));
+            return page.equals("2") ? changed.withReview(ParsedStatements.Review.CONFIRMED) : changed;
+        }), vocabulary());
+
+        TermKnowledge.Answer answer = new TermKnowledge(fachsicht).answer(CALLER, "Plan", pages("1", "2", "3"),
+                recording, () -> false);
+
+        assertThat(answer.terms().getFirst().statements())
+                .extracting(TermKnowledge.Statement::negation, TermKnowledge.Statement::modality,
+                        TermKnowledge.Statement::temporality, TermKnowledge.Statement::trust,
+                        TermKnowledge.Statement::evidence)
+                .as("„prüft nicht“ ist eine eigene Aussage, nie ein Beleg für „prüft“; die Stufe gilt je Teil")
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(ParsedStatements.Negation.NEGATED,
+                                ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT,
+                                DomainTermGraph.Trust.GEPRUEFT, 1),
+                        org.assertj.core.groups.Tuple.tuple(ParsedStatements.Negation.AFFIRMED,
+                                ParsedStatements.Modality.NONE, ParsedStatements.Temporality.GILT,
+                                DomainTermGraph.Trust.UNGEPRUEFT, 1),
+                        org.assertj.core.groups.Tuple.tuple(ParsedStatements.Negation.AFFIRMED,
+                                ParsedStatements.Modality.KANN, ParsedStatements.Temporality.GEPLANT,
+                                DomainTermGraph.Trust.UNGEPRUEFT, 1));
+        assertThat(answer.terms().getFirst().statements()).extracting(statement -> statement.pages().getFirst().key())
+                .containsExactly(key("2"), key("1"), key("3"));
     }
 
     @Test
@@ -251,6 +313,15 @@ class TermKnowledgeTest {
                     result.sentences(), result.mentions(), result.statements().stream().map(change).toList(),
                     result.attachments(), result.components(), result.conllu())));
         }).toList();
+    }
+
+    private static ParsedStatements.Statement withFeatures(ParsedStatements.Statement statement,
+                                                           ParsedStatements.Features features) {
+        return new ParsedStatements.Statement(statement.id(), statement.sentence(), statement.start(),
+                statement.end(), statement.predicateText(), statement.predicateLemma(), statement.voice(),
+                statement.clause(), statement.core(), statement.arguments(), statement.findings(),
+                statement.paragraph(), statement.quality(), statement.qualityReasons(), statement.review(), features,
+                statement.derivation(), statement.check());
     }
 
     private static AnalyzerComparison.Comparison differs(String statementId) {
