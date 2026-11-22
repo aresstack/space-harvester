@@ -90,7 +90,7 @@ class SignInApiTest {
         String owner = AccessContext.technicalClient(TestClient.ID).jobOwner();
         JobStatus job = jobs.submit(JobType.ASSETS, "wiki", "DEV", owner, JobTask.blocking(context ->
                 outcome.set(signIns.await("wiki", context.jobId(), challenge(codes, ""), Instant.now(),
-                        context::checkpoint))));
+                        context))));
 
         JsonNode request = null;
         for (int i = 0; i < 200 && request == null; i++) {
