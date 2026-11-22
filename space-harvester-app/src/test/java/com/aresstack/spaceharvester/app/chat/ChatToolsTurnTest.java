@@ -405,7 +405,7 @@ class ChatToolsTurnTest {
                 .contains("Nachtlauf —muss nicht füllen→ Spool [geprüft, 2 Belege]")
                 .contains(ChatTools.ref(evidence) + " (Nachtlauf) und 1 weitere")
                 .contains("Verwandte Begriffe: Nachtlauf")
-                .contains("Unvollständig: 3 weitere Aussagen; 1 weitere Belegseiten")
+                .contains("Unvollständig: 3 weitere Aussagen; 1 weitere Belegseite")
                 .contains(ChatTools.READ);
     }
 
@@ -614,6 +614,37 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void inTheTurnAFailedReleaseKeepsTheSearchExcerptFromTheModel() throws Exception {
+        ChatTools probe = tools(new ArrayList<>());
+        await(() -> probe.search("Spool").lines().anyMatch(line -> line.split(" \\| ").length >= 3) ? true : null);
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.SEARCH, "{\"text\":\"Spool\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist ein Spool?", space, "Handbuch", events,
+                Runnable::run).knowledgeByTools(null).releasing(new ChatTurn.Releases() {
+                    @Override
+                    public int page(String spaceKey, PageKey key) {
+                        throw new IllegalStateException("Freigabeliste nicht schreibbar");
+                    }
+
+                    @Override
+                    public int selection() {
+                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
+                    }
+                }).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        assertThat(messages.get(messages.size() - 1).text())
+                .contains("(Auszug nicht freigegeben: IllegalStateException)")
+                .doesNotContain("vollem Spool").doesNotContain("Ablage der Ausgaben");
+        assertThat(released()).isEmpty();
+    }
+
+    @Test
     void anOpenPageWhoseReleaseFailsDoesNotGoAlong() throws Exception {
         PageKey open = page("datenhaus");
         ScriptedChat port = new ScriptedChat(List.of((request, listener) -> listener.completed("Fertig.")));
@@ -779,10 +810,9 @@ class ChatToolsTurnTest {
                 List.of(), List.of(), new TermKnowledge.Limits(800, 500, 0, 0, 0, 0, false, 0));
 
         assertThat(ChatTools.render("Spule", answer))
-                .as("ohne gelieferte Aussage nicht den Namen aus dem Glossar, sondern die Eingabe")
-                .startsWith("Fachbegriff: Spule\n")
-                .contains("In den gelesenen 500 von 800 Seiten des Bereichs gibt es keine Aussagen")
-                .contains("Unvollständig: 500 von 800 Seiten des Bereichs gelesen");
+                .as("ohne gelieferte Aussage wie „kein Fachbegriff“, mit dem Teil-Lesen, ohne Namen aus dem Glossar")
+                .isEqualTo("„Spule“ ist im gewählten Bereich kein bestätigter Fachbegriff (gelesen wurden 500 von "
+                        + "800 Seiten des Bereichs, die übrigen sind ungelesen); nutze " + ChatTools.SEARCH + ".");
     }
 
     private ChatTools tools(List<String> order) {
