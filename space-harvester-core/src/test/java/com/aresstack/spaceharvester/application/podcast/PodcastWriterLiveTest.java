@@ -59,7 +59,14 @@ class PodcastWriterLiveTest {
                                 Auf der Startseite stehen jetzt die Ansprechstellen je Team, damit man schneller \
                                 weiß, wen man fragt. Dazu kommt ein Glossar mit zwölf Fachbegriffen, etwa was ein \
                                 Spool-Bereich ist.""",
-                                List.of("auf der Seite „Start“"))),
+                                List.of("auf der Seite „Start“")),
+                        // Erfunden, aber gebaut wie echte Updates (Angelo 22.11.2026): Aktenzeichen im Titel, Kürzel
+                        // im Text, Space und Seitentitel voller Kennungen. Nichts davon darf vorgelesen werden.
+                        new PodcastWriter.Story("PRV 27351 Projektstatus und Jour-Fixe", """
+                                Am 20.11.2026 fand das wöchentliche Jour-Fixe des Leitstand-Teams statt, bei dem die                                 Anbindung des RZ K-PLM besprochen wurde. Der veröffentlichte Projektstatus PRV 27351                                 dokumentiert den Abschluss der Anbindung und die Übergabe der Verantwortung an den                                 Betrieb.""",
+                                List.of("auf der Seite „2026-11-20 - RZ K-PLM Leitstand - Jour Fixe wöchentlich“ im "
+                                        + "Space PRV 27351", "auf der Seite „Sachstand Projektergebnisse“ im Space "
+                                        + "Kranich Extensions"))),
                 "Space DEMO");
         PodcastWriter.Voices voices = new PodcastWriter.Voices("Jana", "Thomas");
 
@@ -89,7 +96,11 @@ class PodcastWriterLiveTest {
                 .doesNotContain("100 neue Seiten", "hundert neue Seiten", "37 geänderte");
         assertThat(all).as("Inhalt kommt vor").contains("Spool").containsIgnoringCase("Checkliste");
         assertThat(all).as("Keine internen Kennungen im Sprechtext").doesNotContain("NLXD042P", "NLX-CHK-7",
-                "BET-4711", "4711");
+                "BET-4711", "4711", "27351", "K-PLM", "PRV");
+        assertThat(all).as("Keine Verweise und Space-Namen: die Stelle markiert der Bericht").doesNotContain(
+                "Kranich Extensions", "Space DEMO", "im Space", "auf der Seite", "Jour Fixe wöchentlich");
+        assertThat(all).as("das Jour-Fixe kommt verständlich vor").containsAnyOf("Leitstand", "Jour-Fixe",
+                "Jour Fixe", "Rechenzentrum");
         assertThat(all).as("Die Eskalationsstufen kommen vor").containsAnyOf("Eskalation", "Stufe", "Leitung");
         assertThat(ends).as("Kein Abschnitt endet mit einer offenen Frage").noneMatch(text -> text.endsWith("?"));
         assertThat(spoken.stream().filter(text -> text.contains("Datenbank")).count())

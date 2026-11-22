@@ -299,7 +299,7 @@ class UpdatePodcastsTest {
     }
 
     @Test
-    void theScriptOfATopicCarriesItsContentAndPlaceButNotTheOverview() throws Exception {
+    void theScriptOfATopicCarriesItsContentButNeitherItsPlaceNorTheOverview() throws Exception {
         FakeModel model = new FakeModel();
         UpdateSummary summary = new UpdateSummary("wiki", "u-1", "DEMO", "Hundert neue Seiten im Basissystem.",
                 List.of(new SummaryStatement("Neue Startseite", List.of(new SummaryPage("p-1", "Start", "DEMO")),
@@ -310,9 +310,10 @@ class UpdatePodcastsTest {
 
         List<String> scripts = model.inputs.stream().filter(input -> input.contains("Schreibe genau diese Beiträge")
                 && input.contains("Thema 2 \"Neue Startseite\"")).toList();
+        // Verweise und Space-Namen spricht der Podcast nicht; die Stelle markiert der Bericht (Angelo 22.11.2026).
         assertThat(scripts).isNotEmpty().allSatisfy(input -> assertThat(input)
-                .contains("Ansprechstellen je Team", "auf der Seite „Start“, unter Handbuch › Betrieb")
-                .doesNotContain("Hundert neue Seiten"));
+                .contains("Ansprechstellen je Team")
+                .doesNotContain("Hundert neue Seiten", "auf der Seite „Start“", "Handbuch › Betrieb", "Space DEMO"));
     }
 
     private UpdatePodcasts podcasts(StepModel model, PodcastSpeech speech) {

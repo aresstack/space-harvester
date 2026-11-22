@@ -87,17 +87,35 @@ class PodcastWriterTest {
     }
 
     @Test
-    void theFallbackScriptReadsTheStoriesWithPlaceGreetingAndGoodbye() {
+    void theFallbackNewsReadsTheStoriesWithGreetingAndGoodbyeButNeverWhereTheyStand() {
         PodcastWriter.Material material = new PodcastWriter.Material("", List.of(new PodcastWriter.Story(
                 "Neue Startseite", "Die Startseite zeigt die Ansprechstellen je Team.",
-                List.of("auf der Seite „Start“"))), "Space DEMO");
+                List.of("auf der Seite „Start“ im Space Nordlicht 4711"))), "Space DEMO");
 
         List<Turn> turns = PodcastWriter.fallbackScript(material, new PodcastPlan.Topic("Neue Startseite", "", 0.5,
                 List.of(), List.of(1)), true, true);
 
         assertThat(turns).hasSize(3);
-        assertThat(turns.get(1).text()).isEqualTo("Neue Startseite: Die Startseite zeigt die Ansprechstellen je Team. "
-                + "Zu finden auf der Seite „Start“.");
+        assertThat(turns.get(1).text()).as("die Stelle markiert der Bericht auf dem Bildschirm (Angelo 22.11.2026)")
+                .isEqualTo("Neue Startseite: Die Startseite zeigt die Ansprechstellen je Team.");
+    }
+
+    @Test
+    void theNewsNeverHearWhereAStoryStandsTheExplainerStillDoes() {
+        PodcastWriter.Story story = new PodcastWriter.Story("Neue Startseite",
+                "Die Startseite zeigt die Ansprechstellen je Team.", List.of("auf der Seite „Start“ im Space NLX 4711"));
+        PodcastPlan plan = new PodcastPlan("Folge", List.of(new PodcastPlan.Topic("Neue Startseite", "", 0.5,
+                List.of(), List.of(1))), List.of());
+        PodcastWriter.Material news = new PodcastWriter.Material("", List.of(story), "Space NLX 4711");
+        PodcastWriter.Material explainer = new PodcastWriter.Material("", List.of(story), "Seite „Start“",
+                PodcastWriter.Format.EXPLAINER);
+
+        assertThat(PodcastWriter.topicMaterial(news, plan, 0)).contains("Die Startseite zeigt")
+                .doesNotContain("NLX", "4711", "Start“", "Space");
+        assertThat(PodcastWriter.Format.NEWS.place).contains("keine Namen von Spaces");
+        assertThat(PodcastWriter.topicMaterial(explainer, plan, 0)).contains("steht auf der Seite „Start“");
+        assertThat(PodcastWriter.fallbackScript(explainer, plan.topics().get(0), false, false).get(0).text())
+                .endsWith("Zu finden auf der Seite „Start“ im Space NLX 4711.");
     }
 
     @Test
@@ -129,7 +147,7 @@ class PodcastWriterTest {
         String nightRun = PodcastWriter.topicMaterial(material, plan, 1);
         String intro = PodcastWriter.topicMaterial(material, plan, 0);
 
-        assertThat(nightRun).contains("Spool-Bereich", "unter Handbuch").doesNotContain("Quartal", "Überblick");
+        assertThat(nightRun).contains("Spool-Bereich").doesNotContain("Quartal", "Überblick", "unter Handbuch");
         assertThat(intro).contains("Überblick").doesNotContain("Spool-Bereich");
     }
 
