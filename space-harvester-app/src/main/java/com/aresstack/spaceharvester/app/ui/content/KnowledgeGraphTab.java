@@ -424,7 +424,11 @@ final class KnowledgeGraphTab extends JPanel {
         cards.setOpaque(false);
         cards.add(canvas, "graph");
         cards.add(Comic.scroll(table), "table");
-        cards.add(domainCanvas, "domain");
+        // Bis die Fachsicht ihre Lage gefunden hat (abseits des EDT), dreht über der leeren Fläche der Ring.
+        com.aresstack.spaceharvester.app.ui.controls.BusyOverlay domainBusy =
+                new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(domainCanvas);
+        domainCanvas.onBusy(domainBusy::setBusy);
+        cards.add(domainBusy, "domain");
 
         add(head, BorderLayout.NORTH);
         add(cards, BorderLayout.CENTER);

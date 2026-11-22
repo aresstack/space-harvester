@@ -607,6 +607,42 @@ class DomainTermGraphTest {
                 evidence.statement().derivation().origin()).isEqualTo(ParsedStatements.Origin.ORIGINAL));
     }
 
+    /**
+     * Mit Auswahl liest die Fachsicht nur deren Seiten ({@link KnowledgeGraph#analysed(AccessContext, PageSet)}), nie
+     * die ganze Ablage; ohne Auswahl den ganzen Durchgang. Ergebnis wie mit Lesen und Filtern danach.
+     */
+    @Test
+    void withASelectionOnlyTheSelectedPagesAreReadNotTheWholeStore() {
+        term("Planer");
+        term("Ziel");
+        term("Kunde");
+        analyse("wiki", "1", "Der Planer prüft das Ziel.");
+        analyse("wiki", "3", "Der Kunde prüft den Planer.");
+        int[] full = {0};
+        List<PageSet> selected = new ArrayList<>();
+        DomainTermGraph counted = new DomainTermGraph(caller -> {
+            full[0]++;
+            return graph.analysed(caller);
+        }, (caller, pages) -> {
+            selected.add(pages);
+            return graph.analysed(caller, pages);
+        }, vocabulary(), () -> null, DomainTermGraph.Comparison.NONE);
+
+        DomainTermGraph.View page = counted.onPages(CALLER, new DomainTermGraph.Options(2, false, pages("1")),
+                () -> false);
+        DomainTermGraph.View around = counted.around(CALLER, "Planer", new DomainTermGraph.Options(1, false,
+                pages("1")), () -> false);
+
+        assertThat(full[0]).as("kein Durchgang über die ganze Ablage").isZero();
+        assertThat(selected).containsExactly(pages("1"), pages("1"));
+        assertThat(page.nodes()).extracting(DomainTermGraph.Node::label).containsExactly("Planer", "Ziel");
+        assertThat(around.edges()).extracting(DomainTermGraph.Edge::to).containsExactly("ziel");
+
+        counted.around(CALLER, "Planer", DomainTermGraph.Options.DEFAULT, () -> false);
+        assertThat(full[0]).as("ohne Auswahl der ganze Durchgang").isEqualTo(1);
+        assertThat(selected).hasSize(2);
+    }
+
     @Test
     void onPagesCollectsTheTermsOfTheGivenPagesOnlyWithoutACentre() {
         term("Planer");

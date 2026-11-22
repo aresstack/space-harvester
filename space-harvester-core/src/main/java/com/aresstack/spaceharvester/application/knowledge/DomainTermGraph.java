@@ -341,6 +341,11 @@ public final class DomainTermGraph {
     }
 
     private final Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed;
+    /**
+     * Die sichtbaren Analysen nur der genannten Seiten ({@link KnowledgeGraph#analysed(AccessContext, PageSet)}), damit
+     * eine Auswahl nicht erst die ganze Ablage liest; {@code null}: {@link #analysed} lesen und danach filtern.
+     */
+    private final java.util.function.BiFunction<AccessContext, PageSet, List<KnowledgeGraph.AnalysedPage>> analysedOn;
     private final Vocabulary vocabulary;
     private final Comparison comparison;
     private final java.util.function.Supplier<AnalyzerChoice> selected;
@@ -356,7 +361,7 @@ public final class DomainTermGraph {
      */
     public DomainTermGraph(KnowledgeGraph graph, Vocabulary vocabulary,
                            java.util.function.Supplier<AnalyzerChoice> selected, Comparison comparison) {
-        this(Objects.requireNonNull(graph, "graph")::analysed, vocabulary, selected, comparison);
+        this(Objects.requireNonNull(graph, "graph")::analysed, graph::analysed, vocabulary, selected, comparison);
     }
 
     DomainTermGraph(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed, Vocabulary vocabulary) {
@@ -375,7 +380,19 @@ public final class DomainTermGraph {
 
     DomainTermGraph(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed, Vocabulary vocabulary,
                     java.util.function.Supplier<AnalyzerChoice> selected, Comparison comparison) {
+        this(analysed, null, vocabulary, selected, comparison);
+    }
+
+    /**
+     * @param analysedOn die sichtbaren Analysen nur der genannten Seiten, oder {@code null}: dann liest eine Auswahl
+     *                   alle über {@code analysed} und filtert danach
+     */
+    DomainTermGraph(Function<AccessContext, List<KnowledgeGraph.AnalysedPage>> analysed,
+                    java.util.function.BiFunction<AccessContext, PageSet, List<KnowledgeGraph.AnalysedPage>> analysedOn,
+                    Vocabulary vocabulary, java.util.function.Supplier<AnalyzerChoice> selected,
+                    Comparison comparison) {
         this.analysed = Objects.requireNonNull(analysed, "analysed");
+        this.analysedOn = analysedOn;
         this.vocabulary = Objects.requireNonNull(vocabulary, "vocabulary");
         this.selected = Objects.requireNonNull(selected, "selected");
         this.comparison = Objects.requireNonNull(comparison, "comparison");
@@ -480,7 +497,10 @@ public final class DomainTermGraph {
         // Je ausgelassener veralteter Aussage die Paare, die sie verbände; gezählt wird erst nach dem Aufbau der Sicht.
         List<Set<String>> stale = new ArrayList<>();
         Set<String> analyzers = new LinkedHashSet<>();
-        for (KnowledgeGraph.AnalysedPage page : analysed.apply(caller)) {
+        // Mit Auswahl nur deren Seiten lesen, nicht die ganze Ablage; der Filter unten bleibt als Absicherung.
+        List<KnowledgeGraph.AnalysedPage> source = options.pages() != null && analysedOn != null
+                ? analysedOn.apply(caller, options.pages()) : analysed.apply(caller);
+        for (KnowledgeGraph.AnalysedPage page : source) {
             if (cancelled.getAsBoolean()) {
                 throw new java.util.concurrent.CancellationException("Fachsicht abgebrochen");
             }

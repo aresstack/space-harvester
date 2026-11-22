@@ -52,6 +52,36 @@ class KnowledgeGraphTest {
         });
     }
 
+    /**
+     * Nur die genannten Seiten: Die übrigen Analysen werden nicht gelesen (kein Stand im Cache nachgeschlagen), das
+     * Leserecht gilt wie beim ganzen Durchgang.
+     */
+    @Test
+    void analysedOnPagesReadsOnlyTheGivenPagesWithTheSameRights() {
+        analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.");
+        analyse("wiki", "2", "Die Buchhaltung prüft den Beleg.");
+        analyse("handbuch", "7", "Die Buchhaltung prüft den Beleg.");
+        List<PageKey> looked = new java.util.ArrayList<>();
+        KnowledgeGraph counted = new KnowledgeGraph(store, access, key -> {
+            looked.add(key);
+            return Optional.ofNullable(cache.get(key));
+        }, snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)), statements,
+                KnowledgeGraph.TermExpansion.NONE);
+        com.aresstack.spaceharvester.application.snapshot.PageSet wanted =
+                com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(List.of(new PageKey("wiki", "2"),
+                        new PageKey("handbuch", "7")));
+
+        assertThat(counted.analysed(CALLER, wanted)).extracting(page -> page.page().key())
+                .containsExactly(new PageKey("handbuch", "7"), new PageKey("wiki", "2"));
+        assertThat(looked).as("Seite 1 wird nicht gelesen").doesNotContain(new PageKey("wiki", "1"));
+        assertThat(counted.analysed(CALLER, wanted)).isEqualTo(counted.analysed(CALLER).stream()
+                .filter(page -> wanted.contains(page.page().key())).toList());
+
+        deniedSources.add("handbuch");
+        assertThat(counted.analysed(CALLER, wanted)).as("ohne Leserecht wie im ganzen Durchgang")
+                .extracting(page -> page.page().key()).containsExactly(new PageKey("wiki", "2"));
+    }
+
     @Test
     void statementsOfADisabledSourceStayStoredButInvisible() {
         analyse("wiki", "1", "Der Sachbearbeiter übermittelt dem Vorgesetzten den Beleg.");
