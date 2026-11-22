@@ -221,7 +221,18 @@ wird automatisch verwaltet.
 1. **Eigene Auftragsart** `JobType.BACKGROUND` (`JobType#background()`). Welche Arbeit, sagt die Angabe
    `background.kind`; Arten melden sich bei `BackgroundJobs#register(BackgroundKind)` an (`application.background`).
    Eingebaut ist „Seiten nachladen“ (`PageLoads`, Art `pages`, `Harvester#pageLoads()`); die Bildbeschreibung meldet
-   sich als Art `images` an.
+   sich als Art `images` an. Fahrplan D3: „Aussagen analysieren“ über Teilbaum, Space oder Quelle ist die Art
+   `statements` (`StatementAnalysisJobs#background`); eine einzelne Seite bleibt ein normaler Auftrag
+   `STATEMENT_ANALYSIS`, als Klick über `Jobs#submitInteractive` (ebenso „Prüfen“ einer Seite), derselbe Code rechnet
+   beide. Der Reiter „Aussagen“ rechnet und prüft dabei die gezeigte Fassung (`startShown`, `startCheckShown`), ohne
+   die Seite erneut abzurufen; mit „mit Unterseiten“ zählt und fragt er wie der Baum (Sicherheitsgrenze, „wirklich“),
+   verfolgt die Gruppe über `BackgroundJobs#watch` (Fortschritt und Abbrechen im Reiter, nach dem Anhalten weiter, bis
+   sie fertig ist) und liest ihr Ergebnis abseits des EDT (`Workspace#statementGroupOmitted`, mit dem Recht
+   `metadata` auf den Space statt `sync`). Eine Quelle mit Grenze: Die Grenze gilt für die Summe aller Spaces. Jeder
+   Teil zählt nach seiner eigenen Ermittlung die schon ermittelten Seiten der übrigen Teile aus dem Auftragsspeicher
+   dazu, ohne fremde Spaces abzugehen; wer die Grenze damit überschreitet, scheitert vor seiner ersten Analyse
+   (`SCOPE_TOO_LARGE`), fertige Teile behalten ihre Analysen. Die ermittelte Zahl steht zusätzlich als Ereignis
+   `SCOPE_COUNTED` am Teil, denn Fortsetzen leert seine Zähler; Geschwister zählen das Größere von beidem.
 2. **Gruppe statt Oberauftrag mit eigenem Platz.** Ein Start (`BackgroundJobs#start`) legt je Space einen Unterauftrag
    an; alle tragen dieselbe `background.group` und `background.title`. Die Gruppe (`BackgroundGroup`) ist kein eigener
    Auftrag, belegt nichts und hat ihren Zustand aus den Unteraufträgen. Jeder Unterauftrag hat einen eigenen Platz und
@@ -251,6 +262,15 @@ wird automatisch verwaltet.
 6. **Rechte.** Der Hintergrund lädt nie mit der Anmeldung eines Benutzers (wie ADR 0016). `PageLoads` lädt mit dem
    technischen Aufrufer des Start-Aufrufs, nach einem Neustart mit dem technischen Aufrufer des Dienstes; was schon im
    Cache liegt, fällt vorher heraus, ein Fortsetzen holt also nur, was fehlt.
+   `statements` legt den Eigentümer des Start-Aufrufers in den Angaben ab (`owner`, `AccessContext#jobOwner`) und
+   setzt nach einem Neustart nur fort, wenn der wiederhergestellte Aufrufer derselbe ist (in der Desktop-App der
+   App-Benutzer); sonst hält der Teil gelb an (`PauseReason#RESUME_BY_HAND`, „Angehalten – von Hand fortsetzen“),
+   und `StatementAnalysisJobs#resume` setzt ihn mit den Rechten des Fortsetzenden fort. Die allgemeine
+   Auftragsaktion (`BackgroundJobs#resumeJob`) kennt keinen Aufrufer; mit ihr hält ein fremder Teil erneut an, statt
+   mit den Rechten des wiederhergestellten Aufrufers zu laufen. Der Analysator steht beim Start in
+   den Angaben (`analyzer`) und wird nie neu aus `statements.analyzer` gelesen; beim Fortsetzen überspringt der Teil
+   Seiten, die dieser Analysator schon aktuell hat (mit „erneut analysieren“ nur die seit dem Start, `since`).
+   `BackgroundPart#automatic` sagt, ob `resumeInterrupted` fortsetzt oder ein Benutzer (für die Meldung).
 7. **Desktop-App.** Die Auftragsverwaltung zeigt Hintergrundaufträge in einem eigenen Reiter „Hintergrund“, je Gruppe
    eine Zeile mit den Unteraufträgen darunter, farblich hervorgehoben (Form mit dem UX-Manager); die Liste der
    Benutzeraufträge bleibt frei davon.
@@ -364,6 +384,22 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    oder gar nicht, zurückgenommen wird vom letzten Teil her.
 5. **Neustart.** Die Vorgänger stehen in den Angaben; `resumeInterrupted` setzt die ältesten Teile zuerst fort, darum
    läuft eine unterbrochene Kette in derselben Reihenfolge weiter.
-6. **Erste Dienste** (`Harvester#servicePlanner`) nur als Beschreibung: Indexieren (AUTOMATIC), Bilder beschreiben
+6. **Erste Dienste** (`Harvester#servicePlanner`): Indexieren (AUTOMATIC), Bilder beschreiben
    (wie `images.automatic`), Aussagenanalyse (MANUAL), Glossar (AUTOMATIC), Wissensgraph (MANUAL, nach Aussagenanalyse
-   und Bildbeschreibung). Ihre Arten bauen die Stränge B1 (D2) und A2 (D3).
+   und Bildbeschreibung). Die Aussagenanalyse arbeitet über ihre Art `statements` (D3): `missing` aus
+   `StatementAnalysisJobs#missing`, je Quelle und Space nach dem gespeicherten Kopf gruppiert. „Bilder beschreiben“
+   arbeitet über seine Art `images` (D2): `missing` sind die freigegebenen Seiten, die ein Lauf an das Modell gäbe
+   (`ImageDescriptionJobs#missing`), je Space und nur sichtbare. Die übrigen Arten bleiben Beschreibung.
+7. **Angaben der Teile.** Jeder Teil trägt seine Seiten (`AnalysisService.PAGES`). Ein Dienst kann weitere Angaben
+   beisteuern (`AnalysisService#parameters`), einmal je Start und für alle Spaces gleich; `pages` setzt immer der
+   Planer. Die Aussagenanalyse legt so Eigentümer, Startzeit und den beim Start eingestellten Analysator fest
+   (`StatementAnalysisJobs#plannerParameters`), dazu eine Kennung des Start-Aufrufers in diesem Prozess (`caller`).
+   Ein Teil mit `pages` analysiert genau diese Seiten seines Space ohne Navigation, jede nur mit Leserecht; der erste
+   Lauf rechnet mit den Rechten des Start-Aufrufers, nach einem Neustart gilt die Eigentümer-Regel aus Punkt 6 oben
+   (gleicher Eigentümer läuft weiter, sonst gelb „von Hand fortsetzen“). Ohne „erneut analysieren“ und ohne Grenze;
+   aktuelle Seiten überspringt der Teil.
+   „Bilder beschreiben“ legt ebenso den Eigentümer (`principal`, `principal.kind`, `via`) und die Kennung `caller`
+   fest (`ImageDescriptionJobs#plannerParameters`). Ein Teil mit `pages` beschreibt genau diese Seiten mit den
+   Rechten des Start-Aufrufers, nach einem Neustart mit dem aus den Angaben gebauten Eigentümer; lässt der sich nicht
+   bauen (Endnutzer ohne Anmeldedaten), hält er gelb mit `IMAGES_RESUME_BY_HAND` an, nie technisch. Je Seite gelten
+   Inhaltsrecht und KI-Freigabe zum Zeitpunkt der Arbeit.

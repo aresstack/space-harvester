@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.background.BackgroundGroup;
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.background.BackgroundKind;
 import com.aresstack.spaceharvester.application.background.BackgroundPart;
+import com.aresstack.spaceharvester.application.background.services.AnalysisService;
 import com.aresstack.spaceharvester.application.configuration.ImageSettings;
 import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
@@ -78,8 +79,20 @@ public final class ImageDescriptionJobs {
     public static final String USER = "user";
     /** Angaben: der Benutzer, mit dessen Rechten ein von ihm gestarteter Lauf auch nach einem Neustart weiterläuft. */
     public static final String PRINCIPAL = "principal";
+    /** Angabe: Art des Benutzers ({@link AccessContext.PrincipalKind}). */
     public static final String PRINCIPAL_KIND = "principal.kind";
+    /** Angabe: der durchreichende Client eines Endnutzers. */
     public static final String VIA = "via";
+    /**
+     * Angabe eines Teils aus dem Dienst-Planer: Kennung des Start-Aufrufers in diesem Prozess
+     * ({@link #plannerParameters}); nach einem Neustart wertlos, dann gilt der Eigentümer.
+     */
+    public static final String CALLER = "caller";
+    /**
+     * Angabe eines Teils des Dienst-Planers (D1): seine Seiten-IDs, durch Zeilenumbruch getrennt
+     * ({@link AnalysisService#PAGES}).
+     */
+    public static final String PAGES = AnalysisService.PAGES;
     /** Ereignis: Seiten ohne KI-Freigabe bewusst ausgelassen (gelb, nur bei Läufen des Benutzers). */
     public static final String NOT_RELEASED = "IMAGES_SKIPPED:NOT_RELEASED";
     /** Ereignis: der Lauf eines Benutzers lässt sich ohne ihn nicht fortsetzen (gelb, angehalten). */
@@ -245,6 +258,28 @@ public final class ImageDescriptionJobs {
     }
 
     /**
+     * Die Angaben der Teile, die der Dienst-Planer (D1) für „Bilder beschreiben“ anlegt
+     * ({@link AnalysisService#parameters()}): Anlass Benutzer, Eigentümer ({@value #PRINCIPAL},
+     * {@value #PRINCIPAL_KIND}, {@value #VIA}) und eine Kennung des Start-Aufrufers in diesem Prozess
+     * ({@value #CALLER}), damit der erste Lauf mit seinen Rechten rechnet, auch als Endnutzer. Die Zuordnung lebt nur im
+     * Speicher und verdrängt die ältesten; nach einem Neustart gilt der Eigentümer.
+     */
+    public Map<String, String> plannerParameters(AccessContext caller) {
+        Objects.requireNonNull(caller, "caller");
+        String token = java.util.UUID.randomUUID().toString();
+        callers.put(token, caller);
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put(TRIGGER, USER);
+        parameters.put(PRINCIPAL, caller.principal());
+        parameters.put(PRINCIPAL_KIND, caller.kind().name());
+        if (caller.via() != null) {
+            parameters.put(VIA, caller.via());
+        }
+        parameters.put(CALLER, token);
+        return parameters;
+    }
+
+    /**
      * Setzt einen Unterauftrag mit den Rechten des Benutzers fort, der ▶ drückt; der Weg der App für „Fortsetzen“.
      */
     public JobStatus resume(AccessContext caller, String jobId) {
@@ -390,6 +425,8 @@ public final class ImageDescriptionJobs {
                 .filter(status -> !status.state().terminal()
                         && (!waiting || status.state() != com.aresstack.spaceharvester.application.jobs.JobState.RUNNING)
                         && KIND.equals(status.parameter(BackgroundJobs.KIND))
+                        // Ein Teil des Planers deckt nur seine Seiten ab, nie den ganzen Space oder Teilbaum.
+                        && status.parameter(PAGES) == null
                         && sourceId.equals(status.sourceId()) && Objects.equals(space, status.partitionKey())
                         && Objects.equals(root, status.parameter(ROOT))
                         && (root == null || Boolean.toString(subtree).equals(status.parameter(SUBTREE))))
@@ -416,6 +453,37 @@ public final class ImageDescriptionJobs {
             // Die Automatik wurde inzwischen ausgeschaltet: nichts an das Modell.
             return;
         }
+        Budget budget;
+        synchronized (budgets) {
+            budget = GROUP_BUDGET ? budgets.computeIfAbsent(part.groupId(), id -> new Budget()) : new Budget();
+        }
+        String listed = part.parameter(PAGES);
+        if (listed != null) {
+            // Ein Teil des Dienst-Planers (D1): genau seine Seiten, mit den Rechten seines Eigentümers. Lässt der sich
+            // nicht bauen, hält der Teil an wie ein Lauf des Benutzers (Architekt 21.11.2026); je Seite gelten beim
+            // Arbeiten Inhaltsrecht und KI-Freigabe von jetzt, nicht die beim Start.
+            AccessContext owner = caller(part);
+            if (owner == null) {
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, RESUME_BY_HAND,
+                        "Lauf eines Benutzers; bitte von Hand fortsetzen"));
+                context.pause(PauseReason.USER);
+                return;
+            }
+            PageSet visible = scope == null ? null
+                    : scope.resolve(owner, root(part.sourceId(), part.partitionKey(), null, false));
+            List<PageSnapshot> chosen = new ArrayList<>();
+            for (String pageId : listed.split("\n")) {
+                if (!pageId.isBlank()) {
+                    find.apply(new PageKey(part.sourceId(), pageId.strip()))
+                            .filter(snapshot -> part.partitionKey() == null
+                                    || part.partitionKey().equals(snapshot.spaceKey()))
+                            .filter(snapshot -> visible == null || visible.contains(snapshot.key()))
+                            .ifPresent(chosen::add);
+                }
+            }
+            run(chosen.iterator(), snapshot -> true, now, context, budget, true);
+            return;
+        }
         AccessContext caller = automatic ? technical : caller(part);
         if (caller == null) {
             // Ohne den Benutzer liefe der Teilbaum mit fremden Rechten (Architekt 21.11.2026).
@@ -429,16 +497,15 @@ public final class ImageDescriptionJobs {
         Iterator<PageSnapshot> pages = root != null && !"true".equals(part.parameter(SUBTREE))
                 ? find.apply(new PageKey(part.sourceId(), root)).stream().iterator()
                 : snapshots.apply(part.sourceId());
-        Budget budget;
-        synchronized (budgets) {
-            budget = GROUP_BUDGET ? budgets.computeIfAbsent(part.groupId(), id -> new Budget()) : new Budget();
-        }
         run(pages, inScope, now, context, budget, !automatic);
     }
 
     /** Der Benutzer eines Laufs: im Speicher, sonst aus den Angaben; ohne beides {@code null}. */
     private AccessContext caller(BackgroundPart part) {
         AccessContext known = callers.get(part.groupId());
+        if (known == null && part.parameter(CALLER) != null) {
+            known = callers.get(part.parameter(CALLER));
+        }
         if (known != null) {
             return known;
         }

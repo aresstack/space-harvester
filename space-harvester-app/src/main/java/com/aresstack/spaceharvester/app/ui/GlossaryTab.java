@@ -530,7 +530,7 @@ public final class GlossaryTab {
     /** Ein Auftrag hat einen neuen Stand: eigene Läufe nachführen, am Ende eines Auftrags die volle Sicht. */
     void jobChanged(JobStatus status) {
         track(status);
-        if (status.state().terminal() && REREADS.contains(status.type())) {
+        if (status.state().terminal() && REREADS.contains(Texts.kind(status))) {
             reread(Pending.FULL);
         }
     }

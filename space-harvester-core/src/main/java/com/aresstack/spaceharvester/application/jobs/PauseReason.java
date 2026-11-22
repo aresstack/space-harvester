@@ -13,5 +13,10 @@ public enum PauseReason {
      * ({@link Jobs#requestRetryFailed}); nur solange das Anhalten angefordert ist, angehalten und abgelegt wird daraus
      * {@link #USER}.
      */
-    RETRY
+    RETRY,
+    /**
+     * Nach einem Neustart nicht von selbst fortgesetzt, weil ein anderer Aufrufer den Auftrag gestartet hat als der
+     * wiederhergestellte (Aussagenanalyse als Hintergrundart, Fahrplan D3); nur ▶ von Hand setzt ihn fort.
+     */
+    RESUME_BY_HAND
 }

@@ -1382,6 +1382,122 @@ class PageImageAnalysisTest {
         }
     }
 
+    @Test
+    void aPlannerPartWithoutOwnerStaysPausedAfterARestart() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null));
+        PageImageAnalysis analysis = analysis();
+        com.aresstack.spaceharvester.application.jobs.InMemoryJobStore store =
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore();
+        ImageDescriptionJobs before = images(jobs(store, task -> { }), analysis, pages, ON, null);
+        String id = before.background().start(com.aresstack.spaceharvester.application.background.BackgroundJobs
+                .newGroupId(), ImageDescriptionJobs.KIND, "Bilder beschreiben", List.of(
+                new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", "DEV",
+                        Map.of(ImageDescriptionJobs.PAGES, "1")))).parts().get(0).id();
+
+        com.aresstack.spaceharvester.application.jobs.Jobs after = jobs(store, Runnable::run);
+        images(after, analysis, pages, ON, null).background().resumeInterrupted();
+
+        assertThat(after.status(id).state()).as("nie mit technischen Rechten")
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.PAUSED);
+        assertThat(after.events(id)).anySatisfy(event ->
+                assertThat(event.code()).isEqualTo(ImageDescriptionJobs.RESUME_BY_HAND));
+        assertThat(describer.calls).isZero();
+    }
+
+    @Test
+    void aPlannerPartRunsItsPagesOnlyWithItsOwnersCurrentRightsAfterARestart() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        source.image("3", "att3", "karte.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 9});
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null), page("2", "DEV", null), page("3", "DEV", null));
+        PageImageAnalysis analysis = analysis();
+        com.aresstack.spaceharvester.application.jobs.InMemoryJobStore store =
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore();
+        List<com.aresstack.spaceharvester.application.access.AccessContext> callers =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        // Seit dem Start hat der Eigentümer das Recht an Seite 2 verloren.
+        ImageDescriptionJobs.Scope scope = (caller, root) -> {
+            callers.add(caller);
+            return com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(List.of(new PageKey("wiki", "1"),
+                    new PageKey("wiki", "3")));
+        };
+        ImageDescriptionJobs before = images(jobs(store, task -> { }), analysis, pages, ON, scope);
+        String id = before.background().start(com.aresstack.spaceharvester.application.background.BackgroundJobs
+                .newGroupId(), ImageDescriptionJobs.KIND, "Bilder beschreiben", List.of(
+                new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", "DEV",
+                        Map.of(ImageDescriptionJobs.PAGES, "1\n2", ImageDescriptionJobs.PRINCIPAL, "nutzer-1",
+                                ImageDescriptionJobs.PRINCIPAL_KIND, "DEVELOPMENT")))).parts().get(0).id();
+
+        com.aresstack.spaceharvester.application.jobs.Jobs after = jobs(store, Runnable::run);
+        images(after, analysis, pages, ON, scope).background().resumeInterrupted();
+
+        assertThat(after.status(id).state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+        assertThat(callers).isNotEmpty().allSatisfy(caller -> {
+            assertThat(caller.principal()).isEqualTo("nutzer-1");
+            assertThat(caller.kind()).isEqualTo(
+                    com.aresstack.spaceharvester.application.access.AccessContext.PrincipalKind.DEVELOPMENT);
+        });
+        assertThat(describer.calls).as("nur Seite 1: 2 ohne Recht, 3 nicht in der Liste").isEqualTo(1);
+        assertThat(analysis.read(pages.get(0)).describedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void aWaitingPlannerPartForSomePagesDoesNotSwallowTheAutomaticRunOfTheSpace() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null), page("2", "DEV", null));
+        ImageDescriptionJobs images = images(jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(),
+                task -> { }), analysis(), pages, ON, null);
+        images.background().start(com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId(),
+                ImageDescriptionJobs.KIND, "Bilder beschreiben", List.of(
+                        new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", "DEV",
+                                Map.of(ImageDescriptionJobs.PAGES, "2"))));
+
+        assertThat(images.startAutomatic("wiki")).as("der wartende Teil deckt nur Seite 2 ab").isPresent();
+    }
+
+    @Test
+    void theServicePlannerRunsImagesWithTheStartingEndUserAndOnlyTheMissingPages() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.image("2", "att2", "plan.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 7});
+        source.image("3", "att3", "karte.png", new byte[] {(byte) 0x89, 'P', 'N', 'G', 9});
+        List<PageSnapshot> pages = List.of(page("1", "DEV", null), page("2", "DEV", null), page("3", "DEV", null));
+        com.aresstack.spaceharvester.application.access.AccessContext endUser =
+                com.aresstack.spaceharvester.application.access.AccessContext.endUser("nutzer-2", "app",
+                        new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "erfunden"));
+        List<com.aresstack.spaceharvester.application.access.AccessContext> callers =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+        ImageDescriptionJobs.Scope scope = (caller, root) -> {
+            callers.add(caller);
+            return com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(
+                    pages.stream().map(PageSnapshot::key).toList());
+        };
+        ImageDescriptionJobs images = images(jobs(), analysis(), pages, ON, scope);
+        com.aresstack.spaceharvester.application.background.services.AnalysisService.Missing visible =
+                (caller, set) -> new com.aresstack.spaceharvester.application.background.services.MissingPages(
+                        Map.of(new com.aresstack.spaceharvester.application.background.services.MissingPages.Scope(
+                                "wiki", "DEV"), set.pagesOf("wiki")), 0);
+        com.aresstack.spaceharvester.application.background.services.ServicePlanner planner =
+                new com.aresstack.spaceharvester.application.background.services.ServicePlanner(images.background(),
+                        visible);
+        planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService("images",
+                "Bilder beschreiben", () -> com.aresstack.spaceharvester.application.background.services
+                .ServiceStart.MANUAL, List.of(), ImageDescriptionJobs.KIND, visible, images::plannerParameters));
+
+        com.aresstack.spaceharvester.application.background.BackgroundGroup group = planner.start(endUser, "images",
+                com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(List.of(new PageKey("wiki", "1"),
+                        new PageKey("wiki", "2")))).group().orElseThrow();
+
+        assertThat(group.parts()).singleElement().satisfies(part -> {
+            assertThat(part.parameter(ImageDescriptionJobs.PRINCIPAL)).isEqualTo("nutzer-2");
+            assertThat(part.parameter(ImageDescriptionJobs.CALLER)).isNotBlank();
+        });
+        assertThat(callers).as("der erste Lauf rechnet mit dem Endnutzer, der startete").isNotEmpty()
+                .allSatisfy(caller -> assertThat(caller).isEqualTo(endUser));
+        assertThat(describer.calls).as("Seite 3 gehört nicht zur Auswahl").isEqualTo(2);
+    }
+
     private static com.aresstack.spaceharvester.application.jobs.Jobs jobs() {
         return new com.aresstack.spaceharvester.application.jobs.Jobs(
                 new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), Runnable::run,

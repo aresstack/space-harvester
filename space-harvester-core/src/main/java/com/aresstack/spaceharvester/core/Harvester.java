@@ -1133,13 +1133,15 @@ public final class Harvester implements AutoCloseable {
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder im Podcast (Angelo 21.11.2026): je Thema ein Seitenbild nach seiner Beschreibung, sonst ein
-            // Schaubild aus Teilen. Gezeichnet wird über ai.chat-model; mit der Einstellung „Bildgenerierung“ (Modell
-            // und Tokenlänge) wechselt das Zeichenmodell dorthin.
+            // Schaubild aus Teilen. Gezeichnet wird mit der Einstellung „Bildgenerierung“ (ai.image-model,
+            // ai.image-max-tokens, ai.image-thinking), damit lange SVG-Antworten nicht abbrechen.
             com.aresstack.spaceharvester.application.podcast.StoredPageImages podcastImages =
                     new com.aresstack.spaceharvester.application.podcast.StoredPageImages(cache::find,
                             this.imageAnalysis, assets);
-            ChatStepModel podcastDrawer = new ChatStepModel("podcast-pictures",
-                    () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog, trustBundles,
+            ChatStepModel podcastDrawer = new ChatStepModel("podcast-pictures", () -> {
+                AiServiceSettings ai = liveAi ? this.settings.ai() : startAi;
+                return ai == null ? null : ai.imageGeneration();
+            }, () -> null, catalog, trustBundles,
                     builder.userAgent);
             this.podcasts.pictures(podcastDrawer, podcastImages);
             this.pagePodcasts.pictures(podcastDrawer, podcastImages);
@@ -1156,12 +1158,6 @@ public final class Harvester implements AutoCloseable {
             this.automaticImages = new com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions(
                     imageDescriptions, imageSettings, sourceId -> catalog.find(sourceId).isPresent());
             opened.add(pageReleases.subscribe(automaticImages::releasesChanged));
-            // D1 (Nachtrag ADR 0025): Dienst-Planer mit den Beschreibungen der Analysedienste; die Arten bauen B1/A2.
-            TermSettings plannerTerms = builder.terms;
-            this.servicePlanner = services(backgroundJobs, () -> (this.settings != null ? this.settings.images()
-                    : startImages).automatic(), () -> (this.settings != null ? this.settings.terms()
-                    : plannerTerms).glossaryAutomatic(), access,
-                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
             // ADR 0028: Verliert eine Seite die Freigabe (Liste oder Quelle), entfallen auch ihre Bildbeschreibungen
             // und Zusammenfassungen mit ihr, und die Analysen ihrer Anhänge, die mit Modell entstanden, rechnen ohne neu.
             PageImageAnalysis pageImages = this.imageAnalysis;
@@ -1362,6 +1358,31 @@ public final class Harvester implements AutoCloseable {
                 }
             }, (who, sourceId, pageId) -> pages.page(who, sourceId, pageId, false).snapshot(), statementAnalysis,
                     access, OWNER);
+            // Fahrplan D3: Teilbaum, Space und Quelle als Hintergrundgruppe, nach einem Neustart mit dem App-Benutzer
+            // fortgesetzt; missing() liest nur Bestand und Cache.
+            this.statementAnalysisJobs.background(backgroundJobs, AccessContext.technicalClient(OWNER));
+            Holdings stockForAnalyses = this.holdings;
+            this.statementAnalysisJobs.local(new StatementAnalysisJobs.LocalPages() {
+                @Override
+                public Map<PageKey, Holdings.Located> locate(AccessContext who,
+                        com.aresstack.spaceharvester.application.snapshot.PageSet set) {
+                    return stockForAnalyses.locate(who, set);
+                }
+
+                @Override
+                public Optional<PageSnapshot> stored(PageKey key) {
+                    return cache.find(key);
+                }
+            });
+            // D1 (Nachtrag ADR 0025): Dienst-Planer mit den Beschreibungen der Analysedienste; die Aussagenanalyse
+            // arbeitet schon (D3), die übrigen Arten baut B1.
+            var imagesStart = startImages;
+            TermSettings plannerTerms = builder.terms;
+            this.servicePlanner = services(backgroundJobs, () -> (this.settings != null ? this.settings.images()
+                    : imagesStart).automatic(), () -> (this.settings != null ? this.settings.terms()
+                    : plannerTerms).glossaryAutomatic(), access,
+                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
+                    this.statementAnalysisJobs, imageDescriptions);
             this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
                     key -> cache.findHeader(key).map(header -> header.metadata().parentPageId()), clock, OWNER);
             this.knowledgeGraphExportDirectory = builder.exportDirectory().resolve("knowledge-graph");
@@ -2410,15 +2431,21 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
-     * Die Beschreibungen der Analysedienste (D1). Ihre Arten fehlen noch (B1/A2); die Starttypen ändern am heutigen
-     * Verhalten nichts.
+     * Die Beschreibungen der Analysedienste (D1). Die Aussagenanalyse arbeitet über ihre Art (D3), sofern
+     * {@code statements} angeschlossen ist, „Bilder beschreiben“ über seine (D2), sofern {@code images} angeschlossen
+     * ist; die übrigen Arten fehlen noch. Die Starttypen ändern am heutigen Verhalten nichts.
+     *
+     * @param statements die Aussagenanalyse oder {@code null}, dann nur als Beschreibung
+     * @param images     „Bilder beschreiben“ oder {@code null}, dann nur als Beschreibung
      */
     static com.aresstack.spaceharvester.application.background.services.ServicePlanner services(
             com.aresstack.spaceharvester.application.background.BackgroundJobs background,
             java.util.function.BooleanSupplier imagesAutomatic, java.util.function.BooleanSupplier glossaryAutomatic,
             AccessGuard access,
-            java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf) {
-        var planner = new com.aresstack.spaceharvester.application.background.services.ServicePlanner(background,
+            java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf,
+            StatementAnalysisJobs statements,
+            com.aresstack.spaceharvester.application.images.ImageDescriptionJobs images) {
+        com.aresstack.spaceharvester.application.background.services.AnalysisService.Missing visibleOf =
                 (caller, pages) -> {
                     Map<com.aresstack.spaceharvester.application.background.services.MissingPages.Scope,
                             java.util.Set<String>> visible = new java.util.LinkedHashMap<>();
@@ -2437,7 +2464,9 @@ public final class Harvester implements AutoCloseable {
                     }
                     return new com.aresstack.spaceharvester.application.background.services.MissingPages(visible,
                             hidden);
-                });
+                };
+        var planner = new com.aresstack.spaceharvester.application.background.services.ServicePlanner(background,
+                visibleOf);
         var manual = (java.util.function.Supplier<
                 com.aresstack.spaceharvester.application.background.services.ServiceStart>) () ->
                 com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL;
@@ -2451,9 +2480,18 @@ public final class Harvester implements AutoCloseable {
                 "images", "Bilder beschreiben", () -> imagesAutomatic.getAsBoolean()
                 ? com.aresstack.spaceharvester.application.background.services.ServiceStart.AUTOMATIC
                 : com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL,
-                List.of("index"), null, nothing));
-        planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
-                "statements", "Aussagenanalyse", manual, List.of("index"), null, nothing));
+                List.of("index"), images == null ? null
+                : com.aresstack.spaceharvester.application.images.ImageDescriptionJobs.KIND,
+                images == null ? nothing : (caller, pages) -> visibleOf.of(caller, images.missing(caller, pages)),
+                images == null ? com.aresstack.spaceharvester.application.background.services.AnalysisService
+                        .Parameters.NONE : images::plannerParameters));
+        planner.register(statements == null
+                ? new com.aresstack.spaceharvester.application.background.services.AnalysisService(
+                "statements", "Aussagenanalyse", manual, List.of("index"), null, nothing)
+                : new com.aresstack.spaceharvester.application.background.services.AnalysisService(
+                "statements", "Aussagenanalyse", manual, List.of("index"), StatementAnalysisJobs.KIND,
+                (caller, pages) -> missingPerSpace(statements.missing(caller, pages), spaceOf),
+                statements::plannerParameters));
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
                 "glossary", "Glossar", () -> glossaryAutomatic.getAsBoolean()
                 ? com.aresstack.spaceharvester.application.background.services.ServiceStart.AUTOMATIC
@@ -2462,6 +2500,25 @@ public final class Harvester implements AutoCloseable {
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
                 "knowledge-graph", "Wissensgraph", manual, List.of("statements", "images"), null, nothing));
         return planner;
+    }
+
+    /**
+     * Die fehlenden Seiten der Aussagenanalyse je Quelle und Space (D1/D3); den Space nennt der gespeicherte Kopf, denn
+     * fehlend sind nur lokale Seiten.
+     */
+    static com.aresstack.spaceharvester.application.background.services.MissingPages missingPerSpace(
+            StatementAnalysisJobs.Missing missing,
+            java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf) {
+        Map<com.aresstack.spaceharvester.application.background.services.MissingPages.Scope, java.util.Set<String>>
+                grouped = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, java.util.Set<String>> source : missing.pages().asMap().entrySet()) {
+            for (String pageId : source.getValue()) {
+                String space = spaceOf.apply(new PageKey(source.getKey(), pageId)).orElse(null);
+                grouped.computeIfAbsent(new com.aresstack.spaceharvester.application.background.services.MissingPages
+                        .Scope(source.getKey(), space), ignored -> new java.util.TreeSet<>()).add(pageId);
+            }
+        }
+        return new com.aresstack.spaceharvester.application.background.services.MissingPages(grouped, 0);
     }
 
     /** „Bilder beschreiben“ über das Auftragssystem (D2): Hintergrundläufe, Knopf je Seite, fehlende Beschreibungen. */

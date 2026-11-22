@@ -123,6 +123,11 @@ public class StatementAnalysis {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /** Die Zeit der Uhr, mit der {@link PageStatementAnalysis#analyzedAt()} geschrieben wird. */
+    public java.time.Instant now() {
+        return clock.instant();
+    }
+
     /** Ob in dieser Laufzeit ein Analysator eingerichtet ist; lädt kein Modell. */
     public boolean available() {
         return analyzer.get() != null;

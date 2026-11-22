@@ -808,7 +808,8 @@ final class StandingTab extends JPanel {
      */
     static boolean rereads(JobStatus status) {
         return status.state().terminal()
-                && (status.type() == JobType.STATEMENT_ANALYSIS || status.type() == JobType.STATEMENT_CHECK);
+                && (com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs.isAnalysis(status)
+                || status.type() == JobType.STATEMENT_CHECK);
     }
 
     /** Filter, Träger oder Suche geändert: die Zeilen im Hintergrund neu bilden, nichts neu lesen. */

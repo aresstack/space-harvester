@@ -2215,6 +2215,7 @@ public class Jobs implements AutoCloseable {
                 String why = switch (reason) {
                     case SIGN_IN_REQUIRED -> "Auftrag angehalten, weil die Anmeldung fehlt: ";
                     case CONNECTION_LOST -> "Auftrag angehalten, weil die Quelle nicht erreichbar ist: ";
+                    case RESUME_BY_HAND -> "Auftrag nach dem Neustart angehalten, bitte von Hand fortsetzen: ";
                     case USER, RETRY -> job.restartForRetry ? "Durchgang für „Nur Fehler neu versuchen“ angehalten: "
                             : "Auftrag angehalten: ";
                 };
