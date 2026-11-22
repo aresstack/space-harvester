@@ -145,6 +145,139 @@ class ReadingViewsTest {
         assertThat(views.cached(CALLER, "wiki", "200")).isEmpty();
     }
 
+    /** Aufträge mit gehaltenem Ausführer und zwei Plätzen, beide belegt: Ein neuer Auftrag wartet. */
+    private static com.aresstack.spaceharvester.application.jobs.Jobs busyJobs(java.util.Queue<Runnable> held,
+                                                                             int slots) {
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs.Jobs(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), held::add,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(slots, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+        for (int i = 0; i < slots; i++) {
+            jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "andere", null, "app",
+                    com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+                    }));
+        }
+        return jobs;
+    }
+
+    private static void runAll(java.util.Queue<Runnable> held) {
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+    }
+
+    private static List<com.aresstack.spaceharvester.application.jobs.JobStatus> prefetchJobs(
+            com.aresstack.spaceharvester.application.jobs.Jobs jobs) {
+        return jobs.listAll(com.aresstack.spaceharvester.application.jobs.JobType.READING_PREFETCH);
+    }
+
+    @Test
+    void asAJobPrefetchIsVisibleAndANewCallReplacesTheWaitingJob() {
+        // Fundstelle 15, Abnahme PR 4 und #1080: ein Klick-Auftrag, höchstens ein wartender je Quelle, der neue nimmt
+        // die Seiten mit.
+        ReadingViews views = views((context, scope, kind) -> AccessDecision.ALLOW);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(held, 2);
+        views.jobs(jobs);
+
+        views.prefetch(CALLER, "wiki", List.of("100"));
+        views.prefetch(CALLER, "wiki", List.of("101"));
+
+        List<com.aresstack.spaceharvester.application.jobs.JobStatus> prefetches = prefetchJobs(jobs);
+        assertThat(prefetches).hasSize(2);
+        assertThat(prefetches).allSatisfy(job -> {
+            assertThat(job.parameter(com.aresstack.spaceharvester.application.jobs.Jobs.INTERACTIVE))
+                    .as("ein Klick, nie hinter Hintergrund").isEqualTo("true");
+            assertThat(job.owner()).isEqualTo(CALLER.jobOwner());
+        });
+        assertThat(prefetches).filteredOn(job -> job.state()
+                == com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED).hasSize(1);
+        com.aresstack.spaceharvester.application.jobs.JobStatus waiting = prefetches.stream().filter(job -> job.state()
+                == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED).findFirst().orElseThrow();
+        assertThat(waiting.parameter(ReadingViews.PAGES)).isEqualTo("101\n100");
+
+        runAll(held);
+
+        assertThat(views.cached(CALLER, "wiki", "100")).isPresent();
+        assertThat(views.cached(CALLER, "wiki", "101")).isPresent();
+        assertThat(jobs.status(waiting.id()).state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+    }
+
+    @Test
+    void theReplacedJobSaysTrulyHowManyPagesFallAwayAtTheLimit() {
+        // Abnahme #1080: Die Grenze von 25 je Aufruf darf keine Seiten still wegwerfen.
+        ReadingViews views = views((context, scope, kind) -> AccessDecision.ALLOW);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(held, 2);
+        views.jobs(jobs);
+        List<String> earlier = new java.util.ArrayList<>();
+        for (int i = 0; i < ReadingViews.MAX_PREFETCH; i++) {
+            earlier.add("e" + i);
+        }
+        views.prefetch(CALLER, "wiki", earlier);
+        String first = prefetchJobs(jobs).getFirst().id();
+
+        views.prefetch(CALLER, "wiki", List.of("n1", "n2", "n3", "n4", "n5"));
+
+        assertThat(jobs.events(first)).extracting(com.aresstack.spaceharvester.application.jobs.JobEvent::message)
+                .anySatisfy(message -> assertThat(message).contains("20 dieser Seiten mit, 5 entfallen"));
+        com.aresstack.spaceharvester.application.jobs.JobStatus waiting = prefetchJobs(jobs).stream()
+                .filter(job -> job.state() == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED)
+                .findFirst().orElseThrow();
+        assertThat(waiting.parameter(ReadingViews.PAGES).split("\n")).hasSize(ReadingViews.MAX_PREFETCH)
+                .startsWith("n1", "n2", "n3", "n4", "n5", "e0");
+    }
+
+    @Test
+    void withASingleSlotPrefetchKeepsTheFormerWayInsteadOfWaitingBehindEverything() throws Exception {
+        // Abnahme #1080: Bei nur einem Platz liefe der Auftrag hinter jedem anderen; dann der bisherige Weg.
+        ReadingViews views = views((context, scope, kind) -> AccessDecision.ALLOW);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(held, 1);
+        views.jobs(jobs);
+
+        views.prefetch(CALLER, "wiki", List.of("100"));
+
+        assertThat(prefetchJobs(jobs)).isEmpty();
+        long until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        while (views.cached(CALLER, "wiki", "100").isEmpty() && System.nanoTime() < until) {
+            Thread.sleep(20);
+        }
+        assertThat(views.cached(CALLER, "wiki", "100")).isPresent();
+    }
+
+    @Test
+    void asAJobAnUnreachableSourceFailsThePartWithItsReason() {
+        // Abnahme PR 4: kein bewusstes Auslassen, sondern rot mit Grund.
+        List<com.aresstack.spaceharvester.application.snapshot.PageSnapshot> pages = new java.util.ArrayList<>();
+        List<String> ids = new java.util.ArrayList<>();
+        for (int i = 300; i < 310; i++) {
+            pages.add(page("wiki", "DEV", String.valueOf(i), null));
+            ids.add(String.valueOf(i));
+        }
+        cache.publish("wiki", "DEV", confirmed("g3"), pages);
+        source.unreachable = true;
+        ReadingViews views = views((context, scope, kind) -> AccessDecision.ALLOW);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs.Jobs(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), held::add,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(2, 10, java.time.Duration.ofHours(1)), CLOCK);
+        views.jobs(jobs);
+
+        views.prefetch(CALLER, "wiki", ids);
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+
+        com.aresstack.spaceharvester.application.jobs.JobStatus part = prefetchJobs(jobs).getFirst();
+        assertThat(part.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.FAILED);
+        assertThat(part.error().code()).isEqualTo(ReadingViews.SOURCE_UNAVAILABLE);
+        assertThat(source.attempts.get()).as("danach keine weitere Seite").isLessThanOrEqualTo(2);
+    }
+
     @Test
     void includedContentNeedsTheWholeSourceAndIsFetchedEveryTime() {
         ReadingView restricted = views((context, scope, kind) -> AccessDecision.ALLOW).view(CALLER, "wiki", "101",

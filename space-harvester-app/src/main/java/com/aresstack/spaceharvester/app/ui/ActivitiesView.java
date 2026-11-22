@@ -1702,6 +1702,7 @@ public final class ActivitiesView implements View {
                 case SEARCH_QUALITY -> new Counters("Fragen", "Gestellt", "Im Chat-Kontext gefunden",
                         "Suche gescheitert");
                 case UPDATE_PODCAST -> new Counters("Themen", "Gesprochen", "Fertig", "Abschnitte ohne Audio");
+                case READING_PREFETCH -> new Counters("Seiten", "Erledigt", "Vorgeladen", "Fehlgeschlagen");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }
