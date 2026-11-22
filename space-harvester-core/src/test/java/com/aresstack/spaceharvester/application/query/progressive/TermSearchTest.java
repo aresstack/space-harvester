@@ -145,6 +145,35 @@ class TermSearchTest {
     }
 
     @Test
+    void documentKindsAreLeftToTheSearchBecauseAnAttachmentsStatementsCarryThePageTitle() {
+        keywordsReturn("p2");
+        KeywordSearch.Query pdfOnly = KeywordSearch.Query.of("Leistungsakte").ofKinds(
+                Set.of(com.aresstack.spaceharvester.application.query.DocumentKind.PDF));
+        TermSearch.Result result = search(knowledge(Map.of("leistungsakte",
+                found("Leistungsakte", List.of(page("p2", "ABL")), 5, 5))))
+                .search(USER, pdfOnly, List.of(), () -> false);
+
+        assertThat(result.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("p2");
+        ArgumentCaptor<KeywordSearch.Query> sent = ArgumentCaptor.forClass(KeywordSearch.Query.class);
+        verify(keywords).search(any(), sent.capture(), isNull(), anyInt());
+        assertThat(sent.getValue().kinds()).containsExactly(
+                com.aresstack.spaceharvester.application.query.DocumentKind.PDF);
+    }
+
+    @Test
+    void theRemainingBudgetLimitsTheSearchesAndMakesTheResultIncomplete() {
+        keywordsReturn("p1", "p2");
+        TermSearch.Result result = search(knowledge(Map.of(
+                "leistungsakte", found("Leistungsakte", List.of(page("p1", "ABL")), 5, 5),
+                "fristablauf", found("Fristablauf", List.of(page("p2", "ABL")), 5, 5))))
+                .search(USER, KeywordSearch.Query.of("Leistungsakte Fristablauf"), List.of(), () -> false, 1);
+
+        assertThat(result.searches()).isEqualTo(1);
+        assertThat(result.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("p1");
+        assertThat(result.complete()).isFalse();
+    }
+
+    @Test
     void aHitOutsideTheCandidatesIsNeverTaken() {
         when(keywords.search(any(), any(), isNull(), anyInt())).thenReturn(new KeywordSearch.Results("wiki",
                 List.of(hit("p2"), hit("fremd")), List.of(), null, true, 0));

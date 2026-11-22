@@ -80,7 +80,11 @@ class SearchOrchestratorTermsTest {
     }
 
     private ProgressiveResult run(TermSearch terms, SearchProfile profile) throws Exception {
-        SearchOrchestrator orchestrator = new SearchOrchestrator(search, null, (original, max) -> List.of(),
+        return run(null, terms, profile);
+    }
+
+    private ProgressiveResult run(VariantSearch semantic, TermSearch terms, SearchProfile profile) throws Exception {
+        SearchOrchestrator orchestrator = new SearchOrchestrator(search, semantic, (original, max) -> List.of(),
                 (original, max) -> List.of(), HitScorer.none(),
                 com.aresstack.spaceharvester.application.searchrun.SearchRunLog.NONE, NeighborSource.NONE,
                 NeighborLoader.NONE, terms);
@@ -141,5 +145,60 @@ class SearchOrchestratorTermsTest {
 
         assertThat(ids(result)).containsExactly("o", "a");
         assertThat(result.technicalTerms()).isEqualTo(ProgressiveResult.TechnicalTerms.UNCHECKED);
+    }
+
+    @Test
+    void aSlowKeywordLookupDoesNotHoldTheSearchPastItsDeadline() throws Exception {
+        TermSearch slow = terms(Duration.ZERO);
+        org.mockito.Mockito.doAnswer(call -> {
+            Thread.sleep(3000);
+            return results("b");
+        }).when(keywords).search(any(), any(), isNull(), anyInt());
+
+        ProgressiveResult result = run(slow, profile().withTechnicalTerms(true).withBudget(Duration.ofMillis(400), 12));
+
+        assertThat(result.elapsed()).isLessThan(Duration.ofMillis(2500));
+        assertThat(ids(result)).containsExactly("o", "a");
+        assertThat(result.technicalTerms()).isEqualTo(ProgressiveResult.TechnicalTerms.UNCHECKED);
+    }
+
+    @Test
+    void withoutBudgetLeftTheTermStepDoesNotSearch() throws Exception {
+        ProgressiveResult result = run(terms(Duration.ZERO), profile().withTechnicalTerms(true)
+                .withBudget(Duration.ofSeconds(5), 1));
+
+        assertThat(asked).hasValue(0);
+        assertThat(ids(result)).containsExactly("o", "a");
+        assertThat(result.technicalTerms()).isEqualTo(ProgressiveResult.TechnicalTerms.UNCHECKED);
+    }
+
+    @Test
+    void semanticallyTheCandidatesAreScoredByTheSemanticSearchWithTheOriginalQuery() throws Exception {
+        java.util.List<KeywordSearch.Query> asks = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        VariantSearch semantic = new VariantSearch() {
+            @Override
+            public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit) {
+                return results("o", "a");
+            }
+
+            @Override
+            public Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit) {
+                asks.add(variant);
+                if (variant.pages() != null) {
+                    return new Outcome(results("b"), Map.of(new PageKey("wiki", "b"), 0.42));
+                }
+                return new Outcome(results("o", "a"), Map.of(new PageKey("wiki", "o"), 0.9,
+                        new PageKey("wiki", "a"), 0.8));
+            }
+        };
+
+        ProgressiveResult result = run(semantic, terms(Duration.ZERO), profile().withTechnicalTerms(true)
+                .withRanking(SearchProfile.Ranking.SEMANTIC));
+
+        assertThat(ids(result)).containsExactly("o", "a", "b");
+        assertThat(result.hits().get(2).score()).isEqualTo(0.42);
+        assertThat(result.hits().get(2).hit().reasons()).contains(HitReason.term("Leistungsakte"));
+        assertThat(asks).anyMatch(query -> query.pages() != null && query.pages().contains("wiki", "b")
+                && query.text().equals(ORIGINAL));
     }
 }

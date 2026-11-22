@@ -123,6 +123,16 @@ public final class TermSearch {
      */
     public Result search(AccessContext caller, KeywordSearch.Query query, Collection<PageKey> known,
                          BooleanSupplier cancelled) {
+        return search(caller, query, known, cancelled, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, KeywordSearch.Query, Collection, BooleanSupplier)}, mit höchstens
+     * {@code maxSearches} Suchanfragen an die {@link KeywordSearch} (das restliche Budget der progressiven Suche);
+     * reicht es nicht für alle Begriffe, ist das Ergebnis unvollständig.
+     */
+    public Result search(AccessContext caller, KeywordSearch.Query query, Collection<PageKey> known,
+                         BooleanSupplier cancelled, int maxSearches) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(query, "query");
         Objects.requireNonNull(cancelled, "cancelled");
@@ -139,6 +149,7 @@ public final class TermSearch {
         boolean capped = false;
         int probes = 0;
         boolean[] taken = new boolean[words.size()];
+        KeywordSearch.Query anyKind = query.ofKinds(Set.of());
         List<String> terms = new ArrayList<>();
         // Je Begriff seine Belegseiten im Umfang der Anfrage, in der Reihenfolge der Antwort.
         Map<String, List<PageKey>> evidence = new LinkedHashMap<>();
@@ -154,7 +165,7 @@ public final class TermSearch {
                         break probing;
                     }
                     if (cancelled.getAsBoolean()) {
-                        return partial(caller, query, evidence, terms, seen, capped, cancelled);
+                        return partial(caller, query, evidence, terms, seen, capped, cancelled, maxSearches);
                     }
                     probes++;
                     String phrase = String.join(" ", words.subList(start, start + length));
@@ -162,7 +173,7 @@ public final class TermSearch {
                     try {
                         answer = knowledge.answer(caller, phrase, pages, cancelled);
                     } catch (CancellationException e) {
-                        return partial(caller, query, evidence, terms, seen, capped, cancelled);
+                        return partial(caller, query, evidence, terms, seen, capped, cancelled, maxSearches);
                     }
                     if (answer.outcome() != TermKnowledge.Outcome.FOUND) {
                         continue;
@@ -175,7 +186,8 @@ public final class TermSearch {
                     capped |= answer.limits().pagesRead() < answer.limits().pagesInScope();
                     List<PageKey> keys = new ArrayList<>();
                     for (TermKnowledge.Page page : answer.pages()) {
-                        if (!seen.contains(page.key()) && NeighborScope.allows(query, page.key(),
+                        // Dateitypen entscheidet erst die Suche: Aussagen eines Anhangs tragen den Titel der Seite.
+                        if (!seen.contains(page.key()) && NeighborScope.allows(anyKind, page.key(),
                                 new PageRef(page.key(), page.title(), page.spaceKey()))) {
                             keys.add(page.key());
                         }
@@ -184,21 +196,23 @@ public final class TermSearch {
                 }
             }
         }
-        Result found = collect(caller, query, evidence, terms, seen, capped, cancelled);
+        Result found = collect(caller, query, evidence, terms, seen, capped, cancelled, maxSearches);
         return new Result(found.hits(), found.terms(), found.capped(), complete && found.complete(),
                 found.searches());
     }
 
     /** Nach Frist oder Abbruch: was bis dahin gefunden ist, als unvollständig. */
     private Result partial(AccessContext caller, KeywordSearch.Query query, Map<String, List<PageKey>> evidence,
-                           List<String> terms, Set<PageKey> seen, boolean capped, BooleanSupplier cancelled) {
-        Result found = collect(caller, query, evidence, terms, seen, capped, cancelled);
+                           List<String> terms, Set<PageKey> seen, boolean capped, BooleanSupplier cancelled,
+                           int maxSearches) {
+        Result found = collect(caller, query, evidence, terms, seen, capped, cancelled, maxSearches);
         return new Result(found.hits(), found.terms(), found.capped(), false, found.searches());
     }
 
     /** Sucht je Begriff seine Belegseiten mit dem Begriff als Suchtext; höchstens {@link #MAX_HITS} neue Treffer. */
     private Result collect(AccessContext caller, KeywordSearch.Query query, Map<String, List<PageKey>> evidence,
-                           List<String> terms, Set<PageKey> seen, boolean capped, BooleanSupplier cancelled) {
+                           List<String> terms, Set<PageKey> seen, boolean capped, BooleanSupplier cancelled,
+                           int maxSearches) {
         List<KeywordSearch.Hit> hits = new ArrayList<>();
         boolean complete = true;
         int searches = 0;
@@ -207,7 +221,7 @@ public final class TermSearch {
             if (candidates.isEmpty()) {
                 continue;
             }
-            if (hits.size() >= MAX_HITS || cancelled.getAsBoolean()) {
+            if (hits.size() >= MAX_HITS || searches >= maxSearches || cancelled.getAsBoolean()) {
                 complete = false;
                 break;
             }

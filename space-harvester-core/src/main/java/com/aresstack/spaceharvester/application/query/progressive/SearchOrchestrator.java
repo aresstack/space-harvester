@@ -218,6 +218,10 @@ public final class SearchOrchestrator implements AutoCloseable {
         }
     }
 
+    /** Ergebnis des Schritts „Fachbegriffe“ samt Bewertungen der semantischen Suche und ihrer Suchanfrage. */
+    private record Scored(TermSearch.Result found, Map<PageKey, Double> scores, int extra) {
+    }
+
     /** Ein Treffer der zusammengeführten Liste. */
     private static final class Entry {
 
@@ -435,20 +439,62 @@ public final class SearchOrchestrator implements AutoCloseable {
 
         /**
          * Suchmethode „Fachbegriffe“ (W8): Belegseiten der Fachbegriffe der Anfrage, im Umfang der Suche, ohne schon
-         * gefundene; bewertet und zusammengeführt wie jeder Treffer. Läuft nur, solange Budget bleibt; Frist und
-         * Abbruch der Suche brechen sie zwischen zwei Proben bzw. Seiten ab, Gefundenes bleibt.
+         * gefundene; bewertet und zusammengeführt wie jeder Treffer. Läuft nur mit dem restlichen Budget und im
+         * Hintergrund, gewartet wird höchstens bis zur Gesamtfrist oder zum Abbruch (wie beim Sammeln der Nachbarn);
+         * kommt sie später zurück, bleibt sie draußen. Semantisch bewertet die gewählte Suche die Kandidaten mit der
+         * ursprünglichen Anfrage, damit keine unbewerteten Schlagworttreffer zwischen die Vektorwerte geraten.
          */
         private void termStep() {
-            if (terms == null || searches >= profile.searchBudget()) {
+            int left = profile.searchBudget() - searches;
+            if (terms == null || left <= 0) {
                 return;
             }
-            TermSearch.Result found = terms.search(caller, query, List.copyOf(entries.keySet()),
-                    () -> cancelled() || System.nanoTime() >= deadline);
-            searches += found.searches();
+            List<PageKey> known = List.copyOf(entries.keySet());
+            boolean semanticRanking = profile.ranking() == SearchProfile.Ranking.SEMANTIC;
+            CompletableFuture<Scored> future = CompletableFuture.supplyAsync(() -> {
+                TermSearch.Result found = terms.search(caller, query, known,
+                        () -> cancelled() || System.nanoTime() >= deadline, semanticRanking ? left - 1 : left);
+                Map<PageKey, Double> scores = Map.of();
+                int extra = 0;
+                if (semanticRanking && !found.hits().isEmpty() && !cancelled() && System.nanoTime() < deadline) {
+                    Set<PageKey> keys = new LinkedHashSet<>();
+                    found.hits().forEach(hit -> keys.add(new PageKey(hit.sourceId(), hit.pageId())));
+                    extra = 1;
+                    try {
+                        scores = attempt(query.within(PageSet.ofKeys(keys))).scores();
+                    } catch (RuntimeException e) {
+                        LOG.log(System.Logger.Level.INFO, "Fachbegriffe nicht semantisch bewertet ({0})",
+                                e.getClass().getName());
+                    }
+                }
+                return new Scored(found, scores, extra);
+            }, executor);
+            Scored scored;
+            try {
+                CompletableFuture.anyOf(future, cancelSignal).get(Math.max(0, deadline - System.nanoTime()),
+                        TimeUnit.NANOSECONDS);
+                if (!future.isDone()) {
+                    return;
+                }
+                scored = future.join();
+            } catch (TimeoutException e) {
+                LOG.log(System.Logger.Level.INFO, "Fachbegriffe nicht in der Frist gesucht");
+                return;
+            } catch (ExecutionException | CompletionException e) {
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                LOG.log(System.Logger.Level.INFO, "Fachbegriffe nicht gesucht ({0})", cause.getClass().getName());
+                return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cancelSignal.complete(null);
+                return;
+            }
+            TermSearch.Result found = scored.found();
+            searches += found.searches() + scored.extra();
             List<Entry> unscored = new ArrayList<>();
             int added = 0;
             for (KeywordSearch.Hit hit : found.hits()) {
-                added += merge(0, hit, true, unscored, Map.of());
+                added += merge(0, hit, true, unscored, scored.scores());
             }
             newInWave = added;
             score(unscored);

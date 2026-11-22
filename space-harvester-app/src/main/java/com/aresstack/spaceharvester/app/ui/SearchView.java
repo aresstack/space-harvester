@@ -156,6 +156,8 @@ public final class SearchView implements View {
     private String keywordSearchId;
     /** Nachbar-Treffer, die ankamen, während ein Stapel lud; sie folgen nach dem Stapel, sonst schnitte er sie ab. */
     private final List<KeywordSearch.Hit> heldNeighbors = new ArrayList<>();
+    /** Seiten zu Fachbegriffen, die während eines ladenden Stapels kamen; sie folgen nach ihm (wie die Nachbarn). */
+    private final List<KeywordSearch.Hit> heldTermPages = new ArrayList<>();
     /** Läuft die Nachbarsuche dieser Anfrage, wartet „Weitere laden“: Der nächste Stapel verwürfe sonst ihre Treffer. */
     private int neighborsPending = -1;
     /** Die Suchanfragen der semantischen Suche als Schlagwörter; die ursprüngliche steht im Suchfeld. */
@@ -1580,6 +1582,7 @@ public final class SearchView implements View {
             neighborLoadWatch = null;
         }
         heldNeighbors.clear();
+        heldTermPages.clear();
         if (running != null) {
             running.cancel();
             running = null;
@@ -1770,8 +1773,15 @@ public final class SearchView implements View {
         status.setForeground(Comic.ORANGE);
     }
 
-    /** Hängt Seiten zu Fachbegriffen hinten an, ohne schon gezeigte; Auswahl und Position bleiben. */
+    /**
+     * Hängt Seiten zu Fachbegriffen hinten an, ohne schon gezeigte; Auswahl und Position bleiben. Lädt gerade ein
+     * Stapel, warten sie auf ihn, sonst schnitte sein Ende sie wieder ab.
+     */
     void appendTermPages(List<KeywordSearch.Hit> found) {
+        if (searching != null) {
+            heldTermPages.addAll(found);
+            return;
+        }
         java.util.Set<List<String>> shown = new java.util.HashSet<>();
         model.rows.forEach(row -> shown.add(java.util.Arrays.asList(row.sourceId(), row.pageId(), row.attachment())));
         List<Hit> fresh = new ArrayList<>();
@@ -1832,6 +1842,11 @@ public final class SearchView implements View {
 
     /** Nach einem Stapel: die zurückgehaltenen Nachbar-Treffer. */
     void releaseNeighbors() {
+        if (!heldTermPages.isEmpty()) {
+            List<KeywordSearch.Hit> terms = List.copyOf(heldTermPages);
+            heldTermPages.clear();
+            appendTermPages(terms);
+        }
         if (heldNeighbors.isEmpty()) {
             return;
         }

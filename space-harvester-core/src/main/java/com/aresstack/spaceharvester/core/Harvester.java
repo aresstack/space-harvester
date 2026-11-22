@@ -2259,7 +2259,7 @@ public final class Harvester implements AutoCloseable {
     /**
      * Die Seiten einer Suche für das Begriffswissen (W8): ihre Seitengrenze, sonst die Seiten ihrer Quellen (ohne
      * Angabe alle eingerichteten) und Spaces mit den Rechten des Aufrufers. Eine Quelle oder ein Space ohne Leserecht
-     * fällt weg, statt die Suche zu sperren.
+     * fällt weg, statt die Suche zu sperren; ausgeschlossene Spaces fehlen schon im Bereich.
      */
     static com.aresstack.spaceharvester.application.snapshot.PageSet searchScope(Holdings holdings,
             List<String> configured, AccessContext caller, KeywordSearch.Query query) {
@@ -2268,25 +2268,47 @@ public final class Harvester implements AutoCloseable {
         }
         List<String> sources = query.sourceId() != null ? List.of(query.sourceId())
                 : !query.sourceIds().isEmpty() ? List.copyOf(query.sourceIds()) : configured;
+        Set<String> excluded = query.excludedSpaceKeys();
         Map<String, List<String>> pages = new LinkedHashMap<>();
         for (String sourceId : sources) {
-            List<Selection.Root> roots = query.spaceKeys().isEmpty() ? List.of(Selection.Root.source(sourceId))
-                    : query.spaceKeys().stream().map(space -> Selection.Root.space(sourceId, space)).toList();
+            List<Selection.Root> roots;
+            if (!query.spaceKeys().isEmpty()) {
+                roots = query.spaceKeys().stream().filter(space -> !excluded.contains(space))
+                        .map(space -> Selection.Root.space(sourceId, space)).toList();
+            } else if (excluded.isEmpty()) {
+                roots = List.of(Selection.Root.source(sourceId));
+            } else {
+                // Ausgeschlossene Spaces fallen schon hier weg, damit sie die Grenze des Begriffswissens nicht
+                // verbrauchen: erst die Spaces der Quelle, dann nur die übrigen.
+                com.aresstack.spaceharvester.application.holdings.PageSelection whole =
+                        resolved(holdings, caller, Selection.Root.source(sourceId));
+                roots = whole == null ? List.of() : whole.spaces().stream()
+                        .map(com.aresstack.spaceharvester.application.holdings.SpaceSummary::spaceKey).distinct()
+                        .filter(space -> !excluded.contains(space))
+                        .map(space -> Selection.Root.space(sourceId, space)).toList();
+            }
             for (Selection.Root root : roots) {
-                try {
-                    com.aresstack.spaceharvester.application.holdings.PageSelection resolved =
-                            holdings.resolve(caller, Selection.of(root));
-                    resolved.pages().asMap().forEach((source, ids) -> pages.computeIfAbsent(source,
+                com.aresstack.spaceharvester.application.holdings.PageSelection selection =
+                        resolved(holdings, caller, root);
+                if (selection != null) {
+                    selection.pages().asMap().forEach((source, ids) -> pages.computeIfAbsent(source,
                             unused -> new ArrayList<>()).addAll(ids));
-                } catch (RuntimeException e) {
-                    // Ohne Leserecht oder nicht (mehr) eingerichtet: diese Wurzel fehlt im Bereich.
-                    LOG.log(System.Logger.Level.DEBUG, "Bereich der Fachbegriffe ohne eine Wurzel ({0})",
-                            e.getClass().getName());
                 }
             }
         }
-        // Ausgeschlossene Spaces fallen bei den Kandidaten und in der Suche selbst weg (TermSearch).
         return com.aresstack.spaceharvester.application.snapshot.PageSet.of(pages);
+    }
+
+    /** Eine Wurzel mit den Rechten des Aufrufers; ohne Leserecht oder nicht (mehr) eingerichtet {@code null}. */
+    private static com.aresstack.spaceharvester.application.holdings.PageSelection resolved(Holdings holdings,
+            AccessContext caller, Selection.Root root) {
+        try {
+            return holdings.resolve(caller, Selection.of(root));
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Bereich der Fachbegriffe ohne eine Wurzel ({0})",
+                    e.getClass().getName());
+            return null;
+        }
     }
 
     /**
