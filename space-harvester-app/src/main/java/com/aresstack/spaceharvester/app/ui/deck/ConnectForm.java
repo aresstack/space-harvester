@@ -1,17 +1,30 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
 import com.aresstack.spaceharvester.app.ui.AppState;
+import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
+import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
+import com.aresstack.spaceharvester.deck.access.ServerAccount;
+import com.aresstack.spaceharvester.deck.access.ServerAccounts;
+import com.aresstack.spaceharvester.deck.access.ServerCredentials;
+import com.aresstack.spaceharvester.deck.terminal.TerminalLogin;
 import com.aresstack.spaceharvester.deck.terminal.TerminalModel;
 import com.aresstack.spaceharvester.deck.terminal.TerminalProfile;
+import com.aresstack.spaceharvester.deck.terminal.TerminalSessions;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.util.function.Consumer;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.function.BiConsumer;
 import javax.swing.BorderFactory;
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -19,43 +32,76 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 
 /**
- * „Neue Verbindung“ zum TN3270-Host: sichtbar nur Host und Port, Modell, TLS, Codepage und Keep-Alive unter
- * „Erweitert“. Nichts ist mit Namen vorbelegt; die zuletzt benutzte Verbindung steht beim nächsten Mal wieder da.
- * Verbunden wird erst auf „Verbinden“ (oder Eingabe), nie beim Öffnen der Perspektive.
+ * „Neue Verbindung“ zum TN3270-Host. Ein Server ist ein KeePass-Eintrag (Angelo, 22.11.2026): Adresse aus dem
+ * URL-Feld, Benutzer und Passwort aus dem Eintrag, gemeinsam für Terminal, FTP und NDV. Sichtbar sind nur Server,
+ * Port und „Automatisch anmelden“; Host von Hand, Modell, TLS, Codepage, Keep-Alive und Startkommando stehen unter
+ * „Erweitert“. Verbunden wird erst auf „Verbinden“; das Passwort liest die Sitzung erst danach im Hintergrund.
  */
 final class ConnectForm extends JPanel {
 
-    static final String HOST_KEY = "deck.terminal.host";
-    static final String PORT_KEY = "deck.terminal.port";
+    static final String ENTRY_KEY = "deck.terminal.entry";
     static final String MODEL_KEY = "deck.terminal.model";
     static final String TLS_KEY = "deck.terminal.tls";
     static final String CODE_PAGE_KEY = "deck.terminal.code-page";
     static final String KEEP_ALIVE_KEY = "deck.terminal.keep-alive";
+    static final String AUTO_LOGIN_KEY = "deck.terminal.auto-login";
+    static final String COMMAND_KEY = "deck.terminal.command";
 
-    final PlaceholderField host = new PlaceholderField(22, "Rechnername oder Adresse");
+    final JComboBox<ServerAccount> server = new JComboBox<>();
+    final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
     final PlaceholderField port = new PlaceholderField(6, String.valueOf(TerminalProfile.DEFAULT_PORT));
+    final JCheckBox autoLogin = new JCheckBox("Automatisch anmelden (Benutzer und Passwort aus KeePass)");
     final JComboBox<TerminalModel> model = new JComboBox<>(TerminalModel.values());
     final JCheckBox tls = new JCheckBox("Verschlüsselt (TLS)");
     final PlaceholderField codePage = new PlaceholderField(8, TerminalProfile.DEFAULT_CODE_PAGE);
     final PlaceholderField keepAlive = new PlaceholderField(6, "aus");
+    final PlaceholderField command = new PlaceholderField(22, "nach der Anmeldung eingeben, z. B. ein Menü");
     private final JLabel problem = new JLabel(" ");
+    private final JLabel serverState = Comic.muted(" ");
     private final JPanel advanced = new JPanel(new GridBagLayout());
     private final JLabel advancedToggle = new JLabel();
-    private final Consumer<TerminalProfile> connect;
+    private final ServerAccounts accounts;
+    private ServerAccount shownAccount;
+    private final BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect;
+    private boolean loaded;
 
-    ConnectForm(Consumer<TerminalProfile> connect) {
+    ConnectForm(ServerAccounts accounts, BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect) {
         super(new BorderLayout());
+        this.accounts = accounts;
         this.connect = connect;
         setOpaque(false);
+        server.setRenderer(new javax.swing.DefaultListCellRenderer() {
+            @Override
+            public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value,
+                                                                   int index, boolean selected, boolean focus) {
+                super.getListCellRendererComponent(list, value, index, selected, focus);
+                if (value instanceof ServerAccount account) {
+                    setText(account.toString() + (account.user().isEmpty() ? "" : " · " + account.user()));
+                } else {
+                    setText("KeePass-Eintrag wählen …");
+                }
+                return this;
+            }
+        });
+        server.addActionListener(e -> serverChanged());
+        IconButton reload = new IconButton(Glyph.REFRESH, "Einträge neu aus KeePass laden");
+        reload.addActionListener(e -> load());
+        InputFrame serverFrame = new InputFrame(server);
+        serverFrame.addButton(reload);
+
         JPanel fields = new JPanel(new GridBagLayout());
         fields.setOpaque(false);
-        row(fields, 0, "Host", host);
-        row(fields, 1, "Port", port);
+        row(fields, 0, "Server", serverFrame);
+        row(fields, 1, "", serverState);
+        row(fields, 2, "Port", port);
+        row(fields, 3, "", autoLogin);
         advanced.setOpaque(false);
-        row(advanced, 0, "Modell", model);
-        row(advanced, 1, "", tls);
-        row(advanced, 2, "Codepage", codePage);
-        row(advanced, 3, "Keep-Alive (s)", keepAlive);
+        row(advanced, 0, "Host", host);
+        row(advanced, 1, "Startkommando", command);
+        row(advanced, 2, "Modell", model);
+        row(advanced, 3, "", tls);
+        row(advanced, 4, "Codepage", codePage);
+        row(advanced, 5, "Keep-Alive (s)", keepAlive);
         advanced.setVisible(false);
         advancedToggle.setFont(Comic.regular(12.5f));
         advancedToggle.setForeground(Comic.BLUE);
@@ -67,15 +113,16 @@ final class ConnectForm extends JPanel {
             }
         });
         advanced(false);
-        tls.setOpaque(false);
-        tls.setFont(Comic.regular(13f));
+        for (JCheckBox box : new JCheckBox[] {tls, autoLogin}) {
+            box.setOpaque(false);
+            box.setFont(Comic.regular(13f));
+        }
         // Mit TLS ist 992 der übliche Port; ein eingetragener Port bleibt, wie er ist.
-        tls.addActionListener(e -> port.setPlaceholder(String.valueOf(
-                tls.isSelected() ? TerminalProfile.DEFAULT_TLS_PORT : TerminalProfile.DEFAULT_PORT)));
+        tls.addActionListener(e -> serverChanged());
         model.setFont(Comic.regular(13f));
         problem.setFont(Comic.regular(12.5f));
         problem.setForeground(Comic.RED);
-        var button = Comic.primary("Verbinden", "TN3270-Sitzung zu diesem Host öffnen (Eingabe)");
+        var button = Comic.primary("Verbinden", "TN3270-Sitzung zu diesem Server öffnen (Eingabe)");
         button.addActionListener(e -> submit());
         host.addActionListener(e -> submit());
         port.addActionListener(e -> submit());
@@ -89,10 +136,17 @@ final class ConnectForm extends JPanel {
         }
         advancedToggle.setBorder(BorderFactory.createEmptyBorder(6, 0, 4, 0));
         problem.setBorder(BorderFactory.createEmptyBorder(4, 0, 6, 0));
-        JComponent plate = Comic.plate("Neue Verbindung", Comic.YELLOW, body);
-        add(plate, BorderLayout.CENTER);
+        add(Comic.plate("Neue Verbindung", Comic.YELLOW, body), BorderLayout.CENTER);
         recall();
+        serverChanged();
         getAccessibleContext().setAccessibleName("Neue TN3270-Verbindung");
+        // Die Liste kommt beim ersten Zeigen (nur lesen, ohne Kopplungsdialog: der steht unter Sicherheit).
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()
+                    && !loaded) {
+                load();
+            }
+        });
     }
 
     private static void row(JPanel panel, int y, String label, JComponent field) {
@@ -107,8 +161,55 @@ final class ConnectForm extends JPanel {
         c.insets = new Insets(3, 0, 3, 0);
         c.fill = GridBagConstraints.HORIZONTAL;
         c.weightx = 1;
-        field.setFont(Comic.regular(13f));
+        if (!(field instanceof JLabel)) {
+            field.setFont(Comic.regular(13f));
+        }
         panel.add(field, c);
+    }
+
+    /** Lädt die KeePass-Einträge im Hintergrund; die gemerkte Wahl bleibt gewählt. */
+    void load() {
+        loaded = true;
+        serverState.setText("Lade Einträge aus KeePass …");
+        serverState.setForeground(Comic.MUTED);
+        Background.run(accounts::accounts, this::show, error -> {
+            serverState.setText(describe(error));
+            serverState.setForeground(Comic.RED);
+        });
+    }
+
+    /** Zeigt die Einträge (für Tests auch direkt). */
+    void show(List<ServerAccount> list) {
+        String wanted = selected() == null ? AppState.shared().get(ENTRY_KEY) : selected().entry();
+        DefaultComboBoxModel<ServerAccount> items = new DefaultComboBoxModel<>();
+        items.addElement(null);
+        list.forEach(items::addElement);
+        server.setModel(items);
+        list.stream().filter(account -> account.entry().equals(wanted)).findFirst().ifPresent(server::setSelectedItem);
+        serverState.setText(list.isEmpty() ? "KeePass liefert keine Einträge" : list.size() + " Einträge aus KeePass");
+        serverState.setForeground(Comic.MUTED);
+        serverChanged();
+    }
+
+    private ServerAccount selected() {
+        return server.getSelectedItem() instanceof ServerAccount account ? account : null;
+    }
+
+    private void serverChanged() {
+        ServerAccount account = selected();
+        // Eine abweichende Adresse (und ein abweichender Port) gilt nur für die eben gewählte Verbindung: Wer den Server wechselt, verbindet sich
+        // mit dessen Adresse, damit Zugangsdaten nie an eine vergessene, verdeckte Adresse gehen.
+        if (account != shownAccount) {
+            host.setText("");
+            port.setText("");
+            shownAccount = account;
+        }
+        host.setPlaceholder(account == null || account.host().isEmpty() ? "Rechnername oder Adresse"
+                : account.host());
+        int fallback = account != null && account.port().isPresent() ? account.port().getAsInt()
+                : tls.isSelected() ? TerminalProfile.DEFAULT_TLS_PORT : TerminalProfile.DEFAULT_PORT;
+        port.setPlaceholder(String.valueOf(fallback));
+        autoLogin.setEnabled(account != null);
     }
 
     private void advanced(boolean shown) {
@@ -118,13 +219,40 @@ final class ConnectForm extends JPanel {
         repaint();
     }
 
-    /** Das Profil aus den Feldern; wirft mit lesbarer Meldung, wenn etwas fehlt. */
+    /** Das Profil aus Server und Feldern; wirft mit lesbarer Meldung, wenn etwas fehlt. */
     TerminalProfile profile() {
-        int portNumber = number(port.getText(), tls.isSelected()
-                ? TerminalProfile.DEFAULT_TLS_PORT : TerminalProfile.DEFAULT_PORT, "Port");
+        ServerAccount account = selected();
+        String target = host.getText().isBlank() && account != null ? account.host() : host.getText();
+        if (target == null || target.isBlank()) {
+            throw new IllegalArgumentException(account == null ? "Server wählen (KeePass-Eintrag)"
+                    : "Der KeePass-Eintrag „" + account.entry() + "“ hat keine Adresse (URL)");
+        }
+        int fallback = account != null && account.port().isPresent() ? account.port().getAsInt()
+                : tls.isSelected() ? TerminalProfile.DEFAULT_TLS_PORT : TerminalProfile.DEFAULT_PORT;
+        int portNumber = number(port.getText(), fallback, "Port");
         int keepAliveSeconds = number(keepAlive.getText(), 0, "Keep-Alive");
-        return new TerminalProfile(host.getText(), portNumber, (TerminalModel) model.getSelectedItem(),
-                tls.isSelected(), keepAliveSeconds, codePage.getText());
+        return new TerminalProfile(target, portNumber, (TerminalModel) model.getSelectedItem(), tls.isSelected(),
+                keepAliveSeconds, codePage.getText());
+    }
+
+    /** Die Anmeldung aus dem gewählten Eintrag, gelesen erst im Hintergrund nach dem Verbinden; sonst keine. */
+    TerminalSessions.LoginSource login() {
+        ServerAccount account = selected();
+        if (account == null || !autoLogin.isSelected()) {
+            return null;
+        }
+        String entry = account.entry();
+        String startCommand = command.getText();
+        return () -> {
+            try (ServerCredentials credentials = accounts.credentials(entry)) {
+                char[] password = credentials.copyPassword();
+                try {
+                    return new TerminalLogin(credentials.user(), password, startCommand);
+                } finally {
+                    Arrays.fill(password, '\0');
+                }
+            }
+        };
     }
 
     private static int number(String text, int fallback, String name) {
@@ -148,29 +276,32 @@ final class ConnectForm extends JPanel {
             return;
         }
         problem.setText(" ");
-        remember(profile);
-        connect.accept(profile);
+        remember();
+        connect.accept(profile, login());
     }
 
     String problemText() {
         return problem.getText();
     }
 
-    void focusHost() {
-        host.requestFocusInWindow();
+    String serverStateText() {
+        return serverState.getText();
     }
 
-    private void remember(TerminalProfile profile) {
-        AppState state = AppState.shared();
-        state.putAll(java.util.Map.of(HOST_KEY, profile.host(), PORT_KEY, port.getText().trim(),
-                MODEL_KEY, profile.model().name(), TLS_KEY, String.valueOf(profile.tls()),
-                CODE_PAGE_KEY, codePage.getText().trim(), KEEP_ALIVE_KEY, keepAlive.getText().trim()));
+    void focusServer() {
+        server.requestFocusInWindow();
+    }
+
+    private void remember() {
+        ServerAccount account = selected();
+        AppState.shared().putAll(Map.of(ENTRY_KEY, account == null ? "" : account.entry(),
+                MODEL_KEY, ((TerminalModel) model.getSelectedItem()).name(), TLS_KEY, String.valueOf(tls.isSelected()),
+                CODE_PAGE_KEY, codePage.getText().trim(), KEEP_ALIVE_KEY, keepAlive.getText().trim(),
+                AUTO_LOGIN_KEY, String.valueOf(autoLogin.isSelected()), COMMAND_KEY, command.getText().trim()));
     }
 
     private void recall() {
         AppState state = AppState.shared();
-        host.setText(nonNull(state.get(HOST_KEY)));
-        port.setText(nonNull(state.get(PORT_KEY)));
         String modelName = state.get(MODEL_KEY);
         for (TerminalModel candidate : TerminalModel.values()) {
             if (candidate.name().equals(modelName)) {
@@ -180,9 +311,21 @@ final class ConnectForm extends JPanel {
         tls.setSelected(state.getBoolean(TLS_KEY, false));
         codePage.setText(nonNull(state.get(CODE_PAGE_KEY)));
         keepAlive.setText(nonNull(state.get(KEEP_ALIVE_KEY)));
+        autoLogin.setSelected(state.getBoolean(AUTO_LOGIN_KEY, true));
+        command.setText(nonNull(state.get(COMMAND_KEY)));
     }
 
     private static String nonNull(String text) {
         return text == null ? "" : text;
+    }
+
+    /** Ein lesbarer Grund ohne Stacktrace. */
+    static String describe(Throwable error) {
+        Throwable cause = error;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        String message = cause.getMessage();
+        return message == null || message.isBlank() ? cause.getClass().getSimpleName() : message;
     }
 }

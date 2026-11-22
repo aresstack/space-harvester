@@ -39,8 +39,16 @@ public final class CommandDeck {
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
 
+    /** Ohne Passwortspeicher (Tests). */
     public CommandDeck() {
-        terminal = new TerminalWorkspace(sessions);
+        this(com.aresstack.spaceharvester.deck.access.ServerAccounts.NONE);
+    }
+
+    /**
+     * @param accounts Host-Zugänge (KeePass), gemeinsam für Terminal und später FTP und NDV
+     */
+    public CommandDeck(com.aresstack.spaceharvester.deck.access.ServerAccounts accounts) {
+        terminal = new TerminalWorkspace(sessions, accounts);
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.

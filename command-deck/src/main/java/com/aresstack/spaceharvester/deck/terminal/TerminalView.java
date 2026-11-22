@@ -23,4 +23,12 @@ public interface TerminalView {
 
     /** Ob der Host gerade keine Eingabe annimmt (X-Wait). */
     boolean keyboardLocked();
+
+    /**
+     * Meldet jedes neue Bild vom Host (und jede eigene Änderung an der Anzeige). Der Aufruf kommt vom Terminal selbst,
+     * nicht aus einer Abfrage, und kann auf einem beliebigen Faden stattfinden.
+     */
+    void addScreenListener(Runnable listener);
+
+    void removeScreenListener(Runnable listener);
 }
