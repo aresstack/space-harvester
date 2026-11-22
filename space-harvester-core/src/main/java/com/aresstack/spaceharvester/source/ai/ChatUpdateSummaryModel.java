@@ -71,6 +71,12 @@ public final class ChatUpdateSummaryModel implements SummaryModel {
     }
 
     @Override
+    public int retries() {
+        AiServiceSettings current = settings.get();
+        return current == null ? 2 : Math.max(2, current.retries());
+    }
+
+    @Override
     public String complete(String instructions, String input) {
         AiServiceSettings current = settings.get();
         if (current == null || !current.chat()) {

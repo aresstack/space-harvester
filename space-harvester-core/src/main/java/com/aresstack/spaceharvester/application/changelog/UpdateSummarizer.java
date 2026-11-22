@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.changelog;
 
+import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
@@ -22,6 +23,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import tools.jackson.databind.JsonNode;
@@ -194,12 +196,14 @@ final class UpdateSummarizer {
             }
         });
         // Die Teile sind unabhängig: bis zu ai.parallel zugleich (Angelo, 22.11.2026); nur das Zusammenführen wartet.
-        List<Answer> answers = inParallel(parts, context, part -> {
-            ObjectNode input = frame.deepCopy();
-            ArrayNode changes = input.putArray("aenderungen");
-            part.forEach(material -> changes.add(material.node()));
-            return ask(INSTRUCTIONS, input.toString(), ids(part), context);
-        });
+        AtomicReference<RuntimeException> lost = new AtomicReference<>();
+        List<Answer> answers = inParallel(parts, context, part -> part(part, frame, context, lost)).stream()
+                .filter(partial -> !partial.text().isBlank() || !partial.statements().isEmpty()).toList();
+        if (answers.isEmpty()) {
+            // Kein Teil kam durch: der Auftrag scheitert mit dem echten Grund.
+            throw lost.get() != null ? lost.get()
+                    : new JobFailedException("SUMMARY_UNUSABLE", "Die Antwort des Modells war keine Zusammenfassung");
+        }
         Answer answer = combine(answers, frame(update, Map.of(), spaceNames, withheld),
                 new Pages(pageSpaces, pageTitles), context);
         List<StoredSummary.InputPage> inputs = materials.stream()
@@ -250,7 +254,17 @@ final class UpdateSummarizer {
                     summaries.add(node(partial, topics.size(), pages));
                     topics.addAll(partial.statements());
                 }
-                String raw = model.complete(COMBINE, input.toString());
+                String raw;
+                try {
+                    raw = completeRetrying(COMBINE, input.toString(), context);
+                } catch (AiServiceException e) {
+                    if (!transientFailure(e)) {
+                        throw e;
+                    }
+                    // Auch nach Wiederholungen nicht durchgekommen: die Themen der Teile bleiben unverändert.
+                    raw = null;
+                    context.incomplete();
+                }
                 context.processed(1);
                 return merge(raw, topics, members);
             });
@@ -588,8 +602,71 @@ final class UpdateSummarizer {
         }
     }
 
+    /**
+     * Ein Teil der Seiten. Kommt die Anfrage auch nach Wiederholungen nicht durch (etwa HTTP 504 eines Gateways bei
+     * großer Eingabe), wird der Teil halbiert und jede Hälfte für sich gefragt; eine einzelne Seite, die nie
+     * durchkommt, fehlt in der Zusammenfassung, der Auftrag gilt dann als unvollständig, scheitert aber nicht
+     * (Angelo, 22.11.2026: ein einzelner Fehler kippt nicht den Auftrag).
+     */
+    private Answer part(List<Material> part, ObjectNode frame, JobContext context,
+                        AtomicReference<RuntimeException> lost) {
+        ObjectNode input = frame.deepCopy();
+        ArrayNode changes = input.putArray("aenderungen");
+        part.forEach(material -> changes.add(material.node()));
+        try {
+            return ask(INSTRUCTIONS, input.toString(), ids(part), context);
+        } catch (AiServiceException e) {
+            if (!transientFailure(e)) {
+                throw e;
+            }
+            lost.set(e);
+            if (part.size() == 1) {
+                context.processed(1);
+                context.failed(1);
+                context.incomplete();
+                return new Answer("", List.of());
+            }
+            context.discovered(1);
+            int half = part.size() / 2;
+            Answer first = part(part.subList(0, half), frame, context, lost);
+            Answer second = part(part.subList(half, part.size()), frame, context, lost);
+            List<StoredSummary.Statement> statements = new ArrayList<>(first.statements());
+            statements.addAll(second.statements());
+            return new Answer((first.text() + " " + second.text()).trim(), statements);
+        }
+    }
+
+    /** Vorübergehend: keine Verbindung, überlastet oder 5xx (UNREACHABLE) und Fristen; nie Anmeldung oder Format. */
+    static boolean transientFailure(AiServiceException e) {
+        return e.reason() == AiServiceException.Reason.UNREACHABLE || e.reason() == AiServiceException.Reason.TIMEOUT;
+    }
+
+    /** Wartezeit vor der n-ten Wiederholung, verdoppelt je Versuch; in Tests kürzer. */
+    static long backoffMillis = 2_000;
+
+    /** Fragt das Modell und wiederholt vorübergehende Fehler bis zu {@link SummaryModel#retries()} Mal. */
+    private String completeRetrying(String instructions, String input, JobContext context) {
+        int retries = Math.max(0, model.retries());
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return model.complete(instructions, input);
+            } catch (AiServiceException e) {
+                if (!transientFailure(e) || attempt >= retries || context.cancelRequested()) {
+                    throw e;
+                }
+                try {
+                    Thread.sleep(Math.min(30_000, backoffMillis << attempt));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new JobCancelledException(context.jobId());
+                }
+                context.checkpoint();
+            }
+        }
+    }
+
     private Answer ask(String instructions, String input, Set<String> known, JobContext context) {
-        String raw = model.complete(instructions, input);
+        String raw = completeRetrying(instructions, input, context);
         context.processed(1);
         Answer answer = parse(raw, known);
         if (answer.text().isBlank() && answer.statements().isEmpty()) {

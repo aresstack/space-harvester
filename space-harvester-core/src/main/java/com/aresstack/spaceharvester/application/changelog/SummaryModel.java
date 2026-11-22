@@ -22,6 +22,11 @@ public interface SummaryModel {
         return 1;
     }
 
+    /** So oft wird ein Aufruf nach einem vorübergehenden Fehler (5xx, Frist, keine Verbindung) wiederholt. */
+    default int retries() {
+        return 2;
+    }
+
     /** Kein Modell. */
     SummaryModel NONE = new SummaryModel() {
         @Override

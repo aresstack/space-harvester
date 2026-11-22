@@ -162,6 +162,11 @@ class UpdateSummaryTest {
 
         @Override
         public String complete(String given, String input) {
+            if (failFirst.getAndDecrement() > 0) {
+                throw new com.aresstack.spaceharvester.ai.AiServiceException(
+                        com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNREACHABLE,
+                        "Chat-Dienst: PROVIDER_ERROR (HTTP 504)");
+            }
             instructions.add(given);
             inputs.add(input);
             int now = running.incrementAndGet();
@@ -179,6 +184,7 @@ class UpdateSummaryTest {
         }
     };
     private int parallel = 1;
+    private final java.util.concurrent.atomic.AtomicInteger failFirst = new java.util.concurrent.atomic.AtomicInteger();
     private long delayMillis;
     private final java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger mostAtOnce =
@@ -622,6 +628,24 @@ class UpdateSummaryTest {
         assertThat(summaries.get(key("wiki", ChangeUpdate.OPEN, null)).statements())
                 .hasSizeLessThanOrEqualTo(UpdateSummarizer.MAX_TOPICS)
                 .allSatisfy(statement -> assertThat(statement.pageIds()).isNotEmpty());
+    }
+
+    /** Angelo 22.11.2026: ein vorübergehender Fehler (etwa HTTP 504) wird wiederholt und kippt den Auftrag nicht. */
+    @Test
+    void aPassingGatewayErrorIsRetriedAndTheJobCompletes() {
+        long before = UpdateSummarizer.backoffMillis;
+        UpdateSummarizer.backoffMillis = 1;
+        try {
+            failFirst.set(2);
+            row(1, "100", "DEV", ChangeKind.NEW, "Start");
+            mark(10, true);
+            row(12, "102", "DEV", ChangeKind.NEW, "Neue Seite");
+            released.add("102");
+            assertThat(run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state()).isEqualTo(JobState.COMPLETED);
+            assertThat(instructions).contains(UpdateSummarizer.INSTRUCTIONS);
+        } finally {
+            UpdateSummarizer.backoffMillis = before;
+        }
     }
 
     /** Angelo 22.11.2026: der Auftrag hält sich an ai.parallel; Teile und Zusammenführen laufen gleichzeitig. */

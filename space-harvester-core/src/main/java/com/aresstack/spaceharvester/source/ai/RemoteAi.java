@@ -16,6 +16,7 @@ import com.aresstack.enterpriseai.astu.modelcatalog.ModelCategory;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelDescriptor;
 import com.aresstack.enterpriseai.chat.api.ChatCompletionException;
 import com.aresstack.enterpriseai.chat.api.ChatCompletionPort;
+import com.aresstack.enterpriseai.chat.api.ChatErrorKind;
 import com.aresstack.enterpriseai.chat.api.ChatStreamListener;
 import com.aresstack.enterpriseai.chat.api.ChatTask;
 import com.aresstack.enterpriseai.chat.openai.OpenAiCompatibleChatAdapter;
@@ -54,6 +55,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BinaryOperator;
 import javax.net.ssl.SSLContext;
@@ -217,6 +220,54 @@ public final class RemoteAi {
         };
     }
 
+    /**
+     * Eine Anfrage, gestreamt ({@code "stream": true}) und bis zum Ende abgewartet. Alle Modellaufrufe streamen: Bei
+     * einer langen Antwort ohne Streaming fließen bis zum Schluss keine Bytes, und ein Proxy oder Gateway bricht die
+     * Verbindung ab (HTTP 504, Angelo 22.11.2026). Die Antwort trägt den vollen Text und den {@code finish_reason}.
+     */
+    static ChatResponse streamed(ChatCompletionPort adapter, ChatRequest request) {
+        CompletableFuture<ChatResponse> done = new CompletableFuture<>();
+        ChatTask task = adapter.stream(request, new ChatStreamListener() {
+            @Override
+            public void onStart() {
+            }
+
+            @Override
+            public void onDelta(String text) {
+            }
+
+            @Override
+            public void onComplete(ChatResponse response) {
+                done.complete(response);
+            }
+
+            @Override
+            public void onError(ChatCompletionException error) {
+                done.completeExceptionally(error);
+            }
+
+            @Override
+            public void onCancelled() {
+                done.completeExceptionally(new ChatCompletionException(ChatErrorKind.TRANSPORT, "stream cancelled"));
+            }
+        });
+        try {
+            return done.get();
+        } catch (InterruptedException e) {
+            task.cancel();
+            Thread.currentThread().interrupt();
+            throw new ChatCompletionException(ChatErrorKind.TRANSPORT, "interrupted", e);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof ChatCompletionException failure) {
+                throw failure;
+            }
+            if (e.getCause() instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new IllegalStateException(e.getCause());
+        }
+    }
+
     /** Der Chat über {@code adapter}: Nachrichten, Optionen und Rückmeldungen wie im Enterprise AI Client. */
     private static AiChat streaming(ChatCompletionPort adapter) {
         return (request, listener) -> {
@@ -304,7 +355,7 @@ public final class RemoteAi {
         ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_VARIANT_TOKENS).build();
         return (instructions, question) -> {
             try {
-                return complete(adapter.complete(new ChatRequest(
+                return complete(streamed(adapter, new ChatRequest(
                         List.of(ChatMessage.system(instructions), ChatMessage.user(question)), options)),
                         MAX_VARIANT_TOKENS, false);
             } catch (ChatCompletionException e) {
@@ -355,7 +406,7 @@ public final class RemoteAi {
             ChatCompletionPort adapter = chatPort(settings.chatModel(),
                     awaitedTimeout(settings.chatModel(), (int) EXPANSION_TIMEOUT.toMillis()));
             try {
-                return complete(adapter.complete(new ChatRequest(
+                return complete(streamed(adapter, new ChatRequest(
                         List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)), maxTokens, true);
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
@@ -389,7 +440,7 @@ public final class RemoteAi {
         return (instructions, input) -> {
             ChatCompletionPort adapter = chatPort(settings.chatModel(), awaitedTimeout(settings.chatModel(), timeout));
             try {
-                return complete(adapter.complete(new ChatRequest(
+                return complete(streamed(adapter, new ChatRequest(
                         List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)), maxTokens, true);
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
@@ -424,7 +475,7 @@ public final class RemoteAi {
                     throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, "Chat-Modell nicht erreichbar");
                 }
                 try {
-                    return adapter.complete(request);
+                    return streamed(adapter, request);
                 } catch (RuntimeException e) {
                     failed.set(true);
                     throw e;
@@ -480,7 +531,7 @@ public final class RemoteAi {
                     });
                 }
                 try {
-                    return adapter.complete(new ChatRequest(request, options)).content();
+                    return streamed(adapter, new ChatRequest(request, options)).content();
                 } catch (ChatCompletionException e) {
                     throw chatFailure(e);
                 }
@@ -597,7 +648,7 @@ public final class RemoteAi {
             }
             ChatCompletionPort adapter = visionPort(awaitedTimeout(settings.visionModel(), timeoutMillis()));
             try {
-                return visionAnswer(adapter.complete(new ChatRequest(List.of(ChatMessage.userWithImages(instruction,
+                return visionAnswer(streamed(adapter, new ChatRequest(List.of(ChatMessage.userWithImages(instruction,
                         List.of(new com.aresstack.enterpriseai.astu.chat.ChatImage(mediaType, image)))),
                         visionOptions())), settings.contextTokens());
             } catch (ChatCompletionException e) {
