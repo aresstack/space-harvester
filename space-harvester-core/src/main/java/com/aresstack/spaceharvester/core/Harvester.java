@@ -2347,6 +2347,14 @@ public final class Harvester implements AutoCloseable {
                 com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Comparison.of(analyzerComparison));
     }
 
+    /**
+     * Begriffswissen für Chat und Suche (Paket W6) auf der Fachsicht: begrenzt, nur im Bereich, gelieferte Seiten an
+     * die Meldung des Aufrufers. Liest nur.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.TermKnowledge termKnowledge() {
+        return new com.aresstack.spaceharvester.application.knowledge.TermKnowledge(domainTermGraph());
+    }
+
     /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */
     public com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries() {
         return verbQueries;

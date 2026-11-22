@@ -321,3 +321,29 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   gesperrt; Aussagen lassen sich nicht prüfen“, der Core lehnt mit `LockedPageException` ab. Nur der Titel selbst öffnet
   die Seite, nicht der leere Platz bis ✓/✕; nach einer Meldung im Overlay (Neuaufbau) kehrt der Fokus dorthin zurück, wo
   er war. Der Seitenreiter „Graph“ hält eine Meldung des Core auch zurück, solange das Overlay noch lädt.
+
+## Umsetzung W6: Begriffswissen für Chat und Suche (Core)
+
+Freigegeben vom Architekten am 22.11.2026 als Absicht für „Wissen in Chat und Suche“. Der Core liefert nur Port und
+Tests; den Chat-Anschluss (Werkzeug, System-Prompt) baut der Chat-Strang, die zuschaltbare Suchmethode „Fachbegriffe“
+(Standard aus) der Strang Suchqualität.
+
+- `TermKnowledge#answer(caller, Begriff, Bereich, Delivery, Abbruch)` auf der Fachsicht (`DomainTermGraph#around`,
+  Tiefe 2): der bestätigte Fachbegriff oder das Synonym, dazu die unmittelbar daran hängenden Synonyme, je Begriff die
+  Aussagen (`Subjekt —Verb→ Objekt`) mit Vertrauensstufe, Zahl der Belege und Belegseiten als `PageKey` mit Space und
+  Titel, außerdem die Nachbarbegriffe. Gezählt wird genau wie in der Fachsicht: Standardansicht, verworfene Aussagen
+  nie, veraltete Seiten ausgelassen und gezählt. Nur lesen, kein KI-Aufruf, nichts gespeichert.
+- Stufe je Aussage: `ABWEICHEND`, wenn ein Beleg abweicht und keiner geprüft ist, sonst die höchste Stufe der Belege.
+  Reihenfolge geprüft, einig, ungeprüft, abweichend, innerhalb der Stufe nach Belegen. Ungeprüftes kommt mit, trägt
+  aber seine Stufe („Was ich sehe, sieht der Bot“: Die Fachsicht zeigt es ebenfalls).
+- Bereich im Core erzwungen: Gelesen werden nur die Analysen der Seiten des Bereichs (`KnowledgeGraph#analysed` mit
+  Seitenauswahl, Rechte je Seite), nie die ganze Ablage, höchstens `MAX_PAGES` (500) Seiten in fester Ordnung (Quelle,
+  Seite). Ein größerer Bereich wird gekappt und `Limits` nennt Seiten im Bereich und gelesene.
+- KI-Freigabe im Core erzwungen (ADR 0028, ADR 0033 Punkt 8): Jede Seite, deren Aussagen in der Antwort stehen, geht
+  an die `Delivery` des Aufrufers, bevor die Antwort herausgeht; genau diese, nicht der ganze Bereich und nicht die
+  Seiten gekappter Aussagen. Wirft die Meldung, gibt es keine Antwort. Wer nichts an ein Modell gibt (Suche), übergibt
+  ausdrücklich `Delivery.NONE`.
+- Obergrenzen je Antwort: 5 Begriffe, 20 Aussagen, 3 Belegseiten je Aussage, 10 Nachbarbegriffe; was gekappt wurde,
+  steht in `Limits` (auch eine gekappte Fachsicht und ausgelassene veraltete Aussagen). Ist die Eingabe kein
+  Fachbegriff, nennt die Antwort bis zu 5 ähnliche (`NOT_A_TERM`) und liefert keine Seite.
+- Zugang: `Harvester#termKnowledge`, `Workspace#termKnowledge`.
