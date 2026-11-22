@@ -10,19 +10,46 @@ import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
  *
  * @param analyzer {@code parser} (Standard, MaltParser) oder {@code model} (Sprachmodell, Erprobung)
  * @param model    eigenes Chat-Modell für den KI-Analysator oder {@code null} für {@code ai.chat-model}
+ * @param maxTokens Tokenlänge (Ausgabelimit) des KI-Analysators oder {@code null} für {@code ai.chat-max-tokens}
  */
-public record AnalyzerSettings(AnalyzerChoice analyzer, String model) {
+public record AnalyzerSettings(AnalyzerChoice analyzer, String model, Integer maxTokens, String thinking) {
 
     public static final String ANALYZER = "statements.analyzer";
     public static final String MODEL = "statements.analyzer-model";
-    public static final AnalyzerSettings DEFAULT = new AnalyzerSettings(AnalyzerChoice.PARSER, null);
+    public static final String MAX_TOKENS = "statements.analyzer-max-tokens";
+    public static final String THINKING = "statements.analyzer-thinking";
+    public static final AnalyzerSettings DEFAULT = new AnalyzerSettings(AnalyzerChoice.PARSER, null, null, null);
 
     public AnalyzerSettings {
         analyzer = analyzer == null ? AnalyzerChoice.PARSER : analyzer;
         model = model == null || model.isBlank() ? null : model.strip();
+        if (maxTokens != null && (maxTokens < 1 || maxTokens > 1_000_000)) {
+            throw new IllegalArgumentException("Tokenlänge zwischen 1 und 1000000");
+        }
+        thinking = StepThinking.normalize(thinking);
+    }
+
+    /** Ohne eigene Tokenlänge. */
+    public AnalyzerSettings(AnalyzerChoice analyzer, String model) {
+        this(analyzer, model, null);
+    }
+
+    /** Ohne eigenes Nachdenken (wie das Text-Modell). */
+    public AnalyzerSettings(AnalyzerChoice analyzer, String model, Integer maxTokens) {
+        this(analyzer, model, maxTokens, null);
+    }
+
+    /** Dieselben Einstellungen mit anderem Nachdenken; {@code null} heißt wie das Text-Modell. */
+    public AnalyzerSettings withThinking(String value) {
+        return new AnalyzerSettings(analyzer, model, maxTokens, value);
     }
 
     public AnalyzerSettings withAnalyzer(AnalyzerChoice value) {
-        return new AnalyzerSettings(value, model);
+        return new AnalyzerSettings(value, model, maxTokens, thinking);
+    }
+
+    /** Dieselben Einstellungen mit anderer Tokenlänge; {@code null} heißt {@code ai.chat-max-tokens}. */
+    public AnalyzerSettings withMaxTokens(Integer value) {
+        return new AnalyzerSettings(analyzer, model, value, thinking);
     }
 }

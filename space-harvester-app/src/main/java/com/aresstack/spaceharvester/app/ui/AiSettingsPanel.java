@@ -15,6 +15,8 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
+import com.aresstack.spaceharvester.app.ui.controls.ThinkingBox;
+import com.aresstack.spaceharvester.app.ui.controls.TokenLengthBox;
 import com.aresstack.spaceharvester.application.configuration.AnalyzerSettings;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.app.ui.content.AnalyzerNames;
@@ -104,16 +106,17 @@ final class AiSettingsPanel {
             + "(Bildbeschreibungen, „In PPTX umwandeln“); bei Ollama höchstens OLLAMA_NUM_PARALLEL; leer: "
             + com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_PARALLEL;
     /**
-     * Nachdenken des Chat-Modells bei Analyseschritten ({@code step-thinking}, Angelo 20.11.2026): Ein Modell mit
-     * Nachdenk-Modus schreibt sonst vor jeder Antwort Tausende Token, und „Transkript korrigieren“ kommt nicht voran.
+     * Nachdenken je Modell (Angelo 20.11. und 22.11.2026) in derselben Zeile wie Modell und Tokenlänge: Das Text-Modell
+     * ({@code step-thinking}) denkt standardmäßig nicht, die übrigen folgen ihm, solange nichts anderes gewählt ist.
+     * Die Stufe geht bei jeder Anfrage mit, außer ein Aufruf legt das Nachdenken aus gutem Grund selbst fest.
      */
-    final JComboBox<String> stepThinking = Comic.combo();
-    static final String THINKING_LABEL = "Nachdenken bei Analyseschritten";
-    static final String THINKING_HINT = "Transkript korrigieren, Folienkommentare und Prüfschritte; „aus“ antwortet "
-            + "direkt (Standard), sonst denkt ein Modell mit Nachdenk-Modus erst nach";
-    /** Anzeige und Wert in der Datei, in derselben Reihenfolge. */
-    static final java.util.List<String> THINKING_NAMES = java.util.List.of("aus", "wenig", "mittel", "viel");
-    static final java.util.List<String> THINKING_KEYS = java.util.List.of("none", "low", "medium", "high");
+    final ThinkingBox stepThinking = new ThinkingBox();
+    static final String THINKING_LIKE_CHAT = "wie Text-Modell";
+    final ThinkingBox visionThinking = new ThinkingBox(THINKING_LIKE_CHAT);
+    final ThinkingBox imageThinking = new ThinkingBox(THINKING_LIKE_CHAT);
+    final ThinkingBox statementThinking = new ThinkingBox(THINKING_LIKE_CHAT);
+    final ThinkingBox simplifyThinking = new ThinkingBox(THINKING_LIKE_CHAT);
+    final ThinkingBox checkThinking = new ThinkingBox(THINKING_LIKE_CHAT);
     final JPasswordField apiKey = new JPasswordField(32);
     final JTextField chatModel = Comic.field(24);
     final JTextField embeddingModel = Comic.field(24);
@@ -164,8 +167,27 @@ final class AiSettingsPanel {
     final JTextField rerankModel = Comic.field(24);
     final JTextField visionModel = Comic.field(24);
     final JTextField chunkTokens = Comic.field(6);
-    /** Ausgabelimit einer Antwort des Text-Modells in Tokens ({@code chat-max-tokens}); leer: Standard des Core. */
-    final JTextField chatMaxTokens = Comic.field(6);
+    /**
+     * Tokenlänge je Modell (Angelo 21.11.2026): in derselben Zeile rechts neben dem Modell eine editierbare Auswahl
+     * mit den Werten aus 3D4J; geht bei jeder Anfrage als {@code max_tokens} bzw. {@code num_predict} mit.
+     */
+    final TokenLengthBox chatMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS);
+    final TokenLengthBox visionMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS);
+    /** Bildgenerierung (SVG-Schaubilder): eigenes Modell und eigene, höhere Tokenlänge. */
+    final JTextField imageModel = Comic.field(24);
+    final TokenLengthBox imageMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_IMAGE_MAX_TOKENS);
+    /** Tokenlänge der Schritte mit eigenem Modell; „wie Text-Modell“ folgt {@code ai.chat-max-tokens}. */
+    static final String TOKENS_LIKE_CHAT = THINKING_LIKE_CHAT;
+    final TokenLengthBox statementMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS, TOKENS_LIKE_CHAT);
+    final TokenLengthBox simplifyMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS, TOKENS_LIKE_CHAT);
+    final TokenLengthBox checkMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS, TOKENS_LIKE_CHAT);
+    final ComposerButton pickImage = Comic.button("▾", "Modell der Bildgenerierung aus der Liste des Dienstes wählen");
     final JTextField chunkOverlap = Comic.field(6);
     final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     private final SettingDialogs.Rows modelRows;
@@ -439,9 +461,8 @@ final class AiSettingsPanel {
         rows.add(LOAD_POLL_LABEL, loadPollInterval, LOAD_POLL_HINT);
         rows.add("API-Key", apiKey, " ");
         modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über das Auswahlmenü rechts");
-        modelRows.add("Text-Modell", Comic.fieldWithButton(chatModel, pickChat),
-                "Für die Synonymprüfung und spätere Suchbegriffe aus einer Frage; optional");
-        modelRows.add(CHAT_MAX_TOKENS_LABEL, chatMaxTokens, CHAT_MAX_TOKENS_HELP);
+        modelRows.add("Text-Modell", modelRow(Comic.fieldWithButton(chatModel, pickChat), chatMaxTokens,
+                stepThinking, "Text-Modell", CHAT_MAX_TOKENS_HELP), null);
         judgedPairs.setToolTipText("Höchstens so viele Kandidatenpaare je Synonymlauf prüft das Text-Modell; 0 "
                 + "lässt die Prüfung aus");
         modelRows.add(JUDGED_PAIRS_LABEL, Comic.row(judgedPairs, Comic.text(JUDGED_PAIRS_UNIT), judgedPairsHelp),
@@ -455,25 +476,32 @@ final class AiSettingsPanel {
         statementAnalyzer.addItem(ANALYZER_MODEL);
         statementAnalyzer.setToolTipText(AnalyzerNames.STORE_TOOLTIP);
         modelRows.add(ANALYZER_LABEL, Comic.row(statementAnalyzer, statementHelp), null);
-        modelRows.add(ANALYZER_MODEL_LABEL, Comic.fieldWithButton(statementModel, pickStatement), null);
+        modelRows.add(ANALYZER_MODEL_LABEL, modelRow(Comic.fieldWithButton(statementModel, pickStatement),
+                statementMaxTokens, statementThinking, ANALYZER_MODEL_LABEL, stepTokensHelp("den KI-Analysator der Aussagenanalyse",
+                        "space-harvester.statements.analyzer-model, .analyzer-max-tokens und .analyzer-thinking")),
+                null);
         simplifyMode.addItem(SIMPLIFY_WHERE_NEEDED);
         simplifyMode.addItem(SIMPLIFY_ALWAYS);
         simplifyMode.setToolTipText("Welche Sätze die Vorstufe der Aussagenanalyse vereinfacht");
         simplifyParallel.setToolTipText("Höchstens so viele Abschnitte einer Seite sind gleichzeitig beim Modell");
         modelRows.add(SIMPLIFY_LABEL, Comic.row(simplifyMode, simplifyHelp), null);
-        modelRows.add(SIMPLIFY_MODEL_LABEL, Comic.fieldWithButton(simplifyModel, pickSimplify),
-                "Nur für „" + SIMPLIFY_LABEL + "“; leer: das Text-Modell");
+        modelRows.add(SIMPLIFY_MODEL_LABEL, modelRow(Comic.fieldWithButton(simplifyModel, pickSimplify),
+                simplifyMaxTokens, simplifyThinking, SIMPLIFY_MODEL_LABEL, stepTokensHelp("„" + SIMPLIFY_LABEL + "“",
+                        "space-harvester.statements.simplification.model, .max-tokens und .thinking")), null);
         checkScope.addItem(CHECK_UNCERTAIN_AND_STAGE);
         checkScope.addItem(CHECK_ALL);
         checkScope.setToolTipText("Welche Aussagen der Auftrag „" + CHECK_JOB + "“ dem Modell zeigt");
         checkParallel.setToolTipText("Höchstens so viele Sätze einer Seite sind gleichzeitig beim Modell");
         modelRows.add(CHECK_SCOPE_LABEL, Comic.row(checkScope, checkHelp), null);
-        modelRows.add(CHECK_MODEL_LABEL, Comic.fieldWithButton(checkModel, pickCheck),
-                "Nur für „" + CHECK_JOB + "“; leer: das Text-Modell");
+        modelRows.add(CHECK_MODEL_LABEL, modelRow(Comic.fieldWithButton(checkModel, pickCheck), checkMaxTokens,
+                checkThinking, CHECK_MODEL_LABEL, stepTokensHelp("„" + CHECK_JOB + "“",
+                        "space-harvester.statements.check.model, .max-tokens und .thinking")), null);
         modelRows.add("Embedding-Modell", Comic.fieldWithButton(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
-        modelRows.add("Vision-Modell", Comic.fieldWithButton(visionModel, pickVision),
-                "Beschreibt die Bilder einer Seite (Leseansicht › Bilder); leer: keine Bildbeschreibung");
+        modelRows.add("Vision-Modell", modelRow(Comic.fieldWithButton(visionModel, pickVision), visionMaxTokens,
+                visionThinking, "Vision-Modell", VISION_MAX_TOKENS_HELP), null);
+        modelRows.add(IMAGE_LABEL, modelRow(Comic.fieldWithButton(imageModel, pickImage), imageMaxTokens,
+                imageThinking, IMAGE_LABEL, IMAGE_HELP), null);
         automaticImages.setToolTipText("Bilder freigegebener Seiten nach jedem Abgleich und nach neuer KI-Freigabe "
                 + "beschreiben; ohne Häkchen nur auf Klick");
         imagesPerRun.setToolTipText("Höchstens so viele Bilder gehen je Lauf und Quelle an das Vision-Modell; "
@@ -483,8 +511,6 @@ final class AiSettingsPanel {
                 imagesPerRun, Comic.text(IMAGES_PER_RUN_AFTER), automaticImagesHelp), null);
         modelRows.add(RETRIES_LABEL, retries, RETRIES_HINT);
         modelRows.add(PARALLEL_LABEL, parallel, PARALLEL_HINT);
-        THINKING_NAMES.forEach(stepThinking::addItem);
-        modelRows.add(THINKING_LABEL, stepThinking, THINKING_HINT);
         {
             modelRows.add("Rerank-Modell", Comic.fieldWithButton(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
@@ -560,6 +586,7 @@ final class AiSettingsPanel {
         pickEmbedding.setEnabled(false);
         pickRerank.setEnabled(false);
         pickVision.setEnabled(false);
+        pickImage.setEnabled(false);
         loadModels.addActionListener(e -> loadModels());
         pickSimplify.addActionListener(e -> pick(pickSimplify, simplifyModel, AiModel.CHAT));
         pickCheck.addActionListener(e -> pick(pickCheck, checkModel, AiModel.CHAT));
@@ -568,6 +595,7 @@ final class AiSettingsPanel {
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
         pickVision.addActionListener(e -> pick(pickVision, visionModel, AiModel.VISION));
+        pickImage.addActionListener(e -> pick(pickImage, imageModel, AiModel.CHAT));
         released.setOpaque(false);
         released.setLayout(new javax.swing.BoxLayout(released, javax.swing.BoxLayout.Y_AXIS));
         rows.add("An den Dienst senden", released, "Nur freigegebene Quellen bekommen Embeddings und Reranking");
@@ -619,15 +647,19 @@ final class AiSettingsPanel {
         loadTimeout.setText(current.loadTimeout() == null ? "" : current.loadTimeout());
         retries.setText(current.retries() == null ? "" : current.retries());
         parallel.setText(current.parallel() == null ? "" : current.parallel());
-        int thinking = current.thinking() == null ? 0 : THINKING_KEYS.indexOf(current.thinking());
-        stepThinking.setSelectedIndex(Math.max(0, thinking));
+        stepThinking.showStored(current.thinking());
+        visionThinking.showStored(current.visionLevel());
+        imageThinking.showStored(current.imageLevel());
         loadPollInterval.setText(current.loadPollInterval() == null ? "" : current.loadPollInterval());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
         dimensions.setText(current.embeddingDimensions() == null ? "" : current.embeddingDimensions());
         rerankModel.setText(current.rerankModel() == null ? "" : current.rerankModel());
         visionModel.setText(current.visionModel() == null ? "" : current.visionModel());
-        chatMaxTokens.setText(current.chatMaxTokens() == null ? "" : current.chatMaxTokens());
+        chatMaxTokens.showStored(current.chatMaxTokens());
+        visionMaxTokens.showStored(current.visionMaxTokens());
+        imageModel.setText(current.imageModel() == null ? "" : current.imageModel());
+        imageMaxTokens.showStored(current.imageMaxTokens());
         judgedPairs.setValue(Math.min(savedBudget(settings).maxJudgedPairs(), SynonymRunForm.MAX_PAIRS));
         automaticSynonyms.setSelected(savedBudget(settings).automatic());
         glossarySynonyms.setSelected(savedBudget(settings).glossaryTermsOnly());
@@ -639,14 +671,21 @@ final class AiSettingsPanel {
                 : SIMPLIFY_WHERE_NEEDED);
         simplifyParallel.setValue(Math.min(simplification.parallel(), MAX_SIMPLIFY_PARALLEL));
         simplifyModel.setText(simplification.model() == null ? "" : simplification.model());
+        simplifyMaxTokens.showStored(simplification.maxTokens() == null ? null
+                : String.valueOf(simplification.maxTokens()));
+        simplifyThinking.showStored(simplification.thinking());
         AnalyzerSettings analyzer = savedAnalyzer(settings);
         statementAnalyzer.setSelectedItem(analyzer.analyzer() == AnalyzerChoice.MODEL ? ANALYZER_MODEL
                 : ANALYZER_PARSER);
         statementModel.setText(analyzer.model() == null ? "" : analyzer.model());
+        statementMaxTokens.showStored(analyzer.maxTokens() == null ? null : String.valueOf(analyzer.maxTokens()));
+        statementThinking.showStored(analyzer.thinking());
         CheckSettings check = savedCheck(settings);
         checkScope.setSelectedItem(check.scope() == CheckScope.ALL ? CHECK_ALL : CHECK_UNCERTAIN_AND_STAGE);
         checkParallel.setValue(Math.min(check.parallel(), MAX_CHECK_PARALLEL));
         checkModel.setText(check.model() == null ? "" : check.model());
+        checkMaxTokens.showStored(check.maxTokens() == null ? null : String.valueOf(check.maxTokens()));
+        checkThinking.showStored(check.thinking());
         chunkTokens.setText(current.chunkTokens() == null ? "" : current.chunkTokens());
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null
@@ -916,11 +955,36 @@ final class AiSettingsPanel {
     AiDraft draft() {
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
                 timeout, releasedDraft(), rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
-                visionModel.getText(), chatMaxTokens.getText(), chosenProvider(),
+                visionModel.getText(), chatMaxTokens.text(), chosenProvider(),
                 ollamaChosen() ? contextTokens.getText() : null, ollamaChosen() ? loadTimeout.getText() : null,
                 retries.getText(), ollamaChosen() ? loadPollInterval.getText() : null,
-                stepThinking.getSelectedIndex() <= 0 ? null : THINKING_KEYS.get(stepThinking.getSelectedIndex()),
-                parallel.getText());
+                stepThinking.level(), parallel.getText(), visionMaxTokens.text(), imageModel.getText(),
+                imageMaxTokens.text(), visionThinking.level(), imageThinking.level());
+    }
+
+    /**
+     * Eine Zeile „links Modell, rechts Tokenlänge“ (Angelo 21.11.2026) mit dem ?-Knopf am Ende: das Modellfeld füllt
+     * die Breite, die Tokenlänge hat feste Breite.
+     */
+    private static JComponent modelRow(JComponent model, TokenLengthBox tokens, ThinkingBox thinking, String heading,
+                                       String help) {
+        JPanel row = new JPanel(new java.awt.GridBagLayout());
+        row.setOpaque(false);
+        java.awt.GridBagConstraints c = new java.awt.GridBagConstraints();
+        c.gridy = 0;
+        c.fill = java.awt.GridBagConstraints.HORIZONTAL;
+        c.weightx = 1;
+        row.add(model, c);
+        c.weightx = 0;
+        c.insets = new java.awt.Insets(0, 6, 0, 0);
+        tokens.setPrototypeDisplayValue("1000000");
+        row.add(tokens, c);
+        row.add(Comic.text(TOKENS_UNIT), c);
+        // Gleich breit in allen Zeilen, damit die Spalten untereinander stehen.
+        thinking.setPrototypeDisplayValue(TOKENS_LIKE_CHAT);
+        row.add(thinking, c);
+        row.add(new HelpButton(Dialogs.CLOSE_SIZE, heading, help), c);
+        return row;
     }
 
     /** Je konfigurierte Quelle ein Häkchen mit ihrem Anzeigenamen; ohne Quellen eine Zeile Text. */
@@ -1361,7 +1425,8 @@ final class AiSettingsPanel {
     SimplificationSettings simplification() {
         return new SimplificationSettings(SIMPLIFY_ALWAYS.equals(simplifyMode.getSelectedItem())
                 ? SimplificationSettings.Mode.ALWAYS : SimplificationSettings.Mode.WHERE_NEEDED,
-                ((Number) simplifyParallel.getValue()).intValue(), simplifyModel.getText());
+                ((Number) simplifyParallel.getValue()).intValue(), simplifyModel.getText(),
+                stepTokens(simplifyMaxTokens), simplifyThinking.level());
     }
 
     /** Die Vorstufe in einer Zeile, für Abschlussseite und Übersichten. */
@@ -1379,7 +1444,8 @@ final class AiSettingsPanel {
     /** Die eingestellte Aussagenanalyse. */
     AnalyzerSettings analyzer() {
         return new AnalyzerSettings(ANALYZER_MODEL.equals(statementAnalyzer.getSelectedItem()) ? AnalyzerChoice.MODEL
-                : AnalyzerChoice.PARSER, statementModel.getText());
+                : AnalyzerChoice.PARSER, statementModel.getText(), stepTokens(statementMaxTokens),
+                statementThinking.level());
     }
 
     /** Der Prüfschritt aus der Datei; ohne Datei die Vorgabe des Core. */
@@ -1391,7 +1457,28 @@ final class AiSettingsPanel {
     CheckSettings check() {
         return new CheckSettings(CHECK_ALL.equals(checkScope.getSelectedItem()) ? CheckScope.ALL
                 : CheckScope.UNCERTAIN_AND_STAGE, ((Number) checkParallel.getValue()).intValue(),
-                checkModel.getText());
+                checkModel.getText(), stepTokens(checkMaxTokens), checkThinking.level());
+    }
+
+    /**
+     * Die Tokenlänge eines Schritts als Zahl; leer oder „wie Text-Modell“ heißt {@code null}. Eine ungültige Eingabe
+     * gilt als nicht gesetzt (die Auswahl bietet nur gültige Werte, eine getippte Zahl außerhalb 1 bis 1000000 bleibt
+     * ohne Wirkung).
+     */
+    static Integer stepTokens(TokenLengthBox box) {
+        String text = box.text();
+        if (!text.matches("\\d{1,7}")) {
+            return null;
+        }
+        int value = Integer.parseInt(text);
+        return value >= 1 && value <= AiDraft.MAX_CHAT_MAX_TOKENS ? value : null;
+    }
+
+    /** Hilfetext der Zeile eines Schritts mit eigenem Modell und eigener Tokenlänge. */
+    private static String stepTokensHelp(String step, String keys) {
+        return "Eigenes Modell nur für " + step + "; leer: das Text-Modell.\n\n" + TOKENS_HELP_TAIL + " „"
+                + TOKENS_LIKE_CHAT + "“ übernimmt Tokenlänge bzw. Nachdenken des Text-Modells.\n\nGilt ohne Neustart beim "
+                + "nächsten Lauf. Schlüssel in der Konfigurationsdatei: " + keys + ".";
     }
 
     /** Der Prüfschritt in einer Zeile, für Abschlussseite und Übersichten. */
@@ -1498,9 +1585,31 @@ final class AiSettingsPanel {
                 .withLoadPollInterval(draft.pollDuration()).withParallel(draft.parallelCount());
     }
 
-    static final String CHAT_MAX_TOKENS_LABEL = "Ausgabelimit";
-    static final String CHAT_MAX_TOKENS_HELP = "So viele Tokens darf eine Antwort des Text-Modells höchstens lang "
-            + "werden (max_tokens); leer: 8192. Endet eine Antwort am Limit, gilt sie als unvollständig";
+    static final String TOKENS_UNIT = "Tokens";
+    private static final String TOKENS_HELP_TAIL = "Rechts daneben steht die Tokenlänge: So viele Tokens darf eine "
+            + "Antwort höchstens lang werden. Sie geht bei jeder Anfrage mit (OpenAI-kompatibel als max_tokens, bei "
+            + "Ollama als num_predict). Zur Auswahl stehen 2048, 8192, 16384, 32768 und 65536 wie in 3D4J; jede andere "
+            + "Zahl kann man eintippen. Endet eine Antwort an der Grenze, gilt sie als abgeschnitten und der Schritt "
+            + "meldet das; dann die Tokenlänge erhöhen.\n\nGanz rechts steht das Nachdenken: „denkt nicht“ antwortet "
+            + "direkt, „denkt wenig/mittel/viel“ lässt ein Modell mit Nachdenk-Modus erst nachdenken (dauert länger "
+            + "und braucht Tokens). Es geht bei jeder Anfrage mit (bei Ollama als think, OpenAI-kompatibel als "
+            + "reasoning_effort; „denkt nicht“ dort ohne Angabe), damit nie ein unbekannter Standard des Dienstes "
+            + "gilt. Legt ein Schritt das Nachdenken aus gutem Grund selbst fest, bleibt das.";
+    static final String CHAT_MAX_TOKENS_HELP = "Das Text-Modell formuliert Suchvarianten, prüft Synonyme, schreibt "
+            + "Zusammenfassungen und Podcast-Texte und beantwortet den Chat. Ohne eigenes Modell gilt es auch für "
+            + "Aussagenanalyse, Vereinfachen, Prüfen und die Bildgenerierung.\n\n" + TOKENS_HELP_TAIL
+            + "\n\nStandard " + AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS + ". Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.ai.chat-model, .chat-max-tokens und .step-thinking (Standard: denkt nicht).";
+    static final String VISION_MAX_TOKENS_HELP = "Das Vision-Modell beschreibt die Bilder einer Seite (Leseansicht › "
+            + "Bilder) und die Folien eines Videos; leer: keine Bildbeschreibung.\n\n" + TOKENS_HELP_TAIL
+            + "\n\nStandard " + AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS + ". Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.ai.vision-model, .vision-max-tokens und .vision-thinking (leer: wie Text-Modell).";
+    static final String IMAGE_LABEL = "Bildgenerierung";
+    static final String IMAGE_HELP = "Dieses Modell zeichnet Bilder und Schaubilder als SVG, etwa für den Podcast. "
+            + "Ohne eigenes Modell gilt das Text-Modell.\n\n" + TOKENS_HELP_TAIL + " Ein SVG-Schaubild ist lang; "
+            + "deshalb ist der Standard hier höher (" + AiServiceSettings.DEFAULT_IMAGE_MAX_TOKENS + "), sonst bricht "
+            + "die Antwort meist mittendrin ab.\n\nGilt ohne Neustart. Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.ai.image-model, .image-max-tokens und .image-thinking (leer: wie Text-Modell).";
 
     static final String UNAUTHENTICATED = "Nicht authentifiziert (401/403): API-Key prüfen";
     static final String NOT_SIGNED_IN = "Nicht angemeldet – API-Key fehlt";
@@ -1709,6 +1818,7 @@ final class AiSettingsPanel {
         pickEmbedding.setEnabled(false);
         pickRerank.setEnabled(false);
         pickVision.setEnabled(false);
+        pickImage.setEnabled(false);
     }
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
@@ -1827,6 +1937,7 @@ final class AiSettingsPanel {
         pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
         pickRerank.setEnabled(!choices(null).isEmpty());
         pickVision.setEnabled(!choices(AiModel.VISION).isEmpty());
+        pickImage.setEnabled(!choices(AiModel.CHAT).isEmpty());
         long embeddings = this.loaded.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
         if (this.loaded.isEmpty()) {
             modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");

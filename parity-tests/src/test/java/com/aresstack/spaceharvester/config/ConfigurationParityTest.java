@@ -66,6 +66,12 @@ class ConfigurationParityTest {
                 vision-model: vision-model
                 step-thinking: low
                 parallel: 6
+                chat-max-tokens: 4096
+                vision-max-tokens: 32768
+                image-model: svg-model
+                image-max-tokens: 65536
+                vision-thinking: high
+                image-thinking: medium
                 external-processing-sources:
                   - confluence
               cache:
@@ -135,6 +141,8 @@ class ConfigurationParityTest {
                   mode: always
                   parallel: 3
                   model: step-model
+                  max-tokens: 4096
+                  thinking: none
                 standing:
                   outdated-words:
                     - Archiv
@@ -144,8 +152,12 @@ class ConfigurationParityTest {
                   scope: all
                   parallel: 4
                   model: check-model
+                  max-tokens: 32768
+                  thinking: low
                 analyzer: model
                 analyzer-model: statement-model
+                analyzer-max-tokens: 16384
+                analyzer-thinking: high
               images:
                 automatic: true
                 max-per-run: 120
@@ -184,6 +196,12 @@ class ConfigurationParityTest {
         assertThat(appAi.visionModel()).isEqualTo(ai.visionModel());
         assertThat(appAi.stepThinking()).isEqualTo(ai.stepThinking()).isEqualTo("low");
         assertThat(appAi.parallel()).isEqualTo(ai.parallel()).isEqualTo(6);
+        assertThat(appAi.chatMaxTokens()).isEqualTo(ai.chatMaxTokens()).isEqualTo(4096);
+        assertThat(appAi.visionMaxTokens()).isEqualTo(ai.visionMaxTokens()).isEqualTo(32768);
+        assertThat(appAi.imageModel()).isEqualTo(ai.imageModel()).isEqualTo("svg-model");
+        assertThat(appAi.imageMaxTokens()).isEqualTo(ai.imageMaxTokens()).isEqualTo(65536);
+        assertThat(appAi.visionThinking()).isEqualTo(ai.visionThinking()).isEqualTo("high");
+        assertThat(appAi.imageThinking()).isEqualTo(ai.imageThinking()).isEqualTo("medium");
         assertThat(appAi.externalProcessingSources()).containsExactlyInAnyOrderElementsOf(
                 ai.externalProcessingSources());
         assertThat(appAi.externalProcessingSources()).isEqualTo(List.of("confluence"));
@@ -240,7 +258,7 @@ class ConfigurationParityTest {
         assertThat(app.simplification()).isEqualTo(service2.simplification())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.SimplificationSettings(
                         com.aresstack.spaceharvester.application.configuration.SimplificationSettings.Mode.ALWAYS, 3,
-                        "step-model"));
+                        "step-model", 4096, "none"));
 
         // ADR 0032, FL6: Wörter des Stands, als YAML-Liste und als Text mit Kommas.
         assertThat(app.standing()).isEqualTo(service2.standing())
@@ -249,14 +267,16 @@ class ConfigurationParityTest {
         // ADR 0032, FL4: Prüfschritt, beim Dienst über withSyncRules.
         assertThat(app.check()).isEqualTo(service2.check())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.CheckSettings(
-                        com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "check-model"));
+                        com.aresstack.spaceharvester.application.check.CheckScope.ALL, 4, "check-model", 32768,
+                        "low"));
         // Fahrplan B1: automatische Bildbeschreibung, beim Dienst über withSyncRules.
         assertThat(app.images()).isEqualTo(service2.images())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.ImageSettings(true, 120));
         // Fahrplan A2/A3: Aussagenanalyse (Analysator = gelesene Ablage, eigenes Modell).
         assertThat(app.analyzer()).isEqualTo(service2.analyzer())
                 .isEqualTo(new com.aresstack.spaceharvester.application.configuration.AnalyzerSettings(
-                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, "statement-model"));
+                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.MODEL, "statement-model", 16384,
+                        "high"));
 
         // Schutzgrenzen beim Lesen von Dokumenten (ADR 0026): nicht genannte Werte und Formate wie die Standards.
         com.aresstack.spaceharvester.application.assets.ExtractionLimits extraction = binder

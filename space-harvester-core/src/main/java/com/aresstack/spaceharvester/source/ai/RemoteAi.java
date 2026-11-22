@@ -335,9 +335,6 @@ public final class RemoteAi {
         };
     }
 
-    /** Obergrenze der Antwort des Chat-Modells für Suchvarianten in Tokens. */
-    static final int MAX_VARIANT_TOKENS = 1024;
-
     /**
      * Das Chat-Modell als Formulierer von Suchvarianten ({@code POST /chat/completions}, ADR 0017) über den
      * unveränderten {@code OpenAiCompatibleChatAdapter}. An den Dienst geht
@@ -351,13 +348,14 @@ public final class RemoteAi {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
         ChatCompletionPort adapter = chatPort(settings.chatModel(), timeoutMillis());
-        // Die Antwort ist eine kurze JSON-Liste; die Obergrenze hält auch einen fehlerhaften Dienst kurz.
-        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_VARIANT_TOKENS).build();
+        // Die Antwort ist eine kurze JSON-Liste; das Ausgabelimit ist die eingestellte Tokenlänge des Text-Modells.
+        int maxTokens = settings.chatMaxTokens();
+        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens).build();
         return (instructions, question) -> {
             try {
                 return complete(streamed(adapter, new ChatRequest(
                         List.of(ChatMessage.system(instructions), ChatMessage.user(question)), options)),
-                        MAX_VARIANT_TOKENS, false);
+                        maxTokens, true);
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
             }
@@ -650,7 +648,7 @@ public final class RemoteAi {
             try {
                 return visionAnswer(streamed(adapter, new ChatRequest(List.of(ChatMessage.userWithImages(instruction,
                         List.of(new com.aresstack.enterpriseai.astu.chat.ChatImage(mediaType, image)))),
-                        visionOptions())), settings.contextTokens());
+                        visionOptions())), settings.contextTokens(), settings.visionMaxTokens());
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
             }
@@ -786,21 +784,22 @@ public final class RemoteAi {
      *
      * @throws AiServiceException {@code INVALID_RESPONSE} bei {@code done_reason = length}
      */
-    static String visionAnswer(ChatResponse response, int contextTokens) {
+    static String visionAnswer(ChatResponse response, int contextTokens, int maxTokens) {
         if (response.finishReason() == ChatFinishReason.LENGTH) {
             ChatUsage usage = response.usage();
             String tokens = usage != null && usage.isReported()
                     ? usage.promptTokens() + " Token Prompt + " + usage.completionTokens() + " Token Antwort, " : "";
             throw new AiServiceException(AiServiceException.Reason.INVALID_RESPONSE, "Vision-Modell: Antwort am Limit "
-                    + "abgeschnitten (" + tokens + "Kontextlänge " + contextTokens + "; " + AiServiceSettings.PREFIX
-                    + AiServiceSettings.CONTEXT_TOKENS + " erhöhen)");
+                    + "abgeschnitten (" + tokens + "Tokenlänge " + maxTokens + ", Kontextlänge " + contextTokens + "; "
+                    + AiServiceSettings.PREFIX + AiServiceSettings.VISION_MAX_TOKENS + " oder "
+                    + AiServiceSettings.PREFIX + AiServiceSettings.CONTEXT_TOKENS + " erhöhen)");
         }
         return response.content();
     }
 
-    /** Optionen eines eigenen Bild-Prompts: Nachdenken wie {@link #termCompletions()} ({@code ai.step-thinking}). */
+    /** Optionen eines eigenen Bild-Prompts: Nachdenken des Vision-Modells ({@code ai.vision-thinking}). */
     private ChatOptions visionOptions() {
-        String thinking = settings.stepThinking();
+        String thinking = settings.visionThinkingLevel();
         ChatOptions.Builder builder = ChatOptions.builder().model(settings.visionModel());
         if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {
             builder.reasoningEffort(thinking);
@@ -816,10 +815,11 @@ public final class RemoteAi {
      */
     private ChatCompletionPort visionPort(int timeoutMillis) {
         if (settings.provider() == AiProvider.OLLAMA) {
-            return new OllamaChatAdapter(ollama(timeoutMillis), settings.visionModel(), settings.contextTokens(),
-                    settings.stepThinking());
+            return limited(new OllamaChatAdapter(ollama(timeoutMillis), settings.visionModel(),
+                    settings.contextTokens(), settings.visionThinkingLevel()), settings.visionMaxTokens());
         }
-        return chatPort(settings.visionModel(), timeoutMillis);
+        return limited(new OpenAiCompatibleChatAdapter(chatConfig(settings.visionModel(), timeoutMillis)),
+                settings.visionMaxTokens(), settings.visionThinkingLevel());
     }
 
     /**
@@ -828,9 +828,60 @@ public final class RemoteAi {
      */
     private ChatCompletionPort chatPort(String model, int timeoutMillis) {
         if (settings.provider() == AiProvider.OLLAMA) {
-            return new OllamaChatAdapter(ollama(timeoutMillis), model, settings.contextTokens());
+            return limited(new OllamaChatAdapter(ollama(timeoutMillis), model, settings.contextTokens(),
+                    settings.stepThinking()), settings.chatMaxTokens());
         }
-        return new OpenAiCompatibleChatAdapter(chatConfig(model, timeoutMillis));
+        return limited(new OpenAiCompatibleChatAdapter(chatConfig(model, timeoutMillis)), settings.chatMaxTokens(),
+                settings.stepThinking());
+    }
+
+    /**
+     * Die Verbindung {@code port}, die bei jeder Anfrage ohne eigenes Ausgabelimit {@code maxTokens} mitschickt
+     * ({@code max_tokens}, bei Ollama {@code options.num_predict}; Angelo 21.11.2026: „Du musst da bei der Anfrage
+     * eine höhere Tokenlänge mitliefern“). Ohne Limit setzt ein Dienst sein eigenes, oft zu kurzes, und lange
+     * Antworten wie SVG-Schaubilder brechen ab. Ein Schritt mit eigenem Limit behält es.
+     */
+    static ChatCompletionPort limited(ChatCompletionPort port, int maxTokens) {
+        return limited(port, maxTokens, null);
+    }
+
+    /**
+     * Wie {@link #limited(ChatCompletionPort, int)}, dazu das Nachdenken (Angelo 22.11.2026: „überall das Nachdenken
+     * einstellbar, sonst nimmt er irgendwas Standardmäßiges“): Eine Anfrage ohne eigenes {@code reasoningEffort}
+     * bekommt {@code thinking}. Legt ein Aufruf das Nachdenken aus gutem Grund selbst fest, bleibt es. Für einen
+     * OpenAI-kompatiblen Dienst; {@code none} geht dort nicht mit, weil viele Dienste den Wert ablehnen (bei Ollama
+     * schickt {@link OllamaChatAdapter} {@code think: false}).
+     */
+    static ChatCompletionPort limited(ChatCompletionPort port, int maxTokens, String thinking) {
+        String effort = thinking == null || "none".equals(thinking) ? null : thinking;
+        return new ChatCompletionPort() {
+            @Override
+            public ChatResponse complete(ChatRequest request) {
+                return port.complete(withLimit(request, maxTokens, effort));
+            }
+
+            @Override
+            public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
+                return port.stream(withLimit(request, maxTokens, effort), listener);
+            }
+        };
+    }
+
+    private static ChatRequest withLimit(ChatRequest request, int maxTokens, String effort) {
+        ChatOptions options = request.options() == null ? ChatOptions.defaults() : request.options();
+        boolean limit = options.maxTokens() == null;
+        boolean think = effort != null && options.reasoningEffort() == null;
+        if (!limit && !think) {
+            return request;
+        }
+        ChatOptions.Builder builder = options.toBuilder();
+        if (limit) {
+            builder.maxTokens(maxTokens);
+        }
+        if (think) {
+            builder.reasoningEffort(effort);
+        }
+        return new ChatRequest(request.messages(), builder.build(), request.tools());
     }
 
     /** Verbindungen zum Ollama-Server mit Route, TLS und Frist wie die übrigen Aufrufe. */

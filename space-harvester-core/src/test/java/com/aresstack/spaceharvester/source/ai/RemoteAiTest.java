@@ -4,6 +4,13 @@ import com.aresstack.spaceharvester.ai.AiChat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.enterpriseai.astu.chat.ChatMessage;
+import com.aresstack.enterpriseai.astu.chat.ChatOptions;
+import com.aresstack.enterpriseai.astu.chat.ChatRequest;
+import com.aresstack.enterpriseai.astu.chat.ChatResponse;
+import com.aresstack.enterpriseai.chat.api.ChatCompletionPort;
+import com.aresstack.enterpriseai.chat.api.ChatStreamListener;
+import com.aresstack.enterpriseai.chat.api.ChatTask;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.spaceharvester.ai.AiModel;
@@ -262,8 +269,7 @@ class RemoteAiTest {
                 });
         assertThatThrownBy(() -> remote(settings).queryVariants().complete("Anweisung", "Frage"))
                 .isInstanceOfSatisfying(AiServiceException.class, e -> assertThat(e.getMessage())
-                        .contains("finish_reason=length", "max_tokens=" + RemoteAi.MAX_VARIANT_TOKENS)
-                        .doesNotContain("chat-max-tokens"));
+                        .contains("finish_reason=length", "max_tokens=256", "chat-max-tokens"));
     }
 
     @Test
@@ -406,6 +412,115 @@ class RemoteAiTest {
                         .isEqualTo(AiServiceException.Reason.INVALID_RESPONSE))
                 .hasMessageContaining("3593 Token Prompt + 4599 Token Antwort")
                 .hasMessageContaining("context-tokens");
+    }
+
+    @Test
+    void everyRequestCarriesTheTokenLengthOfItsModel() {
+        // Angelo 21.11.2026: Ohne mitgeschickte Tokenlänge brachen lange Antworten (SVG-Bilder) ab.
+        List<String> chats = new CopyOnWriteArrayList<>();
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"text-model","model":"text-model"},{"name":"bild-model","model":"bild-model"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"fertig"},"done":true,"done_reason":"stop"}""");
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "text-model", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA).withVisionModel("bild-model").withChatMaxTokens(4096)
+                .withVisionMaxTokens(2048).withImageGeneration(null, 65536);
+
+        remote(settings).statementChat().complete(List.of(
+                new com.aresstack.spaceharvester.application.enrichment.statements.StatementChat.Message(
+                        com.aresstack.spaceharvester.application.enrichment.statements.StatementChat.Role.USER,
+                        "Satz")));
+        remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png", "Beschreibe.");
+        remote(settings.imageGeneration()).termCompletions().apply("Zeichne ein SVG", "{}");
+
+        assertThat(chats).hasSize(3);
+        assertThat(chats.get(0)).contains("\"num_predict\":4096");
+        assertThat(chats.get(1)).contains("\"num_predict\":2048");
+        assertThat(chats.get(2)).contains("\"num_predict\":65536", "\"model\":\"text-model\"");
+    }
+
+    @Test
+    void everyRequestCarriesTheThinkingOfItsModelUnlessTheCallSetsItself() throws Exception {
+        // Angelo 22.11.2026: Ohne mitgeschicktes Nachdenken gilt ein unbekannter Standard des Dienstes; legt ein
+        // Aufruf das Nachdenken selbst fest, bleibt es.
+        List<String> chats = new CopyOnWriteArrayList<>();
+        server.createContext("/api/ps", exchange -> respond(exchange, """
+                {"models":[{"name":"text-model","model":"text-model"},{"name":"bild-model","model":"bild-model"}]}"""));
+        server.createContext("/api/chat", exchange -> {
+            chats.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"message":{"role":"assistant","content":"fertig"},"done":true,"done_reason":"stop"}""");
+        });
+        AiServiceSettings settings = new AiServiceSettings(ollama(), null, "text-model", null, null, null, null,
+                Set.of()).withProvider(AiProvider.OLLAMA).withVisionModel("bild-model").withThinking("high", "low");
+
+        remote(settings).statementChat().complete(List.of(
+                new com.aresstack.spaceharvester.application.enrichment.statements.StatementChat.Message(
+                        com.aresstack.spaceharvester.application.enrichment.statements.StatementChat.Role.USER,
+                        "Satz")));
+        remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png", "Beschreibe.");
+        remote(settings.imageGeneration()).termCompletions().apply("Zeichne ein SVG", "{}");
+        java.util.concurrent.CompletableFuture<String> done = new java.util.concurrent.CompletableFuture<>();
+        remote(settings).chat().stream(new com.aresstack.spaceharvester.ai.AiChat.Request(
+                List.of(com.aresstack.spaceharvester.ai.AiChat.Message.user("Hallo?")), "text-model", "medium"),
+                new com.aresstack.spaceharvester.ai.AiChat.Listener() {
+                    @Override
+                    public void delta(String text) {
+                    }
+
+                    @Override
+                    public void completed(String text) {
+                        done.complete(text);
+                    }
+
+                    @Override
+                    public void failed(com.aresstack.spaceharvester.ai.AiChatException error) {
+                        done.completeExceptionally(error);
+                    }
+
+                    @Override
+                    public void cancelled() {
+                        done.cancel(false);
+                    }
+                });
+        done.join();
+
+        assertThat(chats).hasSize(4);
+        assertThat(chats.get(0)).contains("\"think\":false");
+        assertThat(chats.get(1)).contains("\"think\":\"high\"");
+        assertThat(chats.get(2)).contains("\"think\":\"low\"");
+        assertThat(chats.get(3)).contains("\"think\":\"medium\"");
+    }
+
+    @Test
+    void anOpenAiCompatibleServiceGetsTheReasoningEffortOnlyWhenTheModelThinks() {
+        ChatRequest plain = new ChatRequest(List.of(ChatMessage.user("Hallo")), ChatOptions.defaults());
+        List<ChatRequest> seen = new CopyOnWriteArrayList<>();
+        ChatCompletionPort port = new ChatCompletionPort() {
+            @Override
+            public ChatResponse complete(ChatRequest request) {
+                seen.add(request);
+                return null;
+            }
+
+            @Override
+            public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
+                throw new UnsupportedOperationException();
+            }
+        };
+
+        RemoteAi.limited(port, 1024, "none").complete(plain);
+        RemoteAi.limited(port, 1024, "high").complete(plain);
+        RemoteAi.limited(port, 1024, "high").complete(new ChatRequest(List.of(ChatMessage.user("Hallo")),
+                ChatOptions.builder().reasoningEffort("low").build()));
+
+        assertThat(seen.get(0).options().reasoningEffort()).isNull();
+        assertThat(seen.get(1).options().reasoningEffort()).isEqualTo("high");
+        assertThat(seen.get(2).options().reasoningEffort()).isEqualTo("low");
+        assertThat(seen).allSatisfy(request -> assertThat(request.options().maxTokens()).isEqualTo(1024));
     }
 
     @Test

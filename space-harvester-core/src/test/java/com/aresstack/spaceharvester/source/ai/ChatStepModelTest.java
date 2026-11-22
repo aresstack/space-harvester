@@ -48,4 +48,54 @@ class ChatStepModelTest {
         assertThat(model.available()).isFalse();
         assertThat(model.version()).isEqualTo("sentence-simplification:none");
     }
+
+    @Test
+    void theStepMaxTokensReplaceTheChatMaxTokens() {
+        ChatStepModel model = new ChatStepModel("image", () -> AI, () -> null, () -> 32768, settings -> {
+            throw new AssertionError("kein Aufruf");
+        });
+        assertThat(model.effective().chatModel()).isEqualTo("chat-model");
+        assertThat(model.effective().chatMaxTokens()).isEqualTo(32768);
+    }
+
+    @Test
+    void theImageGenerationHasItsOwnModelAndAHigherStandardLength() {
+        assertThat(AI.imageGeneration().chatModel()).isEqualTo("chat-model");
+        assertThat(AI.imageGeneration().chatMaxTokens()).isEqualTo(AiServiceSettings.DEFAULT_IMAGE_MAX_TOKENS)
+                .isEqualTo(16384);
+        AiServiceSettings own = AI.withImageGeneration("svg-model", 65536);
+        ChatStepModel model = new ChatStepModel("image", own::imageGeneration, () -> null, settings -> {
+            throw new AssertionError("kein Aufruf");
+        });
+        assertThat(model.effective().chatModel()).isEqualTo("svg-model");
+        assertThat(model.effective().chatMaxTokens()).isEqualTo(65536);
+        assertThat(own.chatMaxTokens()).isEqualTo(AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS);
+    }
+
+    @Test
+    void theStepThinkingReplacesTheThinkingOfTheTextModelOnlyWhenSet() {
+        ChatStepModel inherits = new ChatStepModel("check", () -> AI.withStepThinking("low"), () -> null,
+                () -> null, () -> null, settings -> {
+                    throw new AssertionError("kein Aufruf");
+                });
+        ChatStepModel own = new ChatStepModel("check", () -> AI, () -> null, () -> null, () -> "high", settings -> {
+            throw new AssertionError("kein Aufruf");
+        });
+
+        assertThat(inherits.effective().stepThinking()).isEqualTo("low");
+        assertThat(own.effective().stepThinking()).isEqualTo("high");
+        assertThat(AI.stepThinking()).isEqualTo(AiServiceSettings.DEFAULT_STEP_THINKING).isEqualTo("none");
+    }
+
+    @Test
+    void visionAndImageGenerationThinkLikeTheTextModelUntilTheyHaveTheirOwn() {
+        AiServiceSettings text = AI.withStepThinking("medium");
+        assertThat(text.visionThinkingLevel()).isEqualTo("medium");
+        assertThat(text.imageGeneration().stepThinking()).isEqualTo("medium");
+
+        AiServiceSettings own = text.withThinking("none", "HIGH");
+        assertThat(own.visionThinkingLevel()).isEqualTo("none");
+        assertThat(own.imageGeneration().stepThinking()).isEqualTo("high");
+        assertThat(own.stepThinking()).isEqualTo("medium");
+    }
 }

@@ -676,19 +676,53 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param stepThinking  Nachdenken bei Analyseschritten ({@code step-thinking}: none, low, medium, high);
      *                      {@code null}: Standard des Core (aus)
      * @param parallel      gleichzeitige Anfragen an den KI-Dienst ({@code parallel}); {@code null}: Standard des Core
+     * @param visionMaxTokens Ausgabelimit einer Antwort des Vision-Modells ({@code vision-max-tokens}); {@code null}:
+     *                      Standard des Core (8192)
+     * @param imageModel    Modell der Bildgenerierung ({@code image-model}); {@code null}: das Text-Modell
+     * @param imageMaxTokens Ausgabelimit einer Bildgenerierung ({@code image-max-tokens}); {@code null}: Standard des
+     *                      Core (16384)
+     * @param visionThinking Nachdenken des Vision-Modells ({@code vision-thinking}); {@code null}: wie step-thinking
+     * @param imageThinking Nachdenken der Bildgenerierung ({@code image-thinking}); {@code null}: wie step-thinking
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
                              Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
                              Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
                              Duration loadTimeout, Integer retries, Duration loadPollInterval,
-                             String stepThinking, Integer parallel) {
+                             String stepThinking, Integer parallel, Integer visionMaxTokens, String imageModel,
+                             Integer imageMaxTokens, String visionThinking, String imageThinking) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
         public AiSettings {
             externalProcessingSources = List.copyOf(externalProcessingSources);
             provider = provider == null ? AiProvider.OPENAI_COMPATIBLE : provider;
+        }
+
+        /** Ohne eigenes Nachdenken für Vision-Modell und Bildgenerierung. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                          Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                          Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens,
+                    imageModel, imageMaxTokens, null, null);
+        }
+
+        /** Ohne Tokenlänge des Vision-Modells und ohne Bildgenerierung. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                          Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                          Integer parallel) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel, (Integer) null, null,
+                    null);
         }
 
         /** Ohne Vorgabe für gleichzeitige Anfragen. */
@@ -699,7 +733,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking) {
             this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
                     rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
-                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, null);
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, (Integer) null);
         }
 
         /** Für einen OpenAI-kompatiblen Dienst. */

@@ -387,6 +387,12 @@ public final class AppRuntime implements AutoCloseable {
             // Ausgabelimit des Text-Modells (max_tokens); ohne Eintrag gilt der Standard des Core.
             service = service.withChatMaxTokens(ai.chatMaxTokens());
         }
+        // Tokenlänge je Modell (Angelo 21.11.2026): Vision-Modell und Bildgenerierung; ohne Eintrag gilt der Standard
+        // des Core (8192 bzw. 16384), ohne Bildmodell das Text-Modell.
+        service = service.withVisionMaxTokens(ai.visionMaxTokens())
+                .withImageGeneration(ai.imageModel(), ai.imageMaxTokens())
+                // Nachdenken je Modell (Angelo 22.11.2026); ohne Eintrag wie das Text-Modell (step-thinking).
+                .withThinking(ai.visionThinking(), ai.imageThinking());
         if (ai.visionModel() != null) {
             // Bildbeschreibungen nur auf Abruf im Reiter „Bilder“ (ADR 0021); ohne Modell nennt er den Grund.
             service = service.withVisionModel(ai.visionModel());
