@@ -726,6 +726,7 @@ class ChatToolsTurnTest {
                 return List.of();
             }
         };
+        // Alle Quellen freigegeben: geprüft wird hier die Reihenfolge Freigabe vor Antwort, nicht die KI-Freigabe (#1118).
         TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(graph, vocabulary),
                 com.aresstack.spaceharvester.application.release.AiRelease.ofSources(sourceId -> true));
         List<String> order = new CopyOnWriteArrayList<>();
