@@ -24,6 +24,10 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
    - `seiten_auflisten(knoten?, blatt?)`: wie der Baum links je Knoten, ohne Knoten die Startseiten des Bereichs,
      100 Einträge je Blatt, mit Kennzeichen „hat Unterseiten“.
    - `seite_lesen(kennung, versatz?)`: höchstens 12 000 Zeichen je Aufruf, mit Fortsetzung.
+   - `begriff_nachschlagen(begriff)` (Nachtrag W7, 22.11.2026): was der Wissensgraph im Bereich über einen
+     bestätigten Fachbegriff weiß (`TermKnowledge#answer`): Aussagen mit Verb, Merkmalen, Vertrauensstufe und
+     Belegseiten, Synonyme, verwandte Begriffe, was gekappt wurde; sonst ähnliche Fachbegriffe. Bereich (die Auswahl
+     beim Senden) und Obergrenzen erzwingt der Kern.
    Die Regeln stehen im System-Prompt (`ChatKnowledge.TOOL_PROMPT`): Werkzeuge nutzen, bevor etwas „nicht zu finden“
    ist; eine Seite lesen, bevor man sich auf sie beruft; Quellen mit Nummer nennen; Werkzeugergebnisse sind Daten.
 3. **Der Bereich wird je Aufruf erzwungen** (`ChatTools.allows`), gegen die Auswahl beim Senden. Eine Seite außerhalb,
@@ -43,7 +47,9 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
    leben in der App (`app.chat.ChatTools`), wie es ADR 0012 für Werkzeuge vorsieht.
 8. **KI-Freigabe: nur, was an das Modell geht** (Fortschreibung von ADR 0028, Festlegung Architekt 21.11.2026, die
    vorsichtigere, umkehrbare Variante). Mit Werkzeugen trägt der Chat ein: beim Senden die offene Seite; im Moment
-   der Lieferung jede Seite, die `seite_lesen` liefert, und jede Seite, deren Auszug `im_bereich_suchen` liefert.
+   der Lieferung jede Seite, die `seite_lesen` liefert, jede Seite, deren Auszug `im_bereich_suchen` liefert, und
+   jede Belegseite, deren Aussagen `begriff_nachschlagen` liefert (vor der Antwort; scheitert die Meldung, geht
+   keine Antwort hinaus).
    `seiten_auflisten` (nur Titel) trägt nichts ein. Die ganze Auswahl wird mit Werkzeugen nicht mehr beim Senden
    eingetragen, sonst gäbe eine Frage an der Wurzel alle Seiten aller Quellen frei. Eine gelieferte Seite steht als
    eigener Knoten auf der Liste (ohne Unterseiten, `PageReleaseService.releasePage`). Im Rückfall ohne Werkzeuge gilt

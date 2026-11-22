@@ -265,6 +265,14 @@ public final class ChatTurn {
         return this;
     }
 
+    /** Für Tests: ein anderes Begriffswissen für {@value ChatTools#TERM}. */
+    ChatTurn termLookup(ChatTools.TermLookup lookup) {
+        this.termLookup = Objects.requireNonNull(lookup, "lookup");
+        return this;
+    }
+
+    private ChatTools.TermLookup termLookup;
+
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
     public void start() {
         Thread worker = new Thread(this::run, "chat-turn");
@@ -412,6 +420,9 @@ public final class ChatTurn {
                 releasePage(spaceKey, key);
             }
         }).neighbors(neighbors).glossarySynonyms(glossarySynonyms);
+        if (termLookup != null) {
+            running.termLookup(termLookup);
+        }
         tools = running;
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
