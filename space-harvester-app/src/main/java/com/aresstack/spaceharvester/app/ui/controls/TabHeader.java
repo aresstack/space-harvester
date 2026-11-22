@@ -28,7 +28,8 @@ import java.util.function.Supplier;
 public final class TabHeader extends JPanel {
 
     private final JLabel title = new JLabel(" ");
-    private final JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+    /** Titel, Abzeichen und Hinweis; weicht der rechten Seite, statt sie zu überdecken ({@link LeftRow}). */
+    private final JPanel left = new JPanel(new LeftRow(8));
     private final JPanel search = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
     private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
     private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
@@ -43,7 +44,8 @@ public final class TabHeader extends JPanel {
         title.setForeground(Comic.INK);
         left.setOpaque(false);
         left.add(title);
-        add(left, BorderLayout.WEST);
+        // In der Mitte statt im Westen: Die rechte Seite (Suche, Aktionen) behält ihre Breite, links bleibt der Rest.
+        add(left, BorderLayout.CENTER);
         JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         right.setOpaque(false);
         for (JPanel part : new JPanel[] {search, actions, tools}) {
@@ -148,6 +150,76 @@ public final class TabHeader extends JPanel {
         badge.setBackground(Comic.SURFACE);
         badge.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(tone, 1, true),
                 BorderFactory.createEmptyBorder(2, 8, 2, 8)));
+    }
+
+    /**
+     * Eine Zeile von links wie {@code FlowLayout.LEFT}, die nie über ihre Breite hinausragt: Reicht der Platz nicht,
+     * kürzt sie den Titel (das erste Element, mit „…“) und lässt alles dahinter (Abzeichen, Hinweis) weg, statt es
+     * unter die rechte Seite zu legen.
+     */
+    static final class LeftRow implements java.awt.LayoutManager {
+
+        private final int gap;
+
+        LeftRow(int gap) {
+            this.gap = gap;
+        }
+
+        @Override
+        public void addLayoutComponent(String name, Component comp) {
+        }
+
+        @Override
+        public void removeLayoutComponent(Component comp) {
+        }
+
+        @Override
+        public java.awt.Dimension preferredLayoutSize(java.awt.Container parent) {
+            java.awt.Insets insets = parent.getInsets();
+            int width = 0;
+            int height = 0;
+            for (Component child : parent.getComponents()) {
+                if (child.isVisible()) {
+                    java.awt.Dimension size = child.getPreferredSize();
+                    width += gap + size.width;
+                    height = Math.max(height, size.height);
+                }
+            }
+            return new java.awt.Dimension(insets.left + insets.right + width + gap,
+                    insets.top + insets.bottom + height);
+        }
+
+        @Override
+        public java.awt.Dimension minimumLayoutSize(java.awt.Container parent) {
+            return new java.awt.Dimension(0, preferredLayoutSize(parent).height);
+        }
+
+        @Override
+        public void layoutContainer(java.awt.Container parent) {
+            java.awt.Insets insets = parent.getInsets();
+            int right = parent.getWidth() - insets.right;
+            int rowHeight = preferredLayoutSize(parent).height - insets.top - insets.bottom;
+            int x = insets.left + gap;
+            boolean first = true;
+            boolean full = false;
+            for (Component child : parent.getComponents()) {
+                if (!child.isVisible()) {
+                    continue;
+                }
+                java.awt.Dimension size = child.getPreferredSize();
+                int width = size.width;
+                if (!full && x + width > right) {
+                    full = true;
+                    // Der Titel bleibt gekürzt stehen; was danach kommt, passt nicht mehr ganz und fällt weg.
+                    width = first ? Math.max(0, right - x) : 0;
+                } else if (full) {
+                    width = 0;
+                }
+                child.setBounds(x, insets.top + (rowHeight - size.height) / 2, width, width == 0 ? 0 : size.height);
+                x += width + gap;
+                first = false;
+            }
+        }
     }
 
     // ---- für Tests

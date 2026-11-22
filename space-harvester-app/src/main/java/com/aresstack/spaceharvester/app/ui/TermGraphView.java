@@ -81,10 +81,10 @@ public final class TermGraphView {
     /** Leer unter „Nur geprüft“: Es fehlen geprüfte Aussagen, nicht Aussagen überhaupt (Prüfen statt Neuanalyse). */
     static final String NO_CHECKED_VERBS = "Zu diesem Fachbegriff gibt es noch keine geprüften Aussagen mit anderen "
             + "Fachbegriffen.";
-    static final String DOMAIN = "Nur Fachbegriffe";
-    static final String CHECKED = "Nur geprüft";
-    static final String CHECKED_TIP = "Nur Verbindungen mit geprüften Belegen; die Zahl zählt nur diese";
-    static final String CHECKED_LOCKED = "Gilt nur mit „Nur Fachbegriffe“";
+    public static final String DOMAIN = "Nur Fachbegriffe";
+    public static final String CHECKED = "Nur geprüft";
+    public static final String CHECKED_TIP = "Nur Verbindungen mit geprüften Belegen; die Zahl zählt nur diese";
+    public static final String CHECKED_LOCKED = "Gilt nur mit „Nur Fachbegriffe“";
     static final String OPTIONS_TIP = "Optionen: Nur Fachbegriffe, Nur geprüft";
     static final String PROPOSALS_TIP = "Auch vorgeschlagene Beziehungen zeigen, gestrichelt";
     static final String PROPOSALS_LOCKED = "Gilt nicht in der Fachsicht: sie zeigt nur Bestätigtes";
@@ -542,8 +542,7 @@ public final class TermGraphView {
 
     /** Overlay „Belege“ einer Verb-Kante: Sätze im Hintergrund lesen, dann zeigen. */
     private void showEvidence(GraphSource.Edge edge, int x, int y) {
-        String title = canvas.label(edge.from()) + " " + edge.label().replaceFirst("( ≠)? · \\d+$", "") + " "
-                + canvas.label(edge.to());
+        String title = evidenceTitle(canvas, edge);
         int total = edgeCount(edge);
         AppRuntime runtime = context == null ? null : context.runtime();
         int current = ++evidenceRequest;
@@ -585,8 +584,14 @@ public final class TermGraphView {
         });
     }
 
+    /** Kopf des Overlays „Belege“ einer Verb-Kante: „Antragsteller stellt Antrag“ ohne Zahl und „≠“. */
+    public static String evidenceTitle(Canvas canvas, GraphSource.Edge edge) {
+        return canvas.label(edge.from()) + " " + edge.label().replaceFirst("( ≠)? · \\d+$", "") + " "
+                + canvas.label(edge.to());
+    }
+
     /** Zahl aller Belege aus der Beschriftung „Grundform · N“; sonst die mitgelieferten. */
-    static int edgeCount(GraphSource.Edge edge) {
+    public static int edgeCount(GraphSource.Edge edge) {
         if (edge.label() != null) {
             int dot = edge.label().lastIndexOf(" · ");
             if (dot >= 0) {
@@ -717,14 +722,21 @@ public final class TermGraphView {
         return canvas;
     }
 
-    /** Die Zeichenfläche: Kanten mit Beschriftung, darüber die Knoten als Comic-Kästen mit Schlagschatten. */
-    static final class Canvas extends JComponent {
+    /**
+     * Die Zeichenfläche: Kanten mit Beschriftung, darüber die Knoten als Comic-Kästen mit Schlagschatten. Auch der
+     * Seitenreiter „Graph“ zeichnet seine Fachsicht damit (Paket W4b), dort anfangs ohne Mitte ({@link #centred}).
+     */
+    public static final class Canvas extends JComponent {
 
         private static final int PAD = 14;
         private static final int BOX_HEIGHT = 28;
         private GraphSource.Graph graph = GraphSource.Graph.EMPTY;
+        /** Ob der erste Knoten die Mitte ist; ohne Mitte liegen alle Knoten gleichrangig auf Ringen. */
+        private boolean centred = true;
+        /** Gedämpfter Text mitten in der leeren Fläche oder {@code null} (die Übersicht nutzt ihn nicht). */
+        private String emptyText;
 
-        Canvas() {
+        public Canvas() {
             setOpaque(true);
             setBackground(Color.WHITE);
             setPreferredSize(new Dimension(640, 420));
@@ -735,27 +747,50 @@ public final class TermGraphView {
         /** Fachsicht: Bögen, freigestellte Beschriftungen und gedrehter Ring; die Bestandssicht zeichnet wie bisher. */
         private boolean domain;
 
-        void domain(boolean domain) {
+        public void domain(boolean domain) {
             this.domain = domain;
         }
 
-        void graph(GraphSource.Graph graph) {
+        /**
+         * {@code false}: keine Mitte (seitenweite Fachsicht, alle Knoten Tiefe 0); die Knoten liegen gleichrangig auf
+         * Ringen, die mit den meisten Belegen innen. Standard {@code true}.
+         */
+        public void centred(boolean centred) {
+            this.centred = centred;
+            repaint();
+        }
+
+        public boolean centred() {
+            return centred;
+        }
+
+        /** Gedämpfter Text mitten in der Fläche, solange der Graph leer ist; {@code null} zeigt keinen. */
+        public void emptyText(String text) {
+            emptyText = text;
+            repaint();
+        }
+
+        public String emptyText() {
+            return emptyText;
+        }
+
+        public void graph(GraphSource.Graph graph) {
             this.graph = graph;
             repaint();
         }
 
-        GraphSource.Graph graph() {
+        public GraphSource.Graph graph() {
             return graph;
         }
 
         /** Wortlaut eines Knotens oder der Schlüssel, wenn es ihn nicht gibt. */
-        String label(String key) {
+        public String label(String key) {
             return graph.nodes().stream().filter(node -> node.key().equals(key)).map(GraphSource.Node::label)
                     .findFirst().orElse(key);
         }
 
         /** Die Kante unter dem Punkt (Beschriftung oder höchstens 5 px neben der Linie) oder {@code null}. */
-        GraphSource.Edge edgeAt(Point point) {
+        public GraphSource.Edge edgeAt(Point point) {
             Map<String, Rectangle2D> boxes = layout(getWidth(), getHeight());
             GraphSource.Edge best = null;
             double bestDistance = 6;
@@ -855,8 +890,8 @@ public final class TermGraphView {
                     }
                 }
                 Point2D control = null;
-                Point2D centre = graph.nodes().isEmpty() ? null : boxes.get(graph.nodes().get(0).key()) == null
-                        ? null : new Point2D.Double(boxes.get(graph.nodes().get(0).key()).getCenterX(),
+                Point2D centre = !centred || graph.nodes().isEmpty() ? null
+                        : boxes.get(graph.nodes().get(0).key()) == null ? null : new Point2D.Double(boxes.get(graph.nodes().get(0).key()).getCenterX(),
                         boxes.get(graph.nodes().get(0).key()).getCenterY());
                 if (domain && centre != null && offset == 0 && depthOf(edge.from()) > 0 && depthOf(edge.to()) > 0
                         && new Line2D.Double(a, b).ptSegDist(centre) < 60) {
@@ -967,12 +1002,12 @@ public final class TermGraphView {
         }
 
         /** Wortlaute der gezeigten Knoten, die Mitte zuerst. */
-        List<String> labels() {
+        public List<String> labels() {
             return graph.nodes().stream().map(GraphSource.Node::label).toList();
         }
 
         /** Der Knoten unter dem Punkt oder {@code null}. */
-        GraphSource.Node nodeAt(Point point) {
+        public GraphSource.Node nodeAt(Point point) {
             Map<String, Rectangle2D> boxes = layout(getWidth(), getHeight());
             // Später gemalte Knoten liegen oben: rückwärts suchen, damit der sichtbare Knoten getroffen wird.
             List<GraphSource.Node> nodes = graph.nodes();
@@ -997,6 +1032,9 @@ public final class TermGraphView {
             FontMetrics metrics = getFontMetrics(getFont());
             double cx = width / 2.0;
             double cy = height / 2.0;
+            if (!centred) {
+                return boxes(rings(width, height), metrics, width, height);
+            }
             List<GraphSource.Node> first = new ArrayList<>();
             Map<String, List<GraphSource.Node>> children = new LinkedHashMap<>();
             for (GraphSource.Node node : graph.nodes()) {
@@ -1032,6 +1070,13 @@ public final class TermGraphView {
                             cy + r2 * Math.sin(angle)));
                 }
             }
+            return boxes(centres, metrics, width, height);
+        }
+
+        /** Kästen um die Mittelpunkte, in der Fläche gehalten. */
+        private Map<String, Rectangle2D> boxes(Map<String, Point2D> centres, FontMetrics metrics, int width,
+                                               int height) {
+            Map<String, Rectangle2D> boxes = new LinkedHashMap<>();
             for (GraphSource.Node node : graph.nodes()) {
                 Point2D c = centres.get(node.key());
                 if (c == null) {
@@ -1045,6 +1090,41 @@ public final class TermGraphView {
             return boxes;
         }
 
+        /**
+         * Ohne Mitte: alle Knoten in ihrer Reihenfolge (die mit den meisten Belegen zuerst) auf bis zu drei Ringen,
+         * innen die ersten; je Ring so viele, wie sein Umfang trägt, versetzt gegen den Ring davor.
+         */
+        private Map<String, Point2D> rings(int width, int height) {
+            Map<String, Point2D> centres = new LinkedHashMap<>();
+            List<GraphSource.Node> nodes = graph.nodes();
+            int n = nodes.size();
+            double cx = width / 2.0;
+            double cy = height / 2.0;
+            if (n == 1) {
+                centres.put(nodes.get(0).key(), new Point2D.Double(cx, cy));
+                return centres;
+            }
+            double radius = Math.min(width, height) / 2.0 - BOX_HEIGHT;
+            int count = n <= 10 ? 1 : n <= 24 ? 2 : 3;
+            double[] radii = new double[count];
+            double total = 0;
+            for (int k = 0; k < count; k++) {
+                radii[k] = count == 1 ? radius * 0.8 : radius * (0.38 + 0.57 * k / (count - 1));
+                total += radii[k];
+            }
+            int index = 0;
+            for (int k = 0; k < count; k++) {
+                int onRing = k == count - 1 ? n - index : (int) Math.round(n * radii[k] / total);
+                double shift = k % 2 == 0 ? 0 : Math.PI / Math.max(1, onRing);
+                for (int i = 0; i < onRing && index < n; i++, index++) {
+                    double angle = -Math.PI / 2 + shift + 2 * Math.PI * i / onRing;
+                    centres.put(nodes.get(index).key(), new Point2D.Double(cx + radii[k] * Math.cos(angle) * 1.35,
+                            cy + radii[k] * Math.sin(angle)));
+                }
+            }
+            return centres;
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
@@ -1053,6 +1133,10 @@ public final class TermGraphView {
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
                 g2.setColor(getBackground());
                 g2.fillRect(0, 0, getWidth(), getHeight());
+                if (graph.nodes().isEmpty() && emptyText != null && !emptyText.isBlank()) {
+                    paintEmpty(g2);
+                    return;
+                }
                 Map<String, Rectangle2D> boxes = layout(getWidth(), getHeight());
                 // Mehrere Beziehungen zwischen denselben Begriffen nebeneinander zeichnen statt übereinander.
                 for (Segment segment : segments(boxes)) {
@@ -1066,6 +1150,34 @@ public final class TermGraphView {
                 }
             } finally {
                 g2.dispose();
+            }
+        }
+
+        /** Der Text der leeren Fläche: gedämpft, mittig, umbrochen. */
+        private void paintEmpty(Graphics2D g2) {
+            Font font = Comic.regular(13f);
+            FontMetrics metrics = g2.getFontMetrics(font);
+            int max = Math.max(120, Math.min(getWidth() - 48, 460));
+            List<String> lines = new ArrayList<>();
+            StringBuilder line = new StringBuilder();
+            for (String word : emptyText.strip().split("\\s+")) {
+                String next = line.isEmpty() ? word : line + " " + word;
+                if (!line.isEmpty() && metrics.stringWidth(next) > max) {
+                    lines.add(line.toString());
+                    line = new StringBuilder(word);
+                } else {
+                    line = new StringBuilder(next);
+                }
+            }
+            if (!line.isEmpty()) {
+                lines.add(line.toString());
+            }
+            g2.setFont(font);
+            g2.setColor(Comic.MUTED);
+            float y = (float) (getHeight() / 2.0 - lines.size() * metrics.getHeight() / 2.0 + metrics.getAscent());
+            for (String text : lines) {
+                g2.drawString(text, (float) (getWidth() / 2.0 - metrics.stringWidth(text) / 2.0), y);
+                y += metrics.getHeight();
             }
         }
 
@@ -1174,7 +1286,9 @@ public final class TermGraphView {
         }
 
         private void paintNode(Graphics2D g2, GraphSource.Node node, Rectangle2D box) {
-            if (node.synonym() && node.depth() > 0) {
+            // Ohne Mitte ist kein Knoten hervorgehoben: alle wie Nachbarn.
+            int depth = centred ? node.depth() : 1;
+            if (node.synonym() && depth > 0) {
                 // Synonym der Fachsicht: kleiner, nur umrandet, ohne Füllung und ohne Schatten.
                 RoundRectangle2D outline = new RoundRectangle2D.Double(box.getX() + 4, box.getY() + 3,
                         box.getWidth() - 8, box.getHeight() - 6, 14, 14);
@@ -1196,15 +1310,15 @@ public final class TermGraphView {
                     box.getHeight(), 16, 16);
             g2.setColor(Comic.INK);
             g2.fill(shadow);
-            g2.setColor(node.depth() == 0 ? Comic.YELLOW : node.depth() == 1 ? Color.WHITE : Comic.SURFACE);
+            g2.setColor(depth == 0 ? Comic.YELLOW : depth == 1 ? Color.WHITE : Comic.SURFACE);
             g2.fill(shape);
             g2.setColor(Comic.INK);
-            g2.setStroke(new BasicStroke(node.depth() == 0 ? 2.6f : 2f));
+            g2.setStroke(new BasicStroke(depth == 0 ? 2.6f : 2f));
             g2.draw(shape);
-            Font font = node.depth() == 0 ? Comic.semiBold(14f) : getFont();
+            Font font = depth == 0 ? Comic.semiBold(14f) : getFont();
             FontMetrics metrics = g2.getFontMetrics(font);
             g2.setFont(font);
-            g2.setColor(node.depth() == 2 ? Comic.TEXT : Comic.INK);
+            g2.setColor(depth == 2 ? Comic.TEXT : Comic.INK);
             g2.drawString(node.label(), (float) (box.getCenterX() - metrics.stringWidth(node.label()) / 2.0),
                     (float) (box.getCenterY() - metrics.getHeight() / 2.0 + metrics.getAscent()));
         }
