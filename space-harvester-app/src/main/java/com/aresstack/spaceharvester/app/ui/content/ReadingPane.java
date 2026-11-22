@@ -7,7 +7,6 @@ import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
 import com.aresstack.spaceharvester.app.ui.controls.ViewerPopup;
 import com.aresstack.spaceharvester.app.ui.controls.MessagePlate;
-import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.diagrams.VectorDiagram;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
