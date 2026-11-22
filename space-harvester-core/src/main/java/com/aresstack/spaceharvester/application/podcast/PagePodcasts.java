@@ -126,6 +126,16 @@ public final class PagePodcasts {
     }
 
     /**
+     * Schaltet die Bilder je Thema ein (Angelo 21.11.2026): echte Seitenbilder nach ihrer Beschreibung, sonst ein
+     * Schaubild aus Teilen ({@link PodcastPictures}).
+     *
+     * @param drawer zeichnet die Schaubilder (Modell der Bildgenerierung)
+     */
+    public void pictures(StepModel drawer, PodcastPictures.PageImageSource images) {
+        production.pictures(new PodcastProduction.Pictures(drawer, images));
+    }
+
+    /**
      * Der Stand des Podcasts einer Seite; leer, solange nichts erzeugt ist, oder wenn sich der Inhalt seit der
      * Erzeugung geändert hat und kein Auftrag läuft (dann erzeugt der nächste Start ihn neu).
      */

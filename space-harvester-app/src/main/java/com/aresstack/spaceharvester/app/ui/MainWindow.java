@@ -120,6 +120,8 @@ public final class MainWindow implements AppContext.Navigator {
     private final FindBar findBar;
     /** Platz der Zeitleiste über der Suchleiste ({@code TimelineEvent}). */
     private final JPanel timelineSlot = new JPanel(new BorderLayout());
+    /** Platz einer Fläche über dem Inhaltsbereich ({@code ContentOverlayEvent}); sichtbar nur unter „Inhalte“. */
+    private final JPanel overlaySlot = new JPanel(new BorderLayout());
     private AppContext.Section current = AppContext.Section.CONTENT;
     /** Die Auswahl links beim letzten Verlassen der Suche; zurück in der Suche gilt sie wieder. */
     private Explorer.Remembered searchSelection;
@@ -197,6 +199,7 @@ public final class MainWindow implements AppContext.Navigator {
         statusClear.setRepeats(false);
         context.events().subscribe(StatusMessageEvent.class, this::showStatus);
         context.events().subscribe(com.aresstack.spaceharvester.app.event.TimelineEvent.class, this::timeline);
+        context.events().subscribe(com.aresstack.spaceharvester.app.event.ContentOverlayEvent.class, this::overlay);
         context.onChange(ignored -> updateStatus());
         updateStatus();
         // „Nach dem Update Änderungen anzeigen“ (ADR 0030): eine neue Marke öffnet die Updates ihrer Quelle.
@@ -336,7 +339,45 @@ public final class MainWindow implements AppContext.Navigator {
         findFoot.add(timelineSlot, BorderLayout.NORTH);
         findFoot.add(findBar, BorderLayout.CENTER);
         workFoot.add(findFoot, BorderLayout.SOUTH);
-        work.add(deck, BorderLayout.CENTER);
+        // Über dem Inhaltsbereich kann eine Fläche liegen (ContentOverlayEvent, das Bild zum Podcast); der Inhalt
+        // darunter bleibt, wie er ist.
+        JPanel deckHolder = new JPanel(new java.awt.LayoutManager() {
+            @Override
+            public void addLayoutComponent(String name, java.awt.Component component) {
+            }
+
+            @Override
+            public void removeLayoutComponent(java.awt.Component component) {
+            }
+
+            @Override
+            public Dimension preferredLayoutSize(java.awt.Container parent) {
+                return deck.getPreferredSize();
+            }
+
+            @Override
+            public Dimension minimumLayoutSize(java.awt.Container parent) {
+                return deck.getMinimumSize();
+            }
+
+            @Override
+            public void layoutContainer(java.awt.Container parent) {
+                for (java.awt.Component child : parent.getComponents()) {
+                    child.setBounds(0, 0, parent.getWidth(), parent.getHeight());
+                }
+            }
+        }) {
+            @Override
+            public boolean isOptimizedDrawingEnabled() {
+                return false;
+            }
+        };
+        deckHolder.setOpaque(false);
+        overlaySlot.setOpaque(false);
+        overlaySlot.setVisible(false);
+        deckHolder.add(overlaySlot);
+        deckHolder.add(deck);
+        work.add(deckHolder, BorderLayout.CENTER);
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
         chatSidebar.collapseButton().addActionListener(e -> chatOpen(false));
@@ -652,6 +693,7 @@ public final class MainWindow implements AppContext.Navigator {
             searchSelection = explorer.remember();
         }
         current = section;
+        placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
             if (searchSelection == null) {
                 // Zum ersten Mal in der Suche: gesucht wird in dem, was links gewählt ist.
@@ -920,7 +962,41 @@ public final class MainWindow implements AppContext.Navigator {
         }
     }
 
-    /** Zeigt eine Statusmeldung vom Bus und blendet sie nach ihrer Dauer aus (wie die Statusleiste in MainframeMate). */
+    /** Legt die Fläche einer Ansicht über den Inhaltsbereich oder nimmt sie wieder weg (ContentOverlayEvent). */
+    private void overlay(com.aresstack.spaceharvester.app.event.ContentOverlayEvent event) {
+        Runnable apply = () -> {
+            javax.swing.JComponent overlay = event.getPayload().overlay();
+            boolean current = overlaySlot.getComponentCount() == 1 && overlaySlot.getComponent(0) == overlay;
+            if (event.getPayload().show()) {
+                if (!current) {
+                    overlaySlot.removeAll();
+                    overlaySlot.add(overlay, BorderLayout.CENTER);
+                }
+            } else if (current) {
+                overlaySlot.removeAll();
+            }
+            placeOverlay();
+            overlaySlot.revalidate();
+            overlaySlot.repaint();
+        };
+        if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+            apply.run();
+        } else {
+            javax.swing.SwingUtilities.invokeLater(apply);
+        }
+    }
+
+    /** Die Fläche gehört zum Bereich „Inhalte“: In anderen Bereichen liegt sie nicht über deren Ansicht. */
+    private void placeOverlay() {
+        overlaySlot.setVisible(overlaySlot.getComponentCount() == 1 && current == AppContext.Section.CONTENT);
+    }
+
+    /** Die Fläche über dem Inhaltsbereich, falls eine liegt (für Tests). */
+    JComponent contentOverlay() {
+        return overlaySlot.isVisible() && overlaySlot.getComponentCount() == 1
+                ? (JComponent) overlaySlot.getComponent(0) : null;
+    }
+
     /** Zeigt die Zeitleiste einer Ansicht über der Suchleiste, ohne den Trenner, oder nimmt sie wieder weg. */
     private void timeline(com.aresstack.spaceharvester.app.event.TimelineEvent event) {
         Runnable apply = () -> {
@@ -953,6 +1029,7 @@ public final class MainWindow implements AppContext.Navigator {
                 ? (javax.swing.JComponent) timelineSlot.getComponent(0) : null;
     }
 
+    /** Zeigt eine Statusmeldung vom Bus und blendet sie nach ihrer Dauer aus (wie die Statusleiste in MainframeMate). */
     private void showStatus(StatusMessageEvent event) {
         Runnable apply = () -> {
             StatusMessageEvent.Payload message = event.getPayload();

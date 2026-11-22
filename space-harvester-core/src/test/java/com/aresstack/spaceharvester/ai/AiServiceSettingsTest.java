@@ -82,6 +82,36 @@ class AiServiceSettingsTest {
     }
 
     @Test
+    void visionAndImageGenerationHaveTheirOwnTokenLength() {
+        assertThat(AiServiceSettings.NONE.visionMaxTokens()).isEqualTo(8192);
+        assertThat(AiServiceSettings.NONE.imageMaxTokens()).isEqualTo(16384);
+        assertThat(AiServiceSettings.TOKEN_CHOICES).containsExactly(2048, 8192, 16384, 32768, 65536);
+        Properties properties = new Properties();
+        properties.setProperty("space-harvester.ai.base-url", "https://ki.example.org/v1");
+        properties.setProperty("space-harvester.ai.chat-model", "text");
+        properties.setProperty("space-harvester.ai.vision-max-tokens", "2048");
+        properties.setProperty("space-harvester.ai.image-model", "svg");
+        properties.setProperty("space-harvester.ai.image-max-tokens", "65536");
+
+        AiServiceSettings settings = AiServiceSettings.fromProperties(properties);
+
+        assertThat(settings.visionMaxTokens()).isEqualTo(2048);
+        assertThat(settings.imageModel()).isEqualTo("svg");
+        assertThat(settings.imageMaxTokens()).isEqualTo(65536);
+        assertThat(settings.withApiKey("k").withParallel(2).withChatMaxTokens(100).visionMaxTokens()).isEqualTo(2048);
+        assertThat(settings.imageGeneration().chatModel()).isEqualTo("svg");
+        assertThat(settings.imageGeneration().chatMaxTokens()).isEqualTo(65536);
+        assertThat(settings.withImageGeneration(" ", null).imageGeneration().chatModel()).isEqualTo("text");
+        assertThat(settings.toString()).contains("imageMaxTokens=65536", "visionMaxTokens=2048");
+        properties.setProperty("space-harvester.ai.image-max-tokens", "viel");
+        assertThatThrownBy(() -> AiServiceSettings.fromProperties(properties))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("image-max-tokens");
+        properties.setProperty("space-harvester.ai.image-max-tokens", "0");
+        assertThatThrownBy(() -> AiServiceSettings.fromProperties(properties))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("image-max-tokens");
+    }
+
+    @Test
     void withoutValuesThereIsNoServiceAndNoSourceIsApproved() {
         AiServiceSettings settings = AiServiceSettings.fromProperties(new Properties());
 

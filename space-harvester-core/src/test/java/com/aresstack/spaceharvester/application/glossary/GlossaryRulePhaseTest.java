@@ -360,19 +360,24 @@ class GlossaryRulePhaseTest {
     }
 
     @Test
-    void aSecondOccasionWhileASpaceIsWaitingStartsOnlyTheOtherSpaces() {
-        // Aufträge laufen hier nie an: Was gestartet ist, wartet.
-        Jobs waiting = new Jobs(new InMemoryJobStore(), task -> { }, new JobLimits(2, 10, Duration.ofHours(1)),
+    void aSecondOccasionSkipsWaitingAndPausedSpacesButNotRunningOnes() {
+        // Aufträge laufen hier nie zu Ende: Ein Hintergrundplatz ist belegt (RUNNING), der zweite Space wartet.
+        Jobs parked = new Jobs(new InMemoryJobStore(), task -> { }, new JobLimits(2, 10, Duration.ofHours(1)),
                 Clock.fixed(T0, ZoneOffset.UTC));
-        classification.background(new com.aresstack.spaceharvester.application.background.BackgroundJobs(waiting,
-                "app"), EDITOR, () -> true);
+        var background = new com.aresstack.spaceharvester.application.background.BackgroundJobs(parked, "app");
+        classification.background(background, EDITOR, () -> true);
 
-        assertThat(classification.automatic("wiki")).isPresent();
-        assertThat(classification.automatic("wiki")).as("beide Spaces warten").isEmpty();
+        var first = classification.automatic("wiki").orElseThrow();
+        String running = first.parts().stream().filter(part -> parked.status(part.id()).state()
+                == com.aresstack.spaceharvester.application.jobs.JobState.RUNNING).findFirst().orElseThrow()
+                .partitionKey();
         page("7", "DOC", "Redaktion", "pflegt", "Handbuch");
         var second = classification.automatic("wiki").orElseThrow();
 
-        assertThat(second.parts()).extracting(JobStatus::partitionKey).containsExactly("DOC");
+        assertThat(second.parts()).extracting(JobStatus::partitionKey).as("der laufende liest den neuen Bestand nicht")
+                .containsExactlyInAnyOrder(running, "DOC");
+        background.pause(second.groupId());
+        assertThat(classification.automatic("wiki")).as("wartend oder angehalten: nimmt den Anlass mit").isEmpty();
     }
 
     @Test
