@@ -85,6 +85,11 @@ class UpdatePodcastsTest {
         });
         // je Thema ein Plan und drei Symbole
         assertThat(drawn.get()).isEqualTo(3 * 4);
+        // für den Bericht: je Thema mit Bild ein Eintrag in Themenreihenfolge
+        List<UpdatePodcasts.TopicPicture> report = podcasts.topicPictures(summary);
+        assertThat(report).hasSize(3);
+        assertThat(report).allSatisfy(entry -> assertThat(entry.picture().file()).exists());
+        assertThat(report).extracting(UpdatePodcasts.TopicPicture::topicTitle).doesNotContainNull();
         int before = drawn.get();
         podcasts.start(caller, summary);
         assertThat(drawn.get()).as("ein neuer Lauf nimmt die abgelegten Bilder").isEqualTo(before);
