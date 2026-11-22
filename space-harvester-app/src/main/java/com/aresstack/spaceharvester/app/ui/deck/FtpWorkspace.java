@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.deck.access.ServerAccounts;
+import com.aresstack.spaceharvester.deck.editor.EditorSessions;
 import com.aresstack.spaceharvester.deck.ftp.ConnectionState;
 import com.aresstack.spaceharvester.deck.ftp.FtpProfile;
 import com.aresstack.spaceharvester.deck.ftp.FtpSession;
@@ -45,11 +46,21 @@ public final class FtpWorkspace extends JPanel {
     private final JPanel center = new JPanel(cards);
     private final FtpConnectForm form;
     private final SegmentedToggle toggle = new SegmentedToggle();
+    private final EditorSessions editors;
     private FtpSession selected;
 
+    /** Mit eigenem Editor (Tests). */
     public FtpWorkspace(FtpSessions sessions, ServerAccounts accounts) {
+        this(sessions, accounts, new EditorSessions(java.util.concurrent.ForkJoinPool.commonPool()));
+    }
+
+    /**
+     * @param editors der gemeinsame Editor des Command Deck; FTP-Members öffnen darin
+     */
+    public FtpWorkspace(FtpSessions sessions, ServerAccounts accounts, EditorSessions editors) {
         super(new BorderLayout());
         this.sessions = sessions;
+        this.editors = editors;
         this.accounts = accounts;
         setBackground(Comic.SURFACE);
         form = new FtpConnectForm(accounts, this::connect);
@@ -116,7 +127,7 @@ public final class FtpWorkspace extends JPanel {
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
         FtpSessionView view = new FtpSessionView(session, this::closeSession,
-                () -> toggle.select(FtpSessionView.JOBS));
+                () -> toggle.select(FtpSessionView.JOBS), editors);
         view.show(toggle.selected());
         viewOf.put(session, view);
         center.add(view, session.id());

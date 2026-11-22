@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.deck.access.ServerAccount;
 import com.aresstack.spaceharvester.deck.access.ServerAccounts;
 import com.aresstack.spaceharvester.deck.access.ServerCredentials;
+import com.aresstack.spaceharvester.deck.editor.EditorSession;
 import com.aresstack.spaceharvester.deck.ftp.ConnectionState;
 import com.aresstack.spaceharvester.deck.ftp.FakeMvsFtpHost;
 import com.aresstack.spaceharvester.deck.ftp.FtpSession;
@@ -97,8 +98,25 @@ class FtpWorkspaceTest {
             SwingUtilities.invokeAndWait(() -> datasets.openRow(1));
             waitFor(() -> onEdt(() -> datasets.current().equals("'KKR.JCL'") && datasets.shown().size() == 2), until);
             SwingUtilities.invokeAndWait(() -> datasets.openRow(0));
-            waitFor(() -> onEdt(() -> datasets.previewText().startsWith("//BUILD")), until);
+            waitFor(() -> onEdt(() -> datasets.documentText().startsWith("//BUILD")), until);
             assertThat(onEdt(view::statusText)).contains("'KKR.JCL(BUILD)'");
+
+            // Im gemeinsamen Editor bearbeiten und zurückschreiben.
+            EditorSession build = onEdt(datasets::document);
+            assertThat(build.name()).isEqualTo("BUILD");
+            assertThat(deck.editors().all()).contains(build);
+            SwingUtilities.invokeAndWait(() -> datasets.editor(build).type("*NEU\n"));
+            waitFor(() -> onEdt(build::dirty), until);
+            SwingUtilities.invokeAndWait(build::save);
+            waitFor(() -> !build.dirty() && build.state() == EditorSession.State.READY, until);
+            assertThat(host.text("KKR.JCL(BUILD)")).contains("*NEU").contains("//BUILD    JOB");
+            // Ändert jemand das Member auf dem Host, speichert der Editor nicht blind darüber.
+            host.member("KKR.JCL", "BUILD", "//BUILD    JOB VON AUSSEN");
+            SwingUtilities.invokeAndWait(() -> datasets.editor(build).type("*NOCH EINS\n"));
+            waitFor(() -> onEdt(build::dirty), until);
+            SwingUtilities.invokeAndWait(build::save);
+            waitFor(() -> build.state() == EditorSession.State.CONFLICT, until);
+            assertThat(host.text("KKR.JCL(BUILD)")).isEqualTo("//BUILD    JOB VON AUSSEN");
 
             // Hochladen: der Dateiname wird zum Member.
             Path local = temp.resolve("orbit.jcl");

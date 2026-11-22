@@ -39,11 +39,12 @@ final class FtpSessionView extends JPanel {
     private String view = DATASETS;
     private boolean started;
 
-    FtpSessionView(FtpSession session, Consumer<FtpSession> onClose, Runnable showJobs) {
+    FtpSessionView(FtpSession session, Consumer<FtpSession> onClose, Runnable showJobs,
+                   com.aresstack.spaceharvester.deck.editor.EditorSessions editors) {
         super(new BorderLayout());
         this.session = session;
         setBackground(Comic.SURFACE);
-        datasets = new FtpDatasetsView(this, showJobs);
+        datasets = new FtpDatasetsView(this, showJobs, editors);
         jobs = new FtpJobsView(this);
         center.setOpaque(false);
         center.add(datasets, DATASETS);
@@ -57,7 +58,11 @@ final class FtpSessionView extends JPanel {
         disconnect = Comic.button("Trennen", "Beide Verbindungen dieser Sitzung trennen (Datasets und Jobs)");
         disconnect.addActionListener(e -> session.disconnect());
         close = Comic.button("Schließen", "Getrennte Sitzung aus der Liste nehmen");
-        close.addActionListener(e -> onClose.accept(session));
+        close.addActionListener(e -> {
+            if (datasets.closeDocuments()) {
+                onClose.accept(session);
+            }
+        });
         JPanel east = new JPanel(new BorderLayout(12, 0));
         east.setOpaque(false);
         east.add(actions, BorderLayout.CENTER);

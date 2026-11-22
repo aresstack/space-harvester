@@ -1,0 +1,116 @@
+package com.aresstack.spaceharvester.deck.ftp;
+
+import com.aresstack.spaceharvester.deck.editor.DocumentException;
+import com.aresstack.spaceharvester.deck.editor.DocumentStore;
+import com.aresstack.spaceharvester.deck.editor.EditorDocument;
+import com.aresstack.spaceharvester.deck.editor.SaveResult;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+
+/**
+ * Ablage des gemeinsamen Editors für Members und Dateien einer FTP-Sitzung (wie das Bearbeiten in MainframeMate):
+ * Laden liest über die Datasets-Leitung, Speichern prüft vorher den Fingerabdruck ({@code writeIfUnchanged}) und
+ * schreibt Satz für Satz zurück. Gelesen wird mit einer Wiederholung nach Verbindungsabbruch, geschrieben nie doppelt.
+ * Eine Ablage gehört zu genau einer Sitzung; dieselbe Adresse auf zwei Sitzungen sind zwei Dokumente.
+ */
+public final class FtpDocumentStore implements DocumentStore {
+
+    private final FtpSession session;
+
+    public FtpDocumentStore(FtpSession session) {
+        this.session = Objects.requireNonNull(session, "session");
+    }
+
+    public FtpSession session() {
+        return session;
+    }
+
+    @Override
+    public EditorDocument load(String location) throws DocumentException {
+        RemoteFile file = await(session.files(files -> files.read(location)), "Lesen von " + location);
+        return document(file);
+    }
+
+    @Override
+    public SaveResult save(EditorDocument loaded, String text, boolean overwrite) throws DocumentException {
+        String path = loaded.location();
+        boolean records = session.mvs();
+        // Nur auf MVS gilt das Satzformat (letzter Umbruch kein leerer Satz); andere Dateien gehen unverändert hinaus.
+        String outgoing = records && text.endsWith("\n") ? text.substring(0, text.length() - 1) : text;
+        try {
+            RemoteFile written = session.filesOnce(files -> files.writeIfUnchanged(path, outgoing,
+                    overwrite ? null : loaded.hash())).get();
+            RemoteFile fresh = await(session.files(files -> files.read(written.path())), "Lesen nach dem Speichern");
+            if (fresh.text().equals(expected(outgoing, records))) {
+                // Der Editor behält seinen Text als Stand (sonst bliebe er nach dem Speichern „geändert“), der
+                // Fingerabdruck ist der des Hosts für die nächste Prüfung.
+                return new SaveResult.Saved(new EditorDocument(fresh.path(), loaded.name(), text, loaded.charset(),
+                        loaded.lineEnding(), fresh.hash()));
+            }
+            if (overwrite) {
+                // Ausdrücklich überschrieben, der Host hat aber etwas anderes abgelegt (etwa Satzlänge): sein Stand
+                // wird die Grundlage, der Editor zeigt den Unterschied als ungespeicherte Änderung.
+                return new SaveResult.Saved(document(fresh));
+            }
+            // Nicht still fremde Änderungen übernehmen: lieber nachfragen als beim nächsten Mal blind überschreiben.
+            return new SaveResult.Conflict("Gespeichert, aber der Host liefert jetzt einen anderen Text "
+                    + "(Satzlänge oder Änderung von außen) – bitte neu laden oder überschreiben.");
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof WriteConflictException) {
+                return new SaveResult.Conflict("Das Member wurde seit dem Öffnen auf dem Host geändert.");
+            }
+            throw failure("Speichern von " + path, e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DocumentException("Speichern abgebrochen", e);
+        }
+    }
+
+    /** Was der Host nach dem Schreiben liefern muss: auf MVS jede Zeile rechts gekürzt, sonst genau der Text. */
+    static String expected(String written, boolean records) {
+        if (!records) {
+            return written;
+        }
+        String[] lines = written.split("\n", -1);
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                result.append('\n');
+            }
+            result.append(lines[i].stripTrailing());
+        }
+        return result.toString();
+    }
+
+    private EditorDocument document(RemoteFile file) {
+        return new EditorDocument(file.path(), name(file.path()), file.text(), session.profile().encoding(), "\n",
+                file.hash());
+    }
+
+    /** Anzeigename: auf MVS das Member bzw. der Dataset-Name, sonst der Dateiname. */
+    public static String name(String path) {
+        String unquoted = MvsPath.unquote(path);
+        int open = unquoted.indexOf('(');
+        if (open >= 0 && unquoted.endsWith(")")) {
+            return unquoted.substring(open + 1, unquoted.length() - 1);
+        }
+        int slash = unquoted.lastIndexOf('/');
+        return slash >= 0 && slash < unquoted.length() - 1 ? unquoted.substring(slash + 1) : unquoted;
+    }
+
+    private static <T> T await(CompletableFuture<T> future, String what) throws DocumentException {
+        try {
+            return future.get();
+        } catch (ExecutionException e) {
+            throw failure(what, e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new DocumentException(what + " abgebrochen", e);
+        }
+    }
+
+    private static DocumentException failure(String what, Throwable cause) {
+        return new DocumentException(what + " fehlgeschlagen – " + FtpSession.describe(cause), cause);
+    }
+}
