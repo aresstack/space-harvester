@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.knowledge;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
@@ -604,6 +605,324 @@ class DomainTermGraphTest {
         assertThat(edge.count()).as("Korrektur und Vorstufe sind nie Beleg").isEqualTo(1);
         assertThat(edge.evidence()).singleElement().satisfies(evidence -> assertThat(
                 evidence.statement().derivation().origin()).isEqualTo(ParsedStatements.Origin.ORIGINAL));
+    }
+
+    /**
+     * Mit Auswahl liest die Fachsicht nur deren Seiten ({@link KnowledgeGraph#analysed(AccessContext, PageSet)}), nie
+     * die ganze Ablage; ohne Auswahl den ganzen Durchgang. Ergebnis wie mit Lesen und Filtern danach.
+     */
+    @Test
+    void withASelectionOnlyTheSelectedPagesAreReadNotTheWholeStore() {
+        term("Planer");
+        term("Ziel");
+        term("Kunde");
+        analyse("wiki", "1", "Der Planer prüft das Ziel.");
+        analyse("wiki", "3", "Der Kunde prüft den Planer.");
+        int[] full = {0};
+        List<PageSet> selected = new ArrayList<>();
+        DomainTermGraph counted = new DomainTermGraph(caller -> {
+            full[0]++;
+            return graph.analysed(caller);
+        }, (caller, pages) -> {
+            selected.add(pages);
+            return graph.analysed(caller, pages);
+        }, vocabulary(), () -> null, DomainTermGraph.Comparison.NONE);
+
+        DomainTermGraph.View page = counted.onPages(CALLER, new DomainTermGraph.Options(2, false, pages("1")),
+                () -> false);
+        DomainTermGraph.View around = counted.around(CALLER, "Planer", new DomainTermGraph.Options(1, false,
+                pages("1")), () -> false);
+
+        assertThat(full[0]).as("kein Durchgang über die ganze Ablage").isZero();
+        assertThat(selected).containsExactly(pages("1"), pages("1"));
+        assertThat(page.nodes()).extracting(DomainTermGraph.Node::label).containsExactly("Planer", "Ziel");
+        assertThat(around.edges()).extracting(DomainTermGraph.Edge::to).containsExactly("ziel");
+
+        counted.around(CALLER, "Planer", DomainTermGraph.Options.DEFAULT, () -> false);
+        assertThat(full[0]).as("ohne Auswahl der ganze Durchgang").isEqualTo(1);
+        assertThat(selected).hasSize(2);
+    }
+
+    @Test
+    void onPagesCollectsTheTermsOfTheGivenPagesOnlyWithoutACentre() {
+        term("Planer");
+        term("Ziel");
+        term("Nachtlauf");
+        term("Start");
+        term("Kunde");
+        analyse("wiki", "1", "Der Planer prüft das Ziel.");
+        analyse("wiki", "2", "Der Nachtlauf sendet den Start.");
+        analyse("wiki", "3", "Der Kunde prüft den Planer.");
+
+        DomainTermGraph.View view = onPages(pages("1", "2"));
+
+        assertThat(view.outcome()).isEqualTo(DomainTermGraph.Outcome.FOUND);
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::label)
+                .as("„Kunde“ steht nur auf Seite 3").containsExactly("Nachtlauf", "Planer", "Start", "Ziel");
+        assertThat(view.nodes()).allSatisfy(node -> {
+            assertThat(node.depth()).as("keine Mitte").isZero();
+            assertThat(node.parent()).isNull();
+        });
+        assertThat(view.edges()).extracting(DomainTermGraph.Edge::from, DomainTermGraph.Edge::verb,
+                DomainTermGraph.Edge::to).containsExactlyInAnyOrder(
+                org.assertj.core.groups.Tuple.tuple("planer", "prüft", "ziel"),
+                org.assertj.core.groups.Tuple.tuple("nachtlauf", "sendet", "start"));
+        assertThat(view.edges()).allSatisfy(edge -> assertThat(edge.count()).isEqualTo(1));
+        assertThat(view.truncated()).isFalse();
+        assertThat(view.skippedStale()).isZero();
+        assertThat(view.analyzers()).containsExactly("fake");
+    }
+
+    @Test
+    void onPagesOrdersByEvidenceCountThenByNameIgnoringCase() {
+        term("Plan");
+        term("Ziel");
+        term("Nachtlauf");
+        term("Start");
+        term("bote");
+        analyse("wiki", "1", "Der Plan prüft das Ziel. Der Plan prüft das Ziel. Der Nachtlauf sendet den Start. "
+                + "Der Bote sendet den Start.");
+
+        DomainTermGraph.View view = onPages(pages("1"));
+
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::label)
+                .as("je zwei Belege vor je einem, bei Gleichstand nach Wortlaut ohne Groß-/Kleinschreibung")
+                .containsExactly("Plan", "Start", "Ziel", "bote", "Nachtlauf");
+        assertThat(view.edges()).filteredOn(edge -> "prüft".equals(edge.verb())).singleElement()
+                .satisfies(edge -> assertThat(edge.count()).isEqualTo(2));
+    }
+
+    @Test
+    void onPagesStopsAtMaxNodesWithAStableSelection() {
+        term("Kern");
+        List<String> targets = new ArrayList<>();
+        for (int i = 0; i <= DomainTermGraph.MAX_NODES; i++) {
+            String target = "Ziel" + (char) ('a' + i / 26) + (char) ('a' + i % 26);
+            term(target);
+            targets.add(target);
+        }
+        StringBuilder first = new StringBuilder();
+        StringBuilder second = new StringBuilder();
+        for (int i = targets.size() - 1; i >= 0; i--) {
+            (i % 2 == 0 ? first : second).append("Der Kern prüft die ").append(targets.get(i)).append(". ");
+        }
+        analyse("wiki", "2", second.toString().strip());
+        analyse("wiki", "1", first.toString().strip());
+
+        DomainTermGraph.View view = onPages(pages("1", "2"));
+
+        assertThat(view.truncated()).as("42 Knoten gäbe es").isTrue();
+        assertThat(view.nodes()).hasSize(DomainTermGraph.MAX_NODES);
+        List<String> expected = new ArrayList<>(List.of("Kern"));
+        expected.addAll(targets.subList(0, DomainTermGraph.MAX_NODES - 1));
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::label)
+                .as("der Kern mit den meisten Belegen, dann alphabetisch").containsExactlyElementsOf(expected);
+        assertThat(view.edges()).hasSize(DomainTermGraph.MAX_NODES - 1);
+        assertThat(onPages(pages("1", "2")).nodes()).isEqualTo(view.nodes());
+    }
+
+    @Test
+    void onPagesWithExactlyMaxNodesIsNotTruncatedButOneMoreIs() {
+        term("Kern");
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < DomainTermGraph.MAX_NODES - 1; i++) {
+            String target = "Ziel" + (char) ('a' + i / 26) + (char) ('a' + i % 26);
+            term(target);
+            text.append("Der Kern prüft die ").append(target).append(". ");
+        }
+        term("Plan");
+        analyse("wiki", "1", text.toString().strip());
+        analyse("wiki", "2", "Der Plan prüft den Kern.");
+
+        DomainTermGraph.View exact = onPages(pages("1"));
+
+        assertThat(exact.nodes()).as("Kern und 39 Ziele").hasSize(DomainTermGraph.MAX_NODES);
+        assertThat(exact.truncated()).as("genau MAX_NODES Knoten passen").isFalse();
+
+        DomainTermGraph.View oneMore = onPages(pages("1", "2"));
+
+        assertThat(oneMore.nodes()).hasSize(DomainTermGraph.MAX_NODES);
+        assertThat(oneMore.truncated()).as("ein Knoten mehr als MAX_NODES").isTrue();
+    }
+
+    @Test
+    void onPagesNeverShowsANodeWithoutAVisiblePartner() {
+        // 21 getrennte Paare mit je einem Beleg: 42 Knoten gleichen Gewichts, alle „Quelle…“ vor allen „Ziel…“.
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i <= DomainTermGraph.MAX_NODES / 2; i++) {
+            String suffix = "" + (char) ('a' + i / 26) + (char) ('a' + i % 26);
+            term("Quelle" + suffix);
+            term("Ziel" + suffix);
+            text.append("Die Quelle").append(suffix).append(" prüft das Ziel").append(suffix).append(". ");
+        }
+        analyse("wiki", "1", text.toString().strip());
+
+        DomainTermGraph.View view = onPages(pages("1"));
+
+        assertThat(view.truncated()).isTrue();
+        assertThat(view.nodes()).hasSize(DomainTermGraph.MAX_NODES);
+        Set<String> touched = new HashSet<>();
+        view.edges().forEach(edge -> {
+            touched.add(edge.from());
+            touched.add(edge.to());
+        });
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::key).as("jeder Knoten mit sichtbarer Kante")
+                .allMatch(touched::contains);
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::label)
+                .as("das 21. Paar fällt ganz weg").doesNotContain("Quelleau", "Zielau")
+                .contains("Quelleat", "Zielat");
+    }
+
+    @Test
+    void onPagesShowsSynonymEdgesOnlyBetweenShownNodes() {
+        term("Plan");
+        term("Ziel");
+        term("Start");
+        synonyms.add(new DomainTermGraph.Synonym("Plan", "Entwurf", RelationScope.GLOBAL));
+        synonyms.add(new DomainTermGraph.Synonym("Ziel", "Zweck", RelationScope.GLOBAL));
+        analyse("wiki", "1", "Der Entwurf prüft das Ziel. Der Plan sendet den Start.");
+
+        DomainTermGraph.View view = onPages(pages("1"));
+
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::label, DomainTermGraph.Node::kind)
+                .as("„Zweck“ hat keine eigene Verb-Kante").containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("Entwurf", DomainTermGraph.NodeKind.SYNONYM),
+                        org.assertj.core.groups.Tuple.tuple("Plan", DomainTermGraph.NodeKind.TERM),
+                        org.assertj.core.groups.Tuple.tuple("Start", DomainTermGraph.NodeKind.TERM),
+                        org.assertj.core.groups.Tuple.tuple("Ziel", DomainTermGraph.NodeKind.TERM));
+        assertThat(view.edges()).filteredOn(edge -> edge.kind() == DomainTermGraph.EdgeKind.SYNONYM)
+                .extracting(DomainTermGraph.Edge::from, DomainTermGraph.Edge::to)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("plan", "entwurf"));
+        assertThat(view.edges()).filteredOn(edge -> edge.kind() == DomainTermGraph.EdgeKind.VERB).hasSize(2);
+    }
+
+    @Test
+    void onPagesWithoutAVerbBetweenTermsSaysNoEdges() {
+        term("Plan");
+        term("Ziel");
+        // Ein Glossar-Synonym ist immer eine Kante im Aufbau; es darf weder zu FOUND führen noch durchsickern.
+        synonyms.add(new DomainTermGraph.Synonym("Plan", "Entwurf", RelationScope.GLOBAL));
+        analyse("wiki", "1", "Der Kunde prüft das Ziel.");
+
+        DomainTermGraph.View view = onPages(pages("1"));
+
+        assertThat(view.outcome()).isEqualTo(DomainTermGraph.Outcome.NO_EDGES);
+        assertThat(view.nodes()).isEmpty();
+        assertThat(view.edges()).as("keine Synonym-Kante ohne gezeigte Knoten").isEmpty();
+        assertThat(view.truncated()).isFalse();
+        assertThat(view.skippedStale()).isZero();
+        assertThat(view.analyzers()).as("die Seite ist gelesen").containsExactly("fake");
+        DomainTermGraph.View empty = onPages(PageSet.EMPTY);
+        assertThat(empty.outcome()).isEqualTo(DomainTermGraph.Outcome.NO_EDGES);
+        assertThat(empty.edges()).isEmpty();
+    }
+
+    @Test
+    void onPagesCheckedOnlyKeepsOnlyCheckedEvidence() {
+        term("Plan");
+        term("Ziel");
+        term("Nachtlauf");
+        term("Start");
+        analyse("wiki", "1", "Der Plan prüft das Ziel.");
+        analyse("wiki", "2", "Der Nachtlauf sendet den Start.");
+
+        DomainTermGraph.View view = withTrust(Set.of("1"), Map.of()).onPages(CALLER,
+                new DomainTermGraph.Options(2, false, pages("1", "2"), true), () -> false);
+
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::label).containsExactly("Plan", "Ziel");
+        assertThat(view.edges()).singleElement().satisfies(edge -> {
+            assertThat(edge.trust()).isEqualTo(DomainTermGraph.Trust.GEPRUEFT);
+            assertThat(edge.count()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void onPagesSkipsAndCountsStaleStatementsUnlessWanted() {
+        term("Plan");
+        term("Ziel");
+        term("Nachtlauf");
+        term("Start");
+        analyse("wiki", "1", "Der Plan prüft das Ziel.");
+        analyse("wiki", "2", "Der Nachtlauf sendet den Start.");
+        cache.put(new PageKey("wiki", "1"), EnrichmentTestPages.text("wiki", "1", "2", "Ganz neuer Text."));
+
+        DomainTermGraph.View current = onPages(pages("1", "2"));
+        assertThat(current.nodes()).extracting(DomainTermGraph.Node::label).containsExactly("Nachtlauf", "Start");
+        assertThat(current.skippedStale()).isEqualTo(1);
+
+        DomainTermGraph.View withStale = fachsicht.onPages(CALLER,
+                new DomainTermGraph.Options(2, true, pages("1", "2")), () -> false);
+        assertThat(withStale.nodes()).extracting(DomainTermGraph.Node::label)
+                .containsExactly("Nachtlauf", "Plan", "Start", "Ziel");
+        assertThat(withStale.skippedStale()).isZero();
+        assertThat(withStale.edges()).filteredOn(edge -> "prüft".equals(edge.verb())).singleElement()
+                .satisfies(edge -> assertThat(edge.evidence().getFirst().page().state())
+                        .isEqualTo(PageStatements.State.STALE));
+
+        DomainTermGraph.View onlyStale = onPages(pages("1"));
+        assertThat(onlyStale.outcome()).isEqualTo(DomainTermGraph.Outcome.NO_EDGES);
+        assertThat(onlyStale.skippedStale()).as("mit „veraltete zeigen“ stünde die Kante").isEqualTo(1);
+    }
+
+    @Test
+    void onPagesStaleStatementsCountOnlyIfTheyWouldFitThePageWideView() {
+        term("Kern");
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < DomainTermGraph.MAX_NODES; i++) {
+            String target = "Ziel" + (char) ('a' + i / 26) + (char) ('a' + i % 26);
+            term(target);
+            text.append("Der Kern prüft die ").append(target).append(". ");
+        }
+        term("Zug");
+        term("Zustand");
+        analyse("wiki", "1", text.toString().strip());
+        analyse("wiki", "2", "Der Zug sendet den Zustand. Der Kern sendet die Zielaa.");
+        cache.put(new PageKey("wiki", "2"), EnrichmentTestPages.text("wiki", "2", "2", "Ganz neuer Text."));
+
+        DomainTermGraph.View view = onPages(pages("1", "2"));
+        assertThat(view.truncated()).isTrue();
+        assertThat(view.skippedStale()).as("auch mit „veraltete zeigen“ wären Zug und Zustand abgeschnitten, "
+                + "„Kern sendet Zielaa“ aber nicht").isEqualTo(1);
+    }
+
+    @Test
+    void onPagesNamingAPageTheCallerCannotSeeGetsNothingFromIt() {
+        term("Plan");
+        term("Ziel");
+        term("Nachtlauf");
+        term("Start");
+        analyse("wiki", "1", "Der Nachtlauf sendet den Start.");
+        analyse("wiki", "9", "Der Plan prüft das Ziel.");
+        DomainTermGraph visible = new DomainTermGraph(caller -> graph.analysed(caller).stream()
+                .filter(page -> !page.page().key().pageId().equals("9")).toList(), vocabulary());
+
+        DomainTermGraph.View view = visible.onPages(CALLER,
+                new DomainTermGraph.Options(2, false, pages("1", "9")), () -> false);
+
+        assertThat(view.nodes()).extracting(DomainTermGraph.Node::label).containsExactly("Nachtlauf", "Start");
+        assertThat(view.edges()).singleElement().satisfies(edge -> assertThat(edge.evidence())
+                .extracting(e -> e.page().key().pageId()).containsExactly("1"));
+        assertThat(onPages(pages("1", "9")).nodes()).as("Gegenprobe: sichtbar trägt sie bei").hasSize(4);
+    }
+
+    @Test
+    void onPagesNeedsASelectionAndCanBeCancelled() {
+        term("Plan");
+        term("Ziel");
+        analyse("wiki", "1", "Der Plan prüft das Ziel.");
+
+        assertThatThrownBy(() -> fachsicht.onPages(CALLER, DomainTermGraph.Options.DEFAULT, () -> false))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Seitenauswahl");
+        assertThatThrownBy(() -> fachsicht.onPages(CALLER, new DomainTermGraph.Options(2, false, pages("1")),
+                () -> true)).isInstanceOf(java.util.concurrent.CancellationException.class);
+    }
+
+    private DomainTermGraph.View onPages(PageSet pages) {
+        return fachsicht.onPages(CALLER, new DomainTermGraph.Options(2, false, pages), () -> false);
+    }
+
+    private static PageSet pages(String... pageIds) {
+        return PageSet.ofKeys(java.util.Arrays.stream(pageIds).map(id -> new PageKey("wiki", id)).toList());
     }
 
     private DomainTermGraph.Vocabulary vocabulary() {

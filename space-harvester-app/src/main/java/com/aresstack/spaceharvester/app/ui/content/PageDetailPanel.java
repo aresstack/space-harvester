@@ -709,6 +709,9 @@ public final class PageDetailPanel extends JPanel {
         statementsView.withSubpages(subpages::active);
         statementsTab(statementsView);
         graphView.onJump(this::jumpTo);
+        // Overlay „Belege“ der Fachsicht im Seitengraphen (W4b): der Seitentitel öffnet die Seite an der Stelle.
+        graphView.onEvidenceOpen(target -> openAt(new StandingTab.Target(target.sourceId(), target.pageId(),
+                target.start(), target.end())));
         statementsView.onAnalysed(() -> {
             graphView.analysisChanged();
             loadVerbs();

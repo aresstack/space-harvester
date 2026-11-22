@@ -1652,6 +1652,17 @@ public final class Workspace {
         return harvester.domainTermGraph().around(caller, start, options, cancelled);
     }
 
+    /**
+     * Seitenweite Fachsicht ohne Startbegriff (Paket W4b) über {@code options.pages()} (Pflicht): die bestätigten
+     * Fachbegriffe und Synonyme dieser Seiten, die durch ein Verb verbunden sind, höchstens
+     * {@code DomainTermGraph.MAX_NODES}. Rechtegeprüft, rechnet nie; nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.View domainTermGraphOfPages(
+            com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Options options,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.domainTermGraph().onPages(caller, options, cancelled);
+    }
+
     /** Vorschläge für das Startfeld der Fachsicht: nur bestätigte Fachbegriffe und Synonyme. Nie auf dem EDT. */
     public java.util.List<String> domainTermSuggestions(String query, int limit) {
         return harvester.domainTermGraph().suggestions(caller, query, limit);

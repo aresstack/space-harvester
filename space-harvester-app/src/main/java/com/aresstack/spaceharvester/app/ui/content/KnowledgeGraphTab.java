@@ -5,21 +5,29 @@ import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
+import com.aresstack.spaceharvester.app.ui.EvidencePopup;
 import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.GraphSource;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Problems;
+import com.aresstack.spaceharvester.app.ui.TermGraphView;
+import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
+import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
+import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
+import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
+import com.aresstack.spaceharvester.application.standing.SentenceText;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -64,12 +72,14 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -91,9 +101,17 @@ import java.util.function.Supplier;
  * Unterzweig, Space, Quelle oder gesamter Graph) wird im Menü gewählt, veraltete Analysen nur mit eigenem Haken dort.
  * Der Export stößt nie eine Analyse an.
  *
+ * <p>„Nur Fachbegriffe“ oben im Filtermenü (Paket W4b) zeigt statt des Bestands die Fachsicht der Seite, gezeichnet wie
+ * in der Übersicht ({@link TermGraphView.Canvas}): zuerst seitenweit ohne Mitte ({@code DomainTermGraph.onPages}) über
+ * die Seite, mit „mit Unterseiten“ samt den nicht gesperrten Unterseiten; ein Klick auf einen Fachbegriff macht ihn zur
+ * Mitte, „Zurück zur Gesamtsicht“ kehrt zurück. Die Wahl gilt für die Sitzung (wie „mit Unterseiten“), wird nicht
+ * gespeichert; die Bestandsfilter außer „Veraltete zeigen“ sind dann gesperrt. Der Export bleibt der des Bestands.
+ *
  * <p>Alle Methoden nur auf dem EDT; Core-Aufrufe laufen im Hintergrund, späte Ergebnisse werden verworfen.
  */
 final class KnowledgeGraphTab extends JPanel {
+
+    private static final System.Logger LOG = System.getLogger(KnowledgeGraphTab.class.getName());
 
     static final String NOT_ANALYSED = "Diese Seite ist noch nicht analysiert. Unter „Aussagen“ startet "
             + "„Analysieren“ die Analyse; der Graph enthält nur manuell analysierte Seiten.";
@@ -114,6 +132,28 @@ final class KnowledgeGraphTab extends JPanel {
     static final String FILTER_TIP = "Filter: welche Knoten und Kanten der Graph zeigt";
     static final String TABLE_TIP = "Als Tabelle zeigen";
     static final String GRAPH_TIP = "Als Grafik zeigen";
+    /** Tooltip der Bestandsfilter, solange „Nur Fachbegriffe“ an ist (nur „Veraltete zeigen“ wirkt dort weiter). */
+    static final String DOMAIN_LOCKED = "Gilt nicht in der Fachsicht";
+    static final String DOMAIN_TIP = "Fachsicht: nur bestätigte Fachbegriffe und Synonyme dieser Seite, Verben der "
+            + "Aussagen als Kanten";
+    static final String OVERVIEW_TIP = "Zurück zur Gesamtsicht";
+    static final String EXPORT_DOMAIN_TIP = "Exportiert den Bestandsgraphen, nicht die Fachsicht";
+    static final String NO_DOMAIN_EDGES = "Auf dieser Seite sind keine bestätigten Fachbegriffe durch ein Verb "
+            + "verbunden.";
+    static final String NO_DOMAIN_EDGES_BELOW = "Auf dieser Seite und ihren Unterseiten sind keine bestätigten "
+            + "Fachbegriffe durch ein Verb verbunden.";
+    /** Leer unter „Nur geprüft“: Es fehlen geprüfte Aussagen, nicht Aussagen überhaupt (wie in der Übersicht). */
+    static final String NO_CHECKED_DOMAIN_EDGES = "Auf dieser Seite gibt es noch keine geprüften Aussagen, die "
+            + "Fachbegriffe verbinden.";
+    static final String NO_CHECKED_DOMAIN_EDGES_BELOW = "Auf dieser Seite und ihren Unterseiten gibt es noch keine "
+            + "geprüften Aussagen, die Fachbegriffe verbinden.";
+    /** Gekürzte seitenweite Fachsicht: welche Knoten bleiben. */
+    static final String DOMAIN_TRUNCATED = "die " + DomainTermGraph.MAX_NODES + " mit den meisten Belegen";
+    /**
+     * Gekürzte Fachsicht um eine Mitte: {@code around} kürzt in Reihenfolge der Nachbarschaft, nicht nach Belegen
+     * (wie „die ersten …“ in der Übersicht).
+     */
+    static final String DOMAIN_TRUNCATED_CENTRED = "die ersten " + DomainTermGraph.MAX_NODES + " Fachbegriffe";
     private static final GraphNeighbourhood.Options PROBE = new GraphNeighbourhood.Options(1, 0,
             EnumSet.allOf(PageGraph.NodeKind.class), EnumSet.allOf(GraphNeighbourhood.EdgeType.class), true, null,
             null);
@@ -141,6 +181,38 @@ final class KnowledgeGraphTab extends JPanel {
     private final JCheckBoxMenuItem thisSource = check("Nur diese Quelle");
     /** Nur die Auswahl links im Baum (ADR 0029): die Seiten aus {@link #within}; ohne Auswahl ohne Wirkung. */
     private final JCheckBoxMenuItem selectionOnly = check("Nur Auswahl im Baum");
+    /**
+     * „Nur Fachbegriffe“ (W4b): Fachsicht statt Bestand, Standard aus. Gilt für die Sitzung wie „mit Unterseiten“: Der
+     * Reiter lebt so lange wie die Seitenansicht, ein Seitenwechsel lässt den Haken stehen; gespeichert wird er nicht.
+     */
+    private final JCheckBoxMenuItem domain = check(TermGraphView.DOMAIN);
+    /** „Nur geprüft“ wie in der Übersicht: wirkt nur mit „Nur Fachbegriffe“, sonst gesperrt. */
+    private final JCheckBoxMenuItem checked = check(TermGraphView.CHECKED);
+    /** Die Bestandsfilter, die in der Fachsicht gesperrt sind, mit ihrem eigenen Tooltip ({@code null} ohne). */
+    private final Map<JCheckBoxMenuItem, String> bestandTips = new LinkedHashMap<>();
+    /** Die Zeichenfläche der Fachsicht: dieselbe wie in der Übersicht. */
+    private final TermGraphView.Canvas domainCanvas = new TermGraphView.Canvas();
+    /** Overlay „Belege“ einer Verb-Kante der Fachsicht, wie in der Übersicht. */
+    private final EvidencePopup evidence = new EvidencePopup();
+    private Consumer<EvidencePopup.Target> onEvidenceOpen = target -> { };
+    private final IconButton overview = new IconButton(Glyph.OVERVIEW, OVERVIEW_TIP);
+    /**
+     * Gewünschte Mitte der Fachsicht (Wortlaut des angeklickten Fachbegriffs) oder {@code null} für seitenweit; scheitert
+     * ihr Laden, gilt wieder {@link #shownCentre}.
+     */
+    private String domainCentre;
+    /** Mitte der gezeigten Fachsicht oder {@code null}, solange sie seitenweit ist oder nichts zeigt. */
+    private String shownCentre;
+    /** Letzte gezeigte Fachsicht oder {@code null}. */
+    private DomainTermGraph.View domainView;
+    /** Ob für diese Seite schon eine Fachsicht angefordert wurde; sonst lädt sie beim nächsten Anzeigen. */
+    private boolean domainLoaded;
+    /** Zähler der Abfragen der Fachsicht; außerhalb des EDT gelesen, damit eine überholte Rechnung abbricht. */
+    private volatile int domainRequest;
+    /** Zähler der Klicks auf Kanten: nur das Overlay der zuletzt geklickten Kante erscheint. */
+    private int evidenceRequest;
+    /** Was die Statuszeile zur Fachsicht sagt. */
+    private String domainStatus = " ";
     private PageSet selectionPages;
     /**
      * Die Unterseiten der geöffneten Seite, solange „mit Unterseiten“ angehakt ist (ohne die Seite selbst, aus
@@ -239,6 +311,9 @@ final class KnowledgeGraphTab extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
 
         thisSource.setSelected(false);
+        domain.setSelected(false);
+        checked.setSelected(false);
+        domain.setToolTipText(DOMAIN_TIP);
         selectionOnly.setToolTipText("Fokus, Nachbarn und Begriffssuche nur auf der Auswahl links im Explorer "
                 + "samt Unterseiten");
         // Anfangs ohne Kandidatenkanten und ohne veraltete Seiten: beides lässt sich im Filtermenü einschalten.
@@ -252,15 +327,49 @@ final class KnowledgeGraphTab extends JPanel {
         head.search(InputFrame.search(search));
         head.action(pageButton, expand, back);
         head.copy(this::copyText);
-        head.tool(filter, fit, view, export, deleteAll);
+        head.tool(overview, filter, fit, view, export, deleteAll);
+        // Ganz oben die Fachsicht, darunter „Nur geprüft“, dann abgetrennt die Filter des Bestands.
+        filterMenu.add(domain);
+        filterMenu.add(checked);
+        filterMenu.addSeparator();
+        domain.addActionListener(e -> domainToggled());
+        checked.addActionListener(e -> reloadDomain());
         for (JCheckBoxMenuItem box : List.of(documents, statements, mentions, roles, nominal, crossPage, candidates,
                 stale, thisSource, selectionOnly)) {
-            box.addActionListener(e -> reloadFocus());
+            // „Veraltete zeigen“ wirkt auch in der Fachsicht (includeStale); die übrigen nur im Bestand.
+            box.addActionListener(e -> {
+                if (domainMode()) {
+                    reloadDomain();
+                } else {
+                    reloadFocus();
+                }
+            });
+            if (box != stale) {
+                bestandTips.put(box, box.getToolTipText());
+            }
             if (box == stale) {
                 filterMenu.addSeparator();
             }
             filterMenu.add(box);
         }
+        overview.addActionListener(e -> showDomainOverview());
+        evidence.onOpen(target -> onEvidenceOpen.accept(target));
+        domainCanvas.domain(true);
+        domainCanvas.centred(false);
+        domainCanvas.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                GraphSource.Node node = domainCanvas.nodeAt(e.getPoint());
+                if (node != null) {
+                    domainNodeClicked(node);
+                } else if (e.getClickCount() == 1) {
+                    GraphSource.Edge edge = domainCanvas.edgeAt(e.getPoint());
+                    if (edge != null && edge.style() == GraphSource.Style.VERB) {
+                        showEvidence(edge, e.getX(), e.getY());
+                    }
+                }
+            }
+        });
 
         pageButton.addActionListener(e -> showPage());
         expand.addActionListener(e -> expandSelected());
@@ -315,12 +424,21 @@ final class KnowledgeGraphTab extends JPanel {
         cards.setOpaque(false);
         cards.add(canvas, "graph");
         cards.add(Comic.scroll(table), "table");
+        // Bis die Fachsicht ihre Lage gefunden hat (abseits des EDT), dreht über der leeren Fläche der Ring.
+        com.aresstack.spaceharvester.app.ui.controls.BusyOverlay domainBusy =
+                new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(domainCanvas);
+        domainCanvas.onBusy(domainBusy::setBusy);
+        cards.add(domainBusy, "domain");
 
         add(head, BorderLayout.NORTH);
         add(cards, BorderLayout.CENTER);
         addHierarchyListener(e -> {
-            if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing() && !pageLoaded) {
-                showPage();
+            if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                if (!pageLoaded) {
+                    showPage();
+                } else if (domainMode() && !domainLoaded && page != null) {
+                    loadDomain(domainCentre);
+                }
             }
         });
         refresh();
@@ -343,9 +461,18 @@ final class KnowledgeGraphTab extends JPanel {
         pushStatus();
     }
 
-    /** Stand des Graphen und, solange vorhanden, die Rückmeldung zum Export, in einer Zeile. */
+    private void domainStatus(String text) {
+        domainStatus = text;
+        pushStatus();
+    }
+
+    /**
+     * Stand des Graphen (in der Fachsicht der Fachsicht) und, solange vorhanden, die Rückmeldung zum Export, in einer
+     * Zeile.
+     */
     private void pushStatus() {
-        String base = statusText == null ? " " : statusText;
+        String shown = domainMode() ? domainStatus : statusText;
+        String base = shown == null ? " " : shown;
         onStatus.accept(exportNote.isBlank() ? base : base.isBlank() ? exportNote : base + " · " + exportNote);
     }
 
@@ -370,9 +497,14 @@ final class KnowledgeGraphTab extends JPanel {
         onJump = Objects.requireNonNull(listener, "listener");
     }
 
+    /** {@code listener} öffnet die Seite eines Belegs an der Stelle (Overlay „Belege“ der Fachsicht). */
+    void onEvidenceOpen(Consumer<EvidencePopup.Target> listener) {
+        onEvidenceOpen = Objects.requireNonNull(listener, "listener");
+    }
+
     /**
      * Die geöffnete Seite. Geladen wird ihr Teilgraph erst, wenn der Reiter sichtbar ist; beim Seitenwechsel beginnt
-     * eine neue Ansicht.
+     * eine neue Ansicht. Die Fachsicht beginnt dabei wieder seitenweit.
      */
     void page(PageKey key) {
         page(key, null);
@@ -387,6 +519,15 @@ final class KnowledgeGraphTab extends JPanel {
         }
         subpageStack = null;
         page = key;
+        // „Nur Fachbegriffe“ bleibt; die Fachsicht beginnt für die neue Seite wieder seitenweit.
+        domainRequest++;
+        domainLoaded = false;
+        domainCentre = null;
+        shownCentre = null;
+        domainView = null;
+        domainCanvas.graph(GraphSource.Graph.EMPTY);
+        domainCanvas.emptyText(null);
+        domainStatus = " ";
         this.spaceKey = key == null ? null : spaceKey;
         pageChanges++;
         exportNote("");
@@ -413,17 +554,23 @@ final class KnowledgeGraphTab extends JPanel {
         if (page == null) {
             return;
         }
+        boolean domainShown = domainLoaded;
         if (showing()) {
             if (entry != null) {
                 reloadFocus();
             } else {
                 showPage();
             }
+            if (domainMode() && domainShown) {
+                loadDomain(domainCentre);
+            }
         } else {
             pageLoaded = false;
             entry = null;
             expansions.clear();
             requested.clear();
+            domainRequest++;
+            domainLoaded = false;
         }
     }
 
@@ -473,6 +620,13 @@ final class KnowledgeGraphTab extends JPanel {
             entry = null;
             expansions.clear();
             requested.clear();
+        }
+        // Die Fachsicht rechnet über die neue Menge; eine Mitte bleibt (nur ein Seitenwechsel beginnt seitenweit).
+        if (domainMode() && showing() && domainLoaded) {
+            loadDomain(domainCentre);
+        } else {
+            domainRequest++;
+            domainLoaded = false;
         }
         refreshButtons();
     }
@@ -550,6 +704,9 @@ final class KnowledgeGraphTab extends JPanel {
         }
         pageLoaded = true;
         start(new Entry.Page(page, subpages));
+        if (domainMode() && !domainLoaded) {
+            loadDomain(domainCentre);
+        }
     }
 
     private void showTerm(String term) {
@@ -587,6 +744,7 @@ final class KnowledgeGraphTab extends JPanel {
     /** Die Ablage der Aussagenanalyse wurde umgeschaltet (Fahrplan A3): dieselbe Ansicht aus der neuen Ablage. */
     void reload() {
         reloadFocus();
+        reloadDomain();
     }
 
     /** Filter geändert: dieselbe Einstiegsabfrage samt aller Erweiterungen mit den neuen Filtern. */
@@ -623,6 +781,7 @@ final class KnowledgeGraphTab extends JPanel {
         }
         int mine = ++generation;
         loading = true;
+        requestedFilters = filters;
         subpagesLoad = delivers ? mine : -1;
         if (replay && start != entry) {
             requested.clear();
@@ -697,7 +856,13 @@ final class KnowledgeGraphTab extends JPanel {
                 // Anzeige bleibt beim letzten Stand: Filter und Erweiterungen wieder passend dazu.
                 requested.clear();
                 requested.addAll(expansions);
+                // „Veraltete zeigen“ gilt auch für die Fachsicht: Dort bleibt die Wahl des Nutzers stehen, der Bestand
+                // holt sie beim Verlassen der Fachsicht nach (domainToggled).
+                boolean shownStale = stale.isSelected();
                 restore(appliedFilters);
+                if (domainMode()) {
+                    stale.setSelected(shownStale);
+                }
                 status("Graph nicht geladen: " + Problems.describe(error).title());
             }
         });
@@ -761,7 +926,7 @@ final class KnowledgeGraphTab extends JPanel {
         boolean same = pages == null ? selectionPages == null
                 : selectionPages != null && pages.fingerprint().equals(selectionPages.fingerprint());
         selectionPages = pages;
-        selectionOnly.setEnabled(pages != null);
+        selectionOnly.setEnabled(pages != null && !domainMode());
         if (!same && selectionOnly.isSelected()) {
             // Frühere Ansichten galten für andere Seiten; „Zurück“ darf sie nicht als aktuell zeigen.
             history.clear();
@@ -771,6 +936,8 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     private Filters appliedFilters;
+    /** Filter der zuletzt gestarteten Abfrage des Bestands; solange sie läuft, wird er gleich so aussehen. */
+    private Filters requestedFilters;
 
     /** Die Filter, wie sie die Abfrage tatsächlich anwendet („Nur diese Quelle“ nur mit geöffneter Seite). */
     private Filters filters() {
@@ -1197,18 +1364,243 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     private void refreshButtons() {
-        expand.setEnabled(selected != null);
-        back.setEnabled(!history.isEmpty());
-        pageButton.setEnabled(page != null);
-        thisSource.setEnabled(page != null);
-        selectionOnly.setEnabled(selectionPages != null);
+        boolean fach = domainMode();
+        expand.setEnabled(!fach && selected != null);
+        back.setEnabled(!fach && !history.isEmpty());
+        pageButton.setEnabled(!fach && page != null);
+        search.setEnabled(!fach);
+        fit.setEnabled(!fach);
+        view.setEnabled(!fach);
+        // „Zurück zur Gesamtsicht“ nur in der Fachsicht; dort gesperrt, solange sie seitenweit ist.
+        overview.setVisible(fach);
+        overview.setEnabled(fach && domainCentre != null && page != null);
+        // Die Bestandsfilter bleiben sichtbar, wirken in der Fachsicht aber nicht; „Veraltete zeigen“ wirkt weiter.
+        bestandTips.forEach((box, tip) -> {
+            boolean usable = box == thisSource ? page != null : box != selectionOnly || selectionPages != null;
+            box.setEnabled(!fach && usable);
+            box.setToolTipText(fach ? DOMAIN_LOCKED : tip);
+        });
+        checked.setEnabled(fach);
+        checked.setToolTipText(fach ? TermGraphView.CHECKED_TIP : TermGraphView.CHECKED_LOCKED);
         // Blau, sobald die Filter von der Grundeinstellung abweichen (Kandidaten und Veraltete sind anfangs aus).
         boolean filtered = !List.of(documents, statements, mentions, roles, nominal, crossPage).stream()
                 .allMatch(JCheckBoxMenuItem::isSelected) || candidates.isSelected() || stale.isSelected()
                 || (thisSource.isSelected() && page != null);
         filter.setForeground(filtered ? Comic.BLUE : Comic.INK);
+        // Der Punkt am Filter-Symbol und sein Tooltip nennen die Fachsicht.
+        filter.marked(fach);
+        String filterTip = fach ? "Filter – aktiv: Fachsicht (" + TermGraphView.DOMAIN + ")"
+                + (checked.isSelected() ? ", " + TermGraphView.CHECKED : "")
+                + (stale.isSelected() ? ", " + stale.getText() : "") : FILTER_TIP;
+        filter.setToolTipText(filterTip);
+        filter.getAccessibleContext().setAccessibleName(filterTip);
+        export.setToolTipText(fach ? EXPORT_DOMAIN_TIP : EXPORT_TIP);
+        export.getAccessibleContext().setAccessibleName(export.getToolTipText());
         export.setEnabled(actions.get() != null && !exporting);
         deleteAll.setEnabled(actions.get() != null && !deleting);
+        ((CardLayout) cards.getLayout()).show(cards, fach ? "domain" : tableShown ? "table" : "graph");
+    }
+
+    // ---- Fachsicht (W4b)
+
+    /** Ob die Fachsicht gezeigt wird. */
+    private boolean domainMode() {
+        return domain.isSelected();
+    }
+
+    /** „Nur Fachbegriffe“ umgeschaltet: an beginnt die Fachsicht seitenweit, aus zeigt wieder den Bestand. */
+    private void domainToggled() {
+        domainCentre = null;
+        shownCentre = null;
+        evidence.setVisible(false);
+        if (domainMode()) {
+            if (page != null && (showing() || pageLoaded)) {
+                loadDomain(null);
+            } else {
+                domainLoaded = false;
+            }
+        } else {
+            // Eine noch laufende Abfrage der Fachsicht gilt nicht mehr.
+            domainRequest++;
+            domainLoaded = false;
+            domainView = null;
+            if (page != null && showing() && !pageLoaded) {
+                showPage();
+            } else if (page != null && pageLoaded
+                    && !filters().equals(loading ? requestedFilters : appliedFilters)) {
+                // „Veraltete zeigen“ wurde in der Fachsicht umgeschaltet: der Bestand folgt, auch wenn sein Laden noch
+                // läuft (mit den alten Filtern) oder gescheitert ist.
+                reloadFocus();
+            }
+        }
+        refreshButtons();
+        pushStatus();
+    }
+
+    /** „Nur geprüft“ oder „Veraltete zeigen“ geändert: dieselbe Fachsicht (samt Mitte) neu rechnen. */
+    private void reloadDomain() {
+        if (!domainMode() || page == null) {
+            return;
+        }
+        if (domainLoaded || showing()) {
+            loadDomain(domainCentre);
+        }
+        refreshButtons();
+    }
+
+    /** „Zurück zur Gesamtsicht“: wieder seitenweit ohne Mitte. */
+    private void showDomainOverview() {
+        if (domainMode() && domainCentre != null) {
+            loadDomain(null);
+        }
+    }
+
+    /** Ein Klick auf einen Fachbegriff macht ihn zur Mitte. */
+    private void domainNodeClicked(GraphSource.Node node) {
+        if (node == null || node.label().equals(domainCentre)) {
+            return;
+        }
+        loadDomain(node.label());
+    }
+
+    /**
+     * Die Seiten der Fachsicht: die Seite, mit „mit Unterseiten“ dazu deren nicht gesperrte Unterseiten aus der
+     * aktuellen Auswahl.
+     */
+    PageSet domainPages() {
+        Map<String, Set<String>> pages = new LinkedHashMap<>();
+        pages.computeIfAbsent(page.sourceId(), unused -> new LinkedHashSet<>()).add(page.pageId());
+        if (subpages != null) {
+            subpages.pages().asMap().forEach((source, ids) -> ids.stream()
+                    .filter(id -> !subpages.locked().contains(source, id))
+                    .forEach(id -> pages.computeIfAbsent(source, unused -> new LinkedHashSet<>()).add(id)));
+        }
+        return PageSet.of(pages);
+    }
+
+    /**
+     * Lädt die Fachsicht im Hintergrund: ohne {@code centre} seitenweit, sonst um diesen Fachbegriff (Tiefe 2), beide
+     * über dieselben Seiten und Filter. Eine überholte Abfrage bricht ab, ihr Ergebnis wird verworfen.
+     */
+    private void loadDomain(String centre) {
+        if (page == null) {
+            return;
+        }
+        domainLoaded = true;
+        domainCentre = centre;
+        PageSet pages = domainPages();
+        // Ohne nicht gesperrte Unterseite rechnet die Fachsicht nur über die Seite und sagt das auch so.
+        int below = subpages == null || pages.size() <= 1 ? -1 : pages.size() - 1;
+        boolean checkedOnly = checked.isSelected();
+        DomainTermGraph.Options options = new DomainTermGraph.Options(2, stale.isSelected(), pages, checkedOnly);
+        int mine = ++domainRequest;
+        BooleanSupplier cancelled = () -> mine != domainRequest;
+        String source = page.sourceId();
+        evidence.setVisible(false);
+        refreshButtons();
+        domainStatus("Lädt Fachsicht …");
+        runner.run(() -> {
+            Actions current = actionsOrThrow();
+            return centre == null ? current.domainTermGraphOfPages(options, cancelled)
+                    : current.domainTermGraph(centre, options, cancelled);
+        }, view -> {
+            if (mine != domainRequest) {
+                return;
+            }
+            showDomain(view, centre, below, checkedOnly);
+        }, error -> {
+            if (mine != domainRequest) {
+                return;
+            }
+            // Die angefragte Mitte wurde nie gezeigt: wieder die gezeigte, sonst ließe sich der Begriff nicht erneut
+            // anklicken und Neuladen rechnete um ihn.
+            domainCentre = shownCentre;
+            refreshButtons();
+            if (error instanceof CancellationException) {
+                return;
+            }
+            LOG.log(System.Logger.Level.INFO, "Fachsicht der Seite nicht geladen ({0}: {1})", source,
+                    error.getClass().getSimpleName());
+            domainStatus("Fachsicht nicht geladen: " + Problems.describe(error).title());
+        });
+    }
+
+    private void showDomain(DomainTermGraph.View view, String centre, int below, boolean checkedOnly) {
+        domainView = view;
+        shownCentre = centre;
+        GraphSource.Graph graph = GraphSource.ofDomainView(view, centre, StatementProvenance::analyzer);
+        domainCanvas.centred(centre != null);
+        domainCanvas.graph(graph);
+        domainCanvas.emptyText(view.outcome() == DomainTermGraph.Outcome.NO_EDGES ? emptyDomainText(below >= 0,
+                checkedOnly) : graph.empty());
+        domainStatus(domainStatusText(view, centre, below, checkedOnly));
+        refreshButtons();
+    }
+
+    /**
+     * Die Mitte steht allein (keine Verbindung): erklärt wie die Übersicht ({@code NO_VERBS}, {@code NO_CHECKED_VERBS}),
+     * auf die Seite und ihre Unterseiten bezogen.
+     */
+    static String aloneDomainText(boolean withSubpages, boolean checkedOnly) {
+        return "Zu diesem Fachbegriff gibt es " + (withSubpages ? "auf dieser Seite und ihren Unterseiten"
+                : "auf dieser Seite") + " noch keine " + (checkedOnly ? "geprüften " : "")
+                + "Aussagen mit anderen Fachbegriffen.";
+    }
+
+    /** Text der leeren seitenweiten Fachsicht, mitten in der Fläche. */
+    static String emptyDomainText(boolean withSubpages, boolean checkedOnly) {
+        if (checkedOnly) {
+            return withSubpages ? NO_CHECKED_DOMAIN_EDGES_BELOW : NO_CHECKED_DOMAIN_EDGES;
+        }
+        return withSubpages ? NO_DOMAIN_EDGES_BELOW : NO_DOMAIN_EDGES;
+    }
+
+    /**
+     * Statuszeile der Fachsicht: „N Fachbegriffe, M Verbindungen · mit K Unterseiten · K veraltete Aussagen
+     * ausgeblendet · die 40 mit den meisten Belegen“; die Unterseiten nur mit „mit Unterseiten“ ({@code below} ab 0),
+     * die veralteten nur, wenn welche ausgeblendet sind, die Kürzung nur, wenn gekürzt. Um eine Mitte nennt sie diese;
+     * steht die Mitte allein, erklärt sie das statt der Zahlen wie die Übersicht ({@link #aloneDomainText}). Die leere
+     * seitenweite Sicht erklärt die Fläche, nicht die Statuszeile.
+     */
+    static String domainStatusText(DomainTermGraph.View view, String centre, int below, boolean checkedOnly) {
+        List<String> parts = new ArrayList<>();
+        if (centre != null && view.outcome() == DomainTermGraph.Outcome.FOUND && view.nodes().size() == 1) {
+            parts.add(aloneDomainText(below >= 0, checkedOnly));
+        } else if (view.outcome() == DomainTermGraph.Outcome.FOUND) {
+            parts.add(Texts.count(view.nodes().size(), "Fachbegriff", "Fachbegriffe") + ", "
+                    + Texts.count(view.edges().size(), "Verbindung", "Verbindungen")
+                    + (centre == null ? "" : " um „" + centre + "“"));
+        }
+        if (below >= 0) {
+            parts.add("mit " + Texts.count(below, "Unterseite", "Unterseiten"));
+        }
+        if (view.skippedStale() > 0) {
+            parts.add(Texts.count(view.skippedStale(), "veraltete Aussage", "veraltete Aussagen") + " ausgeblendet");
+        }
+        if (view.truncated()) {
+            parts.add(centre == null ? DOMAIN_TRUNCATED : DOMAIN_TRUNCATED_CENTRED);
+        }
+        return parts.isEmpty() ? " " : String.join(" · ", parts);
+    }
+
+    /** Overlay „Belege“ einer Verb-Kante: Sätze im Hintergrund lesen, dann zeigen. */
+    private void showEvidence(GraphSource.Edge edge, int x, int y) {
+        String title = TermGraphView.evidenceTitle(domainCanvas, edge);
+        int total = TermGraphView.edgeCount(edge);
+        Map<KnowledgeGraph.PageRef, List<ParsedStatements.Statement>> byPage = new LinkedHashMap<>();
+        edge.evidence().forEach(item -> byPage.computeIfAbsent(item.page(), unused -> new ArrayList<>())
+                .add(item.statement()));
+        int mine = ++evidenceRequest;
+        int shown = domainRequest;
+        runner.run(() -> actionsOrThrow().sentences(byPage), sentences -> {
+            if (mine == evidenceRequest && shown == domainRequest && domainMode()) {
+                evidence.fill(title, total, edge.evidence(), sentences, false).showAt(domainCanvas, x, y);
+            }
+        }, failure -> {
+            if (mine == evidenceRequest && shown == domainRequest && domainMode()) {
+                evidence.fill(title, total, edge.evidence(), Map.of(), true).showAt(domainCanvas, x, y);
+            }
+        });
     }
 
     /** Umfänge des Exports, in dieser Reihenfolge; ohne geöffnete Seite nur der gesamte Graph. */
@@ -1268,6 +1660,7 @@ final class KnowledgeGraphTab extends JPanel {
             history.clear();
             dropHistory = true;
             reloadFocus();
+            reloadDomain();
             if (!loading) {
                 // Keine Ansicht offen, nichts neu zu laden: nur „Zurück“ sperren.
                 dropHistory = false;
@@ -1894,6 +2287,26 @@ final class KnowledgeGraphTab extends JPanel {
             return Map.of();
         }
 
+        /** Seitenweite Fachsicht über {@code options.pages()} (W4b); ohne eigene Umsetzung leer. */
+        default DomainTermGraph.View domainTermGraphOfPages(DomainTermGraph.Options options,
+                                                           BooleanSupplier cancelled) {
+            return new DomainTermGraph.View(DomainTermGraph.Outcome.NO_EDGES, List.of(), List.of(), false, 0,
+                    Set.of());
+        }
+
+        /** Fachsicht um {@code start} über dieselben Seiten (W4b); ohne eigene Umsetzung leer. */
+        default DomainTermGraph.View domainTermGraph(String start, DomainTermGraph.Options options,
+                                                    BooleanSupplier cancelled) {
+            return new DomainTermGraph.View(DomainTermGraph.Outcome.NOT_A_TERM, List.of(), List.of(), false, 0,
+                    Set.of());
+        }
+
+        /** Wortlaut der Belege je Aussage-ID für das Overlay „Belege“; ohne eigene Umsetzung keiner. */
+        default Map<String, SentenceText> sentences(Map<KnowledgeGraph.PageRef,
+                List<ParsedStatements.Statement>> byPage) {
+            return Map.of();
+        }
+
         GraphNeighbourhood.Subgraph node(String nodeId, GraphNeighbourhood.Options options);
 
         GraphNeighbourhood.Subgraph term(String term, GraphNeighbourhood.Options options);
@@ -1925,6 +2338,24 @@ final class KnowledgeGraphTab extends JPanel {
                     Map<PageKey, String> titles = new LinkedHashMap<>();
                     workspace.pageNodes(keys).forEach((key, node) -> titles.put(key, Breadcrumbs.title(node)));
                     return titles;
+                }
+
+                @Override
+                public DomainTermGraph.View domainTermGraphOfPages(DomainTermGraph.Options options,
+                                                                  BooleanSupplier cancelled) {
+                    return workspace.domainTermGraphOfPages(options, cancelled);
+                }
+
+                @Override
+                public DomainTermGraph.View domainTermGraph(String start, DomainTermGraph.Options options,
+                                                           BooleanSupplier cancelled) {
+                    return workspace.domainTermGraph(start, options, cancelled);
+                }
+
+                @Override
+                public Map<String, SentenceText> sentences(Map<KnowledgeGraph.PageRef,
+                        List<ParsedStatements.Statement>> byPage) {
+                    return workspace.statementSentences(byPage);
                 }
 
                 @Override
@@ -1984,8 +2415,70 @@ final class KnowledgeGraphTab extends JPanel {
         return edges.size();
     }
 
+    /** Die gezeigte Statuszeile: in der Fachsicht die der Fachsicht, sonst die des Bestands (ohne Export). */
     String statusText() {
-        return statusText;
+        return domainMode() ? domainStatus : statusText;
+    }
+
+    JCheckBoxMenuItem domainChoice() {
+        return domain;
+    }
+
+    JCheckBoxMenuItem checkedChoice() {
+        return checked;
+    }
+
+    /** Die Einträge des Filtermenüs von oben, Trenner als {@code "—"}. */
+    List<String> filterMenuTexts() {
+        List<String> texts = new ArrayList<>();
+        for (java.awt.Component item : filterMenu.getComponents()) {
+            texts.add(item instanceof JMenuItem menuItem ? menuItem.getText() : "—");
+        }
+        return texts;
+    }
+
+    /** Der Eintrag des Filtermenüs mit diesem Text. */
+    JCheckBoxMenuItem filterItem(String text) {
+        for (java.awt.Component item : filterMenu.getComponents()) {
+            if (item instanceof JCheckBoxMenuItem box && box.getText().equals(text)) {
+                return box;
+            }
+        }
+        throw new IllegalArgumentException(text);
+    }
+
+    TermGraphView.Canvas domainCanvas() {
+        return domainCanvas;
+    }
+
+    /** Wie ein Klick auf den Fachbegriff {@code label} der gezeigten Fachsicht. */
+    void clickDomainNode(String label) {
+        domainNodeClicked(domainCanvas.graph().nodes().stream().filter(node -> node.label().equals(label))
+                .findFirst().orElseThrow());
+    }
+
+    void clickOverview() {
+        overview.doClick();
+    }
+
+    IconButton overviewButton() {
+        return overview;
+    }
+
+    IconButton filterButton() {
+        return filter;
+    }
+
+    String exportTip() {
+        return export.getToolTipText();
+    }
+
+    String domainCentre() {
+        return domainCentre;
+    }
+
+    String exportAccessibleName() {
+        return export.getAccessibleContext().getAccessibleName();
     }
 
     /** Titel und Text des Detailfensters zur Auswahl (auch ungeöffnet). */
