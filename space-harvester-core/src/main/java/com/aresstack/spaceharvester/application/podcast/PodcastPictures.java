@@ -158,6 +158,11 @@ public final class PodcastPictures {
 
     /** Das abgelegte Bild eines Themas; leer, solange es noch nicht entschieden ist. */
     public Optional<Picture> picture(String key, int topic) {
+        return stored(store, key, topic);
+    }
+
+    /** Wie {@link #picture}, ohne Modelle: zum Lesen des Stands. */
+    static Optional<Picture> stored(PodcastStore store, String key, int topic) {
         Path folder = store.folder(key);
         Path meta = folder.resolve(name(topic, "json"));
         if (!Files.isRegularFile(meta)) {
@@ -208,6 +213,10 @@ public final class PodcastPictures {
                 repairs.add("Bild " + (brief.topic() + 1) + ": Seitenbilder nicht lesbar (" + e.getClass()
                         .getSimpleName() + ")");
                 page = Optional.empty();
+            }
+            if (page.isEmpty() && !drawer.available()) {
+                // Ohne Zeichenmodell nichts festschreiben: ist es später eingestellt, entsteht das Schaubild noch.
+                return Picture.none("kein Modell der Bildgenerierung");
             }
             picture = page.or(() -> diagram(key, brief, repairs))
                     .orElseGet(() -> Picture.none("kein passendes Bild"));

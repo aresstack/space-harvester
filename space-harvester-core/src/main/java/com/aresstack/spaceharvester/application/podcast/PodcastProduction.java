@@ -41,6 +41,20 @@ final class PodcastProduction {
     private final Listeners<Runnable> listeners = new Listeners<>("Podcast");
     /** Zurückgezogene Podcasts mit laufendem Auftrag: sie legen nichts mehr ab und löschen am Ende ihre Ablage. */
     private final java.util.Set<String> revoked = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Woher die Bilder je Thema kommen; {@code null} = keine Bilder. */
+    private volatile Pictures pictures;
+
+    /**
+     * Die Bilder je Thema (Angelo 21.11.2026): wer Schaubilder zeichnet und woher die Seitenbilder kommen.
+     *
+     * @param drawer zeichnet die Schaubilder (Modell der Bildgenerierung mit eigener Tokenlänge)
+     */
+    record Pictures(StepModel drawer, PodcastPictures.PageImageSource images) {
+        Pictures {
+            Objects.requireNonNull(drawer, "drawer");
+            Objects.requireNonNull(images, "images");
+        }
+    }
 
     PodcastProduction(StepModel model, PodcastSpeech speech, PodcastStore store, PodcastVoices voices,
                       IntSupplier parallel, ObjIntConsumer<JobContext> waits) {
@@ -54,6 +68,11 @@ final class PodcastProduction {
 
     PodcastStore store() {
         return store;
+    }
+
+    /** Schaltet die Bilder je Thema ein. */
+    void pictures(Pictures pictures) {
+        this.pictures = Objects.requireNonNull(pictures, "pictures");
     }
 
     /** Ob Chat-Modell und ein Dienst mit Sprachausgabe eingerichtet sind. */
@@ -71,14 +90,18 @@ final class PodcastProduction {
         List<Podcast.Part> parts = new ArrayList<>();
         for (int t = 0; t < plan.get().topics().size(); t++) {
             String topicTitle = plan.get().topics().get(t).title();
+            Podcast.Picture picture = PodcastPictures.stored(store, key, t)
+                    .filter(found -> found.file() != null)
+                    .map(found -> new Podcast.Picture(found.file(), found.mediaType(), found.caption()))
+                    .orElse(null);
             Optional<List<Segment>> segments = store.segments(key, t);
             if (segments.isEmpty()) {
-                parts.add(new Podcast.Part(t, -1, topicTitle, null, null));
+                parts.add(new Podcast.Part(t, -1, topicTitle, null, null, picture));
                 continue;
             }
             for (int s = 0; s < segments.get().size(); s++) {
                 parts.add(new Podcast.Part(t, s, topicTitle, segments.get().get(s).title(),
-                        store.audio(key, t, s).orElse(null)));
+                        store.audio(key, t, s).orElse(null), picture));
             }
         }
         return Optional.of(new Podcast(key, plan.get().title(), parts, running));
@@ -157,9 +180,17 @@ final class PodcastProduction {
             thread.setDaemon(true);
             return thread;
         });
+        Future<?> drawing = null;
         try {
-            // Stufe 2 und 3 parallel; je Thema eine Kette, damit Thema 1 nicht auf Thema 8 wartet.
             final PodcastPlan planned = plan;
+            // Bilder je Thema neben allem anderen: ein eigener Faden geht die Themen durch, die Teile der Schaubilder
+            // laufen im Pool. Die Wiedergabe wartet nie darauf.
+            Pictures configured = pictures;
+            if (configured != null) {
+                drawing = picturesThread(key, origin.sourceId(), material, planned, configured, pool, context,
+                        repairs);
+            }
+            // Stufe 2 und 3 parallel; je Thema eine Kette, damit Thema 1 nicht auf Thema 8 wartet.
             List<Future<List<Future<List<Turn>>>>> scripts = new ArrayList<>();
             for (int t = 0; t < topics; t++) {
                 final int topic = t;
@@ -198,6 +229,10 @@ final class PodcastProduction {
                     missing.add(part);
                 }
             }
+            if (drawing != null) {
+                context.phase("Podcast", "Bilder");
+                await(drawing, context);
+            }
             for (String repair : repairs) {
                 LOG.log(System.Logger.Level.INFO, "Podcast {0}: {1}", key, repair);
             }
@@ -207,8 +242,64 @@ final class PodcastProduction {
             }
             context.written(topics);
         } finally {
+            if (drawing != null) {
+                drawing.cancel(true);
+            }
             pool.shutdownNow();
         }
+    }
+
+    /** Startet die Bilder aller Themen in einem eigenen Faden; jedes fertige Bild meldet {@link #subscribe}. */
+    private Future<?> picturesThread(String key, String sourceId, PodcastWriter.Material material, PodcastPlan plan,
+                                     Pictures configured, ExecutorService parts, JobContext context,
+                                     List<String> repairs) {
+        PodcastPictures maker = new PodcastPictures(store, model, configured.drawer(), configured.images(), parts,
+                attempt -> waits.accept(context, attempt));
+        List<PodcastPictures.Brief> briefs = briefs(material, plan);
+        java.util.concurrent.FutureTask<Void> task = new java.util.concurrent.FutureTask<>(() -> {
+            java.util.Set<String> used = new java.util.HashSet<>();
+            for (PodcastPictures.Brief brief : briefs) {
+                if (Thread.currentThread().isInterrupted() || revoked.contains(key)) {
+                    return null;
+                }
+                boolean known = maker.picture(key, brief.topic()).isPresent();
+                maker.make(key, sourceId, brief, used, repairs);
+                if (!known) {
+                    notify(key);
+                }
+            }
+            return null;
+        });
+        Thread thread = new Thread(task, "space-harvester-podcast-bilder-" + key.substring(0, 6));
+        thread.setDaemon(true);
+        thread.start();
+        return task;
+    }
+
+    /** Wofür je Thema ein Bild entsteht: die Meldungen des Themas mit ihren Seiten, beim Einstieg der Überblick. */
+    static List<PodcastPictures.Brief> briefs(PodcastWriter.Material material, PodcastPlan plan) {
+        List<PodcastPictures.Brief> briefs = new ArrayList<>();
+        for (int t = 0; t < plan.topics().size(); t++) {
+            PodcastPlan.Topic topic = plan.topics().get(t);
+            StringBuilder text = new StringBuilder(topic.angle());
+            java.util.LinkedHashSet<String> pages = new java.util.LinkedHashSet<>();
+            List<PodcastWriter.Story> stories = material.stories(topic);
+            for (PodcastWriter.Story story : stories) {
+                text.append("\n\n").append(story.title()).append(": ").append(story.text());
+                pages.addAll(story.pageIds());
+            }
+            if (stories.isEmpty()) {
+                // Einstieg und Abschluss: der Überblick und die Themen der Folge
+                text.append("\n\n").append(material.overview());
+                for (PodcastPlan.Topic other : plan.topics()) {
+                    if (other != topic) {
+                        text.append("\n- ").append(other.title());
+                    }
+                }
+            }
+            briefs.add(new PodcastPictures.Brief(t, topic.title(), text.toString().strip(), List.copyOf(pages)));
+        }
+        return briefs;
     }
 
     private List<Segment> segments(PodcastWriter writer, String key, PodcastWriter.Material material,
