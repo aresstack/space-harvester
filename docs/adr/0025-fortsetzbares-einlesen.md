@@ -571,7 +571,8 @@ wird automatisch verwaltet.
       (`Jobs.WAITING_FOR_WITHDRAWAL`). Gehaltene Aufträge belegen keinen Platz in der Warteschlange, und Fortsetzen
       und Selbstheilung eines offenen Löschens umgehen die Grenze (angenommene Arbeit). Aufträge über alle Quellen lassen
       die Quellen aus, deren Löschen bei ihrem Start offen war (`Jobs#withheldSources`, am Auftrag festgehalten und an
-      seine Arbeiter-Threads mitgegeben, `Jobs#carryingWithheld`; `AccessGuard#withhold`). `Jobs#cancelSource`, etwa
+      seine Arbeiter-Threads mitgegeben, `Jobs#carryingWithheld`; `AccessGuard#withhold`; ausdrücklich gefiltert in
+      Suchtreffer-Vorbereitung, Synonymsuche und Knowledge-Graph-Export). `Jobs#cancelSource`, etwa
       beim Abschalten der Quelle, lässt ihr offenes Löschen stehen.
       Das Löschen beendet nur Aufträge, die vor ihm angenommen wurden, auch nach Anhalten und Fortsetzen (Annahmezeit
       des Eintrags).
