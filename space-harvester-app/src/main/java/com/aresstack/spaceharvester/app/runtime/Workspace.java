@@ -2252,6 +2252,9 @@ public final class Workspace {
         if (imageRun(status)) {
             return harvester.imageDescriptions().resume(caller, jobId);
         }
+        if (graphRun(status)) {
+            return harvester.knowledgeGraphJobs().resume(caller, jobId);
+        }
         return switch (status.type()) {
             case SYNC -> harvester.syncs().resume(jobId, Harvester.OWNER).status();
             case ASSETS, ATTACHMENTS -> harvester.conversions().resumeImages(jobId, Harvester.OWNER);
@@ -2266,6 +2269,16 @@ public final class Workspace {
     private boolean imageRun(JobStatus status) {
         return status.type() == JobType.BACKGROUND && harvester.imageDescriptions() != null
                 && com.aresstack.spaceharvester.application.images.ImageDescriptionJobs.KIND.equals(
+                status.parameter(com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND));
+    }
+
+    /**
+     * Ein Abschlussteil „Wissensgraph erzeugen“ (W5): ▶ setzt ihn nur mit den Rechten seines Eigentümers fort, sonst
+     * hält er wieder gelb an.
+     */
+    private boolean graphRun(JobStatus status) {
+        return status.type() == JobType.BACKGROUND && harvester.knowledgeGraphJobs() != null
+                && com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND.equals(
                 status.parameter(com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND));
     }
 
@@ -2292,6 +2305,9 @@ public final class Workspace {
         if (action == JobAction.RESUME && imageRun(current)) {
             // D2: ein vom Benutzer gestarteter Lauf „Bilder beschreiben“ läuft mit dessen Rechten weiter.
             return harvester.imageDescriptions().resume(caller, jobId);
+        }
+        if (action == JobAction.RESUME && graphRun(current)) {
+            return harvester.knowledgeGraphJobs().resume(caller, jobId);
         }
         JobStatus status = Harvester.OWNER.equals(owner) ? harvester.performJobAction(jobId, action)
                 : harvester.jobActions().perform(jobId, owner, action);

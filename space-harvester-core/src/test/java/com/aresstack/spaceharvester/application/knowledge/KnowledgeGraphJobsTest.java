@@ -292,6 +292,54 @@ class KnowledgeGraphJobsTest {
         assertThat(again.pauseReason()).isEqualTo(PauseReason.RESUME_BY_HAND);
         assertThat(coverage(after.jobs(), again)).isEmpty();
         assertThat(ran).containsExactly("graph");
+
+        after.graph().resume(APP, again.id());
+
+        JobStatus byOther = after.jobs().status(again.id());
+        assertThat(byOther.state()).as("▶ eines anderen bleibt in der gelben Pause").isEqualTo(JobState.PAUSED);
+        assertThat(byOther.pauseReason()).isEqualTo(PauseReason.RESUME_BY_HAND);
+        assertThat(ran).containsExactly("graph");
+
+        after.graph().resume(FOREIGN, again.id());
+
+        JobStatus byOwner = after.jobs().status(again.id());
+        assertThat(byOwner.state()).as("▶ des Eigentümers setzt fort").isEqualTo(JobState.COMPLETED);
+        assertThat(coverage(after.jobs(), byOwner)).singleElement().satisfies(event ->
+                assertThat(event.message()).isEqualTo("1 von 1 Seite mit aktueller Analyse"));
+        assertThat(ran).containsExactly("graph", "graph");
+    }
+
+    @Test
+    void aForeignStatementsPartOfTheGroupNeverContinuesWithTheRightsOfWhoeverResumes() {
+        Service before = service(new Steps());
+        BackgroundGroup foreign = before.planner().start(FOREIGN, KnowledgeGraphJobs.KIND, pages("ziel")).group()
+                .orElseThrow();
+        String statementsId = part(before.jobs(), foreign, StatementAnalysisJobs.KIND, "DEV").id();
+        String closingId = part(before.jobs(), foreign, KnowledgeGraphJobs.KIND, "DEV").id();
+
+        Service after = service(Runnable::run);
+        after.background().resumeInterrupted();
+        assertThat(after.jobs().status(statementsId).pauseReason()).isEqualTo(PauseReason.RESUME_BY_HAND);
+
+        after.analyses().resume(APP, foreign.groupId());
+
+        JobStatus byOther = after.jobs().status(statementsId);
+        assertThat(byOther.state()).as("nie mit den Rechten des Fortsetzenden").isEqualTo(JobState.PAUSED);
+        assertThat(byOther.pauseReason()).isEqualTo(PauseReason.RESUME_BY_HAND);
+        assertThat(ran).isEmpty();
+
+        after.analyses().resume(FOREIGN, foreign.groupId());
+
+        assertThat(after.jobs().status(statementsId).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(ran).containsExactly("statements:ziel");
+        JobStatus closing = after.jobs().status(closingId);
+        assertThat(closing.state()).as("der Abschlussteil ist ebenso fremd").isEqualTo(JobState.PAUSED);
+        assertThat(closing.pauseReason()).isEqualTo(PauseReason.RESUME_BY_HAND);
+
+        after.graph().resume(FOREIGN, closingId);
+
+        assertThat(after.jobs().status(closingId).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(ran).containsExactly("statements:ziel", "graph");
     }
 
     /** Spaces und Kinder für die Aussagenanalyse; die Teile des Planers nennen ihre Seiten selbst. */

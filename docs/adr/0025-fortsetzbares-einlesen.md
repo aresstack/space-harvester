@@ -425,10 +425,15 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    Analysator fest (derselbe, den die Aussagenanalyse im selben Start festlegt), mit der Regel aus Punkt 7: Der erste
    Lauf rechnet mit den Rechten des Start-Aufrufers, nach einem Neustart nur der gleiche Eigentümer; ein fremder Teil
    hält gelb mit `RESUME_BY_HAND` an. Er läuft nie mit den Rechten dessen weiter, der ihn fortsetzt: ▶ führt ihn ohne
-   bekannten Aufrufer erneut in dieselbe gelbe Pause, nur sein Eigentümer setzt ihn fort.
+   bekannten Aufrufer erneut in dieselbe gelbe Pause, nur sein Eigentümer setzt ihn fort, über
+   `KnowledgeGraphJobs#resume(caller, jobId)` (in der App der Weg für ▶ auf einem Abschlussteil). Ebenso übernimmt
+   `StatementAnalysisJobs#resume(caller, groupId)` bei Teilen des Planers (`caller` in den Angaben) die Rechte des
+   Fortsetzenden nur, wenn er ihr Eigentümer ist; eine Gruppe folgt so einer Regel.
    **App.** Der Knopf „Wissensgraph erzeugen“ steht im Reiter „Graph“ vor dem Export; die Menge ist die Seite, mit
-   „mit Unterseiten“ dazu ihre nicht gesperrten Unterseiten. Fehlt nach der Vorschau nichts, lädt der Reiter nur neu;
-   sonst fragt ein Overlay (Ja/Nein, Esc-Kreis) mit den Zahlen je Stufe, mit dem KI-Analysator auch, wie viele Seiten
+   „mit Unterseiten“ dazu ihre nicht gesperrten Unterseiten. Fehlt nach der Vorschau nichts, lädt der Reiter nur neu
+   (grau „vollständig“ nur, wenn auch nichts ausgelassen bleibt; sonst gelb „nichts zu rechnen“ mit erst zu ladenden,
+   nicht freigegebenen oder abgeschalteten Stufen); sonst fragt ein Overlay (Ja/Nein, Esc-Kreis) mit den Zahlen je Stufe, mit dem KI-Analysator auch, wie viele Seiten
    an den KI-Dienst gehen (nur die Zahl). Die Gruppe steht im Reiter „Hintergrund“; der Reiter „Graph“ folgt ihr über
-   `watchBackground` mit Fortschritt und ✕ (Abbrechen über die Gruppe), bleibt nach dem Anhalten gelb dran und lädt am
-   Ende neu. Hinweise des Planers, gescheiterte Stufen und fehlende Abdeckung stehen gelb in der Statuszeile.
+   `watchBackground` mit Fortschritt und ✕ (Abbrechen über die Gruppe, vor den Hinweisen), bleibt nach dem Anhalten
+   gelb dran (auch wenn nur eine Vorstufe angehalten ist und der Abschlussteil dahinter wartet), folgt ihr nach einer
+   neuen Laufzeit (etwa nach dem Umschalten der Ablage) auf dieser weiter und lädt am Ende neu. Hinweise des Planers, gescheiterte Stufen und fehlende Abdeckung stehen gelb in der Statuszeile.

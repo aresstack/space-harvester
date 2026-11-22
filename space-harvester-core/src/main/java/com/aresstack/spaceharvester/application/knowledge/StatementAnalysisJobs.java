@@ -238,17 +238,27 @@ public class StatementAnalysisJobs {
     }
 
     /**
-     * Setzt eine Gruppe von Hand fort, mit den Rechten des Fortsetzenden; auch nach {@value #RESUME_BY_HAND}.
+     * Setzt eine Gruppe von Hand fort, mit den Rechten des Fortsetzenden; auch nach {@value #RESUME_BY_HAND}. Trägt
+     * die Gruppe Teile des Dienst-Planers ({@value #CALLER}, etwa „Wissensgraph erzeugen“, W5), gelten dessen Rechte
+     * nur, wenn er ihr Eigentümer ({@value #OWNER}) ist; ein fremder Teil läuft nie mit den Rechten dessen weiter, der
+     * ihn fortsetzt, und hält wieder gelb an.
      *
      * @return die Gruppe, leer ohne Hintergrund oder unbekannte Gruppe
      */
     public Optional<BackgroundGroup> resume(AccessContext caller, String groupId) {
         Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(groupId, "groupId");
         BackgroundJobs group = background;
         if (group == null) {
             return Optional.empty();
         }
-        callers.put(Objects.requireNonNull(groupId, "groupId"), caller);
+        boolean foreign = group.group(groupId).stream().flatMap(current -> current.parts().stream())
+                .filter(status -> KIND.equals(status.parameter(BackgroundJobs.KIND))
+                        && status.parameter(CALLER) != null)
+                .anyMatch(status -> !caller.jobOwner().equals(status.parameter(OWNER)));
+        if (!foreign) {
+            callers.put(groupId, caller);
+        }
         return group.resume(groupId);
     }
 

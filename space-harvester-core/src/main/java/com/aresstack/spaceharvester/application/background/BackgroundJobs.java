@@ -345,6 +345,16 @@ public final class BackgroundJobs {
         return cancelled;
     }
 
+    /** Ein Unterauftrag dieses Hintergrunds; leer, wenn es ihn nicht (mehr) gibt oder er keiner ist. */
+    public Optional<JobStatus> part(String jobId) {
+        try {
+            JobStatus status = jobs.status(jobId, owner);
+            return status.type() == JobType.BACKGROUND ? Optional.of(status) : Optional.empty();
+        } catch (UnknownJobException e) {
+            return Optional.empty();
+        }
+    }
+
     /** Die Gruppe, solange noch einer ihrer Unteraufträge in der Liste steht. */
     public Optional<BackgroundGroup> group(String groupId) {
         List<JobStatus> parts = all().stream().filter(status -> groupId.equals(status.parameter(GROUP)))

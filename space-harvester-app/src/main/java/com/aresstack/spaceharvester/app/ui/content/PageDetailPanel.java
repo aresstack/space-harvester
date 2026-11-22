@@ -671,6 +671,8 @@ public final class PageDetailPanel extends JPanel {
         if (context != null) {
             context.onChange(ignored -> {
                 standing.settingsChanged();
+                // Eine verfolgte Gruppe „Wissensgraph erzeugen“ auf der neuen Laufzeit weiter verfolgen (W5).
+                graphView.runtimeChanged();
                 storeChanged();
             });
         }

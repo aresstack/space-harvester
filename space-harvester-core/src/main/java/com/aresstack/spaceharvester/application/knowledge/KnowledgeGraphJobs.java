@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.background.BackgroundKind;
 import com.aresstack.spaceharvester.application.background.BackgroundPart;
 import com.aresstack.spaceharvester.application.background.services.AnalysisService;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.PauseReason;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
@@ -26,7 +27,7 @@ import java.util.Objects;
  * <p>Eigentümer wie bei der Aussagenanalyse: Der erste Lauf rechnet mit den Rechten des Start-Aufrufers
  * ({@value #CALLER}); nach einem Neustart nur, wenn der wiederhergestellte Aufrufer der Eigentümer ({@value #OWNER})
  * ist, sonst hält der Teil gelb an ({@value #RESUME_BY_HAND}). Ein fremder Teil läuft nie mit den Rechten dessen
- * weiter, der ihn fortsetzt.
+ * weiter, der ihn fortsetzt: Nur sein Eigentümer setzt ihn über {@link #resume(AccessContext, String)} fort.
  */
 public class KnowledgeGraphJobs {
 
@@ -48,7 +49,10 @@ public class KnowledgeGraphJobs {
     private final StatementAnalysisJobs statements;
     private final Runnable analysesChanged;
     private volatile AccessContext restored;
-    /** Aufrufer der jüngsten Starts, älteste zuerst verdrängt; danach und nach einem Neustart gilt {@link #restored}. */
+    private volatile BackgroundJobs background;
+    /**
+     * Aufrufer der jüngsten Starts (unter der Kennung {@value #CALLER}) und der Eigentümer, die einen Teil von Hand
+     * fortsetzten (unter der Kennung des Teils), älteste zuerst verdrängt; danach und nach einem Neustart gilt {@link #restored}. */
     private final Map<String, AccessContext> callers = Collections.synchronizedMap(
             new LinkedHashMap<>(16, 0.75f, false) {
                 @Override
@@ -75,6 +79,27 @@ public class KnowledgeGraphJobs {
     public void background(BackgroundJobs jobs, AccessContext restored) {
         this.restored = Objects.requireNonNull(restored, "restored");
         Objects.requireNonNull(jobs, "jobs").register(new BackgroundKind(KIND, this::work));
+        this.background = jobs;
+    }
+
+    /**
+     * Setzt einen Teil der Art {@value #KIND} von Hand fort; der Weg der App für ▶. Mit den Rechten des Fortsetzenden
+     * nur, wenn er der Eigentümer ({@value #OWNER}) ist; sonst bleibt alles wie ohne Aufrufer, ein fremder Teil hält
+     * also wieder gelb an ({@value #RESUME_BY_HAND}).
+     *
+     * @throws IllegalStateException ohne angeschlossenen Hintergrund
+     */
+    public JobStatus resume(AccessContext caller, String jobId) {
+        Objects.requireNonNull(caller, "caller");
+        BackgroundJobs jobs = background;
+        if (jobs == null) {
+            throw new IllegalStateException("Kein Hintergrund angeschlossen");
+        }
+        jobs.part(Objects.requireNonNull(jobId, "jobId"))
+                .filter(status -> KIND.equals(status.parameter(BackgroundJobs.KIND)))
+                .filter(status -> caller.jobOwner().equals(status.parameter(OWNER)))
+                .ifPresent(status -> callers.put(status.id(), caller));
+        return jobs.resumeJob(jobId);
     }
 
     /**
@@ -96,7 +121,9 @@ public class KnowledgeGraphJobs {
     /** Die Arbeit eines Teils, allein aus seinen Angaben: Seiten, Analysator, Eigentümer. */
     private JobTask work(BackgroundPart part) {
         String token = part.parameter(CALLER);
-        AccessContext starter = token == null ? null : callers.get(token);
+        AccessContext started = token == null ? null : callers.get(token);
+        // Von Hand fortgesetzt: nur der Eigentümer steht unter der Kennung des Teils (resume).
+        AccessContext starter = started != null ? started : callers.get(part.jobId());
         AccessContext fallback = restored;
         List<String> listed = listed(part);
         AnalyzerChoice analyzer = AnalyzerChoice.parse(part.parameter(ANALYZER));

@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.background.services.ServicePrevi
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.jobs.JobAction;
 import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
@@ -122,6 +123,11 @@ final class KnowledgeGraphTab extends JPanel {
     static final String GENERATE_BUSY_TIP = "Wissensgraph wird schon erzeugt";
     /** Fehlt nichts, sagt die Statuszeile nur das; der Graph lädt neu. */
     static final String COMPLETE = "Wissensgraph ist vollständig";
+    /**
+     * Nichts zu rechnen, aber nicht vollständig: Seiten bleiben ausgelassen (erst laden, ohne KI-Freigabe, ohne Zugriff,
+     * abgeschaltete Stufe); gelb mit den Hinweisen, der Graph lädt neu.
+     */
+    static final String NOTHING_TO_DO = "Wissensgraph: nichts zu rechnen";
     static final String GENERATING = "Wissensgraph wird erzeugt";
     /** Nichts gestartet, etwa weil der Dienst abgeschaltet ist; die Hinweise sagen, warum. */
     static final String NOT_GENERATED = "Wissensgraph nicht erzeugt";
@@ -204,6 +210,8 @@ final class KnowledgeGraphTab extends JPanel {
     private String graphGroupId;
     private AutoCloseable graphWatch;
     private BackgroundGroup graphLast;
+    /** Die Laufzeit, auf der {@link #graphWatch} beobachtet ({@link Actions#origin()}). */
+    private Object graphOrigin;
     /** Ob die verfolgte Gruppe fertig ist (nicht nur angehalten); dann ist die Beobachtung zu. */
     private boolean graphEnded;
     /** Die Hinweise des Planers beim Start (ausgelassene Stufen, erst laden, ohne Zugriff), gelb bis zum Ende. */
@@ -1421,9 +1429,7 @@ final class KnowledgeGraphTab extends JPanel {
                 return;
             }
             if (preview.nothingMissing()) {
-                boolean off = preview.plan().goal()
-                        .filter(goal -> goal.state() == ServicePreview.State.DISABLED).isPresent();
-                generateNote(notes(off ? NOT_GENERATED : COMPLETE, preview.plan().notes(), StatusNote.Tone.PLAIN));
+                generateNote(nothingMissing(preview));
                 reloadFocus();
                 return;
             }
@@ -1437,6 +1443,27 @@ final class KnowledgeGraphTab extends JPanel {
             generateNote(new StatusNote("Wissensgraph ließ sich nicht prüfen: " + Problems.describe(error).title(),
                     StatusNote.Tone.ERROR, null, null));
         });
+    }
+
+    /**
+     * Die Statuszeile, wenn nichts zu rechnen ist: grau „vollständig“ nur, wenn auch nichts ausgelassen bleibt; sonst
+     * gelb „nichts zu rechnen“ mit den Hinweisen des Planers und den Seiten ohne KI-Freigabe.
+     */
+    private static StatusNote nothingMissing(GraphGeneration.Preview preview) {
+        boolean off = preview.plan().goal().filter(goal -> goal.state() == ServicePreview.State.DISABLED).isPresent();
+        if (off) {
+            return notes(NOT_GENERATED, preview.plan().notes(), StatusNote.Tone.PLAIN);
+        }
+        List<String> all = new ArrayList<>(preview.plan().notes());
+        String notReleased = GraphGeneration.notReleasedLine(preview);
+        if (notReleased != null) {
+            all.add(notReleased);
+        }
+        boolean outstanding = !all.isEmpty() || preview.plan().inaccessible() > 0
+                || preview.plan().stages().stream().anyMatch(stage -> stage.toLoad() > 0
+                || stage.state() == ServicePreview.State.DISABLED);
+        return outstanding ? notes(NOTHING_TO_DO, all, StatusNote.Tone.WARNING)
+                : notes(COMPLETE, all, StatusNote.Tone.PLAIN);
     }
 
     /** Startet die Gruppe nach „Ja“ und verfolgt sie. */
@@ -1470,9 +1497,36 @@ final class KnowledgeGraphTab extends JPanel {
         graphLast = group;
         graphEnded = false;
         planNotes = List.copyOf(notes);
+        graphOrigin = current.origin();
         refreshButtons();
         showGraphProgress();
         graphWatch = current.watchGraph(group.groupId(), this::graphChanged);
+    }
+
+    /**
+     * Die App hat eine neue Laufzeit (etwa nach dem Umschalten der Ablage oder dem Speichern der Einstellungen): Die
+     * Beobachtung der alten ist tot, die verfolgte Gruppe wird auf der neuen weiter verfolgt, die ihren jetzigen Stand
+     * sofort meldet. Ohne Laufzeit verfolgt der Reiter sie nicht mehr.
+     */
+    void runtimeChanged() {
+        if (!graphAttached()) {
+            return;
+        }
+        Actions current = actions.get();
+        Object origin = current == null ? null : current.origin();
+        if (origin == graphOrigin) {
+            return;
+        }
+        closeGraphWatch();
+        graphOrigin = origin;
+        if (current == null) {
+            graphGroupId = null;
+            graphLast = null;
+            generateNote(null);
+            refreshButtons();
+            return;
+        }
+        graphWatch = current.watchGraph(graphGroupId, this::graphChanged);
     }
 
     /** Ein neuer Stand der verfolgten Gruppe, auf dem EDT. */
@@ -1481,13 +1535,14 @@ final class KnowledgeGraphTab extends JPanel {
             return;
         }
         graphLast = group;
-        if (!group.finished()) {
+        boolean paused = paused(group);
+        if (!group.finished() && !paused) {
             // Läuft (wieder): Fortschritt mit ✕ statt „angehalten“.
             showGraphProgress();
             return;
         }
         Actions current = actions.get();
-        if (group.paused()) {
+        if (paused) {
             // Angehalten: gelb, und weiter beobachten, bis die Gruppe fertig ist (fortsetzen unter „Hintergrund“).
             generateNote(result(group, List.of()));
             runner.run(() -> current == null ? List.<String>of() : current.graphNotes(group), notes -> {
@@ -1515,17 +1570,50 @@ final class KnowledgeGraphTab extends JPanel {
         onGenerated.run();
     }
 
-    /** Fortschritt der Gruppe in der Statuszeile: Teile fertig, die laufende Stufe, gelbe Hinweise, ✕ bricht ab. */
+    /**
+     * Ob die Gruppe für die Anzeige angehalten ist: wie {@link BackgroundGroup#paused()}, aber auch, wenn ein Teil
+     * angehalten ist, keiner läuft und jeder offene nur hinter ihm wartet (ein Nachfolger bleibt hinter einem
+     * angehaltenen Vorgänger in der Warteschlange, {@code Jobs.PredecessorGate#DEFAULT}).
+     */
+    static boolean paused(BackgroundGroup group) {
+        if (group.paused()) {
+            return true;
+        }
+        Set<String> held = new java.util.HashSet<>();
+        group.parts().stream().filter(part -> part.state() == JobState.PAUSED).forEach(part -> held.add(part.id()));
+        if (held.isEmpty() || group.parts().stream().anyMatch(part -> part.state() == JobState.RUNNING)) {
+            return false;
+        }
+        boolean grown = true;
+        while (grown) {
+            grown = false;
+            for (JobStatus part : group.parts()) {
+                String after = part.parameter(Jobs.AFTER);
+                if (part.state() == JobState.QUEUED && !held.contains(part.id()) && after != null
+                        && java.util.Arrays.stream(after.split(",")).anyMatch(held::contains)) {
+                    held.add(part.id());
+                    grown = true;
+                }
+            }
+        }
+        return group.parts().stream().allMatch(part -> part.state().terminal() || held.contains(part.id()));
+    }
+
+    /**
+     * Fortschritt der Gruppe in der Statuszeile: Teile fertig, die laufende Stufe, ✕ bricht ab, dahinter gelbe
+     * Hinweise; das ✕ steht vorn, damit lange Hinweise es nicht aus der Statuszeile schieben.
+     */
     private void showGraphProgress() {
         BackgroundGroup group = graphLast;
-        long done = group.parts().stream().filter(part -> part.state().terminal()).count();
+        long done = group.parts().stream().filter(part -> part.state() == JobState.COMPLETED
+                || part.state() == JobState.FAILED || part.state() == JobState.CANCELLED).count();
         String stage = group.parts().stream().filter(part -> part.state() == JobState.RUNNING).findFirst()
                 .or(() -> group.parts().stream().filter(part -> !part.state().terminal()).findFirst())
                 .map(part -> part.parameter(BackgroundJobs.STEP_TITLE)).orElse(null);
         String text = GENERATING + (stage == null ? "" : " · " + stage) + ": " + done + " von "
                 + GraphGeneration.parts(group.parts().size()) + " fertig";
         String joined = planNotes.isEmpty() ? "" : " · " + String.join(" · ", planNotes);
-        generateNote(new StatusNote(text + joined + " " + CANCEL_LINK, planNotes.isEmpty() ? StatusNote.Tone.PLAIN
+        generateNote(new StatusNote(text + " " + CANCEL_LINK + joined, planNotes.isEmpty() ? StatusNote.Tone.PLAIN
                 : StatusNote.Tone.WARNING, CANCEL_LINK, this::cancelGraph));
     }
 
@@ -1545,7 +1633,8 @@ final class KnowledgeGraphTab extends JPanel {
         long done = group.parts().stream().filter(part -> part.state() == JobState.COMPLETED).count();
         String head;
         StatusNote.Tone tone = StatusNote.Tone.PLAIN;
-        if (group.paused()) {
+        boolean paused = paused(group);
+        if (paused) {
             head = "Wissensgraph angehalten nach " + done + " von " + GraphGeneration.parts(group.parts().size())
                     + "; fortsetzen unter " + JOBS_LINK;
             tone = StatusNote.Tone.WARNING;
@@ -1557,7 +1646,7 @@ final class KnowledgeGraphTab extends JPanel {
             head = "Wissensgraph abgebrochen; fertige Teilergebnisse bleiben";
         }
         StatusNote note = notes(head, all, tone);
-        String text = group.paused() ? note.text() : note.text() + " · Einzelheiten unter " + JOBS_LINK;
+        String text = paused ? note.text() : note.text() + " · Einzelheiten unter " + JOBS_LINK;
         return new StatusNote(text, note.tone(), JOBS_LINK, open);
     }
 
@@ -1572,7 +1661,8 @@ final class KnowledgeGraphTab extends JPanel {
     void cancelGraph() {
         Actions current = actions.get();
         String groupId = graphGroupId;
-        if (current == null || groupId == null || graphEnded || graphLast == null || graphLast.finished()) {
+        if (current == null || groupId == null || graphEnded || graphLast == null || graphLast.finished()
+                || paused(graphLast)) {
             return;
         }
         generateNote(StatusNote.plain("Wissensgraph wird abgebrochen …"));
@@ -2240,11 +2330,24 @@ final class KnowledgeGraphTab extends JPanel {
             return List.of();
         }
 
+        /**
+         * Wofür die Aktionen stehen (in der App die Laufzeit): eine andere heißt, eine Beobachtung neu anzulegen
+         * ({@link KnowledgeGraphTab#runtimeChanged()}).
+         */
+        default Object origin() {
+            return this;
+        }
+
         static Actions of(Workspace workspace) {
             if (workspace == null) {
                 return null;
             }
             return new Actions() {
+                @Override
+                public Object origin() {
+                    return workspace;
+                }
+
                 @Override
                 public GraphNeighbourhood.Subgraph page(PageKey key, GraphNeighbourhood.Options options) {
                     return workspace.knowledgeGraphOfPage(key, options);
