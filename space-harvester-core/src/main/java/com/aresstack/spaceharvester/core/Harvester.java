@@ -1202,7 +1202,7 @@ public final class Harvester implements AutoCloseable {
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // Erklär-Podcasts, in die eine solche Seite einging, entfallen (ADR 0028).
-                this.pagePodcasts.withdrawn(pages.stream().map(PageSnapshot::key).map(PageKey::pageId).toList());
+                this.pagePodcasts.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // Podcasts, deren Zusammenfassung dabei wegfiel, entfallen mit ihr.
                 podcastsAfterWithdrawal.prune(meta -> cache.summary(meta.sourceId(), meta.updateId(), meta.spaceKey())
                         .map(stored -> com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.key(

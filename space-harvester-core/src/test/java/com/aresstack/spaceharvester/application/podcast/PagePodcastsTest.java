@@ -43,6 +43,19 @@ class PagePodcastsTest {
     }
 
     @Test
+    void leadingSubsectionsBeforeTheFirstMainHeadingBelongToTheIntroduction() {
+        String text = "Vorab\nWichtiger Hinweis zum Start.\nAblauf\nErst prüfen.";
+        int vorab = text.indexOf("Vorab");
+        int ablauf = text.indexOf("Ablauf");
+        PodcastWriter.Material material = PagePodcasts.material(page("1", "Nordlicht", text,
+                new PageText.Section("Vorab", 3, vorab, ablauf),
+                new PageText.Section("Ablauf", 2, ablauf, text.length())), List.of(), List.of());
+
+        assertThat(material.stories()).extracting(PodcastWriter.Story::title).containsExactly("Einleitung", "Ablauf");
+        assertThat(material.stories().get(0).text()).contains("Wichtiger Hinweis");
+    }
+
+    @Test
     void aPageWithoutHeadingsIsSplitAtParagraphs() {
         String paragraph = "Ein Absatz über die Testumgebung. ".repeat(60);
         PodcastWriter.Material material = PagePodcasts.material(page("1", "Testumgebung",

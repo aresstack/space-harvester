@@ -165,7 +165,22 @@ public final class UpdatePodcasts {
      * @param valid ob die Zusammenfassung zu diesem Podcast noch abgelegt ist
      */
     public int prune(Predicate<PodcastStore.Meta> valid) {
-        return store.delete(meta -> meta.updateId() != null && open(meta.key()) == null && !valid.test(meta));
+        int removed = 0;
+        for (PodcastStore.Meta meta : store.all()) {
+            if (meta.updateId() == null || valid.test(meta)) {
+                continue;
+            }
+            JobStatus running = open(meta.key());
+            if (running != null) {
+                // Läuft der Auftrag noch, bricht er ab und löscht seine Ablage beim Ende selbst (ADR 0028).
+                production.revoke(meta.key());
+                jobs.cancel(running.id());
+            } else {
+                store.delete(found -> found.key().equals(meta.key()));
+            }
+            removed++;
+        }
+        return removed;
     }
 
     private JobStatus open(String key) {

@@ -1392,6 +1392,8 @@ public final class PageDetailPanel extends JPanel {
         this.referencesLoaded = false;
         this.imagesLoaded = false;
         this.page = null;
+        // Der Podcast der vorigen Seite endet sofort, nicht erst, wenn die neue geladen ist (oder nie, wenn das scheitert).
+        pagePodcast.summary(null);
         closeOriginalFile();
         readingPane.loading();
         breadcrumbs.clear();

@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.observe.Subscription;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 
 import java.nio.charset.StandardCharsets;
@@ -180,13 +181,35 @@ public final class PagePodcasts {
         return production.subscribe(key, listener);
     }
 
-    /** Verliert eine Seite die KI-Freigabe, fallen die Seiten-Podcasts, in die ihr Text einging (ADR 0028). */
-    public int withdrawn(Collection<String> pageIds) {
-        Set<String> gone = new HashSet<>(pageIds);
+    /**
+     * Verliert eine Seite die KI-Freigabe, fallen die Seiten-Podcasts, in die ihr Text einging (ADR 0028). Läuft der
+     * Auftrag eines solchen Podcasts noch, wird er abgebrochen und löscht seine Ablage beim Ende selbst.
+     */
+    public int withdrawn(Collection<PageKey> pages) {
+        Set<PageKey> gone = new HashSet<>(pages);
         remembered.clear();
-        return production.store().delete(meta -> meta.pageId() != null
-                && UpdatePodcasts.open(jobs, meta.key()) == null
-                && (gone.contains(meta.pageId()) || meta.pages().stream().anyMatch(gone::contains)));
+        int removed = 0;
+        for (PodcastStore.Meta meta : production.store().all()) {
+            if (meta.pageId() == null || !touches(meta, gone)) {
+                continue;
+            }
+            JobStatus running = UpdatePodcasts.open(jobs, meta.key());
+            if (running != null) {
+                production.revoke(meta.key());
+                jobs.cancel(running.id());
+            } else {
+                production.store().delete(found -> found.key().equals(meta.key()));
+            }
+            removed++;
+        }
+        return removed;
+    }
+
+    private static boolean touches(PodcastStore.Meta meta, Set<PageKey> gone) {
+        if (gone.contains(new PageKey(meta.sourceId(), meta.pageId()))) {
+            return true;
+        }
+        return meta.pages().stream().anyMatch(page -> gone.contains(new PageKey(meta.sourceId(), page)));
     }
 
     private Optional<PodcastWriter.Material> material(AccessContext caller, String sourceId, String pageId) {
@@ -254,7 +277,8 @@ public final class PagePodcasts {
         } else {
             int top = sections.stream().mapToInt(PageText.Section::level).min().orElse(1);
             List<PageText.Section> main = sections.stream().filter(section -> section.level() == top).toList();
-            String intro = text.text().substring(0, Math.min(sections.get(0).start(), text.text().length()));
+            // Bis zur ersten Hauptüberschrift: Unterabschnitte davor gehören zur Einleitung.
+            String intro = text.text().substring(0, Math.min(main.get(0).start(), text.text().length()));
             if (!intro.isBlank()) {
                 stories.add(story("Einleitung", intro, here, page.pageId(), SECTION_CHARS));
             }
@@ -269,7 +293,6 @@ public final class PagePodcasts {
                     break;
                 }
             }
-            // Text vor der ersten Hauptüberschrift, der nur aus Unterüberschriften besteht, steckt in der Einleitung.
         }
         for (Subpage subpage : subpages) {
             Page child = subpage.page();

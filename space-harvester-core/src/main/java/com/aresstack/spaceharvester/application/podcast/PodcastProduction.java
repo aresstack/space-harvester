@@ -39,6 +39,8 @@ final class PodcastProduction {
     /** Wartet vor einem weiteren Versuch; in Tests ohne Pause. */
     private final ObjIntConsumer<JobContext> waits;
     private final Listeners<Runnable> listeners = new Listeners<>("Podcast");
+    /** Zurückgezogene Podcasts mit laufendem Auftrag: sie legen nichts mehr ab und löschen am Ende ihre Ablage. */
+    private final java.util.Set<String> revoked = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     PodcastProduction(StepModel model, PodcastSpeech speech, PodcastStore store, PodcastVoices voices,
                       IntSupplier parallel, ObjIntConsumer<JobContext> waits) {
@@ -82,6 +84,22 @@ final class PodcastProduction {
         return Optional.of(new Podcast(key, plan.get().title(), parts, running));
     }
 
+    /**
+     * Zieht einen Podcast zurück, dessen Auftrag noch läuft (eine beteiligte Seite verlor die KI-Freigabe, ADR 0028):
+     * der Lauf legt nichts mehr ab, bricht ab und löscht beim Ende alles, was er schon hatte. Ohne laufenden Auftrag
+     * löscht der Aufrufer die Ablage selbst.
+     */
+    void revoke(String key) {
+        revoked.add(Objects.requireNonNull(key, "key"));
+    }
+
+    /** Wirft, sobald der Podcast zurückgezogen ist; vor jedem Ablegen. */
+    private void guard(String key) {
+        if (revoked.contains(key)) {
+            throw new IllegalStateException("Podcast zurückgezogen: KI-Freigabe entzogen");
+        }
+    }
+
     /** Meldet jede abgelegte Stufe dieses Podcasts. */
     Subscription subscribe(String key, Runnable listener) {
         Objects.requireNonNull(key, "key");
@@ -94,7 +112,20 @@ final class PodcastProduction {
      * @param origin wofür der Podcast entsteht; Modell und Stimmen setzt der Lauf
      */
     void run(JobContext context, PodcastStore.Meta origin, PodcastWriter.Material material) throws Exception {
+        try {
+            produce(context, origin, material);
+        } finally {
+            if (revoked.remove(origin.key())) {
+                store.delete(meta -> meta.key().equals(origin.key()));
+                notify(origin.key());
+            }
+        }
+    }
+
+    private void produce(JobContext context, PodcastStore.Meta origin, PodcastWriter.Material material)
+            throws Exception {
         String key = origin.key();
+        guard(key);
         context.phase("Podcast", "Sprachmodell");
         List<String> models = voices.ranked(speech.models());
         if (models.isEmpty()) {
@@ -113,6 +144,7 @@ final class PodcastProduction {
         PodcastPlan plan = store.plan(key).orElse(null);
         if (plan == null) {
             plan = writer.outline(material);
+            guard(key);
             store.savePlan(key, plan);
             repairs.addAll(plan.repairs());
             notify(key);
@@ -186,6 +218,7 @@ final class PodcastProduction {
             return stored.get();
         }
         List<Segment> segments = writer.segments(material, plan, topic, names, repairs);
+        guard(key);
         store.saveSegments(key, topic, segments);
         notify(key);
         return segments;
@@ -207,6 +240,7 @@ final class PodcastProduction {
             return stored.get();
         }
         List<Turn> turns = writer.script(material, plan, topic, segments, segment, before, last, names, repairs);
+        guard(key);
         store.saveScript(key, topic, segment, turns);
         return turns;
     }
@@ -220,8 +254,11 @@ final class PodcastProduction {
         if (turns.isEmpty()) {
             return false;
         }
+        guard(key);
         try {
-            store.saveAudio(key, topic, segment, speaker.speak(turns, repairs));
+            byte[] wav = speaker.speak(turns, repairs);
+            guard(key);
+            store.saveAudio(key, topic, segment, wav);
             notify(key);
             return true;
         } catch (java.io.IOException | RuntimeException e) {
