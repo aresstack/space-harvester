@@ -20,6 +20,8 @@ java {
 dependencies {
     // TN3270-Emulation wie in MainframeMate (reines Java, LGPL, keine nativen Teile)
     implementation libs.openterm
+    // FTP und JES wie in MainframeMate (Apache Commons Net, reines Java)
+    implementation libs.commons.net
     // NDV (#1142): PAL-Protokoll (NATSPOD) aus MainframeMate, in derselben Kopie, die auch die NDV-Quelle nutzt;
     // nur der Adapter deck.ndv.pal spricht damit
     implementation project(':enterprise-ai-sources')

@@ -181,6 +181,8 @@ public final class MainWindow implements AppContext.Navigator {
     private PerspectiveSwitcher switcher;
     private AvengerEasterEgg avenger;
     /** Navigation der gewählten Perspektive rechts neben dem Titel. */
+    /** Bedienelemente der Perspektive oben rechts vor Chat und Aufträgen (Perspective#tools, #1142). */
+    private final JPanel toolsSlot = new JPanel(new BorderLayout());
     private final JPanel navigationSlot = new JPanel(new BorderLayout()) {
         @Override
         public Dimension getPreferredSize() {
@@ -406,6 +408,8 @@ public final class MainWindow implements AppContext.Navigator {
         west.add(navigationSlot, BorderLayout.EAST);
         JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
         east.setOpaque(false);
+        toolsSlot.setOpaque(false);
+        east.add(toolsSlot);
         east.add(trailing);
         east.add(administration);
         east.add(Dialogs.closeButton(new ComicWindowHoldCloseButton(Comic.PALETTE, minimize, close, 24)));
@@ -501,7 +505,7 @@ public final class MainWindow implements AppContext.Navigator {
         stage.setBackground(Comic.SURFACE);
         stage.setMinimumSize(new Dimension(320, 0));
         perspectives.add(new Perspective(Perspectives.HARVESTER, "Space Harvester",
-                "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null));
+                "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null, null));
         perspectives.add(commandDeck.perspective());
         perspectives.add(Perspectives.provingGround());
         perspectives.add(Perspectives.missionControl());
@@ -847,6 +851,12 @@ public final class MainWindow implements AppContext.Navigator {
         }
         navigationSlot.revalidate();
         navigationSlot.repaint();
+        toolsSlot.removeAll();
+        if (next.tools() != null) {
+            toolsSlot.add(next.tools(), BorderLayout.CENTER);
+        }
+        toolsSlot.revalidate();
+        toolsSlot.repaint();
         // Die Suchleiste gehört zum Space Harvester; für die anderen Perspektiven ist keine Suche festgelegt.
         searchSlot.setVisible(harvester);
         // Ein Chat für alle Perspektiven; die Werkzeuge kommen je Frage aus der aktiven Perspektive (#1151).
