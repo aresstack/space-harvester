@@ -179,8 +179,9 @@ class PodcastPicturesTest {
     @Test
     void aClosedRunWritesNothingAndKeepsNoDecision() throws Exception {
         PodcastPictures pictures = new PodcastPictures(new PodcastStore(folder),
-                answering("{\"choice\":0}", new AtomicInteger()), answering(DiagramComposerTest.PLAN,
-                new AtomicInteger()), source(png(640, 360)), Runnable::run, a -> { },
+                answering("{\"choice\":0}", new AtomicInteger()), DiagramComposer.Models.of(
+                answering(DiagramComposerTest.PLAN, new AtomicInteger())), source(png(640, 360)), Runnable::run,
+                a -> { },
                 write -> {
                     throw new PodcastPictures.Closed("zurückgezogen");
                 });

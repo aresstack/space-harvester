@@ -129,10 +129,18 @@ public final class PagePodcasts {
      * Schaltet die Bilder je Thema ein (Angelo 21.11.2026): echte Seitenbilder nach ihrer Beschreibung, sonst ein
      * Schaubild aus Teilen ({@link PodcastPictures}).
      *
-     * @param drawer zeichnet die Schaubilder (Modell der Bildgenerierung)
+     * @param drawer zeichnet die Schaubilder (Plan und Einzelteile mit demselben Modell)
      */
     public void pictures(StepModel drawer, PodcastPictures.PageImageSource images) {
-        production.pictures(new PodcastProduction.Pictures(drawer, images));
+        pictures(drawer, drawer, images);
+    }
+
+    /**
+     * @param planner entwirft den Plan eines Schaubilds (Bildgenerierung – Plan)
+     * @param icons   zeichnet seine Einzelteile (Bildgenerierung – Einzelteile)
+     */
+    public void pictures(StepModel planner, StepModel icons, PodcastPictures.PageImageSource images) {
+        production.pictures(new PodcastProduction.Pictures(new DiagramComposer.Models(planner, icons), images));
     }
 
     /**
