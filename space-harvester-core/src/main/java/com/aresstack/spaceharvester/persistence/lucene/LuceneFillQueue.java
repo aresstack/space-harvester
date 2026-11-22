@@ -191,15 +191,23 @@ public final class LuceneFillQueue implements BackgroundFill.FillQueue, AutoClos
     }
 
     /** Entfernt alle wartenden Seiten einer Quelle („Daten bereinigen“) in einem Commit. */
+    @Override
     public synchronized void removeSource(String sourceId) {
         Objects.requireNonNull(sourceId, "sourceId");
         requireOpen();
-        List<PageKey> keys = entries.keySet().stream().filter(key -> key.sourceId().equals(sourceId)).toList();
-        if (keys.isEmpty()) {
+        removeAll(entries.keySet().stream().filter(key -> key.sourceId().equals(sourceId)).toList());
+    }
+
+    /** Entfernt die Einträge dieser Seiten in einem Commit. */
+    @Override
+    public synchronized void removeAll(java.util.Collection<PageKey> keys) {
+        requireOpen();
+        List<PageKey> present = keys.stream().filter(entries::containsKey).distinct().toList();
+        if (present.isEmpty()) {
             return;
         }
         try {
-            for (PageKey key : keys) {
+            for (PageKey key : present) {
                 writer.deleteDocuments(term(key));
             }
             writer.commit();
@@ -207,7 +215,7 @@ public final class LuceneFillQueue implements BackgroundFill.FillQueue, AutoClos
             throw new PageCacheException("Warteschlange der Hintergrundfüllung " + path
                     + " kann nicht geschrieben werden", e);
         }
-        keys.forEach(entries::remove);
+        present.forEach(entries::remove);
     }
 
     @Override

@@ -462,6 +462,76 @@ class BackgroundFillTest {
     }
 
     @Test
+    void anEntryWithoutMirrorLeavesTheQueueInsteadOfBlockingIt() throws Exception {
+        // Abnahme #1087: Zwei Waisen vorn in der Schlange (am Spiegel vorbei eingereiht) füllten mit einem
+        // Hintergrundplatz das ganze Fenster von feed(); alles Spätere lüde bis zum Neustart nie.
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        BackgroundFill fill = fill(scheduler(1), queue, catalog(List.of()), true);
+        queue.add(List.of(gap("wiki", "orphan-1", BackgroundFill.Kind.NOT_LOADED),
+                gap("wiki", "orphan-2", BackgroundFill.Kind.NOT_LOADED)));
+
+        fill.offer(List.of(gap("wiki", "later", BackgroundFill.Kind.NOT_LOADED)));
+
+        eventually(() -> loaded.contains("later") && queue.size() == 0);
+        assertThat(loaded).containsExactly("later");
+    }
+
+    @Test
+    void offeringAPageWhileItsFetchEndsLeavesNoEntryWithoutMirror() throws Exception {
+        // Abnahme #1087: Das Angebot sieht die Seite noch gespiegelt, ihr Abruf endet und trägt sie aus, danach reihte
+        // das Angebot sie ohne Spiegel neu ein.
+        gates.put("page", new CountDownLatch(1));
+        BackgroundFill.FillQueue inner = BackgroundFill.FillQueue.inMemory();
+        AtomicReference<BackgroundFill> started = new AtomicReference<>();
+        AtomicBoolean endBeforeAdd = new AtomicBoolean();
+        BackgroundFill.FillQueue queue = new BackgroundFill.FillQueue() {
+            @Override
+            public List<BackgroundFill.Gap> pending(int limit) {
+                return inner.pending(limit);
+            }
+
+            @Override
+            public void add(List<BackgroundFill.Gap> gaps) {
+                if (endBeforeAdd.compareAndSet(true, false)) {
+                    // Genau zwischen Prüfen und Einreihen endet der laufende Abruf.
+                    gates.get("page").countDown();
+                    try {
+                        eventually(() -> started.get().status().inFlight() == 0);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                inner.add(gaps);
+            }
+
+            @Override
+            public void remove(PageKey key) {
+                inner.remove(key);
+            }
+
+            @Override
+            public int size() {
+                return inner.size();
+            }
+        };
+        BackgroundFill fill = fill(scheduler(1), queue, catalog(List.of()), true);
+        started.set(fill);
+        BackgroundFill.Gap page = gap("wiki", "page", BackgroundFill.Kind.NOT_LOADED);
+        fill.offer(List.of(page));
+        eventually(() -> running.containsKey("page"));
+
+        endBeforeAdd.set(true);
+        fill.offer(List.of(page));
+        if (endBeforeAdd.compareAndSet(true, false)) {
+            // Das Angebot reihte nichts ein (die Seite wartete schon): den Abruf hier enden lassen.
+            gates.get("page").countDown();
+        }
+
+        eventually(() -> loaded.contains("page") && fill.status().inFlight() == 0);
+        assertThat(inner.pending(10)).isEmpty();
+    }
+
+    @Test
     void theFillNeverRunsWithAUserCredential() {
         AccessContext user = AccessContext.endUser("u", "app", new UserCredential("wiki", "t"));
 

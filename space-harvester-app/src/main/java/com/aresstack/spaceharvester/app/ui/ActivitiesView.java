@@ -769,6 +769,13 @@ public final class ActivitiesView implements View {
                 .add(counters.processed(), String.valueOf(p.processed()))
                 .add(counters.written(), String.valueOf(p.written()))
                 .add(counters.failed(), String.valueOf(p.failed()), p.failed() > 0 ? Comic.RED : Comic.INK);
+        if (com.aresstack.spaceharvester.application.background.FillJobs.KIND.equals(
+                status.parameter(BackgroundJobs.KIND))) {
+            // Fundstelle 12: Die Hintergrundfüllung zeigt auch, wie viele Seiten im Space noch warten.
+            // Beendete und angehaltene Teile laden nichts: 0 (Abnahme #1087).
+            boolean active = status.state() == JobState.RUNNING || status.state() == JobState.QUEUED;
+            facts.add("Wartend", String.valueOf(active ? Math.max(0, p.discovered() - p.processed()) : 0));
+        }
         if (skipped(status) > 0) {
             facts.add("Bewusst ausgelassen", String.valueOf(skipped(status)));
         }

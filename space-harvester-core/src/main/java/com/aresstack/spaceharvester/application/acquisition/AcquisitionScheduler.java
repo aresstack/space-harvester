@@ -763,9 +763,23 @@ public final class AcquisitionScheduler implements AutoCloseable {
          * @return {@code false}, wenn die Anfrage schon beendet war
          */
         public boolean cancel() {
+            return cancel(false);
+        }
+
+        /**
+         * Wie {@link #cancel()}, aber nur, solange der Abruf der Seite noch nicht läuft; ein laufender bleibt angefragt
+         * und meldet sein Ende.
+         *
+         * @return {@code false}, wenn die Anfrage schon beendet war oder ihr Abruf läuft
+         */
+        public boolean cancelIfWaiting() {
+            return cancel(true);
+        }
+
+        private boolean cancel(boolean onlyWaiting) {
             boolean demoted = false;
             synchronized (lock) {
-                if (done.isDone()) {
+                if (done.isDone() || onlyWaiting && entry.running) {
                     return false;
                 }
                 if (priority == Priority.FOREGROUND) {
