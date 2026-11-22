@@ -554,6 +554,9 @@ wird automatisch verwaltet.
       unter der Kennung einen gelben Hinweis, der den Auftrag öffnet.
     - Beim Umstellen auf ein neues Ziel wartet `SourceManagement#change` wie bisher auf den Auftrag (höchstens fünf
       Minuten): Ein gleich danach gestarteter Abgleich der Quelle darf nicht vom Löschen der alten Daten beendet werden.
+    - Nimmt `Jobs` den Auftrag nicht an (Warteschlange voll), wird wie früher sofort gelöscht; die Daten bleiben nie
+      ohne Auftrag liegen. Ein unterbrochener Auftrag läuft nicht nach der Aufbewahrungsfrist ab, solange ihn kein
+      neuerer Auftrag derselben Art und Quelle ablöst (`Jobs#purgeExpired`).
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

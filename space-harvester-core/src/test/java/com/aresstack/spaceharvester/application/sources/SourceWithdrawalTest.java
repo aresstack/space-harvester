@@ -118,6 +118,66 @@ class SourceWithdrawalTest {
                     new SourceDataPurge.Store("Analysen", cleared::add)), id -> true);
             assertThat(second.resumeInterrupted()).isEmpty();
             assertThat(cleared).isEmpty();
+            assertThat(store.find(started.id())).as("nichts mehr zu löschen: der Eintrag geht").isEmpty();
+        } finally {
+            after.close();
+        }
+    }
+
+    @Test
+    void anInterruptedRemovalOutlivesTheRetentionOfFinishedJobs() throws Exception {
+        java.util.concurrent.atomic.AtomicReference<java.time.Instant> now =
+                new java.util.concurrent.atomic.AtomicReference<>(java.time.Instant.parse("2026-11-01T08:00:00Z"));
+        Clock clock = new Clock() {
+            @Override
+            public java.time.ZoneId getZone() {
+                return java.time.ZoneOffset.UTC;
+            }
+
+            @Override
+            public Clock withZone(java.time.ZoneId zone) {
+                return this;
+            }
+
+            @Override
+            public java.time.Instant instant() {
+                return now.get();
+            }
+        };
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch entered = new CountDownLatch(1);
+        Jobs before = new Jobs(store, executor, new JobLimits(2, 10, Duration.ofHours(1)), clock);
+        SourceDataPurge first = new SourceDataPurge(before, List.of(new SourceDataPurge.Store("Seiten", id -> {
+            entered.countDown();
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }), new SourceDataPurge.Store("Analysen", cleared::add)), id -> false);
+        JobStatus started = first.startWithdrawal("altwiki", "app", SourceDataPurge.REMOVED);
+        assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+        before.close();
+        release.countDown();
+        eventually(() -> store.find(started.id()).orElseThrow().state().terminal());
+
+        // Der Dienst ruht länger als die Aufbewahrungsfrist: Der unterbrochene Auftrag darf nicht ablaufen.
+        now.set(now.get().plus(Duration.ofDays(30)));
+        Jobs after = new Jobs(store, executor, new JobLimits(2, 10, Duration.ofHours(1)), clock);
+        try {
+            assertThat(after.purgeExpired()).isZero();
+            SourceDataPurge second = new SourceDataPurge(after, List.of(
+                    new SourceDataPurge.Store("Analysen", cleared::add)), id -> false);
+            assertThat(second.withdrawing("altwiki")).isPresent();
+            List<JobStatus> resumed = second.resumeInterrupted();
+            assertThat(after.await(resumed.getFirst().id(), "app", Duration.ofSeconds(30)).state())
+                    .isEqualTo(JobState.COMPLETED);
+            assertThat(cleared).containsExactly("altwiki");
+
+            // Abgelöst vom fortgesetzten Auftrag läuft der unterbrochene wie jeder andere ab.
+            now.set(now.get().plus(Duration.ofDays(1)));
+            after.purgeExpired();
+            assertThat(store.find(started.id())).isEmpty();
         } finally {
             after.close();
         }

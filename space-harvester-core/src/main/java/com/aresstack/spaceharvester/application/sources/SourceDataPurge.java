@@ -174,12 +174,27 @@ public final class SourceDataPurge {
             if (status.parameter(REASON) == null || status.sourceId() == null || !seen.add(status.sourceId())) {
                 continue;
             }
-            if (interrupted(status) && !(REMOVED.equals(status.parameter(REASON)) && configured.test(status.sourceId()))) {
+            if (interrupted(status) && REMOVED.equals(status.parameter(REASON)) && configured.test(status.sourceId())) {
+                // Die Quelle ist inzwischen wieder eingerichtet (etwa per YAML): nichts mehr zu löschen; der Eintrag
+                // bliebe sonst ohne Ablauffrist stehen ({@link Jobs#purgeExpired}).
+                try {
+                    jobs.delete(status.id(), status.owner());
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.DEBUG, "Unterbrochenes Löschen nicht entfernt ({0})",
+                            e.getClass().getName());
+                }
+            } else if (interrupted(status)) {
                 // „Daten bereinigen“ startet nicht im selben Eintrag neu: ein neuer Auftrag mit denselben Angaben; der
                 // unterbrochene bleibt als solcher stehen.
-                resumed.add(startWithdrawal(status.sourceId(), status.owner(), status.parameter(REASON)));
-                LOG.log(System.Logger.Level.INFO, "Löschen der Daten von Quelle {0} wird fortgesetzt",
-                        status.sourceId());
+                try {
+                    resumed.add(startWithdrawal(status.sourceId(), status.owner(), status.parameter(REASON)));
+                    LOG.log(System.Logger.Level.INFO, "Löschen der Daten von Quelle {0} wird fortgesetzt",
+                            status.sourceId());
+                } catch (RuntimeException e) {
+                    // Bleibt unterbrochen stehen und läuft nicht ab; der nächste Start versucht es erneut.
+                    LOG.log(System.Logger.Level.WARNING, "Löschen der Daten von Quelle {0} nicht fortgesetzt ({1})",
+                            status.sourceId(), e.getClass().getName());
+                }
             }
         }
         return resumed;

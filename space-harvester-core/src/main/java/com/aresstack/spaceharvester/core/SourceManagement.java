@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.core;
 
+import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.CertificateExport;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
@@ -171,9 +172,11 @@ public final class SourceManagement {
         if (moved) {
             // Fundstelle 22: als Auftrag „Daten bereinigen“, sichtbar und fortsetzbar. Gewartet wird wie bisher: Ein
             // gleich danach gestarteter Abgleich der Quelle darf nicht vom Löschen der alten Daten beendet werden.
-            JobStatus withdrawal = purge.startWithdrawal(config.id(), Harvester.OWNER, SourceDataPurge.MOVED);
+            Optional<JobStatus> withdrawal = startWithdrawal(config.id(), SourceDataPurge.MOVED);
             try {
-                jobs.await(withdrawal.id(), Harvester.OWNER, WITHDRAWAL_WAIT);
+                if (withdrawal.isPresent()) {
+                    jobs.await(withdrawal.get().id(), Harvester.OWNER, WITHDRAWAL_WAIT);
+                }
             } catch (java.util.concurrent.TimeoutException e) {
                 LOG.log(System.Logger.Level.WARNING, "Daten der Quelle {0} werden noch gelöscht", config.id());
             } catch (InterruptedException e) {
@@ -219,9 +222,29 @@ public final class SourceManagement {
         }
         // Fundstelle 22: Die Daten löscht ein Auftrag im Core; er läuft weiter, wenn die App neu lädt, und setzt nach
         // einem Neustart fort. Bis dahin lässt sich dieselbe ID nicht neu anlegen ({@link #removalPending}).
-        purge.startWithdrawal(sourceId, Harvester.OWNER, SourceDataPurge.REMOVED);
+        startWithdrawal(sourceId, SourceDataPurge.REMOVED);
         LOG.log(System.Logger.Level.INFO, "Quelle {0} entfernt; ihre Daten werden gelöscht", sourceId);
         return true;
+    }
+
+    /**
+     * Startet den Auftrag, der die Daten löscht. Nimmt ihn {@link Jobs} nicht an, etwa weil die Warteschlange voll ist,
+     * wird wie früher sofort im aufrufenden Thread gelöscht: Die Quelle ist dann schon aus dem Katalog, ihre Daten
+     * dürfen nicht ohne Auftrag liegen bleiben.
+     *
+     * @return der Auftrag, leer, wenn schon gelöscht wurde
+     */
+    private Optional<JobStatus> startWithdrawal(String sourceId, String reason) {
+        try {
+            return Optional.of(purge.startWithdrawal(sourceId, Harvester.OWNER, reason));
+        } catch (JobCapacityExceededException | IllegalStateException e) {
+            LOG.log(System.Logger.Level.WARNING, "Auftrag zum Löschen der Daten von Quelle {0} nicht angenommen ({1});"
+                    + " es wird sofort gelöscht", sourceId, e.getClass().getName());
+            SourceDataPurge.Outcome outcome = purge.purge(sourceId);
+            LOG.log(System.Logger.Level.INFO, "Daten der Quelle {0} entfernt ({1} von {2} Ablagen)", sourceId,
+                    outcome.cleared().size(), outcome.cleared().size() + outcome.failed().size());
+            return Optional.empty();
+        }
     }
 
     /**

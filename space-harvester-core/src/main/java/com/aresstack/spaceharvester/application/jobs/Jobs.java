@@ -1551,9 +1551,21 @@ public class Jobs implements AutoCloseable {
                 awaited.addAll(java.util.Arrays.asList(after.split(",")));
             }
         }
+        // Ein vom Ende des Dienstes unterbrochener Auftrag mit {@value #SURVIVES_SHUTDOWN}, etwa das Löschen der Daten
+        // einer entfernten Quelle, bleibt, bis ein neuerer Auftrag derselben Art und Quelle ihn ablöst: sonst ginge er
+        // verloren, wenn der Dienst länger als die Aufbewahrungsfrist ruht, und die Daten blieben liegen.
+        Map<String, Instant> newest = new java.util.HashMap<>();
+        for (JobStatus status : all) {
+            if (status.sourceId() != null) {
+                newest.merge(status.type() + "|" + status.sourceId(), status.createdAt(),
+                        (a, b) -> a.isAfter(b) ? a : b);
+            }
+        }
         for (JobStatus status : all) {
             if (status.state().terminal() && status.finishedAt() != null && status.finishedAt().isBefore(limit)
                     && !(status.state() == JobState.PAUSED && awaited.contains(status.id()))
+                    && !(pendingAfterShutdown(status)
+                            && status.createdAt().equals(newest.get(status.type() + "|" + status.sourceId())))
                     && deleteIfFinished(status.id(), true)) {
                 removed++;
             }
@@ -1822,12 +1834,20 @@ public class Jobs implements AutoCloseable {
         return job.parameters != null && "true".equals(job.parameters.get(INTERACTIVE));
     }
 
-    /** Ob der Auftrag auf eigener Spur läuft ({@value #OWN_LANE}). */
+    /** Ob der Auftrag das Ende des Dienstes als unterbrochen übersteht ({@value #SURVIVES_SHUTDOWN}). */
     private static boolean survivesShutdown(Job job) {
         return job.type.background()
                 || job.parameters != null && "true".equals(job.parameters.get(SURVIVES_SHUTDOWN));
     }
 
+    /** Ob ein Auftrag mit {@value #SURVIVES_SHUTDOWN} vom Ende des Dienstes unterbrochen wurde und fortzusetzen ist. */
+    private static boolean pendingAfterShutdown(JobStatus status) {
+        return !status.type().background() && status.sourceId() != null && status.state() == JobState.FAILED
+                && status.error() != null && INTERRUPTED.equals(status.error().code())
+                && "true".equals(status.parameter(SURVIVES_SHUTDOWN));
+    }
+
+    /** Ob der Auftrag auf eigener Spur läuft ({@value #OWN_LANE}). */
     private static boolean ownLane(Job job) {
         return job.type.background() && job.parameters != null && "true".equals(job.parameters.get(OWN_LANE));
     }
