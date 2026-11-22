@@ -1,0 +1,39 @@
+package com.aresstack.spaceharvester.app.ui.perspective;
+
+import java.util.Objects;
+import javax.swing.JComponent;
+
+/**
+ * Ein Arbeitsplatz an Bord desselben Raumschiffs (#1141): Space Harvester, Command Deck, später Mission Protocol. Eine
+ * Perspektive bringt ihre eigene Navigation (oben neben dem Titel), ihre Arbeitsfläche (Mitte) und, wenn sie eine hat,
+ * ihre linke Leiste mit. Logo, Titelleiste, rechte Chat-/Auftrags-Seitenleiste und Statuszeile gehören zum gemeinsamen
+ * Rahmen und bleiben beim Wechsel stehen; das Hauptfenster kennt keine Sonderfälle einzelner Perspektiven.
+ *
+ * @param id         stabiler Schlüssel (Karten des Fensters, Tests)
+ * @param title      Name im Umschalter und im Titel
+ * @param hint       eine Zeile unter dem Namen im Menü
+ * @param ready      {@code false}: nur ein Platzhalter; der Umschalter zeigt „in Vorbereitung“
+ * @param navigation Knöpfe der Perspektive neben dem Titel, {@code null} für keine
+ * @param workspace  Arbeitsfläche in der Mitte
+ * @param drawer     linke Leiste, {@code null} für keine (die Mitte nimmt dann die ganze Breite)
+ * @param onShown    läuft nach dem Einblenden
+ * @param onHidden   läuft nach dem Ausblenden
+ */
+public record Perspective(String id, String title, String hint, boolean ready, JComponent navigation,
+                          JComponent workspace, JComponent drawer, Runnable onShown, Runnable onHidden) {
+
+    public Perspective {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(title, "title");
+        Objects.requireNonNull(workspace, "workspace");
+        hint = hint == null ? "" : hint;
+        onShown = onShown == null ? () -> { } : onShown;
+        onHidden = onHidden == null ? () -> { } : onHidden;
+    }
+
+    /** Eine Perspektive ohne eigene Rückrufe. */
+    public static Perspective of(String id, String title, String hint, boolean ready, JComponent navigation,
+                                 JComponent workspace, JComponent drawer) {
+        return new Perspective(id, title, hint, ready, navigation, workspace, drawer, null, null);
+    }
+}
