@@ -1553,6 +1553,11 @@ public final class Harvester implements AutoCloseable {
                 opened.add(fill);
                 this.backgroundFill = fill;
                 filling.set(fill);
+                // Fundstelle 12: sichtbar als „Hintergrundfüllung“, je Quelle und Space ein Teil auf eigener Spur.
+                com.aresstack.spaceharvester.application.background.FillJobs fillJobs =
+                        new com.aresstack.spaceharvester.application.background.FillJobs(backgroundJobs, jobs);
+                opened.add(fillJobs);
+                fillJobs.attach(fill, key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
                 // ADR 0027: jeder Commit des Seiten-Cache weckt die Suche nach Lücken, nie in Abständen.
                 cache.changes(cacheChanges.andThen(fill::wake));
             } else {

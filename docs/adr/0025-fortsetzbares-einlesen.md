@@ -502,6 +502,20 @@ wird automatisch verwaltet.
       haben keine Frist. Sie laufen nur mit mehr als einem Platz unter „Vorbereitung“ und ruhen mit „Hintergrund
       anhalten“ wie alle Hintergrundteile.
 
+14. **Hintergrundfüllung** (Angelo 21.11.2026, Fundstelle 12, Variante A vom Architekten bestätigt).
+    - Die Füllung selbst bleibt, wie sie ist (`BackgroundFill`, über den Planer). Sobald sie in einem Space Lücken
+      übergibt, entsteht dort ein Teil der Gruppe „Hintergrundfüllung“ (Art `fill`, `FillJobs`), je Quelle und Space
+      einer, solange dort Seiten warten oder laden. Der Teil rechnet nichts: Er zählt die Abrufe der Füllung (geladen,
+      gescheitert, „Wartend“) und wartet über ihre Rückrufe, auf eigener Spur (Punkt 13).
+    - Anhalten: Der Space ruht, bis der Teil fortgesetzt wird. Abbrechen: Der Space ruht bis zum nächsten
+      abgeschlossenen Abgleich des Space oder der ganzen Quelle. Beides wird aus den Aufträgen abgeleitet, nicht im
+      Speicher gehalten, und übersteht so den Neustart. Ruhende Spaces übergeht die Füllung beim Suchen, Anbieten und
+      Nachschieben.
+    - Gescheiterte Abrufe stehen rot mit Grund im Teil; endet er mit Fehlern, scheitert er (`PAGES_MISSING`), und die
+      Füllung versucht die Seiten nach ihrer Wartezeit erneut. Abrufe, die enden, bevor ihr Teil läuft, werden beim
+      Start nachgemeldet.
+    - Bei nur einem Platz unter „Vorbereitung“ bleibt die Füllung unsichtbar wie bisher.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel

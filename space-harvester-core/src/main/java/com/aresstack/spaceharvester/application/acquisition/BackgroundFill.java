@@ -103,6 +103,33 @@ public final class BackgroundFill implements AutoCloseable {
         }
     }
 
+    /** Quelle und Space einer Lücke; Space {@code null}, wenn unbekannt (Fundstelle 12: ein Teil je Quelle und Space). */
+    public record Where(String sourceId, String spaceKey) {
+
+        public Where {
+            Objects.requireNonNull(sourceId, "sourceId");
+        }
+    }
+
+    /**
+     * Sieht der Füllung je Quelle und Space zu (Fundstelle 12), etwa um sie als Hintergrundauftrag zu zeigen. Die Aufrufe
+     * kommen nie unter der Sperre der Füllung und dürfen nicht blockieren.
+     */
+    public interface Observer {
+
+        /** Eine Seite des Space ging an den Planer. */
+        default void handed(Where where) {
+        }
+
+        /** Der Abruf einer Seite endete, geladen oder gescheitert (zurückgezogene zählen nicht). */
+        default void completed(Where where, boolean stored, Throwable failure) {
+        }
+
+        /** Im Space wartet und lädt nichts mehr, oder die Füllung ist aus. */
+        default void idle(Where where) {
+        }
+    }
+
     /** Der Katalog: welche Spaces er führt und welche ihrer Seiten fehlen oder veraltet sind. Liest nur. */
     public interface Catalog {
 
@@ -217,6 +244,19 @@ public final class BackgroundFill implements AutoCloseable {
     private final Map<String, long[]> bySource = new TreeMap<>();
     private Instant lastScan;
     private Thread worker;
+    /** Space je Seite, soweit bekannt (Kopfdaten im Cache); ohne Zuschauer ungenutzt. */
+    private volatile java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf = key ->
+            java.util.Optional.empty();
+    private volatile Observer observer = new Observer() {
+    };
+    /** Ob ein Space ruht (angehalten oder abgebrochen bis zum nächsten Abgleich, Fundstelle 12). */
+    private volatile Predicate<Where> resting = where -> false;
+    /** Wo jede wartende Seite liegt, gespiegelt zur Warteschlange; unter {@link #monitor}. */
+    private final Map<PageKey, Where> whereOf = new LinkedHashMap<>();
+    /** Wartende Seiten je Quelle und Space (übergebene zählen mit, bis ihr Abruf endet); unter {@link #monitor}. */
+    private final Map<Where, Integer> waitingIn = new LinkedHashMap<>();
+    /** Ob {@link #whereOf} die Warteschlange schon spiegelt; unter {@link #monitor}. */
+    private boolean mirrored;
 
     /**
      * @param caller   technischer Aufrufer, ohne Benutzeranmeldung
@@ -275,6 +315,146 @@ public final class BackgroundFill implements AutoCloseable {
     }
 
     /**
+     * Meldet die Füllung je Quelle und Space an {@code observer} (Fundstelle 12) und lässt Spaces ruhen, für die
+     * {@code resting} gilt: Deren Lücken reiht sie nicht ein und übergibt sie nicht. Vor {@link #start()} aufrufen.
+     *
+     * @param spaceOf der Space einer Seite, soweit bekannt; sonst zählt sie zum Space {@code null}
+     */
+    public void observe(java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf, Observer observer,
+                        Predicate<Where> resting) {
+        this.spaceOf = Objects.requireNonNull(spaceOf, "spaceOf");
+        this.observer = Objects.requireNonNull(observer, "observer");
+        this.resting = Objects.requireNonNull(resting, "resting");
+    }
+
+    /** Wie viele Seiten im Space warten oder laden. */
+    public int waiting(Where where) {
+        synchronized (monitor) {
+            mirror();
+            return waitingIn.getOrDefault(where, 0);
+        }
+    }
+
+    /**
+     * Lässt einen Space ruhen (Fundstelle 12): Seine übergebenen Anfragen werden zurückgezogen (laufende Abrufe enden
+     * regulär), seine Einträge verlassen die Warteschlange; eine Suche im Katalog reiht sie wieder ein, sobald er nicht
+     * mehr ruht ({@link #wake()}).
+     */
+    public void rest(Where where) {
+        Map<PageKey, AcquisitionScheduler.Ticket> tickets = new LinkedHashMap<>();
+        List<PageKey> keys = new ArrayList<>();
+        synchronized (monitor) {
+            mirror();
+            whereOf.forEach((key, at) -> {
+                if (at.equals(where)) {
+                    keys.add(key);
+                    AcquisitionScheduler.Ticket ticket = inFlight.get(key);
+                    if (ticket != null) {
+                        tickets.put(key, ticket);
+                    }
+                }
+            });
+        }
+        cancel(tickets);
+        keys.forEach(this::dequeue);
+        changed();
+    }
+
+    private Where where(PageKey key) {
+        String spaceKey;
+        try {
+            spaceKey = spaceOf.apply(key).orElse(null);
+        } catch (RuntimeException e) {
+            spaceKey = null;
+        }
+        return new Where(key.sourceId(), spaceKey);
+    }
+
+    private boolean resting(Where where) {
+        try {
+            return resting.test(where);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** Unter {@link #monitor}: spiegelt die Warteschlange einmal, etwa nach dem Neustart. */
+    private void mirror() {
+        if (mirrored) {
+            return;
+        }
+        mirrored = true;
+        List<Gap> pending;
+        try {
+            pending = queue.pending(queue.size());
+        } catch (RuntimeException e) {
+            pending = List.of();
+        }
+        for (Gap gap : pending) {
+            if (!whereOf.containsKey(gap.key())) {
+                Where at = where(gap.key());
+                whereOf.put(gap.key(), at);
+                waitingIn.merge(at, 1, Integer::sum);
+            }
+        }
+    }
+
+    /** Reiht ein und spiegelt die neuen Einträge; {@code at} nennt den Space, wo bekannt. */
+    private void enqueue(List<Gap> gaps, Map<PageKey, Where> at) {
+        queue.add(gaps);
+        synchronized (monitor) {
+            mirror();
+            for (Gap gap : gaps) {
+                if (!whereOf.containsKey(gap.key())) {
+                    Where where = at.containsKey(gap.key()) ? at.get(gap.key()) : where(gap.key());
+                    whereOf.put(gap.key(), where);
+                    waitingIn.merge(where, 1, Integer::sum);
+                }
+            }
+        }
+    }
+
+    /** Nimmt einen Eintrag aus der Warteschlange; war es der letzte seines Space, meldet das {@link Observer#idle}. */
+    private void dequeue(PageKey key) {
+        Where emptied = dequeueQuietly(key);
+        if (emptied != null) {
+            notifyIdle(emptied);
+        }
+    }
+
+    /** Wie {@link #dequeue}, meldet aber nichts; nennt den Space, wenn es sein letzter Eintrag war. */
+    private Where dequeueQuietly(PageKey key) {
+        try {
+            queue.remove(key);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Warteschlange der Hintergrundfüllung nicht schreibbar ({0})",
+                    e.getClass().getName());
+            return null;
+        }
+        Where emptied = null;
+        synchronized (monitor) {
+            Where at = whereOf.remove(key);
+            if (at != null) {
+                int left = waitingIn.merge(at, -1, Integer::sum);
+                if (left <= 0) {
+                    waitingIn.remove(at);
+                    emptied = at;
+                }
+            }
+        }
+        return emptied;
+    }
+
+    private void notifyIdle(Where where) {
+        try {
+            observer.idle(where);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.DEBUG, "Zuschauer der Hintergrundfüllung scheiterte ({0})",
+                    e.getClass().getName());
+        }
+    }
+
+    /**
      * Meldet einen Empfänger für den Stand an (ADR 0027): nach jeder Änderung der Warteschlange, der übergebenen und
      * beendeten Abrufe, der Zähler, des Schalters und des Planers der jüngste {@link #status()}, höchstens alle
      * {@link Coalescer#INTERVAL}, auf dem Zustell-Thread des Core. Erst anmelden, dann {@link #status()} lesen.
@@ -309,6 +489,12 @@ public final class BackgroundFill implements AutoCloseable {
         enabled = value;
         if (!value) {
             withdraw();
+            List<Where> spaces;
+            synchronized (monitor) {
+                spaces = new ArrayList<>(waitingIn.keySet());
+            }
+            // Aus: Die Teile enden, die Warteschlange bleibt für das Einschalten.
+            spaces.forEach(this::notifyIdle);
         } else {
             revalidate();
         }
@@ -368,8 +554,13 @@ public final class BackgroundFill implements AutoCloseable {
         if (closed || !enabled || gaps == null || gaps.isEmpty()) {
             return;
         }
+        Map<PageKey, Where> at = new LinkedHashMap<>();
         List<Gap> wanted = gaps.stream().filter(Objects::nonNull).filter(gap -> allowed(gap.key().sourceId()))
-                .toList();
+                .filter(gap -> {
+                    Where where = where(gap.key());
+                    at.put(gap.key(), where);
+                    return !resting(where);
+                }).toList();
         if (wanted.isEmpty()) {
             return;
         }
@@ -377,7 +568,7 @@ public final class BackgroundFill implements AutoCloseable {
             if (queue.size() >= timing.maxQueued()) {
                 return;
             }
-            queue.add(wanted);
+            enqueue(wanted, at);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.INFO, "Warteschlange der Hintergrundfüllung nicht schreibbar ({0})",
                     e.getClass().getName());
@@ -624,9 +815,18 @@ public final class BackgroundFill implements AutoCloseable {
                 }
             }
             String sourceId = gap.key().sourceId();
-            if (!allowed(sourceId)) {
-                // Die Quelle will das (nicht mehr); ein neuer Blick in den Katalog reiht es wieder ein, wenn doch.
-                queue.remove(gap.key());
+            Where at;
+            synchronized (monitor) {
+                mirror();
+                at = whereOf.get(gap.key());
+            }
+            if (at == null) {
+                at = where(gap.key());
+            }
+            if (!allowed(sourceId) || resting(at)) {
+                // Die Quelle will das (nicht mehr) oder der Space ruht; ein neuer Blick in den Katalog reiht es wieder
+                // ein, wenn doch.
+                dequeue(gap.key());
                 dropped = true;
                 continue;
             }
@@ -643,6 +843,12 @@ public final class BackgroundFill implements AutoCloseable {
             }
             synchronized (monitor) {
                 inFlight.put(gap.key(), ticket);
+            }
+            try {
+                observer.handed(at);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.DEBUG, "Zuschauer der Hintergrundfüllung scheiterte ({0})",
+                        e.getClass().getName());
             }
             // Was gleich endet, kommt hier schon zurück; danach gleich weiter in der Schlange.
             again = true;
@@ -677,15 +883,27 @@ public final class BackgroundFill implements AutoCloseable {
     private void completed(PageKey key, AcquisitionScheduler.Ticket ticket, Boolean stored, Throwable failure) {
         boolean withdrawn = failure instanceof CancellationException
                 || failure instanceof CompletionException && failure.getCause() instanceof CancellationException;
+        Where at;
+        synchronized (monitor) {
+            at = whereOf.get(key);
+        }
         if (!withdrawn && !closed) {
             // Geladen oder gescheitert: der Eintrag ist erledigt; eine bleibende Lücke findet die nächste Suche im
             // Katalog wieder. Zurückgezogenes bleibt für den nächsten Start. Erst die Schlange, dann inFlight, damit
             // feed() die Seite nie wartend und zugleich nicht übergeben sieht.
-            try {
-                queue.remove(key);
-            } catch (RuntimeException e) {
-                LOG.log(System.Logger.Level.INFO, "Warteschlange der Hintergrundfüllung nicht schreibbar ({0})",
-                        e.getClass().getName());
+            Where emptied = dequeueQuietly(key);
+            if (at != null) {
+                // Erst austragen, dann zählen, dann „leer“: Der Teil des Space endet nie vor seiner letzten Seite, und
+                // „wartend“ zählt eine erledigte Seite nie mit.
+                try {
+                    observer.completed(at, Boolean.TRUE.equals(stored), failure);
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.DEBUG, "Zuschauer der Hintergrundfüllung scheiterte ({0})",
+                            e.getClass().getName());
+                }
+            }
+            if (emptied != null) {
+                notifyIdle(emptied);
             }
         }
         synchronized (monitor) {
@@ -723,6 +941,7 @@ public final class BackgroundFill implements AutoCloseable {
             rescan = false;
         }
         List<Gap> found = new ArrayList<>();
+        Map<PageKey, Where> at = new LinkedHashMap<>();
         int skipped;
         synchronized (monitor) {
             skipped = failedAt.size();
@@ -735,12 +954,14 @@ public final class BackgroundFill implements AutoCloseable {
                 break;
             }
             String sourceId = space.sourceId();
-            if (!allowed(sourceId)) {
+            Where where = new Where(sourceId, space.spaceKey());
+            if (!allowed(sourceId) || resting(where)) {
                 continue;
             }
             for (Gap gap : catalog.gaps(sourceId, space.spaceKey(), limit)) {
                 if (gap.key().sourceId().equals(sourceId)) {
                     found.add(gap);
+                    at.put(gap.key(), where);
                 }
             }
         }
@@ -748,7 +969,7 @@ public final class BackgroundFill implements AutoCloseable {
             // Kürzlich Gescheitertes erst nach der Wartezeit wieder, sonst käme bei übervoller Schlange immer dieselbe
             // Tranche dran.
             Instant retry = clock.instant().minus(timing.idle());
-            failedAt.values().removeIf(at -> !at.isAfter(retry));
+            failedAt.values().removeIf(failure -> !failure.isAfter(retry));
             found.removeIf(gap -> failedAt.containsKey(gap.key()));
         }
         found.sort(RANK);
@@ -756,7 +977,7 @@ public final class BackgroundFill implements AutoCloseable {
         List<Gap> gaps = more ? found.subList(0, timing.maxQueued()) : found;
         int before = queue.size();
         if (!gaps.isEmpty()) {
-            queue.add(gaps);
+            enqueue(gaps, at);
         }
         int added = queue.size() - before;
         Map<String, Integer> perSource = new LinkedHashMap<>();
