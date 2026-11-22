@@ -108,6 +108,50 @@ class ActivitiesBackgroundTabTest {
         assertThat(rows.get(0).lifecycle().actions()).contains(JobAction.CANCEL);
     }
 
+    /** Die Suchleiste unten findet auch in der Auftragsliste und färbt dort jede Spalte, auch Art und Zustand. */
+    @Test
+    void theSearchBarMarksItsHitsInTheJobList() throws Exception {
+        Path home = Files.createTempDirectory("bgfind");
+        AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home),
+                home.resolve("app.yml"), "test");
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                ActivitiesView view = new ActivitiesView(context, null);
+                view.tabs.select(ActivitiesView.JOBS_TAB);
+                view.showJobsForTest(sample());
+                javax.swing.JTable table = view.table();
+                FindBar bar = new FindBar(view::component);
+                for (int column : new int[] {0, 1, 2}) {
+                    String shown = ((javax.swing.JLabel) table.prepareRenderer(table.getCellRenderer(0, column), 0,
+                            column)).getText();
+                    assertThat(bar.search(shown)).as("Spalte " + column).isPositive();
+                    java.awt.Component hit = table.prepareRenderer(table.getCellRenderer(0, column), 0, column);
+                    assertThat(hit.getBackground()).as("Spalte " + column).isIn(ReaderFind.CURRENT_HIT,
+                            ReaderFind.HIT);
+                    assertThat(hit.isOpaque()).isTrue();
+                    // Die Nachbarzeile derselben Spalte bleibt, wie sie war: ein Renderer zeichnet alle Zellen.
+                    java.awt.Component other = table.prepareRenderer(table.getCellRenderer(1, column), 1, column);
+                    if (!shown.equals(((javax.swing.JLabel) other).getText())) {
+                        assertThat(other.getBackground()).isNotIn(ReaderFind.CURRENT_HIT, ReaderFind.HIT);
+                    }
+                }
+                // Ein gewählter Treffer lässt weder Markierung noch Auswahlfarbe in der Spalte zurück.
+                String state = ((javax.swing.JLabel) table.prepareRenderer(table.getCellRenderer(0, 2), 0, 2))
+                        .getText();
+                bar.search(state);
+                table.getCellRenderer(0, 2).getTableCellRendererComponent(table, table.getValueAt(0, 2), true,
+                        false, 0, 2);
+                bar.search("");
+                for (int row = 0; row < table.getRowCount(); row++) {
+                    assertThat(table.prepareRenderer(table.getCellRenderer(row, 2), row, 2).getBackground())
+                            .as("Zeile " + row).isEqualTo(table.getBackground());
+                }
+            });
+        } finally {
+            context.shutdown();
+        }
+    }
+
     /** Eine Meldung ohne gewählten Auftrag (z. B. „Nicht übernommen“) öffnet den Detailbereich, ihr ✕ schließt ihn. */
     @Test
     void aMessageWithoutASelectionOpensTheDetailAreaAndClosesItAgain() throws Exception {
