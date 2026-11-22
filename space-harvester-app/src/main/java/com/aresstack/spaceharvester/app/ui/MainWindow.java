@@ -191,6 +191,13 @@ public final class MainWindow implements AppContext.Navigator {
                 searchView.scope(scopes);
             }
         });
+        // Und umgekehrt: In der Suche an- oder abgehakte Wissensquellen werden links gewählt bzw. abgewählt, damit
+        // man sieht, dass beides dasselbe ist (Angelo, 22.11.2026).
+        searchView.onSourcesChecked(scopes -> {
+            if (current == AppContext.Section.SEARCH) {
+                explorer.select(scopes);
+            }
+        });
         // Links gewählt bestimmt rechts (Angelo, 13.11.2026): der Reiter „Export“ folgt der Auswahl im Explorer.
         // Die Auswahl links bestimmt die Inhalte, darunter Begriffe, Fachglossar und Graph unter Analysen (ADR 0029).
         explorer.onSelection(content::selection);

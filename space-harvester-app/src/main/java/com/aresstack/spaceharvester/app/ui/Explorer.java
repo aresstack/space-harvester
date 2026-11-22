@@ -1122,6 +1122,43 @@ public final class Explorer {
         }
     }
 
+    /**
+     * Wählt links genau diese Bereiche (Quelle oder Space), etwa wenn in der Suche Wissensquellen an- oder abgehakt
+     * werden (Angelo, 22.11.2026: beides ist dasselbe); leer wählt „Wissensquellen“ (alle). Ein Space, den der Baum
+     * noch nicht geladen hat, wird als seine Quelle gewählt.
+     */
+    public void select(List<Scope> scopes) {
+        if (scopes.isEmpty()) {
+            selectAll();
+            return;
+        }
+        List<TreePath> paths = new ArrayList<>();
+        for (Scope scope : scopes) {
+            for (int i = 0; i < top.getChildCount(); i++) {
+                if (top.getChildAt(i) instanceof Node source && source.item() instanceof SourceItem item
+                        && item.sourceId().equals(scope.sourceId())) {
+                    Node target = source;
+                    if (scope.spaceKey() != null) {
+                        for (int j = 0; j < source.getChildCount(); j++) {
+                            if (source.getChildAt(j) instanceof Node space && space.item() instanceof SpaceItem s
+                                    && s.spaceKey().equals(scope.spaceKey())) {
+                                target = space;
+                            }
+                        }
+                    }
+                    TreePath path = new TreePath(target.getPath());
+                    if (!paths.contains(path)) {
+                        paths.add(path);
+                    }
+                }
+            }
+        }
+        if (paths.isEmpty()) {
+            return;
+        }
+        tree.setSelectionPaths(paths.toArray(TreePath[]::new));
+    }
+
     public List<Scope> scopes() {
         TreePath[] paths = tree.getSelectionPaths();
         List<Scope> scopes = new ArrayList<>();

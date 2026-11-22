@@ -284,6 +284,10 @@ public final class SearchView implements View {
     private int request;
     /** Quellen aus der Auswahl im Explorer; leer für alle. */
     private final Set<String> chosen = new TreeSet<>();
+    /** Während {@link #scope} die Häkchen der Quellen setzt, lösen sie keinen eigenen Umfang aus. */
+    private boolean syncingBoxes;
+    /** Wählt links die angehakten Quellen; {@code null} ohne Explorer. */
+    private java.util.function.Consumer<List<Explorer.Scope>> sourcesListener;
     /** Gewählte Knoten mit Namen für die Umfangszeile. */
     private List<Explorer.Scope> scopes = List.of();
 
@@ -542,8 +546,16 @@ public final class SearchView implements View {
      * Popup bleibt beim Umschalten offen.
      */
     private static javax.swing.JCheckBoxMenuItem menuItem(JCheckBox box) {
-        javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(box.getText());
+        com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem item =
+                new com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem(box.getText());
         item.setModel(box.getModel());
+        // Name, Liste der Spaces und „teilweise“ folgen dem Häkchen.
+        box.addPropertyChangeListener("text", e -> item.setText(box.getText()));
+        box.addPropertyChangeListener(com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.PARTIAL,
+                e -> com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(item,
+                        com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(box)));
+        com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(item,
+                com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(box));
         item.setToolTipText(box.getToolTipText());
         box.addPropertyChangeListener("ToolTipText", e -> item.setToolTipText(box.getToolTipText()));
         item.putClientProperty("CheckBoxMenuItem.doNotCloseOnMouseClick", Boolean.TRUE);
@@ -615,6 +627,128 @@ public final class SearchView implements View {
      * Wissensquellen. Eine laufende Suche bleibt; die nächste nutzt den neuen Umfang.
      */
     public void scope(List<Explorer.Scope> selection) {
+        // Erst die Häkchen, dann der Umfang: er liest die angehakten Quellen.
+        Set<String> known = knownSources();
+        syncBoxesToScope(selection.stream().filter(scope -> scope.sourceId() != null
+                && known.contains(scope.sourceId())).distinct().toList());
+        applyScope(selection);
+    }
+
+    /**
+     * Die auszuschließenden Spaces einer gemischten Auswahl: links eine Quelle ganz und von einer anderen nur einzelne
+     * Spaces. Die Anfrage kennt nur eine Liste von Spaces für alle Quellen; darum fallen bei der teilweise gewählten
+     * Quelle ihre übrigen Spaces weg, die ganze bleibt ganz. Ein Space-Schlüssel, den auch eine ganz gewählte Quelle
+     * hat, wird nicht ausgeschlossen (lieber etwas mehr als dort etwas weniger). Leer, wenn nicht gemischt.
+     *
+     * @param spacesOf die bekannten Spaces einer Quelle (Bestand)
+     */
+    static Set<String> exclusions(List<Explorer.Scope> scopes, Set<String> searched,
+                                  java.util.function.Function<String, ? extends Collection<String>> spacesOf) {
+        Map<String, Set<String>> partial = new LinkedHashMap<>();
+        Set<String> whole = new LinkedHashSet<>();
+        for (Explorer.Scope scope : scopes) {
+            if (!searched.contains(scope.sourceId())) {
+                continue;
+            }
+            if (scope.spaceKey() == null) {
+                whole.add(scope.sourceId());
+            } else {
+                partial.computeIfAbsent(scope.sourceId(), id -> new LinkedHashSet<>()).add(scope.spaceKey());
+            }
+        }
+        partial.keySet().removeAll(whole);
+        if (partial.isEmpty() || whole.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> excluded = new TreeSet<>();
+        partial.forEach((source, chosenSpaces) -> spacesOf.apply(source).stream()
+                .filter(space -> !chosenSpaces.contains(space)).forEach(excluded::add));
+        whole.forEach(source -> excluded.removeAll(spacesOf.apply(source)));
+        return Set.copyOf(excluded);
+    }
+
+    /** Höchstens so viele Spaces nennt eine teilweise gewählte Quelle hinter ihrem Namen, dann „+n“. */
+    static final int MAX_LISTED_SPACES = 3;
+
+    /**
+     * Die Häkchen unter „Wissensquellen“ folgen der Auswahl links (Angelo, 22.11.2026): ohne Auswahl (Überschrift
+     * „Wissensquellen“) alle angehakt, eine ganz gewählte Quelle angehakt, eine Quelle mit nur einzelnen gewählten
+     * Spaces teilweise (dritter Zustand) mit den Spaces hinter dem Namen, alle übrigen abgehakt.
+     */
+    private void syncBoxesToScope(List<Explorer.Scope> scopes) {
+        syncingBoxes = true;
+        try {
+            sourceBoxes.forEach((id, box) -> {
+                List<String> spaces = scopes.stream().filter(scope -> id.equals(scope.sourceId()))
+                        .map(Explorer.Scope::spaceKey).toList();
+                boolean whole = scopes.isEmpty() || spaces.contains(null);
+                boolean partial = !whole && !spaces.isEmpty();
+                box.setSelected(whole || partial);
+                com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(box, partial);
+                box.setText(boxText(sourceTitle(box), partial ? spaces : List.of()));
+            });
+        } finally {
+            syncingBoxes = false;
+        }
+    }
+
+    /** „Confluence HaVdB · CL2, CL3“; ohne Spaces nur der Name. */
+    static String boxText(String title, List<String> spaces) {
+        if (spaces.isEmpty()) {
+            return title;
+        }
+        List<String> listed = spaces.subList(0, Math.min(spaces.size(), MAX_LISTED_SPACES));
+        String more = spaces.size() > MAX_LISTED_SPACES ? " +" + (spaces.size() - MAX_LISTED_SPACES) : "";
+        return title + " · " + String.join(", ", listed) + more;
+    }
+
+    private static String sourceTitle(JCheckBox box) {
+        Object title = box.getClientProperty(SOURCE_TITLE);
+        return title instanceof String text ? text : box.getText();
+    }
+
+    /** Client-Property des Häkchens einer Quelle: ihr Name ohne Liste der Spaces. */
+    private static final String SOURCE_TITLE = "SearchView.sourceTitle";
+
+    /**
+     * Rückmeldung: Ein an- oder abgehaktes Häkchen unter „Wissensquellen“ wählt links dieselben Quellen (Angelo,
+     * 22.11.2026). Anhaken wählt die ganze Quelle, auch eine teilweise gewählte; Abhaken nimmt die Quelle samt ihren
+     * Spaces heraus. Alle ganz angehakt heißt „Wissensquellen“. Die letzte Quelle lässt sich nicht abhaken.
+     */
+    private void sourceChecked(String id) {
+        JCheckBox box = sourceBoxes.get(id);
+        boolean wasPartial = com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(box);
+        boolean whole = wasPartial || box.isSelected();
+        List<Explorer.Scope> base = scopes.isEmpty()
+                ? sourceBoxes.keySet().stream().map(source -> new Explorer.Scope(source, null)).toList()
+                : scopes;
+        List<Explorer.Scope> next = new ArrayList<>(base.stream().filter(scope -> !id.equals(scope.sourceId()))
+                .toList());
+        if (whole) {
+            next.add(new Explorer.Scope(id, null));
+        }
+        if (next.isEmpty()) {
+            // Nichts mehr zu durchsuchen wäre „alles“ links: das Häkchen bleibt.
+            syncBoxesToScope(scopes);
+            return;
+        }
+        boolean all = sourceBoxes.keySet().stream().allMatch(source -> next.contains(new Explorer.Scope(source,
+                null)));
+        List<Explorer.Scope> wanted = all ? List.of() : List.copyOf(next);
+        if (sourcesListener != null) {
+            // Der Baum wählt und meldet die Auswahl zurück ({@link #scope}).
+            sourcesListener.accept(wanted);
+        }
+        scope(wanted);
+    }
+
+    /** Wer links die Quellen wählt, die in der Suche angehakt werden (das Hauptfenster: der Explorer). */
+    public void onSourcesChecked(java.util.function.Consumer<List<Explorer.Scope>> listener) {
+        this.sourcesListener = listener;
+    }
+
+    /** Übernimmt den Umfang; die Häkchen setzt {@link #syncBoxesToScope}. */
+    private void applyScope(List<Explorer.Scope> selection) {
         Set<String> known = knownSources();
         List<Explorer.Scope> before = scopes;
         scopes = selection.stream().filter(scope -> scope.sourceId() != null && known.contains(scope.sourceId()))
@@ -835,9 +969,16 @@ public final class SearchView implements View {
             if (box == null) {
                 box = checkBox(source.title(), "Diese Wissensquelle durchsuchen; abgehakt fehlt sie in der Suche");
                 box.setSelected(true);
-                box.addItemListener(e -> scope(scopes));
+                String sourceId = source.id();
+                box.putClientProperty(SOURCE_TITLE, source.title());
+                box.addItemListener(e -> {
+                    if (!syncingBoxes) {
+                        sourceChecked(sourceId);
+                    }
+                });
                 changed = true;
-            } else if (!box.getText().equals(source.title())) {
+            } else if (!source.title().equals(box.getClientProperty(SOURCE_TITLE))) {
+                box.putClientProperty(SOURCE_TITLE, source.title());
                 box.setText(source.title());
                 changed = true;
             }
@@ -1095,7 +1236,17 @@ public final class SearchView implements View {
             // Umfang als Schnappschuss beim Start: spätere Auswahl oder Optionen ändern diese Suche nicht.
             Set<String> sources = chosenSources();
             String sourceId = sources.size() == 1 ? sources.iterator().next() : null;
-            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), chosenSpaces())
+            Set<String> spaces = chosenSpaces();
+            // Gemischt (ganze Quelle A, aus B nur einzelne Spaces): B ohne seine übrigen Spaces.
+            Set<String> excluded = spaces.isEmpty() ? exclusions(scopes, searchedSources(), source -> {
+                try {
+                    return runtime.workspace().holdingSpaces(source).stream()
+                            .map(com.aresstack.spaceharvester.application.holdings.SpaceSummary::spaceKey).toList();
+                } catch (RuntimeException e) {
+                    return List.of();
+                }
+            }) : Set.of();
+            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), spaces, excluded)
                     .ofKinds(chosenKinds()).withGlossarySynonyms(synonymsOn());
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
