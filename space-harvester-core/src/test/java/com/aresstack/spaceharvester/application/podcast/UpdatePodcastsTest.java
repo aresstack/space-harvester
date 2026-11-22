@@ -69,6 +69,24 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void theTranscriptListsEveryTurnUnderItsTopicWithItsSpeaker() throws Exception {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        assertThat(podcasts.transcript(summary)).as("ohne Podcast kein Transkript").isEmpty();
+
+        podcasts.start(caller, summary);
+
+        String transcript = podcasts.transcript(summary).orElseThrow();
+        assertThat(transcript).startsWith("# Neues bei Nordlicht\n");
+        // je Thema eine Überschrift, darunter nur Zeilen „Sprecher: Text“
+        assertThat(transcript.lines().filter(line -> line.startsWith("## "))).hasSize(3);
+        assertThat(transcript.lines().filter(line -> !line.isBlank() && !line.startsWith("#")))
+                .isNotEmpty()
+                .allMatch(line -> line.startsWith(PodcastProduction.HOST_LABEL + ": ")
+                        || line.startsWith(PodcastProduction.COHOST_LABEL + ": "));
+    }
+
+    @Test
     void everyTopicGetsAPictureBesideTheAudio() throws Exception {
         UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
         AtomicInteger drawn = new AtomicInteger();

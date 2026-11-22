@@ -127,10 +127,8 @@ class PodcastControlTest {
                 new Podcast.Part(0, 1, "Startseite", "Warum", null, first),
                 new Podcast.Part(1, 0, "Glossar", "Glossar", null, second),
                 new Podcast.Part(2, 0, "Abschluss", "Abschluss", null, null));
-        int before = com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(PodcastControl.PICTURES_KEY, 1);
-        try {
+        {
             onEdt(() -> {
-                com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PodcastControl.PICTURES_KEY, 1);
                 control = control();
                 control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
                 // Ohne Wiedergabe liegt nichts über dem Inhalt.
@@ -159,29 +157,59 @@ class PodcastControlTest {
                 control.pictureOf(3);
                 assertFalse(control.stageShown());
                 assertTrue(events.getLast() instanceof ContentOverlayEvent hidden && !hidden.getPayload().show());
-                // „Esc“ bzw. der Schalter an der Zeitleiste blendet die Bilder aus, bis man sie wieder einschaltet.
+                // An der Zeitleiste steht kein Schalter für die Bilder mehr (Angelo 22.11.2026).
+                assertEquals(1, ((java.awt.Container) control.timelineRow()).getComponentCount());
+                // „Esc“ auf der Bühne nimmt dieses Bild weg; das nächste erscheint wieder.
                 control.pictureOf(0);
                 assertTrue(control.stageShown());
-                javax.swing.AbstractButton toggle = (javax.swing.AbstractButton)
-                        ((java.awt.Container) control.timelineRow()).getComponent(1);
-                assertEquals(PodcastControl.PICTURES_ON, toggle.getToolTipText());
-                toggle.doClick();
+                esc(control.stage()).click();
                 assertFalse(control.stageShown());
-                assertFalse(control.pictures());
-                assertEquals(PodcastControl.PICTURES_OFF, toggle.getToolTipText());
-                assertEquals(0, com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(PodcastControl.PICTURES_KEY,
-                        1));
+                control.pictureOf(1);
+                assertFalse(control.stageShown());
                 control.pictureOf(2);
-                assertFalse(control.stageShown());
-                toggle.doClick();
                 assertTrue(control.stageShown());
                 // Etwas anderes wird gezeigt: Wiedergabe und Bild enden.
                 control.summary(null);
                 assertFalse(control.stageShown());
             });
-        } finally {
-            com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PodcastControl.PICTURES_KEY, before);
         }
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.controls.EscCircle esc(java.awt.Container root) {
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof com.aresstack.spaceharvester.app.ui.controls.EscCircle circle) {
+                return circle;
+            }
+            if (child instanceof java.awt.Container inner) {
+                com.aresstack.spaceharvester.app.ui.controls.EscCircle found = esc(inner);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    @Test
+    void offersTheTranscriptAsSoonAsThePodcastHasSegments() throws Exception {
+        source.parts = List.of(new Podcast.Part(0, 0, "Startseite", "Was neu ist", null));
+        source.transcript = "# Neues bei Nordlicht\n\n## Startseite\n\nGastgeber: Willkommen.\n";
+        onEdt(() -> {
+            control = control();
+            control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+            // Ohne Podcast kein Knopf.
+            assertFalse(control.transcriptCopy().isVisible());
+            assertFalse(control.hasTranscript());
+            control.orb().doClick();
+            assertTrue(control.transcriptCopy().isVisible());
+            assertEquals(PodcastControl.COPY_TRANSCRIPT, control.transcriptCopy().getToolTipText());
+            List<String> read = new java.util.ArrayList<>();
+            control.transcript(read::add);
+            assertEquals(List.of(source.transcript), read);
+            // Etwas anderes wird gezeigt: der Knopf geht mit.
+            control.summary(null);
+            assertFalse(control.transcriptCopy().isVisible());
+        });
     }
 
     @Test
@@ -233,6 +261,12 @@ class PodcastControlTest {
         boolean failStart;
         int starts;
         List<Podcast.Part> parts = List.of();
+        String transcript;
+
+        @Override
+        public Optional<String> transcript(UpdateSummary summary) {
+            return Optional.ofNullable(transcript);
+        }
 
         @Override
         public boolean available() {
