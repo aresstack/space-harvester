@@ -1225,7 +1225,7 @@ class KnowledgeGraphTabTest {
         String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
         actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
                 part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(skipped), 0);
-        actions.graphNotes = List.of("DEV: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden");
+        actions.graphNotes = List.of("in ‚DEV‘: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden");
         tab.clickGenerate();
         runner.runAll();
 
@@ -1239,7 +1239,7 @@ class KnowledgeGraphTabTest {
 
         StatusNote end = tab.generateNoteForTests();
         String failed = "Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘";
-        String coverage = "DEV: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden";
+        String coverage = "in ‚DEV‘: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden";
         assertThat(end.tone()).as("die Zeile hat einen Fehler").isEqualTo(StatusNote.Tone.ERROR);
         assertThat(end.text()).as("die gescheiterte Stufe mit Kreispfeil gleich hinter dem Ergebnis, dann die Hinweise")
                 .startsWith("Wissensgraph mit Fehler beendet · " + failed + " · " + skipped).contains(coverage)

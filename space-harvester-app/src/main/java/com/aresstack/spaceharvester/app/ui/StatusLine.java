@@ -83,7 +83,7 @@ final class StatusLine extends JPanel {
             add(new Capped(west, 0.4) {
                 @Override
                 int cap() {
-                    return Math.max(super.cap(), leftRoom());
+                    return Math.min(Math.max(super.cap(), leftRoom()), copyrightRoom());
                 }
             }, BorderLayout.WEST);
         } else {
@@ -103,10 +103,18 @@ final class StatusLine extends JPanel {
                 left.add(new Capped(lead, LEAD_SHARE) {
                     @Override
                     int cap() {
-                        int spare = Math.max((int) (StatusLine.this.getWidth() * LEFT_SHARE), leftRoom())
-                                - (alertCap == null ? 0 : alertCap.getPreferredSize().width)
-                                - westCap.getPreferredSize().width;
-                        return Math.max(super.cap(), spare);
+                        int spare = limit() - westCap.getPreferredSize().width;
+                        return Math.min(Math.max(super.cap(), spare), limit());
+                    }
+
+                    /**
+                     * Nie breiter als der linke Teil neben dem Hinweis: Der Fehler mit Kreispfeil darf den Stand der
+                     * App verdrängen, aber nie die Mitte über ihren Anteil hinaus oder das Copyright.
+                     */
+                    @Override
+                    int limit() {
+                        return Math.max(0, leftBound()
+                                - (alertCap == null ? 0 : alertCap.getPreferredSize().width));
                     }
                 });
             }
@@ -117,7 +125,7 @@ final class StatusLine extends JPanel {
             add(new Capped(left, LEFT_SHARE) {
                 @Override
                 int cap() {
-                    return Math.max(super.cap(), leftRoom());
+                    return leftBound();
                 }
             }, BorderLayout.WEST);
         }
@@ -156,6 +164,26 @@ final class StatusLine extends JPanel {
             room -= center.getPreferredSize().width;
         }
         return Math.max(0, room);
+    }
+
+    /**
+     * Der Platz links bis an das Copyright, auch wenn die Mitte dafür schmaler als gewünscht wird: die Breite ohne
+     * Ränder, ohne das Copyright und ohne die Abstände. Breiter wird der linke Teil nie, sonst läge er über dem
+     * Copyright (und finge dessen Klicks ab). Ohne Breite (noch nicht ausgelegt) {@link Integer#MAX_VALUE}.
+     */
+    int copyrightRoom() {
+        if (getWidth() <= 0) {
+            return Integer.MAX_VALUE;
+        }
+        return Math.max(0, leftRoom() + (center != null && center.isVisible() ? center.getPreferredSize().width : 0));
+    }
+
+    /**
+     * Die größte Breite des linken Teils: was die Mitte frei lässt ({@link #leftRoom}), mindestens
+     * {@link #LEFT_SHARE} der Breite, nie über das Copyright hinaus ({@link #copyrightRoom}).
+     */
+    int leftBound() {
+        return Math.min(Math.max((int) (getWidth() * LEFT_SHARE), leftRoom()), copyrightRoom());
     }
 
     /** Ob gerade eine Füllung gezeichnet wird (läuft oder ist noch nicht ausgeblendet). */
@@ -293,7 +321,8 @@ final class StatusLine extends JPanel {
             java.awt.Dimension size = super.getPreferredSize();
             int cap = cap();
             if (cap > 0 && size.width > cap) {
-                size.width = Math.min(size.width, Math.max(cap, kept(this)));
+                // Über den Anteil hinaus nur für den Fehler mit Kreispfeil, und nie über die Grenze hinaus.
+                size.width = Math.min(size.width, Math.max(cap, Math.min(kept(this), limit())));
             }
             return size;
         }
@@ -304,8 +333,9 @@ final class StatusLine extends JPanel {
         }
 
         /**
-         * Was nie gekürzt wird: die Breite des Roten samt Kreispfeil jeder sichtbaren Meldung darin
-         * ({@link StatusLabel#keptWidth}); ein Fehler bleibt ganz, auch wenn der Anteil kleiner wäre.
+         * Was möglichst nicht gekürzt wird: die Breite des Fehlers samt Kreispfeil jeder sichtbaren Meldung darin
+         * ({@link StatusLabel#keptWidth}); er bleibt ganz, auch wenn der Anteil kleiner wäre, solange
+         * {@link #limit} reicht.
          */
         private int kept(java.awt.Container container) {
             int kept = 0;
@@ -325,6 +355,14 @@ final class StatusLine extends JPanel {
         /** Die größte Breite in Pixeln. */
         int cap() {
             return (int) (StatusLine.this.getWidth() * share);
+        }
+
+        /**
+         * Wie breit es für den Fehler mit Kreispfeil höchstens werden darf; ohne eigene Grenze nicht breiter als
+         * {@link #cap}, damit nichts die Mitte über ihren Anteil hinaus oder das Copyright verdrängt.
+         */
+        int limit() {
+            return cap();
         }
     }
 

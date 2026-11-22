@@ -52,8 +52,9 @@ public final class StatusLabel extends JLabel {
     private int fullSlot = -1;
     private int fullLink = -1;
     /**
-     * Bis wohin im {@link #full} nie gekürzt wird: das Ende des letzten roten Teils samt seinem Symbol (Fehler mit
-     * Kreispfeil bleiben immer ganz, gekürzt wird nur, was dahinter steht, etwa ein gelber Hinweis); 0 ohne Rot.
+     * Bis wohin im {@link #full} nie gekürzt wird: steht das Symbol (etwa der Kreispfeil „wiederholen“) hinter einem
+     * roten Teil, alles bis einschließlich seines Platzes (der Fehler mit Kreispfeil bleibt ganz, gekürzt wird nur, was
+     * dahinter steht, etwa ein gelber Hinweis); sonst 0, und die Meldung kürzt sich wie jede andere.
      */
     private int fullKeep;
     /** Ob das Link-Wort ganz zu sehen ist (nicht weggekürzt). */
@@ -288,7 +289,7 @@ public final class StatusLabel extends JLabel {
                 insets.top + insets.bottom + metrics.getHeight());
     }
 
-    /** Mit HTML so schmal, wie es geht, ohne Rot und sein Symbol zu kürzen ({@link #keptWidth}). */
+    /** Mit HTML so schmal, wie es geht, ohne den Fehler mit seinem Kreispfeil zu kürzen ({@link #keptWidth}). */
     @Override
     public java.awt.Dimension getMinimumSize() {
         if (full == null || isMinimumSizeSet()) {
@@ -298,9 +299,9 @@ public final class StatusLabel extends JLabel {
     }
 
     /**
-     * Die Breite, unter die die Meldung nie gekürzt wird: der Text bis zum Ende des letzten roten Teils samt seinem
-     * Symbol und, wenn danach noch etwas käme, „…“; 0, wenn die Meldung nichts Rotes hat (oder ohne Töne und Symbol
-     * ist; dann kürzt sie sich wie ein einfaches Label).
+     * Die Breite, unter die die Meldung nie gekürzt wird: der Text bis einschließlich des Symbols hinter einem roten
+     * Teil (der Fehler mit Kreispfeil) und, wenn danach noch etwas käme, „…“; 0 ohne ein solches Symbol (dann kürzt
+     * sie sich wie ein einfaches Label, auch wenn sie rot ist).
      */
     public int keptWidth() {
         if (full == null || fullKeep <= 0) {
@@ -313,39 +314,33 @@ public final class StatusLabel extends JLabel {
     }
 
     /**
-     * Das Ende des letzten roten Zeichens in {@code text} (Leerzeichen und Trenner „·“ zählen nicht, sie tragen den Ton
-     * der Zeile; das Link-Wort ist blau), im Text mit dem Platz des Symbols an {@code slot}; steht das Symbol direkt hinter oder in Rot, gehört
-     * sein Platz dazu.
+     * Das Ende des Platzes des Symbols, wenn es direkt hinter einem roten Teil steht (der Kreispfeil hinter einem
+     * gescheiterten Teil): Kopf und Fehler davor bleiben dann ganz. Sonst 0: Rot ohne Symbol, ein Symbol hinter Grauem
+     * (etwa das ✕ hinter dem Fortschritt) und alles hinter dem Symbol kürzen sich wie gewohnt, Gelbes zuerst, weil es
+     * dahinter steht.
      */
     private int keepEnd(String text, int slot) {
-        boolean[] red = new boolean[text.length()];
-        if (note.tone() == StatusNote.Tone.ERROR) {
-            java.util.Arrays.fill(red, true);
+        if (slot <= 0) {
+            return 0;
         }
+        int last = slot - 1;
+        while (last > 0 && (Character.isWhitespace(text.charAt(last)) || text.charAt(last) == '·')) {
+            last--;
+        }
+        StatusNote.Tone tone = note.tone();
         for (StatusNote.Mark mark : note.marks()) {
             int at = text.indexOf(mark.part());
-            for (int i = at; i >= 0 && i < at + mark.part().length(); i++) {
-                red[i] = mark.tone() == StatusNote.Tone.ERROR;
+            if (at >= 0 && last >= at && last < at + mark.part().length()) {
+                tone = mark.tone();
             }
         }
         if (note.hasLink()) {
-            // Das Link-Wort ist blau, nicht rot.
             int at = text.lastIndexOf(note.link());
-            for (int i = at; i >= 0 && i < at + note.link().length(); i++) {
-                red[i] = false;
+            if (at >= 0 && last >= at && last < at + note.link().length()) {
+                return 0;
             }
         }
-        int end = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (red[i] && !Character.isWhitespace(c) && c != '·') {
-                end = i + 1;
-            }
-        }
-        if (end > 0 && slot >= 0 && slot <= end) {
-            end += slotSpaces;
-        }
-        return end;
+        return tone == StatusNote.Tone.ERROR ? slot + slotSpaces : 0;
     }
 
     @Override

@@ -2514,9 +2514,9 @@ public final class Workspace {
     }
 
     /**
-     * Die gelben Hinweise aus den Ereignissen einer Gruppe von „Wissensgraph erzeugen“ (W5): die Abdeckung je Space,
-     * wenn etwas fehlt ({@code KnowledgeGraphJobs.COVERAGE}, nur Zahlen), angehaltene fremde Teile
-     * ({@code RESUME_BY_HAND}) und Seiten, die der KI-Analysator bewusst ausließ. Gelesen mit demselben Recht wie
+     * Die gelben Hinweise aus den Ereignissen einer Gruppe von „Wissensgraph erzeugen“ (W5): die Abdeckung je Space
+     * („in ‚DEV‘: 3 von 5 Seiten …“), wenn etwas fehlt ({@code KnowledgeGraphJobs.COVERAGE}, nur Zahlen), angehaltene
+     * fremde Teile ({@code RESUME_BY_HAND}) und Seiten, die der KI-Analysator bewusst ausließ. Gelesen mit demselben Recht wie
      * {@link #statementGroupOmitted}; nie auf dem EDT, ein schon gelöschter Teil zählt nicht.
      */
     public List<String> knowledgeGraphNotes(
@@ -2544,7 +2544,9 @@ public final class Workspace {
                         coverage = currentCoverage(part);
                     }
                     if (coverage != null) {
-                        notes.add((part.partitionKey() == null ? "" : part.partitionKey() + ": ") + coverage);
+                        // Der Ort ist der Space, wie bei „gescheitert in ‚DEV‘“ (UX 22.11.2026).
+                        notes.add((part.partitionKey() == null ? "" : "in ‚" + part.partitionKey() + "‘: ")
+                                + coverage);
                     }
                 } else if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.RESUME_BY_HAND
                         .equals(event.code())) {

@@ -119,13 +119,70 @@ class StatusLineTest {
             assertThat(lead.getText()).contains(failed).contains("&nbsp;").endsWith("…</nobr></html>");
             assertThat(lead.getToolTipText()).isEqualTo(text);
 
-            // Sehr schmal: das Gelbe ist weg, Rot samt Kreispfeil bleibt ganz.
+            // Knapp: das Gelbe wird gekürzt, der Fehler samt Kreispfeil bleibt ganz.
+            line.setSize(lead.keptWidth() + east.getPreferredSize().width + 200, 28);
+            layOut(line);
+            leadRight = SwingUtilities.convertRectangle(lead.getParent(), lead.getBounds(), line).x + lead.getWidth();
+            assertThat(lead.getWidth()).as("nie schmaler als der Fehler samt Kreispfeil").isGreaterThanOrEqualTo(
+                    lead.keptWidth());
+            assertThat(leadRight).as("links vom Copyright").isLessThanOrEqualTo(east.getX());
+            assertThat(lead.getText()).contains(failed).contains("&nbsp;").doesNotContain(skipped)
+                    .endsWith("…</nobr></html>");
+
+            // Sehr schmal: nie über das Copyright hinaus, es bleibt sichtbar und anklickbar.
             line.setSize(lead.keptWidth() / 2 + east.getPreferredSize().width, 28);
             layOut(line);
-            assertThat(lead.getWidth()).as("nie schmaler als Rot samt Kreispfeil").isGreaterThanOrEqualTo(
-                    lead.keptWidth());
-            assertThat(lead.getText()).contains(failed).contains("&nbsp;").doesNotContain("Bilder");
+            assertCopyrightFree(line, lead, east);
         });
+    }
+
+    /**
+     * Mehrere Fehler (je Stufe und Space) und Gelbes in einer Statuszeile in der kleinsten Breite des Hauptfensters:
+     * der linke Teil reicht nie über das Copyright, der erste Fehler samt Kreispfeil bleibt ganz, gekürzt wird hinten.
+     */
+    @Test
+    void manyFailuresNeverRunIntoTheCopyright() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            StatusLabel lead = new StatusLabel();
+            String failed = "Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘";
+            String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
+            String hidden = "3 Seiten ohne Zugriff ausgelassen";
+            String tail = "Einzelheiten unter Hintergrund";
+            String text = "Wissensgraph mit Fehler beendet · " + failed
+                    + " · Vorstufe „Aussagenanalyse“ gescheitert in ‚Plan‘"
+                    + " · Vorstufe „Aussagenanalyse“ gescheitert in ‚Ziel‘ · " + skipped + " · " + hidden + " · "
+                    + tail;
+            lead.show(new StatusNote(text, StatusNote.Tone.ERROR, "Hintergrund", () -> { },
+                    List.of(new StatusNote.Mark(skipped, StatusNote.Tone.WARNING),
+                            new StatusNote.Mark(tail, StatusNote.Tone.PLAIN)),
+                    new StatusNote.IconLink(Glyph.REFRESH, failed, "„Aussagenanalyse“ wiederholen", () -> { })));
+            JLabel east = new JLabel("© 2026 AresStack");
+            JPanel alert = new JPanel();
+            alert.setOpaque(false);
+            StatusLine line = new StatusLine(new JProgressBar(), alert, lead, new JLabel(" "), new JLabel(" "), east);
+            for (int width : new int[] {960, 1200}) {
+                line.setSize(width, 28);
+                layOut(line);
+                assertCopyrightFree(line, lead, east);
+                assertThat(lead.getText()).as("bei %d", width).contains(failed).contains("&nbsp;")
+                        .doesNotContain(hidden).endsWith("…</nobr></html>");
+                assertThat(lead.getToolTipText()).isEqualTo(text);
+            }
+        });
+    }
+
+    /** Der Stand links endet vor dem Copyright; ein Klick auf das Copyright trifft das Copyright. */
+    private static void assertCopyrightFree(StatusLine line, StatusLabel lead, JLabel east) {
+        int leadRight = SwingUtilities.convertRectangle(lead.getParent(), lead.getBounds(), line).x + lead.getWidth();
+        java.awt.Component west = ((java.awt.BorderLayout) line.getLayout()).getLayoutComponent(
+                java.awt.BorderLayout.WEST);
+        assertThat(leadRight).as("der Stand endet vor dem Copyright").isLessThanOrEqualTo(east.getX());
+        assertThat(west.getX() + west.getWidth()).as("der linke Teil endet vor dem Copyright")
+                .isLessThanOrEqualTo(east.getX());
+        assertThat(east.getX() + east.getWidth()).as("das Copyright ganz in der Zeile")
+                .isLessThanOrEqualTo(line.getWidth());
+        assertThat(SwingUtilities.getDeepestComponentAt(line, east.getX() + east.getWidth() / 2,
+                east.getY() + east.getHeight() / 2)).as("ein Klick auf das Copyright trifft es").isSameAs(east);
     }
 
     /** Braucht die Mitte (Stand der Aufträge) Platz, behält sie ihn; links gilt dann höchstens der alte Anteil. */

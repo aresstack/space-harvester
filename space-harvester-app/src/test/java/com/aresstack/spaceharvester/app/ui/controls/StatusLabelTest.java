@@ -221,6 +221,68 @@ class StatusLabelTest {
         });
     }
 
+    /**
+     * Ein roter Hinweis hinter einem gelben („ohne Zugriff ausgelassen“ steht im Plan hinten) schützt das Gelbe davor
+     * nicht: im Fortschritt (✕ hinter Grauem) ist nichts geschützt, am Ende nur der Fehler samt Kreispfeil; das Gelbe
+     * wird zuerst gekürzt.
+     */
+    @Test
+    void aLaterRedNoteDoesNotKeepTheYellowBeforeIt() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
+            String toLoad = "„Aussagenanalyse“: 4 Seiten erst laden – bleiben ausgelassen";
+            String hidden = "3 Seiten ohne Zugriff ausgelassen";
+            String progress = "Wissensgraph wird erzeugt · Aussagenanalyse: 1 von 4 Teilen fertig";
+            StatusLabel running = new StatusLabel();
+            running.show(new StatusNote(progress + " · " + skipped + " · " + toLoad + " · " + hidden,
+                    StatusNote.Tone.ERROR, null, null, java.util.List.of(new StatusNote.Mark(progress,
+                            StatusNote.Tone.PLAIN), new StatusNote.Mark(skipped, StatusNote.Tone.WARNING),
+                            new StatusNote.Mark(toLoad, StatusNote.Tone.WARNING)),
+                    new StatusNote.IconLink(com.aresstack.spaceharvester.app.ui.Glyph.CANCEL, progress, "Abbrechen",
+                            () -> { })));
+            assertThat(running.keptWidth()).as("✕ hinter Grauem: nichts geschützt").isZero();
+            running.setBounds(0, 0, 300, running.getPreferredSize().height);
+            assertThat(running.getText()).doesNotContain(skipped).doesNotContain(toLoad).endsWith("…</nobr></html>");
+
+            String failed = "Vorstufe „Aussagenanalyse“ gescheitert in ‚DEV‘";
+            String head = "Wissensgraph mit Fehler beendet · " + failed;
+            StatusLabel ended = new StatusLabel();
+            ended.show(new StatusNote(head + " · " + skipped + " · " + toLoad + " · " + hidden
+                    + " · Einzelheiten unter Hintergrund", StatusNote.Tone.ERROR, "Hintergrund", () -> { },
+                    java.util.List.of(new StatusNote.Mark(skipped, StatusNote.Tone.WARNING),
+                            new StatusNote.Mark(toLoad, StatusNote.Tone.WARNING),
+                            new StatusNote.Mark("Einzelheiten unter Hintergrund", StatusNote.Tone.PLAIN)),
+                    new StatusNote.IconLink(com.aresstack.spaceharvester.app.ui.Glyph.REFRESH, failed,
+                            "„Aussagenanalyse“ wiederholen", () -> { })));
+            FontMetrics metrics = ended.getFontMetrics(ended.getFont());
+            int kept = ended.keptWidth();
+            assertThat(kept).as("nur bis zum Kreispfeil").isLessThan(metrics.stringWidth(head + " · " + skipped))
+                    .isGreaterThan(metrics.stringWidth(head));
+            ended.setBounds(0, 0, kept + metrics.stringWidth("„Bilder beschreiben“"), ended.getPreferredSize().height);
+            assertThat(ended.getText()).contains(failed).contains("&nbsp;").doesNotContain(skipped)
+                    .doesNotContain(hidden).endsWith("…</nobr></html>");
+        });
+    }
+
+    /**
+     * Rote Meldungen ohne Kreispfeil (etwa „…; Einzelheiten unter Aufträge.“ in anderen Reitern) kürzen sich wie bisher
+     * mit „…“; geschützt ist nur der Fehler mit Kreispfeil.
+     */
+    @Test
+    void aRedNoteWithALinkButNoRetryStillShortens() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            StatusLabel label = new StatusLabel();
+            String text = "Analyse von Plan und Ziel gescheitert: der Nachtlauf brach ab; Einzelheiten unter Aufträge.";
+            label.show(new StatusNote(text, StatusNote.Tone.ERROR, "Aufträge", () -> { }));
+            assertThat(label.keptWidth()).isZero();
+            assertThat(label.getMinimumSize().width).isZero();
+            FontMetrics metrics = label.getFontMetrics(label.getFont());
+            label.setBounds(0, 0, metrics.stringWidth("Analyse von Plan und Ziel"), label.getPreferredSize().height);
+            assertThat(label.getText()).doesNotContain("Aufträge").endsWith("…</nobr></html>");
+            assertThat(label.getToolTipText()).isEqualTo(text);
+        });
+    }
+
     /** Was hinter einer gelben oder roten Meldung angehängt wird (etwa der Stand des Graphen), bleibt grau. */
     @Test
     void anAppendedStandStaysPlainBehindAColouredNote() {

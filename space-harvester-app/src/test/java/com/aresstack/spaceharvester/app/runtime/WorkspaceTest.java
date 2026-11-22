@@ -1126,6 +1126,26 @@ class WorkspaceTest {
                 .isZero();
     }
 
+    /**
+     * W5: Die Abdeckung je Space nennt den Space als Ort („in ‚DEV‘: …“, UX 22.11.2026), nicht als unerklärtes
+     * Kürzel davor.
+     */
+    @Test
+    void theCoverageNoteNamesTheSpaceAsPlace() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL)).state())
+                .isEqualTo(JobState.COMPLETED);
+        var pages = com.aresstack.spaceharvester.application.snapshot.PageSet.of(Map.of("wiki", List.of("100", "102")));
+        var group = workspace.startKnowledgeGraph(pages).group().orElseThrow();
+        var ended = finished(workspace, group.groupId());
+
+        List<String> notes = workspace.knowledgeGraphNotes(ended);
+        assertThat(notes).as("ohne Analyse fehlt die Abdeckung; der Space steht als Ort davor")
+                .anySatisfy(note -> assertThat(note).startsWith("in ‚DEV‘: ").contains("Seiten mit aktueller Analyse"))
+                .noneMatch(note -> note.startsWith("DEV: "));
+    }
+
     /** Wartet auf das Ende einer Hintergrundgruppe über die Meldung des Core. */
     private static com.aresstack.spaceharvester.application.background.BackgroundGroup finished(Workspace workspace,
             String groupId) throws Exception {
