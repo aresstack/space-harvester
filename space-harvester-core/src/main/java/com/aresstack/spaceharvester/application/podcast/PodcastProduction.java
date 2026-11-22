@@ -118,6 +118,48 @@ final class PodcastProduction {
     }
 
     /**
+     * Der gesprochene Text des Podcasts, soweit er schon geschrieben ist (Angelo 22.11.2026: zum Kopieren und
+     * Speichern, um ihn zu prüfen): der Titel, je Thema eine Überschrift und darunter die Beiträge in Sendereihenfolge,
+     * jeder mit seinem Sprecher. Leer, solange kein Abschnitt geschrieben ist.
+     */
+    Optional<String> transcript(String key) {
+        Optional<PodcastPlan> plan = store.plan(key);
+        if (plan.isEmpty()) {
+            return Optional.empty();
+        }
+        StringBuilder text = new StringBuilder();
+        boolean any = false;
+        for (int t = 0; t < plan.get().topics().size(); t++) {
+            int segments = store.segments(key, t).map(List::size).orElse(0);
+            StringBuilder topic = new StringBuilder();
+            for (int s = 0; s < segments; s++) {
+                for (Turn turn : store.script(key, t, s).orElse(List.of())) {
+                    if (!turn.text().isBlank()) {
+                        topic.append('\n').append(turn.speaker() == PodcastPlan.Speaker.HOST ? HOST_LABEL
+                                : COHOST_LABEL).append(": ").append(turn.text()).append('\n');
+                    }
+                }
+            }
+            if (!topic.isEmpty()) {
+                any = true;
+                String title = plan.get().topics().get(t).title();
+                text.append("\n## ").append(title == null || title.isBlank() ? "Thema " + (t + 1) : title.strip())
+                        .append('\n').append(topic);
+            }
+        }
+        if (!any) {
+            return Optional.empty();
+        }
+        String title = plan.get().title();
+        return Optional.of(((title == null || title.isBlank() ? "" : "# " + title.strip() + "\n") + text).strip()
+                + "\n");
+    }
+
+    /** Wie die beiden Stimmen im Transkript heißen. */
+    static final String HOST_LABEL = "Gastgeber";
+    static final String COHOST_LABEL = "Co-Host";
+
+    /**
      * Zieht einen Podcast zurück, dessen Auftrag noch läuft (eine beteiligte Seite verlor die KI-Freigabe, ADR 0028):
      * der Lauf legt nichts mehr ab, bricht ab und löscht beim Ende alles, was er schon hatte. Ohne laufenden Auftrag
      * löscht der Aufrufer die Ablage selbst.

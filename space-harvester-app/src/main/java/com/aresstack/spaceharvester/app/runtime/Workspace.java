@@ -3370,6 +3370,17 @@ public final class Workspace {
         return harvester.pagePodcasts().podcast(caller, sourceId, pageId);
     }
 
+    /** Der gesprochene Text des Podcasts einer Zusammenfassung, soweit geschrieben. Liest Dateien, nie auf dem EDT. */
+    public java.util.Optional<String> podcastTranscript(
+            com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().transcript(summary);
+    }
+
+    /** Der gesprochene Text des Erklär-Podcasts einer Seite, soweit geschrieben. Liest Dateien, nie auf dem EDT. */
+    public java.util.Optional<String> pagePodcastTranscript(String sourceId, String pageId) {
+        return harvester.pagePodcasts().transcript(caller, sourceId, pageId);
+    }
+
     /** Startet den Erklär-Podcast einer Seite oder setzt ihn fort. */
     public JobStatus startPagePodcast(String sourceId, String pageId) {
         return harvester.pagePodcasts().start(caller, sourceId, pageId);
