@@ -28,7 +28,7 @@ class PodcastControlTest {
 
     private final FakeSource source = new FakeSource();
     private final List<ApplicationEvent<?>> events = new ArrayList<>();
-    private PodcastControl control;
+    private PodcastControl<UpdateSummary> control;
 
     @Test
     void staysOffWithoutASummaryOrWithoutSpeech() throws Exception {
@@ -109,8 +109,8 @@ class PodcastControlTest {
         assertTrue(tracks.stream().allMatch(com.aresstack.spaceharvester.app.speech.PodcastPlayer.Track::startsTopic));
     }
 
-    private PodcastControl control() {
-        PodcastControl created = new PodcastControl(() -> source, new SourceUpdatesViewTest.SyncRunner());
+    private PodcastControl<UpdateSummary> control() {
+        PodcastControl<UpdateSummary> created = new PodcastControl<>(() -> source, new SourceUpdatesViewTest.SyncRunner());
         created.events(events::add);
         return created;
     }
@@ -138,7 +138,7 @@ class PodcastControlTest {
     }
 
     /** Ein Podcast, der erst entsteht: bis zum Start gibt es nichts, danach einen laufenden Auftrag ohne Audio. */
-    private static final class FakeSource implements PodcastControl.Source {
+    private static final class FakeSource implements PodcastControl.Source<UpdateSummary> {
 
         boolean available = true;
         boolean failStart;
@@ -147,6 +147,11 @@ class PodcastControlTest {
         @Override
         public boolean available() {
             return available;
+        }
+
+        @Override
+        public String key(UpdateSummary summary) {
+            return UpdatePodcasts.key(summary);
         }
 
         @Override

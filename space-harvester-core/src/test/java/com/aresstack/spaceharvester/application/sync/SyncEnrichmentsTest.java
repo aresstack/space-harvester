@@ -151,6 +151,8 @@ class SyncEnrichmentsTest {
         assertThat(enrichment.state()).isEqualTo(JobState.COMPLETED);
         assertThat(enrichment.sourceId()).isEqualTo("wiki");
         assertThat(enrichment.partitionKey()).isEqualTo("DOC");
+        assertThat(enrichment.parameter(EnrichmentsAfterSync.TASK_PARAMETER)).as("hält „Anhänge analysieren“ auf")
+                .isEqualTo(EnrichmentsAfterSync.TASK);
         // drei Seiten mal ein Prozessor
         assertThat(enrichment.progress().discovered()).isEqualTo(3);
         assertThat(enrichment.progress().processed()).isEqualTo(3);

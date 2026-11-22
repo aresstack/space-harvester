@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.application.changelog;
 
+import com.aresstack.spaceharvester.ai.AiServiceException;
+import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -17,6 +19,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import tools.jackson.databind.JsonNode;
@@ -46,6 +53,8 @@ final class UpdateSummarizer {
      * Auszug bis {@link #MAX_EXCERPT_CHARS}), und beim Zusammenführen Rahmen ohne Spaces plus zwei Teilantworten.
      */
     static final int MAX_REQUEST_CHARS = 32_000;
+    /** Kleinster Teil, wenn die Seiten auf gleichzeitige Anfragen verteilt werden; kleinere lohnen den Aufruf nicht. */
+    static final int MIN_PART_CHARS = 8_000;
     /** Zeichen der Unterschiede je Seite; darüber gekürzt und so gekennzeichnet. */
     static final int MAX_PAGE_DIFF_CHARS = 6_000;
     /** Zeichen des Auszugs aus dem Lesetext einer Seite ohne Unterschied, etwa einer neuen. */
@@ -120,7 +129,12 @@ final class UpdateSummarizer {
 
     /** Das Ergebnis, bereit zur Ablage. */
     record Result(String text, List<StoredSummary.Statement> statements, int unreadable,
-                  List<StoredSummary.InputPage> inputPages) {
+                  List<StoredSummary.InputPage> inputPages, int lost) {
+
+        Result(String text, List<StoredSummary.Statement> statements, int unreadable,
+               List<StoredSummary.InputPage> inputPages) {
+            this(text, statements, unreadable, inputPages, 0);
+        }
     }
 
     /** Eine Seite, wie sie an das Modell geht. */
@@ -175,7 +189,7 @@ final class UpdateSummarizer {
                 .thenComparing(material -> String.valueOf(material.page().title()), String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(material -> material.page().pageId()));
         ObjectNode frame = frame(update, spaces, spaceNames, withheld);
-        List<List<Material>> parts = parts(materials, frame.toString().length());
+        List<List<Material>> parts = parts(materials, frame.toString().length(), model.parallel());
         context.discovered(parts.size());
         context.phase(COMPONENT, PHASE);
         Map<String, String> pageSpaces = new LinkedHashMap<>();
@@ -186,13 +200,17 @@ final class UpdateSummarizer {
                 pageTitles.put(material.page().pageId(), cut(material.page().title(), MAX_COMBINE_TITLE_CHARS));
             }
         });
-        List<Answer> answers = new ArrayList<>();
-        for (List<Material> part : parts) {
-            context.checkpoint();
-            ObjectNode input = frame.deepCopy();
-            ArrayNode changes = input.putArray("aenderungen");
-            part.forEach(material -> changes.add(material.node()));
-            answers.add(ask(INSTRUCTIONS, input.toString(), ids(part), context));
+        // Die Teile sind unabhängig: bis zu ai.parallel zugleich (Angelo, 22.11.2026); nur das Zusammenführen wartet.
+        AtomicReference<RuntimeException> lost = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger lostPages = new java.util.concurrent.atomic.AtomicInteger();
+        // Hälften eines geteilten Teils bleiben eigene Antworten und gehen durch das begrenzte, stufenweise Zusammenführen.
+        List<Answer> answers = inParallel(parts, context, part -> part(part, frame, context, lost, lostPages)).stream()
+                .flatMap(List::stream)
+                .filter(partial -> !partial.text().isBlank() || !partial.statements().isEmpty()).toList();
+        if (answers.isEmpty()) {
+            // Kein Teil kam durch: der Auftrag scheitert mit dem echten Grund.
+            throw lost.get() != null ? lost.get()
+                    : new JobFailedException("SUMMARY_UNUSABLE", "Die Antwort des Modells war keine Zusammenfassung");
         }
         Answer answer = combine(answers, frame(update, Map.of(), spaceNames, withheld),
                 new Pages(pageSpaces, pageTitles), context);
@@ -200,7 +218,7 @@ final class UpdateSummarizer {
                 .map(material -> new StoredSummary.InputPage(material.page().spaceKey(), material.page().pageId(),
                         material.content()))
                 .toList();
-        return new Result(answer.text(), answer.statements(), withheld + unknown, inputs);
+        return new Result(answer.text(), answer.statements(), withheld + unknown, inputs, lostPages.get());
     }
 
     private static String spaceName(ReportedPage page, Map<String, String> spaceNames) {
@@ -232,13 +250,11 @@ final class UpdateSummarizer {
             }
             groups.add(group);
             context.discovered(groups.stream().filter(candidate -> candidate.size() > 1).count());
-            List<Answer> next = new ArrayList<>();
-            for (List<Answer> members : groups) {
+            // Die Gruppen einer Stufe sind unabhängig voneinander und laufen ebenfalls gleichzeitig.
+            level = inParallel(groups, context, members -> {
                 if (members.size() == 1) {
-                    next.add(members.getFirst());
-                    continue;
+                    return members.getFirst();
                 }
-                context.checkpoint();
                 ObjectNode input = frame.deepCopy();
                 ArrayNode summaries = input.putArray("teile");
                 List<StoredSummary.Statement> topics = new ArrayList<>();
@@ -246,12 +262,20 @@ final class UpdateSummarizer {
                     summaries.add(node(partial, topics.size(), pages));
                     topics.addAll(partial.statements());
                 }
-                String raw = model.complete(COMBINE, input.toString());
+                String raw;
+                try {
+                    raw = completeRetrying(COMBINE, input.toString(), context);
+                } catch (AiServiceException e) {
+                    if (!transientFailure(e)) {
+                        throw e;
+                    }
+                    // Auch nach Wiederholungen nicht durchgekommen: die Themen der Teile bleiben unverändert.
+                    raw = null;
+                    context.incomplete();
+                }
                 context.processed(1);
-                Answer merged = merge(raw, topics, members);
-                next.add(merged);
-            }
-            level = next;
+                return merge(raw, topics, members);
+            });
         }
         return level.getFirst();
     }
@@ -372,12 +396,27 @@ final class UpdateSummarizer {
 
     /** Teile bis zum Budget, in der Reihenfolge nach Space; jeder Teil hat mindestens eine Seite. */
     private static List<List<Material>> parts(List<Material> materials, int frameChars) {
+        return parts(materials, frameChars, 1);
+    }
+
+    /**
+     * Teilt die Seiten so, dass jede gleichzeitige Anfrage ({@code ai.parallel}) etwas zu tun hat: Statt wenige volle
+     * Teile nacheinander gibt es mindestens so viele kleinere Teile, wie zugleich laufen dürfen, jedes nicht kleiner
+     * als {@link #MIN_PART_CHARS} und nie größer als {@link #MAX_REQUEST_CHARS} (Angelo, 22.11.2026).
+     */
+    static List<List<Material>> parts(List<Material> materials, int frameChars, int parallel) {
+        long total = 0;
+        for (Material material : materials) {
+            total += material.node().toString().length() + 1;
+        }
+        long share = parallel <= 1 ? Long.MAX_VALUE : frameChars + (total + parallel - 1) / parallel;
+        int budget = (int) Math.min(MAX_REQUEST_CHARS, Math.max(MIN_PART_CHARS, share));
         List<List<Material>> parts = new ArrayList<>();
         List<Material> part = new ArrayList<>();
         int chars = frameChars;
         for (Material material : materials) {
             int size = material.node().toString().length() + 1;
-            if (!part.isEmpty() && chars + size > MAX_REQUEST_CHARS) {
+            if (!part.isEmpty() && chars + size > budget) {
                 parts.add(part);
                 part = new ArrayList<>();
                 chars = frameChars;
@@ -524,8 +563,119 @@ final class UpdateSummarizer {
     record Answer(String text, List<StoredSummary.Statement> statements) {
     }
 
+    /**
+     * Wendet {@code work} auf jeden Eintrag an, höchstens {@link SummaryModel#parallel()} zugleich, und liefert die
+     * Ergebnisse in der Reihenfolge der Einträge. Nach Abbruch beginnt kein neuer; der erste Fehler beendet den Lauf.
+     */
+    private <T, R> List<R> inParallel(List<T> items, JobContext context, Function<T, R> work) {
+        int parallel = Math.max(1, Math.min(model.parallel(), items.size()));
+        if (parallel == 1) {
+            List<R> results = new ArrayList<>(items.size());
+            for (T item : items) {
+                context.checkpoint();
+                results.add(work.apply(item));
+            }
+            return results;
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(parallel,
+                Thread.ofPlatform().daemon().name("update-summary-", 0).factory());
+        try {
+            List<Future<R>> running = new ArrayList<>(items.size());
+            for (T item : items) {
+                running.add(pool.submit(() -> {
+                    context.checkpoint();
+                    return work.apply(item);
+                }));
+            }
+            List<R> results = new ArrayList<>(items.size());
+            for (Future<R> future : running) {
+                try {
+                    results.add(future.get());
+                } catch (ExecutionException e) {
+                    running.forEach(other -> other.cancel(true));
+                    if (e.getCause() instanceof RuntimeException runtime) {
+                        throw runtime;
+                    }
+                    throw new IllegalStateException(e.getCause());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    running.forEach(other -> other.cancel(true));
+                    throw new JobCancelledException(context.jobId());
+                }
+            }
+            context.checkpoint();
+            return results;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * Ein Teil der Seiten. Kommt die Anfrage auch nach Wiederholungen nicht durch (etwa HTTP 504 eines Gateways bei
+     * großer Eingabe), wird der Teil halbiert und jede Hälfte für sich gefragt; eine einzelne Seite, die nie
+     * durchkommt, fehlt in der Zusammenfassung, der Auftrag gilt dann als unvollständig, scheitert aber nicht
+     * (Angelo, 22.11.2026: ein einzelner Fehler kippt nicht den Auftrag).
+     */
+    private List<Answer> part(List<Material> part, ObjectNode frame, JobContext context,
+                              AtomicReference<RuntimeException> lost, java.util.concurrent.atomic.AtomicInteger lostPages) {
+        context.checkpoint();
+        ObjectNode input = frame.deepCopy();
+        ArrayNode changes = input.putArray("aenderungen");
+        part.forEach(material -> changes.add(material.node()));
+        try {
+            return List.of(ask(INSTRUCTIONS, input.toString(), ids(part), context));
+        } catch (AiServiceException e) {
+            if (!transientFailure(e) || part.isEmpty()) {
+                throw e;
+            }
+            lost.set(e);
+            if (part.size() == 1) {
+                context.processed(1);
+                context.failed(1);
+                context.incomplete();
+                lostPages.incrementAndGet();
+                return List.of();
+            }
+            context.checkpoint();
+            context.discovered(1);
+            int half = part.size() / 2;
+            List<Answer> answers = new ArrayList<>(part(part.subList(0, half), frame, context, lost, lostPages));
+            answers.addAll(part(part.subList(half, part.size()), frame, context, lost, lostPages));
+            return answers;
+        }
+    }
+
+    /** Vorübergehend: keine Verbindung, überlastet oder 5xx (UNREACHABLE) und Fristen; nie Anmeldung oder Format. */
+    static boolean transientFailure(AiServiceException e) {
+        return e.reason() == AiServiceException.Reason.UNREACHABLE || e.reason() == AiServiceException.Reason.TIMEOUT;
+    }
+
+    /** Wartezeit vor der n-ten Wiederholung, verdoppelt je Versuch; in Tests kürzer. */
+    static long backoffMillis = 2_000;
+
+    /** Fragt das Modell und wiederholt vorübergehende Fehler bis zu {@link SummaryModel#retries()} Mal. */
+    private String completeRetrying(String instructions, String input, JobContext context) {
+        int retries = Math.max(0, model.retries());
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return model.complete(instructions, input);
+            } catch (AiServiceException e) {
+                if (!transientFailure(e) || attempt >= retries || context.cancelRequested()) {
+                    throw e;
+                }
+                try {
+                    Thread.sleep(Math.min(30_000, backoffMillis << attempt));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new JobCancelledException(context.jobId());
+                }
+                context.checkpoint();
+            }
+        }
+    }
+
     private Answer ask(String instructions, String input, Set<String> known, JobContext context) {
-        String raw = model.complete(instructions, input);
+        String raw = completeRetrying(instructions, input, context);
         context.processed(1);
         Answer answer = parse(raw, known);
         if (answer.text().isBlank() && answer.statements().isEmpty()) {

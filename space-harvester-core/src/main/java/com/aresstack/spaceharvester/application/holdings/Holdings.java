@@ -208,6 +208,7 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(selection, "selection");
         Map<String, Set<String>> pages = new LinkedHashMap<>();
+        Map<String, Set<String>> locked = new LinkedHashMap<>();
         Map<Space, SpaceSummary> spaces = new LinkedHashMap<>();
         HoldingCounts counts = HoldingCounts.ZERO;
         boolean complete = true;
@@ -220,11 +221,15 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
                 for (Map.Entry<String, HoldingState> page : resolved.pages().entrySet()) {
                     if (selected.add(page.getKey())) {
                         counts = counts.plus(HoldingCounts.of(page.getValue()));
+                        if (page.getValue() == HoldingState.LOCKED) {
+                            locked.computeIfAbsent(root.sourceId(), id -> new HashSet<>()).add(page.getKey());
+                        }
                     }
                 }
             }
         }
-        return new PageSelection(PageSet.of(pages), counts, List.copyOf(spaces.values()), complete);
+        return new PageSelection(PageSet.of(pages), counts, List.copyOf(spaces.values()), complete,
+                PageSet.of(locked));
     }
 
     /**
@@ -233,7 +238,8 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
      * fragen damit beim Anzeigen über ihre Unterseiten ab; nichts wird in die Elternseite kopiert, eine Änderung einer
      * Unterseite ist beim nächsten Abfragen von selbst dabei. Leer, wenn die Seite keine sichtbaren Unterseiten hat oder
      * nicht im Katalog steht; {@link PageSelection#complete()} sagt wie bei {@link #resolve}, ob der Teilbaum
-     * lückenlos ist. Die Zähler zählen nur die Nachfahren.
+     * lückenlos ist. Die Zähler zählen nur die Nachfahren; {@link PageSelection#locked()} nennt die gesperrten unter
+     * ihnen.
      *
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wie {@link #resolve}
      * @throws UnknownSourceException wie {@link #resolve}
@@ -243,15 +249,20 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         Selection.Root root = Selection.Root.subtree(sourceId, spaceKey, pageId);
         Resolved resolved = resolve(caller, root.sourceId(), root.spaceKey(), root.pageId());
         Set<String> below = new HashSet<>();
+        Set<String> locked = new HashSet<>();
         HoldingCounts counts = HoldingCounts.ZERO;
         for (Map.Entry<String, HoldingState> page : resolved.pages().entrySet()) {
             if (!page.getKey().equals(pageId) && below.add(page.getKey())) {
                 counts = counts.plus(HoldingCounts.of(page.getValue()));
+                if (page.getValue() == HoldingState.LOCKED) {
+                    locked.add(page.getKey());
+                }
             }
         }
         Map<String, Set<String>> pages = below.isEmpty() ? Map.of() : Map.of(sourceId, below);
         return new PageSelection(PageSet.of(pages), counts, List.of(resolved.summary()),
-                resolved.summary().inventoried() && resolved.found());
+                resolved.summary().inventoried() && resolved.found(),
+                PageSet.of(locked.isEmpty() ? Map.of() : Map.of(sourceId, locked)));
     }
 
     /**

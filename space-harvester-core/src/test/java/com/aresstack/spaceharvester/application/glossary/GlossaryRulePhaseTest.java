@@ -376,6 +376,108 @@ class GlossaryRulePhaseTest {
     }
 
     @Test
+    void aClickStartsAtOnceWhileTheAutomaticRunHoldsABackgroundSlot() {
+        // Aufträge laufen hier nie zu Ende: Was einen Platz hat, bleibt RUNNING.
+        Jobs parked = new Jobs(new InMemoryJobStore(), task -> { }, new JobLimits(2, 10, Duration.ofHours(1)),
+                Clock.fixed(T0, ZoneOffset.UTC));
+        GlossaryClassification clicked = new GlossaryClassification(catalog, new InMemoryEnrichmentStore(),
+                new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), key -> Optional.empty(),
+                key -> Optional.<PageText>empty(), glossary, model, ResolutionCache.inMemory(), parked,
+                new TermProcessor().version(), GlossaryClassification.Budget.DEFAULT, caller -> List.copyOf(pages),
+                () -> settings, Clock.fixed(T0, ZoneOffset.UTC));
+        clicked.background(new com.aresstack.spaceharvester.application.background.BackgroundJobs(parked, "app"),
+                EDITOR, () -> true);
+        var automatic = clicked.automatic("wiki").orElseThrow();
+        assertThat(automatic.parts()).extracting(part -> parked.status(part.id()).state())
+                .contains(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING);
+
+        JobStatus click = clicked.start(EDITOR, "wiki", "FOE").getFirst();
+
+        assertThat(parked.status(click.id()).state()).as("ein Klick wartet nie hinter Hintergrund")
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING);
+        assertThat(click.type()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.GLOSSARY);
+        assertThat(click.parameters()).containsEntry(Jobs.INTERACTIVE, "true");
+    }
+
+    @Test
+    void aClickReplacesAWaitingAutomaticPartOfItsSpaceButNeverInterruptsARunningOne() {
+        // Aufträge laufen hier nie zu Ende: Ein Hintergrundplatz ist belegt, der zweite Space wartet.
+        Jobs parked = new Jobs(new InMemoryJobStore(), task -> { }, new JobLimits(2, 10, Duration.ofHours(1)),
+                Clock.fixed(T0, ZoneOffset.UTC));
+        GlossaryClassification clicked = new GlossaryClassification(catalog, new InMemoryEnrichmentStore(),
+                new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW), key -> Optional.empty(),
+                key -> Optional.<PageText>empty(), glossary, model, ResolutionCache.inMemory(), parked,
+                new TermProcessor().version(), GlossaryClassification.Budget.DEFAULT, caller -> List.copyOf(pages),
+                () -> settings, Clock.fixed(T0, ZoneOffset.UTC));
+        clicked.background(new com.aresstack.spaceharvester.application.background.BackgroundJobs(parked, "app"),
+                EDITOR, () -> true);
+        var automatic = clicked.automatic("wiki").orElseThrow();
+        JobStatus running = automatic.parts().stream().filter(part -> parked.status(part.id()).state()
+                == com.aresstack.spaceharvester.application.jobs.JobState.RUNNING).findFirst().orElseThrow();
+        JobStatus waiting = automatic.parts().stream().filter(part -> parked.status(part.id()).state()
+                == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED).findFirst().orElseThrow();
+
+        clicked.start(EDITOR, "wiki", waiting.partitionKey());
+        clicked.start(EDITOR, "wiki", running.partitionKey());
+
+        assertThat(parked.status(waiting.id()).state()).as("durch den Klick ersetzt")
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED);
+        assertThat(parked.events(waiting.id())).anySatisfy(event -> {
+            assertThat(event.severity()).isEqualTo(JobEvent.Severity.WARNING);
+            assertThat(event.message()).isEqualTo(GlossaryClassification.REPLACED_BY_CLICK);
+        });
+        assertThat(parked.status(running.id()).state()).as("ein laufender Teil wird nie unterbrochen")
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.RUNNING);
+        assertThat(parked.status(running.id()).cancelRequested()).isFalse();
+    }
+
+    @Test
+    void aSourceRunAndASpaceRunOfTheSameSourceNeverOverlapButTwoSpacesDo() throws Exception {
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            // Zwei Spaces derselben Quelle: beide halten zugleich ihre Sperre.
+            java.util.concurrent.CyclicBarrier both = new java.util.concurrent.CyclicBarrier(2);
+            Runnable meet = () -> {
+                try {
+                    both.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            };
+            var foe = pool.submit(() -> classification.exclusive(new RelationScope("wiki", "FOE"), meet));
+            var it = pool.submit(() -> classification.exclusive(new RelationScope("wiki", "IT"), meet));
+            foe.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            it.get(10, java.util.concurrent.TimeUnit.SECONDS);
+
+            // Quellenlauf gegen Space-Lauf: Der zweite beginnt erst, wenn der erste fertig ist, in beide Richtungen.
+            for (RelationScope first : List.of(WIKI, new RelationScope("wiki", "FOE"))) {
+                RelationScope second = first.spaceKey() == null ? new RelationScope("wiki", "FOE") : WIKI;
+                java.util.concurrent.CountDownLatch holding = new java.util.concurrent.CountDownLatch(1);
+                java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+                java.util.concurrent.atomic.AtomicBoolean entered = new java.util.concurrent.atomic.AtomicBoolean();
+                var holder = pool.submit(() -> classification.exclusive(first, () -> {
+                    holding.countDown();
+                    try {
+                        release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }));
+                assertThat(holding.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var other = pool.submit(() -> classification.exclusive(second, () -> entered.set(true)));
+                Thread.sleep(200);
+                assertThat(entered).as(first + " schließt " + second + " aus").isFalse();
+                release.countDown();
+                holder.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                other.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(entered).isTrue();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void wordListsFromTheSettingsChangeTheClassification() {
         settings = settings.with(GlossaryRuleSettings.Kind.TECHNICAL_HEADS, List.of(), List.of("datenbank"))
                 .with(GlossaryRuleSettings.Kind.ROLE_HEADS, List.of("bewilligungsstelle"), List.of());

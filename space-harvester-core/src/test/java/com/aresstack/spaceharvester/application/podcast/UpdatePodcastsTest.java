@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.podcast;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.changelog.SummaryPage;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
@@ -64,6 +65,29 @@ class UpdatePodcastsTest {
         assertThat(podcast.parts()).allSatisfy(part -> assertThat(Files.size(part.audio())).isGreaterThan(44));
         assertThat(speech.voices).containsOnly("Jana", "Thomas");
         assertThat(notified.get()).isGreaterThanOrEqualTo(1 + 1 + 3 + 4);
+    }
+
+    @Test
+    void everyTopicGetsAPictureBesideTheAudio() throws Exception {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        AtomicInteger drawn = new AtomicInteger();
+        podcasts.pictures(DiagramComposerTest.model(DiagramComposerTest.PLAN, DiagramComposerTest.ICON, drawn),
+                PodcastPictures.PageImageSource.NONE);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+
+        assertThat(jobs.status(podcasts.start(caller, summary).id()).state()).isEqualTo(JobState.COMPLETED);
+
+        Podcast podcast = podcasts.podcast(summary).orElseThrow();
+        assertThat(podcast.parts()).allSatisfy(part -> {
+            assertThat(part.picture()).isNotNull();
+            assertThat(part.picture().vector()).isTrue();
+            assertThat(part.picture().file()).exists();
+        });
+        // je Thema ein Plan und drei Symbole
+        assertThat(drawn.get()).isEqualTo(3 * 4);
+        int before = drawn.get();
+        podcasts.start(caller, summary);
+        assertThat(drawn.get()).as("ein neuer Lauf nimmt die abgelegten Bilder").isEqualTo(before);
     }
 
     @Test
@@ -165,24 +189,46 @@ class UpdatePodcastsTest {
     }
 
     @Test
-    void takesTitleAndDetailsOfEachTopicAsMaterial() {
+    void tellsEachTopicWithItsDetailsAndWhereItStands() {
         UpdateSummary summary = new UpdateSummary("wiki", "u-1", "DEMO", "Kurzer Überblick.", List.of(
-                new SummaryStatement("Neue Startseite", List.of(), "Startseite",
+                new SummaryStatement("Neue Startseite", List.of(new SummaryPage("p-1", "Start", "DEMO"),
+                        new SummaryPage("p-2", "Glossar", "OPS")), "Startseite",
                         "Die Startseite zeigt jetzt die Ansprechstellen je Team und ein Glossar."),
-                new SummaryStatement("Altes Format ohne Details", List.of())),
+                new SummaryStatement("Altes Format ohne Details. Noch ein Satz.", List.of())),
                 "test", Instant.parse("2026-11-21T17:00:00Z"), 0, false);
 
-        PodcastWriter.Material material = UpdatePodcasts.material(summary);
+        PodcastWriter.Material material = UpdatePodcasts.material(summary, page -> "auf der Seite „" + page.title()
+                + "“");
 
-        assertThat(material.statements()).containsExactly(
-                "Startseite: Die Startseite zeigt jetzt die Ansprechstellen je Team und ein Glossar.",
-                "Altes Format ohne Details");
+        assertThat(material.stories()).extracting(PodcastWriter.Story::title)
+                .containsExactly("Startseite", "Altes Format ohne Details");
+        assertThat(material.stories().getFirst().text()).startsWith("Die Startseite zeigt");
+        assertThat(material.stories().getFirst().places()).containsExactly("auf der Seite „Start“",
+                "auf der Seite „Glossar“");
         assertThat(material.scope()).isEqualTo("Space DEMO");
+    }
+
+    @Test
+    void theScriptOfATopicCarriesItsContentAndPlaceButNotTheOverview() throws Exception {
+        FakeModel model = new FakeModel();
+        UpdateSummary summary = new UpdateSummary("wiki", "u-1", "DEMO", "Hundert neue Seiten im Basissystem.",
+                List.of(new SummaryStatement("Neue Startseite", List.of(new SummaryPage("p-1", "Start", "DEMO")),
+                        "Startseite", "Die Startseite zeigt jetzt die Ansprechstellen je Team.")),
+                "test", Instant.parse("2026-11-21T17:00:00Z"), 0, false);
+
+        podcasts(model, new FakeSpeech(voice -> false)).start(caller, summary);
+
+        List<String> scripts = model.inputs.stream().filter(input -> input.contains("Schreibe genau diese Beiträge")
+                && input.contains("Thema 2 \"Neue Startseite\"")).toList();
+        assertThat(scripts).isNotEmpty().allSatisfy(input -> assertThat(input)
+                .contains("Ansprechstellen je Team", "auf der Seite „Start“, unter Handbuch › Betrieb")
+                .doesNotContain("Hundert neue Seiten"));
     }
 
     private UpdatePodcasts podcasts(StepModel model, PodcastSpeech speech) {
         return new UpdatePodcasts(jobs, model, speech, new PodcastStore(root.resolve("podcasts")),
-                PodcastVoices.bundled(), () -> 2, (context, attempt) -> { });
+                PodcastVoices.bundled(), (who, source, page) -> List.of("Handbuch", "Betrieb"), () -> 2,
+                (context, attempt) -> { });
     }
 
     private UpdateSummary summary(String text) {
@@ -194,6 +240,7 @@ class UpdatePodcastsTest {
     private static final class FakeModel implements StepModel {
 
         final AtomicInteger calls = new AtomicInteger();
+        final List<String> inputs = Collections.synchronizedList(new ArrayList<>());
 
         @Override
         public String version() {
@@ -208,10 +255,11 @@ class UpdatePodcastsTest {
         @Override
         public String complete(String instructions, String input) {
             calls.incrementAndGet();
-            if (input.contains("Plane die Folge grob")) {
+            inputs.add(input);
+            if (input.contains("Plane eine Folge")) {
                 return "Klar! {\"title\":\"Neues bei Nordlicht\",\"topics\":[{\"title\":\"Einstieg\",\"angle\":\"Worum "
                         + "es geht\",\"energy\":0.7,\"points\":[]},{\"title\":\"Neue Startseite\",\"angle\":\"Die "
-                        + "Startseite wurde neu gebaut\",\"energy\":0.6,\"points\":[\"neue Startseite\"]},"
+                        + "Startseite wurde neu gebaut\",\"energy\":0.6,\"stories\":[1]},"
                         + "{\"title\":\"Abschluss\",\"energy\":0.3,\"points\":[]}]}";
             }
             if (input.contains("Plane Thema 2")) {

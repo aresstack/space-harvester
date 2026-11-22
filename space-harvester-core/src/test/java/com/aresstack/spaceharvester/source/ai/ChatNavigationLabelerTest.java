@@ -43,11 +43,12 @@ class ChatNavigationLabelerTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
             requests.incrementAndGet();
-            exchange.getRequestBody().readAllBytes();
-            byte[] bytes = (status == 200
-                    ? "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"1: Belege\"}}]}"
-                    : "{\"error\":{\"message\":\"nein\"}}").getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            boolean stream = ChatSse.wanted(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            String answer = "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"1: Belege\"}}]}";
+            byte[] bytes = (status != 200 ? "{\"error\":{\"message\":\"nein\"}}"
+                    : stream ? ChatSse.of(answer) : answer).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", stream && status == 200 ? "text/event-stream"
+                    : "application/json");
             exchange.sendResponseHeaders(status, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();

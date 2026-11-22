@@ -362,6 +362,7 @@ public final class Harvester implements AutoCloseable {
     private final ChangeLog changeLog;
     /** Die Update-Zusammenfassung als Podcast (Angelo 21.11.2026). */
     private final com.aresstack.spaceharvester.application.podcast.UpdatePodcasts podcasts;
+    private final com.aresstack.spaceharvester.application.podcast.PagePodcasts pagePodcasts;
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
     private final ChangeEvents changeEvents;
@@ -500,6 +501,9 @@ public final class Harvester implements AutoCloseable {
             this.jobs = new Jobs(jobStore, eventStore, catalog::route, executor, builder.jobLimits,
                     Clock.systemUTC());
             opened.add(jobs);
+            // Hintergrundaufträge (ADR 0025 Nachtrag): was die App von sich aus anstößt, nachrangig und nach einem
+            // Neustart fortgesetzt. Früh, damit sich jeder Baustein mit seiner Art anmelden kann.
+            this.backgroundJobs = new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, OWNER);
 
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
@@ -798,6 +802,8 @@ public final class Harvester implements AutoCloseable {
             synonymDiscovery.pageReleases(pageReleases::contains);
             // D4.4: Der automatische Lauf gehört wie die übrigen Hintergrundaufträge dem Core.
             synonymDiscovery.owner(OWNER);
+            // Der automatische Lauf ist ein Hintergrundauftrag (Angelo 21.11.2026: nichts läuft unsichtbar).
+            synonymDiscovery.background(backgroundJobs);
             // SY1: Neue KI-Freigaben von Seiten lösen den automatischen Lauf ihrer Quelle aus.
             opened.add(pageReleases.subscribe(synonymDiscovery::releasesChanged));
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
@@ -822,8 +828,6 @@ public final class Harvester implements AutoCloseable {
                     null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
             opened.add(scheduler);
             this.acquisition = scheduler;
-            // Hintergrundaufträge: was die App von sich aus anstößt, nachrangig und nach einem Neustart fortgesetzt.
-            this.backgroundJobs = new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, OWNER);
             this.pageLoads = new com.aresstack.spaceharvester.application.background.PageLoads(backgroundJobs,
                     scheduler, AccessContext.technicalClient(OWNER),
                     key -> texts.cachedVersion(key, cache::findHeader, cache::find).isPresent(),
@@ -951,10 +955,15 @@ public final class Harvester implements AutoCloseable {
             EnrichmentSettings startEnrichment = builder.enrichment;
             DocumentEnrichments documentEnrichments = new DocumentEnrichments(enrichments, jobs,
                     () -> this.settings != null ? this.settings.enrichment() : startEnrichment);
+            // Als Hintergrundauftrag „Anhänge analysieren“, sichtbar im Reiter „Hintergrund“ (Angelo 21.11.2026): je
+            // Space höchstens ein Teil, Arbeit aus den Anhängen der Seiten des Space, Start erst nach dem Abgleich.
+            documentEnrichments.background(backgroundJobs, (sourceId, spaceKey) -> spaceKey == null ? List.of()
+                    : cache.knownPages(sourceId, spaceKey).keySet());
+            opened.add(documentEnrichments);
             sectionTexts.set(documentEnrichments);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
-                    // SY1: danach der automatische Synonymlauf der Quelle als eigener Auftrag.
+                    // SY1: danach der automatische Synonymlauf der Quelle als Hintergrundauftrag.
                     // B1: danach die automatische Bildbeschreibung der Quelle als eigener Auftrag (Standard aus).
                     // K4: danach die Fachbegriffe der Quelle als Hintergrundauftrag (Standard aus).
                     List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId),
@@ -1005,6 +1014,57 @@ public final class Harvester implements AutoCloseable {
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(
                             builder.dataDirectory.resolve("podcasts")),
                     com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled(),
+                    changeLog::ancestors,
+                    () -> {
+                        com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
+                        return current == null ? 1 : current.parallel();
+                    });
+            // Erklär-Podcast einer Seite (Angelo 21.11.2026): derselbe Ablauf, Eingabe die Seite und ihre Unterseiten;
+            // an das Modell nur lokal liegende, lesbare Seiten mit KI-Freigabe (ADR 0028), wie das Wissen des Chats.
+            PageQueries podcastPages = this.pages;
+            AiRelease podcastRelease = this.aiRelease;
+            PageTextProjector podcastTexts = this.pageTexts;
+            LucenePageCache podcastCache = this.pageCache;
+            ChangeLog podcastChangeLog = this.changeLog;
+            this.pagePodcasts = new com.aresstack.spaceharvester.application.podcast.PagePodcasts(jobs,
+                    new ChatStepModel(com.aresstack.spaceharvester.application.podcast.PagePodcasts.VERSION,
+                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                    new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
+                            builder.userAgent, sentences),
+                    new com.aresstack.spaceharvester.application.podcast.PodcastStore(
+                            builder.dataDirectory.resolve("podcasts")),
+                    com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled(),
+                    new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Pages() {
+                        @Override
+                        public Optional<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Page> page(
+                                AccessContext who, String sourceId, String pageId) {
+                            try {
+                                return podcastPages.cached(who, sourceId, pageId)
+                                        .map(com.aresstack.spaceharvester.application.query.DeliveredPage::snapshot)
+                                        .filter(snapshot -> podcastRelease.mayProcess(snapshot.key()))
+                                        .flatMap(snapshot -> podcastTexts.project(snapshot).map(text ->
+                                                new com.aresstack.spaceharvester.application.podcast.PagePodcasts
+                                                        .Page(pageId, snapshot.metadata().title(),
+                                                        snapshot.spaceKey(), text)));
+                            } catch (RuntimeException e) {
+                                return Optional.empty();
+                            }
+                        }
+
+                        @Override
+                        public List<String> children(AccessContext who, String sourceId, String pageId) {
+                            return podcastCache.children(new PageKey(sourceId, pageId), 200).stream()
+                                    .map(com.aresstack.spaceharvester.persistence.lucene.CachedPageHeader::header)
+                                    .sorted(java.util.Comparator.comparing(header -> header.metadata().title(),
+                                            String.CASE_INSENSITIVE_ORDER))
+                                    .map(header -> header.metadata().pageId()).toList();
+                        }
+
+                        @Override
+                        public List<String> ancestors(AccessContext who, String sourceId, String pageId) {
+                            return podcastChangeLog.ancestors(who, sourceId, pageId);
+                        }
+                    },
                     () -> {
                         com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
                         return current == null ? 1 : current.parallel();
@@ -1072,6 +1132,17 @@ public final class Harvester implements AutoCloseable {
             assets.durations(durations);
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
+            // Bilder im Podcast (Angelo 21.11.2026): je Thema ein Seitenbild nach seiner Beschreibung, sonst ein
+            // Schaubild aus Teilen. Gezeichnet wird über ai.chat-model; mit der Einstellung „Bildgenerierung“ (Modell
+            // und Tokenlänge) wechselt das Zeichenmodell dorthin.
+            com.aresstack.spaceharvester.application.podcast.StoredPageImages podcastImages =
+                    new com.aresstack.spaceharvester.application.podcast.StoredPageImages(cache::find,
+                            this.imageAnalysis, assets);
+            ChatStepModel podcastDrawer = new ChatStepModel("podcast-pictures",
+                    () -> liveAi ? this.settings.ai() : startAi, () -> null, catalog, trustBundles,
+                    builder.userAgent);
+            this.podcasts.pictures(podcastDrawer, podcastImages);
+            this.pagePodcasts.pictures(podcastDrawer, podcastImages);
             // B1: Bilder automatisch beschreiben nach dem Abgleich und nach neuer KI-Freigabe, nur mit images.automatic.
             com.aresstack.spaceharvester.application.configuration.ImageSettings startImages = builder.images;
             // D2: jeder Lauf „Bilder beschreiben“ über das Auftragssystem, im Hintergrund ein Unterauftrag je Space.
@@ -1145,6 +1216,8 @@ public final class Harvester implements AutoCloseable {
                 this.glossaryClassification.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // ADR 0030, Abschnitt 5: Zusammenfassungen, in die eine solche Seite einging, entfallen.
                 summaries.withdrawn(pages.stream().map(PageSnapshot::key).toList());
+                // Erklär-Podcasts, in die eine solche Seite einging, entfallen (ADR 0028).
+                this.pagePodcasts.withdrawn(pages.stream().map(PageSnapshot::key).toList());
                 // Podcasts, deren Zusammenfassung dabei wegfiel, entfallen mit ihr.
                 podcastsAfterWithdrawal.prune(meta -> cache.summary(meta.sourceId(), meta.updateId(), meta.spaceKey())
                         .map(stored -> com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.key(
@@ -1297,8 +1370,10 @@ public final class Harvester implements AutoCloseable {
             // D1 (Nachtrag ADR 0025): Dienst-Planer mit den Beschreibungen der Analysedienste; die Aussagenanalyse
             // arbeitet schon (D3), die übrigen Arten baut B1.
             var imagesStart = startImages;
+            TermSettings plannerTerms = builder.terms;
             this.servicePlanner = services(backgroundJobs, () -> (this.settings != null ? this.settings.images()
-                    : imagesStart).automatic(), access,
+                    : imagesStart).automatic(), () -> (this.settings != null ? this.settings.terms()
+                    : plannerTerms).glossaryAutomatic(), access,
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
                     this.statementAnalysisJobs);
             this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
@@ -2139,12 +2214,13 @@ public final class Harvester implements AutoCloseable {
 
     /**
      * Fachsicht des Wissensgraphen (Paket W1): bestätigte Fachbegriffe und Synonyme als Knoten, Verben der Aussagen als
-     * Kanten; liest nur, rechnet nie.
+     * Kanten; liest nur. Das Vertrauen je Beleg (W2) kommt aus dem Abgleich der Analysatoren (K2).
      */
     public com.aresstack.spaceharvester.application.knowledge.DomainTermGraph domainTermGraph() {
         return new com.aresstack.spaceharvester.application.knowledge.DomainTermGraph(knowledgeGraph,
                 new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations),
-                this::statementAnalyzerChoice);
+                this::statementAnalyzerChoice,
+                com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Comparison.of(analyzerComparison));
     }
 
     /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */
@@ -2356,7 +2432,8 @@ public final class Harvester implements AutoCloseable {
      */
     static com.aresstack.spaceharvester.application.background.services.ServicePlanner services(
             com.aresstack.spaceharvester.application.background.BackgroundJobs background,
-            java.util.function.BooleanSupplier imagesAutomatic, AccessGuard access,
+            java.util.function.BooleanSupplier imagesAutomatic, java.util.function.BooleanSupplier glossaryAutomatic,
+            AccessGuard access,
             java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf,
             StatementAnalysisJobs statements) {
         var planner = new com.aresstack.spaceharvester.application.background.services.ServicePlanner(background,
@@ -2401,7 +2478,10 @@ public final class Harvester implements AutoCloseable {
                 (caller, pages) -> missingPerSpace(statements.missing(caller, pages), spaceOf),
                 statements::plannerParameters));
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
-                "glossary", "Glossar", automatic, List.of("index"), null, nothing));
+                "glossary", "Glossar", () -> glossaryAutomatic.getAsBoolean()
+                ? com.aresstack.spaceharvester.application.background.services.ServiceStart.AUTOMATIC
+                : com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL,
+                List.of("index"), null, nothing));
         planner.register(new com.aresstack.spaceharvester.application.background.services.AnalysisService(
                 "knowledge-graph", "Wissensgraph", manual, List.of("statements", "images"), null, nothing));
         return planner;
@@ -2579,6 +2659,11 @@ public final class Harvester implements AutoCloseable {
     /** Änderungsprotokoll und Updates je Quelle (ADR 0030), mit den Rechten des Aufrufers je Seite. */
     public ChangeLog changeLog() {
         return changeLog;
+    }
+
+    /** Der Erklär-Podcast einer Seite (Angelo 21.11.2026). */
+    public com.aresstack.spaceharvester.application.podcast.PagePodcasts pagePodcasts() {
+        return pagePodcasts;
     }
 
     /** Die Update-Zusammenfassung als Podcast (Angelo 21.11.2026). */

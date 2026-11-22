@@ -13,14 +13,17 @@ import com.aresstack.spaceharvester.application.observe.Subscription;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 /**
  * Hintergrundaufträge (Angelo 21.11.2026, ADR 0025 Nachtrag „Hintergrundaufträge“): was die App von sich aus anstößt,
@@ -31,8 +34,9 @@ import java.util.function.Consumer;
  *
  * <p>Die Arbeit eines Unterauftrags baut seine {@link BackgroundKind} allein aus seinen Angaben. Darum setzt
  * {@link #resumeInterrupted()} nach einem Neustart jeden Unterauftrag, den das Beenden des Dienstes oder eine verlorene
- * Verbindung unterbrochen hat, von selbst im selben Eintrag fort. Was der Benutzer angehalten oder abgebrochen hat,
- * läuft nie von selbst weiter.
+ * Verbindung unterbrochen hat, von selbst im selben Eintrag fort, für eine Art mit höchstens einem offenen Teil je
+ * Quelle und Space ({@link BackgroundKind#exclusive()}) nur den jüngsten. Was der Benutzer angehalten oder abgebrochen
+ * hat, läuft nie von selbst weiter.
  *
  * <p>Beobachter ({@link #watch}) erfahren jede Änderung einer Gruppe über die Auftragsmeldungen (ADR 0027), ohne
  * Abfragen.
@@ -61,6 +65,8 @@ public final class BackgroundJobs {
     private final Jobs jobs;
     private final String owner;
     private final Map<String, BackgroundKind> kinds = new ConcurrentHashMap<>();
+    /** Je Art ein Riegel, damit zwei gleichzeitige Anlässe nicht beide einen Teil starten. */
+    private final Map<String, Object> startLocks = new ConcurrentHashMap<>();
 
     /**
      * @param owner Auftraggeber aller Hintergrundaufträge, in der Desktop-App {@code Harvester.OWNER}, damit die
@@ -78,8 +84,7 @@ public final class BackgroundJobs {
                     || !INTERRUPTED.equals(predecessor.error().code())) {
                 return false;
             }
-            BackgroundKind kind = predecessor.type() == JobType.BACKGROUND ? kinds.get(predecessor.parameter(KIND))
-                    : null;
+            BackgroundKind kind = predecessor.type() == JobType.BACKGROUND ? kindOfPart(predecessor) : null;
             return kind != null && kind.autoResume().getAsBoolean();
         });
     }
@@ -228,13 +233,116 @@ public final class BackgroundJobs {
         return UUID.randomUUID().toString();
     }
 
-    /** Ein wartender oder laufender Unterauftrag dieser Art für Quelle und Space, gegen doppelte Anläufe. */
+    /**
+     * Ein wartender oder laufender Unterauftrag dieser Art für Quelle und Space, gegen doppelte Anläufe. Ein angehaltener
+     * zählt nicht: Der Planer ({@code ServicePlanner}) nimmt einen solchen Teil als Vorgänger, und ein angehaltener
+     * Teil einer fremden Gruppe ließe das neue Ziel warten, bis jemand jene fortsetzt (Nachprüfung #1052).
+     */
     public Optional<JobStatus> running(String kind, String sourceId, String partitionKey) {
+        return find(kind, sourceId, partitionKey, state -> !state.terminal());
+    }
+
+    /**
+     * Ein wartender, angehaltener oder laufender Unterauftrag dieser Art für Quelle und Space ({@link #isOpen}): ein
+     * Teil, der seine Arbeit noch tut oder beim Fortsetzen tun wird. Für {@link #startUnlessRunning} und Arten mit
+     * höchstens einem offenen Teil ({@link BackgroundKind#exclusive()}), Abnahme #1052.
+     */
+    public Optional<JobStatus> open(String kind, String sourceId, String partitionKey) {
+        return find(kind, sourceId, partitionKey, BackgroundJobs::isOpen);
+    }
+
+    /** Wartend, angehalten oder laufend: ein Teil, der seine Arbeit noch tut oder beim Fortsetzen tun wird. */
+    private static boolean isOpen(JobState state) {
+        return !state.terminal() || state == JobState.PAUSED;
+    }
+
+    /** Ein anderer offener Teil dieser Art für Quelle und Space als {@code jobId} ({@link #isOpen}). */
+    private Optional<JobStatus> openOther(String kind, String sourceId, String partitionKey, String jobId) {
         return all().stream()
-                .filter(status -> !status.state().terminal() && kind.equals(status.parameter(KIND))
+                .filter(status -> !status.id().equals(jobId) && isOpen(status.state())
+                        && kind.equals(status.parameter(KIND)) && Objects.equals(sourceId, status.sourceId())
+                        && Objects.equals(partitionKey, status.partitionKey()))
+                .findFirst();
+    }
+
+    /**
+     * Ein Unterauftrag dieser Art für Quelle und Space, der noch auf seinen Start wartet ({@link JobState#QUEUED}) oder
+     * angehalten ist ({@link JobState#PAUSED}, Abnahme #1052): Ein angehaltener Teil hält neue Anlässe zurück, ihre
+     * Arbeit läuft beim Fortsetzen, denn die Art baut sie dann frisch aus Angaben und Bestand. Ein laufender zählt
+     * nicht, denn er hat seine Arbeit schon bestimmt.
+     */
+    public Optional<JobStatus> waiting(String kind, String sourceId, String partitionKey) {
+        return find(kind, sourceId, partitionKey, state -> state == JobState.QUEUED || state == JobState.PAUSED);
+    }
+
+    private Optional<JobStatus> find(String kind, String sourceId, String partitionKey,
+                                     Predicate<JobState> state) {
+        return all().stream()
+                .filter(status -> state.test(status.state()) && kind.equals(status.parameter(KIND))
                         && sourceId.equals(status.sourceId())
                         && Objects.equals(partitionKey, status.partitionKey()))
                 .findFirst();
+    }
+
+    /**
+     * Startet eine Gruppe mit einem Teil, außer es wartet schon ein Teil derselben Art für Quelle und Space oder ist
+     * angehalten ({@link #waiting}): der nimmt dann mit, was der neue Anlass bringt. Für Arten, die ihre Arbeit erst
+     * beim Start aus dem Bestand bestimmen, etwa „Synonyme erkennen“ je Quelle; ein laufender Teil hält einen neuen
+     * Anlass nicht auf, denn was sich währenddessen ändert, sieht er nicht mehr.
+     *
+     * @return die neue Gruppe, oder leer, wenn schon ein Teil wartet oder angehalten ist
+     */
+    public Optional<BackgroundGroup> startUnlessWaiting(String kind, String title, BackgroundPart.Draft part) {
+        Objects.requireNonNull(part, "part");
+        synchronized (startLock(kind)) {
+            if (waiting(kind, part.sourceId(), part.partitionKey()).isPresent()) {
+                return Optional.empty();
+            }
+            return Optional.of(start(kind, title, List.of(part)));
+        }
+    }
+
+    /**
+     * Startet eine Gruppe mit einem Teil, außer ein Teil derselben Art für Quelle und Space wartet, ist angehalten oder
+     * läuft schon ({@link #open}): Für Arten, deren laufender Teil sich weitere Arbeit selbst abholt.
+     *
+     * @return die neue Gruppe, oder leer, wenn schon ein Teil wartet, angehalten ist oder läuft
+     */
+    public Optional<BackgroundGroup> startUnlessRunning(String kind, String title, BackgroundPart.Draft part) {
+        Objects.requireNonNull(part, "part");
+        synchronized (startLock(kind)) {
+            if (open(kind, part.sourceId(), part.partitionKey()).isPresent()) {
+                return Optional.empty();
+            }
+            return Optional.of(start(kind, title, List.of(part)));
+        }
+    }
+
+    private Object startLock(String kind) {
+        return startLocks.computeIfAbsent(Objects.requireNonNull(kind, "kind"), ignored -> new Object());
+    }
+
+    /**
+     * Bricht die noch wartenden Unteraufträge dieser Art für Quelle und Space ab, mit gelbem Grund (etwa „durch Klick
+     * ersetzt“); laufende bleiben unberührt ({@link Jobs#cancelIfWaiting}).
+     *
+     * @param partitionKey ein Space, oder {@code null} für alle Spaces der Quelle
+     * @return die abgebrochenen Unteraufträge
+     */
+    public List<JobStatus> cancelWaiting(String kind, String sourceId, String partitionKey, String reason) {
+        List<JobStatus> cancelled = new ArrayList<>();
+        all().stream()
+                .filter(status -> status.state() == JobState.QUEUED && kind.equals(status.parameter(KIND))
+                        && sourceId.equals(status.sourceId())
+                        && (partitionKey == null || partitionKey.equals(status.partitionKey())))
+                .forEach(status -> {
+                    try {
+                        jobs.cancelIfWaiting(status.id(), owner, reason).ifPresent(cancelled::add);
+                    } catch (UnknownJobException e) {
+                        // inzwischen gelöscht
+                    }
+                });
+        return cancelled;
     }
 
     /** Die Gruppe, solange noch einer ihrer Unteraufträge in der Liste steht. */
@@ -297,11 +405,14 @@ public final class BackgroundJobs {
 
     /**
      * Setzt einen Unterauftrag im selben Eintrag fort, mit frisch gebauter Arbeit ({@link BackgroundPart#resumed()}),
-     * auch nach einem Neustart; der Weg für „Fortsetzen“ in der Auftragsliste.
+     * auch nach einem Neustart; der Weg für „Fortsetzen“ in der Auftragsliste. Für eine Art mit höchstens einem offenen
+     * Teil je Quelle und Space ({@link BackgroundKind#exclusive()}) nur, solange kein anderer wartet, angehalten ist oder
+     * läuft (Abnahme #1052), geprüft unter dem Startriegel der Art.
      *
-     * @throws UnknownJobException      wenn es den Auftrag nicht gibt
-     * @throws JobNotResumableException wenn er kein Hintergrundauftrag ist, seine Art fehlt, er wartet, läuft oder
-     *                                  fertig ist
+     * @throws UnknownJobException          wenn es den Auftrag nicht gibt
+     * @throws BackgroundPartOpenException  wenn für eine solche Art schon ein anderer Teil offen ist („läuft schon“)
+     * @throws JobNotResumableException     wenn er kein Hintergrundauftrag ist, seine Art fehlt, er wartet, läuft oder
+     *                                      fertig ist
      */
     public JobStatus resumeJob(String jobId) {
         JobStatus current = jobs.status(jobId, owner);
@@ -313,32 +424,79 @@ public final class BackgroundJobs {
                     : "der Auftrag wartet oder läuft noch");
         }
         String kind = current.parameter(KIND);
-        if (kind == null || !kinds.containsKey(kind)) {
+        BackgroundKind registered = kind == null ? null : kinds.get(kind);
+        if (registered == null) {
             throw new JobNotResumableException(jobId, "die Art „" + kind + "“ ist nicht angemeldet");
         }
-        return jobs.rerun(jobId, owner, task(true, false));
+        if (!registered.exclusive()) {
+            return jobs.rerun(jobId, owner, task(true, false));
+        }
+        synchronized (startLock(kind)) {
+            Optional<JobStatus> open = openOther(kind, current.sourceId(), current.partitionKey(), jobId);
+            if (open.isPresent()) {
+                throw new BackgroundPartOpenException(jobId, open.get().id());
+            }
+            return jobs.rerun(jobId, owner, task(true, false));
+        }
     }
+
+    /** Art, Quelle und Space eines Teils, für den jüngsten unterbrochenen je Space. */
+    private record PartKey(String kind, String sourceId, String partitionKey) {
+
+        static PartKey of(JobStatus status) {
+            return new PartKey(status.parameter(KIND), status.sourceId(), status.partitionKey());
+        }
+    }
+
+    /** Info an einem älteren unterbrochenen Teil, den {@link #resumeInterrupted} abschließt. */
+    public static final String SUPERSEDED_BY_YOUNGER = "Durch jüngeren Teil ersetzt: er nimmt die Arbeit mit";
+    /** Info an unterbrochenen Teilen, deren Arbeit ein anderer offener Teil mitnimmt. */
+    public static final String SUPERSEDED_BY_OPEN = "Durch einen anderen offenen Teil ersetzt: er nimmt die Arbeit mit";
 
     /**
      * Setzt nach dem Start des Dienstes jeden Unterauftrag fort, den das Beenden des Dienstes ({@value #INTERRUPTED})
      * oder eine verlorene Verbindung unterbrochen hat, sofern seine Art angemeldet ist und
      * {@link BackgroundKind#autoResume()} zustimmt. Vom Benutzer Angehaltenes oder Abgebrochenes bleibt stehen.
+     * <p>
+     * Für eine Art mit höchstens einem offenen Teil je Quelle und Space ({@link BackgroundKind#exclusive()}) nur den
+     * jüngsten unterbrochenen (Abnahme #1052): Seine Arbeit kommt aus dem Bestand und deckt die der älteren mit ab. Die
+     * älteren schließt er als abgebrochen ab ({@link Jobs#retire}, Info {@value #SUPERSEDED_BY_YOUNGER}), sonst liefen
+     * sie nach einem späteren Neustart von selbst los, auch wenn der Benutzer den jüngeren inzwischen abgebrochen hat.
+     * Ist schon ein anderer Teil offen, nimmt der die Arbeit mit; dann werden alle unterbrochenen so abgeschlossen
+     * ({@value #SUPERSEDED_BY_OPEN}).
      *
      * @return die fortgesetzten Aufträge
      */
     public List<JobStatus> resumeInterrupted() {
         List<JobStatus> resumed = new ArrayList<>();
         // Älteste zuerst: Vorgänger einer Kette sind wieder offen, bevor ihre Nachfolger fortsetzen (D1).
-        for (JobStatus status : all().stream().sorted(Comparator.comparing(JobStatus::createdAt)).toList()) {
+        List<JobStatus> oldestFirst = all().stream().sorted(Comparator.comparing(JobStatus::createdAt)).toList();
+        Map<PartKey, List<JobStatus>> exclusiveParts = new HashMap<>();
+        for (JobStatus status : oldestFirst) {
+            BackgroundKind kind = kindOfPart(status);
+            if (interrupted(status) && kind != null && kind.exclusive()) {
+                exclusiveParts.computeIfAbsent(PartKey.of(status), ignored -> new ArrayList<>()).add(status);
+            }
+        }
+        for (JobStatus status : oldestFirst) {
             if (!interrupted(status)) {
                 continue;
             }
-            BackgroundKind kind = kinds.get(status.parameter(KIND));
+            BackgroundKind kind = kindOfPart(status);
             if (kind == null || !kind.autoResume().getAsBoolean()) {
                 continue;
             }
             try {
-                resumed.add(jobs.rerun(status.id(), owner, task(true, true)));
+                if (!kind.exclusive()) {
+                    resumed.add(jobs.rerun(status.id(), owner, task(true, true)));
+                    continue;
+                }
+                List<JobStatus> siblings = exclusiveParts.get(PartKey.of(status));
+                if (!status.id().equals(siblings.getLast().id())) {
+                    // Der jüngste derselben Art, Quelle und Space entscheidet über die älteren.
+                    continue;
+                }
+                resumeYoungest(kind, siblings).ifPresent(resumed::add);
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.WARNING, "Hintergrundauftrag {0} nach dem Neustart nicht fortgesetzt "
                         + "({1})", status.id(), e.getClass().getName());
@@ -349,6 +507,45 @@ public final class BackgroundJobs {
                     resumed.size());
         }
         return resumed;
+    }
+
+    /**
+     * Für {@link #resumeInterrupted}: setzt den jüngsten der unterbrochenen Teile einer exklusiven Art für Quelle und
+     * Space fort und schließt die älteren ab; ist ein anderer Teil offen, schließt es alle ab.
+     *
+     * @param siblings die unterbrochenen Teile, älteste zuerst
+     */
+    private Optional<JobStatus> resumeYoungest(BackgroundKind kind, List<JobStatus> siblings) {
+        JobStatus youngest = siblings.getLast();
+        List<JobStatus> older = siblings.subList(0, siblings.size() - 1);
+        Set<String> interruptedIds = new HashSet<>();
+        siblings.forEach(sibling -> interruptedIds.add(sibling.id()));
+        synchronized (startLock(kind.id())) {
+            Optional<JobStatus> open = all().stream()
+                    .filter(other -> !interruptedIds.contains(other.id()) && isOpen(other.state())
+                            && kind.id().equals(other.parameter(KIND))
+                            && Objects.equals(youngest.sourceId(), other.sourceId())
+                            && Objects.equals(youngest.partitionKey(), other.partitionKey()))
+                    .findFirst();
+            if (open.isPresent()) {
+                LOG.log(System.Logger.Level.INFO, "Hintergrundaufträge {0} bleiben stehen: Teil {1} derselben Art für "
+                        + "Quelle und Space ist offen", interruptedIds, open.get().id());
+                siblings.forEach(sibling -> retire(sibling, SUPERSEDED_BY_OPEN));
+                return Optional.empty();
+            }
+            JobStatus resumed = jobs.rerun(youngest.id(), owner, task(true, true));
+            older.forEach(sibling -> retire(sibling, SUPERSEDED_BY_YOUNGER));
+            return Optional.of(resumed);
+        }
+    }
+
+    private void retire(JobStatus part, String reason) {
+        try {
+            jobs.retire(part.id(), owner, reason);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Hintergrundauftrag {0} nicht abgeschlossen ({1})", part.id(),
+                    e.getClass().getName());
+        }
     }
 
     /** Vom Beenden des Dienstes oder von einer verlorenen Verbindung unterbrochen, nicht vom Benutzer. */
@@ -441,6 +638,12 @@ public final class BackgroundJobs {
     private static String groupOf(JobStatus status) {
         String group = status.parameter(GROUP);
         return group != null ? group : status.id();
+    }
+
+    /** Die angemeldete Art eines Teils, {@code null} ohne Angabe oder für eine nicht angemeldete. */
+    private BackgroundKind kindOfPart(JobStatus status) {
+        String kind = status.parameter(KIND);
+        return kind == null ? null : kinds.get(kind);
     }
 
     private BackgroundKind requireKind(String kind) {
