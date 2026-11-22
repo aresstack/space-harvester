@@ -1552,9 +1552,10 @@ public final class Harvester implements AutoCloseable {
                     sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
             this.sourceManagement = new SourceManagement(catalog, jobs, purge);
             jobActions.purge(purge);
-            // Quellenübergreifende Aufträge lassen eine Quelle aus, solange ihr Löschen offen ist (Abnahme Punkt 3).
-            access.withhold(sourceId -> Jobs.ALL_SOURCES.equals(Jobs.runningSource())
-                    && purge.openWithdrawal(sourceId) != null);
+            // Quellenübergreifende Aufträge lassen die Quellen aus, deren Löschen bei ihrem Start offen war (Abnahme
+            // #1090): festgehalten am Auftrag, auch auf den Threads, die seine Arbeit startet.
+            jobs.openWithdrawals(purge::openWithdrawals);
+            access.withhold(sourceId -> Jobs.withheldSources().contains(sourceId));
             try {
                 // Fundstelle 22: Löschen entfernter oder umgestellter Quellen setzt nach dem Neustart fort.
                 sourceManagement.resumeWithdrawals();

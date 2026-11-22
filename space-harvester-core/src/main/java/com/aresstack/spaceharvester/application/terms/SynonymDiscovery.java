@@ -421,7 +421,9 @@ public class SynonymDiscovery {
 
     private List<String> sourceIds(SynonymScope scope) {
         if (scope.global()) {
-            return catalog.all().stream().map(HarvestSource::id).toList();
+            // Im Auftrag ohne die Quellen, deren Daten bei seinem Start gelöscht wurden (Abnahme #1090).
+            java.util.Set<String> withheld = com.aresstack.spaceharvester.application.jobs.Jobs.withheldSources();
+            return catalog.all().stream().map(HarvestSource::id).filter(id -> !withheld.contains(id)).toList();
         }
         return catalog.find(scope.sourceId()).map(source -> List.of(source.id())).orElse(List.of());
     }

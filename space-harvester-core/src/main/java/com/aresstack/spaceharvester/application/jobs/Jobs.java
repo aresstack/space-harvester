@@ -278,8 +278,14 @@ public class Jobs implements AutoCloseable {
      * erneuter Lauf, Hintergrund); offene Löschungen lassen sich nicht löschen.
      */
     private volatile java.util.function.Function<String, String> sourceHold = sourceId -> null;
-    /** Die Quelle des Auftrags, dessen Arbeit gerade auf diesem Thread läuft ({@link #runningSource()}). */
-    private static final ThreadLocal<String> RUNNING_SOURCE = new ThreadLocal<>();
+    /** Die Quellen mit offenem Löschen, gefragt beim Start eines quellenübergreifenden Auftrags. */
+    private volatile java.util.function.Supplier<Set<String>> openWithdrawals = Set::of;
+    /**
+     * Die Quellen, die der quellenübergreifende Auftrag auslässt, dessen Arbeit gerade läuft ({@link #withheldSources}):
+     * beim Start festgehalten; Threads, die seine Arbeit startet, bekommen sie ausdrücklich mit
+     * ({@link #carryingWithheld}), nie geerbt, damit kein anderer Thread sie behält.
+     */
+    private static final ThreadLocal<Set<String>> WITHHELD = new ThreadLocal<>();
 
     /**
      * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)} für einen Klick des Benutzers, etwa
@@ -526,9 +532,22 @@ public class Jobs implements AutoCloseable {
 
     /** Unter dem Sperrobjekt: ob noch ein Auftrag dieser Art für diesen Eigentümer Platz hat. */
     private void requireCapacity(JobType type, String owner) {
+        requireCapacity(type, owner, null, null);
+    }
+
+    /**
+     * Wie {@link #requireCapacity(JobType, String)} für einen bestehenden Eintrag: Fortsetzen und Selbstheilung eines
+     * offenen Löschens der Daten einer Quelle sind angenommene Arbeit und umgehen die Grenze (Abnahme #1090); sonst
+     * warteten es und die hinter ihm gehaltenen Aufträge gegenseitig aufeinander.
+     */
+    private void requireCapacity(JobType type, String owner, String jobId, String sourceId) {
+        if (jobId != null && jobId.equals(holder(sourceId))) {
+            return;
+        }
         if (type.background()) {
             // Eigener Vorrat ohne Grenze je Auslöser: der Hintergrund nimmt nie einem Benutzer den Platz.
-            if (open.values().stream().filter(other -> other.type.background()).count() >= BACKGROUND_CAPACITY) {
+            if (open.values().stream().filter(other -> other.type.background() && !heldQuietly(other)).count()
+                    >= BACKGROUND_CAPACITY) {
                 throw new JobCapacityExceededException(BACKGROUND_CAPACITY);
             }
             return;
@@ -538,14 +557,16 @@ public class Jobs implements AutoCloseable {
         // daher einen eigenen Vorrat derselben Größe und eine eigene Grenze je Eigentümer: zwei je erlaubtem
         // Auslöser, sonst nähme etwa maxOpenPerOwner=1 nie einen an, und ein Client belegt den Vorrat nicht allein.
         // Wer auf seinen Vorgänger wartet (submitAwaiting), belegt nichts: höchstens zwei je angenommenem Export.
+        // Wer hinter einem offenen Löschen gehalten wird (Jobs#sourceHold), belegt ebenfalls nichts.
         if (open.values().stream().filter(other -> other.awaiting == null && !other.type.background()
-                && other.type.followUp() == type.followUp()).count() >= capacity) {
+                && other.type.followUp() == type.followUp() && !heldQuietly(other)).count() >= capacity) {
             throw new JobCapacityExceededException(capacity);
         }
         int perOwner = type.followUp() ? 2 * limits.maxOpenPerOwner() : limits.maxOpenPerOwner();
         if (owner != null && open.values().stream()
                 .filter(other -> other.awaiting == null && !other.type.background()
-                        && other.type.followUp() == type.followUp() && owner.equals(other.owner))
+                        && other.type.followUp() == type.followUp() && owner.equals(other.owner)
+                        && !heldQuietly(other))
                 .count() >= perOwner) {
             throw JobCapacityExceededException.perOwner(perOwner);
         }
@@ -916,7 +937,7 @@ public class Jobs implements AutoCloseable {
             if (backgroundStopped && job.type.background()) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
             }
-            requireCapacity(job.type, job.owner);
+            requireCapacity(job.type, job.owner, job.id, job.sourceId);
             JobTask task = renew == null ? job.task : Objects.requireNonNull(renew.apply(job.task), "task");
             stopped.remove(jobId);
             job.task = task;
@@ -988,7 +1009,7 @@ public class Jobs implements AutoCloseable {
                 job.rootTitle = stored.rootTitle();
                 job.sequence.set(events.events(jobId).stream().mapToLong(JobEvent::sequence).max().orElse(0));
             }
-            requireCapacity(job.type, job.owner);
+            requireCapacity(job.type, job.owner, job.id, job.sourceId);
             stopped.remove(jobId);
             job.task = task;
             if (renewed != null) {
@@ -1031,7 +1052,7 @@ public class Jobs implements AutoCloseable {
                 throw new JobNotResumableException(jobId, "der Auftrag wartet oder läuft noch");
             }
             requireNotLingering(jobId);
-            requireCapacity(current.type(), current.owner());
+            requireCapacity(current.type(), current.owner(), jobId, current.sourceId());
         }
     }
 
@@ -1347,9 +1368,11 @@ public class Jobs implements AutoCloseable {
             throws InterruptedException {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(timeout, "timeout");
-        // Quellenübergreifende Aufträge (ALL_SOURCES) können Daten jeder Quelle enthalten: sie enden mit.
+        // Quellenübergreifende Aufträge (ALL_SOURCES) können Daten jeder Quelle enthalten: sie enden mit. Das offene
+        // Löschen der Quelle bleibt (Abnahme #1090), etwa beim Abschalten; sonst blieben ihre alten Daten liegen.
+        String withdrawal = holder(sourceId);
         java.util.function.Predicate<Job> affected = job -> (job.sourceId.equals(sourceId)
-                || ALL_SOURCES.equals(job.sourceId)) && !job.id.equals(exceptJobId)
+                || ALL_SOURCES.equals(job.sourceId)) && !job.id.equals(exceptJobId) && !job.id.equals(withdrawal)
                 && (createdBefore == null || job.createdAt.isBefore(createdBefore));
         List<String> ids;
         synchronized (lock) {
@@ -1893,13 +1916,23 @@ public class Jobs implements AutoCloseable {
      * Unter dem Sperrobjekt: ob das offene Löschen der Daten seiner Quelle den Auftrag hält ({@link #sourceHold});
      * meldet „wartet auf …“ einmal je Sperre.
      */
-    private boolean heldBySource(Job job) {
-        String holder;
+    /** Der Auftrag, der die Daten der Quelle gerade löscht ({@link #sourceHold}), sonst {@code null}. */
+    private String holder(String sourceId) {
         try {
-            holder = job.sourceId == null ? null : sourceHold.apply(job.sourceId);
+            return sourceId == null ? null : sourceHold.apply(sourceId);
         } catch (RuntimeException e) {
-            holder = null;
+            return null;
         }
+    }
+
+    /** Ob der Auftrag hinter einem offenen Löschen seiner Quelle wartet; ohne Ereignis. */
+    private boolean heldQuietly(Job job) {
+        String holder = holder(job.sourceId);
+        return holder != null && !holder.equals(job.id);
+    }
+
+    private boolean heldBySource(Job job) {
+        String holder = holder(job.sourceId);
         boolean held = holder != null && !holder.equals(job.id);
         if (held && !job.withdrawalNoted) {
             job.withdrawalNoted = true;
@@ -1929,11 +1962,47 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
-     * Die Quelle des Auftrags, dessen Arbeit gerade auf diesem Thread läuft, etwa {@link #ALL_SOURCES}; sonst
-     * {@code null}. Damit lassen quellenübergreifende Aufträge eine Quelle aus, deren Daten gerade gelöscht werden.
+     * Bindet an, welche Quellen gerade ein offenes Löschen haben (Fundstelle 22): Ein quellenübergreifender Auftrag
+     * ({@link #ALL_SOURCES}) lässt sie aus, festgehalten bei seinem Start ({@link #withheldSources}). Beginnt danach
+     * ein Löschen, bricht es ihn ohnehin ab.
      */
-    public static String runningSource() {
-        return RUNNING_SOURCE.get();
+    public void openWithdrawals(java.util.function.Supplier<Set<String>> open) {
+        this.openWithdrawals = Objects.requireNonNull(open, "open");
+    }
+
+    /**
+     * Die Quellen, die der quellenübergreifende Auftrag auslässt, dessen Arbeit gerade auf diesem Thread läuft: die mit
+     * offenem Löschen bei seinem Start (Abnahme #1090). Leer außerhalb eines solchen Auftrags.
+     */
+    public static Set<String> withheldSources() {
+        Set<String> withheld = WITHHELD.get();
+        return withheld == null ? Set.of() : withheld;
+    }
+
+    /**
+     * Gibt Arbeit, die ein Auftrag auf einem anderen Thread startet (etwa die parallelen Prüfungen der Suche), die
+     * ausgelassenen Quellen dieses Auftrags mit ({@link #withheldSources}).
+     */
+    public static <T> java.util.concurrent.Callable<T> carryingWithheld(java.util.concurrent.Callable<T> work) {
+        Objects.requireNonNull(work, "work");
+        Set<String> withheld = WITHHELD.get();
+        return () -> {
+            Set<String> previous = WITHHELD.get();
+            WITHHELD.set(withheld);
+            try {
+                return work.call();
+            } finally {
+                WITHHELD.set(previous);
+            }
+        };
+    }
+
+    private Set<String> withdrawalsNow() {
+        try {
+            return Set.copyOf(openWithdrawals.get());
+        } catch (RuntimeException e) {
+            return Set.of();
+        }
     }
 
     /** Ob {@code status} das offene Löschen der Daten seiner Quelle ist ({@link #sourceHold}). */
@@ -2052,12 +2121,12 @@ public class Jobs implements AutoCloseable {
         CompletionStage<Void> stage;
         try {
             // ADR 0030: Was der Auftrag in den Cache schreibt, trägt seinen Auslöser; blockierende Arbeit läuft hier.
-            String previous = RUNNING_SOURCE.get();
-            RUNNING_SOURCE.set(job.sourceId);
+            Set<String> previous = WITHHELD.get();
+            WITHHELD.set(ALL_SOURCES.equals(job.sourceId) ? withdrawalsNow() : null);
             try {
                 stage = trigger(job.type, job.parameters).call(() -> job.task.start(job));
             } finally {
-                RUNNING_SOURCE.set(previous);
+                WITHHELD.set(previous);
             }
             if (stage == null) {
                 stage = CompletableFuture.failedFuture(new IllegalStateException("JobTask lieferte null"));
