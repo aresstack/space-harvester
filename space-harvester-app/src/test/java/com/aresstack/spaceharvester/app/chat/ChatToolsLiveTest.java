@@ -88,6 +88,60 @@ class ChatToolsLiveTest {
         assertThat(events.completed.toLowerCase(Locale.ROOT)).contains("spool");
     }
 
+    /**
+     * W7: Das Modell schlägt einen Fachbegriff mit {@value ChatTools#TERM} nach und antwortet aus dem Ergebnis. Das
+     * Begriffswissen ist erfunden (im Handbuch ist nichts als Fachbegriff bestätigt); geprüft wird der echte Weg über
+     * die Werkzeugdefinition, den Aufruf durch das Modell, den Bereich je Aufruf und die Antwort.
+     */
+    @Test
+    void aModelLooksUpADomainTermAndAnswersFromIt() throws Exception {
+        Workspace workspace = start(System.getProperty("chat.live.model", "gemma4:12b"));
+        PageSelection space = space(workspace);
+        PageKey evidence = page(workspace, space, "nachtlauf");
+        String spaceKey = workspace.spaces("handbuch").get(0).key();
+        List<com.aresstack.spaceharvester.application.snapshot.PageSet> asked = new CopyOnWriteArrayList<>();
+        List<String> terms = new CopyOnWriteArrayList<>();
+        Recording port = new Recording(workspace.aiChat());
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, model(), null, List.of(),
+                "Schlag den Fachbegriff Spool nach: Wer leert den Spool laut Wissensgraph?", space, "Handbuch",
+                events, Runnable::run).knowledgeByTools(null).termLookup((query, scope, delivery, cancelled) -> {
+                    asked.add(scope);
+                    terms.add(query);
+                    var page = new com.aresstack.spaceharvester.application.knowledge.TermKnowledge.Page(evidence,
+                            spaceKey, "Nachtlauf");
+                    var answer = new com.aresstack.spaceharvester.application.knowledge.TermKnowledge.Answer(
+                            com.aresstack.spaceharvester.application.knowledge.TermKnowledge.Outcome.FOUND,
+                            List.of(new com.aresstack.spaceharvester.application.knowledge.TermKnowledge.Term(
+                                    "Spool",
+                                    com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.NodeKind.TERM,
+                                    List.of(new com.aresstack.spaceharvester.application.knowledge.TermKnowledge
+                                            .Statement("Bereitschaftsdienst", "leeren", "Spool",
+                                            com.aresstack.spaceharvester.application.knowledge.ParsedStatements
+                                                    .Negation.AFFIRMED,
+                                            com.aresstack.spaceharvester.application.knowledge.ParsedStatements
+                                                    .Modality.MUSS,
+                                            com.aresstack.spaceharvester.application.knowledge.ParsedStatements
+                                                    .Temporality.GILT,
+                                            com.aresstack.spaceharvester.application.knowledge.DomainTermGraph
+                                                    .Trust.GEPRUEFT, 2, List.of(page), 0)))),
+                            List.of("Bereitschaftsdienst"), List.of(), List.of(page),
+                            new com.aresstack.spaceharvester.application.knowledge.TermKnowledge.Limits(3, 3, 0, 0, 0,
+                                    0, false, 0));
+                    answer.pages().forEach(item -> delivery.delivered(item.spaceKey(), item.key()));
+                    return answer;
+                }).start();
+        assertThat(events.done.await(10, TimeUnit.MINUTES)).isTrue();
+
+        System.out.println("[live] Fachbegriff: Anfragen " + port.requests.size() + ", Werkzeuge: " + events.using
+                + ", Begriffe: " + terms + ", Antwort: " + events.completed);
+        assertThat(events.failed).isNull();
+        assertThat(events.using).contains("Schlägt einen Fachbegriff nach");
+        assertThat(asked).isNotEmpty().allSatisfy(scope -> assertThat(scope).isEqualTo(space.pages()));
+        assertThat(events.completed.toLowerCase(Locale.ROOT)).contains("bereitschaftsdienst");
+    }
+
     @Test
     void cancellingDuringTheToolLoopEndsTheTurn() throws Exception {
         Workspace workspace = start(System.getProperty("chat.live.model", "gemma4:12b"));

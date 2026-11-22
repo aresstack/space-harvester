@@ -1358,7 +1358,9 @@ public final class Harvester implements AutoCloseable {
                             sourceId -> {
                                 SourceDataPurge purge = withdrawals.get();
                                 return purge == null ? null : purge.openWithdrawal(sourceId);
-                            }));
+                            }), document -> Optional.empty(),
+                    // Bereich des Begriffswissens: nur Kopfdaten (Space), nie der ganze Snapshot samt Text.
+                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
             observedGraph.set(this.knowledgeGraph);
             opened.add(this.knowledgeGraph::close);
             // K2: je Ablage eine eigene Sicht mit denselben Rechten und demselben Stand je Seite, für den Abgleich.
@@ -2377,7 +2379,7 @@ public final class Harvester implements AutoCloseable {
      * die Meldung des Aufrufers. Liest nur.
      */
     public com.aresstack.spaceharvester.application.knowledge.TermKnowledge termKnowledge() {
-        return new com.aresstack.spaceharvester.application.knowledge.TermKnowledge(domainTermGraph());
+        return new com.aresstack.spaceharvester.application.knowledge.TermKnowledge(domainTermGraph(), aiRelease);
     }
 
     /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */

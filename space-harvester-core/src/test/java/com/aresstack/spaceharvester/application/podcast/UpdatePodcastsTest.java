@@ -91,6 +91,8 @@ class UpdatePodcastsTest {
         assertThat(report).hasSize(3);
         assertThat(report).allSatisfy(entry -> assertThat(entry.picture().file()).exists());
         assertThat(report).extracting(UpdatePodcasts.TopicPicture::topicTitle).doesNotContainNull();
+        assertThat(report).as("jedes Bild kennt sein Kapitel").extracting(UpdatePodcasts.TopicPicture::topic)
+                .containsExactly(0, 1, 2);
         int before = drawn.get();
         podcasts.start(caller, summary);
         assertThat(drawn.get()).as("ein neuer Lauf nimmt die abgelegten Bilder").isEqualTo(before);

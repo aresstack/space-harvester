@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.application.knowledge;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
+import com.aresstack.spaceharvester.application.terms.RelationScope;
 import com.aresstack.spaceharvester.application.terms.TermText;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -196,9 +198,12 @@ public final class TermKnowledge {
     }
 
     private final DomainTermGraph graph;
+    private final AiRelease ai;
 
-    public TermKnowledge(DomainTermGraph graph) {
+    /** @param ai KI-Freigabe je Quelle und Seite (ADR 0028): Begriffsnamen nur aus freigegebenen Quellen */
+    public TermKnowledge(DomainTermGraph graph, AiRelease ai) {
         this.graph = Objects.requireNonNull(graph, "graph");
+        this.ai = Objects.requireNonNull(ai, "ai");
     }
 
     /**
@@ -221,14 +226,54 @@ public final class TermKnowledge {
             return Answer.of(Outcome.EMPTY_SCOPE, List.of(), Limits.NONE);
         }
         PageSet read = capped(scope);
-        DomainTermGraph.View view = graph.group(caller, query, new DomainTermGraph.Options(2, false, read, false),
-                cancelled);
-        if (view.outcome() != DomainTermGraph.Outcome.FOUND) {
-            return Answer.of(view.outcome() == DomainTermGraph.Outcome.EMPTY_START ? Outcome.EMPTY_QUERY
-                            : Outcome.NOT_A_TERM, graph.suggestions(caller, query, MAX_CANDIDATES),
-                    new Limits(scope.size(), read.size(), 0, 0, 0, 0, false, 0));
+        // Nur Einträge, die im Bereich gelten: „ist ein Fachbegriff“, Synonyme und Vorschläge nie aus dem ganzen
+        // Glossar (Auftrag Architekt nach W7).
+        DomainTermGraph.Within within = graph.groupWithin(caller, query,
+                new DomainTermGraph.Options(2, false, read, false), cancelled);
+        DomainTermGraph.View view = within.view();
+        Limits none = new Limits(scope.size(), read.size(), 0, 0, 0, 0, false, 0);
+        if (view.outcome() == DomainTermGraph.Outcome.EMPTY_START) {
+            return Answer.of(Outcome.EMPTY_QUERY, List.of(), none);
         }
-        return deliver(build(view, scope.size(), read.size()), delivery);
+        if (view.outcome() == DomainTermGraph.Outcome.FOUND) {
+            // Der gesuchte Begriff nach seinen eigenen Geltungsbereichen, seine Synonyme nach dem Geltungsbereich der
+            // Beziehung zu ihm, nicht nach allen Einträgen des Synonyms.
+            String centre = view.centre().key();
+            Answer answer = build(view, scope.size(), read.size(), (key, delivered) -> mayName(within,
+                    key.equals(centre) ? within.lexicon().scopes(key) : within.lexicon().edgeScopes(centre, key),
+                    delivery, delivered), delivery == Delivery.NONE ? key -> true : ai::mayProcess);
+            if (answer != null) {
+                return deliver(answer, delivery);
+            }
+        }
+        return Answer.of(Outcome.NOT_A_TERM, DomainTermGraph.suggestions(within.lexicon(), query, MAX_CANDIDATES,
+                key -> mayName(within, within.lexicon().scopes(key), delivery, List.of())), none);
+    }
+
+    /**
+     * Ob ein Name den Aufrufer erreichen darf (KI-Freigabe, ADR 0028): wenn einer der Geltungsbereiche {@code scopes}
+     * (des Eintrags oder der Beziehung, über die er in die Antwort kommt) global ist, nichts an ein Modell geht
+     * ({@link Delivery#NONE}), seine Quelle freigegeben ist, eine schon freigegebene Seite des Bereichs darin liegt
+     * oder die Antwort eine Seite darin liefert (und damit freigibt). Was nur in Quellen ohne Freigabe gilt, bleibt
+     * sonst draußen.
+     */
+    private boolean mayName(DomainTermGraph.Within within, List<RelationScope> scopes, Delivery delivery,
+                            java.util.Collection<Page> delivered) {
+        for (RelationScope scope : scopes) {
+            if (scope.global() || delivery == Delivery.NONE || ai.sourceReleased(scope.sourceId())) {
+                return true;
+            }
+            // Alle Seiten des Bereichs in der Quelle des Geltungsbereichs, nicht nur die zufällig schon aufgelösten.
+            if (within.area().coveredReleased(scope, ai::mayProcess)) {
+                return true;
+            }
+            for (Page page : delivered) {
+                if (scope.covers(page.key().sourceId(), page.spaceKey())) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Die ersten {@link #MAX_PAGES} Seiten in fester Ordnung (Quelle, Seite), damit die Kappung stabil ist. */
@@ -250,7 +295,23 @@ public final class TermKnowledge {
         return PageSet.of(kept);
     }
 
-    private static Answer build(DomainTermGraph.View view, int inScope, int read) {
+    /**
+     * Die Antwort; {@code mayName} entscheidet je Begriff ohne gelieferte Aussage, ob sein Name mitgeht (mit den
+     * gelieferten Seiten). {@code null}, wenn der gesuchte Begriff selbst nicht genannt werden darf.
+     */
+    private static Answer build(DomainTermGraph.View view, int inScope, int read,
+                                java.util.function.BiPredicate<String, java.util.Collection<Page>> mayName,
+                                java.util.function.Predicate<PageKey> released) {
+        return build(view, inScope, read, mayName, released, Set.of());
+    }
+
+    /**
+     * Wie oben, ohne die Begriffe {@code dropped}; baut neu, bis jeder genannte Begriff genannt werden darf.
+     * {@code released}: Seiten, die ohne Lieferung schon freigegeben sind (für die Zählung der Ausgelassenen).
+     */
+    private static Answer build(DomainTermGraph.View view, int inScope, int read,
+                                java.util.function.BiPredicate<String, java.util.Collection<Page>> mayName,
+                                java.util.function.Predicate<PageKey> released, Set<String> dropped) {
         DomainTermGraph.Node centre = view.centre();
         Map<String, DomainTermGraph.Node> nodes = new LinkedHashMap<>();
         view.nodes().forEach(node -> nodes.put(node.key(), node));
@@ -268,8 +329,29 @@ public final class TermKnowledge {
                 group.add(node);
             }
         }
-        int omittedTerms = Math.max(0, group.size() - MAX_TERMS);
-        List<DomainTermGraph.Node> shown = group.subList(0, Math.min(group.size(), MAX_TERMS));
+        // Erst filtern, dann kappen und zählen: Was nicht genannt werden darf, belegt keinen Platz und zählt nicht als
+        // ausgelassen. Vorab gegen alle Seiten, die Aussagen der Gruppe liefern könnten; unten gegen die gelieferten.
+        Map<PageKey, Page> possible = new LinkedHashMap<>();
+        Set<String> members = new LinkedHashSet<>();
+        group.forEach(node -> members.add(node.key()));
+        for (DomainTermGraph.Edge edge : view.edges()) {
+            if (edge.kind() == DomainTermGraph.EdgeKind.VERB
+                    && (members.contains(edge.from()) || members.contains(edge.to()))) {
+                edge.evidence().forEach(item -> possible.putIfAbsent(item.page().key(),
+                        new Page(item.page().key(), item.page().spaceKey(), item.page().title())));
+            }
+        }
+        List<DomainTermGraph.Node> allowed = group.stream().filter(node -> !dropped.contains(node.key()))
+                .filter(node -> mayName.test(node.key(), possible.values())).toList();
+        if (!allowed.contains(centre)) {
+            return null;
+        }
+        // Hinter der Kappung zählt nur, wer auch ohne Seiten unfreigegebener Quellen nennbar wäre: Seine Aussagen
+        // kämen sonst nie mit, ein Hinweis auf ihn verriete nur, dass es ihn gibt.
+        List<Page> releasedPossible = possible.values().stream().filter(page -> released.test(page.key())).toList();
+        int omittedTerms = (int) allowed.stream().skip(MAX_TERMS)
+                .filter(node -> mayName.test(node.key(), releasedPossible)).count();
+        List<DomainTermGraph.Node> shown = allowed.subList(0, Math.min(allowed.size(), MAX_TERMS));
         Set<String> groupKeys = new LinkedHashSet<>();
         group.forEach(node -> groupKeys.add(node.key()));
 
@@ -334,6 +416,19 @@ public final class TermKnowledge {
             statements.get(entry.getKey()).add(new Statement(label(nodes, edge.from()), edge.verb(),
                     label(nodes, edge.to()), negation, modality, temporality,
                     trust(edge), edge.count(), named, pages.size() - named.size()));
+        }
+        // Gegen die tatsächlich gelieferten Seiten: Darf ein Name doch nicht mit (seine Seite fiel einer Grenze zum
+        // Opfer), ohne ihn neu bauen; der gesuchte Begriff selbst führt dann zu keiner Antwort.
+        Set<String> failing = new LinkedHashSet<>();
+        shown.stream().filter(node -> !mayName.test(node.key(), delivered.values()))
+                .forEach(node -> failing.add(node.key()));
+        if (failing.contains(centre.key())) {
+            return null;
+        }
+        if (!failing.isEmpty()) {
+            Set<String> more = new LinkedHashSet<>(dropped);
+            more.addAll(failing);
+            return build(view, inScope, read, mayName, released, more);
         }
         List<Term> terms = shown.stream().map(node -> new Term(node.label(), node.kind(), statements.get(node.key())))
                 .toList();
