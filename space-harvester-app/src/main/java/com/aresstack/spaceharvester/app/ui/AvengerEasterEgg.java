@@ -37,6 +37,7 @@ public final class AvengerEasterEgg {
     private static final int ARCHIVE_DELAY_MS = 1600;
 
     private final PerspectiveSwitcher switcher;
+    private boolean running;
 
     public AvengerEasterEgg(PerspectiveSwitcher switcher) {
         this.switcher = switcher;
@@ -45,14 +46,20 @@ public final class AvengerEasterEgg {
     /** Spielt den Ablauf: Flackern, alte Kennung im Titel, dann das Bordarchiv. */
     public void reveal() {
         JRootPane root = SwingUtilities.getRootPane(switcher);
-        if (root == null) {
+        // Läuft schon ein Ablauf (Flackern, Warten aufs Archiv), zählt ein weiterer Auslöser nicht: sonst öffnete
+        // sich das Archiv nach dem Schließen ein zweites Mal.
+        if (root == null || running) {
             return;
         }
+        running = true;
         // Erst flackert es, dann schimmert die alte Kennung durch, und erst wenn man sie sehen konnte, meldet sich
         // das Bordarchiv.
         switcher.showHeritage(OLD_NAME, Duration.ofSeconds(9));
         flicker(root.getLayeredPane(), () -> {
-            Timer archive = new Timer(ARCHIVE_DELAY_MS, e -> ShipArchive.open(switcher, HEADING, RECORD));
+            Timer archive = new Timer(ARCHIVE_DELAY_MS, e -> {
+                running = false;
+                ShipArchive.open(switcher, HEADING, RECORD);
+            });
             archive.setRepeats(false);
             archive.start();
         });

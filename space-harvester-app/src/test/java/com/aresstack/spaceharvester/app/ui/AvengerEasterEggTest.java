@@ -68,6 +68,8 @@ class AvengerEasterEggTest {
                         MouseEvent.BUTTON1));
             }
             assertThat(window[0].perspectiveSwitcher().heritage()).isEqualTo("AVENGER");
+            // Ein zweiter Auslöser während des Ablaufs plant kein zweites Archiv.
+            window[0].avenger().reveal();
         });
         // Nach dem kurzen Flackern öffnet sich das Archiv.
         ShipArchive archive = null;
@@ -92,6 +94,11 @@ class AvengerEasterEggTest {
                     .get(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0)));
             action.actionPerformed(null);
             assertThat(open.isOpen()).isFalse();
+            assertThat(archive(root[0])).isNull();
+        });
+        // Auch nach der Wartezeit des Ablaufs öffnet sich nichts von selbst neu.
+        Thread.sleep(3000);
+        SwingUtilities.invokeAndWait(() -> {
             assertThat(archive(root[0])).isNull();
             assertThat(window[0].perspectives().isCurrent(Perspectives.COMMAND_DECK)).isTrue();
             assertThat(window[0].commandDeck().sessions().all()).isEmpty();
