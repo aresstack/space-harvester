@@ -228,6 +228,13 @@ public final class BackgroundFill implements AutoCloseable {
     private final Timing timing;
     private final Clock clock;
     private final Object monitor = new Object();
+    /**
+     * Ordnet das Schreiben der Warteschlange und ihres Spiegels {@link #whereOf} (Abnahme #1087): Einreihen (spiegeln,
+     * dann hinzufügen) und Austragen (entfernen, dann Spiegel löschen) laufen nie verschränkt, sonst bliebe ein Eintrag
+     * ohne Spiegel zurück, den {@link #feed} nie anfordert. Darf über Ein-/Ausgabe der Schlange gehalten werden, wird
+     * aber nie unter {@link #monitor} genommen (Reihenfolge: erst diese Sperre, dann {@code monitor}).
+     */
+    private final Object queueOrder = new Object();
     private final Map<PageKey, AcquisitionScheduler.Ticket> inFlight = new LinkedHashMap<>();
     private volatile boolean enabled;
     private volatile boolean closed;
@@ -450,9 +457,17 @@ public final class BackgroundFill implements AutoCloseable {
     }
 
     private void purgeSource(String sourceId) {
-        queue.removeSource(sourceId);
         Set<Where> emptied = new java.util.LinkedHashSet<>();
         Map<PageKey, AcquisitionScheduler.Ticket> tickets = new LinkedHashMap<>();
+        synchronized (queueOrder) {
+            purgeQueued(sourceId, emptied, tickets);
+        }
+        cancel(tickets);
+        emptied.forEach(this::settle);
+    }
+
+    private void purgeQueued(String sourceId, Set<Where> emptied, Map<PageKey, AcquisitionScheduler.Ticket> tickets) {
+        queue.removeSource(sourceId);
         synchronized (monitor) {
             inFlight.forEach((key, ticket) -> {
                 if (key.sourceId().equals(sourceId)) {
@@ -472,8 +487,6 @@ public final class BackgroundFill implements AutoCloseable {
             });
             failedAt.keySet().removeIf(key -> key.sourceId().equals(sourceId));
         }
-        cancel(tickets);
-        emptied.forEach(this::settle);
     }
 
     /** Arbeiter: räumt vorgemerkte ruhende Spaces ab und sucht für vorgemerkte fortgesetzte. */
@@ -588,6 +601,17 @@ public final class BackgroundFill implements AutoCloseable {
                 return;
             }
         }
+        synchronized (queueOrder) {
+            mirrorQueue();
+        }
+    }
+
+    private void mirrorQueue() {
+        synchronized (monitor) {
+            if (mirrored) {
+                return;
+            }
+        }
         List<Gap> pending;
         try {
             pending = queue.pending(queue.size());
@@ -622,30 +646,71 @@ public final class BackgroundFill implements AutoCloseable {
         ensureMirrored();
         Map<PageKey, Where> located = new LinkedHashMap<>(at);
         gaps.forEach(gap -> located.computeIfAbsent(gap.key(), this::where));
-        synchronized (monitor) {
-            for (Gap gap : gaps) {
-                if (!whereOf.containsKey(gap.key())) {
-                    Where where = located.get(gap.key());
-                    whereOf.put(gap.key(), where);
-                    waitingIn.merge(where, 1, Integer::sum);
-                    mirroredNow.put(gap.key(), where);
+        synchronized (queueOrder) {
+            List<Gap> added = new ArrayList<>();
+            synchronized (monitor) {
+                for (Gap gap : gaps) {
+                    // Schon gespiegelt heißt: wartet schon (oder endet gerade); dann nicht erneut hinzufügen, sonst
+                    // hinge der Eintrag nach seinem Abschluss ohne Spiegel in der Schlange. Eine Quelle im Bereinigen
+                    // nimmt nichts an.
+                    if (!whereOf.containsKey(gap.key()) && !purging.contains(gap.key().sourceId())) {
+                        Where where = located.get(gap.key());
+                        whereOf.put(gap.key(), where);
+                        waitingIn.merge(where, 1, Integer::sum);
+                        mirroredNow.put(gap.key(), where);
+                        added.add(gap);
+                    }
                 }
             }
-        }
-        try {
-            queue.add(gaps);
-        } catch (RuntimeException e) {
-            Set<Where> emptied = new java.util.LinkedHashSet<>();
-            synchronized (monitor) {
-                mirroredNow.forEach((key, where) -> {
-                    if (whereOf.remove(key, where) && waitingIn.merge(where, -1, Integer::sum) <= 0) {
-                        waitingIn.remove(where);
-                        emptied.add(where);
-                    }
-                });
+            if (added.isEmpty()) {
+                return;
             }
-            emptied.forEach(this::settle);
-            throw e;
+            try {
+                queue.add(added);
+                return;
+            } catch (RuntimeException e) {
+                Set<Where> emptied = new java.util.LinkedHashSet<>();
+                synchronized (monitor) {
+                    mirroredNow.forEach((key, where) -> {
+                        if (whereOf.remove(key, where) && waitingIn.merge(where, -1, Integer::sum) <= 0) {
+                            waitingIn.remove(where);
+                            emptied.add(where);
+                        }
+                    });
+                }
+                emptied.forEach(this::settle);
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Trägt Einträge aus, die ohne Spiegel in der Warteschlange stehen (Abnahme #1087), in einem Commit. Unter
+     * {@link #queueOrder} nachgeprüft: Was inzwischen gespiegelt ist oder zu einer Quelle im Bereinigen gehört, bleibt.
+     *
+     * @return ob etwas ausgetragen wurde
+     */
+    private boolean dropOrphans(List<PageKey> candidates) {
+        if (candidates.isEmpty()) {
+            return false;
+        }
+        synchronized (queueOrder) {
+            List<PageKey> orphans;
+            synchronized (monitor) {
+                orphans = candidates.stream().filter(key -> !whereOf.containsKey(key)
+                        && !inFlight.containsKey(key) && !purging.contains(key.sourceId())).toList();
+            }
+            if (orphans.isEmpty()) {
+                return false;
+            }
+            try {
+                queue.removeAll(orphans);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Warteschlange der Hintergrundfüllung nicht schreibbar ({0})",
+                        e.getClass().getName());
+                return false;
+            }
+            return true;
         }
     }
 
@@ -654,20 +719,22 @@ public final class BackgroundFill implements AutoCloseable {
         if (keys.isEmpty()) {
             return;
         }
-        try {
-            queue.removeAll(keys);
-        } catch (RuntimeException e) {
-            LOG.log(System.Logger.Level.INFO, "Warteschlange der Hintergrundfüllung nicht schreibbar ({0})",
-                    e.getClass().getName());
-            return;
-        }
         Set<Where> emptied = new java.util.LinkedHashSet<>();
-        synchronized (monitor) {
-            for (PageKey key : keys) {
-                Where at = whereOf.remove(key);
-                if (at != null && waitingIn.merge(at, -1, Integer::sum) <= 0) {
-                    waitingIn.remove(at);
-                    emptied.add(at);
+        synchronized (queueOrder) {
+            try {
+                queue.removeAll(keys);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Warteschlange der Hintergrundfüllung nicht schreibbar ({0})",
+                        e.getClass().getName());
+                return;
+            }
+            synchronized (monitor) {
+                for (PageKey key : keys) {
+                    Where at = whereOf.remove(key);
+                    if (at != null && waitingIn.merge(at, -1, Integer::sum) <= 0) {
+                        waitingIn.remove(at);
+                        emptied.add(at);
+                    }
                 }
             }
         }
@@ -700,25 +767,23 @@ public final class BackgroundFill implements AutoCloseable {
 
     /** Wie {@link #dequeue}, meldet aber nichts; nennt den Space, wenn es sein letzter Eintrag war. */
     private Where dequeueQuietly(PageKey key) {
-        try {
-            queue.remove(key);
-        } catch (RuntimeException e) {
-            LOG.log(System.Logger.Level.INFO, "Warteschlange der Hintergrundfüllung nicht schreibbar ({0})",
-                    e.getClass().getName());
-            return null;
-        }
-        Where emptied = null;
-        synchronized (monitor) {
-            Where at = whereOf.remove(key);
-            if (at != null) {
-                int left = waitingIn.merge(at, -1, Integer::sum);
-                if (left <= 0) {
+        synchronized (queueOrder) {
+            try {
+                queue.remove(key);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Warteschlange der Hintergrundfüllung nicht schreibbar ({0})",
+                        e.getClass().getName());
+                return null;
+            }
+            synchronized (monitor) {
+                Where at = whereOf.remove(key);
+                if (at != null && waitingIn.merge(at, -1, Integer::sum) <= 0) {
                     waitingIn.remove(at);
-                    emptied = at;
+                    return at;
                 }
             }
+            return null;
         }
-        return emptied;
     }
 
     private void notifyIdle(Where where) {
@@ -1080,6 +1145,7 @@ public final class BackgroundFill implements AutoCloseable {
         next = queue.pending(window + flying);
         boolean again = false;
         boolean dropped = false;
+        List<PageKey> unmirrored = new ArrayList<>();
         for (Gap gap : next) {
             if (closed || !enabled) {
                 break;
@@ -1102,6 +1168,10 @@ public final class BackgroundFill implements AutoCloseable {
                 at = whereOf.get(gap.key());
                 // Inzwischen ausgetragen (geladen, geruht, bereinigt) oder die Quelle wird bereinigt: nicht anfordern.
                 gone = at == null || purging.contains(sourceId);
+                if (at == null && !purging.contains(sourceId)) {
+                    // Ohne Spiegel: ein Waise, den sonst nichts austrägt; er belegte dauerhaft einen Platz im Blick.
+                    unmirrored.add(gap.key());
+                }
             }
             if (gone) {
                 continue;
@@ -1148,6 +1218,9 @@ public final class BackgroundFill implements AutoCloseable {
             if (withdraw) {
                 cancel(Map.of(gap.key(), ticket));
             }
+        }
+        if (dropOrphans(unmirrored)) {
+            dropped = true;
         }
         if (again || dropped) {
             changed();

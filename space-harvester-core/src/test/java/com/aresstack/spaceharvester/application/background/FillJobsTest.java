@@ -100,6 +100,10 @@ class FillJobsTest {
 
                     @Override
                     public List<BackgroundFill.Gap> gaps(String sourceId, String spaceKey, int limit) {
+                        if (spaceKey == null) {
+                            // Eine Suche ohne Space darf den Katalog nie erreichen (Abnahme #1087).
+                            throw new IllegalArgumentException("Suche ohne Space");
+                        }
                         synchronized (gaps) {
                             return gaps.stream().map(id -> new BackgroundFill.Gap(new PageKey("wiki", id),
                                     BackgroundFill.Kind.NOT_LOADED)).limit(limit).toList();
@@ -262,8 +266,8 @@ class FillJobsTest {
         gaps.add("3");
         fill.wake();
         eventually(() -> loaded.contains("3"));
-        // Die bereinigte Seite wurde nicht neu angefordert.
-        assertThat(started).doesNotHaveDuplicates();
+        // Die bereinigte, nur übergebene Seite 2 wurde zurückgezogen und nicht neu angefordert.
+        assertThat(started).doesNotContain("2");
         eventually(() -> background.parts(FillJobs.KIND).size() == 2 && background.parts(FillJobs.KIND).stream()
                 .allMatch(part -> part.state() == JobState.COMPLETED));
         assertThat(fill.waiting(DEV)).isZero();
@@ -372,9 +376,11 @@ class FillJobsTest {
         fill.start();
         BackgroundFill.Where noSpace = new BackgroundFill.Where("wiki", null);
 
+        // Beide im selben Durchgang: Die Suche ohne Space erreicht den Katalog nicht, die mit Space endet trotzdem.
         fill.scanFor(noSpace);
+        fill.scanFor(DEV);
 
-        eventually(() -> idle.contains(noSpace));
+        eventually(() -> idle.contains(noSpace) && idle.contains(DEV));
         gaps.add("1");
         fill.wake();
         eventually(() -> loaded.contains("1"));

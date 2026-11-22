@@ -518,6 +518,9 @@ wird automatisch verwaltet.
       Katalog nach Lücken seines Space (`BackgroundFill#scanFor`), und der Teil endet erst, wenn sie dort nichts mehr
       findet; ohne Space meldet sie gleich „leer“. Was nach dem Abbrechen noch endet, zählt für keinen späteren Teil.
     - Die Sperre der Füllung gilt nur über ihre Karten im Speicher, nie über Zugriffe auf Warteschlange oder Cache.
+    - Einreihen (erst spiegeln, dann hinzufügen) und Austragen (erst entfernen, dann Spiegel löschen) laufen unter einer
+      eigenen Reihenfolge-Sperre nie verschränkt; ein Eintrag ohne Spiegel trägt die Füllung aus, statt ihn zu
+      überspringen, damit er keinen Platz im Fenster dauerhaft belegt.
     - Wird ein Teil gelöscht, von Hand oder nach der Aufbewahrungsfrist, folgt sein Space den übrigen Teilen. „Daten
       bereinigen“ leert die Warteschlange über die Füllung (`BackgroundFill#removeSource`), damit auch ihr Spiegel
       bereinigt wird. „Wartend“ zeigt bei beendeten und angehaltenen Teilen 0.
