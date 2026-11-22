@@ -114,6 +114,12 @@ public final class CommandDeck {
         return editors;
     }
 
+    /** Namen der offenen Dokumente mit ungespeicherten Änderungen (Rückfrage beim Beenden). */
+    public java.util.List<String> unsavedDocuments() {
+        return editors.all().stream().filter(com.aresstack.spaceharvester.deck.editor.EditorSession::dirty)
+                .map(com.aresstack.spaceharvester.deck.editor.EditorSession::name).toList();
+    }
+
     /** Woher der Bereich Dateien die freigegebenen Ordner (Einstellungen › Dateizugriff) als Orte nimmt. */
     public void sharedFolders(java.util.function.Supplier<java.util.List<java.nio.file.Path>> folders) {
         sharedFolders = folders == null ? java.util.List::of : folders;

@@ -36,7 +36,8 @@ public final class DocumentEditor extends JPanel {
     private final MessagePlate plate = new MessagePlate();
     private final java.util.function.Consumer<EditorSession> observer =
             changed -> SwingUtilities.invokeLater(this::render);
-    private EditorSession.State shown;
+    /** Welcher Ladestand ({@link EditorSession#revision()}) im Editor steht. */
+    private long shownRevision;
     /** Während der Editor selbst Text setzt, ist das keine Bearbeitung. */
     private boolean filling;
 
@@ -148,13 +149,12 @@ public final class DocumentEditor extends JPanel {
 
     private void render() {
         EditorSession.State state = session.state();
-        EditorSession.State before = shown;
-        shown = state;
-        // Neuer Inhalt nur nach dem Laden; nach dem Speichern bleibt der Text, wie er im Editor steht.
-        if (before == EditorSession.State.LOADING || before == null) {
-            if (state == EditorSession.State.READY) {
-                fill(session.document().map(EditorDocument::text).orElse(""));
-            }
+        // Neuer Inhalt nur nach einem Laden; nach dem Speichern bleibt der Text, wie er im Editor steht. Gezählt wird
+        // über die Ladenummer, nicht über Zustandswechsel, die zwischen zwei EDT-Durchläufen verloren gehen können.
+        long revision = session.revision();
+        if (revision != shownRevision && state != EditorSession.State.LOADING) {
+            shownRevision = revision;
+            fill(session.document().map(EditorDocument::text).orElse(""));
         }
         area.setEditable(state == EditorSession.State.READY || state == EditorSession.State.CONFLICT);
         if (state == EditorSession.State.CONFLICT) {

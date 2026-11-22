@@ -13,6 +13,9 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.DosFileAttributeView;
+import java.nio.file.attribute.DosFileAttributes;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.util.Optional;
 
 /**
@@ -50,7 +53,8 @@ public final class LocalDocumentStore implements DocumentStore {
 
     @Override
     public SaveResult save(EditorDocument loaded, String text, boolean overwrite) throws DocumentException {
-        Path path = fileSystem.getPath(loaded.location());
+        // Bei einer Verknüpfung wird das Ziel gelesen, geprüft und ersetzt, nie die Verknüpfung selbst.
+        Path path = target(fileSystem.getPath(loaded.location()));
         if (!overwrite) {
             if (!Files.exists(path)) {
                 return new SaveResult.Conflict("Die Datei wurde inzwischen gelöscht oder umbenannt.");
@@ -63,6 +67,17 @@ public final class LocalDocumentStore implements DocumentStore {
         write(path, bytes);
         return new SaveResult.Saved(new EditorDocument(loaded.location(), loaded.name(), text, loaded.charset(),
                 loaded.lineEnding(), DocumentHash.of(bytes)));
+    }
+
+    private static Path target(Path path) throws DocumentException {
+        if (!Files.isSymbolicLink(path)) {
+            return path;
+        }
+        try {
+            return path.toRealPath();
+        } catch (IOException e) {
+            throw new DocumentException("Das Ziel der Verknüpfung fehlt: " + LocalFiles.reason(e), e);
+        }
     }
 
     private static byte[] read(Path path) throws DocumentException {
@@ -83,6 +98,7 @@ public final class LocalDocumentStore implements DocumentStore {
         try {
             temporary = Files.createTempFile(folder, "." + name(path) + ".", ".tmp");
             Files.write(temporary, bytes);
+            keepPermissions(path, temporary);
             try {
                 Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException e) {
@@ -99,6 +115,26 @@ public final class LocalDocumentStore implements DocumentStore {
                     // Die Nachbardatei bleibt liegen; der Fehler oben ist der wichtigere.
                 }
             }
+        }
+    }
+
+    /** Übernimmt die Rechte der alten Datei (POSIX), damit etwa ausführbare Skripte ausführbar bleiben. */
+    private static void keepPermissions(Path original, Path replacement) throws IOException {
+        if (!Files.exists(original)) {
+            return;
+        }
+        PosixFileAttributeView posix = Files.getFileAttributeView(original, PosixFileAttributeView.class);
+        if (posix != null) {
+            Files.setPosixFilePermissions(replacement, posix.readAttributes().permissions());
+            return;
+        }
+        DosFileAttributeView dos = Files.getFileAttributeView(original, DosFileAttributeView.class);
+        DosFileAttributeView copy = Files.getFileAttributeView(replacement, DosFileAttributeView.class);
+        if (dos != null && copy != null) {
+            DosFileAttributes attributes = dos.readAttributes();
+            copy.setHidden(attributes.isHidden());
+            copy.setArchive(attributes.isArchive());
+            copy.setSystem(attributes.isSystem());
         }
     }
 

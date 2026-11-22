@@ -164,6 +164,23 @@ class FilesWorkspaceTest {
     }
 
     @Test
+    void showsReloadedContentEvenIfTheLoadingStateWasNeverSeen() throws Exception {
+        start();
+        int row = names().indexOf("notiz.txt");
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
+        flush();
+        EditorSession session = workspace.selected();
+        Files.writeString(root.resolve("notiz.txt"), "neu geladen\n");
+
+        // Das Laden ist fertig, bevor der EDT die Meldungen abarbeitet: beide sehen nur noch „Bereit“.
+        session.load();
+        flush();
+
+        assertThat(workspace.editor(session).text()).isEqualTo("neu geladen\n");
+        assertThat(session.dirty()).isFalse();
+    }
+
+    @Test
     void picksTheSyntaxByExtension() throws Exception {
         start();
         int row = names().indexOf("daten.json");

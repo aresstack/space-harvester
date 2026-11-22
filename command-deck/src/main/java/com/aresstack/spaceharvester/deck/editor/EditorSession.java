@@ -46,6 +46,7 @@ public final class EditorSession {
     private State state = State.LOADING;
     private String problem;
     private String note;
+    private long revision;
 
     EditorSession(DocumentStore store, String location, String name, Executor background) {
         this.store = Objects.requireNonNull(store, "store");
@@ -78,6 +79,14 @@ public final class EditorSession {
     /** Der Text mit allen ungespeicherten Änderungen. */
     public Optional<String> text() {
         return read(() -> Optional.ofNullable(text));
+    }
+
+    /**
+     * Zählt jedes abgeschlossene Laden (auch Neu laden). Die Oberfläche erkennt daran neuen Inhalt, selbst wenn sie
+     * den Zwischenzustand „Wird geladen“ nie zu sehen bekam.
+     */
+    public long revision() {
+        return read(() -> revision);
     }
 
     /** Ob es ungespeicherte Änderungen gibt. */
@@ -131,6 +140,7 @@ public final class EditorSession {
                 try {
                     document = loaded;
                     text = loaded.text();
+                    revision++;
                     state = State.READY;
                     problem = null;
                     note = null;

@@ -140,6 +140,37 @@ class EditorSessionTest {
     }
 
     @Test
+    void savesThroughSymbolicLinksAndKeepsPermissions() throws IOException {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                root.getFileSystem().supportedFileAttributeViews().contains("posix"), "nur POSIX");
+        Path script = Files.writeString(root.resolve("lauf.sh"), "echo a\n");
+        Files.setPosixFilePermissions(script, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
+        Path link = Files.createSymbolicLink(root.resolve("verknuepfung.sh"), script);
+        EditorSession session = sessions.open(store, link.toString(), "verknuepfung.sh");
+
+        session.edit("echo b\n");
+        session.save();
+
+        assertThat(Files.isSymbolicLink(link)).isTrue();
+        assertThat(Files.readString(script)).isEqualTo("echo b\n");
+        assertThat(java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(script)))
+                .isEqualTo("rwxr-xr-x");
+    }
+
+    @Test
+    void countsEveryLoadSoTheEditorSeesReloadedContent() throws IOException {
+        Path file = Files.writeString(root.resolve("a.txt"), "eins");
+        EditorSession session = sessions.open(store, file.toString(), "a.txt");
+        long first = session.revision();
+        Files.writeString(file, "zwei");
+
+        session.load();
+
+        assertThat(session.revision()).isEqualTo(first + 1);
+        assertThat(session.text()).contains("zwei");
+    }
+
+    @Test
     void reportsADeletedFileAsConflict() throws IOException {
         Path file = Files.writeString(root.resolve("weg.txt"), "a");
         EditorSession session = sessions.open(store, file.toString(), "weg.txt");
