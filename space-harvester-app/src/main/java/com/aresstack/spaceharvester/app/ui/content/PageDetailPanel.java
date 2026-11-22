@@ -4694,15 +4694,19 @@ public final class PageDetailPanel extends JPanel {
                 text.setCaretPosition(0);
             }
         };
-        try {
-            com.aresstack.spaceharvester.app.ui.Dialogs.viewSized(this, "Bilder der Seite", body, "analysis.images",
-                    0.8);
-        } finally {
+        Runnable release = () -> {
             imageUpdated = at -> { };
             if (viewer[0] != null) {
                 viewer[0].close();
             }
+        };
+        if (javax.swing.SwingUtilities.getRootPane(this) == null) {
+            release.run();
+            return;
         }
+        // Ohne Fensterrahmen, wie die Bilder im Lesetext; ein Klick außerhalb oder Esc schließt.
+        body.setBorder(javax.swing.BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        com.aresstack.spaceharvester.app.ui.controls.ViewerPopup.open(this, body, null).onClosed(release);
     }
 
     private void harvestAssets() {
