@@ -154,6 +154,11 @@ public final class ReviewToggle extends JPanel {
     }
 
     /** Der Knopf ✓, etwa für Tastatur- und Bildschirmlesertests. */
+    /** Ob einer der Knöpfe den Fokus über die Tastatur bekam (dann trägt er den gelben Ring). */
+    public boolean keyboardFocused() {
+        return confirm.focusRing.fromKeyboard() || reject.focusRing.fromKeyboard();
+    }
+
     public JButton confirmButton() {
         return confirm;
     }

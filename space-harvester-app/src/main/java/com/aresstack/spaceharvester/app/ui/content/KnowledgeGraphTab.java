@@ -265,6 +265,8 @@ final class KnowledgeGraphTab extends JPanel {
     private volatile int domainRequest;
     /** Zähler der Klicks auf Kanten: nur das Overlay der zuletzt geklickten Kante erscheint. */
     private int evidenceRequest;
+    /** Die Sätze des Overlays „Belege“ werden gelesen; eine Meldung des Core wartet bis danach (wie in Analysen). */
+    private boolean evidencePending;
     /** Was die Statuszeile zur Fachsicht sagt. */
     private String domainStatus = " ";
     private PageSet selectionPages;
@@ -463,19 +465,21 @@ final class KnowledgeGraphTab extends JPanel {
         evidence.reviewing(new EvidencePopup.Reviewing() {
             @Override
             public Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews> reviews(
-                    Map<PageKey, List<String>> statements) {
-                return actionsOrThrow().statementReviews(statements);
+                    com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer, Map<PageKey, List<String>> statements) {
+                return actionsOrThrow().statementReviews(analyzer, statements);
             }
 
             @Override
             public com.aresstack.spaceharvester.application.standing.StandingDecision review(PageKey key,
-                    String statementId, ParsedStatements.Review review) {
-                return actionsOrThrow().reviewStatement(key, statementId, review);
+                    String statementId, com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer,
+                    ParsedStatements.Review review) {
+                return actionsOrThrow().reviewStatement(key, statementId, analyzer, review);
             }
 
             @Override
-            public boolean withdraw(PageKey key, String statementId, long expectedRevision) {
-                return actionsOrThrow().withdrawStatementReview(key, statementId, expectedRevision);
+            public boolean withdraw(PageKey key, String statementId,
+                    com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer, long expectedRevision) {
+                return actionsOrThrow().withdrawStatementReview(key, statementId, analyzer, expectedRevision);
             }
         }, runner::run);
         evidence.onClosedFailure(failure -> reviewNote(failure.note(() -> reviewNote(null))));
@@ -1760,7 +1764,7 @@ final class KnowledgeGraphTab extends JPanel {
         if (page == null || !domainMode() || !domainLoaded) {
             return;
         }
-        if (evidence.isVisible()) {
+        if (evidence.isVisible() || evidencePending) {
             domainDirty = true;
         } else if (showing()) {
             loadDomain(domainCentre);
@@ -1925,15 +1929,33 @@ final class KnowledgeGraphTab extends JPanel {
                 .add(item.statement()));
         int mine = ++evidenceRequest;
         int shown = domainRequest;
+        evidencePending = true;
         runner.run(() -> actionsOrThrow().sentences(byPage), sentences -> {
-            if (mine == evidenceRequest && shown == domainRequest && domainMode()) {
+            if (mine != evidenceRequest) {
+                return; // überholt: das Lesen des letzten Klicks läuft noch
+            }
+            evidencePending = false;
+            if (shown == domainRequest && domainMode()) {
                 evidence.fill(title, total, edge.evidence(), sentences, false).showAt(domainCanvas, x, y);
             }
+            evidenceSettled();
         }, failure -> {
-            if (mine == evidenceRequest && shown == domainRequest && domainMode()) {
+            if (mine != evidenceRequest) {
+                return;
+            }
+            evidencePending = false;
+            if (shown == domainRequest && domainMode()) {
                 evidence.fill(title, total, edge.evidence(), Map.of(), true).showAt(domainCanvas, x, y);
             }
+            evidenceSettled();
         });
+    }
+
+    /** Das Lesen der Belege ist fertig: eine zurückgehaltene Meldung des Core holt nach, sobald kein Overlay offen ist. */
+    private void evidenceSettled() {
+        if (domainDirty && !evidence.isVisible()) {
+            later.accept(this::domainChanged);
+        }
     }
 
     /** Umfänge des Exports, in dieser Reihenfolge; ohne geöffnete Seite nur der gesamte Graph. */
@@ -3342,18 +3364,23 @@ final class KnowledgeGraphTab extends JPanel {
          * Umsetzung keiner (Knöpfe gesperrt); nie auf dem EDT.
          */
         default Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews> statementReviews(
-                Map<PageKey, List<String>> statements) {
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer, Map<PageKey, List<String>> statements) {
             return Map.of();
         }
 
-        /** Bestätigt oder verwirft eine Aussage von Hand, fester Wert ohne Revisionsprüfung (W3); nie auf dem EDT. */
+        /**
+         * Bestätigt oder verwirft eine Aussage von Hand, fester Wert ohne Revisionsprüfung, in der Ablage genau des
+         * genannten Analysators (W3); nie auf dem EDT.
+         */
         default com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey key,
-                String statementId, ParsedStatements.Review review) {
+                String statementId, com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer,
+                ParsedStatements.Review review) {
             throw new UnsupportedOperationException("Prüfen von Hand nicht verfügbar");
         }
 
-        /** Nimmt die Prüfung zurück, nur bei passender Revision (W3); nie auf dem EDT. */
-        default boolean withdrawStatementReview(PageKey key, String statementId, long expectedRevision) {
+        /** Nimmt die Prüfung zurück, nur bei passender Revision, in der Ablage des Analysators (W3); nie auf dem EDT. */
+        default boolean withdrawStatementReview(PageKey key, String statementId,
+                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer, long expectedRevision) {
             throw new UnsupportedOperationException("Prüfen von Hand nicht verfügbar");
         }
 
@@ -3479,19 +3506,22 @@ final class KnowledgeGraphTab extends JPanel {
 
                 @Override
                 public Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews>
-                        statementReviews(Map<PageKey, List<String>> statements) {
-                    return workspace.statementReviews(statements);
+                        statementReviews(com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer,
+                                         Map<PageKey, List<String>> statements) {
+                    return workspace.statementReviews(analyzer, statements);
                 }
 
                 @Override
                 public com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey key,
-                        String statementId, ParsedStatements.Review review) {
-                    return workspace.reviewStatement(key, statementId, review, (Long) null);
+                        String statementId, com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer,
+                        ParsedStatements.Review review) {
+                    return workspace.reviewStatement(key, statementId, analyzer, review);
                 }
 
                 @Override
-                public boolean withdrawStatementReview(PageKey key, String statementId, long expectedRevision) {
-                    return workspace.withdrawStatementReview(key, statementId, expectedRevision);
+                public boolean withdrawStatementReview(PageKey key, String statementId,
+                        com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice analyzer, long expectedRevision) {
+                    return workspace.withdrawStatementReview(key, statementId, analyzer, expectedRevision);
                 }
 
                 @Override
@@ -3698,6 +3728,17 @@ final class KnowledgeGraphTab extends JPanel {
 
     TermGraphView.Canvas domainCanvas() {
         return domainCanvas;
+    }
+
+    /** Wie ein Klick auf die erste Verb-Kante der gezeigten Fachsicht (Overlay „Belege“). */
+    void clickDomainEdge() {
+        showEvidence(domainCanvas.graph().edges().stream().filter(edge -> edge.style() == GraphSource.Style.VERB)
+                .findFirst().orElseThrow(), 10, 10);
+    }
+
+    /** Ob die Sätze des Overlays „Belege“ noch gelesen werden. */
+    boolean evidencePending() {
+        return evidencePending;
     }
 
     /** Wie ein Klick auf den Fachbegriff {@code label} der gezeigten Fachsicht. */

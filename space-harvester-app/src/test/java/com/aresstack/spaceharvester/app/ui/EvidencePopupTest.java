@@ -7,9 +7,11 @@ import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
+import com.aresstack.spaceharvester.application.knowledge.ModelStatementAnalyzer;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.standing.LockedPageException;
 import com.aresstack.spaceharvester.application.standing.SentenceText;
 import com.aresstack.spaceharvester.application.standing.StandingConflictException;
 import com.aresstack.spaceharvester.application.standing.StandingDecision;
@@ -405,6 +407,153 @@ class EvidencePopupTest {
     }
 
     @Test
+    void onALockedPageBothKnobsAreLockedWithTheReasonAndALockRefusalSaysSo() throws Exception {
+        Core core = new Core();
+        core.locked.add(ZIEL);
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = popup(core);
+            ReviewToggle locked = popup.toggle(1);
+            seen.add(locked.confirmButton().isEnabled());
+            seen.add(locked.lockReason());
+            seen.add(locked.confirmButton().getToolTipText());
+            seen.add(popup.toggle(0).lockReason());
+            // Gesperrt, während das Overlay offen war: der Core lehnt ab, die Zeile sperrt sich mit Grund.
+            core.refuse = new LockedPageException();
+            popup.toggle(0).clickConfirm();
+            seen.add(popup.toggle(0).state());
+            seen.add(popup.toggle(0).lockReason());
+            seen.add(popup.statusText());
+        });
+        assertThat(seen).containsExactly(false, EvidencePopup.LOCKED_PAGE, EvidencePopup.LOCKED_PAGE, null,
+                ReviewToggle.State.OPEN, EvidencePopup.LOCKED_PAGE,
+                "„Der Plan beschreibt den Start des Nachtlaufs und …“ nicht bestätigt: Die Seite ist gesperrt.");
+        assertThat(EvidencePopup.LOCKED_PAGE).isEqualTo("Seite ist gesperrt; Aussagen lassen sich nicht prüfen");
+    }
+
+    @Test
+    void readingAndWritingUseTheAnalyzerOfTheEvidenceEvenIfTheSettingChangesInBetween() throws Exception {
+        Core core = new Core();
+        List<Runnable> later = new ArrayList<>();
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = new EvidencePopup().reviewing(core, deferred(later));
+            popup.openForTests(true);
+            // Ein Beleg aus der KI-Analyse, einer aus dem MaltParser, auf derselben Seite.
+            popup.fill("Plan startet Nachtlauf", 2, List.of(
+                    evidence(PLAN, "Plan", false, ModelStatementAnalyzer.ID),
+                    evidence(ZIEL, "Ziel", false, "maltparser-de")), sentences(), false);
+            later.removeFirst().run();
+            seen.add(popup.toggle(0).lockReason());
+            // Die Einstellung wechselt hier zum MaltParser (nicht sichtbar für das Overlay): ✓ bleibt bei der KI.
+            popup.toggle(0).clickConfirm();
+            later.removeFirst().run();
+            popup.toggle(0).clickConfirm();
+            later.removeFirst().run();
+            popup.toggle(1).clickReject();
+            later.removeFirst().run();
+            seen.add(popup.toggle(0).state());
+            seen.add(popup.toggle(1).state());
+        });
+        assertThat(seen).containsExactly(null, ReviewToggle.State.OPEN, ReviewToggle.State.REJECTED);
+        assertThat(core.calls).containsExactly("reviews 1", "reviews 1", "review " + id(PLAN) + " CONFIRMED",
+                "withdraw " + id(PLAN) + " 1", "review " + id(ZIEL) + " REJECTED");
+        assertThat(core.analyzers).as("je Analysator ein Lesen, dann jede Zeile in ihrer Ablage").containsExactly(
+                AnalyzerChoice.PARSER, AnalyzerChoice.MODEL, AnalyzerChoice.MODEL, AnalyzerChoice.MODEL,
+                AnalyzerChoice.PARSER);
+    }
+
+    @Test
+    void onlyTheTitleItselfOpensThePageNotTheEmptySpaceBesideIt() throws Exception {
+        Core core = new Core();
+        List<Object> seen = new ArrayList<>();
+        List<EvidencePopup.Target> opened = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = popup(core);
+            popup.onOpen(opened::add);
+            popup.setSize(popup.getPreferredSize());
+            layout(popup);
+            javax.swing.JLabel link = popup.link(0);
+            java.awt.Container foot = link.getParent().getParent();
+            seen.add(link.getWidth() == link.getPreferredSize().width);
+            java.awt.Point linkEnd = SwingUtilities.convertPoint(link, link.getWidth(), link.getHeight() / 2, popup);
+            int toggleStart = SwingUtilities.convertPoint(popup.toggle(0), 0, 0, popup).x;
+            seen.add(toggleStart - linkEnd.x > 100);
+            // Mitten in die Lücke zwischen Titel und ✓: dort liegt nicht der Link, ein Klick öffnet nichts.
+            java.awt.Point gap = new java.awt.Point((linkEnd.x + toggleStart) / 2, linkEnd.y);
+            java.awt.Component hit = SwingUtilities.getDeepestComponentAt(popup, gap.x, gap.y);
+            seen.add(hit != link);
+            seen.add(SwingUtilities.isDescendingFrom(hit, foot));
+            java.awt.Point local = SwingUtilities.convertPoint(popup, gap, hit);
+            java.awt.event.MouseEvent click = new java.awt.event.MouseEvent(hit, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, local.x, local.y, 1, false);
+            for (java.awt.event.MouseListener listener : hit.getMouseListeners()) {
+                listener.mouseClicked(click);
+            }
+            seen.add(opened.size());
+            popup.clickLink(0);
+            seen.add(opened.size());
+        });
+        assertThat(seen).containsExactly(true, true, true, true, 0, 1);
+    }
+
+    @Test
+    void aRedMessageAfterEnterOnTheKnobGivesTheKeyboardFocusBackWithItsRing() throws Exception {
+        Core core = new Core();
+        List<String> requests = new ArrayList<>();
+        java.awt.Component[] owner = new java.awt.Component[1];
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = popup(core);
+            popup.focusForTests(new EvidencePopup.Focus() {
+                @Override
+                public java.awt.Component owner() {
+                    return owner[0];
+                }
+
+                @Override
+                public void request(java.awt.Component target, java.awt.event.FocusEvent.Cause cause) {
+                    requests.add(name(popup, target) + " " + cause);
+                    owner[0] = target;
+                }
+            });
+            // Mit Tab auf ✓ der ersten Zeile, dann Enter: der Core lehnt ab, die Meldung baut das Overlay neu.
+            javax.swing.JButton confirm = popup.toggle(0).confirmButton();
+            focus(confirm, java.awt.event.FocusEvent.FOCUS_GAINED, java.awt.event.FocusEvent.Cause.TRAVERSAL_FORWARD);
+            owner[0] = confirm;
+            core.refuse = new IllegalStateException("kaputt");
+            confirm.doClick();
+            seen.add(popup.statusTone());
+            // Mit der Maus auf ✕ der zweiten Zeile: zurück ohne Ring.
+            javax.swing.JButton reject = popup.toggle(1).rejectButton();
+            focus(confirm, java.awt.event.FocusEvent.FOCUS_LOST, java.awt.event.FocusEvent.Cause.MOUSE_EVENT);
+            focus(reject, java.awt.event.FocusEvent.FOCUS_GAINED, java.awt.event.FocusEvent.Cause.MOUSE_EVENT);
+            owner[0] = reject;
+            reject.doClick();
+            // Das ✕ der Meldung verschwindet mit ihr: der Fokus geht an den ersten Link.
+            owner[0] = popup.statusCloseForTests();
+            popup.closeStatus();
+        });
+        assertThat(seen).containsExactly(StatusNote.Tone.ERROR);
+        assertThat(requests).containsExactly("✓0 TRAVERSAL_FORWARD", "✕1 ACTIVATION", "link0 ACTIVATION");
+    }
+
+    private static String name(EvidencePopup popup, java.awt.Component target) {
+        for (int i = 0; i < 3; i++) {
+            if (target == popup.toggle(i).confirmButton()) {
+                return "✓" + i;
+            }
+            if (target == popup.toggle(i).rejectButton()) {
+                return "✕" + i;
+            }
+            if (target == popup.link(i)) {
+                return "link" + i;
+            }
+        }
+        return String.valueOf(target);
+    }
+
+    @Test
     void aMessageNamesTheSentenceBrieflyOrElseThePage() {
         assertThat(EvidencePopup.brief("Kurz.", "Plan")).isEqualTo("„Kurz.“");
         assertThat(EvidencePopup.brief("Der Plan beschreibt den Start des Nachtlaufs und das Ziel der Sicherung.",
@@ -469,12 +618,17 @@ class EvidencePopupTest {
 
     /** Ein Beleg der Fachsicht; {@code confirmed}: wie der Graph eine von Hand bestätigte Aussage liefert. */
     static DomainTermGraph.Evidence evidence(PageKey page, String title, boolean confirmed) {
+        return evidence(page, title, confirmed, "maltparser-de");
+    }
+
+    /** Wie oben, aus der Analyse des Analysators {@code analyzerId}. */
+    static DomainTermGraph.Evidence evidence(PageKey page, String title, boolean confirmed, String analyzerId) {
         ParsedStatements.Statement statement = new ParsedStatements.Statement(id(page), 0, 4, 10, "startet",
                 "starten", ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(), Set.of(), 0,
                 ParsedStatements.Quality.PLAUSIBLE, List.of(), confirmed ? ParsedStatements.Review.CONFIRMED
                 : ParsedStatements.Review.UNREVIEWED);
         return new DomainTermGraph.Evidence(new KnowledgeGraph.PageRef(page, "DEV", title,
-                PageStatements.State.CURRENT, null), statement, "maltparser-de", "Plan", "Nachtlauf",
+                PageStatements.State.CURRENT, null), statement, analyzerId, "Plan", "Nachtlauf",
                 confirmed ? DomainTermGraph.Trust.GEPRUEFT : DomainTermGraph.Trust.UNGEPRUEFT);
     }
 
@@ -509,12 +663,16 @@ class EvidencePopupTest {
 
         final Map<String, StandingDecision> decisions = new LinkedHashMap<>();
         final Set<PageKey> readOnly = new HashSet<>();
+        final Set<PageKey> locked = new HashSet<>();
         final List<String> calls = new ArrayList<>();
+        /** Der Analysator jedes Aufrufs, in derselben Reihenfolge wie {@link #calls}. */
+        final List<AnalyzerChoice> analyzers = new ArrayList<>();
         RuntimeException refuse;
 
         @Override
-        public Map<PageKey, StatusQuo.Reviews> reviews(Map<PageKey, List<String>> statements) {
+        public Map<PageKey, StatusQuo.Reviews> reviews(AnalyzerChoice analyzer, Map<PageKey, List<String>> statements) {
             calls.add("reviews " + statements.values().stream().mapToInt(List::size).sum());
+            analyzers.add(analyzer);
             Map<PageKey, StatusQuo.Reviews> result = new LinkedHashMap<>();
             statements.forEach((page, ids) -> {
                 Map<String, StandingDecision> found = new LinkedHashMap<>();
@@ -523,14 +681,16 @@ class EvidencePopupTest {
                         found.put(id, decisions.get(id));
                     }
                 });
-                result.put(page, new StatusQuo.Reviews(!readOnly.contains(page), found));
+                result.put(page, new StatusQuo.Reviews(!readOnly.contains(page), found, locked.contains(page)));
             });
             return result;
         }
 
         @Override
-        public StandingDecision review(PageKey page, String statementId, ParsedStatements.Review review) {
+        public StandingDecision review(PageKey page, String statementId, AnalyzerChoice analyzer,
+                                       ParsedStatements.Review review) {
             calls.add("review " + statementId + " " + review);
+            analyzers.add(analyzer);
             if (refuse != null) {
                 throw refuse;
             }
@@ -541,8 +701,9 @@ class EvidencePopupTest {
         }
 
         @Override
-        public boolean withdraw(PageKey page, String statementId, long expectedRevision) {
+        public boolean withdraw(PageKey page, String statementId, AnalyzerChoice analyzer, long expectedRevision) {
             calls.add("withdraw " + statementId + " " + expectedRevision);
+            analyzers.add(analyzer);
             if (refuse != null) {
                 throw refuse;
             }

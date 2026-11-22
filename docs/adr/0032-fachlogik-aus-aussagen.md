@@ -314,3 +314,10 @@ Einzelheiten: [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md).
   mit Kreispfeil, der dasselbe Schreiben wiederholt (derselbe Wert, beim Zurücknehmen dieselbe Revision), bei einem
   Konflikt beim Zurücknehmen gelb „… inzwischen geändert“ ohne Wiederholen. Der Seitenlink bleibt blau; Tastaturfokus
   zeigt der gelbe Ring wie bei den übrigen Knöpfen, der erste Fokus beim Öffnen nicht.
+  Jeder Beleg trägt seinen Analysator (`Evidence#analyzerId`); Lesen, ✓/✕ und Zurücknehmen nennen ihn ausdrücklich
+  (`StatusQuo#reviews/review/withdrawReview` mit `AnalyzerChoice`, die alten Aufrufe ohne ihn bleiben), damit ein
+  Wechsel der Einstellung zwischen Anzeige und Klick nicht in der anderen Ablage landet. Eine im Bestand gesperrte Seite
+  (ADR 0014) behält ihre lesbare Analyse, ist aber nicht prüfbar: `Reviews#locked`, gesperrte Knöpfe mit „Seite ist
+  gesperrt; Aussagen lassen sich nicht prüfen“, der Core lehnt mit `LockedPageException` ab. Nur der Titel selbst öffnet
+  die Seite, nicht der leere Platz bis ✓/✕; nach einer Meldung im Overlay (Neuaufbau) kehrt der Fokus dorthin zurück, wo
+  er war. Der Seitenreiter „Graph“ hält eine Meldung des Core auch zurück, solange das Overlay noch lädt.

@@ -8,9 +8,11 @@ import com.aresstack.spaceharvester.app.ui.controls.StatusLabel;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.standing.LockedPageException;
 import com.aresstack.spaceharvester.application.standing.SentenceText;
 import com.aresstack.spaceharvester.application.standing.StandingConflictException;
 import com.aresstack.spaceharvester.application.standing.StandingDecision;
@@ -26,6 +28,7 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -83,6 +86,8 @@ public final class EvidencePopup extends JPopupMenu {
     static final String NO_ACCESS = "Kein Zugriff auf den Wortlaut dieser Seite.";
     /** Tooltip an ✓ und ✕ ohne Recht (UX W3). */
     static final String NO_RIGHT = "Kein Recht, Aussagen dieser Seite zu prüfen";
+    /** Tooltip an ✓ und ✕ auf einer im Bestand gesperrten Seite (ADR 0014). */
+    static final String LOCKED_PAGE = "Seite ist gesperrt; Aussagen lassen sich nicht prüfen";
     /** Tooltip an ✓ und ✕, solange der Prüfstand gelesen wird. */
     static final String READING = "Prüfstand wird gelesen …";
     /** Tooltip an ✓ und ✕, wenn der Prüfstand nicht gelesen werden konnte. */
@@ -108,14 +113,21 @@ public final class EvidencePopup extends JPopupMenu {
     /** Was das Overlay zum Prüfen von Hand braucht (W3); in Tests ersetzt. Nie auf dem EDT gerufen. */
     public interface Reviewing {
 
-        /** Prüfstand (Recht und Entscheidungen samt Revision) je Seite ({@code StatusQuo#reviews}). */
-        Map<PageKey, StatusQuo.Reviews> reviews(Map<PageKey, List<String>> statements);
+        /**
+         * Prüfstand (Recht und Entscheidungen samt Revision) je Seite ({@code StatusQuo#reviews}), in der Ablage des
+         * Analysators, dessen Analyse die Belege zeigen.
+         */
+        Map<PageKey, StatusQuo.Reviews> reviews(AnalyzerChoice analyzer, Map<PageKey, List<String>> statements);
 
-        /** Setzt den festen Wert ohne Revisionsprüfung ({@code StatusQuo#review} mit {@code null}). */
-        StandingDecision review(PageKey page, String statementId, ParsedStatements.Review review);
+        /**
+         * Setzt den festen Wert ohne Revisionsprüfung ({@code StatusQuo#review} mit {@code null}), in der Ablage genau
+         * dieses Analysators, gleich welcher gerade eingestellt ist.
+         */
+        StandingDecision review(PageKey page, String statementId, AnalyzerChoice analyzer,
+                                ParsedStatements.Review review);
 
         /** Nimmt die Prüfung zurück, nur wenn die Entscheidung noch {@code expectedRevision} hat. */
-        boolean withdraw(PageKey page, String statementId, long expectedRevision);
+        boolean withdraw(PageKey page, String statementId, AnalyzerChoice analyzer, long expectedRevision);
 
         /** Über die laufende App; ohne Laufzeit scheitert jeder Aufruf. */
         static Reviewing of(Supplier<AppRuntime> runtime) {
@@ -130,18 +142,21 @@ public final class EvidencePopup extends JPopupMenu {
                 }
 
                 @Override
-                public Map<PageKey, StatusQuo.Reviews> reviews(Map<PageKey, List<String>> statements) {
-                    return workspace().statementReviews(statements);
+                public Map<PageKey, StatusQuo.Reviews> reviews(AnalyzerChoice analyzer,
+                                                               Map<PageKey, List<String>> statements) {
+                    return workspace().statementReviews(analyzer, statements);
                 }
 
                 @Override
-                public StandingDecision review(PageKey page, String statementId, ParsedStatements.Review review) {
-                    return workspace().reviewStatement(page, statementId, review, (Long) null);
+                public StandingDecision review(PageKey page, String statementId, AnalyzerChoice analyzer,
+                                               ParsedStatements.Review review) {
+                    return workspace().reviewStatement(page, statementId, analyzer, review);
                 }
 
                 @Override
-                public boolean withdraw(PageKey page, String statementId, long expectedRevision) {
-                    return workspace().withdrawStatementReview(page, statementId, expectedRevision);
+                public boolean withdraw(PageKey page, String statementId, AnalyzerChoice analyzer,
+                                        long expectedRevision) {
+                    return workspace().withdrawStatementReview(page, statementId, analyzer, expectedRevision);
                 }
             };
         }
@@ -351,6 +366,11 @@ public final class EvidencePopup extends JPopupMenu {
      * offenes Overlay passt seine Größe an.
      */
     private void relayout() {
+        // pack() baut ein offenes Overlay neu auf; danach stünde der Fokus außerhalb. Wer ihn hatte (etwa ✓ nach Enter),
+        // bekommt ihn zurück, mit gelbem Ring, wenn er über die Tastatur kam.
+        Component owner = focus.owner();
+        boolean inside = owner != null && SwingUtilities.isDescendingFrom(owner, this);
+        boolean keyboard = inside && keyboardFocused(owner);
         int statusHeight = 0;
         if (status.isVisible()) {
             int room = INNER - statusClose.getPreferredSize().width - 6;
@@ -370,6 +390,61 @@ public final class EvidencePopup extends JPopupMenu {
             revalidate();
             repaint();
         }
+        if (inside) {
+            Component target = visibleWithin(owner) ? owner : shown.isEmpty() ? null : shown.getFirst().link;
+            if (target != null) {
+                focus.request(target, keyboard ? FocusEvent.Cause.TRAVERSAL_FORWARD : FocusEvent.Cause.ACTIVATION);
+            }
+        }
+    }
+
+    /** Ob {@code component} im Overlay liegt und samt allen Eltern bis dorthin sichtbar ist. */
+    private boolean visibleWithin(Component component) {
+        for (Component at = component; at != null; at = at.getParent()) {
+            if (!at.isVisible() && at != this) {
+                return false;
+            }
+            if (at == this) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Ob der Fokus von {@code owner} über die Tastatur kam (dann zeigt er den gelben Ring). */
+    private static boolean keyboardFocused(Component owner) {
+        if (owner instanceof TitleLink link) {
+            return link.showsKeyboardFocus();
+        }
+        ReviewToggle toggle = (ReviewToggle) SwingUtilities.getAncestorOfClass(ReviewToggle.class, owner);
+        return toggle != null && toggle.keyboardFocused();
+    }
+
+    /** Wer den Fokus hat und wie er zurückgegeben wird; Tests ohne Bildschirm ersetzen es. */
+    interface Focus {
+
+        Focus SYSTEM = new Focus() {
+            @Override
+            public Component owner() {
+                return java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+            }
+
+            @Override
+            public void request(Component target, FocusEvent.Cause cause) {
+                target.requestFocusInWindow(cause);
+            }
+        };
+
+        Component owner();
+
+        void request(Component target, FocusEvent.Cause cause);
+    }
+
+    private Focus focus = Focus.SYSTEM;
+
+    /** Ersetzt die Fokusverwaltung (Tests ohne Bildschirm). */
+    void focusForTests(Focus value) {
+        focus = Objects.requireNonNull(value, "value");
     }
 
     private static void width(List<WrappedText> texts, int width) {
@@ -408,21 +483,27 @@ public final class EvidencePopup extends JPopupMenu {
 
     /** Liest Recht und Entscheidungen der gezeigten Aussagen abseits des EDT; bis dahin sind die Knöpfe gesperrt. */
     private void loadReviews(int mine) {
-        Map<PageKey, List<String>> wanted = new LinkedHashMap<>();
+        // Je Analysator der Belege ein Lesen in dessen Ablage, gleich welcher gerade eingestellt ist.
+        Map<AnalyzerChoice, Map<PageKey, List<String>>> wanted = new java.util.EnumMap<>(AnalyzerChoice.class);
         for (Row row : shown) {
             row.toggle.locked(READING);
-            wanted.computeIfAbsent(row.page(), unused -> new ArrayList<>()).add(row.statementId());
+            wanted.computeIfAbsent(row.analyzer, unused -> new LinkedHashMap<>())
+                    .computeIfAbsent(row.page(), unused -> new ArrayList<>()).add(row.statementId());
         }
         Reviewing current = reviewing;
         int since = writes;
-        runner.run(() -> current.reviews(wanted), found -> {
+        runner.run(() -> {
+            Map<AnalyzerChoice, Map<PageKey, StatusQuo.Reviews>> read = new java.util.EnumMap<>(AnalyzerChoice.class);
+            wanted.forEach((analyzer, statements) -> read.put(analyzer, current.reviews(analyzer, statements)));
+            return read;
+        }, found -> {
             if (mine != generation) {
                 return;
             }
             for (Row row : shown) {
                 // Hat ein Schreiben aus der vorigen Füllung erst nach dem Start dieses Lesens geendet, gilt sein Wert.
-                row.loaded(found.getOrDefault(row.page(), StatusQuo.Reviews.NONE),
-                        lastWrite.getOrDefault(row.key(), Integer.MIN_VALUE) > since);
+                row.loaded(found.getOrDefault(row.analyzer, Map.of()).getOrDefault(row.page(),
+                        StatusQuo.Reviews.NONE), lastWrite.getOrDefault(row.key(), Integer.MIN_VALUE) > since);
             }
         }, failure -> {
             if (mine != generation) {
@@ -477,24 +558,27 @@ public final class EvidencePopup extends JPopupMenu {
      * Meldet ein gescheitertes Schreiben an den Reiter; der Kreispfeil wiederholt es mit demselben Wert ({@code review})
      * bzw. beim Zurücknehmen ({@code review == null}) mit derselben Revision.
      */
-    private void closedFailure(PageKey page, String id, String brief, ParsedStatements.Review review, long expected,
+    private void closedFailure(PageKey page, String id, AnalyzerChoice analyzer, String brief,
+                               ParsedStatements.Review review, long expected,
                                Throwable failure) {
         LOG.log(System.Logger.Level.WARNING, "Entscheidung nach dem Schließen nicht gespeichert: {0}",
                 failure.getClass().getName());
         boolean conflict = review == null && failure instanceof StandingConflictException;
         onClosedFailure.accept(new ClosedFailure(brief, conflict, conflict ? null
-                : () -> retry(page, id, brief, review, expected)));
+                : () -> retry(page, id, analyzer, brief, review, expected)));
     }
 
     /** Wiederholt ein Schreiben aus der Statuszeile; zeigt das Overlay die Aussage gerade, zieht die Zeile mit. */
-    private void retry(PageKey page, String id, String brief, ParsedStatements.Review review, long expected) {
+    private void retry(PageKey page, String id, AnalyzerChoice analyzer, String brief, ParsedStatements.Review review,
+                       long expected) {
         Reviewing current = reviewing;
-        String key = key(page, id);
+        String key = key(page, id, analyzer);
         if (current == null || writing.contains(key)) {
             return;
         }
         writing.add(key);
-        runner.run(() -> review == null ? current.withdraw(page, id, expected) : current.review(page, id, review),
+        runner.run(() -> review == null ? current.withdraw(page, id, analyzer, expected)
+                        : current.review(page, id, analyzer, review),
                 result -> {
                     writing.remove(key);
                     Long kept = result instanceof StandingDecision decision ? decision.revision() : null;
@@ -507,12 +591,12 @@ public final class EvidencePopup extends JPopupMenu {
                     }
                 }, failure -> {
                     writing.remove(key);
-                    closedFailure(page, id, brief, review, expected, failure);
+                    closedFailure(page, id, analyzer, brief, review, expected, failure);
                 });
     }
 
-    private static String key(PageKey page, String statementId) {
-        return page.sourceId() + '\u0000' + page.pageId() + '\u0000' + statementId;
+    private static String key(PageKey page, String statementId, AnalyzerChoice analyzer) {
+        return page.sourceId() + '\u0000' + page.pageId() + '\u0000' + statementId + '\u0000' + analyzer;
     }
 
     /** Der Satz kurz für eine Meldung, sonst die Seite. */
@@ -534,6 +618,8 @@ public final class EvidencePopup extends JPopupMenu {
     private final class Row {
 
         final DomainTermGraph.Evidence item;
+        /** Der Analysator, in dessen Analyse der Beleg steht: dessen Ablage wird gelesen und geschrieben. */
+        final AnalyzerChoice analyzer;
         final int mine;
         final JPanel panel = new JPanel();
         final WrappedText text;
@@ -551,6 +637,7 @@ public final class EvidencePopup extends JPopupMenu {
 
         Row(DomainTermGraph.Evidence item, SentenceText sentence, boolean failed, int mine) {
             this.item = item;
+            this.analyzer = AnalyzerChoice.of(item.analyzerId());
             this.mine = mine;
             panel.setOpaque(false);
             panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
@@ -581,7 +668,14 @@ public final class EvidencePopup extends JPopupMenu {
             foot.setAlignmentX(LEFT_ALIGNMENT);
             stageBox.setOpaque(false);
             foot.add(stageBox, BorderLayout.WEST);
-            foot.add(link, BorderLayout.CENTER);
+            // Klickfläche nur so breit wie der Titel: Daneben (bis zu ✓/✕) öffnet ein Klick nichts. Reicht der Platz
+            // nicht, kürzt sich der Titel mit „…“, ✓/✕ bleiben rechts an ihrer Stelle.
+            JPanel linkBox = new JPanel();
+            linkBox.setLayout(new BoxLayout(linkBox, BoxLayout.X_AXIS));
+            linkBox.setOpaque(false);
+            linkBox.add(link);
+            linkBox.add(Box.createHorizontalGlue());
+            foot.add(linkBox, BorderLayout.CENTER);
             if (reviewing != null) {
                 // Rechtsbündig, in jeder Zeile an derselben Stelle; der Titel davor kürzt sich.
                 JPanel toggleBox = new JPanel(new GridBagLayout());
@@ -631,7 +725,7 @@ public final class EvidencePopup extends JPopupMenu {
         }
 
         String key() {
-            return EvidencePopup.key(page(), statementId());
+            return EvidencePopup.key(page(), statementId(), analyzer);
         }
 
         /**
@@ -648,7 +742,7 @@ public final class EvidencePopup extends JPopupMenu {
                     show(state);
                 }
             }
-            toggle.locked(reviews.writable() ? null : NO_RIGHT);
+            toggle.locked(reviews.writable() ? null : reviews.locked() ? LOCKED_PAGE : NO_RIGHT);
         }
 
         /**
@@ -709,14 +803,14 @@ public final class EvidencePopup extends JPopupMenu {
             if (to == ReviewToggle.State.OPEN) {
                 long expected = revision == null ? 0L : revision;
                 // Danach steht der Eintrag mit neuer Revision (Stand von Hand) oder fehlt; ✓/✕ prüfen sie nicht.
-                runner.run(() -> current.withdraw(page, id, expected),
+                runner.run(() -> current.withdraw(page, id, analyzer, expected),
                         withdrawn -> finished(ReviewToggle.State.OPEN, null), failure -> {
                     if (!showing(mine)) {
                         // Das Overlay ist zu: nicht still scheitern, sondern in der Statuszeile des Reiters.
                         writing.remove(key());
                         pending = false;
                         show(from);
-                        closedFailure(page, id, brief, null, expected, failure);
+                        closedFailure(page, id, analyzer, brief, null, expected, failure);
                     } else if (failure instanceof StandingConflictException) {
                         changedMeanwhile();
                     } else {
@@ -726,13 +820,13 @@ public final class EvidencePopup extends JPopupMenu {
             } else {
                 ParsedStatements.Review review = to == ReviewToggle.State.CONFIRMED ? ParsedStatements.Review.CONFIRMED
                         : ParsedStatements.Review.REJECTED;
-                runner.run(() -> current.review(page, id, review),
+                runner.run(() -> current.review(page, id, analyzer, review),
                         decision -> finished(to, decision == null ? null : decision.revision()), failure -> {
                     if (!showing(mine)) {
                         writing.remove(key());
                         pending = false;
                         show(from);
-                        closedFailure(page, id, brief, review, 0L, failure);
+                        closedFailure(page, id, analyzer, brief, review, 0L, failure);
                     } else {
                         refused(from, to, failure);
                     }
@@ -745,7 +839,7 @@ public final class EvidencePopup extends JPopupMenu {
             Reviewing current = reviewing;
             PageKey page = page();
             String id = statementId();
-            runner.run(() -> current.reviews(Map.of(page, List.of(id))), found -> {
+            runner.run(() -> current.reviews(analyzer, Map.of(page, List.of(id))), found -> {
                 writing.remove(key());
                 pending = false;
                 if (mine != generation) {
@@ -785,7 +879,11 @@ public final class EvidencePopup extends JPopupMenu {
                 case REJECTED -> brief + " nicht verworfen";
                 case OPEN -> "Prüfung von " + brief + " nicht zurückgenommen";
             };
+            if (failure instanceof LockedPageException) {
+                toggle.locked(LOCKED_PAGE);
+            }
             String why = failure instanceof AccessDeniedException ? ": " + NO_RIGHT + "."
+                    : failure instanceof LockedPageException ? ": Die Seite ist gesperrt."
                     : failure instanceof UnknownStandingTargetException
                     ? ": Die Aussage gehört nicht mehr zur aktuellen Analyse der Seite."
                     : ". Bitte erneut versuchen.";
@@ -869,6 +967,19 @@ public final class EvidencePopup extends JPopupMenu {
         @Override
         public Dimension getMinimumSize() {
             return new Dimension(0, super.getMinimumSize().height);
+        }
+
+        /** So breit wie der ganze Titel, auch wenn er gerade gekürzt steht; nie breiter (Klickfläche). */
+        @Override
+        public Dimension getPreferredSize() {
+            Insets insets = getInsets();
+            return new Dimension(getFontMetrics(getFont()).stringWidth(full) + insets.left + insets.right,
+                    super.getPreferredSize().height);
+        }
+
+        @Override
+        public Dimension getMaximumSize() {
+            return getPreferredSize();
         }
 
         @Override
@@ -993,7 +1104,8 @@ public final class EvidencePopup extends JPopupMenu {
 
     // ---- für Tests
 
-    String headingText() {
+    /** Die Überschrift (auch für Tests der Reiter in anderen Paketen). */
+    public String headingText() {
         return heading.getText();
     }
 
@@ -1065,6 +1177,11 @@ public final class EvidencePopup extends JPopupMenu {
     /** Der Link der Zeile als {@link TitleLink}. */
     TitleLink titleLink(int index) {
         return shown.get(index).link;
+    }
+
+    /** Das ✕ des Statusbereichs. */
+    java.awt.Component statusCloseForTests() {
+        return statusClose;
     }
 
     /** Ein Klick auf das ✕ des Statusbereichs. */

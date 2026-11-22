@@ -67,6 +67,28 @@ public final class StatusQuo {
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     /** Beobachter nur für Änderungen von Prüfungen (sie ändern die wirksame Prüfung der Analysen). */
     private final List<Runnable> reviewListeners = new CopyOnWriteArrayList<>();
+    /** Die Analysen der Ablage eines bestimmten Analysators (W3: ✓/✕ im Overlay nennen ihn ausdrücklich). */
+    private volatile AnalysesOf analysesOf = this::analysesOfSelected;
+    /** Gesperrte Seiten im Bestand (ADR 0014); ohne Bestand keine. */
+    private volatile LockedPages lockedPages = LockedPages.NONE;
+
+    /**
+     * Die sichtbaren Analysen der Ablage eines Analysators für die genannten Seiten, mit derselben Lesestelle wie
+     * {@code analysed} (Rechte, Stand, wirksame Prüfung).
+     */
+    @FunctionalInterface
+    public interface AnalysesOf {
+        List<KnowledgeGraph.AnalysedPage> analysed(AccessContext caller, AnalyzerChoice analyzer, Set<PageKey> pages);
+    }
+
+    /** Welche der genannten Seiten im Bestand gesperrt sind ({@code HoldingState.LOCKED}). */
+    @FunctionalInterface
+    public interface LockedPages {
+
+        LockedPages NONE = (caller, pages) -> Set.of();
+
+        Set<PageKey> locked(AccessContext caller, Collection<PageKey> pages);
+    }
 
     /**
      * @param analysed sichtbare analysierte Seiten des Aufrufers, etwa {@code knowledgeGraph::analysed}
@@ -90,6 +112,28 @@ public final class StatusQuo {
         this.access = Objects.requireNonNull(access, "access");
         this.words = Objects.requireNonNull(words, "words");
         this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    /**
+     * Woher die Analysen eines bestimmten Analysators kommen ({@link #review(AccessContext, PageKey, String,
+     * AnalyzerChoice, ParsedStatements.Review, Long)} und Verwandte). Ohne Angabe: die von {@code analysed}, sofern sie
+     * von diesem Analysator stammen.
+     */
+    public StatusQuo analysesOf(AnalysesOf source) {
+        this.analysesOf = Objects.requireNonNull(source, "source");
+        return this;
+    }
+
+    /** Woran gesperrte Seiten zu erkennen sind; ihre Aussagen lassen sich nicht prüfen. Ohne Angabe: keine. */
+    public StatusQuo lockedPages(LockedPages source) {
+        this.lockedPages = Objects.requireNonNull(source, "source");
+        return this;
+    }
+
+    private List<KnowledgeGraph.AnalysedPage> analysesOfSelected(AccessContext caller, AnalyzerChoice analyzer,
+                                                                 Set<PageKey> pages) {
+        return analysed.apply(caller).stream().filter(candidate -> pages.contains(candidate.page().key())
+                && AnalyzerChoice.of(candidate.analysis().analyzerId()) == analyzer).toList();
     }
 
     /** Die Sicht über eine im Bestand aufgelöste Auswahl (ADR 0029). */
@@ -276,12 +320,24 @@ public final class StatusQuo {
      */
     public StandingDecision review(AccessContext caller, PageKey page, String statementId,
                                    ParsedStatements.Review review, Long expectedRevision) {
+        return review(caller, page, statementId, null, review, expectedRevision);
+    }
+
+    /**
+     * Wie {@link #review(AccessContext, PageKey, String, ParsedStatements.Review, Long)}, in der Ablage genau des
+     * genannten Analysators (ADR 0032, W3): etwa der eines Belegs im Overlay, gleich welcher gerade eingestellt ist.
+     *
+     * @param analyzer der Analysator der Analyse, in der die Aussage gezeigt wurde; {@code null} wie oben
+     * @throws LockedPageException wenn die Seite im Bestand gesperrt ist
+     */
+    public StandingDecision review(AccessContext caller, PageKey page, String statementId, AnalyzerChoice analyzer,
+                                   ParsedStatements.Review review, Long expectedRevision) {
         Objects.requireNonNull(review, "review");
         if (review == ParsedStatements.Review.UNREVIEWED) {
             throw new IllegalArgumentException("Zurücknehmen mit withdrawReview");
         }
         requireStatement(statementId);
-        StandingDecision.Target target = requireWritable(caller, page, statementId, true);
+        StandingDecision.Target target = requireReviewable(caller, page, statementId, analyzer, true);
         StandingDecision decision;
         synchronized (this) {
             Optional<StandingDecision> stored = store.find(target);
@@ -308,8 +364,19 @@ public final class StatusQuo {
      * @throws StandingConflictException wenn die Revision nicht passt
      */
     public boolean withdrawReview(AccessContext caller, PageKey page, String statementId, Long expectedRevision) {
+        return withdrawReview(caller, page, statementId, null, expectedRevision);
+    }
+
+    /**
+     * Wie {@link #withdrawReview(AccessContext, PageKey, String, Long)}, in der Ablage genau des genannten Analysators.
+     *
+     * @param analyzer der Analysator der Analyse, in der die Aussage gezeigt wurde; {@code null} wie oben
+     * @throws LockedPageException wenn die Seite im Bestand gesperrt ist
+     */
+    public boolean withdrawReview(AccessContext caller, PageKey page, String statementId, AnalyzerChoice analyzer,
+                                  Long expectedRevision) {
         requireStatement(statementId);
-        StandingDecision.Target target = requireWritable(caller, page, statementId, false);
+        StandingDecision.Target target = requireReviewable(caller, page, statementId, analyzer, false);
         synchronized (this) {
             Optional<StandingDecision> stored = store.find(target);
             check(expectedRevision, stored.map(StandingDecision::revision).orElse(0L));
@@ -345,13 +412,24 @@ public final class StatusQuo {
      * @return je angefragter Seite ihr Prüfstand
      */
     public Map<PageKey, Reviews> reviews(AccessContext caller, Map<PageKey, ? extends Collection<String>> statements) {
+        return reviews(caller, null, statements);
+    }
+
+    /**
+     * Wie {@link #reviews(AccessContext, Map)}, in der Ablage genau des genannten Analysators ({@code null}: wie dort).
+     * Eine gesperrte Seite ist nicht prüfbar.
+     */
+    public Map<PageKey, Reviews> reviews(AccessContext caller, AnalyzerChoice analyzer,
+                                         Map<PageKey, ? extends Collection<String>> statements) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(statements, "statements");
         if (statements.isEmpty()) {
             return Map.of();
         }
+        Set<PageKey> locked = lockedPages.locked(caller, statements.keySet());
         Map<PageKey, List<KnowledgeGraph.AnalysedPage>> visible = new HashMap<>();
-        for (KnowledgeGraph.AnalysedPage candidate : analysed.apply(caller)) {
+        for (KnowledgeGraph.AnalysedPage candidate : analyzer == null ? analysed.apply(caller)
+                : analysesOf.analysed(caller, analyzer, statements.keySet())) {
             if (statements.containsKey(candidate.page().key())) {
                 visible.computeIfAbsent(candidate.page().key(), ignored -> new ArrayList<>()).add(candidate);
             }
@@ -364,15 +442,16 @@ public final class StatusQuo {
                 return;
             }
             String spaceKey = pages.getFirst().page().spaceKey();
-            boolean writable = access.permits(caller, spaceKey == null ? ResourceScope.source(page.sourceId())
+            boolean writable = !locked.contains(page) && access.permits(caller, spaceKey == null
+                    ? ResourceScope.source(page.sourceId())
                     : ResourceScope.page(page.sourceId(), spaceKey, page.pageId()), AccessKind.SYNC);
             Map<String, StandingDecision> decisions = new LinkedHashMap<>();
             for (String id : ids) {
                 if (id != null) {
-                    store.find(target(pages, page, id, false)).ifPresent(found -> decisions.put(id, found));
+                    store.find(target(pages, page, id, false, analyzer)).ifPresent(found -> decisions.put(id, found));
                 }
             }
-            result.put(page, new Reviews(writable, decisions));
+            result.put(page, new Reviews(writable, decisions, locked.contains(page)));
         });
         return result;
     }
@@ -382,14 +461,22 @@ public final class StatusQuo {
      *
      * @param writable  ob der Aufrufer Aussagen dieser Seite prüfen darf
      * @param decisions gespeicherte Entscheidung je Aussage-ID; ohne Entscheidung fehlt die Aussage
+     * @param locked    ob die Seite im Bestand gesperrt ist (dann nie {@code writable}), damit die Oberfläche den Grund
+     *                  nennen kann
      */
-    public record Reviews(boolean writable, Map<String, StandingDecision> decisions) {
+    public record Reviews(boolean writable, Map<String, StandingDecision> decisions, boolean locked) {
 
         /** Nicht sichtbar analysiert: nicht prüfbar, keine Entscheidungen. */
         public static final Reviews NONE = new Reviews(false, Map.of());
 
         public Reviews {
             decisions = Map.copyOf(Objects.requireNonNull(decisions, "decisions"));
+            writable = writable && !locked;
+        }
+
+        /** Eine nicht gesperrte Seite. */
+        public Reviews(boolean writable, Map<String, StandingDecision> decisions) {
+            this(writable, decisions, false);
         }
     }
 
@@ -503,6 +590,34 @@ public final class StatusQuo {
         return texts;
     }
 
+    /**
+     * Wie {@link #requireWritable}, für die Prüfung einer Aussage: in der Ablage des genannten Analysators (sonst der
+     * Analyse, in der sie steht) und nie auf einer gesperrten Seite.
+     */
+    private StandingDecision.Target requireReviewable(AccessContext caller, PageKey page, String statementId,
+                                                      AnalyzerChoice analyzer, boolean mustExist) {
+        StandingDecision.Target target;
+        if (analyzer == null) {
+            target = requireWritable(caller, page, statementId, mustExist);
+        } else {
+            Objects.requireNonNull(caller, "caller");
+            Objects.requireNonNull(page, "page");
+            List<KnowledgeGraph.AnalysedPage> visible = analysesOf.analysed(caller, analyzer, Set.of(page)).stream()
+                    .filter(candidate -> candidate.page().key().equals(page)).toList();
+            if (visible.isEmpty()) {
+                throw new UnknownStandingTargetException("Seite ist nicht analysiert oder nicht sichtbar");
+            }
+            target = target(visible, page, statementId, mustExist, analyzer);
+            String spaceKey = visible.getFirst().page().spaceKey();
+            access.require(caller, spaceKey == null ? ResourceScope.source(page.sourceId())
+                    : ResourceScope.page(page.sourceId(), spaceKey, page.pageId()), AccessKind.SYNC);
+        }
+        if (lockedPages.locked(caller, List.of(page)).contains(page)) {
+            throw new LockedPageException();
+        }
+        return target;
+    }
+
     /** Prüft Sichtbarkeit und {@link AccessKind#SYNC} und gibt das Ziel samt Analysator zurück. */
     private StandingDecision.Target requireWritable(AccessContext caller, PageKey page, String statementId,
                                                     boolean mustExist) {
@@ -520,6 +635,12 @@ public final class StatusQuo {
      */
     private static StandingDecision.Target target(List<KnowledgeGraph.AnalysedPage> visible, PageKey page,
                                                   String statementId, boolean mustExist) {
+        return target(visible, page, statementId, mustExist, null);
+    }
+
+    /** Wie oben; mit {@code analyzer} genau dessen Ablage ({@code visible} stammt dann aus ihr). */
+    private static StandingDecision.Target target(List<KnowledgeGraph.AnalysedPage> visible, PageKey page,
+                                                  String statementId, boolean mustExist, AnalyzerChoice analyzer) {
         if (statementId == null) {
             return new StandingDecision.Target(page, null);
         }
@@ -529,8 +650,8 @@ public final class StatusQuo {
         if (mustExist && found.isEmpty()) {
             throw new UnknownStandingTargetException("Aussage gehört nicht zur aktuellen Analyse der Seite");
         }
-        return new StandingDecision.Target(page, statementId,
-                AnalyzerChoice.of(found.orElse(visible.getFirst()).analysis().analyzerId()));
+        return new StandingDecision.Target(page, statementId, analyzer != null ? analyzer
+                : AnalyzerChoice.of(found.orElse(visible.getFirst()).analysis().analyzerId()));
     }
 
     private static void requireStatement(String statementId) {

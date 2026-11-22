@@ -1398,6 +1398,22 @@ public final class Harvester implements AutoCloseable {
                                     .filter(text -> text.inputSha256().equals(inputSha256)).map(PageText::text);
                         }
                     });
+            // W3: ✓/✕ im Overlay „Belege“ prüfen in der Ablage des Analysators, dessen Analyse der Beleg zeigt, nicht in
+            // der gerade eingestellten; eine im Bestand gesperrte Seite (ADR 0014) ist nicht prüfbar.
+            Holdings stockForReviews = this.holdings;
+            this.statusQuo.analysesOf((who, choice, keys) -> byAnalyzer.get(choice).analysed(who,
+                    com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(keys)));
+            this.statusQuo.lockedPages((who, keys) -> {
+                java.util.Set<PageKey> locked = new java.util.HashSet<>();
+                stockForReviews.locate(who, com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(keys))
+                        .forEach((key, located) -> {
+                            if (located.state() == com.aresstack.spaceharvester.application.holdings.HoldingState
+                                    .LOCKED) {
+                                locked.add(key);
+                            }
+                        });
+                return locked;
+            });
             // Eine gesetzte oder zurückgenommene Prüfung ändert die wirksame Prüfung der Analysen: Graph, Fachsicht,
             // Aussagen und Verben ziehen ohne Klick nach (W3, D6).
             opened.add(statusQuo.subscribeReviews(knowledgeGraph::analysesChanged));

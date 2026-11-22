@@ -222,7 +222,7 @@ class StatusQuoReviewTest {
         assertThatThrownBy(() -> statusQuo.review(EDITOR, first.key, "wiki/1@ffffffffffff#s0.v2", Review.CONFIRMED,
                 null)).isInstanceOf(UnknownStandingTargetException.class);
         assertThatThrownBy(() -> statusQuo.review(READER, first.key, id, Review.CONFIRMED, null))
-                .as("gesperrte Seite").isInstanceOf(AccessDeniedException.class);
+                .as("ohne sync").isInstanceOf(AccessDeniedException.class);
         assertThat(store.all()).isEmpty();
 
         statusQuo.review(EDITOR, first.key, id, Review.CONFIRMED, null);
@@ -302,6 +302,90 @@ class StatusQuoReviewTest {
         assertThat(reader.get(ziel.key).writable()).as("ohne sync bzw. gesperrt: nicht prüfbar").isFalse();
         assertThat(reader.get(ziel.key).decisions()).as("lesen wie die Sicht").containsOnlyKeys(other);
         assertThat(statusQuo.reviews(EDITOR, Map.of())).isEmpty();
+    }
+
+    @Test
+    void aLockedPageKeepsItsAnalysisButCannotBeReviewed() {
+        StandingFixtures.PageBuilder plan = page("1", "Plan", 'a').action("Nachtlauf", "startet", "Sicherung",
+                features(Temporality.GILT));
+        StandingFixtures.PageBuilder ziel = page("2", "Ziel", 'b').action("Start", "folgt", "Plan",
+                features(Temporality.GILT));
+        pages.add(plan.build());
+        pages.add(ziel.build());
+        String id = plan.statements.getFirst().id();
+        String other = ziel.statements.getFirst().id();
+        statusQuo.review(EDITOR, plan.key, id, Review.CONFIRMED, null);
+        List<java.util.Collection<PageKey>> asked = new ArrayList<>();
+        statusQuo.lockedPages((caller, keys) -> {
+            asked.add(List.copyOf(keys));
+            return keys.contains(plan.key) ? java.util.Set.of(plan.key) : java.util.Set.of();
+        });
+
+        Map<PageKey, StatusQuo.Reviews> seen = statusQuo.reviews(EDITOR, Map.of(plan.key, List.of(id),
+                ziel.key, List.of(other)));
+        assertThat(seen.get(plan.key).writable()).as("gesperrt: nicht prüfbar, auch mit sync").isFalse();
+        assertThat(seen.get(plan.key).locked()).isTrue();
+        assertThat(seen.get(plan.key).decisions()).as("die Entscheidung bleibt lesbar").containsOnlyKeys(id);
+        assertThat(seen.get(ziel.key).writable()).isTrue();
+        assertThat(seen.get(ziel.key).locked()).isFalse();
+        assertThat(asked).as("ein Blick in den Bestand für alle Seiten").hasSize(1);
+
+        assertThatThrownBy(() -> statusQuo.review(EDITOR, plan.key, id, Review.REJECTED, null))
+                .isInstanceOf(LockedPageException.class);
+        assertThatThrownBy(() -> statusQuo.review(EDITOR, plan.key, id, AnalyzerChoice.PARSER, Review.REJECTED,
+                null)).isInstanceOf(LockedPageException.class);
+        assertThatThrownBy(() -> statusQuo.withdrawReview(EDITOR, plan.key, id, AnalyzerChoice.PARSER, 1L))
+                .isInstanceOf(LockedPageException.class);
+        assertThatThrownBy(() -> statusQuo.withdrawReview(EDITOR, plan.key, id, 1L))
+                .isInstanceOf(LockedPageException.class);
+        assertThat(store.all()).singleElement().satisfies(decision -> {
+            assertThat(decision.review()).isEqualTo(Review.CONFIRMED);
+            assertThat(decision.revision()).isEqualTo(1);
+        });
+        assertThat(statusQuo.review(EDITOR, ziel.key, other, AnalyzerChoice.PARSER, Review.REJECTED, null).review())
+                .as("die nicht gesperrte Seite bleibt prüfbar").isEqualTo(Review.REJECTED);
+    }
+
+    @Test
+    void anExplicitAnalyzerReviewsInItsOwnStoreWhateverTheSettingSaysMeanwhile() {
+        StandingFixtures.PageBuilder first = page("1", "Plan", 'a').action("Nachtlauf", "startet", "Sicherung",
+                features(Temporality.GILT));
+        KnowledgeGraph.AnalysedPage parsed = first.build();
+        KnowledgeGraph.AnalysedPage modelled = model(parsed);
+        String id = first.statements.getFirst().id();
+        // Die Einstellung zeigt den MaltParser; jede Ablage hat ihre eigenen Analysen.
+        pages.add(parsed);
+        statusQuo.analysesOf((caller, analyzer, keys) -> (analyzer == AnalyzerChoice.MODEL ? List.of(modelled)
+                : List.of(parsed)).stream().filter(page -> keys.contains(page.page().key())).toList());
+        Map<PageKey, StatusQuo.Reviews> shown = statusQuo.reviews(EDITOR, AnalyzerChoice.PARSER,
+                Map.of(first.key, List.of(id)));
+        assertThat(shown.get(first.key).writable()).isTrue();
+
+        // Zwischen Anzeige und Klick wechselt die Einstellung zur KI.
+        pages.clear();
+        pages.add(modelled);
+        StandingDecision kept = statusQuo.review(EDITOR, first.key, id, AnalyzerChoice.PARSER, Review.CONFIRMED,
+                null);
+
+        assertThat(kept.analyzer()).as("die Ablage des Belegs, nicht die eingestellte").isEqualTo(AnalyzerChoice.PARSER);
+        assertThat(store.all()).singleElement().extracting(StandingDecision::analyzer)
+                .isEqualTo(AnalyzerChoice.PARSER);
+        assertThat(statusQuo.reviews(EDITOR, AnalyzerChoice.PARSER, Map.of(first.key, List.of(id))).get(first.key)
+                .decisions()).containsOnlyKeys(id);
+        assertThat(statusQuo.reviews(EDITOR, AnalyzerChoice.MODEL, Map.of(first.key, List.of(id))).get(first.key)
+                .decisions()).as("die KI-Ablage bleibt unberührt").isEmpty();
+
+        // Zurücknehmen ebenso in der genannten Ablage, mit deren Revision.
+        assertThat(statusQuo.withdrawReview(EDITOR, first.key, id, AnalyzerChoice.PARSER, kept.revision())).isTrue();
+        assertThat(store.all()).isEmpty();
+
+        // Ohne Angabe gilt weiter die Analyse, in der die Aussage steht (hier die eingestellte KI).
+        assertThat(statusQuo.review(EDITOR, first.key, id, Review.REJECTED, null).analyzer())
+                .isEqualTo(AnalyzerChoice.MODEL);
+        // Eine Aussage, die in der genannten Ablage nicht steht, ist kein Ziel.
+        statusQuo.analysesOf((caller, analyzer, keys) -> List.of());
+        assertThatThrownBy(() -> statusQuo.review(EDITOR, first.key, id, AnalyzerChoice.PARSER, Review.CONFIRMED,
+                null)).isInstanceOf(UnknownStandingTargetException.class);
     }
 
     /** Dieselbe Analyse, als hätte der KI-Analysator sie gerechnet (gleiche IDs, andere Ablage). */

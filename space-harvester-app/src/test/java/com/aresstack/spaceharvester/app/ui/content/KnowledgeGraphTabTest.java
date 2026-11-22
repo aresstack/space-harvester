@@ -2523,7 +2523,8 @@ class KnowledgeGraphTabTest {
         assertThat(tab.reviewNote()).isNull();
         runner.runAll();
         assertThat(tab.reviewNote()).isNull();
-        assertThat(actions.reviewCalls).containsExactly("reviews", "review CONFIRMED", "review CONFIRMED");
+        assertThat(actions.reviewCalls).containsExactly("reviews PARSER", "review CONFIRMED PARSER",
+                "review CONFIRMED PARSER");
     }
 
     @Test
@@ -2544,7 +2545,7 @@ class KnowledgeGraphTabTest {
         assertThat(note.text()).isEqualTo("Entscheidung zu Aussage auf „Plan“ inzwischen geändert");
         assertThat(note.tone()).isEqualTo(StatusNote.Tone.WARNING);
         assertThat(note.icon()).isNull();
-        assertThat(actions.reviewCalls).containsExactly("reviews", "review REJECTED", "withdraw 3");
+        assertThat(actions.reviewCalls).containsExactly("reviews PARSER", "review REJECTED PARSER", "withdraw 3 PARSER");
     }
 
     private static DomainTermGraph.Evidence evidence(PageKey page, String title) {
@@ -2559,6 +2560,35 @@ class KnowledgeGraphTabTest {
         return new DomainTermGraph.Evidence(new KnowledgeGraph.PageRef(page, "DEV", title,
                 PageStatements.State.CURRENT, null), statement, "maltparser-de", "Plan", "Nachtlauf",
                 DomainTermGraph.Trust.UNGEPRUEFT);
+    }
+
+    @Test
+    void aReviewNoticeWhileTheEvidenceIsStillLoadingWaitsAndTheOverlayStillOpens() {
+        List<Runnable> deferred = new ArrayList<>();
+        tab.later(deferred::add);
+        tab.page(WIKI);
+        tab.showingForTests(true);
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        actions.domainCalls.clear();
+
+        // Klick auf eine Verb-Kante: die Sätze werden gelesen, da meldet der Core eine Prüfung (etwa nach ✓/✕).
+        tab.clickDomainEdge();
+        assertThat(tab.evidencePending()).isTrue();
+        tab.domainChanged();
+        assertThat(runner.pendingCount()).as("kein Neuladen, solange das Overlay lädt").isEqualTo(1);
+        assertThat(actions.domainCalls).isEmpty();
+
+        // Die Sätze sind da: das Overlay füllt sich (der Klick wirkt), erst dann zieht die Fachsicht nach.
+        runner.runAll();
+        assertThat(tab.evidencePending()).isFalse();
+        assertThat(tab.evidencePopup().headingText()).isNotBlank();
+        assertThat(actions.domainCalls).as("noch nicht während des Füllens").isEmpty();
+        assertThat(deferred).hasSize(1);
+        deferred.removeFirst().run();
+        runner.runAll();
+        assertThat(actions.domainCalls).hasSize(1);
     }
 
     @Test
@@ -3037,8 +3067,8 @@ class KnowledgeGraphTabTest {
 
         @Override
         public Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews> statementReviews(
-                Map<PageKey, List<String>> statements) {
-            reviewCalls.add("reviews");
+                AnalyzerChoice analyzer, Map<PageKey, List<String>> statements) {
+            reviewCalls.add("reviews " + analyzer);
             Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews> result =
                     new java.util.LinkedHashMap<>();
             statements.keySet().forEach(key -> result.put(key,
@@ -3048,8 +3078,9 @@ class KnowledgeGraphTabTest {
 
         @Override
         public com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey key,
-                String statementId, com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review review) {
-            reviewCalls.add("review " + review);
+                String statementId, AnalyzerChoice analyzer,
+                com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review review) {
+            reviewCalls.add("review " + review + " " + analyzer);
             if (reviewFailure != null) {
                 throw reviewFailure;
             }
@@ -3059,8 +3090,9 @@ class KnowledgeGraphTabTest {
         }
 
         @Override
-        public boolean withdrawStatementReview(PageKey key, String statementId, long expectedRevision) {
-            reviewCalls.add("withdraw " + expectedRevision);
+        public boolean withdrawStatementReview(PageKey key, String statementId, AnalyzerChoice analyzer,
+                long expectedRevision) {
+            reviewCalls.add("withdraw " + expectedRevision + " " + analyzer);
             if (reviewFailure != null) {
                 throw reviewFailure;
             }
