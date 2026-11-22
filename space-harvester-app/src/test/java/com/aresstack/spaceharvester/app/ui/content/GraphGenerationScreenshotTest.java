@@ -119,7 +119,7 @@ class GraphGenerationScreenshotTest {
         SwingUtilities.invokeAndWait(dialog::dispose);
         settle();
 
-        // Dieselbe Rückfrage ohne bereites Chat-Modell: gelb „kein Chat-Modell …“ statt der Zeile zum KI-Dienst
+        // Dieselbe Rückfrage ohne bereites Chat-Modell: Zeile „Aussagenanalyse“ gelb „kein Chat-Modell (wird ausgelassen)“
         actions.preview = new GraphGeneration.Preview(actions.preview.plan(), AnalyzerChoice.MODEL, 3, false);
         SwingUtilities.invokeLater(tab[0]::clickGenerate);
         JDialog noModel = awaitDialog();

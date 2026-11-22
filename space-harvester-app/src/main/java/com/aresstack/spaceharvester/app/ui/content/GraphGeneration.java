@@ -21,8 +21,9 @@ import java.util.Set;
  * Die Rückfrage von „Wissensgraph erzeugen“ im Reiter „Graph“ (W5, UX 22.11.2026): „Wissensgraph wirklich erzeugen?“
  * als Überschrift, darunter eine Tabelle je Stufe des Dienst-Planers: Stufe, Zahl der Seiten und gedämpft in eigener Spalte, was dazu
  * gehört („4 erst laden“, „läuft schon“), bewusst abgeschaltete Stufen gelb „abgeschaltet (wird ausgelassen)“. Darunter
- * gelb, wie viele Seiten ohne KI-Freigabe ausgelassen werden (ohne bereites Chat-Modell auch „kein Chat-Modell,
- * Aussagenanalyse wird ausgelassen“), rot die ohne Zugriff; in eigener Zeile direkt über
+ * gelb, wie viele Seiten ohne KI-Freigabe ausgelassen werden (nur, wenn überhaupt etwas an den KI-Dienst ginge), rot
+ * die ohne Zugriff; ohne bereites Chat-Modell steht in der Zeile „Aussagenanalyse“ statt der Zahl gelb „kein
+ * Chat-Modell (wird ausgelassen)“ wie bei einer abgeschalteten Stufe (UX 22.11.2026); in eigener Zeile direkt über
  * Ja/Nein steht, wie viele Seiten an den KI-Dienst gehen: die von „Bilder beschreiben“ immer, die der Aussagenanalyse
  * nur mit dem KI-Analysator, jede Seite nur einmal (nur die Zahl, kein Geldbetrag; Seiten ohne KI-Freigabe zählen
  * nicht mit). Stufen, die noch keine Arbeit haben, erscheinen nicht.
@@ -35,10 +36,11 @@ final class GraphGeneration {
     static final String DISABLED = "abgeschaltet (wird ausgelassen)";
     static final String NOTHING = "nichts zu tun";
     /**
-     * Gelb statt der Zeile zum KI-Dienst, wenn die Aussagenanalyse mit dem KI-Analysator Seiten hätte, aber kein
-     * Chat-Modell bereit ist (Auflage W5): Der Lauf lässt sie bewusst aus.
+     * Gelb in der Zusatzspalte der Zeile „Aussagenanalyse“ (ohne Seitenzahl), wenn sie mit dem KI-Analysator Seiten
+     * hätte, aber kein Chat-Modell bereit ist (Auflage W5, Form UX 22.11.2026): Der Lauf lässt sie bewusst aus, sie
+     * zählen nicht beim KI-Dienst.
      */
-    static final String NO_MODEL = "kein Chat-Modell, Aussagenanalyse wird ausgelassen";
+    static final String NO_MODEL = "kein Chat-Modell (wird ausgelassen)";
 
     private GraphGeneration() {
     }
@@ -133,8 +135,10 @@ final class GraphGeneration {
                 case RUNNING -> lines.add(new Line(stage.title(), pages(stage.reused()), extras(stage, RUNNING),
                         false));
                 case NOTHING_MISSING -> lines.add(new Line(stage.title(), "", extras(stage, NOTHING), false));
-                case PLANNED -> lines.add(new Line(stage.title(), pages(stage.pages()),
-                        extras(stage, stage.reused() > 0 ? stage.reused() + " " + RUNNING : ""), false));
+                case PLANNED -> lines.add(STATEMENTS.equals(stage.id()) && preview.statementsWithoutModel()
+                        ? new Line(stage.title(), "", NO_MODEL, true)
+                        : new Line(stage.title(), pages(stage.pages()),
+                                extras(stage, stage.reused() > 0 ? stage.reused() + " " + RUNNING : ""), false));
             }
         }
         return lines;
@@ -158,11 +162,11 @@ final class GraphGeneration {
     }
 
     /**
-     * Gelb, statt die Seiten der Aussagenanalyse beim KI-Dienst zu zählen: {@link #NO_MODEL}, wenn der KI-Analysator
-     * eingestellt ist, aber kein Chat-Modell bereit; sonst {@code null}.
+     * In der Rückfrage: die gelbe Zeile der Seiten ohne KI-Freigabe nur, wenn überhaupt eine Seite an den KI-Dienst
+     * ginge (UX 22.11.2026); sonst {@code null}.
      */
-    static String noModelLine(Preview preview) {
-        return preview.statementsWithoutModel() ? NO_MODEL : null;
+    static String questionNotReleasedLine(Preview preview) {
+        return preview.toModel() > 0 ? notReleasedLine(preview) : null;
     }
 
     /** Rot (fehlender Zugriff): Seiten ohne Zugriff, die ausgelassen werden; {@code null} ohne. */
@@ -179,7 +183,7 @@ final class GraphGeneration {
             text.append('\n').append(line.stage()).append(line.count().isEmpty() ? "" : " · " + line.count())
                     .append(line.extra().isEmpty() ? "" : " · " + line.extra());
         }
-        for (String extra : new String[] {notReleasedLine(preview), noModelLine(preview), inaccessibleLine(preview),
+        for (String extra : new String[] {questionNotReleasedLine(preview), inaccessibleLine(preview),
                 modelLine(preview)}) {
             if (extra != null) {
                 text.append('\n').append(extra);
@@ -224,7 +228,7 @@ final class GraphGeneration {
         c.weightx = 1;
         boolean first = true;
         String inaccessible = inaccessibleLine(preview);
-        for (String warning : new String[] {notReleasedLine(preview), noModelLine(preview), inaccessible}) {
+        for (String warning : new String[] {questionNotReleasedLine(preview), inaccessible}) {
             if (warning != null) {
                 c.gridy++;
                 c.insets = new Insets(first ? 10 : 2, 0, 0, 0);

@@ -1837,47 +1837,53 @@ class KnowledgeGraphTabTest {
     // ---- Auflagen des Architekten und Codex-Befunde (W5)
 
     /**
-     * Auflage 1: Mit dem KI-Analysator, aber ohne bereites Chat-Modell geht keine Seite der Aussagenanalyse an den
-     * KI-Dienst; statt der Zeile zum KI-Dienst steht gelb „kein Chat-Modell, Aussagenanalyse wird ausgelassen“. Die
-     * Zahlen je Stufe bleiben die des Planers (Vorschau und Start nennen dieselben), die Seiten ohne Freigabe bleiben
-     * gelb gezählt. Gehen Bilder an den KI-Dienst, nennt die Zeile nur deren Seiten.
+     * Auflage 1 in der Form des UX-Managers: Mit dem KI-Analysator, aber ohne bereites Chat-Modell geht keine Seite der
+     * Aussagenanalyse an den KI-Dienst. Ihre Zeile verliert die Seitenzahl und nennt gelb in der Zusatzspalte „kein
+     * Chat-Modell (wird ausgelassen)“, wie eine abgeschaltete Stufe; eine eigene gelbe Zeile darunter gibt es nicht. Die
+     * Zeile „ohne KI-Freigabe“ steht nur, wenn überhaupt etwas an den KI-Dienst ginge. Gehen Bilder an den KI-Dienst,
+     * nennt die Zeile zum KI-Dienst nur deren Seiten.
      */
     @Test
-    void withoutAChatModelTheQuestionSaysTheStatementsAreLeftOutInsteadOfTheAiLine() {
+    void withoutAChatModelTheStatementsRowSaysItIsLeftOutInsteadOfItsCount() {
         ServicePreview plan = new ServicePreview(List.of(
-                stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 12, 0, 0, 1), goal(15)),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 12, 4, 0, 1), goal(15)),
                 List.of(), 0);
         GraphGeneration.Preview noModel = new GraphGeneration.Preview(plan, AnalyzerChoice.MODEL, 3, false);
 
         assertThat(GraphGeneration.modelLine(noModel)).as("keine Seite geht an den KI-Dienst").isNull();
-        assertThat(GraphGeneration.noModelLine(noModel))
-                .isEqualTo("kein Chat-Modell, Aussagenanalyse wird ausgelassen");
-        assertThat(GraphGeneration.notReleasedLine(noModel)).isEqualTo("3 ohne KI-Freigabe (werden ausgelassen)");
-        assertThat(GraphGeneration.lines(noModel)).as("die Zahlen des Planers bleiben").contains(
-                new GraphGeneration.Line("Aussagenanalyse", "12 Seiten", "", false));
-        assertThat(GraphGeneration.text(noModel)).endsWith("\n3 ohne KI-Freigabe (werden ausgelassen)"
-                + "\nkein Chat-Modell, Aussagenanalyse wird ausgelassen").doesNotContain("KI-Dienst");
+        assertThat(GraphGeneration.lines(noModel)).contains(
+                new GraphGeneration.Line("Aussagenanalyse", "", "kein Chat-Modell (wird ausgelassen)", true));
+        assertThat(GraphGeneration.questionNotReleasedLine(noModel))
+                .as("nichts ginge an den KI-Dienst: keine Zeile zur Freigabe").isNull();
+        assertThat(GraphGeneration.text(noModel)).doesNotContain("KI-Dienst").doesNotContain("KI-Freigabe")
+                .doesNotContain("12 Seiten").contains("Aussagenanalyse · kein Chat-Modell (wird ausgelassen)");
         javax.swing.JComponent body = GraphGeneration.body(noModel);
         javax.swing.JLabel line = labels(body).stream()
                 .filter(label -> GraphGeneration.NO_MODEL.equals(label.getText())).findFirst().orElseThrow();
         assertThat(line.getForeground()).as("gelb: bewusst ausgelassen")
                 .isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.STANDING_UNCLEAR);
-        assertThat(labels(body)).noneMatch(label -> label.getText().contains("KI-Dienst"));
+        assertThat(labels(body)).noneMatch(label -> label.getText().contains("KI-Dienst")
+                || label.getText().contains("KI-Freigabe"));
 
         GraphGeneration.Preview ready = new GraphGeneration.Preview(plan, AnalyzerChoice.MODEL, 3, true);
-        assertThat(GraphGeneration.noModelLine(ready)).isNull();
+        assertThat(GraphGeneration.lines(ready)).contains(
+                new GraphGeneration.Line("Aussagenanalyse", "12 Seiten", "4 erst laden", false));
         assertThat(GraphGeneration.modelLine(ready)).isEqualTo("12 Seiten gehen an den KI-Dienst.");
-        assertThat(GraphGeneration.noModelLine(new GraphGeneration.Preview(plan, AnalyzerChoice.PARSER, 0, false)))
-                .as("der MaltParser braucht kein Chat-Modell").isNull();
+        assertThat(GraphGeneration.questionNotReleasedLine(ready)).isEqualTo("3 ohne KI-Freigabe (werden ausgelassen)");
+        assertThat(GraphGeneration.lines(new GraphGeneration.Preview(plan, AnalyzerChoice.PARSER, 0, false)))
+                .as("der MaltParser braucht kein Chat-Modell")
+                .contains(new GraphGeneration.Line("Aussagenanalyse", "12 Seiten", "4 erst laden", false));
 
         GraphGeneration.Preview images = new GraphGeneration.Preview(new ServicePreview(List.of(
                 stage("images", "Bilder beschreiben", ServicePreview.State.PLANNED, 4, 0, 0, 1),
                 stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 2, 0, 0, 1), goal(5)),
                 List.of(), 0, Map.of("images", PageSet.of(Map.of("wiki", List.of("1", "2", "3", "4"))),
-                "statements", PageSet.of(Map.of("wiki", List.of("1", "5"))))), AnalyzerChoice.MODEL, 0, false);
+                "statements", PageSet.of(Map.of("wiki", List.of("1", "5"))))), AnalyzerChoice.MODEL, 2, false);
         assertThat(GraphGeneration.modelLine(images)).as("nur noch die Bildseiten").isEqualTo(
                 "4 Seiten gehen an den KI-Dienst.");
-        assertThat(GraphGeneration.noModelLine(images)).isEqualTo(GraphGeneration.NO_MODEL);
+        assertThat(GraphGeneration.questionNotReleasedLine(images)).isEqualTo("2 ohne KI-Freigabe (werden ausgelassen)");
+        assertThat(GraphGeneration.lines(images)).contains(
+                new GraphGeneration.Line("Aussagenanalyse", "", GraphGeneration.NO_MODEL, true));
     }
 
     /** Die Beschriftungen eines Panels, auch verschachtelt. */
