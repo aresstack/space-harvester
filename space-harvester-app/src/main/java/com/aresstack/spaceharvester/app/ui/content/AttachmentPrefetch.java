@@ -17,6 +17,10 @@ import java.util.function.Function;
  * gezeigten, dann der Reihe nach Abstand zu ihm (+1, −1, +2, −2 …), schließlich alle übrigen. Wechselt der Benutzer den
  * Anhang, richtet sich die Reihenfolge sofort nach dem neuen. Geladen wird nacheinander über {@link Source}, die das
  * Ergebnis auch ablegt; die zuletzt geladenen Bytes bleiben im Speicher, damit Zurückblättern sofort zeigt.
+ *
+ * <p>Mit {@code handOff} (Fundstelle 18) lädt er selbst nur den gezeigten, seine {@value #NEAR} Nachbarn je Seite und
+ * was {@code uiOnly} nennt (Standbilder der Videomarken brauchen den offenen Player); die übrigen gibt er einmal ab, an
+ * den Hintergrundteil „Anhänge vorladen“. Lehnt der ab (nur ein Platz), bleibt es beim bisherigen Weg.
  */
 final class AttachmentPrefetch implements AutoCloseable {
 
@@ -30,6 +34,9 @@ final class AttachmentPrefetch implements AutoCloseable {
         }
     }
 
+    /** So viele Nachbarn je Seite lädt der Vorlader mit {@code handOff} selbst. */
+    static final int NEAR = 2;
+
     /** So viele zuletzt geladene Anhänge bleiben im Speicher. */
     private final int cached;
     /** Nach so vielen geladenen Anhängen zeigt {@code batch} den Stand, und am Ende. */
@@ -38,6 +45,12 @@ final class AttachmentPrefetch implements AutoCloseable {
     private final Source source;
     private final Function<Throwable, String> reason;
     private final Runnable batch;
+    /** Gibt die übrigen Anhänge ab; {@code true}, wenn sie angenommen wurden. {@code null}: alles selbst laden. */
+    private final Function<List<String>, Boolean> handOff;
+    private final java.util.function.Predicate<String> uiOnly;
+    /** Ob die übrigen schon abgegeben oder abgelehnt sind. */
+    private boolean handedOff;
+    private boolean refused;
     private final Map<String, byte[]> cache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, byte[]> eldest) {
@@ -66,6 +79,18 @@ final class AttachmentPrefetch implements AutoCloseable {
      */
     AttachmentPrefetch(Source source, Function<Throwable, String> reason, Runnable batch, int cached,
                        int batchSize) {
+        this(source, reason, batch, cached, batchSize, null, key -> false);
+    }
+
+    /**
+     * @param handOff gibt die übrigen Anhänge ab (nicht auf dem EDT gerufen); {@code true}, wenn sie angenommen wurden
+     * @param uiOnly  Anhänge, die nur hier geladen werden können, etwa Standbilder von Videomarken
+     */
+    AttachmentPrefetch(Source source, Function<Throwable, String> reason, Runnable batch, int cached,
+                       int batchSize, Function<List<String>, Boolean> handOff,
+                       java.util.function.Predicate<String> uiOnly) {
+        this.handOff = handOff;
+        this.uiOnly = Objects.requireNonNull(uiOnly, "uiOnly");
         this.cached = cached;
         this.batchSize = batchSize;
         this.source = Objects.requireNonNull(source, "source");
@@ -139,7 +164,9 @@ final class AttachmentPrefetch implements AutoCloseable {
             return waiting.keySet().iterator().next();
         }
         int at = Math.max(0, order.indexOf(focus));
-        for (int distance = 0; distance < order.size(); distance++) {
+        boolean nearOnly = handOff != null && !refused;
+        int reach = nearOnly ? Math.min(order.size(), NEAR + 1) : order.size();
+        for (int distance = 0; distance < reach; distance++) {
             for (int index : new int[] {at + distance, at - distance}) {
                 if (index >= 0 && index < order.size()) {
                     String key = order.get(index);
@@ -149,13 +176,46 @@ final class AttachmentPrefetch implements AutoCloseable {
                 }
             }
         }
+        if (nearOnly) {
+            for (String key : order) {
+                if (uiOnly.test(key) && !loaded.contains(key) && !failed.contains(key)) {
+                    return key;
+                }
+            }
+        }
         return null;
+    }
+
+    /** Die übrigen Anhänge zum Abgeben, einmal je Vorlader; leer, wenn nichts (mehr) abzugeben ist. */
+    private synchronized List<String> rest() {
+        if (closed || handOff == null || refused || handedOff) {
+            return List.of();
+        }
+        handedOff = true;
+        return order.stream().filter(key -> !uiOnly.test(key) && !loaded.contains(key) && !failed.contains(key))
+                .toList();
     }
 
     private void run() {
         while (true) {
             String key = next();
             if (key == null) {
+                List<String> rest = rest();
+                if (!rest.isEmpty()) {
+                    boolean accepted;
+                    try {
+                        accepted = Boolean.TRUE.equals(handOff.apply(rest));
+                    } catch (RuntimeException e) {
+                        accepted = false;
+                    }
+                    if (!accepted) {
+                        // Nur ein Platz oder kein Teil möglich: wie bisher alles selbst laden.
+                        synchronized (this) {
+                            refused = true;
+                        }
+                    }
+                    continue;
+                }
                 boolean report;
                 synchronized (this) {
                     worker = null;

@@ -377,6 +377,7 @@ public final class Harvester implements AutoCloseable {
     /** Hintergrundaufträge (Angelo 21.11.2026, ADR 0025 Nachtrag). */
     private final com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs;
     private final com.aresstack.spaceharvester.application.background.ConnectionChecks connectionChecks;
+    private final com.aresstack.spaceharvester.application.background.AttachmentPrefetches attachmentPrefetches;
     /** „Seiten nachladen“ als Hintergrundauftrag. */
     private final com.aresstack.spaceharvester.application.background.PageLoads pageLoads;
     private final com.aresstack.spaceharvester.application.background.services.ServicePlanner servicePlanner;
@@ -514,6 +515,10 @@ public final class Harvester implements AutoCloseable {
             // Fundstelle 17: eine Verbindungsprüfung, die länger als eine Sekunde dauert, als Hintergrundteil.
             this.connectionChecks = new com.aresstack.spaceharvester.application.background.ConnectionChecks(
                     backgroundJobs);
+            // Fundstelle 18: die übrigen Anhänge einer geöffneten Art je Quelle und Space als Hintergrundteil.
+            this.attachmentPrefetches = new com.aresstack.spaceharvester.application.background.AttachmentPrefetches(
+                    backgroundJobs);
+            opened.add(attachmentPrefetches);
 
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
@@ -2441,6 +2446,11 @@ public final class Harvester implements AutoCloseable {
     /** Verbindungsprüfungen, die länger als eine Sekunde dauern, als Hintergrundteil (Fundstelle 17). */
     public com.aresstack.spaceharvester.application.background.ConnectionChecks connectionChecks() {
         return connectionChecks;
+    }
+
+    /** „Anhänge vorladen“ als Hintergrundteil je Quelle und Space (Fundstelle 18). */
+    public com.aresstack.spaceharvester.application.background.AttachmentPrefetches attachmentPrefetches() {
+        return attachmentPrefetches;
     }
 
     /** Abgleich eines Space in den Cache als Auftrag; Status und Delta über {@link SpaceSyncJobs#status}. */

@@ -3334,6 +3334,16 @@ public final class Workspace {
     }
 
     /**
+     * Gibt Anhänge einer Seite zum Vorladen an den Hintergrundteil „Anhänge vorladen“ ihres Space ab (Fundstelle 18);
+     * geladen und abgelegt wird wie mit {@link #assetContent}. Leer bei nur einem Platz: Dann lädt die App selbst vor.
+     */
+    public java.util.Optional<JobStatus> prefetchAttachments(String sourceId, String pageId, List<String> attachmentIds) {
+        PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
+        return harvester.attachmentPrefetches().request(sourceId, list.spaceKey(), pageId, attachmentIds,
+                (source, page, attachment) -> assetContent(source, page, attachment));
+    }
+
+    /**
      * Wie {@link #assetContent}, aber als Strom ({@code Assets.stream}, #571): ein abgelegter Anhang kommt aus der
      * Ablage, ohne ganz im Speicher zu liegen. Der Aufrufer schließt den Strom; ein Hashfehler kommt beim Lesen am
      * Ende als {@link java.io.IOException}.

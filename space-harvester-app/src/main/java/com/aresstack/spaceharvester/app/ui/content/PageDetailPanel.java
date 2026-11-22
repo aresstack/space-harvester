@@ -4322,8 +4322,24 @@ public final class PageDetailPanel extends JPanel {
             }
         }, PageDetailPanel::reason, () -> attachmentsChanged(video),
                 context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_CACHED),
-                context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_BATCH));
+                context.video().number(com.aresstack.spaceharvester.app.settings.VideoSettings.Value.PREFETCH_BATCH),
+                // Fundstelle 18: die übrigen als Hintergrundteil „Anhänge vorladen“; endet er, gilt die Liste neu.
+                rest -> runtime.workspace().prefetchAttachments(source, id, rest).map(part -> {
+                    javax.swing.SwingUtilities.invokeLater(() -> watchPrefetch(runtime, part.id(), video));
+                    return true;
+                }).orElse(false),
+                com.aresstack.spaceharvester.application.assets.Assets::videoMark);
         return prefetch;
+    }
+
+    /** Wacht über den Hintergrundteil, der die übrigen Anhänge der Seite vorlädt; einer je Seite. */
+    private com.aresstack.spaceharvester.application.observe.Subscription prefetchWatch;
+
+    private void watchPrefetch(AppRuntime runtime, String jobId, VideoFrameSource video) {
+        if (prefetchWatch != null) {
+            prefetchWatch.close();
+        }
+        prefetchWatch = runtime.workspace().whenJobFinished(jobId, done -> attachmentsChanged(video));
     }
 
     /** Die Anhänge derselben Art in der Reihenfolge der Liste. */
