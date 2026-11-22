@@ -51,6 +51,9 @@ class FtpDocumentStoreTest {
         assertThat(host.text("KKR.JCL(BUILD)")).endsWith("//STEP2    EXEC PGM=IEFBR14");
         EditorDocument saved = ((SaveResult.Saved) result).document();
         assertThat(saved.hash()).isEqualTo(store.load("'KKR.JCL(BUILD)'").hash());
+        // Der Stand ist der Editortext, sonst bliebe das Dokument nach dem Speichern „geändert“.
+        assertThat(saved.text()).isEqualTo(loaded.text() + "\n//STEP2    EXEC PGM=IEFBR14   \n");
+        assertThat(store.save(saved, saved.text(), false)).isInstanceOf(SaveResult.Saved.class);
     }
 
     @Test
@@ -61,6 +64,12 @@ class FtpDocumentStoreTest {
         assertThat(host.text("KKR.JCL(STERNE)")).isEqualTo("//STERNE  JOB GEAENDERT");
         assertThat(store.save(loaded, "//MEINS", true)).isInstanceOf(SaveResult.Saved.class);
         assertThat(host.text("KKR.JCL(STERNE)")).isEqualTo("//MEINS");
+    }
+
+    @Test
+    void normalizesOnlyMvsRecords() {
+        assertThat(FtpDocumentStore.expected("A  \nB ", true)).isEqualTo("A\nB");
+        assertThat(FtpDocumentStore.expected("a  \nb\n", false)).isEqualTo("a  \nb\n");
     }
 
     @Test

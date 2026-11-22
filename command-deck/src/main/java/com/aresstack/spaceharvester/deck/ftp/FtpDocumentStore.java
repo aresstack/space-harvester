@@ -35,14 +35,27 @@ public final class FtpDocumentStore implements DocumentStore {
     @Override
     public SaveResult save(EditorDocument loaded, String text, boolean overwrite) throws DocumentException {
         String path = loaded.location();
-        // Satzformat: Zeilen werden rechts gekürzt, der letzte Umbruch erzeugt keinen leeren Satz (wie beim Hochladen).
-        String records = text.endsWith("\n") ? text.substring(0, text.length() - 1) : text;
+        boolean records = session.mvs();
+        // Nur auf MVS gilt das Satzformat (letzter Umbruch kein leerer Satz); andere Dateien gehen unverändert hinaus.
+        String outgoing = records && text.endsWith("\n") ? text.substring(0, text.length() - 1) : text;
         try {
-            RemoteFile written = session.filesOnce(files -> files.writeIfUnchanged(path, records,
+            RemoteFile written = session.filesOnce(files -> files.writeIfUnchanged(path, outgoing,
                     overwrite ? null : loaded.hash())).get();
-            // Der neue Fingerabdruck muss zu dem passen, was der Host beim nächsten Lesen liefert.
             RemoteFile fresh = await(session.files(files -> files.read(written.path())), "Lesen nach dem Speichern");
-            return new SaveResult.Saved(document(fresh));
+            if (fresh.text().equals(expected(outgoing, records))) {
+                // Der Editor behält seinen Text als Stand (sonst bliebe er nach dem Speichern „geändert“), der
+                // Fingerabdruck ist der des Hosts für die nächste Prüfung.
+                return new SaveResult.Saved(new EditorDocument(fresh.path(), loaded.name(), text, loaded.charset(),
+                        loaded.lineEnding(), fresh.hash()));
+            }
+            if (overwrite) {
+                // Ausdrücklich überschrieben, der Host hat aber etwas anderes abgelegt (etwa Satzlänge): sein Stand
+                // wird die Grundlage, der Editor zeigt den Unterschied als ungespeicherte Änderung.
+                return new SaveResult.Saved(document(fresh));
+            }
+            // Nicht still fremde Änderungen übernehmen: lieber nachfragen als beim nächsten Mal blind überschreiben.
+            return new SaveResult.Conflict("Gespeichert, aber der Host liefert jetzt einen anderen Text "
+                    + "(Satzlänge oder Änderung von außen) – bitte neu laden oder überschreiben.");
         } catch (ExecutionException e) {
             if (e.getCause() instanceof WriteConflictException) {
                 return new SaveResult.Conflict("Das Member wurde seit dem Öffnen auf dem Host geändert.");
@@ -52,6 +65,22 @@ public final class FtpDocumentStore implements DocumentStore {
             Thread.currentThread().interrupt();
             throw new DocumentException("Speichern abgebrochen", e);
         }
+    }
+
+    /** Was der Host nach dem Schreiben liefern muss: auf MVS jede Zeile rechts gekürzt, sonst genau der Text. */
+    static String expected(String written, boolean records) {
+        if (!records) {
+            return written;
+        }
+        String[] lines = written.split("\n", -1);
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                result.append('\n');
+            }
+            result.append(lines[i].stripTrailing());
+        }
+        return result.toString();
     }
 
     private EditorDocument document(RemoteFile file) {
