@@ -20,6 +20,7 @@ public final class TerminalSession {
     private TerminalConnection connection;
     private SessionState state = SessionState.CONNECTING;
     private String failure;
+    private String note;
 
     TerminalSession(String id, TerminalProfile profile) {
         this.id = Objects.requireNonNull(id, "id");
@@ -51,6 +52,27 @@ public final class TerminalSession {
         } finally {
             lock.unlock();
         }
+    }
+
+    /** Ein Hinweis zur laufenden Sitzung, etwa das Ergebnis der automatischen Anmeldung. */
+    public Optional<String> note() {
+        lock.lock();
+        try {
+            return Optional.ofNullable(note);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Setzt den Hinweis und meldet ihn den Beobachtern. */
+    void note(String text) {
+        lock.lock();
+        try {
+            note = text;
+        } finally {
+            lock.unlock();
+        }
+        observers.forEach(observer -> observer.accept(this));
     }
 
     /** Die Darstellung des Adapters, sobald die Verbindung angelegt ist. */

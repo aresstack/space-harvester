@@ -207,9 +207,12 @@ public final class MainWindow implements AppContext.Navigator {
 
     public MainWindow(AppContext context) {
         this.context = context;
-        commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
-                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
         context.setNavigator(this);
+        // Server des Command Deck aus KeePass, über dieselbe Kopplung wie die Wissensquellen; BetaView zusätzlich
+        // über den Netzweg der App (Proxy, Zertifikate).
+        commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
+                new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
+                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
@@ -497,7 +500,8 @@ public final class MainWindow implements AppContext.Navigator {
         perspectives.add(new Perspective(Perspectives.HARVESTER, "Space Harvester",
                 "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null));
         perspectives.add(commandDeck.perspective());
-        perspectives.add(Perspectives.missionProtocol());
+        perspectives.add(Perspectives.provingGround());
+        perspectives.add(Perspectives.missionControl());
         for (Perspective perspective : perspectives.all()) {
             stage.add(perspective.workspace(), perspective.id());
         }

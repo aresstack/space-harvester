@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess;
 import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewWorkspace;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
+import com.aresstack.spaceharvester.deck.access.ServerAccounts;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
 import com.aresstack.spaceharvester.deck.betaview.http.HttpBetaViewServer;
 import com.aresstack.spaceharvester.deck.terminal.TerminalSessions;
@@ -44,14 +45,24 @@ public final class CommandDeck {
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
 
-    /** Deck ohne App-Kontext (Tests): BetaView direkt ohne Proxy, ohne KeePass. */
+    /** Ohne Passwortspeicher und Proxy (Tests). */
     public CommandDeck() {
-        this(BetaViewAccess.direct());
+        this(ServerAccounts.NONE, BetaViewAccess.direct());
     }
 
-    /** Deck mit dem Netzweg (Proxy, Zertifikate) und der KeePass-Kopplung der App für BetaView. */
-    public CommandDeck(BetaViewAccess betaViewAccess) {
-        terminal = new TerminalWorkspace(sessions);
+    /**
+     * @param accounts Host-Zugänge (KeePass), gemeinsam für Terminal und später FTP und NDV
+     */
+    public CommandDeck(ServerAccounts accounts) {
+        this(accounts, BetaViewAccess.direct());
+    }
+
+    /**
+     * @param accounts       Host-Zugänge (KeePass), gemeinsam für Terminal und später FTP und NDV
+     * @param betaViewAccess Netzweg (Proxy, Zertifikate) und KeePass-Kopplung der App für BetaView
+     */
+    public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess) {
+        terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), betaViewAccess);
         workspace.setBackground(Comic.SURFACE);

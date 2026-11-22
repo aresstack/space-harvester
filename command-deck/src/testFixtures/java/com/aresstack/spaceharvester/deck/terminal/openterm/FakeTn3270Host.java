@@ -44,6 +44,8 @@ public final class FakeTn3270Host implements AutoCloseable {
     private final Charset codePage;
     private final List<Socket> clients = new CopyOnWriteArrayList<>();
     private final ByteArrayOutputStream received = new ByteArrayOutputStream();
+    private final List<Integer> aids = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final java.util.concurrent.atomic.AtomicInteger inputs = new java.util.concurrent.atomic.AtomicInteger();
 
     public FakeTn3270Host(List<Line> screen, String codePage) throws IOException {
         this.server = new ServerSocket(0, 5, InetAddress.getLoopbackAddress());
@@ -79,7 +81,7 @@ public final class FakeTn3270Host implements AutoCloseable {
         try (client) {
             InputStream in = client.getInputStream();
             OutputStream out = client.getOutputStream();
-            Thread.ofVirtual().start(() -> drain(in));
+            Thread.ofVirtual().start(() -> drain(in, out));
             out.write(new byte[] {(byte) IAC, (byte) DO, OPT_TTYPE});
             out.flush();
             Thread.sleep(150);
@@ -90,9 +92,11 @@ public final class FakeTn3270Host implements AutoCloseable {
                 (byte) IAC, (byte) DO, OPT_BINARY, (byte) IAC, (byte) WILL, OPT_BINARY});
             out.flush();
             Thread.sleep(250);
-            out.write(dataStream());
-            out.write(new byte[] {(byte) IAC, (byte) EOR});
-            out.flush();
+            synchronized (out) {
+                out.write(dataStream());
+                out.write(new byte[] {(byte) IAC, (byte) EOR});
+                out.flush();
+            }
             while (!client.isClosed() && !server.isClosed()) {
                 Thread.sleep(100);
             }
@@ -101,13 +105,54 @@ public final class FakeTn3270Host implements AutoCloseable {
         }
     }
 
-    private void drain(InputStream in) {
+    /**
+     * Schreibt mit, was der Client schickt. Jede abgeschlossene Eingabe (CLEAR, ENTER: endet mit IAC EOR) beantwortet
+     * der Host wie ein echter mit einem neuen Bild, damit die Tastatur wieder frei wird.
+     */
+    private void drain(InputStream in, OutputStream out) {
         byte[] buffer = new byte[1024];
         try {
             int n;
+            // Kleiner Telnet-Leser: Optionen und Unterverhandlung überspringen, erstes Datenbyte eines Satzes = AID.
+            int state = 0; // 0 Daten, 1 nach IAC, 2 Option überspringen, 3 in SB, 4 in SB nach IAC
+            boolean recordStart = true;
             while ((n = in.read(buffer)) > 0) {
                 synchronized (received) {
                     received.write(buffer, 0, n);
+                }
+                for (int i = 0; i < n; i++) {
+                    int b = buffer[i] & 0xFF;
+                    switch (state) {
+                        case 0 -> {
+                            if (b == IAC) {
+                                state = 1;
+                            } else if (recordStart) {
+                                aids.add(b);
+                                recordStart = false;
+                            }
+                        }
+                        case 1 -> {
+                            if (b == EOR) {
+                                state = 0;
+                                recordStart = true;
+                                inputs.incrementAndGet();
+                                synchronized (out) {
+                                    out.write(dataStream());
+                                    out.write(new byte[] {(byte) IAC, (byte) EOR});
+                                    out.flush();
+                                }
+                            } else if (b >= WILL && b <= 254) {
+                                state = 2;
+                            } else if (b == SB) {
+                                state = 3;
+                            } else {
+                                state = 0;
+                            }
+                        }
+                        case 2 -> state = 0;
+                        case 3 -> state = b == IAC ? 4 : 3;
+                        default -> state = b == SE ? 0 : 3;
+                    }
                 }
             }
         } catch (IOException ignored) {
@@ -115,18 +160,30 @@ public final class FakeTn3270Host implements AutoCloseable {
         }
     }
 
+    /** Die AID-Bytes der Eingaben in Reihenfolge (0x7D ENTER, 0x6D CLEAR, 0xF1–0xF9 PF1–PF9, 0x6C PA1 …). */
+    public List<Integer> aids() {
+        return List.copyOf(aids);
+    }
+
+    /** Wie viele abgeschlossene Eingaben (AID mit IAC EOR) der Host bekommen hat. */
+    public int inputs() {
+        return inputs.get();
+    }
+
     /** Erase/Write mit Tastatur frei, dann je Zeile Pufferadresse, Feldanfang und Text; Schreibmarke ins Feld. */
     byte[] dataStream() {
         ByteArrayOutputStream data = new ByteArrayOutputStream();
         data.write(0xF5);
         data.write(0xC3);
+        boolean cursorPlaced = false;
         for (Line line : screen) {
             address(data, line.row() * 80 + line.column());
             data.write(0x1D);
             // Geschützt und hell (0x28) bzw. ungeschützt (0x00), über die Codetabelle.
             data.write(CODES[line.input() ? 0x00 : 0x28]);
-            if (line.input()) {
+            if (line.input() && !cursorPlaced) {
                 data.write(0x13);
+                cursorPlaced = true;
             }
             byte[] text = line.text().getBytes(codePage);
             for (byte b : text) {

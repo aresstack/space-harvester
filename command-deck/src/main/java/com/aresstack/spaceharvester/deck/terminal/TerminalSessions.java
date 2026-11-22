@@ -19,14 +19,26 @@ public final class TerminalSessions {
     private final List<TerminalSession> sessions = new CopyOnWriteArrayList<>();
     private final List<Consumer<TerminalSession>> openedObservers = new CopyOnWriteArrayList<>();
     private final AtomicInteger counter = new AtomicInteger();
+    private final LoginScript loginScript;
+
+    /** Liefert die Zugangsdaten erst im Hintergrund, nach dem Verbinden (etwa aus KeePass). */
+    @FunctionalInterface
+    public interface LoginSource {
+        TerminalLogin login() throws Exception;
+    }
 
     /**
      * @param connector  Adapter zum Host
      * @param background führt den blockierenden Verbindungsaufbau aus (nie der EDT)
      */
     public TerminalSessions(TerminalConnector connector, Executor background) {
+        this(connector, background, new LoginScript(LoginScript.DEFAULT_DELAY));
+    }
+
+    public TerminalSessions(TerminalConnector connector, Executor background, LoginScript loginScript) {
         this.connector = Objects.requireNonNull(connector, "connector");
         this.background = Objects.requireNonNull(background, "background");
+        this.loginScript = Objects.requireNonNull(loginScript, "loginScript");
     }
 
     /**
@@ -34,6 +46,15 @@ public final class TerminalSessions {
      * und baut die Verbindung dann im Hintergrund auf. Scheitert schon das Anlegen, ist die Sitzung sofort FAILED.
      */
     public TerminalSession open(TerminalProfile profile) {
+        return open(profile, null);
+    }
+
+    /**
+     * Wie {@link #open(TerminalProfile)}; mit {@code login} meldet sich die Sitzung nach dem Verbinden selbst an
+     * (Ablauf {@link LoginScript}). Das Ergebnis steht als Hinweis in der Sitzung; die Verbindung bleibt auch bei
+     * einer gescheiterten Anmeldung offen, man meldet sich dann von Hand an.
+     */
+    public TerminalSession open(TerminalProfile profile, LoginSource login) {
         TerminalSession session = new TerminalSession("terminal-" + counter.incrementAndGet(), profile);
         TerminalConnection connection;
         try {
@@ -63,9 +84,39 @@ public final class TerminalSessions {
             } catch (Exception e) {
                 connection.disconnect();
                 session.change(SessionState.FAILED, describe(e));
+                return;
+            }
+            if (login != null && session.state() == SessionState.CONNECTED) {
+                logIn(session, connection, login);
             }
         });
         return session;
+    }
+
+    private void logIn(TerminalSession session, TerminalConnection connection, LoginSource source) {
+        TerminalKeyboard keyboard = connection.view(TerminalKeyboard.class).orElse(null);
+        if (keyboard == null) {
+            session.note("Automatische Anmeldung nicht möglich: Terminal ohne Tastatursteuerung");
+            return;
+        }
+        TerminalLogin login;
+        try {
+            login = source.login();
+        } catch (Exception e) {
+            session.note("Automatische Anmeldung: Zugangsdaten nicht lesbar – " + describe(e));
+            return;
+        }
+        session.note("Melde automatisch an …");
+        try {
+            session.note(loginScript.run(keyboard, login)
+                    .map(reason -> "Automatische Anmeldung abgebrochen: " + reason)
+                    .orElse("Automatisch angemeldet als " + login.user()));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            session.note("Automatische Anmeldung unterbrochen");
+        } catch (RuntimeException e) {
+            session.note("Automatische Anmeldung abgebrochen: " + describe(e));
+        }
     }
 
     /** Alle Sitzungen dieses Programmlaufs in der Reihenfolge des Öffnens, auch beendete. */

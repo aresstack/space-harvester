@@ -133,6 +133,11 @@ public final class KeePassLink {
         return List.copyOf(interactive.list());
     }
 
+    /** Wie {@link #entries()}, aber nie mit Kopplungsdialog (Command Deck); ungültige Kopplung endet als Fehler. */
+    public List<VaultEntry> entriesSilently() throws SecretUnavailableException {
+        return List.copyOf(silent.list());
+    }
+
     /** Liest einen Eintrag (Adresse und Passwort); der Aufrufer schließt ihn. */
     public VaultEntryDraft read(String title) throws SecretUnavailableException {
         return interactive.read(title);

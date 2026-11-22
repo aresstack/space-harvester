@@ -5,7 +5,11 @@ import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.deck.sky.CosmicClockPanel;
+import com.aresstack.spaceharvester.app.ui.controls.FunctionKeyBar;
+import com.aresstack.spaceharvester.deck.terminal.AidKey;
+import com.aresstack.spaceharvester.deck.terminal.FunctionKeyLegend;
 import com.aresstack.spaceharvester.deck.terminal.SessionState;
+import com.aresstack.spaceharvester.deck.terminal.TerminalKeyboard;
 import com.aresstack.spaceharvester.deck.terminal.TerminalProfile;
 import com.aresstack.spaceharvester.deck.terminal.TerminalSession;
 import com.aresstack.spaceharvester.deck.terminal.TerminalSessions;
@@ -54,13 +58,19 @@ public final class TerminalWorkspace extends JPanel {
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton paste;
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton disconnect;
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton close;
+    private final FunctionKeyBar functionKeys = new FunctionKeyBar(this::pressFunctionKey);
+    private final Map<AidKey, com.aresstack.enterpriseai.ui.comic.control.ComposerButton> specialKeys =
+            new java.util.EnumMap<>(AidKey.class);
+    private final java.util.Set<Component> keyWatched = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+    private final Runnable screenChanged = () -> SwingUtilities.invokeLater(this::readLegend);
+    private TerminalView watchedView;
     private TerminalSession selected;
 
-    public TerminalWorkspace(TerminalSessions sessions) {
+    public TerminalWorkspace(TerminalSessions sessions, com.aresstack.spaceharvester.deck.access.ServerAccounts accounts) {
         super(new BorderLayout());
         this.sessions = sessions;
         setBackground(Comic.SURFACE);
-        form = new ConnectForm(sessions::open);
+        form = new ConnectForm(accounts, sessions::open);
 
         // Kopfzeile: Sitzungen links, „Neue Verbindung“ als letzte Pille.
         pills.setOpaque(false);
@@ -75,6 +85,16 @@ public final class TerminalWorkspace extends JPanel {
         head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(8, 12, 8, 12)));
         head.add(pills, BorderLayout.CENTER);
+        // Sondertasten wie in der Werkzeugleiste von MainframeMate: ENT, CLR, PA1–PA3, SYS.
+        JPanel special = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        special.setOpaque(false);
+        for (AidKey key : AidKey.SPECIAL) {
+            var button = Comic.button(key.label(), key.hint());
+            button.addActionListener(e -> press(key));
+            specialKeys.put(key, button);
+            special.add(button);
+        }
+        head.add(special, BorderLayout.EAST);
 
         // Mitte: Sternenhimmel, darin zentriert das Terminal bzw. das Formular. Er läuft nur, solange er sichtbar ist.
         sky.setLayout(new GridBagLayout());
@@ -126,8 +146,51 @@ public final class TerminalWorkspace extends JPanel {
         foot.add(status, BorderLayout.CENTER);
         foot.add(actions, BorderLayout.EAST);
 
+        // Der Himmel füllt die Fläche, die PF-Leiste schwebt halb durchsichtig am unteren Rand (wie in MainframeMate).
+        JPanel stage = new JPanel() {
+            @Override
+            public boolean isOptimizedDrawingEnabled() {
+                return false;
+            }
+        };
+        stage.setLayout(new java.awt.LayoutManager() {
+            @Override
+            public void addLayoutComponent(String name, Component comp) {
+            }
+
+            @Override
+            public void removeLayoutComponent(Component comp) {
+            }
+
+            @Override
+            public java.awt.Dimension preferredLayoutSize(java.awt.Container parent) {
+                return sky.getPreferredSize();
+            }
+
+            @Override
+            public java.awt.Dimension minimumLayoutSize(java.awt.Container parent) {
+                return new java.awt.Dimension(0, 0);
+            }
+
+            @Override
+            public void layoutContainer(java.awt.Container parent) {
+                int width = parent.getWidth();
+                int height = parent.getHeight();
+                int bar = functionKeys.isVisible() ? functionKeys.getPreferredSize().height : 0;
+                // Das Terminal mittig über der Leiste, der Himmel trotzdem bis unten.
+                if (!(sky.getBorder() instanceof javax.swing.border.EmptyBorder empty)
+                        || empty.getBorderInsets().bottom != bar) {
+                    sky.setBorder(BorderFactory.createEmptyBorder(0, 0, bar, 0));
+                }
+                sky.setBounds(0, 0, width, height);
+                functionKeys.setBounds(0, height - bar, width, bar);
+            }
+        });
+        stage.add(functionKeys);
+        stage.add(sky);
+
         add(head, BorderLayout.NORTH);
-        add(sky, BorderLayout.CENTER);
+        add(stage, BorderLayout.CENTER);
         add(foot, BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
@@ -180,15 +243,74 @@ public final class TerminalWorkspace extends JPanel {
         if (center != null) {
             sky.add(center);
         }
+        watch(session);
         sky.revalidate();
         sky.repaint();
         fitScreen();
         showState();
         if (session == null) {
-            SwingUtilities.invokeLater(form::focusHost);
+            SwingUtilities.invokeLater(form::focusServer);
         } else {
             SwingUtilities.invokeLater(() -> view(TerminalView.class).ifPresent(TerminalView::focus));
         }
+    }
+
+    /** Hört auf neue Bilder der gewählten Sitzung, um die PF-Leiste zu beschriften; die vorige wird abgemeldet. */
+    private void watch(TerminalSession session) {
+        if (watchedView != null) {
+            watchedView.removeScreenListener(screenChanged);
+            watchedView = null;
+        }
+        functionKeys.setVisible(session != null);
+        if (session == null) {
+            return;
+        }
+        session.view(TerminalView.class).ifPresent(view -> {
+            watchedView = view;
+            view.addScreenListener(screenChanged);
+        });
+        session.view(JComponent.class).filter(keyWatched::add).ifPresent(screen ->
+                screen.addKeyListener(new java.awt.event.KeyAdapter() {
+                    @Override
+                    public void keyPressed(java.awt.event.KeyEvent event) {
+                        functionKeys.showPressed(functionKeyNumber(event), true);
+                    }
+
+                    @Override
+                    public void keyReleased(java.awt.event.KeyEvent event) {
+                        functionKeys.showPressed(functionKeyNumber(event), false);
+                    }
+                }));
+        readLegend();
+    }
+
+    private void readLegend() {
+        functionKeys.show(view(TerminalView.class).map(view -> FunctionKeyLegend.ofScreen(view.text()))
+                .orElse(Map.of()));
+    }
+
+    private void pressFunctionKey(int number) {
+        press(AidKey.pf(number));
+    }
+
+    private void press(AidKey key) {
+        if (selected == null || selected.state() != SessionState.CONNECTED) {
+            return;
+        }
+        view(TerminalKeyboard.class).ifPresent(keyboard -> keyboard.press(key));
+        view(TerminalView.class).ifPresent(TerminalView::focus);
+    }
+
+    /** F1–F24 einer echten Taste, sonst 0 (wie fkeyNumberFromEvent in MainframeMate). */
+    static int functionKeyNumber(java.awt.event.KeyEvent event) {
+        int code = event.getKeyCode();
+        if (code >= java.awt.event.KeyEvent.VK_F1 && code <= java.awt.event.KeyEvent.VK_F12) {
+            return code - java.awt.event.KeyEvent.VK_F1 + 1;
+        }
+        if (code >= java.awt.event.KeyEvent.VK_F13 && code <= java.awt.event.KeyEvent.VK_F24) {
+            return code - java.awt.event.KeyEvent.VK_F13 + 13;
+        }
+        return 0;
     }
 
     private void closeSession(TerminalSession session) {
@@ -210,19 +332,26 @@ public final class TerminalWorkspace extends JPanel {
         paste.setEnabled(session != null && session.state() == SessionState.CONNECTED);
         disconnect.setEnabled(live);
         close.setEnabled(session != null && session.state().ended());
+        boolean connected = session != null && session.state() == SessionState.CONNECTED;
+        specialKeys.values().forEach(button -> button.setEnabled(connected));
+        functionKeys.setEnabled(connected);
         if (session == null) {
-            status.setText("Keine Sitzung gewählt – Host eintragen und verbinden");
+            status.setText("Keine Sitzung gewählt – Server wählen und verbinden");
             status.setForeground(Comic.MUTED);
             return;
         }
         String text = session.profile().label() + " · " + session.state().label()
-                + session.failure().map(reason -> " – " + reason).orElse("");
+                + session.failure().map(reason -> " – " + reason).orElse("")
+                + (session.state() == SessionState.CONNECTED ? session.note().map(note -> " · " + note).orElse("")
+                        : "");
         status.setText(text);
         status.setForeground(session.state() == SessionState.FAILED ? Comic.RED : Comic.MUTED);
     }
 
     private void fitScreen() {
-        view(TerminalView.class).ifPresent(view -> view.fit(sky.getWidth() - 24, sky.getHeight() - 24));
+        // Unter der PF-Leiste bleibt nichts verborgen: das Bild bekommt die Höhe ohne sie.
+        int bar = functionKeys.isVisible() ? functionKeys.getPreferredSize().height : 0;
+        view(TerminalView.class).ifPresent(view -> view.fit(sky.getWidth() - 24, sky.getHeight() - 24 - bar));
     }
 
     private <T> Optional<T> view(Class<T> type) {
@@ -232,6 +361,10 @@ public final class TerminalWorkspace extends JPanel {
     /** Die gewählte Sitzung (für Tests). */
     TerminalSession selected() {
         return selected;
+    }
+
+    FunctionKeyBar functionKeys() {
+        return functionKeys;
     }
 
     ConnectForm form() {

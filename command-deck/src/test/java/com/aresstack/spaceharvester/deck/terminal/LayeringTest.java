@@ -19,7 +19,8 @@ class LayeringTest {
 
     @Test
     void theTerminalModelKnowsNoUiAndNoEmulator() {
-        noClasses().that().resideInAPackage("com.aresstack.spaceharvester.deck.terminal")
+        noClasses().that().resideInAnyPackage("com.aresstack.spaceharvester.deck.terminal",
+                        "com.aresstack.spaceharvester.deck.access")
                 .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "java.awt..", "com.ascert..")
                 .check(classes);
     }
