@@ -193,8 +193,12 @@ class JobsAwaitTest {
         });
         waiter.setDaemon(true);
         waiter.start();
-        // Erst weitermachen, wenn der Wartende wirklich wartet.
+        // Erst weitermachen, wenn der Wartende wirklich wartet; mit Frist, damit ein Fehler nie den Lauf aufhängt.
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (waiter.getState() != Thread.State.TIMED_WAITING && !waited.isDone()) {
+            if (System.nanoTime() >= until) {
+                throw new AssertionError("Der Wartende wartet nach zehn Sekunden noch nicht");
+            }
             Thread.onSpinWait();
         }
         return waited;

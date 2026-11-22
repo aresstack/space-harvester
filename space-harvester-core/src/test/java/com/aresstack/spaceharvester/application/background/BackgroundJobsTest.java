@@ -419,6 +419,47 @@ class BackgroundJobsTest {
     }
 
     @Test
+    void aFailingRerunListenerNeverSkipsTheOthers() {
+        // Abnahme #1137: Ein Zuhörer, der vor und nach dem Neustart wirft, hält weder den Neustart noch die übrigen auf.
+        Jobs jobs = jobs(executor);
+        BackgroundJobs background = background(jobs, new AtomicBoolean(true));
+        List<String> heard = new CopyOnWriteArrayList<>();
+        background.onRerun(new BackgroundJobs.Reruns() {
+            @Override
+            public void before(String partId) {
+                throw new IllegalStateException("erfunden");
+            }
+
+            @Override
+            public void after(String partId, JobStatus rerun) {
+                throw new IllegalStateException("erfunden");
+            }
+        });
+        background.onRerun(new BackgroundJobs.Reruns() {
+            @Override
+            public void before(String partId) {
+                heard.add("vorher " + partId);
+            }
+
+            @Override
+            public void after(String partId, JobStatus rerun) {
+                heard.add("nachher " + partId + " " + (rerun != null));
+            }
+        });
+        BackgroundGroup cancelled = background.start("demo", "Demo",
+                List.of(new BackgroundPart.Draft("wiki", "ALPHA")));
+        background.cancel(cancelled.groupId());
+        executor.runAll();
+        String partId = cancelled.parts().getFirst().id();
+
+        background.resumeWithoutCaller(partId);
+        executor.runAll();
+
+        assertThat(heard).containsExactly("vorher " + partId, "nachher " + partId + " true");
+        assertThat(jobs.status(partId).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
     void aKindWithoutThatLimitStillResumesNextToAnOpenPart() {
         Jobs jobs = jobs(executor);
         BackgroundJobs background = background(jobs, new AtomicBoolean(true));
