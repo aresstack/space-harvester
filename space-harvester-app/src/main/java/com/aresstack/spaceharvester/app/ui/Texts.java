@@ -180,6 +180,13 @@ public final class Texts {
      * ({@code VideoPresentations.FORMAT_PARAMETER}), heißt er „PDF erzeugen“.
      */
     public static String type(JobStatus status) {
+        if (status.type() == JobType.UPDATE_SUMMARY) {
+            // Unterauftrag der Zusammenfassung: sein Schritt, etwa „Teil 2 von 5“ oder „Zusammenführen 1 von 2“.
+            String step = status.parameters().get(com.aresstack.spaceharvester.application.changelog.ChangeLog.STEP_PARAMETER);
+            if (step != null && !step.isBlank()) {
+                return step;
+            }
+        }
         if (status.type() == JobType.ENRICHMENT
                 && com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.TASK.equals(
                 status.parameters().get(com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions

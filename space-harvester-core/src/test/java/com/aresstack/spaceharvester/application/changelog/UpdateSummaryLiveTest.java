@@ -86,9 +86,8 @@ class UpdateSummaryLiveTest {
                 "BMS", "Betrieb Musterstadt");
 
         String model = System.getProperty("summary.live.model", "gemma4:12b");
-        UpdateSummarizer.Result result = new UpdateSummarizer(
-                com.aresstack.spaceharvester.source.ai.LiveSummaryModel.ollama(
-                        System.getProperty("summary.live.ollama"), model), key -> true).summarize(report, page -> paths.getOrDefault(page.pageId(), List.of()),
+        UpdateSummarizer.Result result = new UpdateSummarizer(model(model), key -> true).summarize(report,
+                page -> paths.getOrDefault(page.pageId(), List.of()),
                 page -> Optional.ofNullable(texts.get(page.pageId())), names, context());
 
         StringBuilder out = new StringBuilder("# Update-Zusammenfassung (Echttest, ").append(model).append(")\n\n")
@@ -110,6 +109,50 @@ class UpdateSummaryLiveTest {
                 });
         assertThat(result.statements().stream().anyMatch(topic -> topic.pageIds().containsAll(
                 Set.of("p1", "p2", "p3", "p4", "p5", "p6")))).as("die Protokolle sind ein Thema").isTrue();
+    }
+
+    /**
+     * Gezielt hervorgerufen (Angelo 22.11.2026): ein so kleines Ausgabelimit, dass die erste Antwort abgeschnitten
+     * wird. Der Auftrag fragt mit dem Grund knapper nach und halbiert die Teile, statt zu scheitern.
+     */
+    @Test
+    void aProvokedOutputLimitStillEndsWithASummary() throws Exception {
+        for (int i = 1; i <= 6; i++) {
+            add("PBA", "s" + i, "Sitzungsprotokoll Beispielgremium " + i, List.of("Gremien"),
+                    "Thema " + i + ": Planung der Testlieferung, Zuständigkeiten, offene Fragen zur Prüfsumme, "
+                            + "Termine für die nächsten Abstimmungen und Beschlüsse zur Übergabe als XML.");
+        }
+        Map<ChangeKind, Integer> kinds = new EnumMap<>(ChangeKind.class);
+        pages.forEach(page -> kinds.merge(page.kind(), 1, Integer::sum));
+        ChangeReport report = new ChangeReport(new ChangeUpdate("u2", "wiki", FROM, TO, null, false, kinds,
+                Map.of("PBA", pages.size()), pages.size(), 0, 0, false), pages);
+        int limit = Integer.getInteger("summary.live.limit", 400);
+        com.aresstack.spaceharvester.source.ai.LiveSummaryModel.summaryMaxTokens(limit);
+        try {
+            String model = System.getProperty("summary.live.model", "gemma4:12b");
+            UpdateSummarizer.Result result = new UpdateSummarizer(model(model), key -> true).summarize(report,
+                    page -> paths.getOrDefault(page.pageId(), List.of()),
+                    page -> Optional.ofNullable(texts.get(page.pageId())),
+                    Map.of("PBA", "Projekt Beispielarchiv"), context());
+            String out = "# Abschneiden hervorgerufen (" + model + ", Limit " + limit + ")\n\n" + result.text()
+                    + "\n\nThemen: " + result.statements().size() + ", ausgelassene Seiten: " + result.lost()
+                    + "\n";
+            Path file = Path.of("build", "reports", "update-summary-live-limit.md");
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, out, StandardCharsets.UTF_8);
+            System.out.println(out);
+            assertThat(result.text()).isNotBlank();
+        } finally {
+            com.aresstack.spaceharvester.source.ai.LiveSummaryModel.resetSummaryMaxTokens();
+        }
+    }
+
+    /** Ollama direkt oder, mit {@code -PsummaryLiveProvider=openai}, über seine OpenAI-kompatible Schnittstelle. */
+    private static SummaryModel model(String model) {
+        String base = System.getProperty("summary.live.ollama");
+        return "openai".equals(System.getProperty("summary.live.provider"))
+                ? com.aresstack.spaceharvester.source.ai.LiveSummaryModel.openAiCompatible(base, model)
+                : com.aresstack.spaceharvester.source.ai.LiveSummaryModel.ollama(base, model);
     }
 
     private void add(String space, String id, String title, List<String> path, String text) {

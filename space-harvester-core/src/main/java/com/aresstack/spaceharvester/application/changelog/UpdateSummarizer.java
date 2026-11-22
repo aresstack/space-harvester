@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.changelog;
 
+import com.aresstack.spaceharvester.ai.AiOutputTruncatedException;
 import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
@@ -24,7 +25,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.IntFunction;
 import java.util.function.Predicate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -145,6 +148,27 @@ final class UpdateSummarizer {
     private final Predicate<PageKey> released;
 
     UpdateSummarizer(SummaryModel model, Predicate<PageKey> released) {
+        this(model, released, null);
+    }
+
+    /**
+     * Wie die Anfragen eines Laufs ausgeführt werden: im Auftrag selbst (bis {@code ai.parallel} zugleich) oder als
+     * Unteraufträge unter dem Auftrag „Zusammenfassen“ (Angelo 22.11.2026: Oberauftrag mit Unteraufträgen).
+     */
+    interface Runner {
+
+        /**
+         * Wendet {@code work} auf jeden Eintrag an und liefert die Ergebnisse in der Reihenfolge der Einträge; der
+         * erste Fehler beendet den Lauf. {@code work} bekommt den Auftrag, in dem es läuft, für Fortschritt und Abbruch.
+         */
+        <T, R> List<R> run(List<T> items, IntFunction<String> title, BiFunction<T, JobContext, R> work,
+                           JobContext context);
+    }
+
+    private Runner runner;
+
+    UpdateSummarizer(SummaryModel model, Predicate<PageKey> released, Runner runner) {
+        this.runner = runner;
         this.model = Objects.requireNonNull(model, "model");
         this.released = Objects.requireNonNull(released, "released");
     }
@@ -204,12 +228,14 @@ final class UpdateSummarizer {
         AtomicReference<RuntimeException> lost = new AtomicReference<>();
         java.util.concurrent.atomic.AtomicInteger lostPages = new java.util.concurrent.atomic.AtomicInteger();
         // Hälften eines geteilten Teils bleiben eigene Antworten und gehen durch das begrenzte, stufenweise Zusammenführen.
-        List<Answer> answers = inParallel(parts, context, part -> part(part, frame, context, lost, lostPages)).stream()
+        int count = parts.size();
+        List<Answer> answers = runner().run(parts, index -> "Teil " + (index + 1) + " von " + count,
+                        (part, lane) -> part(part, frame, lane, lost, lostPages), context).stream()
                 .flatMap(List::stream)
                 .filter(partial -> !partial.text().isBlank() || !partial.statements().isEmpty()).toList();
         if (answers.isEmpty()) {
             // Kein Teil kam durch: der Auftrag scheitert mit dem echten Grund.
-            throw lost.get() != null ? lost.get()
+            throw lost.get() != null && !(lost.get() instanceof UnusableAnswerException) ? lost.get()
                     : new JobFailedException("SUMMARY_UNUSABLE", "Die Antwort des Modells war keine Zusammenfassung");
         }
         Answer answer = combine(answers, frame(update, Map.of(), spaceNames, withheld),
@@ -251,7 +277,13 @@ final class UpdateSummarizer {
             groups.add(group);
             context.discovered(groups.stream().filter(candidate -> candidate.size() > 1).count());
             // Die Gruppen einer Stufe sind unabhängig voneinander und laufen ebenfalls gleichzeitig.
-            level = inParallel(groups, context, members -> {
+            int merges = (int) groups.stream().filter(candidate -> candidate.size() > 1).count();
+            int[] merge = {0};
+            List<String> titles = new ArrayList<>();
+            for (List<Answer> candidate : groups) {
+                titles.add(candidate.size() > 1 ? "Zusammenführen " + (++merge[0]) + " von " + merges : "");
+            }
+            level = runner().run(groups, titles::get, (members, lane) -> {
                 if (members.size() == 1) {
                     return members.getFirst();
                 }
@@ -264,18 +296,19 @@ final class UpdateSummarizer {
                 }
                 String raw;
                 try {
-                    raw = completeRetrying(COMBINE, input.toString(), context);
+                    raw = combineAsking(input.toString(), lane);
                 } catch (AiServiceException e) {
-                    if (!transientFailure(e)) {
+                    if (!splittable(e)) {
                         throw e;
                     }
-                    // Auch nach Wiederholungen nicht durchgekommen: die Themen der Teile bleiben unverändert.
+                    // Auch nach Wiederholungen nicht durchgekommen oder am Ausgabelimit abgeschnitten: die Themen der
+                    // Teile bleiben unverändert.
                     raw = null;
-                    context.incomplete();
+                    lane.incomplete();
                 }
-                context.processed(1);
+                lane.processed(1);
                 return merge(raw, topics, members);
-            });
+            }, context);
         }
         return level.getFirst();
     }
@@ -567,8 +600,23 @@ final class UpdateSummarizer {
      * Wendet {@code work} auf jeden Eintrag an, höchstens {@link SummaryModel#parallel()} zugleich, und liefert die
      * Ergebnisse in der Reihenfolge der Einträge. Nach Abbruch beginnt kein neuer; der erste Fehler beendet den Lauf.
      */
-    private <T, R> List<R> inParallel(List<T> items, JobContext context, Function<T, R> work) {
-        int parallel = Math.max(1, Math.min(model.parallel(), items.size()));
+    private Runner runner() {
+        return runner != null ? runner : inJob(model);
+    }
+
+    /** Alle Anfragen im Auftrag selbst, höchstens {@link SummaryModel#parallel()} zugleich. */
+    static Runner inJob(SummaryModel model) {
+        return new Runner() {
+            @Override
+            public <T, R> List<R> run(List<T> items, IntFunction<String> title, BiFunction<T, JobContext, R> work,
+                                      JobContext context) {
+                return inParallel(Math.max(1, model.parallel()), items, context, item -> work.apply(item, context));
+            }
+        };
+    }
+
+    private static <T, R> List<R> inParallel(int lanes, List<T> items, JobContext context, Function<T, R> work) {
+        int parallel = Math.max(1, Math.min(lanes, items.size()));
         if (parallel == 1) {
             List<R> results = new ArrayList<>(items.size());
             for (T item : items) {
@@ -625,7 +673,7 @@ final class UpdateSummarizer {
         try {
             return List.of(ask(INSTRUCTIONS, input.toString(), ids(part), context));
         } catch (AiServiceException e) {
-            if (!transientFailure(e) || part.isEmpty()) {
+            if (!splittable(e) || part.isEmpty()) {
                 throw e;
             }
             lost.set(e);
@@ -648,6 +696,15 @@ final class UpdateSummarizer {
     /** Vorübergehend: keine Verbindung, überlastet oder 5xx (UNREACHABLE) und Fristen; nie Anmeldung oder Format. */
     static boolean transientFailure(AiServiceException e) {
         return e.reason() == AiServiceException.Reason.UNREACHABLE || e.reason() == AiServiceException.Reason.TIMEOUT;
+    }
+
+    /**
+     * Was ein kleinerer Teil lösen kann: vorübergehende Fehler und eine am Ausgabelimit abgeschnittene Antwort
+     * (Angelo 22.11.2026: finish_reason=length kippte den Auftrag). Abgeschnittenes wird nicht gleich wiederholt, die
+     * gleiche Eingabe gäbe die gleiche zu lange Antwort; der Teil wird halbiert.
+     */
+    static boolean splittable(AiServiceException e) {
+        return transientFailure(e) || e instanceof AiOutputTruncatedException || e instanceof UnusableAnswerException;
     }
 
     /** Wartezeit vor der n-ten Wiederholung, verdoppelt je Versuch; in Tests kürzer. */
@@ -674,14 +731,74 @@ final class UpdateSummarizer {
         }
     }
 
-    private Answer ask(String instructions, String input, Set<String> known, JobContext context) {
-        String raw = completeRetrying(instructions, input, context);
-        context.processed(1);
-        Answer answer = parse(raw, known);
-        if (answer.text().isBlank() && answer.statements().isEmpty()) {
-            throw new JobFailedException("SUMMARY_UNUSABLE", "Die Antwort des Modells war keine Zusammenfassung");
+    /** Das Zusammenführen; eine abgeschnittene Antwort wird mit dem Grund erneut erfragt, bis {@link #ATTEMPTS}. */
+    private String combineAsking(String input, JobContext context) {
+        String problem = null;
+        AiOutputTruncatedException last = null;
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            context.checkpoint();
+            try {
+                return completeRetrying(COMBINE + again(problem), input, context);
+            } catch (AiOutputTruncatedException e) {
+                last = e;
+                problem = TOO_LONG;
+            }
         }
-        return answer;
+        throw last;
+    }
+
+    /** Versuche je Anfrage, wenn die Antwort unbrauchbar oder abgeschnitten ist (wie die Teile in 3d4j). */
+    static final int ATTEMPTS = 3;
+
+    /**
+     * Fragt und prüft die Antwort. Ist sie unbrauchbar (kein JSON mit Überblick und Themen) oder am Ausgabelimit
+     * abgeschnitten, wird erneut gefragt, und das Modell erfährt, was an der vorigen Antwort falsch war (Vorbild:
+     * 3d4j, „Your previous answer was unusable: …“). Erst nach {@link #ATTEMPTS} Versuchen gibt die Anfrage auf; ein
+     * Teil wird dann halbiert ({@link #splittable}), und erst wenn kein Teil durchkam, scheitert der Auftrag.
+     */
+    private Answer ask(String instructions, String input, Set<String> known, JobContext context) {
+        String problem = null;
+        AiServiceException last = null;
+        for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
+            context.checkpoint();
+            String raw;
+            try {
+                raw = completeRetrying(instructions + again(problem), input, context);
+            } catch (AiOutputTruncatedException e) {
+                last = e;
+                problem = TOO_LONG;
+                continue;
+            }
+            Answer answer = parse(raw, known);
+            if (!answer.text().isBlank() || !answer.statements().isEmpty()) {
+                context.processed(1);
+                return answer;
+            }
+            problem = NOT_JSON;
+            last = new UnusableAnswerException();
+        }
+        throw last;
+    }
+
+    /** Was an einer abgeschnittenen Antwort falsch war, für den nächsten Versuch. */
+    static final String TOO_LONG = "sie war zu lang und wurde am Ausgabelimit abgeschnitten. Schreibe knapper: "
+            + "kürzere Texte, ähnliche Themen zusammenlegen, Details nur in Stichworten";
+    /** Was an einer Antwort ohne verwertbares JSON falsch war, für den nächsten Versuch. */
+    static final String NOT_JSON = "sie enthielt kein vollständiges JSON-Objekt mit \"zusammenfassung\" und "
+            + "\"themen\"";
+
+    static String again(String problem) {
+        return problem == null ? "" : "\n\nDeine vorige Antwort war unbrauchbar: " + problem
+                + ". Halte dich genau an die Regeln und antworte nur mit dem korrigierten JSON.";
+    }
+
+    /** Auch nach allen Versuchen keine Zusammenfassung; ein kleinerer Teil kann gelingen. */
+    static final class UnusableAnswerException extends AiServiceException {
+        private static final long serialVersionUID = 1L;
+
+        UnusableAnswerException() {
+            super(Reason.INVALID_RESPONSE, "Die Antwort des Modells war keine Zusammenfassung");
+        }
     }
 
     private static JsonNode json(String raw) {

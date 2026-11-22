@@ -169,6 +169,10 @@ class UpdateSummaryTest {
             }
             instructions.add(given);
             inputs.add(input);
+            if (truncateIf != null && truncateIf.test(input)) {
+                throw new com.aresstack.spaceharvester.ai.AiOutputTruncatedException(
+                        "Chat-Dienst: Antwort am Ausgabelimit abgeschnitten (finish_reason=length, max_tokens=32768)");
+            }
             int now = running.incrementAndGet();
             mostAtOnce.accumulateAndGet(now, Math::max);
             try {
@@ -180,11 +184,14 @@ class UpdateSummaryTest {
             } finally {
                 running.decrementAndGet();
             }
-            return answer;
+            return unusableFirst.getAndDecrement() > 0 ? "Leider kann ich das nicht." : answer;
         }
     };
+    private final java.util.concurrent.atomic.AtomicInteger unusableFirst =
+            new java.util.concurrent.atomic.AtomicInteger();
     private int parallel = 1;
     private volatile String failWhen;
+    private volatile java.util.function.Predicate<String> truncateIf;
     private final java.util.concurrent.atomic.AtomicInteger failFirst = new java.util.concurrent.atomic.AtomicInteger();
     private long delayMillis;
     private final java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
@@ -699,6 +706,102 @@ class UpdateSummaryTest {
         long parts = instructions.stream().filter(UpdateSummarizer.INSTRUCTIONS::equals).count();
         assertThat(parts).as("mindestens so viele Teile, wie zugleich laufen dürfen").isGreaterThanOrEqualTo(3);
         assertThat(mostAtOnce.get()).as("gleichzeitig, aber nie mehr als ai.parallel").isEqualTo(3);
+    }
+
+    /**
+     * Angelo 22.11.2026: eine am Ausgabelimit abgeschnittene Antwort (finish_reason=length) kippt den Auftrag nicht,
+     * der Teil wird halbiert und jede Hälfte für sich gefragt.
+     */
+    @Test
+    void aTruncatedAnswerSplitsThePartInsteadOfFailingTheJob() {
+        row(1, "100", "DEV", ChangeKind.NEW, "Start");
+        mark(10, true);
+        row(12, "102", "DEV", ChangeKind.NEW, "Erste Seite");
+        row(12, "103", "DEV", ChangeKind.NEW, "Zweite Seite");
+        released.add("102");
+        released.add("103");
+        // Nur die Anfrage mit beiden Seiten ist zu lang; jede Hälfte kommt durch.
+        truncateIf = input -> input.contains("Erste Seite") && input.contains("Zweite Seite");
+        answer = """
+                {"zusammenfassung": "Neu.", "themen": [{"titel": "Neu", "text": "Neu.", "seiten": ["102"]}]}""";
+        try {
+            assertThat(run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state()).isEqualTo(JobState.COMPLETED);
+            assertThat(instructions).as("erst mit dem Grund erneut gefragt")
+                    .anySatisfy(given -> assertThat(given).contains("am Ausgabelimit abgeschnitten"));
+            assertThat(inputs.stream().filter(input -> input.contains("Erste Seite")
+                    && !input.contains("Zweite Seite"))).as("erste Hälfte für sich").isNotEmpty();
+            assertThat(inputs.stream().filter(input -> input.contains("Zweite Seite")
+                    && !input.contains("Erste Seite"))).as("zweite Hälfte für sich").isNotEmpty();
+        } finally {
+            truncateIf = null;
+        }
+    }
+
+    /** Wie in 3d4j: eine unbrauchbare Antwort wird mit dem Grund erneut erfragt und kippt den Auftrag nicht. */
+    @Test
+    void anUnusableAnswerIsAskedAgainWithTheReason() {
+        String id = oneUpdate();
+        unusableFirst.set(1);
+
+        assertThat(run(log.summarize(CALLER, "wiki", id)).state()).isEqualTo(JobState.COMPLETED);
+
+        assertThat(instructions).hasSizeGreaterThanOrEqualTo(2);
+        assertThat(instructions.get(1)).contains("Deine vorige Antwort war unbrauchbar").contains("JSON");
+        assertThat(log.summary(CALLER, "wiki", id)).isPresent();
+    }
+
+    /**
+     * Angelo 22.11.2026: „Zusammenfassen“ ist ein Oberauftrag; seine Teile laufen als eigene Unteraufträge in der
+     * Auftragsliste, so viele zugleich, wie die Job-Einstellungen und ai.parallel zulassen.
+     */
+    @Test
+    void thePartsRunAsChildJobsOfTheSummary() throws Exception {
+        parallel = 3;
+        delayMillis = 100;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
+        Jobs wide = new Jobs(new InMemoryJobStore(), pool, new JobLimits(6, 50, Duration.ofHours(1)),
+                Clock.fixed(T0.plusSeconds(3600), ZoneOffset.UTC));
+        ChangeLog parentLog = new ChangeLog(store, access, key -> Optional.ofNullable(headers.get(key)),
+                () -> List.of("wiki"), new ChangeLog.Summaries(wide, model,
+                key -> released.contains(key.pageId()), Clock.fixed(T0.plusSeconds(7200), ZoneOffset.UTC), material));
+        try {
+            row(1, "1", "DEV", ChangeKind.NEW, "Start");
+            mark(10, true);
+            String paragraph = "Absatz mit Inhalt. ".repeat(25);
+            for (int i = 0; i < 24; i++) {
+                String pageId = "p" + i;
+                row(1, pageId, "DEV", ChangeKind.NEW, "Seite " + i);
+                row(12, pageId, "DEV", ChangeKind.CONTENT_CHANGED, "Seite " + i);
+                ParagraphChange[] changes = new ParagraphChange[12];
+                for (int j = 0; j < changes.length; j++) {
+                    changes[j] = new ParagraphChange(ParagraphChange.Kind.CHANGED, paragraph + j, paragraph + "neu " + j);
+                }
+                diff(12, pageId, "1", "2", false, changes);
+                released.add(pageId);
+            }
+            answer = """
+                    {"zusammenfassung": "Überblick.", "themen": [{"titel": "Seiten", "text": "Inhalt.", "seiten": ["p0"]}]}""";
+
+            JobStatus parent = parentLog.summarize(CALLER, "wiki", ChangeUpdate.OPEN);
+            JobStatus done = wide.await(parent.id(), CALLER.jobOwner(), Duration.ofSeconds(60));
+
+            assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+            List<JobStatus> children = wide.listAll(JobType.UPDATE_SUMMARY).stream()
+                    .filter(job -> parent.id().equals(job.parameters().get(ChangeLog.PARENT_PARAMETER)))
+                    .toList();
+            assertThat(children).as("Teile als Unteraufträge").hasSizeGreaterThanOrEqualTo(3);
+            assertThat(children).allSatisfy(child -> {
+                assertThat(child.parameters().get(ChangeLog.STEP_PARAMETER)).isNotBlank();
+                assertThat(child.state().terminal()).isTrue();
+            });
+            assertThat(children).anySatisfy(child ->
+                    assertThat(child.parameters().get(ChangeLog.STEP_PARAMETER)).startsWith("Teil 1 von "));
+            assertThat(mostAtOnce.get()).as("gleichzeitig, nie mehr als ai.parallel").isBetween(2, 3);
+        } finally {
+            parentLog.close();
+            wide.close();
+            pool.shutdownNow();
+        }
     }
 
     @Test

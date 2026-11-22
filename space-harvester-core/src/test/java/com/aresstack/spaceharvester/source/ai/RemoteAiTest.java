@@ -496,7 +496,7 @@ class RemoteAiTest {
     }
 
     @Test
-    void anOpenAiCompatibleServiceGetsTheReasoningEffortOnlyWhenTheModelThinks() {
+    void anOpenAiCompatibleServiceGetsTheSmallestReasoningEffortWhenThinkingIsOff() {
         ChatRequest plain = new ChatRequest(List.of(ChatMessage.user("Hallo")), ChatOptions.defaults());
         List<ChatRequest> seen = new CopyOnWriteArrayList<>();
         ChatCompletionPort port = new ChatCompletionPort() {
@@ -517,10 +517,39 @@ class RemoteAiTest {
         RemoteAi.limited(port, 1024, "high").complete(new ChatRequest(List.of(ChatMessage.user("Hallo")),
                 ChatOptions.builder().reasoningEffort("low").build()));
 
-        assertThat(seen.get(0).options().reasoningEffort()).isNull();
+        // Angelo 22.11.2026: ohne Angabe dachte gpt-oss mit seiner Vorgabe bis ans Ausgabelimit.
+        assertThat(seen.get(0).options().reasoningEffort()).isEqualTo(RemoteAi.MIN_REASONING_EFFORT);
         assertThat(seen.get(1).options().reasoningEffort()).isEqualTo("high");
         assertThat(seen.get(2).options().reasoningEffort()).isEqualTo("low");
         assertThat(seen).allSatisfy(request -> assertThat(request.options().maxTokens()).isEqualTo(1024));
+    }
+
+    /** Ein Modell ohne Nachdenken lehnt reasoning_effort ab: dieselbe Anfrage geht einmal ohne. */
+    @Test
+    void aServiceThatRejectsTheReasoningEffortIsAskedOnceMoreWithoutIt() {
+        ChatRequest plain = new ChatRequest(List.of(ChatMessage.user("Hallo")), ChatOptions.defaults());
+        List<ChatRequest> seen = new CopyOnWriteArrayList<>();
+        ChatCompletionPort port = new ChatCompletionPort() {
+            @Override
+            public ChatResponse complete(ChatRequest request) {
+                seen.add(request);
+                if (request.options().reasoningEffort() != null) {
+                    throw new com.aresstack.enterpriseai.chat.api.ChatCompletionException(
+                            com.aresstack.enterpriseai.chat.api.ChatErrorKind.INVALID_REQUEST, "HTTP 400");
+                }
+                return null;
+            }
+
+            @Override
+            public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
+                throw new UnsupportedOperationException();
+            }
+        };
+
+        RemoteAi.limited(port, 1024, "none").complete(plain);
+
+        assertThat(seen).hasSize(2);
+        assertThat(seen.get(1).options().reasoningEffort()).isNull();
     }
 
     @Test

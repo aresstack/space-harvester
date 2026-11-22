@@ -95,6 +95,12 @@ public final class ChangeLog implements AutoCloseable {
     public static final String UPDATE_PARAMETER = "update";
     /** Parameter des Auftrags {@link JobType#UPDATE_SUMMARY}: Space der Ebene, fehlt für die ganze Quelle. */
     public static final String SPACE_PARAMETER = "space";
+    /** Parameter eines Unterauftrags von „Zusammenfassen“: die ID des Oberauftrags (Angelo 22.11.2026). */
+    public static final String PARENT_PARAMETER = "summary.parent";
+    /** Parameter eines Unterauftrags von „Zusammenfassen“: sein Schritt, etwa „Teil 2 von 5“. */
+    public static final String STEP_PARAMETER = "summary.step";
+    /** So lange darf kein Unterauftrag laufen, bevor der Oberauftrag einen wartenden selbst übernimmt. */
+    static final java.time.Duration CHILD_START_GRACE = java.time.Duration.ofSeconds(15);
 
     /**
      * @param headers jüngste Kopfdaten einer Seite im Cache, für Titel, Pfad und Verweis im Bericht
@@ -599,7 +605,8 @@ public final class ChangeLog implements AutoCloseable {
                     Map<String, String> reportSpaces = new LinkedHashMap<>();
                     report.pages().forEach(page -> reportSpaces.put(page.pageId(), page.spaceKey()));
                     Map<String, String> names = spaceNames(sourceId, reportSpaces);
-                    UpdateSummarizer.Result result = new UpdateSummarizer(runtime.model(), runtime.released())
+                    UpdateSummarizer.Result result = new UpdateSummarizer(runtime.model(), runtime.released(),
+                            new ChildJobs(runtime, context.jobId(), sourceId, spaceKey, caller.jobOwner()))
                             .summarize(report, page -> releasedPath(page, visible, runtime.released()), text, names,
                                     context);
                     Instant now = runtime.clock().instant();
@@ -612,6 +619,219 @@ public final class ChangeLog implements AutoCloseable {
                             result.inputPages(), span.from()));
                     context.written(1);
                 }));
+    }
+
+    /**
+     * Die Anfragen von „Zusammenfassen“ als Unteraufträge unter dem Auftrag (Angelo 22.11.2026): je Teil und je
+     * Zusammenführen ein eigener Auftrag, die nach den Auftragsplätzen („Vorbereitung“) gleichzeitig laufen, zusammen
+     * höchstens {@code ai.parallel} Anfragen zugleich. Der Oberauftrag teilt auf, wartet und führt das Ergebnis zusammen;
+     * er zählt je fertigem Unterauftrag einen Schritt. Ist kein Platz für Unteraufträge frei (eine Vorbereitung) oder
+     * startet keiner, übernimmt er wartende selbst, damit nichts hängt. Abbrechen des Oberauftrags bricht alle ab.
+     */
+    private static final class ChildJobs implements UpdateSummarizer.Runner {
+
+        private final Summaries runtime;
+        private final String parentId;
+        private final String sourceId;
+        private final String spaceKey;
+        private final String owner;
+        private final java.util.concurrent.Semaphore lanes;
+
+        ChildJobs(Summaries runtime, String parentId, String sourceId, String spaceKey, String owner) {
+            this.runtime = runtime;
+            this.parentId = parentId;
+            this.sourceId = sourceId;
+            this.spaceKey = spaceKey;
+            this.owner = owner;
+            this.lanes = new java.util.concurrent.Semaphore(Math.max(1, runtime.model().parallel()));
+        }
+
+        @Override
+        public <T, R> List<R> run(List<T> items, java.util.function.IntFunction<String> title,
+                                  java.util.function.BiFunction<T, com.aresstack.spaceharvester.application.jobs
+                                          .JobContext, R> work,
+                                  com.aresstack.spaceharvester.application.jobs.JobContext context) {
+            Jobs jobs = runtime.jobs();
+            // Folgeaufträge belegen höchstens alle Plätze bis auf einen; der Oberauftrag hält selbst einen.
+            boolean room = Math.max(1, jobs.parallelPreparations() - 1) >= 2;
+            int size = items.size();
+            if (!room || size <= 1) {
+                // Kein Platz für Unteraufträge: im Auftrag selbst, trotzdem bis zu ai.parallel zugleich.
+                return UpdateSummarizer.inJob(runtime.model()).run(items, title, work, context);
+            }
+            List<java.util.concurrent.CompletableFuture<R>> results = new ArrayList<>(size);
+            List<java.util.concurrent.atomic.AtomicBoolean> claimed = new ArrayList<>(size);
+            String[] children = new String[size];
+            for (int i = 0; i < size; i++) {
+                results.add(new java.util.concurrent.CompletableFuture<>());
+                claimed.add(new java.util.concurrent.atomic.AtomicBoolean());
+            }
+            for (int i = 0; i < size; i++) {
+                String step = title.apply(i);
+                if (!room || size == 1 || step == null || step.isBlank()) {
+                    continue;
+                }
+                int index = i;
+                T item = items.get(i);
+                Map<String, String> parameters = new LinkedHashMap<>();
+                parameters.put(PARENT_PARAMETER, parentId);
+                parameters.put(STEP_PARAMETER, step);
+                try {
+                    children[i] = jobs.submit(JobType.UPDATE_SUMMARY, sourceId, spaceKey, null, owner, parameters,
+                            JobTask.blocking(child -> {
+                                if (!claimed.get(index).compareAndSet(false, true)) {
+                                    return;
+                                }
+                                child.discovered(1);
+                                execute(item, work, child, results.get(index));
+                            })).id();
+                    try {
+                        jobs.prioritize(children[i], owner);
+                    } catch (RuntimeException ignored) {
+                        // Schon gestartet.
+                    }
+                } catch (RuntimeException full) {
+                    // Kein Platz in der Warteschlange: der Oberauftrag macht diesen Teil selbst.
+                    children[i] = null;
+                }
+            }
+            try (AutoCloseable ignored = context.whenStopRequested(() -> cancelAll(children))) {
+                Instant waitingSince = runtime.clock().instant();
+                java.util.Set<Integer> counted = new java.util.HashSet<>();
+                while (true) {
+                    boolean open = false;
+                    boolean anyRunning = false;
+                    Integer takeOver = null;
+                    for (int i = 0; i < size; i++) {
+                        if (results.get(i).isDone()) {
+                            if (children[i] != null && counted.add(i)) {
+                                context.processed(1);
+                            }
+                            continue;
+                        }
+                        open = true;
+                        if (children[i] == null) {
+                            takeOver = takeOver == null ? i : takeOver;
+                            continue;
+                        }
+                        JobStatus status = status(jobs, children[i]);
+                        if (status == null || status.state().terminal()) {
+                            // Abgebrochen oder gelöscht, bevor er lief: der Oberauftrag macht ihn selbst.
+                            takeOver = takeOver == null ? i : takeOver;
+                        } else if (status.state() == com.aresstack.spaceharvester.application.jobs.JobState.RUNNING) {
+                            anyRunning = true;
+                        }
+                    }
+                    if (!open) {
+                        break;
+                    }
+                    context.checkpoint();
+                    if (takeOver == null && !anyRunning && java.time.Duration.between(waitingSince,
+                            runtime.clock().instant()).compareTo(CHILD_START_GRACE) > 0) {
+                        // Kein Unterauftrag bekommt einen Platz: den nächsten wartenden selbst übernehmen.
+                        for (int i = 0; i < size && takeOver == null; i++) {
+                            if (!results.get(i).isDone()) {
+                                takeOver = i;
+                            }
+                        }
+                    }
+                    if (takeOver != null) {
+                        int index = takeOver;
+                        if (claimed.get(index).compareAndSet(false, true)) {
+                            if (children[index] != null) {
+                                try {
+                                    jobs.cancelIfWaiting(children[index], owner, "vom Oberauftrag übernommen");
+                                } catch (RuntimeException ignoredCancel) {
+                                    // Schon beendet.
+                                }
+                            }
+                            execute(items.get(index), work, context, results.get(index));
+                        }
+                        waitingSince = runtime.clock().instant();
+                        continue;
+                    }
+                    if (anyRunning) {
+                        waitingSince = runtime.clock().instant();
+                    }
+                    try {
+                        java.util.concurrent.CompletableFuture.anyOf(results.stream().filter(f -> !f.isDone())
+                                .toArray(java.util.concurrent.CompletableFuture[]::new))
+                                .get(1, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException e) {
+                        // weiter prüfen
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        cancelAll(children);
+                        throw new com.aresstack.spaceharvester.application.jobs.JobCancelledException(
+                                context.jobId());
+                    }
+                }
+            } catch (RuntimeException e) {
+                cancelAll(children);
+                throw e;
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+            List<R> answers = new ArrayList<>(size);
+            for (java.util.concurrent.CompletableFuture<R> result : results) {
+                try {
+                    answers.add(result.join());
+                } catch (java.util.concurrent.CompletionException e) {
+                    cancelAll(children);
+                    if (e.getCause() instanceof RuntimeException cause) {
+                        throw cause;
+                    }
+                    throw e;
+                }
+            }
+            return answers;
+        }
+
+        private <T, R> void execute(T item, java.util.function.BiFunction<T, com.aresstack.spaceharvester.application
+                .jobs.JobContext, R> work, com.aresstack.spaceharvester.application.jobs.JobContext lane,
+                                    java.util.concurrent.CompletableFuture<R> result) {
+            try {
+                lanes.acquire();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                com.aresstack.spaceharvester.application.jobs.JobCancelledException cancelled =
+                        new com.aresstack.spaceharvester.application.jobs.JobCancelledException(lane.jobId());
+                result.completeExceptionally(cancelled);
+                throw cancelled;
+            }
+            try {
+                result.complete(work.apply(item, lane));
+            } catch (RuntimeException e) {
+                result.completeExceptionally(e);
+                throw e;
+            } finally {
+                lanes.release();
+            }
+        }
+
+        private static JobStatus status(Jobs jobs, String id) {
+            try {
+                return jobs.status(id);
+            } catch (RuntimeException gone) {
+                return null;
+            }
+        }
+
+        private void cancelAll(String[] children) {
+            for (String child : children) {
+                if (child == null) {
+                    continue;
+                }
+                try {
+                    JobStatus status = runtime.jobs().status(child);
+                    if (!status.state().terminal()) {
+                        runtime.jobs().cancel(child, owner);
+                    }
+                } catch (RuntimeException ignored) {
+                    // Schon beendet oder gelöscht.
+                }
+            }
+        }
     }
 
     /**

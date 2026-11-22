@@ -226,6 +226,22 @@ public final class RemoteAi {
      * Verbindung ab (HTTP 504, Angelo 22.11.2026). Die Antwort trägt den vollen Text und den {@code finish_reason}.
      */
     static ChatResponse streamed(ChatCompletionPort adapter, ChatRequest request) {
+        try {
+            return streamedOnce(adapter, request);
+        } catch (ChatCompletionException e) {
+            ChatOptions options = request.options();
+            String effort = options == null ? null : options.reasoningEffort();
+            // Ein Modell ohne Nachdenken lehnt reasoning_effort ab: dieselbe Anfrage einmal ohne. „none“ bleibt, denn
+            // ohne think:false würde Ollama gerade nachdenken.
+            if (e.kind() != ChatErrorKind.INVALID_REQUEST || effort == null || "none".equals(effort)) {
+                throw e;
+            }
+            return streamedOnce(adapter, new ChatRequest(request.messages(),
+                    options.toBuilder().reasoningEffort(null).build()));
+        }
+    }
+
+    private static ChatResponse streamedOnce(ChatCompletionPort adapter, ChatRequest request) {
         CompletableFuture<ChatResponse> done = new CompletableFuture<>();
         ChatTask task = adapter.stream(request, new ChatStreamListener() {
             @Override
@@ -396,9 +412,7 @@ public final class RemoteAi {
         // OpenAI-kompatibler Dienst kennt „none“ oft nicht und bekommt dann keine Vorgabe.
         String thinking = settings.stepThinking();
         ChatOptions.Builder builder = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens);
-        if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {
-            builder.reasoningEffort(thinking);
-        }
+        builder.reasoningEffort(effort(thinking));
         ChatOptions options = builder.build();
         return (instructions, input) -> {
             ChatCompletionPort adapter = chatPort(settings.chatModel(),
@@ -416,6 +430,8 @@ public final class RemoteAi {
     public static final Duration SUMMARY_TIMEOUT = Duration.ofMinutes(5);
     /** Ausgabelimit der Update-Zusammenfassung mindestens, auch wenn {@code ai.chat-max-tokens} kleiner ist. */
     public static final int SUMMARY_MIN_TOKENS = 32_768;
+    /** Nur für Echttests kleiner: so lässt sich das Abschneiden am Ausgabelimit gezielt hervorrufen. */
+    static volatile int summaryMaxTokensForTest;
 
     /**
      * Wie {@link #termCompletions()} für die Update-Zusammenfassung (ADR 0030, update-summary-v2): Die Antworten tragen
@@ -427,12 +443,11 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        int maxTokens = Math.max(settings.chatMaxTokens(), SUMMARY_MIN_TOKENS);
+        int maxTokens = summaryMaxTokensForTest > 0 ? summaryMaxTokensForTest
+                : Math.max(settings.chatMaxTokens(), SUMMARY_MIN_TOKENS);
         String thinking = settings.stepThinking();
         ChatOptions.Builder builder = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens);
-        if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {
-            builder.reasoningEffort(thinking);
-        }
+        builder.reasoningEffort(effort(thinking));
         ChatOptions options = builder.build();
         int timeout = (int) Math.min(Integer.MAX_VALUE, Math.max(SUMMARY_TIMEOUT.toMillis(), timeoutMillis()));
         return (instructions, input) -> {
@@ -801,9 +816,7 @@ public final class RemoteAi {
     private ChatOptions visionOptions() {
         String thinking = settings.visionThinkingLevel();
         ChatOptions.Builder builder = ChatOptions.builder().model(settings.visionModel());
-        if (settings.provider() == AiProvider.OLLAMA || !"none".equals(thinking)) {
-            builder.reasoningEffort(thinking);
-        }
+        builder.reasoningEffort(effort(thinking));
         return builder.build();
     }
 
@@ -853,18 +866,104 @@ public final class RemoteAi {
      * schickt {@link OllamaChatAdapter} {@code think: false}).
      */
     static ChatCompletionPort limited(ChatCompletionPort port, int maxTokens, String thinking) {
-        String effort = thinking == null || "none".equals(thinking) ? null : thinking;
+        // Angelo 22.11.2026: „aus“ heißt bei einem OpenAI-kompatiblen Dienst das kleinste Nachdenken. Ohne Angabe denkt
+        // ein Modell wie gpt-oss mit seiner Vorgabe (medium) und braucht für eine Zusammenfassung ewig. Lehnt ein Dienst
+        // den Wert ab (Modell ohne Nachdenken), geht dieselbe Anfrage einmal ohne ihn.
+        String effort = thinking == null ? null : "none".equals(thinking) ? MIN_REASONING_EFFORT : thinking;
         return new ChatCompletionPort() {
             @Override
             public ChatResponse complete(ChatRequest request) {
-                return port.complete(withLimit(request, maxTokens, effort));
+                ChatRequest limited = withLimit(request, maxTokens, effort);
+                try {
+                    return port.complete(limited);
+                } catch (ChatCompletionException e) {
+                    if (!rejectedEffort(e, request, limited)) {
+                        throw e;
+                    }
+                    return port.complete(withLimit(request, maxTokens, null));
+                }
             }
 
             @Override
             public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
-                return port.stream(withLimit(request, maxTokens, effort), listener);
+                ChatRequest limited = withLimit(request, maxTokens, effort);
+                java.util.concurrent.atomic.AtomicReference<ChatTask> current =
+                        new java.util.concurrent.atomic.AtomicReference<>();
+                java.util.concurrent.atomic.AtomicBoolean received = new java.util.concurrent.atomic.AtomicBoolean();
+                current.set(port.stream(limited, new ChatStreamListener() {
+                    @Override
+                    public void onStart() {
+                        listener.onStart();
+                    }
+
+                    @Override
+                    public void onDelta(String text) {
+                        received.set(true);
+                        listener.onDelta(text);
+                    }
+
+                    @Override
+                    public void onComplete(ChatResponse response) {
+                        listener.onComplete(response);
+                    }
+
+                    @Override
+                    public void onError(ChatCompletionException error) {
+                        if (!received.get() && rejectedEffort(error, request, limited)) {
+                            current.set(port.stream(withLimit(request, maxTokens, null), listener));
+                            return;
+                        }
+                        listener.onError(error);
+                    }
+
+                    @Override
+                    public void onCancelled() {
+                        listener.onCancelled();
+                    }
+                }));
+                return new ChatTask() {
+                    @Override
+                    public void cancel() {
+                        current.get().cancel();
+                    }
+
+                    @Override
+                    public boolean isDone() {
+                        return current.get().isDone();
+                    }
+
+                    @Override
+                    public boolean isCancelled() {
+                        return current.get().isCancelled();
+                    }
+                };
             }
         };
+    }
+
+
+    /**
+     * Das Nachdenken, wie es an den Dienst geht. Ollama versteht „none“ ({@code think: false}). Ein OpenAI-kompatibler
+     * Dienst kennt „none“ oft nicht; ohne Angabe denkt ein Modell wie gpt-oss aber mit seiner Vorgabe (medium) und
+     * schrieb für eine Zusammenfassung bis ans Ausgabelimit (Angelo 22.11.2026: finish_reason=length bei 32768). Daher
+     * geht „aus“ dort als das kleinste Nachdenken {@link #MIN_REASONING_EFFORT}; lehnt ein Modell ohne Nachdenken den
+     * Wert ab, wiederholt {@link #streamed} die Anfrage einmal ohne ihn.
+     */
+    private String effort(String thinking) {
+        if (thinking == null) {
+            return null;
+        }
+        return settings.provider() != AiProvider.OLLAMA && "none".equals(thinking) ? MIN_REASONING_EFFORT : thinking;
+    }
+
+    /** Das kleinste Nachdenken, das OpenAI-kompatible Dienste annehmen ({@code reasoning_effort}). */
+    static final String MIN_REASONING_EFFORT = "low";
+
+    /** Ob der Dienst die Anfrage nur wegen des hier ergänzten {@code reasoning_effort} abgelehnt hat. */
+    private static boolean rejectedEffort(ChatCompletionException e, ChatRequest original, ChatRequest sent) {
+        boolean added = sent.options() != null && sent.options().reasoningEffort() != null
+                && (original.options() == null || original.options().reasoningEffort() == null);
+        return added && e.kind() == ChatErrorKind.INVALID_REQUEST;
     }
 
     private static ChatRequest withLimit(ChatRequest request, int maxTokens, String effort) {
@@ -989,7 +1088,7 @@ public final class RemoteAi {
      */
     static String complete(ChatResponse response, int maxTokens, boolean configurable) {
         if (response.finishReason() == ChatFinishReason.LENGTH) {
-            throw new AiServiceException(AiServiceException.Reason.INVALID_RESPONSE, TRUNCATED + maxTokens + ")"
+            throw new com.aresstack.spaceharvester.ai.AiOutputTruncatedException(TRUNCATED + maxTokens + ")"
                     + (configurable ? TRUNCATED_ADVICE : ""));
         }
         return response.content();
