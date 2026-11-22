@@ -127,7 +127,27 @@ public final class MainWindow implements AppContext.Navigator {
     private Explorer.Remembered searchSelection;
     /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
     private AppContext.Section beforeSettings = AppContext.Section.CONTENT;
-    private final JPanel top = new JPanel(new HeaderLayout(12));
+    /** Tooltips der freien Flächen der Fensterleiste: Der Doppelklick ersetzt den fehlenden Vergrößern-Knopf. */
+    static final String MAXIMIZE_TOOLTIP = "Doppelklick: Vollbild";
+    static final String RESTORE_TOOLTIP = "Doppelklick: Verkleinern";
+    private final JPanel top = new JPanel(new HeaderLayout(12)) {
+        @Override
+        public String getToolTipText(java.awt.event.MouseEvent event) {
+            // Nur die freien Flächen fragen hier: Knöpfe und Felder zeigen ihre eigenen Tooltips.
+            return windowBarTooltip(
+                    ComicWindowDragger.isMaximized(javax.swing.SwingUtilities.getWindowAncestor(this)));
+        }
+    };
+
+    /** Was der Doppelklick auf die Fensterleiste gerade tut. */
+    static String windowBarTooltip(boolean maximized) {
+        return maximized ? RESTORE_TOOLTIP : MAXIMIZE_TOOLTIP;
+    }
+
+    /** Die Fensterleiste (für Tests). */
+    JPanel windowBar() {
+        return top;
+    }
     private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
@@ -316,6 +336,8 @@ public final class MainWindow implements AppContext.Navigator {
         // Ein Suchfeld für das ganze Fenster, mittig zwischen den Icon-Gruppen (#515).
         top.add(SearchBarLayout.wrap(searchView.searchBar()), BorderLayout.CENTER);
         ComicWindowDragger.install(top);
+        // Meldet die Leiste beim Tooltip-Dienst an; den Text liefert getToolTipText je nach Fensterzustand.
+        top.setToolTipText(MAXIMIZE_TOOLTIP);
 
         side.setBackground(Comic.SURFACE);
         side.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 10));

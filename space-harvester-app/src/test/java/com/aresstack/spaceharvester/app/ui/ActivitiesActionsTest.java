@@ -428,42 +428,53 @@ class ActivitiesActionsTest {
     }
 
     /**
-     * „Alle anhalten“ und „Alle abbrechen“ stehen mittig über der ganzen Kopfzeile (Angelo 11.11.2026); wird es eng,
-     * rücken sie zwischen Titel und rechte Gruppe und zeigen zuletzt nur ihr Symbol, statt abgeschnitten zu werden.
+     * Die Wippe links bleibt in voller Breite und einzeilig (Angelo 22.11.2026); wird die Kopfzeile zu schmal, gibt
+     * die rechte Gruppe ihr Beiwerk ab, und zwar ohne an der Grenze hin und her zu kippen.
      */
     @Test
-    void theGlobalButtonsSitInTheMiddleOfTheRowAndShrinkToTheirSymbols() {
-        JPanel west = fixed(150);
-        JPanel center = fixed(260);
-        JPanel east = fixed(380);
-        boolean[] compact = {false};
+    void theHeadKeepsTheToggleWholeAndTellsWhenItGetsNarrow() {
+        JPanel west = fixed(190);
+        JPanel east = fixed(600);
+        boolean[] narrow = {false};
         JPanel head = new JPanel();
-        head.setLayout(new ActivitiesView.HeadLayout(west, center, east, 260, narrow -> {
-            compact[0] = narrow;
-            center.setPreferredSize(new Dimension(narrow ? 74 : 260, 28));
+        head.setLayout(new ActivitiesView.HeadLayout(west, east, 220, now -> {
+            narrow[0] = now;
+            east.setPreferredSize(new Dimension(now ? 380 : 600, 28));
         }));
         head.add(west);
-        head.add(center);
         head.add(east);
 
         layout(head, 1200);
-        assertThat(center.getBounds()).isEqualTo(new Rectangle(470, 0, 260, 28));
-        assertThat(east.getX()).isEqualTo(820);
-        assertThat(compact[0]).isFalse();
-        layout(head, 900);
-        assertThat(center.getX()).as("so mittig wie möglich, ohne die rechte Gruppe zu berühren").isEqualTo(258);
-        assertThat(compact[0]).isFalse();
+        assertThat(west.getBounds()).isEqualTo(new Rectangle(0, 0, 190, 28));
+        assertThat(east.getBounds()).isEqualTo(new Rectangle(600, 0, 600, 28));
+        assertThat(narrow[0]).isFalse();
         layout(head, 700);
-        assertThat(compact[0]).as("Texte passen nicht mehr").isTrue();
-        assertThat(center.getBounds()).isEqualTo(new Rectangle(244, 0, 74, 28));
-        assertThat(west.getWidth()).isEqualTo(150);
-        layout(head, 560);
-        assertThat(center.getBounds()).as("der Titel gibt Platz ab, beide Knöpfe bleiben ganz sichtbar")
-                .isEqualTo(new Rectangle(104, 0, 74, 28));
-        assertThat(west.getWidth()).isEqualTo(102);
+        assertThat(narrow[0]).as("Wippe und volle Werkzeuge passen nicht mehr").isTrue();
+        layout(head, 700);
+        assertThat(west.getWidth()).isEqualTo(190);
+        assertThat(east.getBounds()).isEqualTo(new Rectangle(320, 0, 380, 28));
+        // Knapp unter der vollen Breite bleibt es schmal, statt bei jedem Layout umzuschalten.
+        layout(head, 790);
+        assertThat(narrow[0]).isTrue();
         layout(head, 1200);
-        assertThat(compact[0]).isFalse();
-        assertThat(head.getPreferredSize().width).isEqualTo(150 + 260 + 380 + 2 * ActivitiesView.HeadLayout.GAP);
+        assertThat(narrow[0]).isFalse();
+        assertThat(head.getPreferredSize().width).isEqualTo(190 + ActivitiesView.HeadLayout.GAP + 600);
+    }
+
+    /** Unten stehen Auf- und Zuklappen links, „Alle anhalten“ und „Alle abbrechen“ mittig im eigenen Platz. */
+    @Test
+    void theToolsPutFoldingLeftAndTheGlobalActionsInTheMiddle() {
+        JPanel west = fixed(60);
+        JPanel center = fixed(260);
+        JPanel tools = new JPanel(new ActivitiesView.ToolsLayout(west, center));
+        tools.add(west);
+        tools.add(center);
+        layout(tools, 900);
+        assertThat(west.getBounds()).isEqualTo(new Rectangle(0, 0, 60, 28));
+        assertThat(center.getBounds()).isEqualTo(new Rectangle(320, 0, 260, 28));
+        layout(tools, 340);
+        assertThat(center.getX()).as("eng: neben der linken Gruppe, nicht darüber")
+                .isEqualTo(60 + ActivitiesView.ToolsLayout.GAP);
     }
 
     private static void layout(JPanel head, int width) {
