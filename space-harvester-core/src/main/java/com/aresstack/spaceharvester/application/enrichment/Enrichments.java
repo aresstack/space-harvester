@@ -1118,9 +1118,13 @@ public class Enrichments {
                 + (root == cause ? "" : " ← " + root.getClass().getSimpleName())
                 + (findings.httpStatus() == null ? "" : ", HTTP " + findings.httpStatus())
                 + (findings.component() == null ? "" : ", in " + findings.component());
+        // Der TLS-Befund trägt sonst die Meldung der Ausnahme (Codex #1103): nur ihre Klasse.
+        String tls = findings.tlsFinding();
+        if (tls != null && tls.indexOf(": ") >= 0) {
+            tls = tls.substring(0, tls.indexOf(": "));
+        }
         return new JobEvent.Draft(JobEvent.Severity.ERROR, findings.category(), COMPONENT, WORK_FAILED,
-                where + ": " + reason + "; weiter mit der nächsten", findings.httpStatus(), findings.tlsFinding(),
-                null);
+                where + ": " + reason + "; weiter mit der nächsten", findings.httpStatus(), tls, null);
     }
 
     /** Rechnet eine Berechnung der Warteschlange mit dem Snapshot von jetzt. */

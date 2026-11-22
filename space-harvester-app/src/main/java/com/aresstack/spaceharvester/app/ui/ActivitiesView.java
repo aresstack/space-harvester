@@ -1779,8 +1779,11 @@ public final class ActivitiesView implements View {
     static String progressText(JobStatus status) {
         JobProgress p = status.progress();
         boolean fetching = status.type() == JobType.EXPORT && !status.state().terminal() && p.written() == 0;
+        // Gescheitertes zählt nicht als erledigt, aber nur, wo beide Zähler dieselbe Einheit zählen (Codex #1103): Eine
+        // Anreicherung zählt Abschnitte als erledigt, Fehlschläge aber je Prozessor.
+        boolean sameUnit = status.type() != JobType.EXPORT && status.type() != JobType.ENRICHMENT;
         long done = status.type() == JobType.EXPORT && !fetching ? p.written()
-                : Math.max(0, p.processed() - (status.type() == JobType.EXPORT ? 0 : p.failed()));
+                : Math.max(0, p.processed() - (sameUnit ? p.failed() : 0));
         long skipped = skipped(status);
         return done + "/" + p.discovered() + (skipped > 0 ? " · " + skipped + " ausgelassen" : "")
                 + (p.failed() > 0 ? " · " + p.failed() + " Fehler" : "");

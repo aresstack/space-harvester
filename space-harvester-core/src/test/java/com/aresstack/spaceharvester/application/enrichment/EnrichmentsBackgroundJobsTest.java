@@ -434,6 +434,18 @@ class EnrichmentsBackgroundJobsTest {
     }
 
     @Test
+    void aTlsFailureNamesOnlyTheExceptionClassNeverItsMessage() {
+        // Codex #1103: Der TLS-Befund trug die Meldung der Ausnahme.
+        RuntimeException cause = new IllegalStateException("Aufruf gescheitert",
+                new javax.net.ssl.SSLHandshakeException("Geheimer Seitentext im Zertifikat"));
+        JobEvent.Draft draft = Enrichments.failure(new Enrichments.Work("remote", new PageKey("wiki", "7"), false),
+                "wiki", cause);
+
+        assertThat(draft.tlsFinding()).isEqualTo("SSLHandshakeException");
+        assertThat(draft.message()).contains("Seite 7", "SSLHandshakeException").doesNotContain("Geheimer");
+    }
+
+    @Test
     void retryingComputesOnlyTheFailedPagesAgainInTheSameEntry() throws Exception {
         // Angelo 22.11.2026: ↻ wiederholt im Hintergrund das Gescheiterte wie im Vordergrund.
         Remote remote = new Remote();
