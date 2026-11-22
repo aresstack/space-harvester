@@ -36,6 +36,10 @@ class JesListingTest {
     @Test
     void headersAreSkipped() {
         assertThat(JesListing.parseJob("JOBNAME  JOBID    OWNER    STATUS CLASS")).isNull();
+        // Jobs dürfen trotzdem so heißen wie eine Kopfzeile beginnt
+        assertThat(JesListing.parseJob("OWNER01  JOB04700 KKR      OUTPUT A        RC=0000 3 spool files").jobName())
+                .isEqualTo("OWNER01");
+        assertThat(JesListing.parseJob("JOBNAME1 JOB04701 KKR      ACTIVE B").jobName()).isEqualTo("JOBNAME1");
         assertThat(JesListing.parseSpool("         ID  STEPNAME PROCSTEP C DDNAME   BYTE-COUNT")).isNull();
         assertThat(JesListing.parseSpool("--------")).isNull();
         assertThat(JesListing.parseSpool("3 spool files")).isNull();

@@ -140,7 +140,11 @@ final class CommonsNetFiles implements FileConnection {
         if (!unquoted.endsWith("*") && !unquoted.contains("(")) {
             String[] below = ftp.listNames("'" + unquoted + ".*'");
             if (below != null) {
-                for (RemoteEntry entry : datasetsBelow(resolved, below)) {
+                List<RemoteEntry> datasets = datasetsBelow(resolved, below);
+                if (datasets.stream().anyMatch(entry -> isLeaf(below, entry))) {
+                    datasets = withSequentialAsFiles(unquoted, below, datasets);
+                }
+                for (RemoteEntry entry : datasets) {
                     if (seen.add(entry.path().toUpperCase(Locale.ROOT))) {
                         entries.add(entry);
                     }
@@ -193,6 +197,51 @@ final class CommonsNetFiles implements FileConnection {
             }
         }
         return entries;
+    }
+
+    /** Ob ein Eintrag aus {@code NLST 'X.*'} ein echtes Dataset ist (keine bloße Qualifier-Stufe). */
+    private static boolean isLeaf(String[] names, RemoteEntry entry) {
+        String path = MvsPath.unquote(entry.path());
+        for (String raw : names) {
+            if (raw != null && MvsPath.unquote(raw.trim()).equalsIgnoreCase(path)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * NLST sagt nicht, ob ein Dataset partitioniert (PO, hat Members) oder sequenziell (PS, eine Datei) ist. Das steht
+     * nur in der Spalte Dsorg von {@code LIST 'X.*'}; sequenzielle Datasets werden damit zu Dateien, die man lesen kann.
+     * Kann der Server das nicht liefern, bleibt es bei Ordnern wie bisher.
+     */
+    private List<RemoteEntry> withSequentialAsFiles(String parent, String[] names, List<RemoteEntry> datasets) {
+        Set<String> sequential = new java.util.HashSet<>();
+        try {
+            FTPFile[] files = ftp.listFiles("'" + parent + ".*'");
+            if (files != null) {
+                for (FTPFile file : files) {
+                    if (file != null && file.getName() != null && file.isFile()) {
+                        sequential.add(MvsPath.unquote(file.getName()).toUpperCase(Locale.ROOT));
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+            return datasets;
+        }
+        if (sequential.isEmpty()) {
+            return datasets;
+        }
+        String prefix = parent.toUpperCase(Locale.ROOT) + ".";
+        List<RemoteEntry> result = new ArrayList<>();
+        for (RemoteEntry entry : datasets) {
+            String full = MvsPath.unquote(entry.path()).toUpperCase(Locale.ROOT);
+            // z/OS zeigt Namen unter dem Arbeitsverzeichnis relativ, sonst voll qualifiziert.
+            boolean file = isLeaf(names, entry) && (sequential.contains(full)
+                    || sequential.stream().anyMatch(name -> full.endsWith("." + name) && full.startsWith(prefix)));
+            result.add(file ? RemoteEntry.file(entry.name(), entry.path()) : entry);
+        }
+        return result;
     }
 
     /** Einträge aus {@code NLST 'X.*'}: immer Datasets, angezeigt wird nur die nächste Stufe. */
@@ -327,7 +376,8 @@ final class CommonsNetFiles implements FileConnection {
 
     @Override
     public void close() {
-        Clients.logoutAndClose(ftp);
+        // Sofort trennen: ein hängender Server darf „Trennen“ nicht bis zum Zeitlimit aufhalten.
+        Clients.close(ftp);
     }
 
     private List<String> candidates(String path) {

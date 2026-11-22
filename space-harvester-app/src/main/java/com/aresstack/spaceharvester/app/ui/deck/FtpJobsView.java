@@ -53,6 +53,8 @@ final class FtpJobsView extends JPanel {
     private final DefaultListModel<SpoolFile> spoolModel = new DefaultListModel<>();
     private final JList<SpoolFile> spoolList = new JList<>(spoolModel);
     private final JTextArea spoolText = Comic.code();
+    /** Die Spool-Datei, deren Text gerade im Textfeld steht; {@code null} während des Ladens. */
+    private SpoolFile loadedSpool;
     private final JLabel spoolTitle = Comic.caption("Spool");
     private final JPanel actions;
     private final ComposerButton submit;
@@ -269,12 +271,17 @@ final class FtpJobsView extends JPanel {
         SpoolFile file = spoolList.getSelectedValue();
         JobOutput current = output;
         String jobId = outputJob;
+        // Den alten Text sofort verwerfen: sonst speichert „Spool speichern“ den Text der vorigen Datei unter neuem Namen.
+        loadedSpool = null;
+        spoolText.setText("");
+        updateActions();
         if (file == null || current == null) {
             return;
         }
         owner.run(owner.session().jobs(jes -> current.text(jes, jobId, file)),
                 "Spool-Datei " + file.ddName() + " nicht geladen", text -> {
                     if (file.equals(spoolList.getSelectedValue())) {
+                        loadedSpool = file;
                         spoolText.setText(text);
                         spoolText.setCaretPosition(0);
                         updateActions();
@@ -285,6 +292,7 @@ final class FtpJobsView extends JPanel {
     private void clearSpool() {
         output = null;
         outputJob = null;
+        loadedSpool = null;
         spoolModel.clear();
         spoolText.setText("");
         spoolTitle.setText("Spool");
@@ -295,7 +303,8 @@ final class FtpJobsView extends JPanel {
         submit.setEnabled(connected);
         refresh.setEnabled(connected);
         delete.setEnabled(connected && job != null);
-        save.setEnabled(connected && spoolList.getSelectedValue() != null && !spoolText.getText().isEmpty());
+        SpoolFile selectedSpool = spoolList.getSelectedValue();
+        save.setEnabled(connected && selectedSpool != null && selectedSpool.equals(loadedSpool));
     }
 
     private void submitFile() {
@@ -318,7 +327,7 @@ final class FtpJobsView extends JPanel {
 
     private void saveSpool() {
         SpoolFile file = spoolList.getSelectedValue();
-        if (file == null || outputJob == null) {
+        if (file == null || outputJob == null || !file.equals(loadedSpool)) {
             return;
         }
         JFileChooser chooser = SaveChooser.create(outputJob + "-" + file.ddName() + ".txt");

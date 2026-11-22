@@ -141,7 +141,8 @@ final class CommonsNetJes implements JesConnection {
 
     @Override
     public void close() {
-        Clients.logoutAndClose(ftp);
+        // Sofort trennen: ein hängender Server darf „Trennen“ nicht bis zum Zeitlimit aufhalten.
+        Clients.close(ftp);
     }
 
     private static List<String> lines(FTPFile[] files) {

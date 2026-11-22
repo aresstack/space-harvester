@@ -231,7 +231,15 @@ public final class FtpSession {
                     if (!retry || shut) {
                         throw broken;
                     }
-                    return task.run(ensure());
+                    try {
+                        return task.run(ensure());
+                    } catch (FtpReplyException refused) {
+                        throw refused;
+                    } catch (IOException brokenAgain) {
+                        // Auch die Ersatzverbindung ist kaputt: nicht stehen lassen, der nächste Auftrag baut neu auf.
+                        drop();
+                        throw brokenAgain;
+                    }
                 }
             } finally {
                 lock.unlock();

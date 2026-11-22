@@ -523,7 +523,8 @@ final class FtpDatasetsView extends JPanel {
             boolean mvs = owner.session().mvs();
             return switch (column) {
                 case 0 -> entry.name();
-                case 1 -> entry.directory() ? (mvs ? "Dataset" : "Ordner") : (mvs ? "Member" : "Datei");
+                case 1 -> entry.directory() ? (mvs ? "Dataset" : "Ordner")
+                        : (mvs ? (entry.path().contains("(") ? "Member" : "Dataset (sequenziell)") : "Datei");
                 default -> entry.size() < 0 ? "" : size(entry.size());
             };
         }

@@ -21,6 +21,9 @@ public final class JesListing {
             "^(\\S+)\\s+(" + JOB_ID + ")\\s+(\\S+)\\s+(\\S+)\\s+(\\S*)\\s*(?:RC=(\\S+))?.*?(\\d+)\\s+spool",
             Pattern.CASE_INSENSITIVE);
 
+    /** Kopfzeilen der Jobliste; ein Job darf trotzdem OWNER01 oder JOBNAME1 heißen. */
+    private static final Pattern HEADER = Pattern.compile("^(?:JOBNAME\\s+JOBID\\b|OWNER\\s+JOBID\\b|-{3,})");
+
     /** Einfacher: Name, ID, Besitzer, Zustand. */
     private static final Pattern JOB_LINE_SIMPLE = Pattern.compile(
             "^(\\S+)\\s+(" + JOB_ID + ")\\s+(\\S+)\\s+(OUTPUT|ACTIVE|INPUT|HELD)(?:\\s+(\\S))?",
@@ -47,7 +50,7 @@ public final class JesListing {
         }
         String trimmed = line.trim();
         String upper = trimmed.toUpperCase(Locale.ROOT);
-        if (upper.startsWith("JOBNAME") || upper.startsWith("---") || upper.startsWith("OWNER")) {
+        if (HEADER.matcher(upper).find()) {
             return null;
         }
         Matcher full = JOB_LINE.matcher(trimmed);

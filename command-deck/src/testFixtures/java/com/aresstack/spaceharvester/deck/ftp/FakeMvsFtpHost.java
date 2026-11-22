@@ -314,7 +314,7 @@ public final class FakeMvsFtpHost implements AutoCloseable {
 
     private void list(Client client, String arg, PrintWriter out) throws IOException {
         if (!client.jes) {
-            reply(out, "550 No data sets found.");
+            listDatasets(client, unquote(arg), out);
             return;
         }
         StringBuilder text = new StringBuilder("JOBNAME  JOBID    OWNER    STATUS CLASS\r\n");
@@ -344,6 +344,31 @@ public final class FakeMvsFtpHost implements AutoCloseable {
                 }
                 text.append(job.spool().size()).append(" spool files\r\n");
             }
+        }
+        send(client, out, text.toString());
+    }
+
+    /** {@code LIST 'X.*'} wie z/OS: eine Zeile je Dataset mit Dsorg PO (partitioniert) oder PS (sequenziell). */
+    private void listDatasets(Client client, String name, PrintWriter out) throws IOException {
+        if (!name.endsWith(".*")) {
+            reply(out, "550 No data sets found.");
+            return;
+        }
+        String prefix = name.substring(0, name.length() - 1);
+        StringBuilder text = new StringBuilder("Volume Unit    Referred Ext Used Recfm Lrecl BlkSz Dsorg Dsname\r\n");
+        TreeSet<String> all = new TreeSet<>(partitioned.keySet());
+        all.addAll(sequential.keySet());
+        int count = 0;
+        for (String dataset : all) {
+            if (dataset.startsWith(prefix)) {
+                text.append(String.format(Locale.ROOT, "WRK001 3390   2026/11/20  1   15  FB      80 27920  %-4s %s\r\n",
+                        partitioned.containsKey(dataset) ? "PO" : "PS", dataset));
+                count++;
+            }
+        }
+        if (count == 0) {
+            reply(out, "550 No data sets found.");
+            return;
         }
         send(client, out, text.toString());
     }

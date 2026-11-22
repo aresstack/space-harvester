@@ -49,7 +49,7 @@ final class Clients {
         return reply == null || reply.isBlank() ? "(keine Antwort)" : reply.trim().replace("\r", "").replace('\n', ' ');
     }
 
-    /** Meldet ab und trennt; wirft nie. Trennt auch, wenn gerade ein anderer Thread überträgt. */
+    /** Trennt sofort (ohne auf eine Abmelde-Antwort zu warten); wirft nie. Trennt auch, wenn gerade ein anderer Thread überträgt. */
     static void close(FTPClient ftp) {
         try {
             if (ftp.isConnected()) {
@@ -57,18 +57,6 @@ final class Clients {
             }
         } catch (IOException ignored) {
             // beim Trennen ist nichts mehr zu retten
-        }
-    }
-
-    static void logoutAndClose(FTPClient ftp) {
-        try {
-            if (ftp.isConnected()) {
-                ftp.logout();
-            }
-        } catch (IOException ignored) {
-            // Abmelden ist Höflichkeit; getrennt wird unten ohnehin
-        } finally {
-            close(ftp);
         }
     }
 }

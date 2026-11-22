@@ -70,6 +70,19 @@ class CommonsNetFtpConnectorTest {
     }
 
     @Test
+    void sequentialDatasetsAreFilesThatCanBeRead() throws Exception {
+        try (FileConnection files = files()) {
+            List<RemoteEntry> data = files.list("'KKR.DATA'");
+            assertThat(data).extracting(RemoteEntry::name).containsExactly("LOG");
+            assertThat(data.get(0).directory()).isFalse();
+            assertThat(files.read(data.get(0).path()).text()).isEqualTo("Grüße an Bord\nZeile zwei");
+            // Partitionierte Datasets bleiben Ordner
+            assertThat(files.list("'KKR.SRC'")).extracting(RemoteEntry::name, RemoteEntry::directory)
+                    .containsExactly(org.assertj.core.groups.Tuple.tuple("COBOL", true));
+        }
+    }
+
+    @Test
     void theRootCannotBeListed() throws Exception {
         try (FileConnection files = files()) {
             assertThatThrownBy(() -> files.list("''")).isInstanceOf(FtpReplyException.class).hasMessageContaining("HLQ");
