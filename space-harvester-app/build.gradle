@@ -136,6 +136,10 @@ tasks.named('jar') {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'java.awt.headless', 'true'
+    // Der Bedienzustand (app-state.json) der Tests liegt im Build-Ordner, nie im Benutzerordner; jeder Lauf beginnt leer.
+    def appState = layout.buildDirectory.file('tmp/test-app-state.json').get().asFile
+    systemProperty 'space-harvester.app-state', appState.absolutePath
+    doFirst { appState.delete() }
     // Die App-Tests rendern PDFs mit Systemschriften und bauen viele Swing-Oberflächen; 512 MB (Vorgabe) reichen nicht mehr.
     maxHeapSize = '1g'
     // Echttest des Chats mit Werkzeugen (ADR 0033) gegen einen Ollama-Server, nur auf Anfrage:

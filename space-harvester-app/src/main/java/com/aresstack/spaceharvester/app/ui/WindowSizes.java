@@ -1,13 +1,12 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import java.awt.Dimension;
+import java.util.Map;
 import java.util.Optional;
-import java.util.prefs.Preferences;
 
 /**
- * Gemerkte Fenstergrößen der Dialoge (Bedienzustand, keine Konfiguration): in den Benutzer-Einstellungen von Java,
- * unter Windows also im Benutzerzweig der Registry. Fehlt der Speicher oder ist er gesperrt, gilt einfach die
- * Standardgröße.
+ * Gemerkte Fenstergrößen der Dialoge und Zahlen des Bedienzustands (keine Konfiguration): im Application State
+ * ({@link AppState}, {@code app-state.json}). Fehlt der Speicher oder ist er gesperrt, gilt einfach die Standardgröße.
  */
 public final class WindowSizes {
 
@@ -17,47 +16,25 @@ public final class WindowSizes {
     }
 
     static Optional<Dimension> recall(String key) {
-        try {
-            Preferences node = node();
-            int width = node.getInt(key + ".width", -1);
-            int height = node.getInt(key + ".height", -1);
-            return width >= MIN && height >= MIN ? Optional.of(new Dimension(width, height)) : Optional.empty();
-        } catch (RuntimeException e) {
-            return Optional.empty();
-        }
+        int width = recallInt(key + ".width", -1);
+        int height = recallInt(key + ".height", -1);
+        return width >= MIN && height >= MIN ? Optional.of(new Dimension(width, height)) : Optional.empty();
     }
 
     static void remember(String key, Dimension size) {
         if (size.width < MIN || size.height < MIN) {
             return;
         }
-        try {
-            Preferences node = node();
-            node.putInt(key + ".width", size.width);
-            node.putInt(key + ".height", size.height);
-        } catch (RuntimeException e) {
-            // Ohne Speicher bleibt es bei der Standardgröße.
-        }
+        AppState.shared().putAll(Map.of(key + ".width", String.valueOf(size.width),
+                key + ".height", String.valueOf(size.height)));
     }
 
     /** Ein gemerkter Zahlenwert des Bedienzustands, etwa die Breite einer Seitenleiste. */
     public static int recallInt(String key, int fallback) {
-        try {
-            return node().getInt(key, fallback);
-        } catch (RuntimeException e) {
-            return fallback;
-        }
+        return AppState.shared().getInt(key, fallback);
     }
 
     public static void rememberInt(String key, int value) {
-        try {
-            node().putInt(key, value);
-        } catch (RuntimeException e) {
-            // Ohne Speicher gilt beim nächsten Start der Standard.
-        }
-    }
-
-    private static Preferences node() {
-        return Preferences.userRoot().node("com/aresstack/spaceharvester/app/windows");
+        AppState.shared().put(key, value);
     }
 }

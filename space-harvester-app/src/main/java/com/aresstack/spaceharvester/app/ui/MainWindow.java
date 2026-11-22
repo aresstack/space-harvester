@@ -80,6 +80,8 @@ public final class MainWindow implements AppContext.Navigator {
     private final CardLayout actionCards = new CardLayout();
     private final JPanel actionDeck = new JPanel(actionCards);
     static final int SIDEBAR_WIDTH = 280;
+    static final String LEFT_WIDTH_KEY = "sidebar.left.width";
+    static final String LEFT_OPEN_KEY = "sidebar.left.open";
     private ComicSplitPane split;
     /** Arbeitsfläche links, Chat-Seitenleiste rechts (Angelo, 21.11.2026). */
     private javax.swing.JSplitPane chatSplit;
@@ -253,12 +255,13 @@ public final class MainWindow implements AppContext.Navigator {
         frame.setContentPane(surface);
         ComicWindowShape.install(frame, surface, Comic.PALETTE, WINDOW_PADDING, ResearchUiMetrics.RADIUS_WINDOW);
         frame.setMinimumSize(new Dimension(960, 600));
-        frame.setSize(new Dimension(1280, 820));
-        frame.setLocationRelativeTo(null);
+        // Lage, Größe und maximiert wie beim letzten Beenden, passend zu den jetzt angeschlossenen Bildschirmen.
+        WindowPlacement.restore(frame, new Dimension(1280, 820));
         frame.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent event) {
                 if (confirmClose(frame)) {
+                    WindowPlacement.remember(frame);
                     frame.dispose();
                     context.shutdown();
                     System.exit(0);
@@ -266,6 +269,8 @@ public final class MainWindow implements AppContext.Navigator {
             }
         });
         frame.setVisible(true);
+        WindowPlacement.maximizeIfRemembered(frame);
+        WindowPlacement.track(frame);
         // Die App startet in der Leseansicht; zur Suche geht es erst mit einer Eingabe oben (Angelo, 21.11.2026).
         show(AppContext.Section.CONTENT);
         return frame;
@@ -463,7 +468,12 @@ public final class MainWindow implements AppContext.Navigator {
         // alle Teilungen gleich aussehen; die Breitenregeln des ComicSplitPane bleiben.
         ComicDivider.install(split, Comic.PALETTE);
         split.setContinuousLayout(true);
-        split.setPreferredLeftWidth(SIDEBAR_WIDTH);
+        // Breite und offen/zu der linken Leiste wie beim letzten Beenden (Application State).
+        split.setPreferredLeftWidth(WindowSizes.recallInt(LEFT_WIDTH_KEY, SIDEBAR_WIDTH));
+        split.setLeftWidthListener(width -> WindowSizes.rememberInt(LEFT_WIDTH_KEY, width));
+        if (WindowSizes.recallInt(LEFT_OPEN_KEY, 1) == 0) {
+            collapseDrawer();
+        }
         // Einklappbar: Doppelklick auf den Teiler klappt den Drawer zu bzw. wieder auf.
         if (split.getUI() instanceof javax.swing.plaf.basic.BasicSplitPaneUI basic) {
             basic.getDivider().addMouseListener(new java.awt.event.MouseAdapter() {
@@ -696,11 +706,17 @@ public final class MainWindow implements AppContext.Navigator {
     void toggleDrawer() {
         if (split.isLeftCollapsed()) {
             split.openLeft();
+            WindowSizes.rememberInt(LEFT_OPEN_KEY, 1);
         } else {
-            split.collapseLeft();
-            // collapseLeft() nimmt den Teiler ganz weg; ein schmaler bleibt, damit ein Doppelklick wieder aufklappt.
-            split.setDividerSize(COLLAPSED_DIVIDER);
+            collapseDrawer();
+            WindowSizes.rememberInt(LEFT_OPEN_KEY, 0);
         }
+    }
+
+    private void collapseDrawer() {
+        split.collapseLeft();
+        // collapseLeft() nimmt den Teiler ganz weg; ein schmaler bleibt, damit ein Doppelklick wieder aufklappt.
+        split.setDividerSize(COLLAPSED_DIVIDER);
     }
 
     @Override
