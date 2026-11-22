@@ -337,6 +337,7 @@ public final class Harvester implements AutoCloseable {
     private final boolean parallelismFollows;
     private final SearchOrchestrator progressiveSearch;
     private final NeighborSearch neighborSearch;
+    private final com.aresstack.spaceharvester.application.query.progressive.TermSearch termSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
     private final PageConnections pageConnections;
@@ -978,12 +979,20 @@ public final class Harvester implements AutoCloseable {
             this.factEdits = new FactEdits(access, pages, enrichments, editedFacts, factEditStore, clock);
             // ADR 0017 mit ADR 0013: semantisch findet jede Variante nur, Treffer kommen aus den Vektoren.
             RuleBasedExpansion rules = new RuleBasedExpansion();
+            // W8: Suchmethode „Fachbegriffe“; das Begriffswissen entsteht weiter unten, gefragt wird erst in der Suche.
+            Harvester searching = this;
+            Holdings termHoldings = this.holdings;
+            this.termSearch = new com.aresstack.spaceharvester.application.query.progressive.TermSearch(keywordSearch,
+                    (who, query) -> searchScope(termHoldings, catalog.all().stream().map(HarvestSource::id).toList(),
+                            who, query),
+                    com.aresstack.spaceharvester.application.query.progressive.TermSearch.Knowledge.of(
+                            searching::termKnowledge));
             SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
                     new SemanticVariantSearch(relevance, textIndex),
                     new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
                     HitScorer.of(excerpts), runLog, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
-                            backgroundJobs));
+                            backgroundJobs), termSearch);
             // R2: dieselbe Methode zur Schlagwortsuche ohne progressive Suche, als eigener Aufruf nach einem Stapel.
             this.neighborSearch = new NeighborSearch(keywordSearch, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
@@ -2237,6 +2246,47 @@ public final class Harvester implements AutoCloseable {
     /** Suchmethode „Nachbarseiten“ (R2) zur Schlagwortsuche, nach einem Stapel; nur mit Haken des Benutzers. */
     public NeighborSearch neighborSearch() {
         return neighborSearch;
+    }
+
+    /**
+     * Suchmethode „Fachbegriffe“ (W8) zur Schlagwortsuche ohne progressive Suche, als eigener Aufruf nach einem
+     * Stapel; die progressive Suche nutzt dieselbe mit {@code SearchProfile#technicalTerms()}.
+     */
+    public com.aresstack.spaceharvester.application.query.progressive.TermSearch termSearch() {
+        return termSearch;
+    }
+
+    /**
+     * Die Seiten einer Suche für das Begriffswissen (W8): ihre Seitengrenze, sonst die Seiten ihrer Quellen (ohne
+     * Angabe alle eingerichteten) und Spaces mit den Rechten des Aufrufers. Eine Quelle oder ein Space ohne Leserecht
+     * fällt weg, statt die Suche zu sperren.
+     */
+    static com.aresstack.spaceharvester.application.snapshot.PageSet searchScope(Holdings holdings,
+            List<String> configured, AccessContext caller, KeywordSearch.Query query) {
+        if (query.pages() != null) {
+            return query.pages();
+        }
+        List<String> sources = query.sourceId() != null ? List.of(query.sourceId())
+                : !query.sourceIds().isEmpty() ? List.copyOf(query.sourceIds()) : configured;
+        Map<String, List<String>> pages = new LinkedHashMap<>();
+        for (String sourceId : sources) {
+            List<Selection.Root> roots = query.spaceKeys().isEmpty() ? List.of(Selection.Root.source(sourceId))
+                    : query.spaceKeys().stream().map(space -> Selection.Root.space(sourceId, space)).toList();
+            for (Selection.Root root : roots) {
+                try {
+                    com.aresstack.spaceharvester.application.holdings.PageSelection resolved =
+                            holdings.resolve(caller, Selection.of(root));
+                    resolved.pages().asMap().forEach((source, ids) -> pages.computeIfAbsent(source,
+                            unused -> new ArrayList<>()).addAll(ids));
+                } catch (RuntimeException e) {
+                    // Ohne Leserecht oder nicht (mehr) eingerichtet: diese Wurzel fehlt im Bereich.
+                    LOG.log(System.Logger.Level.DEBUG, "Bereich der Fachbegriffe ohne eine Wurzel ({0})",
+                            e.getClass().getName());
+                }
+            }
+        }
+        // Ausgeschlossene Spaces fallen bei den Kandidaten und in der Suche selbst weg (TermSearch).
+        return com.aresstack.spaceharvester.application.snapshot.PageSet.of(pages);
     }
 
     /**

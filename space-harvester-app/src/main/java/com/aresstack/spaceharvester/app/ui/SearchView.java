@@ -85,6 +85,17 @@ public final class SearchView implements View {
     static final String NEIGHBORS_LOADING = "weitere Nachbarseiten laden im Hintergrund";
     /** Suchmethode „Synonyme der Fachbegriffe“ (K5a). */
     static final String SYNONYMS = "Synonyme der Fachbegriffe einbeziehen";
+    /** Suchmethode „Fachbegriffe“ (W8). */
+    static final String TERM_PAGES = "Seiten zu Fachbegriffen einbeziehen";
+    /** Ein Satz, wie bei den Nachbarseiten. */
+    static final String TERM_PAGES_TIP = "Nennt die Anfrage einen bestätigten Fachbegriff, kommen Seiten dazu, auf "
+            + "denen der Wissensgraph Aussagen zu ihm belegt";
+    /** Gelbe Zeile, wenn die Seiten zu Fachbegriffen nicht ganz gesucht werden konnten; kein Fehler der Suche. */
+    static final String TERM_PAGES_UNCHECKED = "Seiten zu Fachbegriffen nicht ganz gesucht";
+    /** Gelbe Zeile, wenn der Bereich größer war als die Grenze des Begriffswissens. */
+    static final String TERM_PAGES_CAPPED = "Seiten zu Fachbegriffen: nur die ersten "
+            + com.aresstack.spaceharvester.application.knowledge.TermKnowledge.MAX_PAGES
+            + " Seiten des Bereichs gelesen (Grenze)";
     /** Gelbe Zeile, wenn das Glossar nicht lesbar ist; die Suche läuft ohne die Synonyme, kein Fehler. */
     static final String SYNONYMS_UNREADABLE = "Glossar nicht lesbar, ohne Synonyme der Fachbegriffe gesucht";
 
@@ -106,6 +117,14 @@ public final class SearchView implements View {
      * Im Modus „Nur Fachbegriffe“ wirkungslos, bleibt aber bedienbar. Der Chat folgt ihr ({@link SearchMethods}).
      */
     final JCheckBox glossarySynonyms = checkBox(SYNONYMS, SYNONYMS_TIP);
+    /**
+     * Suchmethode „Fachbegriffe“ (W8, Angelo 21.11.2026: zuschaltbar, Standard aus): Nennt die Anfrage einen
+     * bestätigten Fachbegriff, kommen Seiten mit Aussagen zu ihm aus dem Wissensgraphen dazu. Die Stellung bleibt
+     * erhalten ({@link SearchMethods}).
+     */
+    final JCheckBox termPages = checkBox(TERM_PAGES, TERM_PAGES_TIP);
+    /** Die Suche, nach deren Stapel die Seiten zu Fachbegriffen noch gesucht werden; -1 ohne. */
+    private int termPagesFor = -1;
     /** Gelber Zusatz der Statuszeile zur Synonymsuche der laufenden Anfrage (Kürzung, Glossar nicht lesbar), sonst leer. */
     private String synonymNote = "";
     /**
@@ -129,7 +148,7 @@ public final class SearchView implements View {
      * Zählt Anfragen, nicht Stapel: „Weitere laden“ bleibt dieselbe Anfrage, nachgeladene Nachbarn gehören weiter
      * dazu (Auflage AT). {@link #request} zählt dagegen jeden Stapel.
      */
-    private int searchId;
+    private volatile int searchId;
     /**
      * Kennung der laufenden Schlagwortsuche im Core (Fundstelle 23): gleich für ihre Stapel und ihr Neusortieren, damit
      * sie jeden Fund nur einmal zum Katalogisieren anbietet.
@@ -281,6 +300,11 @@ public final class SearchView implements View {
         neighbors.setSelected(SearchMethods.user().neighbors());
         neighbors.addItemListener(e -> {
             SearchMethods.user().neighbors(neighbors.isSelected());
+            mode();
+        });
+        termPages.setSelected(SearchMethods.user().termPages());
+        termPages.addItemListener(e -> {
+            SearchMethods.user().termPages(termPages.isSelected());
             mode();
         });
         glossarySynonyms.setSelected(SearchMethods.user().glossarySynonyms());
@@ -483,6 +507,7 @@ public final class SearchView implements View {
         options.add(menuItem(semantic));
         options.add(menuItem(neighbors));
         options.add(menuItem(glossarySynonyms));
+        options.add(menuItem(termPages));
         options.add(menuItem(technicalTerms));
         options.add(notes);
         options.revalidate();
@@ -770,6 +795,9 @@ public final class SearchView implements View {
         glossarySynonyms.setEnabled(runtime != null);
         glossarySynonyms.setToolTipText(runtime != null ? SYNONYMS_TIP
                 : "Gesperrt: keine Wissensquelle eingerichtet, also kein Glossar");
+        termPages.setEnabled(runtime != null);
+        termPages.setToolTipText(runtime != null ? TERM_PAGES_TIP
+                : "Gesperrt: keine Wissensquelle eingerichtet, also kein Wissensgraph");
         String tip = semantic.getToolTipText();
         semanticNote.setText(tip == null ? " " : "<html><div style='width:320px'>" + tip + "</div></html>");
         mode();
@@ -849,7 +877,8 @@ public final class SearchView implements View {
         modeLabel.setText(terms ? TECHNICAL_TERMS_MODE
                 : (semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
                 + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : "")
-                + (synonymsOn() ? " + Synonyme" : ""));
+                + (synonymsOn() ? " + Synonyme" : "")
+                + (termPagesOn() ? " + Fachbegriffe" : ""));
         centerCards.show(center, terms ? TERMS_CARD : HITS_CARD);
         AppRuntime runtime = context.runtime();
         if (!terms || runtime == null) {
@@ -887,6 +916,11 @@ public final class SearchView implements View {
     com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope technicalScope() {
         return new com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope(chosenSources(),
                 chosenSpaces());
+    }
+
+    /** Ob die nächste Suche die Seiten zu Fachbegriffen einbezieht (W8). */
+    private boolean termPagesOn() {
+        return termPages.isSelected() && termPages.isEnabled();
     }
 
     /** Ob die nächste Suche die Synonyme der Fachbegriffe einbezieht (K5a). */
@@ -1062,6 +1096,7 @@ public final class SearchView implements View {
         keywordSearchId = core;
         checkSynonyms(runtime, q, id);
         neighborsFor = neighbors.isSelected() && neighbors.isEnabled() ? id : -1;
+        termPagesFor = termPagesOn() ? id : -1;
         run.setEnabled(false);
         more.setVisible(false);
         feedback.clear();
@@ -1208,7 +1243,8 @@ public final class SearchView implements View {
                 });
             }
         };
-        running = runtime.workspace().progressiveSearch(q, listener, neighbors.isSelected() && neighbors.isEnabled());
+        running = runtime.workspace().progressiveSearch(q, listener, neighbors.isSelected() && neighbors.isEnabled(),
+                termPagesOn());
     }
 
     /** Die ganze Liste nach einer Freigabe: neue Treffer eingeordnet, bekannte an ihrem neuen Platz, Auswahl bleibt. */
@@ -1237,6 +1273,12 @@ public final class SearchView implements View {
         if (result.neighbors() == ProgressiveResult.Neighbors.UNCHECKED
                 && result.reason() != ProgressiveResult.Completion.CANCELLED) {
             uncheckedNeighbors();
+        }
+        if (result.reason() != ProgressiveResult.Completion.CANCELLED) {
+            String note = termPagesNote(result.technicalTerms());
+            if (note != null) {
+                noteTermPages(note);
+            }
         }
         if (result.neighborLoad() != null && result.reason() != ProgressiveResult.Completion.CANCELLED
                 && progressiveQuery != null) {
@@ -1677,6 +1719,80 @@ public final class SearchView implements View {
     }
 
     /**
+     * Suchmethode „Fachbegriffe“ (W8) zur Schlagwortsuche, einmal nach dem ersten fertig geladenen Stapel: Seiten mit
+     * Aussagen zu Fachbegriffen der Anfrage rücken hinten nach, ohne schon gezeigte; Auswahl und Position bleiben.
+     * Eine neue Suche bricht sie zwischen zwei Proben ab. Kappung, Abbruch oder Scheitern stehen gelb in der
+     * Statuszeile, nie als Fehler.
+     */
+    private void searchTermPages() {
+        AppRuntime runtime = context.runtime();
+        KeywordSearch.Query q = lastQuery;
+        int id = request;
+        if (termPagesFor != id || runtime == null || q == null) {
+            return;
+        }
+        termPagesFor = -1;
+        List<com.aresstack.spaceharvester.application.snapshot.PageKey> shown = model.rows.stream()
+                .map(row -> new com.aresstack.spaceharvester.application.snapshot.PageKey(row.sourceId(),
+                        row.pageId())).toList();
+        int sid = searchId;
+        Background.run(() -> runtime.workspace().termSearch(q, shown, () -> sid != searchId), found -> {
+            if (sid != searchId) {
+                return;
+            }
+            appendTermPages(found.hits());
+            String note = termPagesNote(!found.complete() ? ProgressiveResult.TechnicalTerms.UNCHECKED
+                    : found.capped() ? ProgressiveResult.TechnicalTerms.CAPPED
+                    : ProgressiveResult.TechnicalTerms.CHECKED);
+            if (note != null) {
+                noteTermPages(note);
+            }
+        }, error -> {
+            if (sid == searchId) {
+                LOG.log(System.Logger.Level.INFO, "Fachbegriffe nicht gesucht ({0})", error.getClass().getName());
+                noteTermPages(TERM_PAGES_UNCHECKED);
+            }
+        });
+    }
+
+    /** Die gelbe Zeile zum Stand der Seiten zu Fachbegriffen oder {@code null}, wenn es nichts zu sagen gibt. */
+    static String termPagesNote(ProgressiveResult.TechnicalTerms state) {
+        return switch (state) {
+            case UNCHECKED -> TERM_PAGES_UNCHECKED;
+            case CAPPED -> TERM_PAGES_CAPPED;
+            case OFF, CHECKED -> null;
+        };
+    }
+
+    private void noteTermPages(String note) {
+        String text = status.getText().strip();
+        status.setText(text.isEmpty() ? note : text + " · " + note);
+        status.setForeground(Comic.ORANGE);
+    }
+
+    /** Hängt Seiten zu Fachbegriffen hinten an, ohne schon gezeigte; Auswahl und Position bleiben. */
+    void appendTermPages(List<KeywordSearch.Hit> found) {
+        java.util.Set<List<String>> shown = new java.util.HashSet<>();
+        model.rows.forEach(row -> shown.add(java.util.Arrays.asList(row.sourceId(), row.pageId(), row.attachment())));
+        List<Hit> fresh = new ArrayList<>();
+        for (KeywordSearch.Hit hit : found) {
+            Hit row = Hit.of(hit);
+            if (shown.add(java.util.Arrays.asList(row.sourceId(), row.pageId(), row.attachment()))) {
+                fresh.add(row);
+            }
+        }
+        if (fresh.isEmpty()) {
+            return;
+        }
+        Hit selected = selectedHit();
+        model.append(fresh);
+        select(selected);
+        String text = status.getText().strip();
+        String added = Texts.count(fresh.size(), "Seite", "Seiten") + " zu Fachbegriffen dazu";
+        status.setText(text.isEmpty() ? added : text + " · " + added);
+    }
+
+    /**
      * Die angezeigten Treffer für die Nachbarsuche, mit ihren Ursachen: Ausgangsseiten sind nur die eigentlichen
      * Treffer, nie schon angehängte Nachbarn (ein Schritt, Auflage AT); bekannt sind alle.
      */
@@ -1804,8 +1920,10 @@ public final class SearchView implements View {
         updateMore();
         if (!cancelled && running == null) {
             searchNeighbors();
+            searchTermPages();
         } else if (cancelled) {
             neighborsFor = -1;
+            termPagesFor = -1;
         }
     }
 

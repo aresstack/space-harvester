@@ -1845,8 +1845,24 @@ public final class Workspace {
      */
     public ProgressiveSearch progressiveSearch(KeywordSearch.Query query, ProgressiveSearchListener listener,
                                                boolean neighbors) {
+        return progressiveSearch(query, listener, neighbors, false);
+    }
+
+    /** Wie oben, zusätzlich mit bzw. ohne die Suchmethode „Fachbegriffe“ (W8). */
+    public ProgressiveSearch progressiveSearch(KeywordSearch.Query query, ProgressiveSearchListener listener,
+                                               boolean neighbors, boolean technicalTerms) {
         return harvester.progressiveSearch().searchAsync(caller, query,
-                harvester.searchProfile().withNeighbors(neighbors), listener);
+                harvester.searchProfile().withNeighbors(neighbors).withTechnicalTerms(technicalTerms), listener);
+    }
+
+    /**
+     * Suchmethode „Fachbegriffe“ (W8) zur Schlagwortsuche nach einem Stapel: Seiten mit Aussagen zu Fachbegriffen der
+     * Anfrage, im selben Umfang, ohne die schon angezeigten. Läuft nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.query.progressive.TermSearch.Result termSearch(
+            KeywordSearch.Query query, java.util.Collection<com.aresstack.spaceharvester.application.snapshot.PageKey> shown,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.termSearch().search(caller, query, shown, cancelled);
     }
 
     /**
@@ -1899,11 +1915,18 @@ public final class Workspace {
     public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
                                         java.nio.file.Path output, String version, boolean neighbors,
                                         boolean synonyms) {
+        return startSearchQuality(suite, previous, output, version, neighbors, synonyms, false);
+    }
+
+    /** Wie oben, zusätzlich mit bzw. ohne die Suchmethode „Fachbegriffe“ (W8). */
+    public JobStatus startSearchQuality(java.nio.file.Path suite, java.nio.file.Path previous,
+                                        java.nio.file.Path output, String version, boolean neighbors,
+                                        boolean synonyms, boolean technicalTerms) {
         JobStatus status = harvester.searchQuality().submit(caller,
                 new com.aresstack.spaceharvester.application.quality.SearchQualityRuns.Request(suite, previous, output,
                         com.aresstack.spaceharvester.app.chat.ChatKnowledge.MAX_SOURCES,
                         java.time.Duration.ofSeconds(com.aresstack.spaceharvester.app.chat.ChatTurn.SEARCH_SECONDS),
-                        version, neighbors, synonyms));
+                        version, neighbors, synonyms, technicalTerms));
         activities.remember(status.id());
         return status;
     }

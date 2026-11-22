@@ -56,6 +56,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * jeder Variante bewertet und zusammengeführt und tragen zusätzlich die Ursache {@link HitReason.Kind#NEIGHBOR}; ein
  * Nachbar, den die Anfrage nicht trifft, erscheint nicht. Ohne Haken bleibt der Ablauf unverändert.
  *
+ * <p>Mit {@link SearchProfile#technicalTerms()} (Suchmethode „Fachbegriffe“, W8, nur mit Haken) folgt danach ein
+ * weiterer Schritt: Nennt die Anfrage einen bestätigten Fachbegriff, kommen die Seiten dazu, auf denen der
+ * Wissensgraph Aussagen zu ihm belegt ({@link TermSearch}), bewertet gegen die ursprüngliche Anfrage und mit der
+ * Ursache {@link HitReason.Kind#TERM}. Frist, Budget und Abbruch gelten wie für jede Suchanfrage; was bis dahin
+ * gefunden ist, bleibt stehen. Ohne Haken wird {@link TermSearch} nicht aufgerufen.
+ *
  * <p>Ein Agent wartet auf {@link ProgressiveSearch#result()}, eine Oberfläche bekommt unterwegs
  * {@link ProgressiveSearchListener}-Ereignisse; beides ist derselbe Vorgang. Rechte prüft die {@link VariantSearch}:
  * Was der Aufrufer nicht sehen darf, erscheint weder als Treffer noch in einer Zahl. Suchtexte und Seiten-IDs kommen
@@ -81,6 +87,8 @@ public final class SearchOrchestrator implements AutoCloseable {
     private final SearchRunLog runs;
     private final NeighborSource neighbors;
     private final NeighborLoader loader;
+    /** Suchmethode „Fachbegriffe“ (W8) oder {@code null}, dann bleibt sie auch mit Haken ungeprüft. */
+    private final TermSearch terms;
     private final Set<Run> active = ConcurrentHashMap.newKeySet();
 
     /** Eine Strategie für beide Einstellungen von {@link SearchProfile#expansion()}. */
@@ -133,6 +141,14 @@ public final class SearchOrchestrator implements AutoCloseable {
     public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
                               QueryExpansionStrategy rules, HitScorer scorer, SearchRunLog runs,
                               NeighborSource neighbors, NeighborLoader loader) {
+        this(search, semantic, expansion, rules, scorer, runs, neighbors, loader, null);
+    }
+
+    /** @param terms die Suchmethode „Fachbegriffe“ (W8) oder {@code null} ohne */
+    public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
+                              QueryExpansionStrategy rules, HitScorer scorer, SearchRunLog runs,
+                              NeighborSource neighbors, NeighborLoader loader, TermSearch terms) {
+        this.terms = terms;
         this.neighbors = Objects.requireNonNull(neighbors, "neighbors");
         this.loader = Objects.requireNonNull(loader, "loader");
         this.runs = Objects.requireNonNull(runs, "runs");
@@ -271,6 +287,8 @@ public final class SearchOrchestrator implements AutoCloseable {
         private int failedNeighborQueries;
         /** Nachladen fehlender Nachbarn, {@code null} ohne. */
         private NeighborLoader.Load neighborLoad;
+        /** Stand der Suchmethode „Fachbegriffe“; zugeschaltet, bis sie fertig ist, ungeprüft. */
+        private ProgressiveResult.TechnicalTerms termState;
 
         Run(VariantSearch search, AccessContext caller, KeywordSearch.Query query, SearchProfile profile,
             SearchQualityPolicy quality, ProgressiveSearchListener listener) {
@@ -286,6 +304,8 @@ public final class SearchOrchestrator implements AutoCloseable {
             this.deadline = started + profile.timeBudget().toNanos();
             this.neighborState = profile.neighbors() ? ProgressiveResult.Neighbors.UNCHECKED
                     : ProgressiveResult.Neighbors.OFF;
+            this.termState = profile.technicalTerms() ? ProgressiveResult.TechnicalTerms.UNCHECKED
+                    : ProgressiveResult.TechnicalTerms.OFF;
         }
 
         @Override
@@ -397,7 +417,47 @@ public final class SearchOrchestrator implements AutoCloseable {
                     return;
                 }
             }
+            if (profile.technicalTerms() && reason != Completion.FAILED && !cancelled() && successes > 0
+                    && System.nanoTime() < deadline) {
+                try {
+                    termStep();
+                } catch (RuntimeException e) {
+                    // Die Methode ergänzt nur; ihr Scheitern lässt die Treffer der Suche stehen.
+                    LOG.log(System.Logger.Level.INFO, "Fachbegriffe nicht gesucht ({0})", e.getClass().getName());
+                }
+                if (cancelled()) {
+                    finish(Completion.CANCELLED);
+                    return;
+                }
+            }
             finish(reason);
+        }
+
+        /**
+         * Suchmethode „Fachbegriffe“ (W8): Belegseiten der Fachbegriffe der Anfrage, im Umfang der Suche, ohne schon
+         * gefundene; bewertet und zusammengeführt wie jeder Treffer. Läuft nur, solange Budget bleibt; Frist und
+         * Abbruch der Suche brechen sie zwischen zwei Proben bzw. Seiten ab, Gefundenes bleibt.
+         */
+        private void termStep() {
+            if (terms == null || searches >= profile.searchBudget()) {
+                return;
+            }
+            TermSearch.Result found = terms.search(caller, query, List.copyOf(entries.keySet()),
+                    () -> cancelled() || System.nanoTime() >= deadline);
+            searches += found.searches();
+            List<Entry> unscored = new ArrayList<>();
+            int added = 0;
+            for (KeywordSearch.Hit hit : found.hits()) {
+                added += merge(0, hit, true, unscored, Map.of());
+            }
+            newInWave = added;
+            score(unscored);
+            if (added > 0) {
+                emit(() -> listener.ranked(ranked()));
+            }
+            termState = !found.complete() ? ProgressiveResult.TechnicalTerms.UNCHECKED
+                    : found.capped() ? ProgressiveResult.TechnicalTerms.CAPPED
+                    : ProgressiveResult.TechnicalTerms.CHECKED;
         }
 
         /**
@@ -896,7 +956,7 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
             ProgressiveResult done = new ProgressiveResult(ranked(), variants(), reason, loads,
                     Duration.ofNanos(System.nanoTime() - started), failure, neighborState, neighborQueries,
-                    failedNeighborQueries, neighborLoad);
+                    failedNeighborQueries, neighborLoad, termState);
             record(done);
             emit(() -> listener.variants(done.variants()));
             emit(() -> listener.completed(done));

@@ -544,9 +544,14 @@ class SearchViewTest {
             // K5a: „Synonyme der Fachbegriffe einbeziehen“ direkt unter den Nachbarseiten, Standard aus.
             List<String> methods = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
                     .filter(text -> text.equals(SearchView.SEMANTIC) || text.equals(SearchView.NEIGHBORS)
-                            || text.equals(SearchView.SYNONYMS) || text.equals(SearchView.TECHNICAL_TERMS)).toList();
+                            || text.equals(SearchView.SYNONYMS) || text.equals(SearchView.TERM_PAGES)
+                            || text.equals(SearchView.TECHNICAL_TERMS)).toList();
+            // W8: „Seiten zu Fachbegriffen einbeziehen“ unter den Synonymen, Standard aus.
             assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS, SearchView.SYNONYMS,
-                    SearchView.TECHNICAL_TERMS);
+                    SearchView.TERM_PAGES, SearchView.TECHNICAL_TERMS);
+            assertThat(view[0].termPages.isSelected()).as("Seiten zu Fachbegriffen ist Standard aus").isFalse();
+            assertThat(view[0].termPages.isEnabled()).isTrue();
+            assertThat(view[0].modeLabel.getText()).doesNotContain("Fachbegriffe");
             assertThat(view[0].technicalTerms.isSelected()).as("„Nur Fachbegriffe“ ist Standard aus").isFalse();
             assertThat(view[0].glossarySynonyms.isSelected()).isFalse();
             assertThat(view[0].glossarySynonyms.isEnabled()).isTrue();
