@@ -506,6 +506,21 @@ class SearchViewTest {
     }
 
     @Test
+    void aWholeSourceWithSpacesOfAnotherSearchesTheWholeOneAndOnlyTheChosenSpaces() {
+        Map<String, List<String>> spaces = Map.of("wiki", List.of("DEV", "OPS"),
+                "akten", List.of("CL1", "CL2", "CL3", "OPS"));
+        List<Explorer.Scope> mixed = List.of(new Explorer.Scope("wiki", null), new Explorer.Scope("akten", "CL2"),
+                new Explorer.Scope("akten", "CL3"));
+
+        assertThat(SearchView.exclusions(mixed, Set.of("wiki", "akten"), spaces::get))
+                .as("aus „akten“ fallen CL1 weg; OPS hat auch die ganze Quelle, er bleibt").containsExactly("CL1");
+        assertThat(SearchView.exclusions(List.of(new Explorer.Scope("akten", "CL2")), Set.of("akten"), spaces::get))
+                .as("nur Spaces: die Anfrage nennt sie selbst").isEmpty();
+        assertThat(SearchView.exclusions(List.of(new Explorer.Scope("wiki", null)), Set.of("wiki"), spaces::get))
+                .isEmpty();
+    }
+
+    @Test
     void spacesOfSeveralSourcesAreTheScopeAndAreListedBehindTheirSource() {
         assertThat(SearchView.boxText("Confluence HaVdB", List.of("CL2", "CL3")))
                 .isEqualTo("Confluence HaVdB · CL2, CL3");

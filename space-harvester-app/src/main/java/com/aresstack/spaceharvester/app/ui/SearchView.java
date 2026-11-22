@@ -634,6 +634,39 @@ public final class SearchView implements View {
         applyScope(selection);
     }
 
+    /**
+     * Die auszuschließenden Spaces einer gemischten Auswahl: links eine Quelle ganz und von einer anderen nur einzelne
+     * Spaces. Die Anfrage kennt nur eine Liste von Spaces für alle Quellen; darum fallen bei der teilweise gewählten
+     * Quelle ihre übrigen Spaces weg, die ganze bleibt ganz. Ein Space-Schlüssel, den auch eine ganz gewählte Quelle
+     * hat, wird nicht ausgeschlossen (lieber etwas mehr als dort etwas weniger). Leer, wenn nicht gemischt.
+     *
+     * @param spacesOf die bekannten Spaces einer Quelle (Bestand)
+     */
+    static Set<String> exclusions(List<Explorer.Scope> scopes, Set<String> searched,
+                                  java.util.function.Function<String, ? extends Collection<String>> spacesOf) {
+        Map<String, Set<String>> partial = new LinkedHashMap<>();
+        Set<String> whole = new LinkedHashSet<>();
+        for (Explorer.Scope scope : scopes) {
+            if (!searched.contains(scope.sourceId())) {
+                continue;
+            }
+            if (scope.spaceKey() == null) {
+                whole.add(scope.sourceId());
+            } else {
+                partial.computeIfAbsent(scope.sourceId(), id -> new LinkedHashSet<>()).add(scope.spaceKey());
+            }
+        }
+        partial.keySet().removeAll(whole);
+        if (partial.isEmpty() || whole.isEmpty()) {
+            return Set.of();
+        }
+        Set<String> excluded = new TreeSet<>();
+        partial.forEach((source, chosenSpaces) -> spacesOf.apply(source).stream()
+                .filter(space -> !chosenSpaces.contains(space)).forEach(excluded::add));
+        whole.forEach(source -> excluded.removeAll(spacesOf.apply(source)));
+        return Set.copyOf(excluded);
+    }
+
     /** Höchstens so viele Spaces nennt eine teilweise gewählte Quelle hinter ihrem Namen, dann „+n“. */
     static final int MAX_LISTED_SPACES = 3;
 
@@ -1203,7 +1236,17 @@ public final class SearchView implements View {
             // Umfang als Schnappschuss beim Start: spätere Auswahl oder Optionen ändern diese Suche nicht.
             Set<String> sources = chosenSources();
             String sourceId = sources.size() == 1 ? sources.iterator().next() : null;
-            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), chosenSpaces())
+            Set<String> spaces = chosenSpaces();
+            // Gemischt (ganze Quelle A, aus B nur einzelne Spaces): B ohne seine übrigen Spaces.
+            Set<String> excluded = spaces.isEmpty() ? exclusions(scopes, searchedSources(), source -> {
+                try {
+                    return runtime.workspace().holdingSpaces(source).stream()
+                            .map(com.aresstack.spaceharvester.application.holdings.SpaceSummary::spaceKey).toList();
+                } catch (RuntimeException e) {
+                    return List.of();
+                }
+            }) : Set.of();
+            q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), spaces, excluded)
                     .ofKinds(chosenKinds()).withGlossarySynonyms(synonymsOn());
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
