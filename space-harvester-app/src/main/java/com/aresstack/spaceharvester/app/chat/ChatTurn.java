@@ -265,6 +265,14 @@ public final class ChatTurn {
         return this;
     }
 
+    /** Für Tests: ein anderes Begriffswissen für {@value ChatTools#TERM}. */
+    ChatTurn termLookup(ChatTools.TermLookup lookup) {
+        this.termLookup = Objects.requireNonNull(lookup, "lookup");
+        return this;
+    }
+
+    private ChatTools.TermLookup termLookup;
+
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
     public void start() {
         Thread worker = new Thread(this::run, "chat-turn");
@@ -409,9 +417,12 @@ public final class ChatTurn {
 
             @Override
             public void delivered(String spaceKey, PageKey key) {
-                releasePage(spaceKey, key);
+                releasePageOrThrow(spaceKey, key);
             }
         }).neighbors(neighbors).glossarySynonyms(glossarySynonyms);
+        if (termLookup != null) {
+            running.termLookup(termLookup);
+        }
         tools = running;
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
@@ -419,7 +430,23 @@ public final class ChatTurn {
         int total = 0;
         if (openPage != null && running.allows(openPage)) {
             ChatTools.Page page = running.page(openPage);
-            if (page != null && !page.text().isBlank()) {
+            String spaceKey = page == null ? null : running.spaceOf(openPage);
+            if (spaceKey == null && page != null) {
+                spaceKey = page.spaceKey();
+            }
+            // Die offene Seite geht nur mit, wenn sie vorher eingetragen ist (ADR 0033 Punkt 8); scheitert der
+            // Eintrag, meldet ihn die Oberfläche, und die Frage geht ohne die Seite hinaus.
+            boolean released = false;
+            if (page != null && !page.text().isBlank() && spaceKey != null) {
+                try {
+                    releasePageOrThrow(spaceKey, openPage);
+                    released = true;
+                } catch (RuntimeException failed) {
+                    ChatTools.diagnosis.accept("Offene Seite: Freigabe gescheitert: "
+                            + failed.getClass().getSimpleName());
+                }
+            }
+            if (released) {
                 total = page.text().length();
                 String head = total <= OPEN_PAGE_CHARS ? page.text() : ChatKnowledge.excerpt(page.text(),
                         OPEN_PAGE_CHARS).replaceAll(" …$", "");
@@ -428,13 +455,6 @@ public final class ChatTurn {
                         openPage.pageId());
                 openRef = ChatTools.ref(openPage);
                 cite(open, openPage);
-                String spaceKey = running.spaceOf(openPage);
-                if (spaceKey == null) {
-                    spaceKey = page.spaceKey();
-                }
-                if (spaceKey != null) {
-                    releasePage(spaceKey, openPage);
-                }
             }
         }
         if (cancelRequested) {
@@ -552,8 +572,11 @@ public final class ChatTurn {
         round(next, round + 1);
     }
 
-    /** Trägt eine an das Modell gelieferte Seite ein, je Turn einmal. */
-    private void releasePage(String spaceKey, PageKey key) {
+    /**
+     * Trägt eine Seite ein, bevor ihr Inhalt an das Modell geht, je Turn einmal. Scheitert der Eintrag, wirft es nach
+     * der Meldung an die Oberfläche, und die Seite geht nicht an das Modell (ADR 0033 Punkt 8, alle Werkzeuge).
+     */
+    private void releasePageOrThrow(String spaceKey, PageKey key) {
         if (!releasedHere.add(key)) {
             return;
         }
@@ -563,7 +586,9 @@ public final class ChatTurn {
                 onUi(() -> listener.released(added));
             }
         } catch (RuntimeException e) {
+            releasedHere.remove(key);
             onUi(() -> listener.releaseFailed(e));
+            throw e;
         }
     }
 

@@ -91,6 +91,8 @@ class UpdatePodcastsTest {
         assertThat(report).hasSize(3);
         assertThat(report).allSatisfy(entry -> assertThat(entry.picture().file()).exists());
         assertThat(report).extracting(UpdatePodcasts.TopicPicture::topicTitle).doesNotContainNull();
+        assertThat(report).as("jedes Bild kennt sein Kapitel").extracting(UpdatePodcasts.TopicPicture::topic)
+                .containsExactly(0, 1, 2);
         int before = drawn.get();
         podcasts.start(caller, summary);
         assertThat(drawn.get()).as("ein neuer Lauf nimmt die abgelegten Bilder").isEqualTo(before);
@@ -165,6 +167,23 @@ class UpdatePodcastsTest {
         // der Ausweg steht in der Diagnose des Auftrags, einmal mit Anzahl
         assertThat(jobs.events(status.id())).extracting(JobEvent::message)
                 .anySatisfy(message -> assertThat(message).contains("mit der anderen Stimme"));
+    }
+
+    @Test
+    void pointsEachTopicToTheStatementsOfTheSummaryItTells() throws Exception {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        // die erste Aussage ohne Text zählt nicht als Meldung: Meldung 1 ist Aussage 1
+        UpdateSummary summary = new UpdateSummary("wiki", "u-1", "DEMO", "Neue Startseite",
+                List.of(new SummaryStatement(" ", List.of()),
+                        new SummaryStatement("Das Projekt Nordlicht hat eine neue Startseite.", List.of())),
+                "test", Instant.parse("2026-11-21T17:00:00Z"), 0, false);
+        assertThat(podcasts.statements(summary, 1)).as("ohne Plan").isEmpty();
+
+        podcasts.start(caller, summary);
+
+        assertThat(podcasts.statements(summary, 0)).as("Einstieg").isEmpty();
+        assertThat(podcasts.statements(summary, 1)).containsExactly(1);
+        assertThat(podcasts.statements(summary, 7)).isEmpty();
     }
 
     @Test

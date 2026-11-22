@@ -32,6 +32,19 @@ class PodcastControlTest {
     private PodcastControl<UpdateSummary> control;
 
     @Test
+    void theShareOfAChapterDecidesWhenItsPictureOpensNotAFixedTime() {
+        // Kapitel: 0–10 s, 10–30 s, 30–40 s
+        List<Long> starts = List.of(10_000L, 30_000L);
+        assertEquals(0.0, PodcastControl.share(0, starts, 40_000), 1e-9);
+        assertEquals(0.2, PodcastControl.share(2_000, starts, 40_000), 1e-9);
+        assertEquals(0.2, PodcastControl.share(14_000, starts, 40_000), 1e-9);
+        assertEquals(0.4, PodcastControl.share(34_000, starts, 40_000), 1e-9);
+        assertEquals(1.0, PodcastControl.share(40_000, starts, 40_000), 1e-9);
+        assertEquals(0.0, PodcastControl.share(500, List.of(), 0), 1e-9);
+        assertTrue(PodcastControl.OPEN_SHARE < PodcastControl.CLOSE_SHARE);
+    }
+
+    @Test
     void staysOffWithoutASummaryOrWithoutSpeech() throws Exception {
         onEdt(() -> {
             control = control();

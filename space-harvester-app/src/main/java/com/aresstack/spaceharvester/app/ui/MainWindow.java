@@ -109,7 +109,22 @@ public final class MainWindow implements AppContext.Navigator {
     private boolean starting = true;
     /** Stand des sichtbaren Bereichs ({@link View#statusInfo()}) links in der Statuszeile, vor dem Stand der App. */
     private final CardLayout viewStatusCards = new CardLayout();
-    private final JPanel viewStatus = new JPanel(viewStatusCards);
+    /**
+     * Der Stand des sichtbaren Bereichs links in der Statuszeile. So breit wie der Stand, der gerade gezeigt wird:
+     * Ein Kartenstapel wäre sonst so breit wie sein breitester, auch unsichtbarer Stand (etwa der lange Stand der
+     * Suche) und schöbe den Auftragstext samt Zurück und Vor nach rechts, neben eine leere Fläche.
+     */
+    private final JPanel viewStatus = new JPanel(viewStatusCards) {
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            for (java.awt.Component card : getComponents()) {
+                if (card.isVisible()) {
+                    return card.getPreferredSize();
+                }
+            }
+            return new java.awt.Dimension(0, 0);
+        }
+    };
     /** Die Statuszeile; ihr Hintergrund ist der Fortschrittsbalken der Aufträge. */
     private StatusLine statusLine;
     /** „Confluence verlangt einen Einmalcode“ ganz links in der Statuszeile, solange eine Anforderung offen ist. */
@@ -1178,6 +1193,11 @@ public final class MainWindow implements AppContext.Navigator {
 
     SearchView searchView() {
         return searchView;
+    }
+
+    /** Der Stand des sichtbaren Bereichs links in der Statuszeile (für Tests). */
+    JComponent viewStatus() {
+        return viewStatus;
     }
 
     StatusLine statusLine() {

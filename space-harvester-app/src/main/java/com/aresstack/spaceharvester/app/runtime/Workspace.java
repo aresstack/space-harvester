@@ -1722,6 +1722,18 @@ public final class Workspace {
         return harvester.domainTermGraph().onPages(caller, options, cancelled);
     }
 
+    /**
+     * Begriffswissen für Chat und Suche (Paket W6): was der Wissensgraph im Bereich {@code scope} über einen
+     * bestätigten Fachbegriff weiß, begrenzt und mit Stufe je Aussage. Jede gelieferte Seite geht vorher an
+     * {@code delivery} (für den Chat die KI-Freigabe, ADR 0033 Punkt 8). Rechtegeprüft, rechnet nie; nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.TermKnowledge.Answer termKnowledge(String query,
+            com.aresstack.spaceharvester.application.snapshot.PageSet scope,
+            com.aresstack.spaceharvester.application.knowledge.TermKnowledge.Delivery delivery,
+            java.util.function.BooleanSupplier cancelled) {
+        return harvester.termKnowledge().answer(caller, query, scope, delivery, cancelled);
+    }
+
     /** Vorschläge für das Startfeld der Fachsicht: nur bestätigte Fachbegriffe und Synonyme. Nie auf dem EDT. */
     public java.util.List<String> domainTermSuggestions(String query, int limit) {
         return harvester.domainTermGraph().suggestions(caller, query, limit);
@@ -3298,6 +3310,24 @@ public final class Workspace {
     /** Meldet jede abgelegte Stufe eines Podcasts (Plan, Abschnitte, Audio), auf einem Thread des Core. */
     public Subscription subscribePodcast(String key, Runnable listener) {
         return harvester.podcasts().subscribe(key, listener);
+    }
+
+    /**
+     * Wovon Thema {@code topic} des Podcasts erzählt, als Nummern der Themen der Zusammenfassung; die Leseansicht
+     * rollt dorthin und markiert sie. Liest eine Datei, nie auf dem EDT.
+     */
+    public List<Integer> podcastStatements(com.aresstack.spaceharvester.application.changelog.UpdateSummary summary,
+                                           int topic) {
+        return harvester.podcasts().statements(summary, topic);
+    }
+
+    /**
+     * Die fertigen Bilder der Themen des Podcasts einer Zusammenfassung, in Themenreihenfolge; die Leseansicht stellt
+     * sie neben die Meldung, von der sie erzählen. Liest Dateien, nie auf dem EDT.
+     */
+    public List<com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture> podcastPictures(
+            com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().topicPictures(summary);
     }
 
     /** Ob der Erklär-Podcast einer Seite erzeugt werden kann: Chat-Modell und Sprachausgabe (TTS) eingerichtet. */

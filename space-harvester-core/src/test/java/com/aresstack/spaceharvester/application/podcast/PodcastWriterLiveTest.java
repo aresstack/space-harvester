@@ -40,8 +40,9 @@ class PodcastWriterLiveTest {
                 Im Space DEMO gibt es 100 neue Seiten mit zusammen 840 Kilobyte, dazu 37 geänderte Seiten. Im \
                 Mittelpunkt stehen der Nachtlauf Nordlicht, die Umstellung der Testumgebung und die Startseite.""",
                 List.of(new PodcastWriter.Story("Nachtlauf Nordlicht bricht nicht mehr ab", """
-                                Das Betriebshandbuch für den fiktiven Nachtlauf Nordlicht wurde überarbeitet. Vor dem \
-                                Start prüft der Lauf jetzt, ob im Spool-Bereich genug Platz ist; ist er zu voll, startet \
+                                Das Betriebshandbuch für den fiktiven Nachtlauf Nordlicht (Job NLXD042P) wurde \
+                                überarbeitet. Vor dem Start prüft der Lauf jetzt mit dem Prüfskript NLX-CHK-7 (Ticket \
+                                BET-4711), ob im Spool-Bereich genug Platz ist; ist er zu voll, startet \
                                 er gar nicht erst und meldet das der Bereitschaft. Bisher brach der Lauf mitten in der \
                                 Nacht ab und musste von Hand neu angestoßen werden. Neu ist auch eine Seite mit drei \
                                 Eskalationsstufen: erst die Bereitschaft, nach einer Stunde das Betriebsteam, ab zwei \
@@ -87,6 +88,8 @@ class PodcastWriterLiveTest {
         assertThat(all).as("keine Metadaten").doesNotContainIgnoringCase("kilobyte")
                 .doesNotContain("100 neue Seiten", "hundert neue Seiten", "37 geänderte");
         assertThat(all).as("Inhalt kommt vor").contains("Spool").containsIgnoringCase("Checkliste");
+        assertThat(all).as("Keine internen Kennungen im Sprechtext").doesNotContain("NLXD042P", "NLX-CHK-7",
+                "BET-4711", "4711");
         assertThat(all).as("Die Eskalationsstufen kommen vor").containsAnyOf("Eskalation", "Stufe", "Leitung");
         assertThat(ends).as("Kein Abschnitt endet mit einer offenen Frage").noneMatch(text -> text.endsWith("?"));
         assertThat(spoken.stream().filter(text -> text.contains("Datenbank")).count())

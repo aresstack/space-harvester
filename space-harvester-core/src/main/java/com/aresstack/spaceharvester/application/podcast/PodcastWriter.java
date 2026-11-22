@@ -47,13 +47,23 @@ public final class PodcastWriter {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
+    /**
+     * Was die Sprachausgabe nicht vorlesen kann (Angelo 22.11.2026: kryptische interne Bezeichner): umschreiben statt
+     * buchstabieren. Die Leseansicht zeigt beim Abspielen ohnehin die Stelle, um die es geht.
+     */
+    static final String SPOKEN = "Alles wird vorgelesen: keine internen Kennungen und Bezeichner, keine Kürzel aus "
+            + "Buchstaben und Ziffern, keine Projekt-, Auftrags- oder Ticketnummern, Dateinamen, Pfade, Klassen-, "
+            + "Tabellen- oder Benutzernamen. Sagt stattdessen in einfachen Worten, was gemeint ist (etwa „das neue "
+            + "Prüfwerkzeug für die Datenbanken“ statt der Kennung); ein gängiges Kürzel höchstens einmal, wenn es "
+            + "ohne nicht geht.";
     static final String STYLE = "Du schreibst einen lockeren deutschen Nachrichten-Podcast im Stil von NotebookLM: zwei "
             + "Stimmen erzählen gut gelaunt, was es in einer Wissensquelle Neues gibt, als würden sie Kolleginnen und "
             + "Kollegen auf den neuesten Stand bringen. Sie erzählen anschaulich, WAS inhaltlich neu ist und was das "
             + "bedeutet, ordnen ein und reagieren aufeinander. Regeln: Nur Fakten aus dem Material, nichts erfinden, "
             + "keine Namen von Personen. Nie über Metadaten reden: keine Anzahl von Seiten oder Änderungen, keine "
             + "Größen, Kilobyte, Versionsnummern oder Zeitstempel, keine Feststellung, dass Seiten angelegt oder "
-            + "geändert wurden, ohne zu sagen, was drinsteht. Antworte nur mit gültigem JSON, ohne Markdown.";
+            + "geändert wurden, ohne zu sagen, was drinsteht. " + SPOKEN + " Antworte nur mit gültigem JSON, ohne "
+            + "Markdown.";
 
     /**
      * Der Erklär-Podcast einer Seite (Angelo 21.11.2026): Überblick über das Wesentliche, nicht alles; Tabellen nur, wenn
@@ -66,8 +76,8 @@ public final class PodcastWriter {
             + "dem Material. Regeln: Überblick statt Vollständigkeit; Unwichtiges, Wiederholungen, Inhaltsverzeichnisse "
             + "und Änderungshistorien weglassen. Tabellen nie vorlesen: aus einer Tabelle höchstens die Aussage in einem "
             + "Satz, keine Zahlenkolonnen. Nur Fakten aus dem Material, nichts erfinden, keine Namen von Personen. Nie "
-            + "über Metadaten reden: keine Anzahl von Seiten, keine Größen, Versionsnummern oder Zeitstempel. Antworte "
-            + "nur mit gültigem JSON, ohne Markdown.";
+            + "über Metadaten reden: keine Anzahl von Seiten, keine Größen, Versionsnummern oder Zeitstempel. "
+            + SPOKEN + " Antworte nur mit gültigem JSON, ohne Markdown.";
 
     /** Wofür eine Folge entsteht: Neuigkeiten eines Updates oder die Erklärung einer Seite. */
     public enum Format {

@@ -395,6 +395,12 @@ public final class Harvester implements AutoCloseable {
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
+    /**
+     * Das Löschen der Quellendaten (#1090), sobald es angelegt ist; der Knowledge Graph entsteht vorher und fragt es
+     * erst beim Lesen.
+     */
+    private final java.util.concurrent.atomic.AtomicReference<SourceDataPurge> withdrawals =
+            new java.util.concurrent.atomic.AtomicReference<>();
     private final com.aresstack.spaceharvester.application.knowledge.AnalyzerComparison analyzerComparison;
     private final com.aresstack.spaceharvester.application.knowledge.VerbQueries verbQueries;
     private final com.aresstack.spaceharvester.application.standing.StatusQuo statusQuo;
@@ -1349,8 +1355,15 @@ public final class Harvester implements AutoCloseable {
                     clock, simplified, checked, () -> modelAnalyzer, withdrawn::mayProcess,
                     new com.aresstack.spaceharvester.application.standing.DecisionReviews(standingDecisions));
             graphAnalysis.set(this.statementAnalysis);
+            // Eine Stelle für alle Leser (Graph, Fachsicht, Chat, Suche): auch keine Quelle mit offenem Löschen.
             this.knowledgeGraph = new KnowledgeGraph(graphStore, access, cache::find, readerText, statementAnalysis,
-                    termRelations::expansions, sourceId -> catalog.find(sourceId).isPresent());
+                    termRelations::expansions, analysedSources(sourceId -> catalog.find(sourceId).isPresent(),
+                            sourceId -> {
+                                SourceDataPurge purge = withdrawals.get();
+                                return purge == null ? null : purge.openWithdrawal(sourceId);
+                            }), document -> Optional.empty(),
+                    // Bereich des Begriffswissens: nur Kopfdaten (Space), nie der ganze Snapshot samt Text.
+                    key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
             observedGraph.set(this.knowledgeGraph);
             opened.add(this.knowledgeGraph::close);
             // K2: je Ablage eine eigene Sicht mit denselben Rechten und demselben Stand je Seite, für den Abgleich.
@@ -1585,6 +1598,7 @@ public final class Harvester implements AutoCloseable {
                     .build(), sourceId -> catalog.config(sourceId).isPresent(),
                     sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
             this.sourceManagement = new SourceManagement(catalog, jobs, purge);
+            withdrawals.set(purge);
             jobActions.purge(purge);
             // Quellenübergreifende Aufträge lassen die Quellen aus, deren Löschen bei ihrem Start offen war (Abnahme
             // #1090): festgehalten am Auftrag, auch auf den Threads, die seine Arbeit startet.
@@ -2352,6 +2366,27 @@ public final class Harvester implements AutoCloseable {
                 new com.aresstack.spaceharvester.application.glossary.GlossaryVocabulary(glossary, termRelations),
                 this::statementAnalyzerChoice,
                 com.aresstack.spaceharvester.application.knowledge.DomainTermGraph.Comparison.of(analyzerComparison));
+    }
+
+    /**
+     * Die Quellen, deren Aussagen der Knowledge Graph liest: eingerichtet und ohne offenes Löschen (#1090: entfernt,
+     * umgestellt, wartend oder in Selbstheilung). Gilt für alle Leser des Graphen, also Fachsicht, Begriffswissen, Chat
+     * und Suche.
+     *
+     * @param openWithdrawal der Auftrag, der die Daten der Quelle gerade löscht, oder {@code null}
+     */
+    static Predicate<String> analysedSources(Predicate<String> configured, Function<String, String> openWithdrawal) {
+        Objects.requireNonNull(configured, "configured");
+        Objects.requireNonNull(openWithdrawal, "openWithdrawal");
+        return sourceId -> configured.test(sourceId) && openWithdrawal.apply(sourceId) == null;
+    }
+
+    /**
+     * Begriffswissen für Chat und Suche (Paket W6) auf der Fachsicht: begrenzt, nur im Bereich, gelieferte Seiten an
+     * die Meldung des Aufrufers. Liest nur.
+     */
+    public com.aresstack.spaceharvester.application.knowledge.TermKnowledge termKnowledge() {
+        return new com.aresstack.spaceharvester.application.knowledge.TermKnowledge(domainTermGraph(), aiRelease);
     }
 
     /** Verzeichnis der Verben einer Seitenmenge aus den Aussagen (Paket K1), mit Rechteprüfung je Seite. */

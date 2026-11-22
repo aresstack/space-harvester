@@ -142,6 +142,35 @@ public final class UpdatePodcasts {
     }
 
     /**
+     * Wovon ein Thema des Podcasts erzählt, als Nummern der Themen der Zusammenfassung
+     * ({@link UpdateSummary#statements()}, ab 0): Die Leseansicht rollt dorthin und markiert sie, solange das Thema
+     * läuft (Angelo 22.11.2026). Leer für Einstieg und Abschluss, ohne Plan oder bei älteren Zusammenfassungen ohne
+     * Themen. Liest eine Datei, nie auf dem EDT.
+     */
+    public List<Integer> statements(UpdateSummary summary, int topic) {
+        Objects.requireNonNull(summary, "summary");
+        Optional<PodcastPlan> plan = production.store().plan(key(summary));
+        if (plan.isEmpty() || topic < 0 || topic >= plan.get().topics().size()) {
+            return List.of();
+        }
+        // Meldung n (ab 1) ist das n-te Thema mit Text, wie material() sie zählt
+        List<Integer> told = new ArrayList<>();
+        for (int i = 0; i < summary.statements().size(); i++) {
+            SummaryStatement statement = summary.statements().get(i);
+            if (!blank(blank(statement.details()) ? statement.text() : statement.details())) {
+                told.add(i);
+            }
+        }
+        List<Integer> statements = new ArrayList<>();
+        for (int story : plan.get().topics().get(topic).stories()) {
+            if (story >= 1 && story <= told.size() && !statements.contains(told.get(story - 1))) {
+                statements.add(told.get(story - 1));
+            }
+        }
+        return List.copyOf(statements);
+    }
+
+    /**
      * Startet die Erzeugung oder setzt sie fort; wartet oder läuft für diesen Podcast schon ein Auftrag, ist er die
      * Antwort. Podcasts älterer Zusammenfassungen derselben Ebene fallen weg.
      *
@@ -180,12 +209,18 @@ public final class UpdatePodcasts {
      * @param pageIds     die Seiten der Meldungen dieses Themas, ohne Doppelte
      * @param storyTitles die Titel dieser Meldungen
      */
-    public record TopicPicture(String topicTitle, List<String> pageIds, List<String> storyTitles,
+    public record TopicPicture(int topic, String topicTitle, List<String> pageIds, List<String> storyTitles,
                                Podcast.Picture picture) {
         public TopicPicture {
             Objects.requireNonNull(picture, "picture");
             pageIds = List.copyOf(pageIds);
             storyTitles = List.copyOf(storyTitles);
+        }
+
+        /** Ohne bekannte Themennummer ({@code topic = -1}). */
+        public TopicPicture(String topicTitle, List<String> pageIds, List<String> storyTitles,
+                            Podcast.Picture picture) {
+            this(-1, topicTitle, pageIds, storyTitles, picture);
         }
     }
 
@@ -212,7 +247,7 @@ public final class UpdatePodcasts {
                 pageIds.addAll(story.pageIds());
                 titles.add(story.title());
             }
-            pictures.add(new TopicPicture(topic.title(), List.copyOf(pageIds), titles, new Podcast.Picture(
+            pictures.add(new TopicPicture(t, topic.title(), List.copyOf(pageIds), titles, new Podcast.Picture(
                     stored.get().file(), stored.get().mediaType(), stored.get().caption())));
         }
         return pictures;
