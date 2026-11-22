@@ -141,7 +141,8 @@ class ActivitiesActionsTest {
             ActivitiesView.ProgressIcon icon = (ActivitiesView.ProgressIcon) slots.get(0).icon();
             assertThat(icon.skipped()).isEqualTo(26);
             assertThat(icon.failed()).isEqualTo(3);
-            assertThat(ActivitiesView.progressText(job)).isEqualTo("629/630 · 26 ausgelassen · 3 Fehler");
+            // Gescheiterte zählen nicht als erledigt (Angelo 22.11.2026).
+            assertThat(ActivitiesView.progressText(job)).isEqualTo("626/630 · 26 ausgelassen · 3 Fehler");
         }
         assertThat(ActivitiesView.showsProgress(job(JobType.EXPORT, JobState.RUNNING, false)))
                 .as("nur Bilder und Anhänge haben eine Restzeit").isFalse();
