@@ -21,9 +21,10 @@ import java.util.Objects;
  * Satzanalyse und der Stimmstabilitäts-Fix, der lange Stücke nach etwa 500 Zeichen an der nächsten Satzgrenze beendet,
  * weil generative Stimmen wie Orpheus über rund 1000 Zeichen ihre Stimme wechseln.
  *
- * <p>Genau zwei Stimmen (Angelo 22.11.2026: „Sind das jetzt 3 Leute?“): Jeder Beitrag spricht mit der Stimme seiner
- * Rolle im Sprachmodell des Podcasts, nie mit der Stimme der anderen Rolle und nie mit einem anderen Modell, dessen
- * Stimmen anders klängen. Selbstheilend (Angelo 21.11.2026): Scheitert ein Beitrag auch nach den Wiederholungen des
+ * <p>Jede Rolle behält ihre Stimme (Angelo 22.11.2026: die Stimmen waren nicht auseinanderzuhalten): Jeder Beitrag
+ * spricht mit der Stimme seiner Rolle im Sprachmodell des Podcasts, nie still mit der Stimme der anderen Rolle oder mit
+ * einem anderen Modell, dessen Stimmen anders klängen. Welche Stimmen und Modelle es gibt, bestimmt weiter
+ * {@link PodcastVoices}. Selbstheilend (Angelo 21.11.2026): Scheitert ein Beitrag auch nach den Wiederholungen des
  * Ablaufs, versucht der Sprecher ihn Satz für Satz; scheitert auch das, scheitert der Abschnitt und der Auftrag versucht
  * ihn später noch einmal (Diagnose {@code PODCAST_AUDIO_MISSING}).
  */

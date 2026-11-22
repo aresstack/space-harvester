@@ -18,7 +18,7 @@ import java.util.function.Predicate;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Genau zwei Stimmen (Angelo 22.11.2026): jede Rolle spricht nur mit ihrer Stimme und im Modell des Podcasts. */
+/** Jede Rolle behält ihre Stimme (Angelo 22.11.2026: Stimmen nicht auseinanderzuhalten), kein stiller Wechsel. */
 class PodcastSpeakerTest {
 
     private static final String MODEL = "orpheus-3b-german";

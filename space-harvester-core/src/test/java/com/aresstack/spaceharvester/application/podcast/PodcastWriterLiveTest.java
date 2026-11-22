@@ -95,7 +95,7 @@ class PodcastWriterLiveTest {
         System.out.println("[live] Reparaturen: " + repairs);
         String all = String.join("\n", spoken);
         assertThat(repairs).noneMatch(repair -> repair.contains("ohne Modell"));
-        // Angelo 22.11.2026: Begrüßung mit der Art der Quelle, kein erdachter Sendungsname, genau zwei Sprecher.
+        // Angelo 22.11.2026: Begrüßung mit der Art der Quelle, kein erdachter Sendungsname, Rollen stimmen.
         assertThat(String.join(" ", spoken.subList(0, Math.min(3, spoken.size())))).as("Begrüßung")
                 .contains("Confluence-Update");
         assertThat(all).as("kein erdachter Sendungsname").doesNotContain("IT-Info", "IT‑Info");

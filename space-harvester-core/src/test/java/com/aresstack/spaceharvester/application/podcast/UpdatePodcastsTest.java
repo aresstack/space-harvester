@@ -176,7 +176,7 @@ class UpdatePodcastsTest {
 
     @Test
     void aFailingVoiceIsNeverReplacedByTheOtherOne() throws Exception {
-        // Angelo 22.11.2026: Jana und „jemand mit fast derselben Stimme“, später Thomas – nie drei Stimmen.
+        // Angelo 22.11.2026: Jana und „jemand mit fast derselben Stimme“ – kein stiller Wechsel auf eine fremde Stimme.
         FakeSpeech speech = new FakeSpeech("Thomas"::equals);
         UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
 
