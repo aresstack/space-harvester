@@ -1078,11 +1078,12 @@ class WorkspaceTest {
     }
 
     /**
-     * W5: Der Kreispfeil hinter einer gescheiterten Stufe setzt nur deren gescheiterte und abgebrochene Teile fort, über
-     * denselben Weg wie ▶; Teile anderer Stufen, fremde Kennungen und fertige Teile bleiben, wie sie sind.
+     * W5 (Auflage 7): Der Kreispfeil hinter einer gescheiterten Stufe setzt nur deren gescheiterte Teile fort, über
+     * denselben Weg wie ▶; vom Benutzer abgebrochene Teile, Teile anderer Stufen, fremde Kennungen und fertige Teile
+     * bleiben, wie sie sind.
      */
     @Test
-    void retryingAStageResumesOnlyItsFailedOrCancelledPartsOfTheGroup() throws Exception {
+    void retryingAStageResumesOnlyItsFailedPartsNeverOnesTheUserCancelled() throws Exception {
         AppRuntime started = start();
         Workspace workspace = started.workspace();
         assertThat(await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL)).state())
@@ -1092,38 +1093,53 @@ class WorkspaceTest {
         workspace.performBackgroundGroupAction(group.groupId(),
                 com.aresstack.spaceharvester.application.jobs.JobAction.CANCEL);
         var ended = finished(workspace, group.groupId());
-        var open = ended.parts().stream().filter(part -> part.state() == JobState.CANCELLED
-                || part.state() == JobState.FAILED).toList();
-        assertThat(open).as("sofort abgebrochen: mindestens ein Teil ist abgebrochen").isNotEmpty();
-        String stage = open.get(0).parameter(BackgroundJobs.KIND);
-        List<String> mine = open.stream().filter(part -> stage.equals(part.parameter(BackgroundJobs.KIND)))
+        List<String> cancelled = ended.parts().stream().filter(part -> part.state() == JobState.CANCELLED)
                 .map(JobStatus::id).toList();
-        Map<String, JobState> others = new java.util.LinkedHashMap<>();
-        ended.parts().stream().filter(part -> !mine.contains(part.id()))
-                .forEach(part -> others.put(part.id(), part.state()));
-        List<String> asked = new ArrayList<>(mine);
+        assertThat(cancelled).as("sofort abgebrochen: mindestens ein Teil ist abgebrochen").isNotEmpty();
+        List<String> asked = new ArrayList<>(cancelled);
         asked.add("unbekannt");
         ended.parts().stream().filter(part -> part.state() == JobState.COMPLETED).findFirst()
                 .ifPresent(done -> asked.add(done.id()));
 
-        var outcome = workspace.retryBackgroundParts(group.groupId(), asked);
+        assertThat(workspace.retryBackgroundParts(group.groupId(), asked).changed())
+                .as("vom Benutzer abgebrochene Teile wiederholt der Kreispfeil nie").isZero();
+        assertThat(started.harvester().backgroundJobs().group(group.groupId()).orElseThrow().parts())
+                .filteredOn(part -> cancelled.contains(part.id()))
+                .allSatisfy(part -> assertThat(part.state()).isEqualTo(JobState.CANCELLED));
 
-        assertThat(outcome.changed()).as("genau die abgebrochenen und gescheiterten Teile der Stufe")
-                .isEqualTo(mine.size());
+        // Ein gescheiterter Teil (erfundene Art „Nachtlauf“, die immer scheitert) wird fortgesetzt.
+        var background = started.harvester().backgroundJobs();
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+        background.register(new com.aresstack.spaceharvester.application.background.BackgroundKind("nachtlauf",
+                part -> com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+                    runs.incrementAndGet();
+                    throw new IllegalStateException("Nachtlauf scheitert");
+                })));
+        var broken = background.start(BackgroundJobs.newGroupId(), "nachtlauf", "Nachtlauf",
+                List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", "DEV")));
+        var failed = finished(workspace, broken.groupId());
+        assertThat(failed.parts()).singleElement()
+                .satisfies(part -> assertThat(part.state()).isEqualTo(JobState.FAILED));
+        var outcome = workspace.retryBackgroundParts(broken.groupId(), failed.jobIds());
+        assertThat(outcome.changed()).as("der gescheiterte Teil").isEqualTo(1);
         assertThat(outcome.failed()).isZero();
-        var again = finished(workspace, group.groupId());
-        for (JobStatus part : again.parts()) {
-            if (others.containsKey(part.id())) {
-                assertThat(part.state()).as("Teil %s einer anderen Stufe bleibt", part.id())
-                        .isEqualTo(others.get(part.id()));
-            } else if (open.stream().anyMatch(was -> was.id().equals(part.id())
-                    && was.state() == JobState.CANCELLED)) {
-                assertThat(part.state()).as("abgebrochener Teil %s wurde fortgesetzt", part.id())
-                        .isNotEqualTo(JobState.CANCELLED);
-            }
+        assertThat(workspace.retryBackgroundParts("keine-gruppe", failed.jobIds()).changed())
+                .as("nur Teile dieser Gruppe").isZero();
+    }
+
+    /**
+     * W5 (Auflage 5): Kennt die Laufzeit eine Gruppe beim Anmelden nicht (etwa nach dem Umschalten der Ablage), sagt die
+     * Beobachtung das einmal auf dem EDT, statt still keinen Stand zu melden.
+     */
+    @Test
+    void watchingAGroupThisRuntimeDoesNotKnowSaysSoOnTheEdt() throws Exception {
+        Workspace workspace = start().workspace();
+        java.util.concurrent.CompletableFuture<Boolean> missing = new java.util.concurrent.CompletableFuture<>();
+        try (var watch = workspace.watchBackground("unbekannte-gruppe", group -> missing.complete(false),
+                () -> missing.complete(javax.swing.SwingUtilities.isEventDispatchThread()))) {
+            assertThat(missing.get(10, java.util.concurrent.TimeUnit.SECONDS)).as("fehlt, gemeldet auf dem EDT")
+                    .isTrue();
         }
-        assertThat(workspace.retryBackgroundParts("keine-gruppe", mine).changed()).as("nur Teile dieser Gruppe")
-                .isZero();
     }
 
     /**

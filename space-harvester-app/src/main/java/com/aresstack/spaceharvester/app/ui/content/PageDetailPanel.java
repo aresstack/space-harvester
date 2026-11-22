@@ -2155,10 +2155,18 @@ public final class PageDetailPanel extends JPanel {
         String tab = selectedTab();
         StatusNote note = tabStatus.getOrDefault(tab,
                 StatusNote.plain(" "));
-        String shown = withStore(tab, note.text(), shownStore);
-        // Die Ablage dahinter bleibt grau, auch wenn die Meldung gelb oder rot ist.
-        statusShown.accept(shown != null && shown.startsWith(note.text())
-                ? note.plus(shown.substring(note.text().length())) : note.withText(shown));
+        statusShown.accept(withStore(tab, note, shownStore));
+    }
+
+    /**
+     * Wie {@link #withStore(String, String, com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice)} für eine
+     * Meldung: Die Ablage dahinter bleibt grau, auch wenn die Meldung gelb oder rot ist ({@link StatusNote#plus}).
+     */
+    static StatusNote withStore(String tab, StatusNote note,
+                                com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice store) {
+        String shown = withStore(tab, note.text(), store);
+        return shown != null && shown.startsWith(note.text())
+                ? note.plus(shown.substring(note.text().length())) : note.withText(shown);
     }
 
     /**

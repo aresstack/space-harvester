@@ -23,6 +23,7 @@ import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import com.aresstack.spaceharvester.application.simplification.SimplificationStore;
 import com.aresstack.spaceharvester.application.simplification.Simplifications;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -594,6 +595,69 @@ class StatementAnalysisJobsTest {
         assertThat(done.progress()).isEqualTo(new JobProgress(1, 1, 0, 0));
         assertThat(jobs.events(done.id())).anySatisfy(event ->
                 assertThat(event.code()).isEqualTo(StatementAnalysisJobs.MODEL_NO_MODEL));
+    }
+
+    /**
+     * W5 (Auflage 1): Die KI-Freigabe gilt unabhängig vom Modell. Ohne Chat-Modell zählen Seiten ohne Freigabe in
+     * Vorschau ({@code coverage}, {@code notReleased}) und Planer ({@code missing}) als „ohne KI-Freigabe“, die übrigen
+     * als offen; der Lauf nennt dieselben Zahlen (ohne Freigabe, ohne Modell).
+     */
+    @Test
+    void withoutChatModelPagesWithoutReleaseCountAsNotReleasedInPreviewAndRunAlike() {
+        tree.space("wiki", "DEV", "1");
+        tree.children("1", List.of("2", "3"));
+        FakeStepModel chat = new FakeStepModel(input -> "");
+        chat.available = false;
+        Set<PageKey> released = Set.of(new PageKey("wiki", "1"));
+        StatementAnalysis withModel = new StatementAnalysis(
+                snapshot -> Optional.of(StatementAnalysisTest.text(snapshot)),
+                new AnalyzerStores(store, new InMemoryKnowledgeGraphStore(), () -> AnalyzerChoice.MODEL), access,
+                configured::get, StatementAnalysisTest.clock(), null, null,
+                () -> new ModelStatementAnalyzer(chat, ModelStatementAnalyzerTest.SENTENCES), released::contains);
+        StatementAnalysisJobs modelJobs = new StatementAnalysisJobs(jobs, tree,
+                (caller, sourceId, pageId) -> page(sourceId, pageId), withModel, access, "desktop");
+        modelJobs.local(new StatementAnalysisJobs.LocalPages() {
+            @Override
+            public Map<PageKey, com.aresstack.spaceharvester.application.holdings.Holdings.Located> locate(
+                    AccessContext caller, PageSet pages) {
+                Map<PageKey, com.aresstack.spaceharvester.application.holdings.Holdings.Located> located =
+                        new java.util.LinkedHashMap<>();
+                for (String id : List.of("1", "2", "3")) {
+                    if (pages.contains("wiki", id)) {
+                        located.put(new PageKey("wiki", id), new com.aresstack.spaceharvester.application.holdings
+                                .Holdings.Located("DEV", com.aresstack.spaceharvester.application.holdings
+                                .HoldingState.LOCAL));
+                    }
+                }
+                return located;
+            }
+
+            @Override
+            public Optional<PageSnapshot> stored(PageKey key) {
+                return Optional.of(page(key.sourceId(), key.pageId()));
+            }
+        });
+        PageSet set = PageSet.of(Map.of("wiki", List.of("1", "2", "3")));
+
+        assertThat(withModel.modelReady()).isFalse();
+        assertThat(modelJobs.coverage(CALLER, set, AnalyzerChoice.MODEL))
+                .isEqualTo(new StatementAnalysisJobs.Coverage(0, 1, 0, 0, 2));
+        assertThat(modelJobs.notReleased(CALLER, set).pagesOf("wiki")).containsExactlyInAnyOrder("2", "3");
+        assertThat(modelJobs.missing(CALLER, set).pages().pagesOf("wiki")).containsExactly("1");
+
+        JobStatus done = jobs.status(modelJobs.start(CALLER, new StatementAnalysisJobs.Scope.Subtree("wiki", "DEV",
+                "1"), new StatementAnalysisJobs.Options(false, 0, null, AnalyzerChoice.MODEL)).id());
+
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.events(done.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(StatementAnalysisJobs.MODEL_NOT_RELEASED);
+            assertThat(event.message()).startsWith("2 Seiten ohne KI-Freigabe");
+        });
+        assertThat(jobs.events(done.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(StatementAnalysisJobs.MODEL_NO_MODEL);
+            assertThat(event.message()).startsWith("1 Seiten bewusst ausgelassen");
+        });
+        assertThat(chat.inputs).isEmpty();
     }
 
     private JobStatus run(StatementAnalysisJobs.Scope scope, StatementAnalysisJobs.Options options) {

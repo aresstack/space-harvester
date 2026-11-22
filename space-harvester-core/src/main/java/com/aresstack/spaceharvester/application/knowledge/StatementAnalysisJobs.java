@@ -671,7 +671,9 @@ public class StatementAnalysisJobs {
                 standings.put(key, Standing.NO_TEXT);
             } else if (choice == AnalyzerChoice.MODEL && analysis.modelUnavailable(key)
                     .filter(reason -> reason == AnalyzerUnavailableException.Reason.NOT_RELEASED).isPresent()) {
-                standings.put(key, Standing.NOT_RELEASED); // wie im Lauf: bewusst ausgelassen, kein Fehler
+                // wie im Lauf: bewusst ausgelassen, kein Fehler; die Freigabe zählt auch ohne bereites Chat-Modell
+                // (modelUnavailable prüft sie zuerst), damit Vorschau und Lauf dieselben Zahlen nennen
+                standings.put(key, Standing.NOT_RELEASED);
             } else {
                 standings.put(key, Standing.OPEN);
             }

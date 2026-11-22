@@ -120,7 +120,7 @@ import java.util.function.Supplier;
  * über Meldungen des Core (kein Abfragen) mit Fortschritt und ✕, bleibt nach dem Anhalten gelb dran und lädt am Ende neu,
  * ohne zu verspringen (Ausschnitt, Zoom und Auswahl bleiben, solange der Knoten noch da ist). Ausgelassenes ist gelb,
  * fehlender Zugriff und gescheiterte Stufen rot; hinter einer gescheiterten Stufe wiederholt der Kreispfeil nur deren
- * gescheiterte und abgebrochene Teile (UX 22.11.2026).
+ * gescheiterte Teile, nie vom Benutzer abgebrochene (UX 22.11.2026).
  *
  * <p>„Nur Fachbegriffe“ oben im Filtermenü (Paket W4b) zeigt statt des Bestands die Fachsicht der Seite, gezeichnet wie
  * in der Übersicht ({@link TermGraphView.Canvas}): zuerst seitenweit ohne Mitte ({@code DomainTermGraph.onPages}) über
@@ -164,6 +164,15 @@ final class KnowledgeGraphTab extends JPanel {
      * Zeichen „✕“ fehlt der App-Schrift (Inter) und erschiene als Kästchen.
      */
     static final String CANCEL_TIP = "Abbrechen; fertige Teilergebnisse bleiben";
+    /** Die Rückfrage vor dem Abbrechen der Gruppe (✕ mit Maus oder Tastatur), im Stil der Overlay-Rückfragen. */
+    static final String CANCEL_QUESTION = "Wissensgraph-Lauf wirklich abbrechen?";
+    /**
+     * Neutral, wenn die Laufzeit die verfolgte Gruppe nicht (mehr) kennt, etwa nach dem Umschalten der Ablage: Der Reiter
+     * verfolgt sie nicht weiter, statt ewig „wird erzeugt“ zu zeigen.
+     */
+    static final String GRAPH_UNKNOWN = "Wissensgraph-Lauf hier nicht bekannt; wird nicht weiter verfolgt";
+    /** Kopf, wenn alle Teile fertig sind, aber einer Seiten nicht schaffte oder unvollständig blieb (Codex #1081). */
+    static final String GENERATED_INCOMPLETE = "Wissensgraph unvollständig erzeugt";
     /** Link der Ergebnisse auf den Reiter „Hintergrund“ der Auftragsverwaltung. */
     static final String JOBS_LINK = "Hintergrund";
     static final String FILTERED_TERM = "Treffer gibt es, aber die gewählten Filter blenden sie aus "
@@ -288,6 +297,9 @@ final class KnowledgeGraphTab extends JPanel {
     private final IconButton generate = new IconButton(Glyph.GRAPH_PLUS, GENERATE_TIP);
     private Predicate<GraphGeneration.Preview> confirmGenerate = preview -> Dialogs.confirmOverlay(this,
             GraphGeneration.QUESTION, GraphGeneration.body(preview));
+    /** Die Rückfrage vor dem Abbrechen der Gruppe ({@link #CANCEL_QUESTION}, Ja/Nein, Esc heißt Nein). */
+    private BooleanSupplier confirmCancel = () -> Dialogs.confirmOverlay(this, CANCEL_QUESTION,
+            Comic.muted("Fertige Teilergebnisse bleiben."));
     /** Ob Vorschau oder Start von „Wissensgraph erzeugen“ gerade laufen. */
     private boolean preparing;
     /** Die verfolgte Gruppe von „Wissensgraph erzeugen“; {@code null} ohne. */
@@ -302,6 +314,15 @@ final class KnowledgeGraphTab extends JPanel {
     private int graphLookups;
     /** Die Hinweise des Planers beim Start (ausgelassene Stufen, erst laden, ohne Zugriff), gelb bis zum Ende. */
     private List<String> planNotes = List.of();
+    /**
+     * Die Seiten, für die die verfolgte Gruppe gestartet oder gefunden wurde; mit den Seiten ihrer Teile entscheiden
+     * sie, ob die gezeigte Seite in der Gruppe liegt (sonst hängt der Reiter sie ab, Auflage W5).
+     */
+    private PageSet graphPages = PageSet.EMPTY;
+    /** Die zuletzt beim Seitenwechsel abgehängte Gruppe und ihre Planer-Hinweise, für das erneute Anhängen. */
+    private String detachedGroupId;
+    private List<String> detachedNotes = List.of();
+    private PageSet detachedPages = PageSet.EMPTY;
     /** Was die Statuszeile zu „Wissensgraph erzeugen“ sagt, vor dem Stand des Graphen; {@code null} ohne. */
     private StatusNote generateNote;
     private Consumer<StatusNote> onNote;
@@ -648,8 +669,14 @@ final class KnowledgeGraphTab extends JPanel {
         domainStatus = " ";
         this.spaceKey = key == null ? null : spaceKey;
         pageChanges++;
+        if (graphAttached() && !inGraph(key)) {
+            // Beobachtung und Sperre gelten nur, solange die gezeigte Seite in der Gruppe liegt (Auflage W5); kehrt
+            // man zurück, hängt findRunningGraph sie wieder an.
+            detachGraph();
+        }
         if (!graphAttached()) {
-            // Was „Wissensgraph erzeugen“ zuletzt sagte, galt der vorigen Seite; eine laufende Gruppe bleibt verfolgt.
+            // Was „Wissensgraph erzeugen“ zuletzt sagte, galt der vorigen Seite; eine laufende Gruppe über diese Seite
+            // bleibt verfolgt.
             generateNote = null;
         }
         exportNote("");
@@ -981,7 +1008,9 @@ final class KnowledgeGraphTab extends JPanel {
                 // wiederherstellen.
                 dropHistory = false;
                 history.clear();
-            } else if (kept == null && (!nodes.isEmpty() || entry != null)) {
+            } else if (!inPlace && (!nodes.isEmpty() || entry != null)) {
+                // Neuladen an Ort und Stelle schreibt nie in den Verlauf, auch nicht, wenn der Graph vorher leer war
+                // (Auflage W5).
                 history.push(snapshot());
             }
             entry = start;
@@ -1940,6 +1969,13 @@ final class KnowledgeGraphTab extends JPanel {
                 generateNote(null); // inzwischen eine andere Seite: nicht ungefragt für die alte fragen
                 return;
             }
+            if (!pages.equals(generatePages())) {
+                // „mit Unterseiten“ während des Zählens umgeschaltet (Auflage W5): Die Zahlen galten der alten Menge;
+                // weder sie zeigen noch sie starten, sondern die jetzige Menge zählen.
+                generateNote(null);
+                generateGraph();
+                return;
+            }
             if (preview.nothingMissing()) {
                 StatusNote note = nothingMissing(preview);
                 generateNote(note);
@@ -1955,7 +1991,8 @@ final class KnowledgeGraphTab extends JPanel {
                 return;
             }
             generateNote(null);
-            if (confirmGenerate.test(preview)) {
+            if (confirmGenerate.test(preview) && Objects.equals(key, page) && pages.equals(generatePages())
+                    && !preparing && !graphAttached()) {
                 startGraph(current, pages);
             }
         }, error -> {
@@ -2002,7 +2039,7 @@ final class KnowledgeGraphTab extends JPanel {
                 reloadInPlace();
                 return;
             }
-            attach(current, group.get(), plan.notes());
+            attach(current, group.get(), plan.notes(), pages);
         }, error -> {
             preparing = false;
             refreshButtons();
@@ -2011,17 +2048,84 @@ final class KnowledgeGraphTab extends JPanel {
         });
     }
 
-    /** Verfolgt {@code group} über Meldungen des Core, bis sie fertig ist; auch nach dem Anhalten. */
-    private void attach(Actions current, BackgroundGroup group, List<String> notes) {
+    /**
+     * Verfolgt {@code group} über Meldungen des Core, bis sie fertig ist; auch nach dem Anhalten. {@code pages}: die
+     * Seiten, für die sie gestartet oder gefunden wurde.
+     */
+    private void attach(Actions current, BackgroundGroup group, List<String> notes, PageSet pages) {
         closeGraphWatch();
         graphGroupId = group.groupId();
         graphLast = group;
         graphEnded = false;
         planNotes = List.copyOf(notes);
+        graphPages = pages;
+        detachedGroupId = null;
+        detachedNotes = List.of();
+        detachedPages = PageSet.EMPTY;
         graphOrigin = current.origin();
         refreshButtons();
         showGraphProgress();
-        graphWatch = current.watchGraph(group.groupId(), this::graphChanged);
+        watchGraph(current, group.groupId());
+    }
+
+    /**
+     * Beobachtet die Gruppe auf {@code current}; kennt diese Laufzeit sie nicht, hängt der Reiter sie ab
+     * ({@link #graphMissing}).
+     */
+    private void watchGraph(Actions current, String groupId) {
+        Object origin = current.origin();
+        graphWatch = current.watchGraph(groupId, this::graphChanged, () -> graphMissing(groupId, origin));
+    }
+
+    /**
+     * Die Laufzeit kennt die verfolgte Gruppe nicht (mehr), etwa nach dem Umschalten der Ablage (Auflage W5): abhängen
+     * und neutral melden, statt für immer „wird erzeugt“ zu zeigen. Eine späte Antwort einer alten Beobachtung zählt
+     * nicht.
+     */
+    private void graphMissing(String groupId, Object origin) {
+        Actions now = actions.get();
+        if (!groupId.equals(graphGroupId) || graphEnded || now == null || now.origin() != origin
+                || graphOrigin != origin) {
+            return;
+        }
+        closeGraphWatch();
+        graphGroupId = null;
+        graphLast = null;
+        graphOrigin = null;
+        planNotes = List.of();
+        graphPages = PageSet.EMPTY;
+        refreshButtons();
+        generateNote(StatusNote.plain(GRAPH_UNKNOWN));
+    }
+
+    /** Ob {@code key} in der verfolgten Gruppe liegt: unter den Seiten ihres Starts oder ihrer Teile. */
+    private boolean inGraph(PageKey key) {
+        if (key == null) {
+            return false;
+        }
+        if (graphPages.contains(key)) {
+            return true;
+        }
+        BackgroundGroup group = graphLast;
+        return group != null && group.parts().stream()
+                .anyMatch(part -> KnowledgeGraphJobs.pages(part).contains(key));
+    }
+
+    /**
+     * Hängt die verfolgte Gruppe ab, weil die gezeigte Seite nicht in ihr liegt: Beobachtung zu, Knopf frei. Gruppe und
+     * Hinweise des Planers bleiben gemerkt, damit ein Zurückkehren sie wieder mit ihnen anhängt.
+     */
+    private void detachGraph() {
+        detachedGroupId = graphGroupId;
+        detachedNotes = planNotes;
+        detachedPages = graphPages;
+        closeGraphWatch();
+        graphGroupId = null;
+        graphLast = null;
+        graphOrigin = null;
+        planNotes = List.of();
+        graphPages = PageSet.EMPTY;
+        refreshButtons();
     }
 
     /**
@@ -2049,7 +2153,7 @@ final class KnowledgeGraphTab extends JPanel {
             refreshButtons();
             return;
         }
-        graphWatch = current.watchGraph(graphGroupId, this::graphChanged);
+        watchGraph(current, graphGroupId);
     }
 
     /**
@@ -2073,7 +2177,10 @@ final class KnowledgeGraphTab extends JPanel {
                     || now == null || now.origin() != origin) {
                 return;
             }
-            attach(current, found.get(), List.of());
+            // Kehrt man zu einer abgehängten Gruppe zurück, gelten ihre Hinweise des Planers weiter.
+            boolean again = found.get().groupId().equals(detachedGroupId);
+            attach(current, found.get(), again ? detachedNotes : List.of(),
+                    again ? union(pages, detachedPages) : pages);
             graphChanged(found.get());
         }, error -> {
             // Ohne Antwort bleibt der Knopf frei; ein Start legt dann eine eigene Gruppe an.
@@ -2127,7 +2234,9 @@ final class KnowledgeGraphTab extends JPanel {
     /**
      * Ob die Gruppe für die Anzeige angehalten ist: wie {@link BackgroundGroup#paused()}, aber auch, wenn ein Teil
      * angehalten ist, keiner läuft und jeder offene nur hinter ihm wartet (ein Nachfolger bleibt hinter einem
-     * angehaltenen Vorgänger in der Warteschlange, {@code Jobs.PredecessorGate#DEFAULT}).
+     * angehaltenen Vorgänger in der Warteschlange, {@code Jobs.PredecessorGate#DEFAULT}). Ein angehaltener Vorgänger
+     * außerhalb der Gruppe (eine wiederverwendete Vorstufe einer anderen Gruppe, {@link BackgroundGroup#predecessors()})
+     * hält ebenso an (Codex #1081).
      */
     static boolean paused(BackgroundGroup group) {
         if (group.paused()) {
@@ -2135,6 +2244,8 @@ final class KnowledgeGraphTab extends JPanel {
         }
         Set<String> held = new java.util.HashSet<>();
         group.parts().stream().filter(part -> part.state() == JobState.PAUSED).forEach(part -> held.add(part.id()));
+        group.predecessors().stream().filter(part -> part.state() == JobState.PAUSED)
+                .forEach(part -> held.add(part.id()));
         if (held.isEmpty() || group.parts().stream().anyMatch(part -> part.state() == JobState.RUNNING)) {
             return false;
         }
@@ -2190,6 +2301,10 @@ final class KnowledgeGraphTab extends JPanel {
                 }
             }
         }
+        // Fertige Teile, die Seiten nicht schafften oder unvollständig blieben (etwa „Bilder beschreiben“ an der
+        // Obergrenze): kein „erzeugt“ ohne Hinweis (Codex #1081).
+        List<String> shortfalls = shortfalls(group);
+        all.addAll(shortfalls);
         all.addAll(planNotes);
         all.addAll(eventNotes);
         String jobId = group.parts().isEmpty() ? null : group.parts().get(0).id();
@@ -2202,8 +2317,11 @@ final class KnowledgeGraphTab extends JPanel {
             head = "Wissensgraph angehalten nach " + done + " von " + GraphGeneration.parts(group.parts().size())
                     + "; fortsetzen unter " + JOBS_LINK;
             tone = StatusNote.Tone.WARNING;
-        } else if (group.completed()) {
+        } else if (group.completed() && shortfalls.isEmpty()) {
             head = "Wissensgraph erzeugt";
+        } else if (group.completed()) {
+            head = GENERATED_INCOMPLETE;
+            tone = StatusNote.Tone.WARNING;
         } else if (group.parts().stream().anyMatch(part -> part.state() == JobState.FAILED)) {
             head = "Wissensgraph mit Fehler beendet";
             tone = StatusNote.Tone.ERROR;
@@ -2222,8 +2340,9 @@ final class KnowledgeGraphTab extends JPanel {
         if (firstFailed != null) {
             String groupId = group.groupId();
             String stage = stageKey(firstFailed);
+            // Nur Gescheitertes: Was der Benutzer selbst abgebrochen hat, bleibt abgebrochen (Auflage W5).
             List<JobStatus> retryable = group.parts().stream().filter(part -> stage.equals(stageKey(part)))
-                    .filter(part -> part.state() == JobState.FAILED || part.state() == JobState.CANCELLED).toList();
+                    .filter(part -> part.state() == JobState.FAILED).toList();
             List<String> ids = retryable.stream().map(JobStatus::id).toList();
             String title = stageTitle(firstFailed);
             // Nur, wenn sich wenigstens ein Teil fortsetzen lässt; sonst täte der Kreispfeil nichts.
@@ -2233,6 +2352,28 @@ final class KnowledgeGraphTab extends JPanel {
             }
         }
         return new StatusNote(text, note.tone(), JOBS_LINK, open, marks, retry);
+    }
+
+    /**
+     * Je fertigem Teil, der Seiten nicht schaffte, rot „„Bilder beschreiben“: 2 Seiten gescheitert in ‚DEV‘“; je fertigem,
+     * aber unvollständigem Teil (etwa an der Obergrenze) gelb „„Bilder beschreiben“ unvollständig in ‚DEV‘“. Wie die
+     * Hintergrund-Ansicht zählen Fehlerzähler und Unvollständig-Kennzeichen, nicht nur der Zustand.
+     */
+    private static List<String> shortfalls(BackgroundGroup group) {
+        List<String> notes = new ArrayList<>();
+        for (JobStatus part : group.parts()) {
+            if (part.state() != JobState.COMPLETED) {
+                continue;
+            }
+            String place = part.partitionKey() == null ? "" : " in ‚" + part.partitionKey() + "‘";
+            long failed = part.progress().failed();
+            if (failed > 0) {
+                notes.add("„" + stageTitle(part) + "“: " + GraphGeneration.pages(failed) + " gescheitert" + place);
+            } else if (part.incomplete()) {
+                notes.add("„" + stageTitle(part) + "“ unvollständig" + place);
+            }
+        }
+        return notes;
     }
 
     /**
@@ -2292,7 +2433,7 @@ final class KnowledgeGraphTab extends JPanel {
     }
 
     /**
-     * Der Kreispfeil hinter einer gescheiterten Stufe: setzt genau deren gescheiterte und abgebrochene Teile über den
+     * Der Kreispfeil hinter einer gescheiterten Stufe: setzt genau deren gescheiterte Teile (nie vom Benutzer abgebrochene) über den
      * Weg der Auftragsverwaltung fort (▶, mit den Rechten des Aufrufers, Eigentümerregeln wie dort) und verfolgt die
      * Gruppe wieder bis zum Ende; andere Stufen bleiben, wie sie sind.
      */
@@ -2338,7 +2479,7 @@ final class KnowledgeGraphTab extends JPanel {
                 closeGraphWatch();
                 graphEnded = false;
                 graphOrigin = now.origin();
-                graphWatch = now.watchGraph(groupId, this::graphChanged);
+                watchGraph(now, groupId);
             }
             refreshButtons();
         }, error -> {
@@ -2370,20 +2511,38 @@ final class KnowledgeGraphTab extends JPanel {
         return new StatusNote(text, tone, before.link(), before.action(), marks, null);
     }
 
-    /** ✕ in der Statuszeile: bricht die verfolgte Gruppe ab; fertige Teilergebnisse bleiben. */
+    /**
+     * ✕ in der Statuszeile (Maus und Tastatur): fragt erst „wirklich abbrechen?“ ({@link #CANCEL_QUESTION}, Ja/Nein),
+     * dann bricht es die verfolgte Gruppe ab; fertige Teilergebnisse bleiben.
+     */
     void cancelGraph() {
-        Actions current = actions.get();
         String groupId = graphGroupId;
-        if (current == null || groupId == null || graphEnded || graphLast == null || graphLast.finished()
-                || paused(graphLast)) {
+        if (!cancellable(groupId) || !confirmCancel.getAsBoolean() || !cancellable(groupId)) {
+            // Während der Rückfrage kann die Gruppe fertig, angehalten oder abgehängt worden sein.
             return;
         }
+        Actions current = actions.get();
         generateNote(StatusNote.plain("Wissensgraph wird abgebrochen …"));
         runner.run(() -> {
             current.cancelGraph(groupId);
             return null;
         }, ignored -> { }, error -> generateNote(new StatusNote("Abbrechen ging nicht: "
                 + Problems.describe(error).title(), StatusNote.Tone.ERROR, null, null)));
+    }
+
+    /** Beide Mengen zusammen. */
+    private static PageSet union(PageSet a, PageSet b) {
+        List<PageKey> keys = new ArrayList<>();
+        for (PageSet set : List.of(a, b)) {
+            set.asMap().forEach((sourceId, ids) -> ids.forEach(id -> keys.add(new PageKey(sourceId, id))));
+        }
+        return PageSet.ofKeys(keys);
+    }
+
+    /** Ob {@code groupId} die verfolgte, noch laufende Gruppe ist, die ✕ abbrechen kann. */
+    private boolean cancellable(String groupId) {
+        return actions.get() != null && groupId != null && groupId.equals(graphGroupId) && !graphEnded
+                && graphLast != null && !graphLast.finished() && !paused(graphLast);
     }
 
     /** Ob eine Gruppe von „Wissensgraph erzeugen“ verfolgt wird, die noch läuft oder angehalten ist. */
@@ -3054,6 +3213,14 @@ final class KnowledgeGraphTab extends JPanel {
             return () -> { };
         }
 
+        /**
+         * Wie {@link #watchGraph(String, Consumer)}; kennt diese Laufzeit die Gruppe beim Anmelden nicht, läuft statt
+         * des ersten Stands einmal {@code missing}, auf dem EDT. Ohne eigene Umsetzung nie.
+         */
+        default AutoCloseable watchGraph(String groupId, Consumer<BackgroundGroup> listener, Runnable missing) {
+            return watchGraph(groupId, listener);
+        }
+
         /** Bricht die Gruppe ab; fertige Teilergebnisse bleiben. */
         default void cancelGraph(String groupId) {
         }
@@ -3064,7 +3231,7 @@ final class KnowledgeGraphTab extends JPanel {
         }
 
         /**
-         * Setzt die gescheiterten und abgebrochenen Teile {@code jobIds} der Gruppe fort, wie ▶ in der
+         * Setzt die gescheiterten Teile {@code jobIds} der Gruppe fort, wie ▶ in der
          * Auftragsverwaltung (mit den Rechten des Aufrufers); nie auf dem EDT. Sagt, wie viele fortgesetzt wurden und
          * woran es sonst scheiterte (etwa am Eigentümer).
          */
@@ -3159,7 +3326,8 @@ final class KnowledgeGraphTab extends JPanel {
                 public GraphGeneration.Preview previewGraph(PageSet pages) {
                     ServicePreview plan = workspace.previewKnowledgeGraph(pages);
                     AnalyzerChoice analyzer = workspace.statementAnalyzer();
-                    return new GraphGeneration.Preview(plan, analyzer, workspace.knowledgeGraphNotReleased(pages));
+                    return new GraphGeneration.Preview(plan, analyzer, workspace.knowledgeGraphNotReleased(pages),
+                            analyzer != AnalyzerChoice.MODEL || workspace.statementModelReady());
                 }
 
                 @Override
@@ -3170,6 +3338,12 @@ final class KnowledgeGraphTab extends JPanel {
                 @Override
                 public AutoCloseable watchGraph(String groupId, Consumer<BackgroundGroup> listener) {
                     return workspace.watchBackground(groupId, listener);
+                }
+
+                @Override
+                public AutoCloseable watchGraph(String groupId, Consumer<BackgroundGroup> listener,
+                                                Runnable missing) {
+                    return workspace.watchBackground(groupId, listener, missing);
                 }
 
                 @Override
@@ -3203,6 +3377,10 @@ final class KnowledgeGraphTab extends JPanel {
 
     void confirmGenerateWith(Predicate<GraphGeneration.Preview> confirm) {
         confirmGenerate = Objects.requireNonNull(confirm, "confirm");
+    }
+
+    void confirmCancelWith(BooleanSupplier confirm) {
+        confirmCancel = Objects.requireNonNull(confirm, "confirm");
     }
 
     /** Ob „Wissensgraph erzeugen“ in der Kopfleiste steht und klickbar ist. */

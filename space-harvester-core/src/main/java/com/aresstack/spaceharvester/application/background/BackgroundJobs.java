@@ -285,7 +285,15 @@ public final class BackgroundJobs {
             throw e;
         }
         LOG.log(System.Logger.Level.INFO, "Hintergrund „{0}“ gestartet: {1} Teile", groupKind, started.size());
-        return new BackgroundGroup(groupId, groupKind, title, started);
+        List<JobStatus> predecessors = new ArrayList<>();
+        for (String id : outsidePredecessors(started)) {
+            try {
+                predecessors.add(jobs.status(id, owner));
+            } catch (UnknownJobException e) {
+                // schon gelöscht: wartet auf nichts mehr
+            }
+        }
+        return new BackgroundGroup(groupId, groupKind, title, started, predecessors);
     }
 
     /** Eine neue Gruppen-ID für {@link #start(String, String, String, List)}. */
@@ -544,25 +552,55 @@ public final class BackgroundJobs {
         }
     }
 
-    /** Die Gruppe, solange noch einer ihrer Unteraufträge in der Liste steht. */
+    /**
+     * Die Gruppe, solange noch einer ihrer Unteraufträge in der Liste steht, mit den Aufträgen außerhalb, auf die einer
+     * ihrer Teile wartet ({@link BackgroundGroup#predecessors()}).
+     */
     public Optional<BackgroundGroup> group(String groupId) {
-        List<JobStatus> parts = all().stream().filter(status -> groupId.equals(status.parameter(GROUP)))
+        List<JobStatus> all = all();
+        List<JobStatus> parts = all.stream().filter(status -> groupId.equals(status.parameter(GROUP)))
                 .sorted(Comparator.comparing(JobStatus::createdAt)).toList();
         if (parts.isEmpty()) {
             return Optional.empty();
         }
         JobStatus first = parts.get(0);
-        return Optional.of(new BackgroundGroup(groupId, kindOf(first), first.parameter(TITLE), parts));
+        java.util.Set<String> outside = outsidePredecessors(parts);
+        List<JobStatus> predecessors = outside.isEmpty() ? List.of()
+                : all.stream().filter(status -> outside.contains(status.id())).toList();
+        return Optional.of(new BackgroundGroup(groupId, kindOf(first), first.parameter(TITLE), parts, predecessors));
     }
 
-    /** Alle Gruppen, die jüngste zuerst. */
+    /** Die Kennungen der Vorgänger ({@link Jobs#AFTER}) von {@code parts}, die nicht selbst zu {@code parts} gehören. */
+    private static java.util.Set<String> outsidePredecessors(List<JobStatus> parts) {
+        java.util.Set<String> own = new java.util.HashSet<>();
+        parts.forEach(part -> own.add(part.id()));
+        java.util.Set<String> outside = new java.util.LinkedHashSet<>();
+        for (JobStatus part : parts) {
+            String after = part.parameter(Jobs.AFTER);
+            if (after == null || after.isBlank()) {
+                continue;
+            }
+            for (String id : after.split(",")) {
+                if (!id.isBlank() && !own.contains(id)) {
+                    outside.add(id);
+                }
+            }
+        }
+        return outside;
+    }
+
+    /** Alle Gruppen, die jüngste zuerst, je mit ihren Vorgängern außerhalb ({@link BackgroundGroup#predecessors()}). */
     public List<BackgroundGroup> groups() {
+        List<JobStatus> all = all();
+        Map<String, JobStatus> byId = new HashMap<>();
+        all.forEach(status -> byId.put(status.id(), status));
         Map<String, List<JobStatus>> byGroup = new LinkedHashMap<>();
-        all().stream().sorted(Comparator.comparing(JobStatus::createdAt))
+        all.stream().sorted(Comparator.comparing(JobStatus::createdAt))
                 .forEach(status -> byGroup.computeIfAbsent(groupOf(status), key -> new ArrayList<>()).add(status));
         List<BackgroundGroup> result = new ArrayList<>();
         byGroup.forEach((groupId, parts) -> result.add(0, new BackgroundGroup(groupId,
-                kindOf(parts.get(0)), parts.get(0).parameter(TITLE), parts)));
+                kindOf(parts.get(0)), parts.get(0).parameter(TITLE), parts, outsidePredecessors(parts).stream()
+                .map(byId::get).filter(Objects::nonNull).toList())));
         return result;
     }
 
@@ -763,7 +801,13 @@ public final class BackgroundJobs {
     public Subscription watch(String groupId, Consumer<BackgroundGroup> listener) {
         Objects.requireNonNull(groupId, "groupId");
         Objects.requireNonNull(listener, "listener");
-        return jobs.subscribe(owner, new JobListener() {
+        // Auch ein Vorgänger außerhalb der Gruppe (eine wiederverwendete Vorstufe, Jobs.AFTER) ändert, worauf ein
+        // wartender Teil steht, etwa wenn er angehalten wird: dann meldet sich die Gruppe ebenfalls. Welche das sind,
+        // weiß jede Meldung der Gruppe neu; die erste Menge kommt beim Anmelden.
+        java.util.Set<String> unknown = new java.util.HashSet<>();
+        java.util.concurrent.atomic.AtomicReference<java.util.Set<String>> outside =
+                new java.util.concurrent.atomic.AtomicReference<>(unknown);
+        Subscription subscription = jobs.subscribe(owner, new JobListener() {
             @Override
             public void changed(JobStatus status) {
                 notify(status);
@@ -775,12 +819,22 @@ public final class BackgroundJobs {
             }
 
             private void notify(JobStatus status) {
-                if (status != null && groupId.equals(status.parameter(GROUP))) {
-                    listener.accept(group(groupId).orElse(new BackgroundGroup(groupId, status.parameter(KIND),
-                            status.parameter(TITLE), List.of())));
+                if (status != null && (groupId.equals(status.parameter(GROUP))
+                        || outside.get().contains(status.id()))) {
+                    BackgroundGroup group = group(groupId).orElse(new BackgroundGroup(groupId,
+                            groupId.equals(status.parameter(GROUP)) ? status.parameter(KIND) : null,
+                            groupId.equals(status.parameter(GROUP)) ? status.parameter(TITLE) : null, List.of()));
+                    outside.set(predecessorIds(group));
+                    listener.accept(group);
                 }
             }
         });
+        group(groupId).ifPresent(group -> outside.compareAndSet(unknown, predecessorIds(group)));
+        return subscription;
+    }
+
+    private static java.util.Set<String> predecessorIds(BackgroundGroup group) {
+        return outsidePredecessors(group.parts());
     }
 
     /**

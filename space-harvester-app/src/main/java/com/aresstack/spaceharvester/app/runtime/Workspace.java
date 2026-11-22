@@ -1369,6 +1369,14 @@ public final class Workspace {
     }
 
     /**
+     * Ob der KI-Analysator der Aussagenanalyse jetzt rechnen könnte: eingerichtet und ein Chat-Modell bereit (W5, für
+     * die Rückfrage von „Wissensgraph erzeugen“); lädt und ruft kein Modell.
+     */
+    public boolean statementModelReady() {
+        return harvester.statementAnalysis().modelReady();
+    }
+
+    /**
      * Warum der KI-Analysator diese Seite jetzt bewusst auslässt (kein Modell, keine KI-Freigabe); leer, wenn er sie
      * rechnen kann oder der MaltParser eingestellt ist.
      */
@@ -2390,7 +2398,19 @@ public final class Workspace {
      */
     public Subscription watchBackground(String groupId,
             java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener) {
+        return watchBackground(groupId, listener, () -> { });
+    }
+
+    /**
+     * Wie {@link #watchBackground(String, java.util.function.Consumer)}; kennt diese Laufzeit die Gruppe beim Anmelden
+     * nicht (etwa nach dem Umschalten der Ablage, W5), läuft stattdessen {@code missing} auf dem Event Dispatch Thread,
+     * einmal, sofern bis dahin keine Änderung gemeldet wurde.
+     */
+    public Subscription watchBackground(String groupId,
+            java.util.function.Consumer<com.aresstack.spaceharvester.application.background.BackgroundGroup> listener,
+            Runnable missing) {
         java.util.Objects.requireNonNull(listener, "listener");
+        java.util.Objects.requireNonNull(missing, "missing");
         com.aresstack.spaceharvester.application.background.BackgroundJobs background = harvester.backgroundJobs();
         java.util.concurrent.atomic.AtomicBoolean pushed = new java.util.concurrent.atomic.AtomicBoolean();
         Subscription watch = background.watch(groupId, group -> {
@@ -2399,15 +2419,22 @@ public final class Workspace {
         });
         // Den jetzigen Stand liest ein eigener Thread aus dem Auftragsspeicher, nie der EDT; eine schon gemeldete
         // Änderung ist neuer und gilt.
-        Thread.ofVirtual().name("watch-background").start(() -> background.group(groupId).ifPresent(group -> {
-            if (!pushed.get()) {
-                javax.swing.SwingUtilities.invokeLater(() -> {
-                    if (!pushed.get()) {
-                        listener.accept(group);
-                    }
-                });
+        Thread.ofVirtual().name("watch-background").start(() -> {
+            Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> found =
+                    background.group(groupId);
+            if (pushed.get()) {
+                return;
             }
-        }));
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                if (!pushed.get()) {
+                    if (found.isPresent()) {
+                        listener.accept(found.get());
+                    } else {
+                        missing.run();
+                    }
+                }
+            });
+        });
         return watch;
     }
 
@@ -2516,7 +2543,8 @@ public final class Workspace {
     /**
      * Die gelben Hinweise aus den Ereignissen einer Gruppe von „Wissensgraph erzeugen“ (W5): die Abdeckung je Space
      * („in ‚DEV‘: 3 von 5 Seiten …“), wenn etwas fehlt ({@code KnowledgeGraphJobs.COVERAGE}, nur Zahlen), angehaltene
-     * fremde Teile ({@code RESUME_BY_HAND}) und Seiten, die der KI-Analysator bewusst ausließ. Gelesen mit demselben Recht wie
+     * fremde Teile ({@code RESUME_BY_HAND}), die Obergrenze von „Bilder beschreiben“ ({@code LIMIT_REACHED}) und Seiten,
+     * die der KI-Analysator bewusst ausließ. Gelesen mit demselben Recht wie
      * {@link #statementGroupOmitted}; nie auf dem EDT, ein schon gelöschter Teil zählt nicht.
      */
     public List<String> knowledgeGraphNotes(
@@ -2551,6 +2579,11 @@ public final class Workspace {
                 } else if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.RESUME_BY_HAND
                         .equals(event.code())) {
                     notes.add(event.message());
+                } else if (com.aresstack.spaceharvester.application.images.AutomaticImageDescriptions.LIMIT_REACHED
+                        .equals(event.code())) {
+                    // „Bilder beschreiben“ an der Obergrenze: fertig, aber unvollständig (Codex #1081); nur Zahlen.
+                    notes.add((part.partitionKey() == null ? "" : "in ‚" + part.partitionKey() + "‘: ")
+                            + event.message());
                 }
             }
         }
@@ -2605,8 +2638,8 @@ public final class Workspace {
 
     /**
      * Wiederholt einzelne Unteraufträge einer Hintergrundgruppe (W5: der Kreispfeil hinter einer gescheiterten Stufe
-     * von „Wissensgraph erzeugen“): nur die aus {@code jobIds}, die zu dieser Gruppe gehören, gescheitert oder
-     * abgebrochen sind und sich fortsetzen lassen, über denselben Weg wie ▶ in der Auftragsverwaltung
+     * von „Wissensgraph erzeugen“): nur die aus {@code jobIds}, die zu dieser Gruppe gehören, gescheitert sind (nie
+     * vom Benutzer abgebrochene, Auflage W5) und sich fortsetzen lassen, über denselben Weg wie ▶ in der Auftragsverwaltung
      * ({@link #performJobAction}, mit den Rechten des Aufrufers; ein fremder Teil hält dort wieder gelb an). Andere
      * Teile der Gruppe bleiben, wie sie sind. Nie auf dem EDT.
      */
@@ -2615,8 +2648,7 @@ public final class Workspace {
         List<JobStatus> parts = harvester.backgroundJobs().group(groupId)
                 .map(com.aresstack.spaceharvester.application.background.BackgroundGroup::parts).orElse(List.of());
         return AllJobs.apply(parts.stream().filter(job -> wanted.contains(job.id()))
-                .filter(job -> job.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED
-                        || job.state() == com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED)
+                .filter(job -> job.state() == com.aresstack.spaceharvester.application.jobs.JobState.FAILED)
                 .filter(job -> job.lifecycle().allows(JobAction.RESUME)).toList(),
                 job -> performJobAction(job.id(), JobAction.RESUME));
     }

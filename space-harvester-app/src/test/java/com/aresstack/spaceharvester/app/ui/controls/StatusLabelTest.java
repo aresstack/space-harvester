@@ -202,6 +202,57 @@ class StatusLabelTest {
         });
     }
 
+    /**
+     * Auflage W5: Eine Meldung nur mit Symbol (das ✕ hinter dem Fortschritt) nimmt den Fokus und zeigt ihn mit dem gelben
+     * Rahmen um das Symbol; Enter und Leertaste lösen es aus. Mit Link-Wort gehört der Rahmen an das Wort.
+     */
+    @Test
+    void aNoteWithOnlyAnIconShowsTheFocusMarkAroundTheIcon() throws Exception {
+        AtomicInteger cancelled = new AtomicInteger();
+        SwingUtilities.invokeAndWait(() -> {
+            StatusLabel label = new StatusLabel();
+            String progress = "Wissensgraph wird erzeugt · Aussagenanalyse: 1 von 4 Teilen fertig";
+            label.show(new StatusNote(progress, StatusNote.Tone.PLAIN, null, null, java.util.List.of(),
+                    new StatusNote.IconLink(com.aresstack.spaceharvester.app.ui.Glyph.CANCEL, progress, "Abbrechen",
+                            cancelled::incrementAndGet)));
+            label.setSize(label.getPreferredSize());
+            assertThat(label.isFocusable()).as("ein Tab-Halt").isTrue();
+            assertThat(label.focusSpan()).as("ohne Fokus keine Marke").isNull();
+
+            java.awt.image.BufferedImage plain = paint(label);
+            label.focusForTests(true);
+            assertThat(label.focusSpan()).as("die Marke steht um das Symbol").containsExactly(label.iconSpan());
+            java.awt.image.BufferedImage focused = paint(label);
+            int x = label.iconSpan()[0] - 3;
+            boolean framed = false;
+            for (int y = 0; y < label.getHeight(); y++) {
+                framed |= plain.getRGB(x, y) != focused.getRGB(x, y);
+            }
+            assertThat(framed).as("gezeichneter Rahmen links vom Symbol").isTrue();
+
+            for (String key : new String[] {"SPACE", "ENTER"}) {
+                label.getActionMap().get(label.getInputMap(javax.swing.JComponent.WHEN_FOCUSED)
+                        .get(javax.swing.KeyStroke.getKeyStroke(key))).actionPerformed(null);
+            }
+            assertThat(cancelled).hasValue(2);
+
+            label.show(new StatusNote("Einzelheiten unter Aufträge.", StatusNote.Tone.PLAIN, "Aufträge", () -> { }));
+            label.setSize(label.getPreferredSize());
+            FontMetrics metrics = label.getFontMetrics(label.getFont());
+            assertThat(label.focusSpan()[0]).as("mit Link am Wort")
+                    .isEqualTo(label.getInsets().left + metrics.stringWidth("Einzelheiten unter "));
+        });
+    }
+
+    private static java.awt.image.BufferedImage paint(StatusLabel label) {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(label.getWidth(), label.getHeight(),
+                java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = image.createGraphics();
+        label.paint(g);
+        g.dispose();
+        return image;
+    }
+
     /** Ohne Rot kürzt sich die Meldung wie bisher, auch über ihr Symbol (✕) hinweg; nichts ist geschützt. */
     @Test
     void withoutRedNothingIsKeptFromTheCut() throws Exception {

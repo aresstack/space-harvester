@@ -86,12 +86,8 @@ class GraphGenerationScreenshotTest {
             tab[0] = new KnowledgeGraphTab(() -> actions, new Runner());
             StatusLabel status = new StatusLabel();
             status.setOpaque(false);
-            // Wie im Hauptfenster (PageDetailPanel#showTabStatus): die Ablage dahinter bleibt grau.
-            tab[0].onNote(note -> {
-                String shown = PageDetailPanel.withStore("Graph", note.text(), AnalyzerChoice.MODEL);
-                status.show(shown != null && shown.startsWith(note.text())
-                        ? note.plus(shown.substring(note.text().length())) : note.withText(shown));
-            });
+            // Derselbe Weg wie im Hauptfenster (PageDetailPanel#showTabStatus): die Ablage dahinter bleibt grau.
+            tab[0].onNote(note -> status.show(PageDetailPanel.withStore("Graph", note, AnalyzerChoice.MODEL)));
             root[0] = new JPanel(new BorderLayout());
             root[0].setBackground(Comic.SURFACE);
             root[0].add(tab[0], BorderLayout.CENTER);
@@ -121,6 +117,16 @@ class GraphGenerationScreenshotTest {
         settle();
         SwingUtilities.invokeAndWait(() -> write(root[0], dialog, out.resolve("w5-overlay-" + width + ".png")));
         SwingUtilities.invokeAndWait(dialog::dispose);
+        settle();
+
+        // Dieselbe Rückfrage ohne bereites Chat-Modell: gelb „kein Chat-Modell …“ statt der Zeile zum KI-Dienst
+        actions.preview = new GraphGeneration.Preview(actions.preview.plan(), AnalyzerChoice.MODEL, 3, false);
+        SwingUtilities.invokeLater(tab[0]::clickGenerate);
+        JDialog noModel = awaitDialog();
+        settle();
+        SwingUtilities.invokeAndWait(() -> write(root[0], noModel,
+                out.resolve("w5-overlay-ohne-modell-" + width + ".png")));
+        SwingUtilities.invokeAndWait(noModel::dispose);
         settle();
 
         // Lauf: Fortschritt mit ✕, gelb die ausgelassene Stufe

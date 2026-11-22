@@ -323,20 +323,26 @@ public class StatementAnalysis {
     }
 
     /**
-     * Warum der KI-Analysator (Fahrplan Paket A2) diese Seite jetzt nicht rechnen kann: nicht eingerichtet oder kein
-     * Chat-Modell eingestellt ({@link AnalyzerUnavailableException.Reason#NO_AI_MODEL}), Seite ohne KI-Freigabe
-     * ({@link AnalyzerUnavailableException.Reason#NOT_RELEASED}); leer, wenn er kann. Beides ist „bewusst ausgelassen“,
-     * kein Fehler.
+     * Warum der KI-Analysator (Fahrplan Paket A2) diese Seite jetzt nicht rechnen kann: Seite ohne KI-Freigabe
+     * ({@link AnalyzerUnavailableException.Reason#NOT_RELEASED}), sonst nicht eingerichtet oder kein Chat-Modell
+     * eingestellt ({@link AnalyzerUnavailableException.Reason#NO_AI_MODEL}); leer, wenn er kann. Beides ist „bewusst
+     * ausgelassen“, kein Fehler. Die Freigabe gilt unabhängig vom Modell (W5): Eine Seite ohne Freigabe zählt auch ohne
+     * Chat-Modell als „ohne KI-Freigabe“, damit Vorschau, Planer und Lauf dieselben Zahlen nennen.
      */
     public Optional<AnalyzerUnavailableException.Reason> modelUnavailable(PageKey key) {
-        StatementAnalyzer analyzer = model.get();
-        if (analyzer == null || !analyzer.ready()) {
-            return Optional.of(AnalyzerUnavailableException.Reason.NO_AI_MODEL);
-        }
         if (!released.test(key)) {
             return Optional.of(AnalyzerUnavailableException.Reason.NOT_RELEASED);
         }
+        if (!modelReady()) {
+            return Optional.of(AnalyzerUnavailableException.Reason.NO_AI_MODEL);
+        }
         return Optional.empty();
+    }
+
+    /** Ob der KI-Analysator eingerichtet und ein Chat-Modell bereit ist; lädt kein Modell und ruft keins. */
+    public boolean modelReady() {
+        StatementAnalyzer analyzer = model.get();
+        return analyzer != null && analyzer.ready();
     }
 
     /**

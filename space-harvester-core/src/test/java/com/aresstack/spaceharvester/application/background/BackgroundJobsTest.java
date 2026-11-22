@@ -279,6 +279,43 @@ class BackgroundJobsTest {
         assertThat(reports).last().satisfies(report -> assertThat(report.completed()).isTrue());
     }
 
+    /**
+     * Codex #1081: Ein Teil wartet auf einen wiederverwendeten Teil einer anderen Gruppe ({@link Jobs#AFTER}). Die
+     * Gruppe nennt ihn als Vorgänger (nicht als eigenen Teil), und wird er angehalten, meldet sich auch die Gruppe.
+     */
+    @Test
+    void aReusedPredecessorOfAnotherGroupIsNamedAndItsChangesReachTheWatchersOfTheGroup() throws Exception {
+        Jobs jobs = jobs(executor);
+        BackgroundJobs background = background(jobs, new AtomicBoolean(true));
+        BackgroundGroup reused = background.start("demo", "Plan", List.of(new BackgroundPart.Draft("wiki", "DEV")));
+        String reusedId = reused.parts().get(0).id();
+        BackgroundGroup goal = background.startSteps(BackgroundJobs.newGroupId(), "demo", "Ziel", List.of(
+                new BackgroundJobs.Step("demo", "Ziel", new BackgroundPart.Draft("wiki", "DEV"), List.of(reusedId),
+                        List.of(), List.of("Plan"))));
+        List<BackgroundGroup> reports = new CopyOnWriteArrayList<>();
+
+        BackgroundGroup read = background.group(goal.groupId()).orElseThrow();
+        assertThat(read.parts()).extracting(JobStatus::id).doesNotContain(reusedId);
+        assertThat(read.predecessors()).extracting(JobStatus::id).containsExactly(reusedId);
+        assertThat(background.groups()).filteredOn(listed -> listed.groupId().equals(goal.groupId())).singleElement()
+                .satisfies(listed -> assertThat(listed.predecessors()).extracting(JobStatus::id)
+                        .containsExactly(reusedId));
+
+        java.util.concurrent.CountDownLatch held = new java.util.concurrent.CountDownLatch(1);
+        try (var subscription = background.watch(goal.groupId(), report -> {
+            reports.add(report);
+            if (report.predecessors().stream().anyMatch(part -> part.state() == JobState.PAUSED)) {
+                held.countDown();
+            }
+        })) {
+            background.pause(reused.groupId());
+            executor.runAll();
+            assertThat(held.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                    .as("der angehaltene Vorgänger meldet sich bei der wartenden Gruppe").isTrue();
+        }
+        assertThat(reports).allSatisfy(report -> assertThat(report.groupId()).isEqualTo(goal.groupId()));
+    }
+
     @Test
     void whenFinishedTellsOnceAtTheEndAndAtOnceForAFinishedGroup() throws Exception {
         Jobs jobs = jobs(executor);

@@ -19,7 +19,8 @@ import java.util.Objects;
  *
  * <p>Teile mit eigenem Ton ({@link StatusNote.Mark}) erscheinen in ihrer Farbe. Ein Symbol als Link
  * ({@link StatusNote.IconLink}, etwa der Kreispfeil „wiederholen“) steht blau direkt hinter seinem Teil, mit Hand-Zeiger
- * und eigenem Tooltip; per Tastatur löst es Strg+Enter aus, ohne Link-Wort auch Enter und Leertaste.
+ * und eigenem Tooltip; per Tastatur löst es Strg+Enter aus, ohne Link-Wort auch Enter und Leertaste, und dann steht der
+ * gelbe Fokusrahmen um das Symbol.
  */
 public final class StatusLabel extends JLabel {
 
@@ -61,6 +62,7 @@ public final class StatusLabel extends JLabel {
     private boolean linkShown;
     /** Die Breite, für die der HTML-Text zuletzt gebaut wurde. */
     private int renderedWidth = -1;
+    private boolean focusForTests;
 
     public StatusLabel() {
         super(" ");
@@ -374,18 +376,41 @@ public final class StatusLabel extends JLabel {
             int[] icon = iconSpan();
             note.icon().glyph().paintIcon(ICON_HOST, graphics, icon[0], (getHeight() - ICON) / 2);
         }
-        if (note.hasLink() && linkShown && isFocusOwner()) {
-            int[] span = linkSpan();
+        int[] mark = focusSpan();
+        if (mark != null) {
             java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
             try {
                 g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
                 g.setColor(Comic.YELLOW);
                 g.setStroke(new java.awt.BasicStroke(2f));
-                g.drawRoundRect(span[0] - 3, 1, span[1] - span[0] + 6, getHeight() - 3, 6, 6);
+                g.drawRoundRect(mark[0] - 3, 1, mark[1] - mark[0] + 6, getHeight() - 3, 6, 6);
             } finally {
                 g.dispose();
             }
         }
+    }
+
+    /**
+     * Wo die gelbe Fokusmarke steht, solange die Meldung den Fokus hat: um das Link-Wort, ohne Link-Wort um das Symbol (etwa das ✕ hinter dem Fortschritt, das dann Enter und Leertaste auslösen; Auflage W5); ohne Fokus
+     * oder ohne beides {@code null}.
+     */
+    int[] focusSpan() {
+        if (!isFocusOwner() && !focusForTests) {
+            return null;
+        }
+        if (note.hasLink()) {
+            // Enter und Leertaste lösen den Link aus: die Marke gehört an ihn, auch wenn ein Symbol dahinter steht.
+            return linkShown ? linkSpan() : null;
+        }
+        if (note.hasIcon() && slotAt >= 0) {
+            return iconSpan();
+        }
+        return null;
+    }
+
+    /** Für Tests ohne Fenster: die Meldung gilt als fokussiert. */
+    void focusForTests(boolean focused) {
+        focusForTests = focused;
     }
 
     public StatusNote note() {
