@@ -1382,7 +1382,7 @@ public final class Harvester implements AutoCloseable {
                     : imagesStart).automatic(), () -> (this.settings != null ? this.settings.terms()
                     : plannerTerms).glossaryAutomatic(), access,
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
-                    this.statementAnalysisJobs);
+                    this.statementAnalysisJobs, imageDescriptions);
             this.knowledgeGraphExport = new KnowledgeGraphExportUseCase(jobs, knowledgeGraph,
                     key -> cache.findHeader(key).map(header -> header.metadata().parentPageId()), clock, OWNER);
             this.knowledgeGraphExportDirectory = builder.exportDirectory().resolve("knowledge-graph");
@@ -2432,18 +2432,20 @@ public final class Harvester implements AutoCloseable {
 
     /**
      * Die Beschreibungen der Analysedienste (D1). Die Aussagenanalyse arbeitet über ihre Art (D3), sofern
-     * {@code statements} angeschlossen ist; die übrigen Arten fehlen noch (B1). Die Starttypen ändern am heutigen
-     * Verhalten nichts.
+     * {@code statements} angeschlossen ist, „Bilder beschreiben“ über seine (D2), sofern {@code images} angeschlossen
+     * ist; die übrigen Arten fehlen noch. Die Starttypen ändern am heutigen Verhalten nichts.
      *
      * @param statements die Aussagenanalyse oder {@code null}, dann nur als Beschreibung
+     * @param images     „Bilder beschreiben“ oder {@code null}, dann nur als Beschreibung
      */
     static com.aresstack.spaceharvester.application.background.services.ServicePlanner services(
             com.aresstack.spaceharvester.application.background.BackgroundJobs background,
             java.util.function.BooleanSupplier imagesAutomatic, java.util.function.BooleanSupplier glossaryAutomatic,
             AccessGuard access,
             java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf,
-            StatementAnalysisJobs statements) {
-        var planner = new com.aresstack.spaceharvester.application.background.services.ServicePlanner(background,
+            StatementAnalysisJobs statements,
+            com.aresstack.spaceharvester.application.images.ImageDescriptionJobs images) {
+        com.aresstack.spaceharvester.application.background.services.AnalysisService.Missing visibleOf =
                 (caller, pages) -> {
                     Map<com.aresstack.spaceharvester.application.background.services.MissingPages.Scope,
                             java.util.Set<String>> visible = new java.util.LinkedHashMap<>();
@@ -2462,7 +2464,9 @@ public final class Harvester implements AutoCloseable {
                     }
                     return new com.aresstack.spaceharvester.application.background.services.MissingPages(visible,
                             hidden);
-                });
+                };
+        var planner = new com.aresstack.spaceharvester.application.background.services.ServicePlanner(background,
+                visibleOf);
         var manual = (java.util.function.Supplier<
                 com.aresstack.spaceharvester.application.background.services.ServiceStart>) () ->
                 com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL;
@@ -2476,7 +2480,11 @@ public final class Harvester implements AutoCloseable {
                 "images", "Bilder beschreiben", () -> imagesAutomatic.getAsBoolean()
                 ? com.aresstack.spaceharvester.application.background.services.ServiceStart.AUTOMATIC
                 : com.aresstack.spaceharvester.application.background.services.ServiceStart.MANUAL,
-                List.of("index"), null, nothing));
+                List.of("index"), images == null ? null
+                : com.aresstack.spaceharvester.application.images.ImageDescriptionJobs.KIND,
+                images == null ? nothing : (caller, pages) -> visibleOf.of(caller, images.missing(caller, pages)),
+                images == null ? com.aresstack.spaceharvester.application.background.services.AnalysisService
+                        .Parameters.NONE : images::plannerParameters));
         planner.register(statements == null
                 ? new com.aresstack.spaceharvester.application.background.services.AnalysisService(
                 "statements", "Aussagenanalyse", manual, List.of("index"), null, nothing)

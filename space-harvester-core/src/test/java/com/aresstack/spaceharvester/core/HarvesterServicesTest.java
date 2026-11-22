@@ -22,11 +22,12 @@ class HarvesterServicesTest {
                 java.time.Clock.systemUTC());
         ServicePlanner planner = Harvester.services(
                 new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app"), imagesAutomatic::get,
-                glossaryAutomatic::get, null, key -> Optional.empty(), null);
+                glossaryAutomatic::get, null, key -> Optional.empty(), null, null);
 
         assertThat(planner.services()).extracting(AnalysisService::id).containsExactlyInAnyOrder("index", "images",
                 "statements", "glossary", "knowledge-graph");
-        assertThat(planner.services()).allSatisfy(service -> assertThat(service.kind()).isNull());
+        assertThat(planner.services()).as("ohne Bilder-Lauf nur Beschreibungen")
+                .allSatisfy(service -> assertThat(service.kind()).isNull());
         assertThat(planner.service("statements").orElseThrow().start().get()).isEqualTo(ServiceStart.MANUAL);
         assertThat(planner.service("glossary").orElseThrow().start().get()).as("terms.glossary.automatic aus")
                 .isEqualTo(ServiceStart.MANUAL);

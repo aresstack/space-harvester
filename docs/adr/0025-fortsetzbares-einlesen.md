@@ -387,8 +387,9 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
 6. **Erste Dienste** (`Harvester#servicePlanner`): Indexieren (AUTOMATIC), Bilder beschreiben
    (wie `images.automatic`), Aussagenanalyse (MANUAL), Glossar (AUTOMATIC), Wissensgraph (MANUAL, nach Aussagenanalyse
    und Bildbeschreibung). Die Aussagenanalyse arbeitet über ihre Art `statements` (D3): `missing` aus
-   `StatementAnalysisJobs#missing`, je Quelle und Space nach dem gespeicherten Kopf gruppiert; die übrigen Arten baut
-   B1 (D2), bis dahin bleiben sie Beschreibung.
+   `StatementAnalysisJobs#missing`, je Quelle und Space nach dem gespeicherten Kopf gruppiert. „Bilder beschreiben“
+   arbeitet über seine Art `images` (D2): `missing` sind die freigegebenen Seiten, die ein Lauf an das Modell gäbe
+   (`ImageDescriptionJobs#missing`), je Space und nur sichtbare. Die übrigen Arten bleiben Beschreibung.
 7. **Angaben der Teile.** Jeder Teil trägt seine Seiten (`AnalysisService.PAGES`). Ein Dienst kann weitere Angaben
    beisteuern (`AnalysisService#parameters`), einmal je Start und für alle Spaces gleich; `pages` setzt immer der
    Planer. Die Aussagenanalyse legt so Eigentümer, Startzeit und den beim Start eingestellten Analysator fest
@@ -397,3 +398,8 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    Lauf rechnet mit den Rechten des Start-Aufrufers, nach einem Neustart gilt die Eigentümer-Regel aus Punkt 6 oben
    (gleicher Eigentümer läuft weiter, sonst gelb „von Hand fortsetzen“). Ohne „erneut analysieren“ und ohne Grenze;
    aktuelle Seiten überspringt der Teil.
+   „Bilder beschreiben“ legt ebenso den Eigentümer (`principal`, `principal.kind`, `via`) und die Kennung `caller`
+   fest (`ImageDescriptionJobs#plannerParameters`). Ein Teil mit `pages` beschreibt genau diese Seiten mit den
+   Rechten des Start-Aufrufers, nach einem Neustart mit dem aus den Angaben gebauten Eigentümer; lässt der sich nicht
+   bauen (Endnutzer ohne Anmeldedaten), hält er gelb mit `IMAGES_RESUME_BY_HAND` an, nie technisch. Je Seite gelten
+   Inhaltsrecht und KI-Freigabe zum Zeitpunkt der Arbeit.
