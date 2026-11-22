@@ -145,7 +145,13 @@ public final class AcquisitionScheduler implements AutoCloseable {
     private boolean wakeScheduled;
     private final Executor executor;
     private final ExecutorService owned;
-    private final Object lock = new Object();
+    /**
+     * Sperre des Planers; eine {@link java.util.concurrent.locks.ReentrantLock}, kein {@code synchronized}: Wer wartet
+     * ({@link #quiesce}, {@link #close}), gibt auf einem virtuellen Thread seinen Träger frei (Architekt 22.11.2026).
+     */
+    private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+    /** Ein Abruf endete ({@link #finish}). */
+    private final java.util.concurrent.locks.Condition finished = lock.newCondition();
     private final Map<PageKey, Entry> entries = new HashMap<>();
     private final LinkedHashSet<Entry> foregroundQueue = new LinkedHashSet<>();
     private final LinkedHashSet<Entry> backgroundQueue = new LinkedHashSet<>();
@@ -222,8 +228,11 @@ public final class AcquisitionScheduler implements AutoCloseable {
      * der neuen Grenze.
      */
     public void backgroundParallelism(int background) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             limits = limits.withBackground(background);
+        } finally {
+            lock.unlock();
         }
         dispatch();
     }
@@ -268,7 +277,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
             throw new IllegalArgumentException("Der Hintergrund lädt nie mit der Anmeldung eines Benutzers");
         }
         Ticket ticket;
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 throw new RejectedExecutionException("Beschaffung beendet");
             }
@@ -304,6 +314,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
                     entry.technical = caller;
                 }
             }
+        } finally {
+            lock.unlock();
         }
         dispatch();
         return ticket;
@@ -311,22 +323,31 @@ public final class AcquisitionScheduler implements AutoCloseable {
 
     /** Ob gerade etwas im Vordergrund wartet oder lädt. */
     public boolean foregroundBusy() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             return foregroundRunning > 0 || !foregroundQueue.isEmpty();
+        } finally {
+            lock.unlock();
         }
     }
 
     /** Lage des Vordergrunds: Parallelität und was dort wartet. */
     public int foregroundBacklog() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             return foregroundQueue.size();
+        } finally {
+            lock.unlock();
         }
     }
 
     public Status status() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             return new Status(foregroundQueue.size(), foregroundRunning, backgroundQueue.size(), backgroundRunning,
                     promoted, pause());
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -339,8 +360,11 @@ public final class AcquisitionScheduler implements AutoCloseable {
         Subscription subscription = listeners.add(Objects.requireNonNull(listener, "listener"));
         // Läuft die Wartezeit schon, hat sie ohne Empfänger niemand vorgemerkt: ihr Ende sonst nie gemeldet.
         long cooldown;
-        synchronized (lock) {
+        lock.lock();
+        try {
             cooldown = remainingCooldown();
+        } finally {
+            lock.unlock();
         }
         if (cooldown >= 0) {
             notifier.markLater(STATUS, Set.of(), Duration.ofNanos(cooldown).plusMillis(1));
@@ -365,10 +389,13 @@ public final class AcquisitionScheduler implements AutoCloseable {
     private void deliver() {
         Status status;
         long cooldown;
-        synchronized (lock) {
+        lock.lock();
+        try {
             status = new Status(foregroundQueue.size(), foregroundRunning, backgroundQueue.size(), backgroundRunning,
                     promoted, pause());
             cooldown = remainingCooldown();
+        } finally {
+            lock.unlock();
         }
         listeners.deliver(null, listener -> listener.changed(status));
         if (cooldown >= 0) {
@@ -398,19 +425,25 @@ public final class AcquisitionScheduler implements AutoCloseable {
      * Abrufe enden regulär, neue beginnen erst danach. Mehrfach haltbar.
      */
     public AutoCloseable pauseBackground() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             pauses++;
+        } finally {
+            lock.unlock();
         }
         changed();
         boolean[] released = {false};
         return () -> {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 if (released[0]) {
                     return;
                 }
                 released[0] = true;
                 pauses--;
                 lastForeground = System.nanoTime();
+            } finally {
+                lock.unlock();
             }
             dispatch();
         };
@@ -428,7 +461,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
         Objects.requireNonNull(timeout, "timeout");
         AutoCloseable pause = pauseBackground();
         List<Ticket> dropped = new ArrayList<>();
-        synchronized (lock) {
+        lock.lock();
+        try {
             for (Iterator<Entry> it = backgroundQueue.iterator(); it.hasNext(); ) {
                 Entry entry = it.next();
                 if (entry.key.sourceId().equals(sourceId) && entry.foreground.isEmpty()) {
@@ -437,11 +471,14 @@ public final class AcquisitionScheduler implements AutoCloseable {
                     dropped.addAll(entry.tickets());
                 }
             }
+        } finally {
+            lock.unlock();
         }
         dropped.forEach(ticket -> ticket.done.cancel(false));
         changed();
         try {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 long deadline = System.nanoTime() + timeout.toNanos();
                 while (runningPerSource.containsKey(sourceId)) {
                     long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
@@ -450,8 +487,10 @@ public final class AcquisitionScheduler implements AutoCloseable {
                                 sourceId, timeout.toSeconds());
                         break;
                     }
-                    lock.wait(left);
+                    finished.await(left, TimeUnit.MILLISECONDS);
                 }
+            } finally {
+                lock.unlock();
             }
         } catch (InterruptedException e) {
             try {
@@ -502,7 +541,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
     /** Startet, wofür ein Platz frei ist: zuerst der Vordergrund, der Hintergrund nur, wenn dort nichts ansteht. */
     private void dispatch() {
         List<Entry> start = new ArrayList<>();
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (closed) {
                 return;
             }
@@ -548,8 +588,11 @@ public final class AcquisitionScheduler implements AutoCloseable {
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
-                    synchronized (lock) {
+                    lock.lock();
+                    try {
                         wakeScheduled = false;
+                    } finally {
+                        lock.unlock();
                     }
                     dispatch();
                 });
@@ -567,6 +610,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
                     }
                 }
             }
+        } finally {
+            lock.unlock();
         }
         for (Entry entry : start) {
             try {
@@ -615,7 +660,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
 
     private void finish(Entry entry, boolean stored, RuntimeException failure) {
         List<Ticket> tickets;
-        synchronized (lock) {
+        lock.lock();
+        try {
             entries.remove(entry.key, entry);
             if (entry.slot == Priority.FOREGROUND || !entry.foreground.isEmpty()) {
                 lastForeground = System.nanoTime();
@@ -625,7 +671,9 @@ public final class AcquisitionScheduler implements AutoCloseable {
             tickets = entry.tickets();
             entry.foreground.clear();
             entry.background.clear();
-            lock.notifyAll();
+            finished.signalAll();
+        } finally {
+            lock.unlock();
         }
         tickets.forEach(ticket -> {
             // Erst die Ursache, dann das Ergebnis: wer {@code false} sieht, findet auch den Grund (Anmeldung, Netz).
@@ -642,7 +690,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
     @Override
     public void close() throws InterruptedException {
         List<Ticket> dropped = new ArrayList<>();
-        synchronized (lock) {
+        lock.lock();
+        try {
             if (!closed) {
                 closed = true;
                 for (Entry entry : List.copyOf(foregroundQueue)) {
@@ -656,16 +705,21 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 foregroundQueue.clear();
                 backgroundQueue.clear();
             }
+        } finally {
+            lock.unlock();
         }
         dropped.forEach(ticket -> ticket.done.cancel(false));
-        synchronized (lock) {
+        lock.lock();
+        try {
             while (foregroundRunning + backgroundRunning > 0) {
-                lock.wait(30_000);
+                finished.await(30, TimeUnit.SECONDS);
                 if (foregroundRunning + backgroundRunning > 0) {
                     LOG.log(System.Logger.Level.INFO, "Beschaffung endet noch; warte auf {0} laufende Abrufe",
                             foregroundRunning + backgroundRunning);
                 }
             }
+        } finally {
+            lock.unlock();
         }
         if (owned != null) {
             // Kein Unterbrechen: es läuft nichts mehr.
@@ -778,7 +832,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
 
         private boolean cancel(boolean onlyWaiting) {
             boolean demoted = false;
-            synchronized (lock) {
+            lock.lock();
+            try {
                 if (done.isDone() || onlyWaiting && entry.running) {
                     return false;
                 }
@@ -801,6 +856,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
                         demoted = true;
                     }
                 }
+            } finally {
+                lock.unlock();
             }
             boolean cancelled = done.cancel(false);
             if (demoted || cancelled) {

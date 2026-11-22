@@ -286,6 +286,39 @@ class AcquisitionSchedulerTest {
     }
 
     @Test
+    void manyWaitersOnVirtualThreadsNeverHoldTheirCarriers() throws Exception {
+        // Architekt 22.11.2026: Mit synchronized und wait() hielte jeder Wartende auf einem virtuellen Thread seinen
+        // Träger fest; mehr Wartende als Träger legten den Planer still.
+        int waiters = 400;
+        gate("1");
+        AcquisitionScheduler planner = scheduler(4, 1, 4);
+        AcquisitionScheduler.Ticket load = planner.request(SERVER, key("1"), AcquisitionScheduler.Priority.BACKGROUND);
+        awaitRunning("1");
+        CountDownLatch entered = new CountDownLatch(waiters);
+        List<java.util.concurrent.Future<AutoCloseable>> quiesced = new ArrayList<>();
+        try (java.util.concurrent.ExecutorService virtual =
+                     java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < waiters; i++) {
+                quiesced.add(virtual.submit(() -> {
+                    entered.countDown();
+                    return planner.quiesce("wiki", Duration.ofSeconds(30));
+                }));
+            }
+            assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+            // Während alle warten, lädt der Vordergrund einer anderen Quelle auf einem virtuellen Thread.
+            AcquisitionScheduler.Ticket other = planner.request(SERVER, new PageKey("handbuch", "9"),
+                    AcquisitionScheduler.Priority.FOREGROUND);
+            assertThat(other.done().get(10, TimeUnit.SECONDS)).isTrue();
+
+            release("1");
+            assertThat(load.done().get(10, TimeUnit.SECONDS)).isTrue();
+            for (java.util.concurrent.Future<AutoCloseable> each : quiesced) {
+                each.get(10, TimeUnit.SECONDS).close();
+            }
+        }
+    }
+
+    @Test
     void quiescingASourceDropsItsWaitingBackgroundPagesAndWaitsForItsRunningLoads() throws Exception {
         gate("1");
         AcquisitionScheduler planner = scheduler(4, 1, 4);
