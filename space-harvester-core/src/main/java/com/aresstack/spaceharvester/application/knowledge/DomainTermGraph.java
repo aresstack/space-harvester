@@ -1007,6 +1007,8 @@ public final class DomainTermGraph {
         private final Map<String, NodeKind> kinds = new LinkedHashMap<>();
         private final Map<String, List<RelationScope>> scopes = new LinkedHashMap<>();
         private final List<String[]> synonymEdges = new ArrayList<>();
+        /** Je Synonymkante (beide Richtungen) die Geltungsbereiche, in denen die Beziehung selbst gilt. */
+        private final Map<String, List<RelationScope>> edgeScopes = new LinkedHashMap<>();
 
         private Lexicon(List<Term> terms, List<Synonym> synonyms, List<Term> technical) {
             this(terms, synonyms, technical, scope -> true);
@@ -1017,6 +1019,15 @@ public final class DomainTermGraph {
                         java.util.function.Predicate<RelationScope> within) {
             Set<String> technisch = new java.util.HashSet<>();
             technical.forEach(term -> technisch.add(TermText.normalize(term.term()).strip()));
+            // Fachbegriffe, die nur außerhalb des Bereichs gelten: weder Knoten noch über ein Synonym ein Synonymknoten
+            // (sonst passte er im Bereich, wo er in der Fachsicht nie passt).
+            Set<String> outside = new java.util.HashSet<>();
+            for (Term term : terms) {
+                String key = TermText.normalize(term.term()).strip();
+                if (!key.isEmpty() && !within.test(term.scope())) {
+                    outside.add(key);
+                }
+            }
             for (Term term : terms) {
                 String key = TermText.normalize(term.term()).strip();
                 if (key.isEmpty() || !within.test(term.scope())) {
@@ -1027,6 +1038,7 @@ public final class DomainTermGraph {
                 scopes.computeIfAbsent(key, unused -> new ArrayList<>()).add(term.scope());
             }
             Set<String> fachbegriffe = Set.copyOf(kinds.keySet());
+            outside.removeAll(fachbegriffe);
             for (Synonym synonym : synonyms) {
                 String from = TermText.normalize(synonym.fromTerm()).strip();
                 String to = TermText.normalize(synonym.toTerm()).strip();
@@ -1036,6 +1048,9 @@ public final class DomainTermGraph {
                 }
                 String term = fachbegriffe.contains(from) ? from : to;
                 String other = term.equals(from) ? to : from;
+                if (outside.contains(other)) {
+                    continue;
+                }
                 if (!fachbegriffe.contains(other) && technisch.contains(other)) {
                     // Ein bestätigter technischer Eintrag wird auch über ein Synonym kein Knoten der Fachsicht.
                     continue;
@@ -1066,12 +1081,19 @@ public final class DomainTermGraph {
                     scopes.computeIfAbsent(other, unused -> new ArrayList<>()).addAll(shared);
                 }
                 synonymEdges.add(new String[] {term, other});
+                edgeScopes.computeIfAbsent(term + "\u0000" + other, unused -> new ArrayList<>()).addAll(shared);
+                edgeScopes.computeIfAbsent(other + "\u0000" + term, unused -> new ArrayList<>()).addAll(shared);
             }
         }
 
         /** Die Geltungsbereiche eines Knotens (leer, wenn er nicht im Lexikon steht). */
         List<RelationScope> scopes(String key) {
             return List.copyOf(scopes.getOrDefault(key, List.of()));
+        }
+
+        /** Wo die Synonymbeziehung zwischen {@code one} und {@code two} gilt (leer ohne Beziehung). */
+        List<RelationScope> edgeScopes(String one, String two) {
+            return List.copyOf(edgeScopes.getOrDefault(one + "\u0000" + two, List.of()));
         }
 
         /** Wo beide Geltungsbereiche gelten, oder leer, wenn sie sich nicht überschneiden. */

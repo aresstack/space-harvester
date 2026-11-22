@@ -368,4 +368,6 @@ Tests; den Chat-Anschluss (Werkzeug, System-Prompt) baut der Chat-Strang, die zu
   (`AiRelease`): Ein Name, der nur in Quellen ohne Freigabe gilt, geht nur mit, wenn eine schon freigegebene Seite des
   Bereichs darin liegt oder die Antwort eine Seite darin liefert und damit freigibt; global geltende Einträge bleiben.
   Mit `Delivery.NONE` (Suche, nichts geht an ein Modell) entfällt nur diese Freigabe-Prüfung, der Bereich gilt
-  trotzdem.
+  trotzdem. Ein Synonym zählt nach dem Geltungsbereich seiner Beziehung zum gesuchten Begriff, nicht nach seinen
+  übrigen Einträgen. Ein Fachbegriff, der nur außerhalb des Bereichs gilt, wird auch über ein Synonym kein Knoten
+  (gezählt wird wie in der Fachsicht). Erst filtern, dann auf fünf Begriffe kappen und Ausgelassenes zählen.

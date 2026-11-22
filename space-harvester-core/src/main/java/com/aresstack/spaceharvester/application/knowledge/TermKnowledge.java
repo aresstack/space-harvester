@@ -226,25 +226,30 @@ public final class TermKnowledge {
             return Answer.of(Outcome.EMPTY_QUERY, List.of(), none);
         }
         if (view.outcome() == DomainTermGraph.Outcome.FOUND) {
-            Answer answer = build(view, scope.size(), read.size(),
-                    (key, delivered) -> mayName(within, key, delivery, delivered));
+            // Der gesuchte Begriff nach seinen eigenen Geltungsbereichen, seine Synonyme nach dem Geltungsbereich der
+            // Beziehung zu ihm, nicht nach allen Einträgen des Synonyms.
+            String centre = view.centre().key();
+            Answer answer = build(view, scope.size(), read.size(), (key, delivered) -> mayName(within,
+                    key.equals(centre) ? within.lexicon().scopes(key) : within.lexicon().edgeScopes(centre, key),
+                    delivery, delivered));
             if (answer != null) {
                 return deliver(answer, delivery);
             }
         }
         return Answer.of(Outcome.NOT_A_TERM, DomainTermGraph.suggestions(within.lexicon(), query, MAX_CANDIDATES,
-                key -> mayName(within, key, delivery, List.of())), none);
+                key -> mayName(within, within.lexicon().scopes(key), delivery, List.of())), none);
     }
 
     /**
-     * Ob der Name eines Eintrags den Aufrufer erreichen darf (KI-Freigabe, ADR 0028): wenn einer seiner
-     * Geltungsbereiche im Bereich global ist, nichts an ein Modell geht ({@link Delivery#NONE}), seine Quelle
-     * freigegeben ist, eine schon freigegebene Seite des Bereichs darin liegt oder die Antwort eine Seite darin
-     * liefert (und damit freigibt). Einträge, die nur in Quellen ohne Freigabe gelten, bleiben sonst draußen.
+     * Ob ein Name den Aufrufer erreichen darf (KI-Freigabe, ADR 0028): wenn einer der Geltungsbereiche {@code scopes}
+     * (des Eintrags oder der Beziehung, über die er in die Antwort kommt) global ist, nichts an ein Modell geht
+     * ({@link Delivery#NONE}), seine Quelle freigegeben ist, eine schon freigegebene Seite des Bereichs darin liegt
+     * oder die Antwort eine Seite darin liefert (und damit freigibt). Was nur in Quellen ohne Freigabe gilt, bleibt
+     * sonst draußen.
      */
-    private boolean mayName(DomainTermGraph.Within within, String key, Delivery delivery,
+    private boolean mayName(DomainTermGraph.Within within, List<RelationScope> scopes, Delivery delivery,
                             java.util.Collection<Page> delivered) {
-        for (RelationScope scope : within.lexicon().scopes(key)) {
+        for (RelationScope scope : scopes) {
             if (scope.global() || delivery == Delivery.NONE || ai.sourceReleased(scope.sourceId())) {
                 return true;
             }
@@ -287,6 +292,13 @@ public final class TermKnowledge {
      */
     private static Answer build(DomainTermGraph.View view, int inScope, int read,
                                 java.util.function.BiPredicate<String, java.util.Collection<Page>> mayName) {
+        return build(view, inScope, read, mayName, Set.of());
+    }
+
+    /** Wie oben, ohne die Begriffe {@code dropped}; baut neu, bis jeder genannte Begriff genannt werden darf. */
+    private static Answer build(DomainTermGraph.View view, int inScope, int read,
+                                java.util.function.BiPredicate<String, java.util.Collection<Page>> mayName,
+                                Set<String> dropped) {
         DomainTermGraph.Node centre = view.centre();
         Map<String, DomainTermGraph.Node> nodes = new LinkedHashMap<>();
         view.nodes().forEach(node -> nodes.put(node.key(), node));
@@ -304,8 +316,25 @@ public final class TermKnowledge {
                 group.add(node);
             }
         }
-        int omittedTerms = Math.max(0, group.size() - MAX_TERMS);
-        List<DomainTermGraph.Node> shown = group.subList(0, Math.min(group.size(), MAX_TERMS));
+        // Erst filtern, dann kappen und zählen: Was nicht genannt werden darf, belegt keinen Platz und zählt nicht als
+        // ausgelassen. Vorab gegen alle Seiten, die Aussagen der Gruppe liefern könnten; unten gegen die gelieferten.
+        Map<PageKey, Page> possible = new LinkedHashMap<>();
+        Set<String> members = new LinkedHashSet<>();
+        group.forEach(node -> members.add(node.key()));
+        for (DomainTermGraph.Edge edge : view.edges()) {
+            if (edge.kind() == DomainTermGraph.EdgeKind.VERB
+                    && (members.contains(edge.from()) || members.contains(edge.to()))) {
+                edge.evidence().forEach(item -> possible.putIfAbsent(item.page().key(),
+                        new Page(item.page().key(), item.page().spaceKey(), item.page().title())));
+            }
+        }
+        List<DomainTermGraph.Node> allowed = group.stream().filter(node -> !dropped.contains(node.key()))
+                .filter(node -> mayName.test(node.key(), possible.values())).toList();
+        if (!allowed.contains(centre)) {
+            return null;
+        }
+        int omittedTerms = Math.max(0, allowed.size() - MAX_TERMS);
+        List<DomainTermGraph.Node> shown = allowed.subList(0, Math.min(allowed.size(), MAX_TERMS));
         Set<String> groupKeys = new LinkedHashSet<>();
         group.forEach(node -> groupKeys.add(node.key()));
 
@@ -358,13 +387,20 @@ public final class TermKnowledge {
                     label(nodes, edge.to()), features.negation(), features.modality(), features.temporality(),
                     trust(edge), edge.count(), named, pages.size() - named.size()));
         }
-        // Ein Begriff ohne gelieferte Aussage geht nur mit, wenn sein Name den Aufrufer erreichen darf.
-        List<DomainTermGraph.Node> named = shown.stream().filter(node -> !statements.get(node.key()).isEmpty()
-                || mayName.test(node.key(), delivered.values())).toList();
-        if (!named.contains(centre)) {
+        // Gegen die tatsächlich gelieferten Seiten: Darf ein Name doch nicht mit (seine Seite fiel einer Grenze zum
+        // Opfer), ohne ihn neu bauen; der gesuchte Begriff selbst führt dann zu keiner Antwort.
+        Set<String> failing = new LinkedHashSet<>();
+        shown.stream().filter(node -> !mayName.test(node.key(), delivered.values()))
+                .forEach(node -> failing.add(node.key()));
+        if (failing.contains(centre.key())) {
             return null;
         }
-        List<Term> terms = named.stream().map(node -> new Term(node.label(), node.kind(), statements.get(node.key())))
+        if (!failing.isEmpty()) {
+            Set<String> more = new LinkedHashSet<>(dropped);
+            more.addAll(failing);
+            return build(view, inScope, read, mayName, more);
+        }
+        List<Term> terms = shown.stream().map(node -> new Term(node.label(), node.kind(), statements.get(node.key())))
                 .toList();
         List<String> neighbours = neighbourWeight.entrySet().stream()
                 .sorted(Map.Entry.<String, Integer>comparingByValue().reversed()

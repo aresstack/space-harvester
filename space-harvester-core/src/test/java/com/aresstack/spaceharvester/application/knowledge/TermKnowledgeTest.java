@@ -451,6 +451,98 @@ class TermKnowledgeTest {
     }
 
     @Test
+    void aSynonymIsNamedByTheScopeOfItsRelationToTheTermNotByItsOtherEntries() {
+        term("Plan");
+        term("Ziel");
+        term("Vorhaben");
+        synonyms.add(new DomainTermGraph.Synonym("Plan", "Vorhaben", new RelationScope("akte", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Ziel", "Vorhaben", new RelationScope("wiki", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Ziel", "Absicht", new RelationScope("akte", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Plan", "Absicht", new RelationScope("wiki", null)));
+        analyse("1", "Der Text ist kurz.");
+        analyse("akte", "7", "Der Text ist auch kurz.");
+        PageSet both = PageSet.ofKeys(List.of(key("1"), new PageKey("akte", "7")));
+
+        TermKnowledge.Answer answer = knowledge(AiRelease.ofSources("wiki"::equals)).answer(CALLER, "Plan", both,
+                recording, () -> false);
+
+        assertThat(answer.terms()).extracting(TermKnowledge.Term::term)
+                .as("Plan~Vorhaben gilt nur in „akte“ (ohne Freigabe); dass Vorhaben global und in „wiki“ mit Ziel "
+                        + "verbunden ist, schaltet die Beziehung nicht frei. Plan~Absicht gilt in „wiki“")
+                .containsExactly("Plan", "Absicht");
+    }
+
+    @Test
+    void aTermThatOnlyHoldsOutsideTheScopeNeverBecomesASynonymNodeInside() {
+        term("Plan");
+        term("Ziel");
+        terms.add(new DomainTermGraph.Term("Akte", new RelationScope("akte", null)));
+        synonyms.add(new DomainTermGraph.Synonym("Akte", "Plan", new RelationScope(null, null)));
+        analyse("1", "Die Akte prüft das Ziel.");
+
+        TermKnowledge.Answer answer = knowledge().answer(CALLER, "Plan", pages("1"), recording, () -> false);
+        assertThat(answer.terms()).extracting(TermKnowledge.Term::term).containsExactly("Plan");
+        assertThat(answer.terms().getFirst().statements()).as("zählt wie die Fachsicht: „Akte“ passt in „wiki“ nie")
+                .isEmpty();
+        assertThat(new DomainTermGraph(graph, vocabulary()).around(CALLER, "Plan", DomainTermGraph.Options.DEFAULT,
+                () -> false).edges()).filteredOn(edge -> edge.kind() == DomainTermGraph.EdgeKind.VERB).isEmpty();
+        assertThat(delivered).isEmpty();
+    }
+
+    @Test
+    void namesAreFilteredBeforeTheTermsAreCappedAndCounted() {
+        term("Plan");
+        for (String hidden : List.of("Akte1", "Akte2")) {
+            synonyms.add(new DomainTermGraph.Synonym("Plan", hidden, new RelationScope("akte", null)));
+        }
+        for (String open : List.of("Weg1", "Weg2", "Weg3", "Weg4", "Weg5")) {
+            synonyms.add(new DomainTermGraph.Synonym("Plan", open, new RelationScope(null, null)));
+        }
+        analyse("1", "Der Text ist kurz.");
+        analyse("akte", "7", "Der Text ist auch kurz.");
+        PageSet both = PageSet.ofKeys(List.of(key("1"), new PageKey("akte", "7")));
+
+        TermKnowledge.Answer answer = knowledge(AiRelease.ofSources("wiki"::equals)).answer(CALLER, "Plan", both,
+                recording, () -> false);
+
+        assertThat(answer.terms()).extracting(TermKnowledge.Term::term)
+                .as("versteckte Synonyme belegen keinen Platz").containsExactly("Plan", "Weg1", "Weg2", "Weg3", "Weg4");
+        assertThat(answer.limits().omittedTerms()).as("und zählen nicht als ausgelassen").isEqualTo(1);
+    }
+
+    @Test
+    void anEntryWithoutOwnStatementIsNamedWhenTheAnswerDeliversAPageOfItsSource() {
+        term("Plan");
+        term("Ziel");
+        synonyms.add(new DomainTermGraph.Synonym("Plan", "Entwurf", new RelationScope("akte", null)));
+        analyse("akte", "7", "Der Plan prüft das Ziel.");
+
+        TermKnowledge.Answer answer = knowledge(AiRelease.ofSources("wiki"::equals)).answer(CALLER, "Plan",
+                PageSet.ofKeys(List.of(new PageKey("akte", "7"))), recording, () -> false);
+
+        assertThat(answer.terms()).extracting(TermKnowledge.Term::term).containsExactly("Plan", "Entwurf");
+        assertThat(answer.terms().get(1).statements()).isEmpty();
+        assertThat(delivered).containsExactly(new PageKey("akte", "7"));
+    }
+
+    @Test
+    void theAskedTermInTheScopeButNotNameableGivesNoAnswerNoCandidatesAndNoDelivery() {
+        term("Plan");
+        terms.add(new DomainTermGraph.Term("Aktenplan", new RelationScope("akte", null)));
+        analyse("1", "Der Text ist kurz.");
+        analyse("akte", "7", "Der Text ist auch kurz.");
+        PageSet both = PageSet.ofKeys(List.of(key("1"), new PageKey("akte", "7")));
+
+        TermKnowledge.Answer answer = knowledge(AiRelease.ofSources("wiki"::equals)).answer(CALLER, "Aktenplan",
+                both, recording, () -> false);
+
+        assertThat(answer.outcome()).isEqualTo(TermKnowledge.Outcome.NOT_A_TERM);
+        assertThat(answer.candidates()).isEmpty();
+        assertThat(answer.terms()).isEmpty();
+        assertThat(delivered).isEmpty();
+    }
+
+    @Test
     void aGlobalTermIsDeliveredEvenWithoutAnyAiRelease() {
         term("Plan");
         analyse("1", "Der Text ist kurz.");
