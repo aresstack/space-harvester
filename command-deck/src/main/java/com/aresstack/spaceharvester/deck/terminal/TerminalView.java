@@ -31,4 +31,15 @@ public interface TerminalView {
     void addScreenListener(Runnable listener);
 
     void removeScreenListener(Runnable listener);
+
+    /**
+     * Hebt Bereiche des Bildes hervor, etwa die Felder, die der KI-Maskenassistent ausgefüllt hat (#1151), damit der
+     * Mensch sie vor dem Absenden prüft. Eine leere Liste nimmt die Hervorhebung weg.
+     */
+    default void highlight(java.util.List<Span> spans) {
+    }
+
+    /** Ein Bereich ab Pufferposition {@code start}, {@code length} Zellen lang. */
+    record Span(int start, int length) {
+    }
 }
