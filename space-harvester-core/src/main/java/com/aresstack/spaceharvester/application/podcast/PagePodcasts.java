@@ -42,7 +42,7 @@ import java.util.function.ObjIntConsumer;
 public final class PagePodcasts {
 
     /** Kennung des Verfahrens; Teil des Schlüssels, damit eine neue Fassung neu plant. */
-    public static final String VERSION = "page-podcast-v1";
+    public static final String VERSION = "page-podcast-v2";
     /** Parameter des Auftrags: die Seite. */
     public static final String PAGE_PARAMETER = "page";
 

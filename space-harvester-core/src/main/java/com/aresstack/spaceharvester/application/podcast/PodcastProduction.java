@@ -210,9 +210,11 @@ final class PodcastProduction {
         if (models.isEmpty()) {
             throw new JobFailedException("NO_SPEECH_MODEL", "Der KI-Dienst bietet kein Sprachmodell (TTS) an");
         }
-        PodcastSpeaker speaker = new PodcastSpeaker(speech, models, voices);
-        PodcastVoices.Pair pair = store.meta(key).filter(meta -> speaker.model().equals(meta.model()))
-                .map(meta -> new PodcastVoices.Pair(meta.host(), meta.cohost())).orElse(speaker.pair());
+        // Ein Modell und zwei feste Stimmen für den ganzen Podcast, auch über Neustarts hinweg (Angelo 22.11.2026).
+        String speechModel = models.get(0);
+        PodcastVoices.Pair pair = store.meta(key).filter(meta -> speechModel.equals(meta.model()))
+                .map(meta -> new PodcastVoices.Pair(meta.host(), meta.cohost())).orElse(voices.pair(speechModel));
+        PodcastSpeaker speaker = new PodcastSpeaker(speech, speechModel, pair);
         store.saveMeta(origin.voiced(speaker.model(), pair.host(), pair.cohost()));
         notify(key);
         PodcastWriter writer = new PodcastWriter(model, attempt -> waits.accept(context, attempt));

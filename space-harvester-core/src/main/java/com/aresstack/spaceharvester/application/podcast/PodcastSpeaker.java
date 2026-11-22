@@ -21,39 +21,45 @@ import java.util.Objects;
  * Satzanalyse und der Stimmstabilitäts-Fix, der lange Stücke nach etwa 500 Zeichen an der nächsten Satzgrenze beendet,
  * weil generative Stimmen wie Orpheus über rund 1000 Zeichen ihre Stimme wechseln.
  *
- * <p>Selbstheilend (Angelo 21.11.2026): Scheitert ein Beitrag auch nach den Wiederholungen des Ablaufs, versucht der
- * Sprecher ihn Satz für Satz, dann mit der anderen Stimme, dann mit dem nächsten Sprachmodell des Dienstes. Erst wenn
- * alles scheitert, scheitert der Abschnitt; der Auftrag versucht ihn später noch einmal.
+ * <p>Jede Rolle behält ihre Stimme (Angelo 22.11.2026: die Stimmen waren nicht auseinanderzuhalten): Jeder Beitrag
+ * spricht mit der Stimme seiner Rolle im Sprachmodell des Podcasts, nie still mit der Stimme der anderen Rolle oder mit
+ * einem anderen Modell, dessen Stimmen anders klängen. Welche Stimmen und Modelle es gibt, bestimmt weiter
+ * {@link PodcastVoices}. Selbstheilend (Angelo 21.11.2026): Scheitert ein Beitrag auch nach den Wiederholungen des
+ * Ablaufs, versucht der Sprecher ihn Satz für Satz; scheitert auch das, scheitert der Abschnitt und der Auftrag versucht
+ * ihn später noch einmal (Diagnose {@code PODCAST_AUDIO_MISSING}).
  */
 public final class PodcastSpeaker {
 
     /** Pause zwischen zwei Beiträgen. */
     static final int PAUSE_MILLIS = 350;
-    /** Höchstens so viele Sprachmodelle werden versucht. */
-    static final int MAX_MODELS = 2;
+    /**
+     * Kürzel, die die Sprachausgabe als Wort statt Buchstabe für Buchstabe läse (Angelo 22.11.2026, „BSCW-Update“); nur
+     * für das Audio, der Text im Bericht bleibt, wie er ist.
+     */
+    private static final java.util.regex.Pattern BSCW = java.util.regex.Pattern.compile("\\bBSCW\\b");
 
     private final PodcastSpeech speech;
-    private final List<String> models;
-    private final PodcastVoices voices;
+    private final String model;
+    private final PodcastVoices.Pair pair;
 
-    /** @param models die Sprachmodelle des Dienstes, bevorzugtes zuerst ({@link PodcastVoices#ranked}) */
-    public PodcastSpeaker(PodcastSpeech speech, List<String> models, PodcastVoices voices) {
+    /**
+     * @param model das Sprachmodell des Podcasts
+     * @param pair  die Stimmen von Gastgeber und Co-Host, für den ganzen Podcast fest
+     */
+    public PodcastSpeaker(PodcastSpeech speech, String model, PodcastVoices.Pair pair) {
         this.speech = Objects.requireNonNull(speech, "speech");
-        if (models.isEmpty()) {
-            throw new IllegalArgumentException("models must not be empty");
-        }
-        this.models = List.copyOf(models.subList(0, Math.min(MAX_MODELS, models.size())));
-        this.voices = Objects.requireNonNull(voices, "voices");
+        this.model = Objects.requireNonNull(model, "model");
+        this.pair = Objects.requireNonNull(pair, "pair");
     }
 
-    /** Das bevorzugte Modell, dessen Stimmen der Podcast trägt. */
+    /** Das Sprachmodell, dessen Stimmen der Podcast trägt. */
     public String model() {
-        return models.get(0);
+        return model;
     }
 
-    /** Die Stimmen des bevorzugten Modells. */
+    /** Die Stimmen des Podcasts. */
     public PodcastVoices.Pair pair() {
-        return voices.pair(model());
+        return pair;
     }
 
     /**
@@ -86,40 +92,30 @@ public final class PodcastSpeaker {
         return wav(parts, format);
     }
 
-    /** Die WAV-Stücke eines Beitrags, mit allen Auswegen. */
+    /** Der Text, wie ihn die Sprachausgabe bekommt: Kürzel Buchstabe für Buchstabe. */
+    static String pronounced(String text) {
+        return BSCW.matcher(text).replaceAll("Be Es Ze We");
+    }
+
+    /** Die WAV-Stücke eines Beitrags: mit der Stimme seiner Rolle, absatzweise, sonst Satz für Satz. */
     private List<byte[]> turn(Turn turn, List<String> repairs) throws IOException {
+        String voice = turn.speaker() == Speaker.HOST ? pair.host() : pair.cohost();
         String lastProblem = "unbekannt";
-        for (int m = 0; m < models.size(); m++) {
-            String model = models.get(m);
-            PodcastVoices.Pair pair = voices.pair(model);
-            String voice = turn.speaker() == Speaker.HOST ? pair.host() : pair.cohost();
-            String other = turn.speaker() == Speaker.HOST ? pair.cohost() : pair.host();
-            List<Attempt> attempts = new ArrayList<>();
-            attempts.add(new Attempt(voice, false, null));
-            attempts.add(new Attempt(voice, true, "Satz für Satz"));
-            if (other != null && !other.equals(voice)) {
-                attempts.add(new Attempt(other, true, "mit der anderen Stimme"));
-            }
-            for (Attempt attempt : attempts) {
-                try {
-                    List<byte[]> wavs = speech.speak(model, attempt.voice(), turn.text(), attempt.sentences());
-                    if (!wavs.isEmpty()) {
-                        if (attempt.note() != null || m > 0) {
-                            repairs.add("Beitrag " + (attempt.note() == null ? "" : attempt.note() + " ")
-                                    + (m > 0 ? "mit dem Sprachmodell " + model + " " : "") + "gesprochen");
-                        }
-                        return wavs;
+        for (boolean sentences : new boolean[] {false, true}) {
+            try {
+                List<byte[]> wavs = speech.speak(model, voice, pronounced(turn.text()), sentences);
+                if (!wavs.isEmpty()) {
+                    if (sentences) {
+                        repairs.add("Beitrag Satz für Satz gesprochen");
                     }
-                    lastProblem = "kein Audio";
-                } catch (IOException | RuntimeException e) {
-                    lastProblem = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                    return wavs;
                 }
+                lastProblem = "kein Audio";
+            } catch (IOException | RuntimeException e) {
+                lastProblem = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             }
         }
         throw new IOException("Sprachausgabe gescheitert (" + lastProblem + ")");
-    }
-
-    private record Attempt(String voice, boolean sentences, String note) {
     }
 
     private static AudioInputStream stream(byte[] wav) throws IOException {

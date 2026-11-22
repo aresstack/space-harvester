@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.podcast;
 
 import com.aresstack.spaceharvester.application.podcast.PodcastPlan.Segment;
+import com.aresstack.spaceharvester.application.podcast.PodcastPlan.Speaker;
 import com.aresstack.spaceharvester.application.podcast.PodcastPlan.Turn;
 import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import org.junit.jupiter.api.Test;
@@ -67,8 +68,9 @@ class PodcastWriterLiveTest {
                                 List.of("auf der Seite „2026-11-20 - RZ K-PLM Leitstand - Jour Fixe wöchentlich“ im "
                                         + "Space PRV 27351", "auf der Seite „Sachstand Projektergebnisse“ im Space "
                                         + "Kranich Extensions"))),
-                "Space DEMO");
+                "Space DEMO").withShow(UpdatePodcasts.show("confluence"));
         PodcastWriter.Voices voices = new PodcastWriter.Voices("Jana", "Thomas");
+        List<Turn> told = new ArrayList<>();
 
         PodcastPlan plan = writer.outline(material);
         System.out.println("[live] Titel: " + plan.title() + ", Reparaturen: " + plan.repairs());
@@ -85,6 +87,7 @@ class PodcastWriterLiveTest {
                 System.out.println("[live] == " + plan.topics().get(t).title() + " / " + planned.get(s).title());
                 turns.forEach(turn -> System.out.println("[live] " + turn.speaker() + ": " + turn.text()));
                 turns.forEach(turn -> spoken.add(turn.text()));
+                told.addAll(turns);
                 ends.add(turns.get(turns.size() - 1).text().strip());
                 before = planned.get(s);
             }
@@ -92,6 +95,13 @@ class PodcastWriterLiveTest {
         System.out.println("[live] Reparaturen: " + repairs);
         String all = String.join("\n", spoken);
         assertThat(repairs).noneMatch(repair -> repair.contains("ohne Modell"));
+        // Angelo 22.11.2026: Begrüßung mit der Art der Quelle, kein erdachter Sendungsname, Rollen stimmen.
+        assertThat(String.join(" ", spoken.subList(0, Math.min(3, spoken.size())))).as("Begrüßung")
+                .contains("Confluence-Update");
+        assertThat(all).as("kein erdachter Sendungsname").doesNotContain("IT-Info", "IT‑Info");
+        assertThat(told).as("Jana ist Gastgeberin, Thomas Co-Host").noneMatch(turn ->
+                turn.speaker() == Speaker.COHOST && turn.text().contains("Ich bin Jana")
+                        || turn.speaker() == Speaker.HOST && turn.text().contains("Ich bin Thomas"));
         assertThat(all).as("keine Metadaten").doesNotContainIgnoringCase("kilobyte")
                 .doesNotContain("100 neue Seiten", "hundert neue Seiten", "37 geänderte");
         assertThat(all).as("Inhalt kommt vor").contains("Spool").containsIgnoringCase("Checkliste");

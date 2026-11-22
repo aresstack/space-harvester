@@ -175,16 +175,18 @@ class UpdatePodcastsTest {
     }
 
     @Test
-    void healsAFailingVoiceWithTheOtherOne() throws Exception {
+    void aFailingVoiceIsNeverReplacedByTheOtherOne() throws Exception {
+        // Angelo 22.11.2026: Jana und „jemand mit fast derselben Stimme“ – kein stiller Wechsel auf eine fremde Stimme.
         FakeSpeech speech = new FakeSpeech("Thomas"::equals);
         UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
 
         JobStatus status = podcasts(new FakeModel(), speech).start(caller, summary);
 
-        assertThat(podcasts(new FakeModel(), speech).podcast(summary).orElseThrow().complete()).isTrue();
-        // der Ausweg steht in der Diagnose des Auftrags, einmal mit Anzahl
+        assertThat(podcasts(new FakeModel(), speech).podcast(summary).orElseThrow().complete())
+                .as("die Beiträge von Thomas fehlen, statt mit Janas Stimme gesprochen zu werden").isFalse();
         assertThat(jobs.events(status.id())).extracting(JobEvent::message)
-                .anySatisfy(message -> assertThat(message).contains("mit der anderen Stimme"));
+                .noneSatisfy(message -> assertThat(message).contains("anderen Stimme"))
+                .anySatisfy(message -> assertThat(message).contains("ohne Audio"));
     }
 
     @Test

@@ -172,7 +172,8 @@ public final class PodcastWriter {
             }
             prompt.append('\n');
         }
-        prompt.append("\n# AUFGABE\nPlane eine Folge \"").append(format.episode).append("\": einen packenden Titel "
+        prompt.append("\n# AUFGABE\nPlane eine Folge \"").append(material.show() == null ? format.episode
+                        : material.show()).append("\": einen packenden Titel "
                 + "und 3 bis ").append(PodcastPlan.MAX_TOPICS).append(" Themen in Sendereihenfolge. ")
                 .append(format.opening).append(" Das letzte ist ein kurzer Abschluss. Dazwischen erzählt jedes Thema ")
                 .append(format == Format.NEWS ? "eine " : "einen ").append(format.one).append(" oder mehrere, die inhaltlich zusammenpassen; ")
@@ -399,7 +400,7 @@ public final class PodcastWriter {
             prompt.append("Die anderen Abschnitte dieses Themas erzählen ").append(String.join(", ", others))
                     .append("; das gehört nicht hierher.\n");
         }
-        prompt.append(first ? "Davor: nichts, das ist der Anfang der Folge; begrüßt kurz.\n"
+        prompt.append(first ? "Davor: nichts, das ist der Anfang der Folge; begrüßt kurz" + greeting(material) + ".\n"
                 : "Davor endete der Abschnitt \"" + (before == null ? "" : before.title()) + "\"; schließt natürlich "
                 + "daran an, ohne neu zu begrüßen und ohne den Überblick zu wiederholen.\n");
         if (last) {
@@ -483,7 +484,8 @@ public final class PodcastWriter {
         List<Turn> turns = new ArrayList<>();
         Speaker speaker = Speaker.HOST;
         if (first) {
-            turns.add(new Turn(speaker, "Hallo und willkommen! " + material.format().greeting));
+            turns.add(new Turn(speaker, (material.show() == null ? "Hallo und willkommen! "
+                    : "Hallo und willkommen zum " + material.show() + "! ") + material.format().greeting));
             speaker = speaker.other();
         }
         List<Story> stories = material.stories(topic);
@@ -518,12 +520,24 @@ public final class PodcastWriter {
      * @param stories  die Meldungen, je ein Thema der Zusammenfassung
      * @param scope    die Ebene, etwa „Space Betrieb“ oder „Seite „Handbuch““, {@code null} für die ganze Quelle
      * @param format   Neuigkeiten oder Erklärung einer Seite
+     * @param show     wie die Sendung heißt, nach der Art der Quelle, etwa „Confluence-Update“ (Angelo 22.11.2026);
+     *                 nie ein Servername, {@code null} ohne Namen
      */
-    public record Material(String overview, List<Story> stories, String scope, Format format) {
+    public record Material(String overview, List<Story> stories, String scope, Format format, String show) {
         public Material {
             overview = overview == null ? "" : overview;
             stories = List.copyOf(stories);
             format = format == null ? Format.NEWS : format;
+            show = show == null || show.isBlank() ? null : show.strip();
+        }
+
+        public Material(String overview, List<Story> stories, String scope, Format format) {
+            this(overview, stories, scope, format, null);
+        }
+
+        /** Dasselbe Material für die Sendung {@code show}. */
+        public Material withShow(String show) {
+            return new Material(overview, stories, scope, format, show);
         }
 
         /** Neuigkeiten eines Updates. */
@@ -599,6 +613,15 @@ public final class PodcastWriter {
     }
 
     // --- Hilfen -------------------------------------------------------------------------------------------------
+
+    /**
+     * Wie die Begrüßung die Sendung nennt (Angelo 22.11.2026): nach der Art der Quelle, etwa „Willkommen zum
+     * Confluence-Update“, nie mit einem selbst erdachten Sendungsnamen oder einem Servernamen.
+     */
+    static String greeting(Material material) {
+        return material.show() == null ? "" : " mit „Willkommen zum " + material.show() + "“; so heißt die Sendung, "
+                + "nennt sie nicht anders und nennt keine Server- oder Rechnernamen";
+    }
 
     private static String planText(PodcastPlan plan, Voices voices) {
         StringBuilder text = new StringBuilder("# PLAN DER FOLGE \"").append(plan.title()).append("\"\nStimmen: ")
