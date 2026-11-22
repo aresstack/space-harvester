@@ -175,6 +175,13 @@ public final class PodcastPlayer {
     }
 
     /** Der Titel des Abschnitts an einer Stelle. */
+    /** Der Index des Abschnitts an {@code millis} in der Reihenfolge der Tracks, {@code -1} außerhalb. */
+    public int trackAt(long millis) {
+        synchronized (lock) {
+            return indexAt(millis);
+        }
+    }
+
     public String titleAt(long millis) {
         synchronized (lock) {
             int index = indexAt(millis);

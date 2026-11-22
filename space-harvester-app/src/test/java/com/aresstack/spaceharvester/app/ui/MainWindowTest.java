@@ -131,7 +131,8 @@ class MainWindowTest {
             surface[0].setSize(1280, 820);
         });
         // Suche nur unter der Arbeitsfläche, nicht unter dem Explorer; der Fortschritt steckt in der Statuszeile.
-        assertThat(SwingUtilities.isDescendingFrom(window[0].findBar(), window[0].deck().getParent())).isTrue();
+        assertThat(SwingUtilities.isDescendingFrom(window[0].findBar(), window[0].deck().getParent().getParent()))
+                .isTrue();
         assertThat(SwingUtilities.isDescendingFrom(window[0].findBar(), window[0].explorer().component())).isFalse();
         assertThat(SwingUtilities.isDescendingFrom(window[0].statusLine(), surface[0])).isTrue();
         for (AppContext.Section section : AppContext.Section.values()) {
@@ -275,6 +276,45 @@ class MainWindowTest {
         });
         Thread.sleep(500);
         SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], home.resolve("export.png")));
+    }
+
+    @Test
+    void anOverlayCoversTheContentAreaOnlyUnderContents() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            surface.setSize(1280, 820);
+            window.show(AppContext.Section.CONTENT);
+            JPanel picture = new JPanel();
+            assertThat(window.contentOverlay()).isNull();
+
+            context.events().publish(com.aresstack.spaceharvester.app.event.ContentOverlayEvent.show(picture));
+            layout(surface);
+            assertThat(window.contentOverlay()).isSameAs(picture);
+            // Die Fläche deckt genau den Inhaltsbereich; Zeitleiste und Suchleiste darunter bleiben frei.
+            assertThat(SwingUtilities.convertRectangle(picture.getParent(), picture.getBounds(), surface))
+                    .isEqualTo(SwingUtilities.convertRectangle(window.deck().getParent(), window.deck().getBounds(),
+                            surface));
+
+            // In einem anderen Bereich liegt sie nicht über dessen Ansicht, zurück unter „Inhalte“ wieder schon.
+            window.show(AppContext.Section.STATUS);
+            assertThat(window.contentOverlay()).isNull();
+            window.show(AppContext.Section.CONTENT);
+            assertThat(window.contentOverlay()).isSameAs(picture);
+
+            context.events().publish(com.aresstack.spaceharvester.app.event.ContentOverlayEvent.hide(picture));
+            assertThat(window.contentOverlay()).isNull();
+        });
     }
 
     @Test
