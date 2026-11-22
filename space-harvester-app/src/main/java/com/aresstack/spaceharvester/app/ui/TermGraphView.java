@@ -2284,39 +2284,68 @@ public final class TermGraphView {
         /** Linie und Schrift einer Aussage, die früher galt oder verworfen ist (UX W9): blasser, nie farbig. */
         static final Color PALE = new Color(Comic.INK.getRed(), Comic.INK.getGreen(), Comic.INK.getBlue(), 105);
         /** Länge des Querstrichs einer verneinten Aussage (UX W9). */
-        static final double NEGATION_LENGTH = 11;
+        static final double NEGATION_LENGTH = 14;
+        /** Abstand des Querstrichs zur Beschriftung (UX W9). */
+        static final double NEGATION_GAP = 8;
+        /** So lang ist eine gestrichelte oder gepunktete Linie um den Querstrich durchgezogen (UX W9). */
+        static final double NEGATION_SOLID = 12;
 
         /**
-         * Querstrich einer verneinten Aussage (UX W9): kurz und schräg durch die Linie, in ihrer Farbe und Stärke,
-         * einmal unmittelbar vor der Beschriftung (in Richtung der Kante); ohne Beschriftung in der Mitte.
+         * Querstrich einer verneinten Aussage (UX W9): 14 px, etwa 60° zur Linie, in Linienfarbe, mindestens 2 px stark,
+         * {@link #NEGATION_GAP} vor der Beschriftung auf der Seite des Startknotens, obenauf. Auf gestrichelter oder
+         * gepunkteter Linie ist die Linie {@link #NEGATION_SOLID} um ihn durchgezogen, damit er sich vom Muster abhebt.
          */
         private static void negation(Graphics2D g2, Segment segment, Rectangle2D tag) {
             double t = negationAt(segment, tag);
             Point2D at = segment.at(t);
             Point2D ahead = segment.at(Math.min(1, t + 0.01));
             Point2D behind = segment.at(Math.max(0, t - 0.01));
-            double angle = Math.atan2(ahead.getY() - behind.getY(), ahead.getX() - behind.getX()) + Math.toRadians(60);
+            double direction = Math.atan2(ahead.getY() - behind.getY(), ahead.getX() - behind.getX());
+            java.awt.Stroke before = g2.getStroke();
+            float line = before instanceof BasicStroke basic ? basic.getLineWidth() : 2f;
+            if (before instanceof BasicStroke basic && basic.getDashArray() != null) {
+                // Ein Stück durchgezogene Linie unter dem Querstrich, entlang der Kante.
+                double step = 0.002;
+                Point2D[] ends = new Point2D[2];
+                for (int side = 0; side < 2; side++) {
+                    Point2D last = at;
+                    double walked = 0;
+                    for (double u = t; walked < NEGATION_SOLID / 2 && u >= 0 && u <= 1;
+                         u += side == 0 ? -step : step) {
+                        Point2D next = segment.at(Math.max(0, Math.min(1, u)));
+                        walked += next.distance(last);
+                        last = next;
+                    }
+                    ends[side] = last;
+                }
+                g2.setStroke(new BasicStroke(line, BasicStroke.CAP_BUTT, BasicStroke.JOIN_ROUND));
+                g2.draw(new Line2D.Double(ends[0], at));
+                g2.draw(new Line2D.Double(at, ends[1]));
+            }
+            double angle = direction + Math.toRadians(60);
             double dx = Math.cos(angle) * NEGATION_LENGTH / 2;
             double dy = Math.sin(angle) * NEGATION_LENGTH / 2;
-            float width = g2.getStroke() instanceof BasicStroke line ? line.getLineWidth() : 2f;
-            java.awt.Stroke before = g2.getStroke();
-            g2.setStroke(new BasicStroke(width, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.setStroke(new BasicStroke(Math.max(2f, line), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             g2.draw(new Line2D.Double(at.getX() - dx, at.getY() - dy, at.getX() + dx, at.getY() + dy));
             g2.setStroke(before);
         }
 
-        /** Wo der Querstrich sitzt: kurz bevor die Linie die Beschriftung erreicht; ohne Beschriftung die Mitte. */
+        /**
+         * Wo der Querstrich sitzt: auf der Linie, so weit vor der Beschriftung (Seite des Startknotens), dass er
+         * {@link #NEGATION_GAP} Abstand hält; ohne Beschriftung die Mitte.
+         */
         static double negationAt(Segment segment, Rectangle2D tag) {
             if (tag == null) {
                 return 0.5;
             }
-            Rectangle2D near = new Rectangle2D.Double(tag.getX() - 7, tag.getY() - 7, tag.getWidth() + 14,
-                    tag.getHeight() + 14);
-            int steps = 80;
+            double margin = NEGATION_GAP + NEGATION_LENGTH / 2;
+            Rectangle2D near = new Rectangle2D.Double(tag.getX() - margin, tag.getY() - margin,
+                    tag.getWidth() + 2 * margin, tag.getHeight() + 2 * margin);
+            int steps = 200;
             for (int i = 0; i <= steps; i++) {
                 double t = i / (double) steps;
                 if (near.contains(segment.at(t))) {
-                    return Math.max(0.05, t);
+                    return Math.max(0.02, t);
                 }
             }
             return 0.5;

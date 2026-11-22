@@ -160,9 +160,19 @@ class TermGraphViewStatementsTest {
                     .negated()).findFirst().orElseThrow();
             double t = TermGraphView.Canvas.negationAt(negated, negated.tag());
             Point2D cross = negated.at(t);
-            assertThat(negated.tag().contains(cross)).as("Querstrich vor, nicht unter der Beschriftung").isFalse();
-            assertThat(cross.distance(negated.tag().getCenterX(), negated.tag().getCenterY()))
-                    .as("unmittelbar vor der Beschriftung").isLessThan(negated.tag().getWidth() / 2 + 20);
+            Rectangle2D tag = negated.tag();
+            Rectangle2D kept = new Rectangle2D.Double(tag.getX() - TermGraphView.Canvas.NEGATION_GAP + 0.5,
+                    tag.getY() - TermGraphView.Canvas.NEGATION_GAP + 0.5,
+                    tag.getWidth() + 2 * TermGraphView.Canvas.NEGATION_GAP - 1,
+                    tag.getHeight() + 2 * TermGraphView.Canvas.NEGATION_GAP - 1);
+            double half = TermGraphView.Canvas.NEGATION_LENGTH / 2;
+            for (double angle = 0; angle < 2 * Math.PI; angle += Math.PI / 12) {
+                assertThat(kept.contains(cross.getX() + Math.cos(angle) * half, cross.getY() + Math.sin(angle) * half))
+                        .as("Querstrich hält 8 px Abstand zur Beschriftung").isFalse();
+            }
+            assertThat(cross.distance(tag.getCenterX(), tag.getCenterY()))
+                    .as("kurz vor der Beschriftung").isLessThan(Math.hypot(tag.getWidth() / 2, tag.getHeight() / 2)
+                            + TermGraphView.Canvas.NEGATION_GAP + TermGraphView.Canvas.NEGATION_LENGTH + 4);
             assertThat(t).as("in Richtung der Kante vor der Beschriftung").isLessThan(tagPosition(negated));
         }
         assertThat(TermGraphView.Canvas.PALE.getAlpha()).as("blasser, nicht farbig").isLessThan(255);
