@@ -82,6 +82,37 @@ public final class PageLoads {
      * {@link Wake} hat seine eigene Sperre.
      */
     private final java.util.concurrent.locks.ReentrantLock joining = new java.util.concurrent.locks.ReentrantLock();
+    /**
+     * Die offenen Teile dieser Art (wartend, laufend, angehalten) mit ihrem jüngsten Stand, je Teil-ID: ein Abbild aus
+     * den Auftragsmeldungen (ADR 0027, Abnahme #1132), damit {@link #join} auf dem Weg der Suchtreffer nie den
+     * Auftragsspeicher liest. Nur beim Start einmal aus dem Speicher gefüllt. Gestartete und neu laufende Teile kommen
+     * sofort hinein, nicht erst mit der Meldung. Nur unter {@link #image}.
+     */
+    private final Map<String, com.aresstack.spaceharvester.application.jobs.JobStatus> open = new java.util.HashMap<>();
+    /**
+     * Sperre des Abbilds ({@link #open}, {@link #gone}, {@link #starting}, {@link #rerunning}, {@link #seeding}); nie
+     * über Ein- und Ausgabe gehalten, nur über Kartenzugriffe.
+     */
+    private final java.util.concurrent.locks.ReentrantLock image = new java.util.concurrent.locks.ReentrantLock();
+    /** Gruppen, die {@link #join} gerade startet, bis ihre Teile im Abbild stehen. */
+    private final Set<String> starting = new java.util.HashSet<>();
+    /** Teile, die gerade im selben Eintrag neu starten ({@link BackgroundJobs#onRerun}), bis ihr Stand im Abbild steht. */
+    /**
+     * Je Teil die Zahl laufender Neustarts, nicht nur ob einer läuft (Abnahme #1133): Zwei können überlappen, etwa ein
+     * Doppelklick auf Fortsetzen; der gescheiterte darf {@link #gone} nicht räumen, solange der andere noch läuft.
+     */
+    private final Map<String, Integer> rerunning = new java.util.HashMap<>();
+    /**
+     * Teile, deren Ende gemeldet wurde, während sie starteten, neu starteten oder das Abbild gefüllt wurde, mit dem Anlass
+     * (Gruppe oder Teil): Der ältere Stand aus {@code start()}, dem Neustart oder dem Speicher bringt sie nicht als offen
+     * zurück. Der Anlass räumt seine Einträge am Ende selbst.
+     */
+    private final Map<String, String> gone = new java.util.HashMap<>();
+    private boolean seeding = true;
+    /** Die Auftragsmeldungen für {@link #open}; lebt so lange wie der Dienst. */
+    private final com.aresstack.spaceharvester.application.observe.Subscription parts;
+    /** Die Neustarts für {@link #open}; lebt so lange wie der Dienst. */
+    private final com.aresstack.spaceharvester.application.observe.Subscription reruns;
 
     /**
      * @param technical der technische Aufrufer des Dienstes, für fortgesetzte Unteraufträge nach einem Neustart
@@ -96,6 +127,97 @@ public final class PageLoads {
         this.cached = Objects.requireNonNull(cached, "cached");
         this.space = Objects.requireNonNull(space, "space");
         background.register(new BackgroundKind(KIND, this::work));
+        this.parts = background.subscribe(KIND, this::track, this::untrack);
+        // Einmal beim Start: was vor dem Neustart offen war. Meldungen währenddessen gehen vor (gone).
+        for (BackgroundGroup group : background.groups()) {
+            if (KIND.equals(group.kind())) {
+                group.parts().forEach(this::adopt);
+            }
+        }
+        image.lock();
+        try {
+            seeding = false;
+            gone.values().removeIf(SEEDING::equals);
+        } finally {
+            image.unlock();
+        }
+        this.reruns = background.onRerun(rerunWatch);
+    }
+
+    /** Hält das Abbild bei Neustarts im selben Eintrag aktuell; paketsichtbar für Tests überlappender Neustarts. */
+    final BackgroundJobs.Reruns rerunWatch = new BackgroundJobs.Reruns() {
+        @Override
+        public void before(String partId) {
+            guard(() -> rerunning.merge(partId, 1, Integer::sum));
+        }
+
+        @Override
+        public void after(String partId, com.aresstack.spaceharvester.application.jobs.JobStatus rerun) {
+            if (rerun != null && KIND.equals(rerun.parameter(BackgroundJobs.KIND))) {
+                adopt(rerun);
+            }
+            guard(() -> {
+                // Erst der letzte überlappende Neustart räumt; vorher hält gone ein gemeldetes Ende fest.
+                if (rerunning.merge(partId, -1, Integer::sum) <= 0) {
+                    rerunning.remove(partId);
+                    gone.values().removeIf(partId::equals);
+                }
+            });
+        }
+    };
+
+    /** Anlass in {@link #gone} für Enden, die beim Füllen gemeldet wurden. */
+    private static final String SEEDING = "";
+
+    private void guard(Runnable change) {
+        image.lock();
+        try {
+            change.run();
+        } finally {
+            image.unlock();
+        }
+    }
+
+    /** Auftragsmeldung: der jüngste Stand eines Teils dieser Art. */
+    private void track(com.aresstack.spaceharvester.application.jobs.JobStatus status) {
+        if (!loading(status.state())) {
+            untrack(status);
+            return;
+        }
+        guard(() -> open.put(status.id(), status));
+    }
+
+    /** Auftragsmeldung: Der Teil lädt nicht mehr oder ist gelöscht. */
+    private void untrack(com.aresstack.spaceharvester.application.jobs.JobStatus last) {
+        guard(() -> {
+            open.remove(last.id());
+            String group = groupOf(last);
+            if (starting.contains(group)) {
+                gone.put(last.id(), group);
+            } else if (rerunning.containsKey(last.id())) {
+                gone.put(last.id(), last.id());
+            } else if (seeding) {
+                gone.put(last.id(), SEEDING);
+            }
+        });
+    }
+
+    /**
+     * Übernimmt einen Stand aus dem Speicher, aus {@code start()} oder aus einem Neustart, ohne einen jüngeren aus
+     * Meldungen zu ersetzen und ohne einen schon beendet gemeldeten zurückzubringen.
+     */
+    private void adopt(com.aresstack.spaceharvester.application.jobs.JobStatus status) {
+        guard(() -> {
+            if (open.containsKey(status.id()) || gone.remove(status.id()) != null || !loading(status.state())) {
+                return;
+            }
+            open.put(status.id(), status);
+        });
+    }
+
+    private static String groupOf(com.aresstack.spaceharvester.application.jobs.JobStatus status) {
+        String group = status.parameter(BackgroundJobs.GROUP);
+        return group != null ? group : status.id();
     }
 
     /**
@@ -208,13 +330,25 @@ public final class PageLoads {
             }
         }));
         BackgroundGroup started;
+        guard(() -> starting.add(groupId));
         try {
-            started = background.start(groupId, KIND, title, parts);
-        } catch (RuntimeException e) {
-            forget(groupId, held);
-            throw e;
+            try {
+                started = background.start(groupId, KIND, title, parts);
+            } catch (RuntimeException e) {
+                forget(groupId, held);
+                throw e;
+            }
+            // Sofort ins Abbild, nicht erst mit der Meldung: Der nächste join sieht die Seiten schon als geladen.
+            started.parts().forEach(this::adopt);
+        } finally {
+            guard(() -> {
+                starting.remove(groupId);
+                gone.values().removeIf(groupId::equals);
+            });
         }
-        background.group(groupId).filter(PageLoads::ended).ifPresent(group -> forget(groupId, held));
+        if (ended(started)) {
+            forget(groupId, held);
+        }
         return new Joined(Optional.of(started), joined);
     }
 
@@ -269,20 +403,25 @@ public final class PageLoads {
      */
     private Map<PageKey, String> queued(boolean refreshing) {
         Map<PageKey, String> queued = new java.util.HashMap<>();
-        for (BackgroundGroup group : background.groups()) {
-            if (!KIND.equals(group.kind())) {
+        List<com.aresstack.spaceharvester.application.jobs.JobStatus> parts;
+        image.lock();
+        try {
+            parts = new ArrayList<>(open.values());
+        } finally {
+            image.unlock();
+        }
+        // Jüngste zuerst, wie zuvor die Gruppen (BackgroundJobs#groups): eine Seite zählt zur jüngsten Gruppe.
+        parts.sort(java.util.Comparator.comparing(
+                com.aresstack.spaceharvester.application.jobs.JobStatus::createdAt).reversed());
+        for (com.aresstack.spaceharvester.application.jobs.JobStatus part : parts) {
+            String pages = part.parameter(PAGES);
+            if (!loading(part.state()) || pages == null || part.sourceId() == null
+                    || refreshing && (!"true".equals(part.parameter(REFRESH)) || part.state().terminal())) {
                 continue;
             }
-            for (com.aresstack.spaceharvester.application.jobs.JobStatus part : group.parts()) {
-                String pages = part.parameter(PAGES);
-                if (!loading(part.state()) || pages == null || part.sourceId() == null
-                        || refreshing && (!"true".equals(part.parameter(REFRESH)) || part.state().terminal())) {
-                    continue;
-                }
-                for (String pageId : pages.split(SEPARATOR)) {
-                    if (!pageId.isBlank()) {
-                        queued.putIfAbsent(new PageKey(part.sourceId(), pageId), group.groupId());
-                    }
+            for (String pageId : pages.split(SEPARATOR)) {
+                if (!pageId.isBlank()) {
+                    queued.putIfAbsent(new PageKey(part.sourceId(), pageId), groupOf(part));
                 }
             }
         }

@@ -779,6 +779,11 @@ public class ExportAssetCollection {
         }
 
         @Override
+        public AutoCloseable whenStopRequested(Runnable listener) {
+            return context.whenStopRequested(listener);
+        }
+
+        @Override
         public boolean cancelRequested() {
             return context.cancelRequested();
         }
@@ -1049,7 +1054,7 @@ public class ExportAssetCollection {
             // Budget 0: keine Bilder und Anhänge laden, ohne Fehler warten, bis wieder Verbindungen da sind.
             context.phase(COMPONENT, CONNECTIONS_PHASE);
             try {
-                budget.awaitAvailable(context::checkpoint);
+                budget.awaitAvailable(context);
             } finally {
                 context.phase(COMPONENT, current.scope.phase);
             }
@@ -1062,11 +1067,12 @@ public class ExportAssetCollection {
                     thread.setDaemon(true);
                     return thread;
                 });
-        int[] active = new int[1];
+        Active active = new Active();
         java.util.concurrent.atomic.AtomicReference<RuntimeException> failure =
                 new java.util.concurrent.atomic.AtomicReference<>();
         Map<String, List<ExportAssetManifest.Entry>> loaded = new ConcurrentHashMap<>();
         List<String> order = new ArrayList<>();
+        AutoCloseable stop = context.whenStopRequested(active::wake);
         try (ConnectionBudget.Lease lease = budget == null ? null
                 : budget.register(() -> remaining(current))) {
             Run run = current.with(context, lease);
@@ -1090,10 +1096,7 @@ public class ExportAssetCollection {
                     } catch (RuntimeException e) {
                         failure.compareAndSet(null, e);
                     } finally {
-                        synchronized (active) {
-                            active[0]--;
-                            active.notifyAll();
-                        }
+                        active.done();
                     }
                 };
                 if (pool == null) {
@@ -1103,18 +1106,14 @@ public class ExportAssetCollection {
                 }
             });
             // Laufende Seiten zu Ende kommen lassen, auch beim Anhalten: sie stehen dann im Manifest.
-            synchronized (active) {
-                while (active[0] > 0) {
-                    try {
-                        active.wait(200);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new JobCancelledException("Ladedurchgang unterbrochen");
-                    }
-                }
-            }
+            active.awaitIdle();
             rethrow(failure);
         } finally {
+            try {
+                stop.close();
+            } catch (Exception e) {
+                LOG.log(System.Logger.Level.WARNING, "Abmelden vom Auftrag gescheitert ({0})", e.getClass().getName());
+            }
             if (pool != null) {
                 pool.shutdownNow();
             }
@@ -1167,19 +1166,76 @@ public class ExportAssetCollection {
      * Lässt eine weitere Seite laufen, wenn dieser Auftrag unter seinem Anteil am Budget ist (ohne Budget: eine Seite);
      * sonst wartet es kurz und gibt {@code false} zurück, damit der Aufrufer Anhalten und Fehler prüft.
      */
-    private static boolean admit(int[] active, ConnectionBudget.Lease lease) {
-        synchronized (active) {
-            if (active[0] < (lease == null ? 1 : Math.max(1, lease.share()))) {
-                active[0]++;
-                return true;
-            }
+    private static boolean admit(Active active, ConnectionBudget.Lease lease) {
+        return active.admit(lease == null ? 1 : Math.max(1, lease.share()));
+    }
+
+    /**
+     * Die laufenden Seiten eines Ladedurchgangs. Mit {@link java.util.concurrent.locks.ReentrantLock} statt
+     * {@code synchronized} (Architekt 22.11.2026): Der Auftrag wartet auf einem virtuellen Thread und gibt dabei seinen
+     * Träger frei.
+     */
+    private static final class Active {
+
+        private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+        private final java.util.concurrent.locks.Condition finished = lock.newCondition();
+        private int running;
+
+        /** Belegt eine Seite unter {@code limit}; sonst wartet es kurz und liefert {@code false}. */
+        boolean admit(int limit) {
+            lock.lock();
             try {
-                active.wait(200);
+                if (running < limit) {
+                    running++;
+                    return true;
+                }
+                // Rückfallnetz, kein Takt (ADR 0027): Fertige Seiten (auch gescheiterte) und Anhalten oder Abbrechen
+                // ({@link #wake}) wecken sofort per signalAll. Die Frist greift nur, weil das Limit dem Anteil nach
+                // Restzeit folgt, der sich ohne Meldung verschiebt.
+                finished.await(200, java.util.concurrent.TimeUnit.MILLISECONDS);
+                return false;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new JobCancelledException("Ladedurchgang unterbrochen");
+            } finally {
+                lock.unlock();
             }
-            return false;
+        }
+
+        /** Eine Seite ist fertig. */
+        void done() {
+            lock.lock();
+            try {
+                running--;
+                finished.signalAll();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        /** Weckt einen Wartenden in {@link #admit}, damit der Aufrufer Anhalten und Abbrechen prüft. */
+        void wake() {
+            lock.lock();
+            try {
+                finished.signalAll();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        /** Wartet, bis keine Seite mehr läuft; jede fertige meldet sich. */
+        void awaitIdle() {
+            lock.lock();
+            try {
+                while (running > 0) {
+                    finished.await();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new JobCancelledException("Ladedurchgang unterbrochen");
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -2051,12 +2107,12 @@ public class ExportAssetCollection {
                 // Während des Laufs auf 0 gestellt: nichts mehr laden und ohne Fehler warten.
                 context.phase(COMPONENT, CONNECTIONS_PHASE);
                 try {
-                    budget.awaitAvailable(context::checkpoint);
+                    budget.awaitAvailable(context);
                 } finally {
                     context.phase(COMPONENT, scope.phase);
                 }
             }
-            lease.acquire(context::checkpoint);
+            lease.acquire(context);
             try {
                 return download.run();
             } finally {
@@ -2069,7 +2125,7 @@ public class ExportAssetCollection {
             context.phase(COMPONENT, SIGN_IN_PHASE);
             SignInRequests.Outcome outcome;
             try {
-                outcome = signIns.await(sourceId, context.jobId(), e.challenge(), started, context::checkpoint);
+                outcome = signIns.await(sourceId, context.jobId(), e.challenge(), started, context);
             } finally {
                 context.phase(COMPONENT, scope.phase);
             }

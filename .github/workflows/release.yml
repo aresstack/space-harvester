@@ -10,7 +10,7 @@ name: Release
 #   diesen Stand, als „Latest“ markiert, ohne Versionsnummer im Titel und in den Dateinamen. So liefert
 #   https://github.com/aresstack/space-harvester/releases/download/latest/space-harvester-app.jar immer den neuesten
 #   Stand (Lesezeichen, Vorbild aresstack/audio). Intern trägt das JAR <Basis>-beta.<N> für --version.
-# - Push auf einen anderen Branch: das rollierende Pre-Release „snapshot“ bekommt diesen Stand, ebenfalls ohne
+# - Push auf develop (Angelo 22.11.: andere Branches bauen kein Release, PR-Checks laufen über build.yml): das rollierende Pre-Release „snapshot“ bekommt diesen Stand, ebenfalls ohne
 #   Versionsnummer in Titel und Dateinamen, nie „Latest“. Das ist das einzige Pre-Release.
 # - Tag v<Major>.<Minor>.<Patch>[-<Vorabkennung>] auf einem main-Stand oder manueller Start auf main mit Eingabe
 #   „tag“: Release genau mit dieser Version und Versionsnummern in den Dateinamen. Immer das NEUESTE Release ist
@@ -20,7 +20,7 @@ name: Release
 # Versionierte Releases werden nie überschrieben. Ablauf: docs/DESKTOP_APP.md („Releases“).
 on:
   push:
-    branches: ['**']
+    branches: [main, develop]
     tags: ['v*']
   workflow_dispatch:
     inputs:

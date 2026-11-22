@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.assets;
 
+import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -20,42 +21,118 @@ import java.util.function.LongSupplier;
  */
 public final class ConnectionBudget {
 
-    private final Object lock = new Object();
+    /**
+     * {@link java.util.concurrent.locks.ReentrantLock} statt {@code synchronized} (Architekt 22.11.2026): Wartende
+     * Aufträge laufen auf virtuellen Threads und geben beim Warten ihren Träger frei.
+     */
+    private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+    /** Budget, Anmeldung oder Freigabe geändert. */
+    private final java.util.concurrent.locks.Condition changed = lock.newCondition();
     private final Set<Lease> leases = new LinkedHashSet<>();
     private int total;
     private int inFlight;
+    /** Frist des Rückfallnetzes beim Warten auf eine Verbindung, siehe {@link Lease#acquire}. */
+    private final long fallbackNanos;
 
     /** @param total Verbindungen aller Downloads zusammen, 0 bis {@value JobLimits#MAX_DOWNLOAD_CONNECTIONS} */
     public ConnectionBudget(int total) {
+        this(total, java.time.Duration.ofMillis(200));
+    }
+
+    /** Mit eigener Frist des Rückfallnetzes; Tests setzen sie lang, damit nur ein Signal weckt. */
+    ConnectionBudget(int total, java.time.Duration fallback) {
         this.total = JobLimits.requireConnections(total);
+        this.fallbackNanos = fallback.toNanos();
     }
 
     /** Verbindungen aller Downloads zusammen. */
     public int total() {
-        synchronized (lock) {
+        lock.lock();
+        try {
             return total;
+        } finally {
+            lock.unlock();
         }
     }
 
     /** Ändert das Budget sofort; laufende Dateien laufen zu Ende. */
     public void total(int value) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             total = JobLimits.requireConnections(value);
-            lock.notifyAll();
+            changed.signalAll();
+        } finally {
+            lock.unlock();
         }
     }
 
-    /** Wartet, bis das Budget wieder Verbindungen hat; {@code checkpoint} läuft zwischen den Wartezeiten. */
-    public void awaitAvailable(Runnable checkpoint) {
-        synchronized (lock) {
-            while (total == 0) {
-                checkpoint.run();
-                try {
-                    lock.wait(200);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Warten auf eine Verbindung unterbrochen", e);
+    /**
+     * Wartet ohne Takt (ADR 0027), bis das Budget wieder Verbindungen hat: geweckt wird nur durch eine Änderung des
+     * Budgets und über {@link JobContext#whenStopRequested} (Anhalten, Abbrechen und der Ablauf der Laufzeitgrenze,
+     * den {@code Jobs} mit einem einmaligen Zeitgeber meldet); danach prüft {@link JobContext#checkpoint()}.
+     */
+    public void awaitAvailable(JobContext context) {
+        try (Wake wake = new Wake(context)) {
+            lock.lock();
+            try {
+                while (true) {
+                    wake.checkpoint();
+                    if (total != 0) {
+                        return;
+                    }
+                    try {
+                        changed.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("Warten auf eine Verbindung unterbrochen", e);
+                    }
                 }
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    /**
+     * Weckt die Wartenden dieses Budgets, wenn der Auftrag anhalten oder abbrechen soll. Der Prüfpunkt läuft unter
+     * {@link #lock}; er blockiert nicht.
+     * <p>
+     * Sperrreihenfolge (Abnahme #1133), bitte so lassen: Der Stopp-Rückruf läuft unter der Sperre der Aufträge und
+     * nimmt danach {@link #lock}. Unter {@link #lock} laufen dagegen {@link #checkpoint()} sowie An- und Abmelden des
+     * Zuhörers ({@link JobContext#whenStopRequested}, {@code registration.close()}, auch über
+     * {@link Lease#acquire}/{@link Lease#close}); sie dürfen darum nie eine Sperre der Aufträge nehmen (nur Flag, Frist
+     * und eine nebenläufige Liste), sonst drohte eine Verklemmung.
+     */
+    private final class Wake implements AutoCloseable {
+
+        private final JobContext context;
+        private final AutoCloseable registration;
+        /** Der Zuhörer hat gefeuert; der Auftrag meldet ihn danach nicht mehr (höchstens einmal je Anmeldung). */
+        private volatile boolean fired;
+
+        Wake(JobContext context) {
+            this.context = java.util.Objects.requireNonNull(context, "context");
+            this.registration = context.whenStopRequested(() -> {
+                fired = true;
+                lock.lock();
+                try {
+                    changed.signalAll();
+                } finally {
+                    lock.unlock();
+                }
+            });
+        }
+
+        void checkpoint() {
+            context.checkpoint();
+        }
+
+        @Override
+        public void close() {
+            try {
+                registration.close();
+            } catch (Exception e) {
+                throw new IllegalStateException("Abmelden vom Auftrag gescheitert", e);
             }
         }
     }
@@ -68,9 +145,12 @@ public final class ConnectionBudget {
      */
     public Lease register(LongSupplier remaining) {
         Lease lease = new Lease(remaining);
-        synchronized (lock) {
+        lock.lock();
+        try {
             leases.add(lease);
-            lock.notifyAll();
+            changed.signalAll();
+        } finally {
+            lock.unlock();
         }
         return lease;
     }
@@ -80,6 +160,16 @@ public final class ConnectionBudget {
 
         private final LongSupplier remaining;
         private int running;
+        /**
+         * Ein Zuhörer je Lease statt je {@link #acquire} (Architekt, Abnahme #1133): Jedes Anmelden und Abmelden kopiert
+         * die Zuhörerliste des Auftrags. Verglichen wird der Auftrag ({@link JobContext#jobId()}), nicht das Objekt:
+         * Die Aufrufer hüllen ihn je Seite neu ein. Neu angemeldet wird nur für einen anderen Auftrag oder nachdem der
+         * Zuhörer gefeuert hat (er läuft höchstens einmal, ein fortgesetzter Lauf braucht einen neuen). Nur unter
+         * {@link #lock}.
+         */
+        private Wake wake;
+        /** Abgemeldet ({@link #close()}); danach belegt die Lease nichts mehr. Nur unter {@link #lock}. */
+        private boolean closed;
 
         private Lease(LongSupplier remaining) {
             this.remaining = remaining;
@@ -87,14 +177,30 @@ public final class ConnectionBudget {
 
         /**
          * Wartet, bis dieser Auftrag unter seinem Anteil und das Budget nicht ausgeschöpft ist, und belegt dann eine
-         * Verbindung. {@code checkpoint} läuft zwischen den Wartezeiten (Anhalten, Abbrechen).
+         * Verbindung. Geweckt wird durch Freigeben, An- und Abmelden, eine Änderung des Budgets und eine Anforderung
+         * zum Anhalten oder Abbrechen; danach prüft {@link JobContext#checkpoint()}.
          */
-        public void acquire(Runnable checkpoint) {
-            synchronized (lock) {
-                while (inFlight >= total || running >= ConnectionBudget.this.share(this)) {
-                    checkpoint.run();
+        public void acquire(JobContext context) {
+            java.util.Objects.requireNonNull(context, "context");
+            lock.lock();
+            try {
+                if (closed) {
+                    throw new IllegalStateException("Die Anmeldung beim Verbindungsbudget ist schon geschlossen");
+                }
+                wakeFor(context);
+                while (true) {
+                    // Der Prüfpunkt des eigenen Aufrufers: Der Zuhörer kann zu einer anderen Hülle desselben Auftrags
+                    // gehören. Darin keine Sperre der Aufträge (siehe Wake).
+                    context.checkpoint();
+                    if (inFlight < total && running < ConnectionBudget.this.share(this)) {
+                        break;
+                    }
                     try {
-                        lock.wait(200);
+                        // Rückfallnetz, kein Takt (ADR 0027): Freigeben, Zuteilen (An- und Abmelden, Budget),
+                        // Anhalten, Abbrechen und die Laufzeitgrenze wecken sofort. Die Frist greift nur für die
+                        // Verschiebung der Anteile nach Restzeit: die Schätzungen der Aufträge ändern sich ohne
+                        // Meldung.
+                        changed.awaitNanos(fallbackNanos);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         throw new IllegalStateException("Warten auf eine Verbindung unterbrochen", e);
@@ -102,15 +208,36 @@ public final class ConnectionBudget {
                 }
                 running++;
                 inFlight++;
+            } finally {
+                lock.unlock();
             }
+        }
+
+        /** Unter {@link #lock}: der Zuhörer dieses Leases für {@code context}, wenn nötig neu angemeldet. */
+        private Wake wakeFor(JobContext context) {
+            Wake current = wake;
+            if (current != null && !current.fired
+                    && java.util.Objects.equals(current.context.jobId(), context.jobId())) {
+                return current;
+            }
+            wake = null;
+            if (current != null) {
+                current.close();
+            }
+            Wake fresh = new Wake(context);
+            wake = fresh;
+            return fresh;
         }
 
         /** Gibt eine mit {@link #acquire} belegte Verbindung frei. */
         public void release() {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 running--;
                 inFlight--;
-                lock.notifyAll();
+                changed.signalAll();
+            } finally {
+                lock.unlock();
             }
         }
 
@@ -121,16 +248,28 @@ public final class ConnectionBudget {
 
         /** Der aktuelle Anteil dieses Auftrags am Budget. */
         public int share() {
-            synchronized (lock) {
+            lock.lock();
+            try {
                 return ConnectionBudget.this.share(this);
+            } finally {
+                lock.unlock();
             }
         }
 
         @Override
         public void close() {
-            synchronized (lock) {
+            lock.lock();
+            try {
+                closed = true;
+                Wake current = wake;
+                wake = null;
+                if (current != null) {
+                    current.close();
+                }
                 leases.remove(this);
-                lock.notifyAll();
+                changed.signalAll();
+            } finally {
+                lock.unlock();
             }
         }
     }
