@@ -130,6 +130,11 @@ public final class SearchView implements View {
      * dazu (Auflage AT). {@link #request} zählt dagegen jeden Stapel.
      */
     private int searchId;
+    /**
+     * Kennung der laufenden Schlagwortsuche im Core (Fundstelle 23): gleich für ihre Stapel und ihr Neusortieren, damit
+     * sie jeden Fund nur einmal zum Katalogisieren anbietet.
+     */
+    private String keywordSearchId;
     /** Nachbar-Treffer, die ankamen, während ein Stapel lud; sie folgen nach dem Stapel, sonst schnitte er sie ab. */
     private final List<KeywordSearch.Hit> heldNeighbors = new ArrayList<>();
     /** Läuft die Nachbarsuche dieser Anfrage, wartet „Weitere laden“: Der nächste Stapel verwürfe sonst ihre Treffer. */
@@ -1053,6 +1058,8 @@ public final class SearchView implements View {
         showVariants(List.of());
         int id = ++request;
         searchId++;
+        String core = java.util.UUID.randomUUID().toString();
+        keywordSearchId = core;
         checkSynonyms(runtime, q, id);
         neighborsFor = neighbors.isSelected() && neighbors.isEnabled() ? id : -1;
         run.setEnabled(false);
@@ -1063,7 +1070,8 @@ public final class SearchView implements View {
         states.clear();
         status.setText(" ");
         starting("Suche läuft …");
-        searching = Background.start(() -> runtime.workspace().keywordSearch(q, null, LIMIT, observer(id)), results -> {
+        searching = Background.start(() -> runtime.workspace().keywordSearchIn(core, q, null, LIMIT, observer(id)),
+                results -> {
             if (id != request) {
                 discard(results);
                 return;
@@ -1334,7 +1342,8 @@ public final class SearchView implements View {
         feedback.clear();
         starting("Weitere Treffer werden geladen …");
         int from = model.rows.size();
-        searching = Background.start(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT, observer(id)),
+        String core = keywordSearchId;
+        searching = Background.start(() -> runtime.workspace().keywordSearchIn(core, q, cursor, LIMIT, observer(id)),
                 results -> {
             if (id != request) {
                 discard(results);
@@ -1454,7 +1463,9 @@ public final class SearchView implements View {
         int id = request;
         String cursor = shownCursor;
         int start = batchStart;
-        Background.run(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT), results -> {
+        // Fundstelle 23: dieselbe Suche, darum bietet Neusortieren nur Funde an, die sie noch nicht angeboten hat.
+        String core = keywordSearchId;
+        Background.run(() -> runtime.workspace().keywordSearchIn(core, q, cursor, LIMIT, null), results -> {
             refreshing = false;
             if (id != request) {
                 return;
