@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -135,6 +136,25 @@ class ConnectionBudgetTest {
     }
 
     @Test
+    void theRuntimeLimitEndsAWaitForTheBudgetEvenThoughNobodySignals() {
+        // Codex-Review #1133: Die Laufzeitgrenze meldet sich nicht; ohne Frist hielte der Auftrag bei Budget 0 ewig
+        // seinen Download-Platz.
+        ConnectionBudget budget = new ConnectionBudget(0, java.time.Duration.ofMillis(20));
+        StopContext limited = new StopContext();
+        java.util.concurrent.CompletableFuture<Void> waiter = java.util.concurrent.CompletableFuture.runAsync(
+                () -> budget.awaitAvailable(limited));
+        while (limited.listeners.isEmpty()) {
+            Thread.onSpinWait();
+        }
+
+        limited.expired = true;
+
+        assertThat(waiter).failsWithin(5, TimeUnit.SECONDS).withThrowableThat().havingCause()
+                .isInstanceOfSatisfying(JobFailedException.class, e -> assertThat(e.code()).isEqualTo("TIMEOUT"));
+        assertThat(limited.listeners).isEmpty();
+    }
+
+    @Test
     void stoppingWakesWaitersAtOnceWithoutATick() throws Exception {
         // ADR 0027: Anhalten oder Abbrechen weckt; das Budget bleibt 0, und kein Takt sieht nach.
         ConnectionBudget budget = new ConnectionBudget(0);
@@ -185,6 +205,8 @@ class ConnectionBudgetTest {
 
         final List<Runnable> listeners = new CopyOnWriteArrayList<>();
         private volatile boolean cancelled;
+        /** Laufzeitgrenze abgelaufen, wie in {@code Jobs}: still, ohne Zuhörer zu wecken. */
+        volatile boolean expired;
 
         void cancel() {
             cancelled = true;
@@ -213,6 +235,9 @@ class ConnectionBudgetTest {
         public void checkpoint() {
             if (cancelled) {
                 throw new JobCancelledException("job-1");
+            }
+            if (expired) {
+                throw new JobFailedException("TIMEOUT", "Laufzeitgrenze überschritten");
             }
         }
 
