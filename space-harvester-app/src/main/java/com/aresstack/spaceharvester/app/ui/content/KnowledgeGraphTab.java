@@ -1991,10 +1991,16 @@ final class KnowledgeGraphTab extends JPanel {
                 return;
             }
             generateNote(null);
-            if (confirmGenerate.test(preview) && Objects.equals(key, page) && pages.equals(generatePages())
-                    && !preparing && !graphAttached()) {
-                startGraph(current, pages);
+            if (!confirmGenerate.test(preview) || !Objects.equals(key, page) || preparing || graphAttached()) {
+                return;
             }
+            if (!pages.equals(generatePages())) {
+                // Während der Rückfrage änderte sich die Menge (etwa die Unterseiten kamen an): Die bestätigten Zahlen
+                // galten der alten; die jetzige zählen und noch einmal fragen, wie beim Umschalten während des Zählens.
+                generateGraph();
+                return;
+            }
+            startGraph(current, pages);
         }, error -> {
             preparing = false;
             refreshButtons();
@@ -2037,6 +2043,16 @@ final class KnowledgeGraphTab extends JPanel {
                 refreshButtons();
                 generateNote(notes(NOT_GENERATED, StatusNote.Tone.PLAIN, plan.notes()));
                 reloadInPlace();
+                return;
+            }
+            if (page == null || !pages.contains(page)) {
+                // Inzwischen eine Seite außerhalb der Menge (Auflage W5): nicht hier anhängen, sondern abgehängt merken;
+                // kehrt man zurück, hängt findRunningGraph sie mit den Hinweisen des Planers an.
+                detachedGroupId = group.get().groupId();
+                detachedNotes = List.copyOf(plan.notes());
+                detachedPages = pages;
+                refreshButtons();
+                findRunningGraph();
                 return;
             }
             attach(current, group.get(), plan.notes(), pages);
@@ -2236,32 +2252,58 @@ final class KnowledgeGraphTab extends JPanel {
      * angehalten ist, keiner läuft und jeder offene nur hinter ihm wartet (ein Nachfolger bleibt hinter einem
      * angehaltenen Vorgänger in der Warteschlange, {@code Jobs.PredecessorGate#DEFAULT}). Ein angehaltener Vorgänger
      * außerhalb der Gruppe (eine wiederverwendete Vorstufe einer anderen Gruppe, {@link BackgroundGroup#predecessors()})
-     * hält ebenso an (Codex #1081).
+     * hält ebenso an (Codex #1081), auch mittelbar: ein wartender Vorgänger außerhalb, der selbst hinter einem
+     * angehaltenen Teil seiner Gruppe steht.
      */
     static boolean paused(BackgroundGroup group) {
         if (group.paused()) {
             return true;
         }
+        List<JobStatus> all = new ArrayList<>(group.parts());
+        all.addAll(group.predecessors());
+        Map<String, JobStatus> byId = new java.util.HashMap<>();
+        all.forEach(part -> byId.put(part.id(), part));
         Set<String> held = new java.util.HashSet<>();
-        group.parts().stream().filter(part -> part.state() == JobState.PAUSED).forEach(part -> held.add(part.id()));
-        group.predecessors().stream().filter(part -> part.state() == JobState.PAUSED)
-                .forEach(part -> held.add(part.id()));
+        all.stream().filter(part -> part.state() == JobState.PAUSED).forEach(part -> held.add(part.id()));
         if (held.isEmpty() || group.parts().stream().anyMatch(part -> part.state() == JobState.RUNNING)) {
             return false;
         }
         boolean grown = true;
         while (grown) {
             grown = false;
-            for (JobStatus part : group.parts()) {
-                String after = part.parameter(Jobs.AFTER);
-                if (part.state() == JobState.QUEUED && !held.contains(part.id()) && after != null
-                        && java.util.Arrays.stream(after.split(",")).anyMatch(held::contains)) {
+            for (JobStatus part : all) {
+                if (part.state() == JobState.QUEUED && !held.contains(part.id()) && heldBehind(part, held, byId)) {
                     held.add(part.id());
                     grown = true;
                 }
             }
         }
         return group.parts().stream().allMatch(part -> part.state().terminal() || held.contains(part.id()));
+    }
+
+    /**
+     * Ob {@code follower} hinter einem Teil aus {@code held} wartet ({@link Jobs#AFTER}), wie das Tor der
+     * Auftragsverwaltung: Wartet er nur der Reihe wegen, hält ihn ein angehaltener Vorgänger einer anderen Quelle nicht
+     * auf ({@link BackgroundJobs#ORDER_ONLY}, Abnahme #1077).
+     */
+    private static boolean heldBehind(JobStatus follower, Set<String> held, Map<String, JobStatus> byId) {
+        String after = follower.parameter(Jobs.AFTER);
+        if (after == null) {
+            return false;
+        }
+        boolean orderOnly = "true".equals(follower.parameter(BackgroundJobs.ORDER_ONLY));
+        for (String id : after.split(",")) {
+            JobStatus predecessor = byId.get(id);
+            if (!held.contains(id) || predecessor == null) {
+                continue;
+            }
+            if (orderOnly && predecessor.state() == JobState.PAUSED
+                    && !Objects.equals(predecessor.sourceId(), follower.sourceId())) {
+                continue;
+            }
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -2303,8 +2345,11 @@ final class KnowledgeGraphTab extends JPanel {
         }
         // Fertige Teile, die Seiten nicht schafften oder unvollständig blieben (etwa „Bilder beschreiben“ an der
         // Obergrenze): kein „erzeugt“ ohne Hinweis (Codex #1081).
-        List<String> shortfalls = shortfalls(group);
+        List<String> shortfalls = shortfalls(group, eventNotes);
         all.addAll(shortfalls);
+        // Unvollständig bleibt es auch, wenn ein Hinweis aus den Ereignissen die Ursache schon nennt (Obergrenze).
+        boolean shortfall = group.parts().stream().anyMatch(part -> part.state() == JobState.COMPLETED
+                && (part.progress().failed() > 0 || part.incomplete()));
         all.addAll(planNotes);
         all.addAll(eventNotes);
         String jobId = group.parts().isEmpty() ? null : group.parts().get(0).id();
@@ -2317,7 +2362,7 @@ final class KnowledgeGraphTab extends JPanel {
             head = "Wissensgraph angehalten nach " + done + " von " + GraphGeneration.parts(group.parts().size())
                     + "; fortsetzen unter " + JOBS_LINK;
             tone = StatusNote.Tone.WARNING;
-        } else if (group.completed() && shortfalls.isEmpty()) {
+        } else if (group.completed() && !shortfall) {
             head = "Wissensgraph erzeugt";
         } else if (group.completed()) {
             head = GENERATED_INCOMPLETE;
@@ -2357,9 +2402,11 @@ final class KnowledgeGraphTab extends JPanel {
     /**
      * Je fertigem Teil, der Seiten nicht schaffte, rot „„Bilder beschreiben“: 2 Seiten gescheitert in ‚DEV‘“; je fertigem,
      * aber unvollständigem Teil (etwa an der Obergrenze) gelb „„Bilder beschreiben“ unvollständig in ‚DEV‘“. Wie die
-     * Hintergrund-Ansicht zählen Fehlerzähler und Unvollständig-Kennzeichen, nicht nur der Zustand.
+     * Hintergrund-Ansicht zählen Fehlerzähler und Unvollständig-Kennzeichen, nicht nur der Zustand. Nennen die
+     * Ereignisse schon die Obergrenze von „Bilder beschreiben“ für denselben Space („in ‚DEV‘: Obergrenze von …“,
+     * {@code Workspace#knowledgeGraphNotes}), entfällt „unvollständig“: ein Hinweis je Ursache.
      */
-    private static List<String> shortfalls(BackgroundGroup group) {
+    private static List<String> shortfalls(BackgroundGroup group, List<String> eventNotes) {
         List<String> notes = new ArrayList<>();
         for (JobStatus part : group.parts()) {
             if (part.state() != JobState.COMPLETED) {
@@ -2369,11 +2416,21 @@ final class KnowledgeGraphTab extends JPanel {
             long failed = part.progress().failed();
             if (failed > 0) {
                 notes.add("„" + stageTitle(part) + "“: " + GraphGeneration.pages(failed) + " gescheitert" + place);
-            } else if (part.incomplete()) {
+            } else if (part.incomplete() && !limitNamed(part, eventNotes)) {
                 notes.add("„" + stageTitle(part) + "“ unvollständig" + place);
             }
         }
         return notes;
+    }
+
+    /** Ob {@code eventNotes} die Obergrenze des Bilder-Teils {@code part} in seinem Space schon nennen. */
+    private static boolean limitNamed(JobStatus part, List<String> eventNotes) {
+        if (!com.aresstack.spaceharvester.application.images.ImageDescriptionJobs.KIND
+                .equals(part.parameter(BackgroundJobs.KIND))) {
+            return false;
+        }
+        String prefix = (part.partitionKey() == null ? "" : "in ‚" + part.partitionKey() + "‘: ") + "Obergrenze ";
+        return eventNotes.stream().anyMatch(note -> note.startsWith(prefix));
     }
 
     /**
@@ -2450,6 +2507,14 @@ final class KnowledgeGraphTab extends JPanel {
             preparing = false;
             if (!groupId.equals(graphGroupId)) {
                 refreshButtons();
+                return;
+            }
+            if (graphEnded && !inGraph(page)) {
+                // Inzwischen eine Seite außerhalb der Gruppe (Auflage W5): nicht hier beobachten, sondern abgehängt
+                // merken; kehrt man zurück, hängt findRunningGraph die fortgesetzte Gruppe wieder an. Problem und „nichts
+                // zu wiederholen“ gehörten der vorigen Seite.
+                detachGraph();
+                findRunningGraph();
                 return;
             }
             if (outcome.changed() == 0) {

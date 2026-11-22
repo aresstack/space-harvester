@@ -2121,6 +2121,186 @@ class KnowledgeGraphTabTest {
         assertThat(limited.tone()).isEqualTo(StatusNote.Tone.WARNING);
     }
 
+    /**
+     * Nacharbeit Codex #1081, 2: Nennen die Ereignisse die Obergrenze von „Bilder beschreiben“ schon, steht für denselben
+     * Teil genau ein Hinweis in der Statuszeile, nicht dazu noch „unvollständig“.
+     */
+    @Test
+    void anImageLimitIsNamedOnceInTheResultLine() {
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Bilder beschreiben"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        String limit = "in ‚DEV‘: Obergrenze von 5 Bildern je Lauf erreicht; 2 Bilder bleiben für den nächsten Lauf offen";
+        actions.graphNotes = List.of(limit);
+        tab.clickGenerate();
+        runner.runAll();
+
+        actions.watcher.accept(group(counted(part("p-1", JobState.COMPLETED, "Bilder beschreiben"), 0, true),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+
+        StatusNote end = tab.generateNoteForTests();
+        assertThat(end.text()).startsWith(KnowledgeGraphTab.GENERATED_INCOMPLETE + " · " + limit)
+                .doesNotContain("unvollständig in ‚DEV‘");
+        assertThat(end.text().split("Obergrenze", -1)).as("genau ein Hinweis").hasSize(2);
+        assertThat(end.tone()).isEqualTo(StatusNote.Tone.WARNING);
+    }
+
+    /**
+     * Nacharbeit Auflage 2: Wechselt die Seite zwischen „Ja“ und der Antwort des Starts auf eine Seite außerhalb der
+     * Menge, hängt der Reiter die Gruppe dort nicht an (kein ✕, Knopf frei); kehrt man zurück, hängt er sie mit den
+     * Hinweisen des Planers an.
+     */
+    @Test
+    void aPageChangeBetweenYesAndTheStartNeverAttachesTheGroupOnAPageOutsideIt() {
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.RUNNING, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph", "p-1"))), List.of(skipped), 0);
+        tab.clickGenerate();
+        assertThat(runner.pendingCount()).isEqualTo(1);
+        runner.runAt(0); // zählen, „Ja“; der Start wartet
+        assertThat(runner.pendingCount()).isEqualTo(1);
+
+        tab.page(new PageKey("wiki", "9"));
+        runner.runAll();
+
+        assertThat(actions.started).hasSize(1);
+        assertThat(actions.watched).as("nicht auf der fremden Seite beobachtet").isEmpty();
+        assertThat(tab.generateOffered()).as("auf der fremden Seite frei").isTrue();
+        assertThat(tab.generateNoteForTests()).as("kein Fortschritt der Gruppe auf der fremden Seite").isNull();
+
+        actions.running = group(part("p-1", JobState.RUNNING, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph", "p-1"));
+        tab.page(WIKI);
+        runner.runAll();
+        assertThat(actions.watched).as("zurück: angehängt").containsExactly("g-1");
+        assertThat(tab.generateOffered()).isFalse();
+        assertThat(tab.generateNoteForTests().text()).startsWith(KnowledgeGraphTab.GENERATING).contains(skipped);
+    }
+
+    /**
+     * Nacharbeit Auflage 2: Wechselt die Seite zwischen dem Kreispfeil und der Antwort des Wiederholens auf eine Seite
+     * außerhalb der Gruppe, beobachtet der Reiter sie dort nicht; kehrt man zurück, hängt er die fortgesetzte Gruppe an.
+     */
+    @Test
+    void aPageChangeBetweenTheRetryArrowAndItsAnswerNeverAttachesTheGroupOnAPageOutsideIt() {
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+        actions.watcher.accept(group(part("p-1", JobState.FAILED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        StatusNote end = tab.generateNoteForTests();
+        assertThat(end.icon()).isNotNull();
+
+        end.icon().action().run();
+        tab.page(new PageKey("wiki", "9"));
+        runner.runAll();
+
+        assertThat(actions.retried).containsExactly("g-1 [p-1]");
+        assertThat(actions.watched).as("nicht auf der fremden Seite beobachtet").containsExactly("g-1");
+        assertThat(tab.generateOffered()).isTrue();
+        assertThat(tab.generateNoteForTests()).isNull();
+
+        actions.running = group(part("p-1", JobState.RUNNING, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph"));
+        tab.page(WIKI);
+        runner.runAll();
+        assertThat(actions.watched).as("zurück: angehängt").containsExactly("g-1", "g-1");
+        assertThat(tab.generateOffered()).isFalse();
+        assertThat(tab.generateNoteForTests().text()).startsWith(KnowledgeGraphTab.GENERATING);
+    }
+
+    /**
+     * Nacharbeit Auflage 3: Ändert sich die Menge, während das Overlay offen ist (die Unterseiten kommen an), startet
+     * „Ja“ nicht die alte Menge und tut auch nicht still nichts: Der Reiter zählt die jetzige und fragt noch einmal.
+     */
+    @Test
+    void aSetChangingWhileTheQuestionIsOpenIsCountedAndAskedAgain() {
+        List<GraphGeneration.Preview> asked = new ArrayList<>();
+        GraphGeneration.Preview now = preview(AnalyzerChoice.PARSER, 0, List.of(),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 2, 0, 0, 1), goal(2));
+        tab.confirmGenerateWith(preview -> {
+            asked.add(preview);
+            if (asked.size() == 1) {
+                tab.subpages(below("2"), false);
+                actions.preview = now;
+            }
+            return true;
+        });
+        showPage();
+        GraphGeneration.Preview old = missing();
+        actions.preview = old;
+
+        tab.clickGenerate();
+        runner.runAll();
+
+        assertThat(asked).as("noch einmal gefragt, mit den Zahlen der jetzigen Menge").containsExactly(old, now);
+        assertThat(actions.previewed).extracting(set -> set.pagesOf("wiki")).containsExactly(
+                java.util.Set.of("1"), java.util.Set.of("1", "2"));
+        assertThat(actions.started).as("nie die alte Menge").extracting(set -> set.pagesOf("wiki"))
+                .containsExactly(java.util.Set.of("1", "2"));
+    }
+
+    /**
+     * Nacharbeit Codex #1081, 1: Wartet der wiederverwendete Vorgänger selbst hinter einem angehaltenen Teil seiner
+     * Gruppe („Nachtlauf“), zeigt die Statuszeile „angehalten“; läuft der wieder, den Fortschritt. Wartet der
+     * Vorgänger nur der Reihe wegen auf einen angehaltenen Teil einer anderen Quelle, hält das nicht an.
+     */
+    @Test
+    void aReusedPredecessorQueuedBehindAPausedPartOfItsGroupShowsTheGroupPaused() {
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-2", JobState.QUEUED, "Wissensgraph", "p-9"))),
+                List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+
+        BackgroundGroup held = new BackgroundGroup("g-1", "knowledge-graph", "Wissensgraph",
+                List.of(part("p-2", JobState.QUEUED, "Wissensgraph", "p-9")),
+                List.of(part("p-9", JobState.QUEUED, "Aussagenanalyse", "x-1"),
+                        part("x-1", JobState.PAUSED, "Bilder beschreiben")));
+        assertThat(KnowledgeGraphTab.paused(held)).isTrue();
+        actions.watcher.accept(held);
+        runner.runAll();
+        assertThat(tab.generateNoteForTests().text()).startsWith("Wissensgraph angehalten nach 0 von 1 Teil");
+        assertThat(tab.generateNoteForTests().tone()).isEqualTo(StatusNote.Tone.WARNING);
+
+        actions.watcher.accept(new BackgroundGroup("g-1", "knowledge-graph", "Wissensgraph",
+                List.of(part("p-2", JobState.QUEUED, "Wissensgraph", "p-9")),
+                List.of(part("p-9", JobState.QUEUED, "Aussagenanalyse", "x-1"),
+                        part("x-1", JobState.RUNNING, "Bilder beschreiben"))));
+        assertThat(tab.generateNoteForTests().text()).startsWith(KnowledgeGraphTab.GENERATING);
+
+        JobStatus orderOnly = withParameter(part("p-9", JobState.QUEUED, "Aussagenanalyse", "x-1"),
+                BackgroundJobs.ORDER_ONLY, "true");
+        JobStatus otherSource = new JobStatus("x-1", JobType.BACKGROUND, "ablage", "DEV", "app", JobState.PAUSED,
+                JobProgress.NONE, null, false, Instant.EPOCH, null, null, "1", null, Map.of(BackgroundJobs.STEP_TITLE,
+                "Bilder beschreiben"), false, false, null);
+        assertThat(KnowledgeGraphTab.paused(new BackgroundGroup("g-1", "knowledge-graph", "Wissensgraph",
+                List.of(part("p-2", JobState.QUEUED, "Wissensgraph", "p-9")), List.of(orderOnly, otherSource))))
+                .as("nur der Reihe wegen, andere Quelle: hält nicht").isFalse();
+    }
+
+    /** {@code part} mit einem weiteren Parameter. */
+    private static JobStatus withParameter(JobStatus part, String key, String value) {
+        Map<String, String> parameters = new java.util.HashMap<>(part.parameters());
+        parameters.put(key, value);
+        return new JobStatus(part.id(), part.type(), part.sourceId(), part.partitionKey(), part.owner(), part.state(),
+                part.progress(), part.error(), false, part.createdAt(), null, null, part.rootPageId(), null, parameters,
+                false, false, null);
+    }
+
     /** {@code part} mit {@code failed} gescheiterten Seiten und dem Kennzeichen „unvollständig“. */
     private static JobStatus counted(JobStatus part, long failed, boolean incomplete) {
         return new JobStatus(part.id(), part.type(), part.sourceId(), part.partitionKey(), part.owner(), part.state(),
