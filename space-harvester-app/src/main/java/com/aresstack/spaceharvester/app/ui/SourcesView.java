@@ -1326,12 +1326,14 @@ public final class SourcesView implements View {
         SyncMode mode = context.settings() != null ? context.settings().effectiveSync(id).mode()
                 : com.aresstack.spaceharvester.application.configuration.SyncSettings.DEFAULT_MODE;
         feedback.working("Nachholen von " + Texts.count(keys.size(), "Space", "Spaces") + " wird gestartet …");
+        // Die ganze Quelle steht in der Auftragsliste als eine aufklappbare Zeile über ihren Spaces (Angelo 22.11.2026).
+        String group = whole && keys.size() > 1 ? java.util.UUID.randomUUID().toString() : null;
         Background.run(() -> {
             List<String> jobs = new ArrayList<>();
             Map<String, Exception> failed = new LinkedHashMap<>();
             for (String key : keys) {
                 try {
-                    jobs.add(runtime.workspace().catchUp(id, key, mode).id());
+                    jobs.add(runtime.workspace().catchUp(id, key, mode, group).id());
                 } catch (RuntimeException e) {
                     failed.put(key, e);
                 }
