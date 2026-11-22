@@ -5,6 +5,8 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
+import com.aresstack.spaceharvester.deck.ftp.FtpSessions;
+import com.aresstack.spaceharvester.deck.ftp.commonsnet.CommonsNetFtpConnector;
 import com.aresstack.spaceharvester.deck.terminal.TerminalSessions;
 import com.aresstack.spaceharvester.deck.terminal.openterm.OpenTermConnector;
 import java.awt.BorderLayout;
@@ -36,6 +38,10 @@ public final class CommandDeck {
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
     private final TerminalWorkspace terminal;
+    private final FtpSessions ftpSessions = new FtpSessions(new CommonsNetFtpConnector(), connecting);
+    private final FtpWorkspace ftp;
+    /** Oben rechts in der Titelleiste: die Bedienelemente des gewählten Bereichs (FTP: Datasets | JES-Jobs). */
+    private final JPanel tools = new JPanel(new BorderLayout());
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
 
@@ -49,6 +55,8 @@ public final class CommandDeck {
      */
     public CommandDeck(com.aresstack.spaceharvester.deck.access.ServerAccounts accounts) {
         terminal = new TerminalWorkspace(sessions, accounts);
+        ftp = new FtpWorkspace(ftpSessions, accounts);
+        tools.setOpaque(false);
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
@@ -63,12 +71,16 @@ public final class CommandDeck {
             group.add(button);
             buttons.put(candidate, button);
             navigation.add(button);
-            workspace.add(candidate == DeckArea.TERMINAL ? terminal : placeholder(candidate), candidate.name());
+            workspace.add(switch (candidate) {
+                case TERMINAL -> terminal;
+                case FTP -> ftp;
+                default -> placeholder(candidate);
+            }, candidate.name());
         }
         show(DeckArea.TERMINAL);
         perspective = Perspective.of(Perspectives.COMMAND_DECK, "Command Deck",
                 "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", true, navigation,
-                workspace, null);
+                workspace, null, tools);
     }
 
     public Perspective perspective() {
@@ -84,6 +96,12 @@ public final class CommandDeck {
         area = next;
         buttons.get(next).setSelected(true);
         cards.show(workspace, next.name());
+        tools.removeAll();
+        if (next == DeckArea.FTP) {
+            tools.add(ftp.tools(), BorderLayout.CENTER);
+        }
+        tools.revalidate();
+        tools.repaint();
     }
 
     public DeckArea area() {
@@ -93,7 +111,20 @@ public final class CommandDeck {
     /** Trennt alle Sitzungen (Programmende). */
     public void shutdown() {
         sessions.closeAll();
+        ftpSessions.closeAll();
         connecting.shutdownNow();
+    }
+
+    public FtpSessions ftpSessions() {
+        return ftpSessions;
+    }
+
+    FtpWorkspace ftp() {
+        return ftp;
+    }
+
+    JComponent tools() {
+        return tools;
     }
 
     TerminalWorkspace terminal() {

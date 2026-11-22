@@ -16,11 +16,14 @@ import javax.swing.JComponent;
  * @param navigation Knöpfe der Perspektive neben dem Titel, {@code null} für keine
  * @param workspace  Arbeitsfläche in der Mitte
  * @param drawer     linke Leiste, {@code null} für keine (die Mitte nimmt dann die ganze Breite)
+ * @param tools      Bedienelemente oben rechts in der Titelleiste vor Chat und Aufträgen (etwa „Datasets | JES-Jobs“
+ *                   im FTP-Bereich des Command Deck, #1142), {@code null} für keine
  * @param onShown    läuft nach dem Einblenden
  * @param onHidden   läuft nach dem Ausblenden
  */
 public record Perspective(String id, String title, String hint, boolean ready, JComponent navigation,
-                          JComponent workspace, JComponent drawer, Runnable onShown, Runnable onHidden) {
+                          JComponent workspace, JComponent drawer, JComponent tools, Runnable onShown,
+                          Runnable onHidden) {
 
     public Perspective {
         Objects.requireNonNull(id, "id");
@@ -34,6 +37,12 @@ public record Perspective(String id, String title, String hint, boolean ready, J
     /** Eine Perspektive ohne eigene Rückrufe. */
     public static Perspective of(String id, String title, String hint, boolean ready, JComponent navigation,
                                  JComponent workspace, JComponent drawer) {
-        return new Perspective(id, title, hint, ready, navigation, workspace, drawer, null, null);
+        return new Perspective(id, title, hint, ready, navigation, workspace, drawer, null, null, null);
+    }
+
+    /** Eine Perspektive ohne eigene Rückrufe, mit Bedienelementen oben rechts. */
+    public static Perspective of(String id, String title, String hint, boolean ready, JComponent navigation,
+                                 JComponent workspace, JComponent drawer, JComponent tools) {
+        return new Perspective(id, title, hint, ready, navigation, workspace, drawer, tools, null, null);
     }
 }
