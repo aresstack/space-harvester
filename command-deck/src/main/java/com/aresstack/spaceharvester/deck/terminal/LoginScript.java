@@ -40,14 +40,18 @@ public final class LoginScript {
             if (!keyboard.firstInputField()) {
                 return Optional.of("kein Eingabefeld für den Benutzer");
             }
-            keyboard.type(login.user().toCharArray());
+            if (!typed(keyboard, login.user().toCharArray())) {
+                return Optional.of("Benutzerfeld ist geschützt");
+            }
             pause();
             if (!keyboard.nextInputField()) {
                 return Optional.of("kein zweites Eingabefeld für das Passwort");
             }
             char[] password = login.copyPassword();
             try {
-                keyboard.type(password);
+                if (!typed(keyboard, password)) {
+                    return Optional.of("Passwortfeld ist geschützt");
+                }
             } finally {
                 Arrays.fill(password, '\0');
             }
@@ -58,11 +62,23 @@ public final class LoginScript {
                     return Optional.of("Tastatur nach der Anmeldung nicht frei, Startkommando nicht gesendet");
                 }
                 pause();
-                keyboard.type(login.command().toCharArray());
+                if (!typed(keyboard, login.command().toCharArray())) {
+                    return Optional.of("Startkommando: Feld an der Schreibmarke ist geschützt");
+                }
                 pause();
                 keyboard.enter();
             }
             return Optional.empty();
+        }
+    }
+
+    /** Tippt; {@code false}, wenn das Terminal die Eingabe an dieser Stelle ablehnt (geschütztes Feld). */
+    private static boolean typed(TerminalKeyboard keyboard, char[] text) {
+        try {
+            keyboard.type(text);
+            return true;
+        } catch (IllegalStateException protectedField) {
+            return false;
         }
     }
 

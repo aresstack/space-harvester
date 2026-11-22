@@ -54,8 +54,10 @@ class ConnectFormTest {
             form.submit();
             assertThat(form.problemText()).contains("keine Adresse");
 
+            // Eine abweichende Adresse für B gilt nicht für A: Zugangsdaten gehen nur an die Adresse des Eintrags.
+            form.host.setText("10.9.9.9");
             form.server.setSelectedItem(HOST_A);
-            form.port.setText("");
+            assertThat(form.host.getText()).isEmpty();
             form.autoLogin.setSelected(true);
             form.command.setText("MENU");
             form.submit();
