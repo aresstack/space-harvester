@@ -330,11 +330,12 @@ public class ReadingViews {
         });
     }
 
-    /** Der Teil: höchstens {@value #PREFETCH_PARALLEL} zugleich; eine nicht erreichbare Quelle beendet ihn rot. */
+    /** Der Teil: mit allen übrigen Vorladungen höchstens {@value #PREFETCH_PARALLEL} zugleich; eine nicht erreichbare Quelle beendet ihn rot. */
     private void prefetchAll(com.aresstack.spaceharvester.application.jobs.JobContext context, AccessContext caller,
                              String sourceId, List<String> pageIds) throws InterruptedException {
         context.discovered(pageIds.size());
-        Semaphore slots = new Semaphore(PREFETCH_PARALLEL);
+        // Codex-Befund #1080: dieselben Plätze wie der bisherige Weg, auch über mehrere Teile hinweg.
+        Semaphore slots = prefetchSlots;
         java.util.concurrent.atomic.AtomicReference<SourceAccessException> gaveUp =
                 new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.atomic.AtomicBoolean anyFailed = new java.util.concurrent.atomic.AtomicBoolean();

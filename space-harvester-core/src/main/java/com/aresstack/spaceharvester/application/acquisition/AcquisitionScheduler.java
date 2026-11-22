@@ -233,6 +233,16 @@ public final class AcquisitionScheduler implements AutoCloseable {
      * @throws IllegalArgumentException   bei einer Hintergrundanfrage mit durchgereichter Benutzeranmeldung
      */
     public Ticket request(AccessContext caller, PageKey key, Priority priority) {
+        return request(caller, key, priority, false);
+    }
+
+    /**
+     * Wie {@link #request(AccessContext, PageKey, Priority)}; mit {@code refresh} lädt der Abruf streng wie für den
+     * Hintergrund ({@link Load}), unabhängig vom Platz (Codex-Befund #1080): Eine als veraltet gemeldete Seite kommt
+     * dann nie aus dem Cache-Zeitfenster, auch nicht für einen Benutzer mit eigener Anmeldung oder bei abgeschaltetem
+     * Hintergrund. Gilt für den nächsten Start des Eintrags; ein schon laufender Abruf bleibt, wie er ist.
+     */
+    public Ticket request(AccessContext caller, PageKey key, Priority priority, boolean refresh) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(priority, "priority");
@@ -261,6 +271,9 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 promoted++;
             }
             ticket = new Ticket(entry, priority);
+            if (refresh && !entry.running) {
+                entry.refresh = true;
+            }
             if (priority == Priority.FOREGROUND) {
                 lastForeground = System.nanoTime();
                 entry.foreground.put(ticket, caller);
@@ -525,7 +538,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
         entry.slot = slot;
         // Technisch vor delegiert: so bleibt keine Benutzeranmeldung länger als nötig im Spiel.
         entry.caller = entry.technical != null ? entry.technical : entry.foreground.values().iterator().next();
-        entry.strict = !entry.background.isEmpty();
+        entry.strict = !entry.background.isEmpty() || entry.refresh;
         count(entry, 1);
     }
 
@@ -621,6 +634,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
         private AccessContext technical;
         /** Ob der laufende Abruf für den Hintergrund zählt ({@link Load}). */
         private boolean strict;
+        /** Ob eine wartende Anfrage den strengen Abruf verlangt ({@code refresh}). */
+        private boolean refresh;
         private final Map<Ticket, AccessContext> foreground = new LinkedHashMap<>();
         private final List<Ticket> background = new ArrayList<>();
 

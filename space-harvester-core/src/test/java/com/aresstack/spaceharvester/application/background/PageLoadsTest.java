@@ -129,8 +129,14 @@ class PageLoadsTest {
         // Fundstelle 10: Die Suche meldet eine gespeicherte Seite als veraltet.
         cache.add(new PageKey("wiki", "1"));
         java.util.concurrent.atomic.AtomicInteger loaded = new java.util.concurrent.atomic.AtomicInteger();
-        AcquisitionScheduler counting = new AcquisitionScheduler((caller, key) -> loaded.incrementAndGet(),
-                new AcquisitionScheduler.Limits(2, 0, 2, 50));
+        java.util.concurrent.atomic.AtomicInteger strict = new java.util.concurrent.atomic.AtomicInteger();
+        // Hintergrund abgeschaltet: Der Abruf läuft im Vordergrund und muss trotzdem streng laden (Codex-Befund #1080).
+        AcquisitionScheduler counting = new AcquisitionScheduler((caller, key, background) -> {
+            loaded.incrementAndGet();
+            if (background) {
+                strict.incrementAndGet();
+            }
+        }, new AcquisitionScheduler.Limits(2, 0, 2, 50), null, Duration.ofSeconds(1));
         try {
             BackgroundJobs own = new BackgroundJobs(jobs, "app-refresh");
             PageLoads refreshing = new PageLoads(own, counting, AccessContext.technicalClient("app"),
@@ -143,6 +149,7 @@ class PageLoadsTest {
             executor.runAll();
 
             assertThat(loaded).hasValue(1);
+            assertThat(strict).as("nie aus dem Cache-Zeitfenster").hasValue(1);
             assertThat(own.group(group.groupId()).orElseThrow().parts()).singleElement().satisfies(part -> {
                 assertThat(part.parameter(PageLoads.REFRESH)).isEqualTo("true");
                 assertThat(part.state()).isEqualTo(JobState.COMPLETED);

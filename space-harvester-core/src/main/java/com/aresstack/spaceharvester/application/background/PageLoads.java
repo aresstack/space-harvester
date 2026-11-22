@@ -269,7 +269,7 @@ public final class PageLoads {
                     }
                     long seen = wake.mark();
                     try {
-                        open.addLast(scheduler.request(caller, key, priority(caller)));
+                        open.addLast(scheduler.request(caller, key, priority(caller), refresh));
                         break;
                     } catch (java.util.concurrent.RejectedExecutionException e) {
                         if (!open.isEmpty()) {
