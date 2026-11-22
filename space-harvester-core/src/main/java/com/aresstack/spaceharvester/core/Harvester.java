@@ -372,6 +372,7 @@ public final class Harvester implements AutoCloseable {
     private final Exports exports;
     private final ExportConversions conversions;
     private final DocumentRereads rereads;
+    private final com.aresstack.spaceharvester.application.assets.PageAssetHarvests pageAssetHarvests;
     private final JobActions jobActions;
     /** Hintergrundaufträge (Angelo 21.11.2026, ADR 0025 Nachtrag). */
     private final com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs;
@@ -1496,6 +1497,9 @@ public final class Harvester implements AutoCloseable {
                     sourceId -> catalog.config(sourceId).isPresent(),
                     key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()),
                     new FileReadStates(builder.assetDirectory()), clock);
+            // Fundstelle 24: „Anhänge ablegen“ einer Seite als Auftrag.
+            this.pageAssetHarvests = new com.aresstack.spaceharvester.application.assets.PageAssetHarvests(jobs,
+                    assets);
             this.jobActions = new JobActions(jobs, exports, syncs, conversions, rereads, sourceQueryExports);
             jobActions.presentations(videoPresentations);
             // Q1: Suchqualität über den Suchweg des Chats; der Bereich wie im Chat als Seitenmenge aus dem Bestand.
@@ -2419,6 +2423,11 @@ public final class Harvester implements AutoCloseable {
     public static final long DEFAULT_MAX_TEXT_FILE_BYTES = 200L * 1024 * 1024;
 
     /** Abgleich eines Space in den Cache als Auftrag; Status und Delta über {@link SpaceSyncJobs#status}. */
+    /** „Anhänge ablegen“ einer Seite als Auftrag (Fundstelle 24). */
+    public com.aresstack.spaceharvester.application.assets.PageAssetHarvests pageAssetHarvests() {
+        return pageAssetHarvests;
+    }
+
     public SpaceSyncJobs syncs() {
         return syncs;
     }
