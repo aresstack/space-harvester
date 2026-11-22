@@ -582,6 +582,13 @@ wird automatisch verwaltet.
     - Nimmt `Jobs` den Auftrag nicht an (Warteschlange voll), wird wie früher sofort gelöscht; die Daten bleiben nie
       ohne Auftrag liegen. Ein unterbrochener, gescheiterter oder angehaltener Auftrag läuft nicht nach der
       Aufbewahrungsfrist ab, solange ihn kein neuerer Auftrag derselben Art und Quelle ablöst (`Jobs#purgeExpired`).
+18. **Verbindung prüfen ab einer Sekunde sichtbar** (Angelo 21.11.2026, Fundstelle 17, Entwurf vom Architekten
+    bestätigt). Die App prüft Quellen nach jedem Neuladen und Speichern weiter selbst (Spaces live abfragen). Je Prüfung
+    läuft ein einmaliger Zeitgeber von einer Sekunde, kein Polling (`AppContext.VisibleCheck`). Läuft die Prüfung dann
+    noch, entsteht ein Hintergrundteil „Verbindung prüfen“ (`ConnectionChecks`, Art `connection`), der mit der Prüfung
+    grün oder rot mit Grund (`connection-failed`) endet; endet sie vorher, entsteht kein Teil. Abbrechen blendet den
+    Teil nur aus, die Prüfung selbst läuft zu Ende. Ein Teil von vor einem Neustart endet sofort. Mit nur einem Platz
+    gilt der bisherige Weg.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
