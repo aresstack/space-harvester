@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.app.ui.controls.PlaceholderList;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
+import com.aresstack.spaceharvester.application.standing.LockedPageException;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -125,6 +126,10 @@ final class StandingTab extends JPanel {
     static final String STALE_HIDE_TIP = "Aussagen aus veralteten Analysen wieder ausblenden";
     static final String NO_CONFLICTS = "Keine möglichen Widersprüche";
     static final String NO_RIGHT_TO_DECIDE = "Keine Berechtigung, den Stand in dieser Quelle zu setzen";
+    /** Tooltip an Pillen und Löschen auf einer im Bestand gesperrten Seite (ADR 0014), für Aussage und Seite. */
+    static final String LOCKED_PAGE = "Seite ist gesperrt; der Stand lässt sich nicht ändern";
+    /** Statuszeile, wenn der Core auf einer inzwischen gesperrten Seite ablehnt. */
+    static final String LOCKED_REFUSED = "Stand nicht gesetzt: Die Seite ist gesperrt.";
     static final String NO_RIGHT_TO_HISTORY = "Keine Berechtigung, das Protokoll in dieser Quelle zu lesen";
     static final String NOT_WATCHING = "Stand erneuert sich nicht von selbst (Anmeldung beim Core fehlgeschlagen)";
     static final String HELP = "Jede Aussage der Auswahl links hat einen Stand: „gilt“ (gilt jetzt), „geplant“ (soll "
@@ -332,6 +337,11 @@ final class StandingTab extends JPanel {
     private volatile boolean deleting;
     /** Ergebnis des letzten Löschens; steht vor der Zählung in der Statuszeile, bis eine andere Auswahl kommt. */
     private String deletedNotice;
+    /**
+     * Warum das letzte Setzen scheiterte, wenn danach neu gelesen wird (gesperrte Seite): steht vor der Zählung, bis
+     * zum nächsten Setzen oder einer anderen Auswahl, damit das neue Lesen die Meldung nicht still überschreibt.
+     */
+    private String writeNotice;
     private Subscription analysesWatch = Subscription.NONE;
     private final JTextField search = new JTextField(9);
     private final DefaultListModel<Row> model = new DefaultListModel<>();
@@ -594,6 +604,7 @@ final class StandingTab extends JPanel {
         }
         this.selection = selection;
         deletedNotice = null;
+        writeNotice = null;
         dirty = true;
         reading.source(selection == null ? null : (topic, stop) -> {
             Actions current = actions.get();
@@ -889,7 +900,8 @@ final class StandingTab extends JPanel {
 
     /** Das Ergebnis des letzten Löschens vor der Zählung, solange dieselbe Auswahl gilt. */
     private String noticed(String text) {
-        return deletedNotice == null ? text : deletedNotice + " · " + text;
+        String withDeleted = deletedNotice == null ? text : deletedNotice + " · " + text;
+        return writeNotice == null ? withDeleted : writeNotice + " · " + withDeleted;
     }
 
     /** Die Rückfrage vor dem Löschen, mit dem Namen des gewählten Knotens. */
@@ -1481,9 +1493,15 @@ final class StandingTab extends JPanel {
         label.setForeground(Comic.MUTED);
         row.add(label);
         long revision = decision == null ? 0 : decision.revision();
+        // Gesperrte Seite: der Stand bleibt sichtbar, ändern lässt er sich nicht (der Core lehnt auch ab).
+        boolean locked = locked(page);
         for (Standing standing : Standing.values()) {
             CountChip chip = CountChip.choice(word(standing), tone(standing));
             chip.setSelected(decision != null && decision.standing() == standing);
+            if (locked) {
+                chip.setEnabled(false);
+                chip.setToolTipText(LOCKED_PAGE);
+            }
             chip.addActionListener(e -> {
                 popup.setVisible(false);
                 if (decision != null && decision.standing() == standing) {
@@ -1494,8 +1512,8 @@ final class StandingTab extends JPanel {
             });
             row.add(chip);
         }
-        IconButton clear = new IconButton(Glyph.TRASH, CLEAR_TIP).compact();
-        clear.setEnabled(decision != null && decision.hasStanding());
+        IconButton clear = new IconButton(Glyph.TRASH, locked ? LOCKED_PAGE : CLEAR_TIP).compact();
+        clear.setEnabled(!locked && decision != null && decision.hasStanding());
         clear.addActionListener(e -> clear(page, statementId, revision));
         IconButton history = new IconButton(Glyph.TABLE, HISTORY_TIP).compact();
         history.addActionListener(e -> history(page, statementId));
@@ -1508,15 +1526,22 @@ final class StandingTab extends JPanel {
     private JComponent staleControls(StandingDecision decision) {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         row.setOpaque(false);
-        IconButton clear = new IconButton(Glyph.TRASH, CLEAR_TIP).compact();
+        boolean locked = locked(decision.page());
+        IconButton clear = new IconButton(Glyph.TRASH, locked ? LOCKED_PAGE : CLEAR_TIP).compact();
         // Löschen nimmt nur den Stand; eine Prüfung nimmt ihr eigener Schalter zurück.
-        clear.setEnabled(decision.hasStanding());
+        clear.setEnabled(!locked && decision.hasStanding());
         clear.addActionListener(e -> clear(decision.page(), decision.statementId(), decision.revision()));
         IconButton history = new IconButton(Glyph.TABLE, HISTORY_TIP).compact();
         history.addActionListener(e -> history(decision.page(), decision.statementId()));
         row.add(clear);
         row.add(history);
         return row;
+    }
+
+    /** Ob die Seite laut der gelesenen Sicht im Bestand gesperrt ist. */
+    private boolean locked(PageKey page) {
+        StatusQuoView current = view;
+        return current != null && current.locked(page);
     }
 
     private void clear(PageKey page, String statementId, long revision) {
@@ -1536,6 +1561,7 @@ final class StandingTab extends JPanel {
         if (actions.get() == null) {
             return;
         }
+        writeNotice = null;
         runner.run(work, result -> {
             onStatus.accept(done);
             if (watchFailed) {
@@ -1547,6 +1573,11 @@ final class StandingTab extends JPanel {
                 changed();
             } else if (failure instanceof AccessDeniedException) {
                 onStatus.accept(NO_RIGHT_TO_DECIDE);
+            } else if (failure instanceof LockedPageException) {
+                // Inzwischen gesperrt: neu lesen, damit die Schalter sich sperren; die Statuszeile sagt es weiter.
+                writeNotice = LOCKED_REFUSED;
+                onStatus.accept(LOCKED_REFUSED);
+                changed();
             } else {
                 onStatus.accept("Stand nicht gesetzt (" + failure.getClass().getSimpleName() + ")");
             }

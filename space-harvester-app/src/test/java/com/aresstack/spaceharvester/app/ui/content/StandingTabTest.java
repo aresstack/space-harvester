@@ -473,6 +473,50 @@ class StandingTabTest {
     }
 
     @Test
+    void onALockedPageThePillsAndTheTrashAreDisabledWithTheReason() {
+        StatusQuoView base = view();
+        Fixture fixture = new Fixture(new StatusQuoView(base.entries(), base.states(), base.pages(), base.counts(),
+                base.certainCounts(), base.staleDecisions(), base.staleEntries(), base.rejectedDecisions(),
+                java.util.Set.of(new PageKey("wiki", "1"))));
+        StandingTab tab = fixture.shownTab();
+        tab.click(indexOf(tab, "Der Sachbearbeiter prüft"));
+
+        assertThat(Standing.values()).allSatisfy(standing -> {
+            assertThat(tab.decisionChip(standing).isEnabled()).isFalse();
+            assertThat(tab.decisionChip(standing).getToolTipText()).isEqualTo(StandingTab.LOCKED_PAGE);
+        });
+        assertThat(tab.overlayButton(StandingTab.LOCKED_PAGE).isEnabled()).isFalse();
+        assertThat(tab.overlayButton(StandingTab.HISTORY_TIP).isEnabled()).as("das Protokoll bleibt lesbar").isTrue();
+        tab.decisionChip(Standing.GEPLANT).doClick();
+        assertThat(fixture.writes).isEmpty();
+        assertThat(StandingTab.LOCKED_PAGE).isEqualTo("Seite ist gesperrt; der Stand lässt sich nicht ändern");
+    }
+
+    @Test
+    void aPageLockedMeanwhileIsRefusedByTheCoreRereadsAndSaysSo() {
+        Fixture fixture = new Fixture(view());
+        fixture.lockedMeanwhile = true;
+        StandingTab tab = fixture.shownTab();
+        tab.click(indexOf(tab, "Der Sachbearbeiter prüft"));
+        assertThat(tab.decisionChip(Standing.UEBERHOLT).isEnabled()).as("laut Sicht noch frei").isTrue();
+
+        // Zwischen Lesen und Klick gesperrt: der Core lehnt ab, die Sicht wird neu gelesen und sperrt die Pillen.
+        StatusQuoView base = view();
+        fixture.view = new StatusQuoView(base.entries(), base.states(), base.pages(), base.counts(),
+                base.certainCounts(), base.staleDecisions(), base.staleEntries(), base.rejectedDecisions(),
+                java.util.Set.of(new PageKey("wiki", "1")));
+        tab.decisionChip(Standing.UEBERHOLT).doClick();
+
+        assertThat(fixture.writes).hasSize(1);
+        assertThat(fixture.reads.get()).isEqualTo(2);
+        assertThat(fixture.status.get()).as("die Meldung bleibt nach dem neuen Lesen vor der Zählung")
+                .isEqualTo(StandingTab.LOCKED_REFUSED + " · 5 Aussagen auf 2 Seiten");
+        assertThat(StandingTab.LOCKED_REFUSED).endsWith("Die Seite ist gesperrt.");
+        tab.click(indexOf(tab, "Der Sachbearbeiter prüft"));
+        assertThat(tab.decisionChip(Standing.UEBERHOLT).isEnabled()).isFalse();
+    }
+
+    @Test
     void aConflictRereadsAndSaysSo() {
         Fixture fixture = new Fixture(view());
         fixture.conflict = true;
@@ -795,6 +839,8 @@ class StandingTabTest {
         boolean failSubscribe;
         final List<String> topics = new ArrayList<>();
         boolean denied;
+        /** Der Core lehnt ab, weil die Seite inzwischen gesperrt ist. */
+        boolean lockedMeanwhile;
         final StandingTab tab;
 
         Fixture(StatusQuoView view) {
@@ -826,6 +872,9 @@ class StandingTabTest {
                     writes.add("decide " + page.pageId() + " " + statementId + " " + standing + " " + expectedRevision);
                     if (denied) {
                         throw denied();
+                    }
+                    if (lockedMeanwhile) {
+                        throw new com.aresstack.spaceharvester.application.standing.LockedPageException();
                     }
                     if (conflict) {
                         throw new com.aresstack.spaceharvester.application.standing.StandingConflictException(
