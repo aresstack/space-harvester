@@ -1,7 +1,8 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
 import java.time.Duration;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 /**
@@ -11,6 +12,13 @@ import java.util.function.Supplier;
  */
 final class ActiveParts {
 
+    /**
+     * {@link ReentrantLock} statt {@code synchronized} (Architekt 22.11.2026): Wer in {@link #await} wartet, gibt als
+     * virtueller Thread seinen Träger frei.
+     */
+    private final ReentrantLock lock = new ReentrantLock();
+    /** Ein Teil hat seinen Schritt beendet. */
+    private final Condition left = lock.newCondition();
     private int active;
 
     /**
@@ -33,25 +41,39 @@ final class ActiveParts {
         }
     }
 
-    private synchronized void enter() {
-        active++;
+    private void enter() {
+        lock.lock();
+        try {
+            active++;
+        } finally {
+            lock.unlock();
+        }
     }
 
-    private synchronized void leave() {
-        active--;
-        notifyAll();
+    private void leave() {
+        lock.lock();
+        try {
+            active--;
+            left.signalAll();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Wartet höchstens {@code wait} lang, bis kein Teil mehr läuft; {@code false}, wenn noch einer läuft. */
-    synchronized boolean await(Duration wait) throws InterruptedException {
-        long deadline = System.nanoTime() + wait.toNanos();
-        while (active > 0) {
-            long left = deadline - System.nanoTime();
-            if (left <= 0) {
-                return false;
+    boolean await(Duration wait) throws InterruptedException {
+        long remaining = wait.toNanos();
+        lock.lock();
+        try {
+            while (active > 0) {
+                if (remaining <= 0) {
+                    return false;
+                }
+                remaining = left.awaitNanos(remaining);
             }
-            TimeUnit.NANOSECONDS.timedWait(this, left);
+            return true;
+        } finally {
+            lock.unlock();
         }
-        return true;
     }
 }
