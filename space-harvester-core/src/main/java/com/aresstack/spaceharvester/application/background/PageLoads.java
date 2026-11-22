@@ -466,24 +466,45 @@ public final class PageLoads {
         }
     }
 
-    /** Weckt den wartenden Unterauftrag; jede Meldung zählt eins hoch, damit keine verloren geht. */
+    /**
+     * Weckt den wartenden Unterauftrag; jede Meldung zählt eins hoch, damit keine verloren geht. Mit
+     * {@link java.util.concurrent.locks.ReentrantLock} statt {@code synchronized}: Der Unterauftrag wartet auf einem
+     * virtuellen Thread und gibt dabei seinen Träger frei (Architekt 22.11.2026).
+     */
     static final class Wake {
 
+        private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+        private final java.util.concurrent.locks.Condition rung = lock.newCondition();
         private long generation;
 
-        synchronized void ring() {
-            generation++;
-            notifyAll();
+        void ring() {
+            lock.lock();
+            try {
+                generation++;
+                rung.signalAll();
+            } finally {
+                lock.unlock();
+            }
         }
 
-        synchronized long mark() {
-            return generation;
+        long mark() {
+            lock.lock();
+            try {
+                return generation;
+            } finally {
+                lock.unlock();
+            }
         }
 
         /** Wartet, bis nach {@code seen} geläutet wurde; ohne Zeitgrenze. */
-        synchronized void awaitAfter(long seen) throws InterruptedException {
-            while (generation == seen) {
-                wait();
+        void awaitAfter(long seen) throws InterruptedException {
+            lock.lock();
+            try {
+                while (generation == seen) {
+                    rung.await();
+                }
+            } finally {
+                lock.unlock();
             }
         }
     }
