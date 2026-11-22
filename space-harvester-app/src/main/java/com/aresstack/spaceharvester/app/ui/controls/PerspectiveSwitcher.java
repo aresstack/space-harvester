@@ -22,7 +22,8 @@ import javax.swing.SwingConstants;
 /**
  * Der Titel oben links als Umschalter der Perspektiven (#1141, Angelo 22.11.2026): Logo und Name der gewählten
  * Perspektive, rechts daneben ein Dreieck. Ein Klick auf Titel oder Dreieck (oder Leertaste/Eingabe/Alt+↓) öffnet
- * das Menü mit allen Perspektiven; Platzhalter tragen „in Vorbereitung“. Das Logo bleibt in jeder Perspektive gleich.
+ * das Menü mit allen Perspektiven; Platzhalter tragen „in Vorbereitung“. Das Logo bleibt in jeder Perspektive gleich
+ * und öffnet das Menü nicht. Unter dem Namen kann die alte Schiffskennung durchschimmern ({@link #showHeritage}).
  * Der Name ist der einzige kürzbare Teil der Kopfzeile („Space Har…“, siehe HeaderLayout).
  */
 public final class PerspectiveSwitcher extends JPanel {
@@ -31,7 +32,8 @@ public final class PerspectiveSwitcher extends JPanel {
     static final String PREPARING = "in Vorbereitung";
 
     private final Perspectives perspectives;
-    private final JLabel title = new JLabel();
+    private final JLabel logo = new JLabel();
+    private final HeritageTitle title = new HeritageTitle();
     private final JLabel arrow = new JLabel(new DownTriangle());
     private final KeyboardFocusRing ring;
     private JPopupMenu menu;
@@ -45,11 +47,14 @@ public final class PerspectiveSwitcher extends JPanel {
         setToolTipText(TOOLTIP);
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);
-        title.setIcon(logo);
-        title.setIconTextGap(8);
+        this.logo.setIcon(logo);
+        this.logo.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
+        // Das Logo öffnet das Menü nicht; es trägt (vorläufig) einen versteckten Auslöser, siehe logo().
+        this.logo.addMouseListener(new MouseAdapter() { });
         arrow.setForeground(Comic.INK);
         arrow.setVerticalAlignment(SwingConstants.CENTER);
         arrow.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 0));
+        add(this.logo, BorderLayout.WEST);
         add(title, BorderLayout.CENTER);
         add(arrow, BorderLayout.EAST);
         setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
@@ -92,7 +97,7 @@ public final class PerspectiveSwitcher extends JPanel {
     @Override
     public Dimension getMinimumSize() {
         Dimension pref = getPreferredSize();
-        int fixed = title.getIcon() == null ? 0 : title.getIcon().getIconWidth() + title.getIconTextGap();
+        int fixed = logo.getPreferredSize().width;
         return new Dimension(fixed + arrow.getPreferredSize().width + 24, pref.height);
     }
 
@@ -130,6 +135,98 @@ public final class PerspectiveSwitcher extends JPanel {
 
     private static String escape(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /** Das Logo oben links, für versteckte Auslöser. */
+    public JComponent logo() {
+        return logo;
+    }
+
+    /**
+     * Lässt unter dem Namen eine alte, überlackierte Kennung durchschimmern: blendet sie verwittert ein, hält sie und
+     * blendet sie wieder aus. Läuft über einen kurzen Zeitgeber, der danach stoppt.
+     */
+    public void showHeritage(String oldName, java.time.Duration hold) {
+        title.reveal(oldName, hold);
+    }
+
+    /** Die gerade durchschimmernde Kennung, leer wenn keine (für Tests). */
+    public String heritage() {
+        return title.ghost == null ? "" : title.ghost;
+    }
+
+    /** Der Titel, unter dem eine alte Kennung durchschimmern kann: verwitterte Großbuchstaben mit Kratzern. */
+    private static final class HeritageTitle extends JLabel {
+
+        private static final int FADE_MS = 700;
+        private String ghost;
+        private float alpha;
+        private javax.swing.Timer timer;
+
+        void reveal(String oldName, java.time.Duration hold) {
+            if (timer != null) {
+                timer.stop();
+            }
+            ghost = oldName;
+            long start = System.currentTimeMillis();
+            long total = FADE_MS * 2L + hold.toMillis();
+            timer = new javax.swing.Timer(40, e -> {
+                long t = System.currentTimeMillis() - start;
+                if (t >= total) {
+                    ((javax.swing.Timer) e.getSource()).stop();
+                    ghost = null;
+                    alpha = 0;
+                } else if (t < FADE_MS) {
+                    alpha = t / (float) FADE_MS;
+                } else if (t > total - FADE_MS) {
+                    alpha = (total - t) / (float) FADE_MS;
+                } else {
+                    alpha = 1f;
+                }
+                repaint();
+            });
+            alpha = 0;
+            timer.start();
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics g) {
+            if (ghost != null && alpha > 0) {
+                java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                // Die alte Kennung groß und gesperrt quer unter dem Namen, wie unter frischer Farbe durchscheinend.
+                java.awt.FontMetrics titleMetrics = getFontMetrics(getFont());
+                int titleWidth = titleMetrics.stringWidth(getText());
+                // So gesperrt, dass die alte Kennung genau unter dem Namen liegt.
+                java.awt.Font base = Comic.semiBold(19f).deriveFont(java.awt.Font.BOLD);
+                float tracking = Math.max(0f, (titleWidth - getFontMetrics(base).stringWidth(ghost))
+                        / (float) Math.max(1, ghost.length() - 1) / base.getSize2D());
+                java.awt.Font font = base.deriveFont(java.util.Map.of(java.awt.font.TextAttribute.TRACKING, tracking));
+                g2.setFont(font);
+                java.awt.FontMetrics metrics = g2.getFontMetrics();
+                int x = getInsets().left;
+                int y = (getHeight() + metrics.getAscent() - metrics.getDescent()) / 2;
+                int width = metrics.stringWidth(ghost);
+                g2.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.75f * alpha));
+                g2.setPaint(new java.awt.GradientPaint(x, y - metrics.getAscent(), new java.awt.Color(0xB07A45), x,
+                        y, new java.awt.Color(0x6E4A2A)));
+                g2.drawString(ghost, x, y);
+                // Abgeplatzte Stellen: kleine Flecken in der Hintergrundfarbe lassen die Schrift löchrig wirken.
+                g2.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.9f * alpha));
+                g2.setColor(Comic.SURFACE);
+                java.util.Random chips = new java.util.Random(ghost.hashCode());
+                for (int i = 0; i < 40; i++) {
+                    int sx = x + chips.nextInt(Math.max(1, width));
+                    int sy = y - chips.nextInt(Math.max(1, metrics.getAscent()));
+                    g2.fillOval(sx, sy, 1 + chips.nextInt(3), 1 + chips.nextInt(2));
+                }
+                g2.dispose();
+            }
+            super.paintComponent(g);
+        }
     }
 
     /** Der Name im Titel (für Tests). */
