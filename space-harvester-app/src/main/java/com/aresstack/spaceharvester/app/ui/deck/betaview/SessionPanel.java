@@ -32,6 +32,7 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
     private final BetaViewSession session;
     private final Prompts prompts;
     final SearchPane search;
+    final JSplitPane split;
     final DocumentPane documents;
     private final JLabel status = Comic.muted(" ");
     private boolean tabsFetched;
@@ -43,12 +44,26 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
         setOpaque(false);
         search = new SearchPane(this);
         documents = new DocumentPane(this);
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, search, documents);
+        split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, search, documents);
         ComicDivider.install(split);
         split.setBorder(null);
         split.setOpaque(false);
         split.setResizeWeight(0.42);
-        split.setDividerLocation(0.42);
+        search.setMinimumSize(new java.awt.Dimension(search.headerWidth(), 0));
+        documents.setMinimumSize(new java.awt.Dimension(320, 0));
+        // Erste Aufteilung, sobald die Breite bekannt ist: 42 % für die Suche, aber nie weniger als ihre Kopfzeile.
+        split.addComponentListener(new java.awt.event.ComponentAdapter() {
+            private boolean placed;
+
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                if (!placed && split.getWidth() > 0) {
+                    placed = true;
+                    split.setDividerLocation(Math.max((int) Math.round(split.getWidth() * 0.42),
+                            search.headerWidth()));
+                }
+            }
+        });
         var signOff = Comic.button("Abmelden", "Von diesem BetaView-Server abmelden");
         signOff.addActionListener(e -> logout.run());
         JPanel foot = new JPanel(new BorderLayout());

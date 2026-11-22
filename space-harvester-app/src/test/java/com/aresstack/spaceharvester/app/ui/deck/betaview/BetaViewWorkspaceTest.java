@@ -127,6 +127,9 @@ class BetaViewWorkspaceTest {
     void fileNamesFollowTheTitle() {
         assertThat(SessionPanel.fileName("Lauf 21.11.: A/B")).isEqualTo("Lauf 21.11._ A_B");
         assertThat(SessionPanel.fileName("  ")).isEqualTo("Dokument");
+        DocumentTab longTitle = new DocumentTab("D1", "F1", "L1", "Sehr langer Titel eines Tagesabschlusses im Lauf",
+                "21.11.2026 06:12", "", false);
+        assertThat(DocumentPane.shortLabel(longTitle)).hasSizeLessThanOrEqualTo(DocumentPane.MAX_PILL).endsWith("…");
     }
 
     private void build(BetaViewAccess access, Prompts prompts) throws Exception {

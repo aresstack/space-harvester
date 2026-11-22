@@ -294,6 +294,20 @@ final class SearchPane extends JPanel {
     }
 
     /** Die Auswahl aus den Feldern; wirft mit lesbarer Meldung, wenn etwas fehlt. */
+    /**
+     * Breite, ab der die Unterreiter und die Aktionen in eine Zeile passen. Die Sitzung gibt der Suche mindestens so
+     * viel Platz, damit „Gemerkt“ bei 960 px nicht in eine zweite Zeile rutscht.
+     */
+    int headerWidth() {
+        int width = 0;
+        for (String name : tabs.names()) {
+            width += tabs.button(name).getPreferredSize().width + 4;
+        }
+        width += saveSearchButton.getPreferredSize().width + searchButton.getPreferredSize().width + 3 * 6;
+        java.awt.Insets insets = tabs.getInsets();
+        return width + insets.left + insets.right + 8;
+    }
+
     SearchFilter filter() {
         SearchFilter.Period.Mode mode = (SearchFilter.Period.Mode) period.getSelectedItem();
         int number = 0;

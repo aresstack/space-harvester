@@ -125,12 +125,14 @@ final class DocumentPane extends JPanel {
                 download, downloadOptions, bookmark, info, close}) {
             tools.add(part);
         }
-        JPanel head = new JPanel(new BorderLayout(8, 0));
+        // Zwei Zeilen: oben die Dokumente (brechen bei schmaler Breite um), darunter die Werkzeuge zum gewählten.
+        // In einer gemeinsamen Zeile schnitten die Werkzeuge bei 960 px den Titel ab.
+        JPanel head = new JPanel(new BorderLayout(0, 4));
         head.setOpaque(false);
         head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(6, 10, 6, 10)));
         head.add(pillRow, BorderLayout.CENTER);
-        head.add(tools, BorderLayout.EAST);
+        head.add(tools, BorderLayout.SOUTH);
 
         Comic.noAutoScroll(text);
         busy = new BusyOverlay(Comic.scroll(text));
@@ -304,6 +306,7 @@ final class DocumentPane extends JPanel {
     }
 
     private void refreshPills() {
+        pillRow.setVisible(!pills.isEmpty());
         pillRow.revalidate();
         pillRow.repaint();
     }
@@ -337,9 +340,12 @@ final class DocumentPane extends JPanel {
         close.setEnabled(has);
     }
 
-    private static String shortLabel(DocumentTab tab) {
+    /** Höchstlänge des Titels in der Pille; der volle Titel steht im Tooltip. */
+    static final int MAX_PILL = 28;
+
+    static String shortLabel(DocumentTab tab) {
         String label = tab.label();
-        return label.length() > 30 ? label.substring(0, 27) + "…" : label;
+        return label.length() > MAX_PILL ? label.substring(0, MAX_PILL - 1).strip() + "…" : label;
     }
 
     private static String tooltip(DocumentTab tab) {
