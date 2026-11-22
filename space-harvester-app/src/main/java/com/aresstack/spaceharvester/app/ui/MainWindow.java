@@ -844,6 +844,8 @@ public final class MainWindow implements AppContext.Navigator {
         navigationSlot.repaint();
         // Die Suchleiste gehört zum Space Harvester; für die anderen Perspektiven ist keine Suche festgelegt.
         searchSlot.setVisible(harvester);
+        // Ein Chat für alle Perspektiven; die Werkzeuge kommen je Frage aus der aktiven Perspektive (#1151).
+        if (chatSidebar != null) chatSidebar.chat().toolScope(Perspectives.COMMAND_DECK.equals(next.id()) ? commandDeck::chatScope : null);
         stageCards.show(stage, next.id());
         if (!harvester) {
             // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.

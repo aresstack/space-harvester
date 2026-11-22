@@ -62,9 +62,18 @@ public final class TerminalWorkspace extends JPanel {
     private final Map<AidKey, com.aresstack.enterpriseai.ui.comic.control.ComposerButton> specialKeys =
             new java.util.EnumMap<>(AidKey.class);
     private final java.util.Set<Component> keyWatched = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
-    private final Runnable screenChanged = () -> SwingUtilities.invokeLater(this::readLegend);
+    private final Runnable screenChanged = () -> SwingUtilities.invokeLater(() -> {
+        readLegend();
+        showAssist();
+    });
+    /** KI-Maskenassistent (#1151): Hinweis und Zurücknehmen links neben den Aktionen. */
+    private final JLabel assistHint = Comic.muted(" ");
+    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton undoAssist;
+    private final Runnable assistChanged = () -> SwingUtilities.invokeLater(this::showAssist);
+    private TerminalSession watchedSession;
     private TerminalView watchedView;
-    private TerminalSession selected;
+    /** Auch vom Chat-Faden gelesen (Prüfung „noch dieselbe Sitzung?“ der Chat-Werkzeuge). */
+    private volatile TerminalSession selected;
 
     public TerminalWorkspace(TerminalSessions sessions, com.aresstack.spaceharvester.deck.access.ServerAccounts accounts) {
         super(new BorderLayout());
@@ -138,7 +147,13 @@ public final class TerminalWorkspace extends JPanel {
                 closeSession(selected);
             }
         });
-        JPanel actions = Comic.row(copy, paste, disconnect, close);
+        undoAssist = Comic.button("KI-Eingaben zurücknehmen",
+                "Setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt");
+        undoAssist.addActionListener(e -> undoAssist());
+        undoAssist.setVisible(false);
+        assistHint.setForeground(Comic.INK);
+        assistHint.setVisible(false);
+        JPanel actions = Comic.row(assistHint, undoAssist, copy, paste, disconnect, close);
         JPanel foot = new JPanel(new BorderLayout());
         foot.setOpaque(false);
         foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
@@ -225,6 +240,7 @@ public final class TerminalWorkspace extends JPanel {
         }
         if (session == selected) {
             showState();
+            showAssist();
             if (session.state() == SessionState.CONNECTED) {
                 view(TerminalView.class).ifPresent(TerminalView::focus);
             }
@@ -261,6 +277,15 @@ public final class TerminalWorkspace extends JPanel {
             watchedView.removeScreenListener(screenChanged);
             watchedView = null;
         }
+        if (watchedSession != null) {
+            watchedSession.assistant().unobserve(assistChanged);
+            watchedSession = null;
+        }
+        if (session != null) {
+            watchedSession = session;
+            session.assistant().observe(assistChanged);
+        }
+        showAssist();
         functionKeys.setVisible(session != null);
         if (session == null) {
             return;
@@ -282,6 +307,49 @@ public final class TerminalWorkspace extends JPanel {
                     }
                 }));
         readLegend();
+    }
+
+    /**
+     * Zeigt, was die KI vorbereitet hat (#1151): die Felder gelb umrandet im Terminal, daneben der Hinweis und
+     * „KI-Eingaben zurücknehmen“. Nach einem neuen Bild vom Host (der Mensch hat abgeschickt) ist alles weg.
+     */
+    void showAssist() {
+        TerminalSession session = selected;
+        java.util.List<com.aresstack.spaceharvester.deck.terminal.MaskAssistant.Edit> edits =
+                session == null || session.state() != SessionState.CONNECTED ? java.util.List.of()
+                        : session.assistant().edits();
+        java.util.Set<Integer> fields = new java.util.LinkedHashSet<>();
+        java.util.List<TerminalView.Span> spans = new java.util.ArrayList<>();
+        for (var edit : edits) {
+            if (fields.add(edit.start())) {
+                spans.add(new TerminalView.Span(edit.start(), edit.length()));
+            }
+        }
+        view(TerminalView.class).ifPresent(view -> view.highlight(spans));
+        boolean any = !spans.isEmpty();
+        assistHint.setText(any ? assistText(spans.size()) : " ");
+        assistHint.setVisible(any);
+        undoAssist.setVisible(any);
+        undoAssist.setEnabled(any);
+    }
+
+    static String assistText(int fields) {
+        return (fields == 1 ? "KI hat 1 Feld" : "KI hat " + fields + " Felder")
+                + " vorbereitet – prüfen, dann selbst abschicken";
+    }
+
+    private void undoAssist() {
+        TerminalSession session = selected;
+        if (session == null) {
+            return;
+        }
+        try {
+            session.assistant().undo();
+        } catch (com.aresstack.spaceharvester.deck.terminal.MaskRefused refused) {
+            status.setText(refused.getMessage());
+        }
+        showAssist();
+        view(TerminalView.class).ifPresent(TerminalView::focus);
     }
 
     private void readLegend() {
@@ -358,9 +426,17 @@ public final class TerminalWorkspace extends JPanel {
         return selected == null ? Optional.empty() : selected.view(type);
     }
 
-    /** Die gewählte Sitzung (für Tests). */
-    TerminalSession selected() {
+    /** Die gewählte Sitzung; {@code null} beim Formular „Neue Verbindung“. Auf jedem Faden lesbar. */
+    public TerminalSession selected() {
         return selected;
+    }
+
+    String assistHintText() {
+        return assistHint.isVisible() ? assistHint.getText() : "";
+    }
+
+    com.aresstack.enterpriseai.ui.comic.control.ComposerButton undoAssistButton() {
+        return undoAssist;
     }
 
     FunctionKeyBar functionKeys() {

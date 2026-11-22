@@ -36,11 +36,26 @@ public final class FakeTn3270Host implements AutoCloseable {
     };
 
     /** Eine Zeile des Bildes: Position und Text, geschützt und hell oder als Eingabefeld. */
-    public record Line(int row, int column, String text, boolean input) {
+    public record Line(int row, int column, String text, boolean input, int length, boolean numeric,
+                       boolean hidden) {
+
+        /** Eine Zeile wie bisher: Eingabefelder mindestens 8 Zeichen oder so lang wie der Text. */
+        public Line(int row, int column, String text, boolean input) {
+            this(row, column, text, input, 0, false, false);
+        }
+
+        /** Ein Eingabefeld mit fester Länge, auf Wunsch numerisch oder verdeckt (Kennwort). */
+        public static Line input(int row, int column, int length, boolean numeric, boolean hidden) {
+            return new Line(row, column, "", true, length, numeric, hidden);
+        }
+
+        int inputLength() {
+            return length > 0 ? length : Math.max(8, text.length());
+        }
     }
 
     private final ServerSocket server;
-    private final List<Line> screen;
+    private volatile List<Line> screen;
     private final Charset codePage;
     private final List<Socket> clients = new CopyOnWriteArrayList<>();
     private final ByteArrayOutputStream received = new ByteArrayOutputStream();
@@ -160,6 +175,14 @@ public final class FakeTn3270Host implements AutoCloseable {
         }
     }
 
+    /**
+     * Das Bild, das der Host ab jetzt auf jede Eingabe schickt (wie ein Host, der nach ENTER die nächste Maske
+     * zeigt). Ohne Eingabe des Clients schickt er nichts.
+     */
+    public void nextScreen(List<Line> next) {
+        this.screen = List.copyOf(next);
+    }
+
     /** Die AID-Bytes der Eingaben in Reihenfolge (0x7D ENTER, 0x6D CLEAR, 0xF1–0xF9 PF1–PF9, 0x6C PA1 …). */
     public List<Integer> aids() {
         return List.copyOf(aids);
@@ -180,7 +203,8 @@ public final class FakeTn3270Host implements AutoCloseable {
             address(data, line.row() * 80 + line.column());
             data.write(0x1D);
             // Geschützt und hell (0x28) bzw. ungeschützt (0x00), über die Codetabelle.
-            data.write(CODES[line.input() ? 0x00 : 0x28]);
+            // Numerisch 0x10, verdeckt 0x0C (Kennwort).
+            data.write(CODES[line.input() ? (line.numeric() ? 0x10 : 0) | (line.hidden() ? 0x0C : 0) : 0x28]);
             if (line.input() && !cursorPlaced) {
                 data.write(0x13);
                 cursorPlaced = true;
@@ -194,7 +218,7 @@ public final class FakeTn3270Host implements AutoCloseable {
             }
             if (line.input()) {
                 // Feldende: ein geschütztes Attribut nach dem Eingabebereich.
-                address(data, line.row() * 80 + line.column() + 1 + Math.max(8, line.text().length()));
+                address(data, line.row() * 80 + line.column() + 1 + line.inputLength());
                 data.write(0x1D);
                 data.write(CODES[0x20]);
             }

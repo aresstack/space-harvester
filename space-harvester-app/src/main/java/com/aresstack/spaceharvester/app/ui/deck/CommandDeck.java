@@ -84,6 +84,21 @@ public final class CommandDeck {
         return perspective;
     }
 
+    /**
+     * Was der globale Chat in dieser Perspektive bekommt (#1151): die Werkzeuge des Maskenassistenten für die gerade
+     * gewählte Terminal-Sitzung – Maske lesen, Felder lokal ausfüllen, Schreibmarke bewegen, nie abschicken. Beim
+     * Senden ausgewertet; ohne Sitzung sagen die Werkzeuge das dem Modell.
+     */
+    public com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope chatScope() {
+        com.aresstack.spaceharvester.deck.terminal.TerminalSession session = terminal.selected();
+        String area = "Command Deck › Terminal" + (session == null ? " (keine Sitzung gewählt)"
+                : " " + session.profile().label());
+        String key = "command-deck/terminal" + (session == null ? "" : "/" + session.profile().label());
+        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(area, key,
+                new com.aresstack.spaceharvester.app.chat.TerminalChatTools(session, terminal::selected),
+                com.aresstack.spaceharvester.app.chat.TerminalChatTools.systemMessage(area));
+    }
+
     public TerminalSessions sessions() {
         return sessions;
     }
