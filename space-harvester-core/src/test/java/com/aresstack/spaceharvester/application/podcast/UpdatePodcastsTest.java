@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.changelog.SummaryPage;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -153,9 +154,49 @@ class UpdatePodcastsTest {
         FakeSpeech speech = new FakeSpeech("Thomas"::equals);
         UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
 
-        podcasts(new FakeModel(), speech).start(caller, summary);
+        JobStatus status = podcasts(new FakeModel(), speech).start(caller, summary);
 
         assertThat(podcasts(new FakeModel(), speech).podcast(summary).orElseThrow().complete()).isTrue();
+        // der Ausweg steht in der Diagnose des Auftrags, einmal mit Anzahl
+        assertThat(jobs.events(status.id())).extracting(JobEvent::message)
+                .anySatisfy(message -> assertThat(message).contains("mit der anderen Stimme"));
+    }
+
+    @Test
+    void speaksSeveralSegmentsAtOnceSoPlaybackNeverWaits() throws Exception {
+        FakeSpeech speech = new FakeSpeech(voice -> false, 150);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+
+        podcasts(new FakeModel(), speech).start(caller, summary);
+
+        // ai.parallel = 2: Sprachausgabe läuft nicht mehr Abschnitt für Abschnitt
+        assertThat(speech.mostAtOnce.get()).isEqualTo(2);
+        assertThat(podcasts(new FakeModel(), speech).podcast(summary).orElseThrow().complete()).isTrue();
+    }
+
+    @Test
+    void aSpeechCallWithItsOwnWorkersCountsAgainstTheParallelBudget() throws Exception {
+        FakeSpeech speech = new FakeSpeech(voice -> false, 100);
+        speech.workers = 2;
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+
+        podcasts(new FakeModel(), speech).start(caller, summary);
+
+        // ai.parallel = 2, je Aufruf 2 Anfragen: nur ein Abschnitt zugleich
+        assertThat(speech.mostAtOnce.get()).isEqualTo(1);
+    }
+
+    @Test
+    void reportsSegmentsWithoutAudioInTheDiagnosis() throws Exception {
+        FakeSpeech speech = new FakeSpeech(voice -> true);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+
+        JobStatus status = podcasts(new FakeModel(), speech).start(caller, summary);
+
+        assertThat(jobs.events(status.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo("PODCAST_AUDIO_MISSING");
+            assertThat(event.message()).startsWith("4 Abschnitt(e) ohne Audio").contains("1.1, 2.1, 2.2, 3.1");
+        });
     }
 
     @Test
@@ -307,10 +348,20 @@ class UpdatePodcastsTest {
 
         final List<String> voices = Collections.synchronizedList(new ArrayList<>());
         final AtomicInteger calls = new AtomicInteger();
+        final AtomicInteger mostAtOnce = new AtomicInteger();
+        private final AtomicInteger atOnce = new AtomicInteger();
         private final Predicate<String> failing;
+        private final long millis;
+        int workers = 1;
 
         FakeSpeech(Predicate<String> failing) {
+            this(failing, 0);
+        }
+
+        /** @param millis so lange dauert jeder Aufruf */
+        FakeSpeech(Predicate<String> failing, long millis) {
             this.failing = failing;
+            this.millis = millis;
         }
 
         @Override
@@ -324,13 +375,29 @@ class UpdatePodcastsTest {
         }
 
         @Override
+        public int workers() {
+            return workers;
+        }
+
+        @Override
         public List<byte[]> speak(String model, String voice, String text, boolean sentences) throws IOException {
             calls.incrementAndGet();
-            if (failing.test(voice)) {
-                throw new IOException("HTTP 503");
+            mostAtOnce.accumulateAndGet(atOnce.incrementAndGet(), Math::max);
+            try {
+                if (millis > 0) {
+                    Thread.sleep(millis);
+                }
+                if (failing.test(voice)) {
+                    throw new IOException("HTTP 503");
+                }
+                voices.add(voice);
+                return List.of(silence());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("unterbrochen");
+            } finally {
+                atOnce.decrementAndGet();
             }
-            voices.add(voice);
-            return List.of(silence());
         }
 
         private static byte[] silence() {

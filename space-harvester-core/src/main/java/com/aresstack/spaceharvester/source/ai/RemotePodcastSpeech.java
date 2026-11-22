@@ -82,6 +82,11 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
     }
 
     @Override
+    public int workers() {
+        return WORKERS;
+    }
+
+    @Override
     public List<byte[]> speak(String model, String voice, String text, boolean sentences) throws IOException {
         SpeechSynthesisPort port;
         try {

@@ -15,21 +15,25 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.IntSupplier;
 import java.util.function.ObjIntConsumer;
 
 /**
- * Die Herstellung eines Podcasts, gleich wofür (Update-Zusammenfassung oder Seite): Grobübersicht, je Thema die
- * Abschnitte und Texte parallel ({@code ai.parallel}), dann das Audio in Sendereihenfolge. Jede Stufe liegt sofort in
- * der {@link PodcastStore Ablage}; ein neuer Lauf macht dort weiter, wo der letzte aufhörte, und jede abgelegte Stufe
- * meldet {@link #subscribe} (ADR 0027, kein Polling).
+ * Die Herstellung eines Podcasts, gleich wofür (Update-Zusammenfassung oder Seite): Grobübersicht, dann je Thema
+ * Abschnitte, Texte, Audio und Bild, alles parallel ({@code ai.parallel}) in einem {@link RankedPool}, der immer zuerst
+ * nimmt, was die Wiedergabe als Nächstes braucht: Der erste Abschnitt spricht so früh wie möglich, die übrigen Fäden
+ * rechnen die folgenden Themen voraus. Auswege und fehlende Abschnitte stehen in der Diagnose des Auftrags. Jede
+ * Stufe liegt sofort in der {@link PodcastStore Ablage}; ein neuer Lauf macht dort weiter, wo der letzte aufhörte, und
+ * jede abgelegte Stufe meldet {@link #subscribe} (ADR 0027, kein Polling).
  */
 final class PodcastProduction {
 
     private static final System.Logger LOG = System.getLogger(PodcastProduction.class.getName());
+    /** Komponente in der Diagnose. */
+    static final String COMPONENT = "Podcast";
+    /** Höchstens so viele Arten von Auswegen je Lauf in der Diagnose. */
+    static final int MAX_REPORTED_REPAIRS = 20;
 
     private final StepModel model;
     private final PodcastSpeech speech;
@@ -181,47 +185,64 @@ final class PodcastProduction {
         context.checkpoint();
         int topics = plan.topics().size();
         context.discovered(topics);
-        ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, parallel.getAsInt()), runnable -> {
-            Thread thread = new Thread(runnable, "space-harvester-podcast-" + key.substring(0, 6));
-            thread.setDaemon(true);
-            return thread;
-        });
+        int threads = Math.max(1, parallel.getAsInt());
+        RankedPool pool = new RankedPool(threads, "space-harvester-podcast-" + key.substring(0, 6));
         Future<?> drawing = null;
         java.util.concurrent.atomic.AtomicBoolean ended = new java.util.concurrent.atomic.AtomicBoolean();
+        // Jedes Ablegen geht durch diesen Zaun: Nach dem Ende des Laufs (oder dem Zurückziehen) legt kein Faden aus dem
+        // Pool mehr etwas ab, auch wenn er seinen Modellaufruf erst später beendet; run() darf dann löschen.
+        PodcastPictures.Fence fence = write -> {
+            synchronized (ended) {
+                if (ended.get() || revoked.contains(key)) {
+                    throw new PodcastPictures.Closed("Podcast-Lauf beendet oder zurückgezogen");
+                }
+                write.run();
+            }
+        };
+        // Ein speak()-Aufruf stellt selbst bis zu speech.workers() Anfragen: zusammen höchstens ai.parallel.
+        java.util.concurrent.Semaphore voices = new java.util.concurrent.Semaphore(
+                Math.max(1, threads / Math.max(1, speech.workers())));
         try {
             final PodcastPlan planned = plan;
-            // Bilder je Thema neben allem anderen: ein eigener Faden geht die Themen durch, die Teile der Schaubilder
-            // laufen im Pool. Die Wiedergabe wartet nie darauf.
-            Pictures configured = pictures;
-            if (configured != null) {
-                drawing = picturesThread(key, origin.sourceId(), material, planned, configured, pool, context,
-                        repairs, ended);
-            }
-            // Stufe 2 und 3 parallel; je Thema eine Kette, damit Thema 1 nicht auf Thema 8 wartet.
-            List<Future<List<Future<List<Turn>>>>> scripts = new ArrayList<>();
+            // Alles auf einmal einreichen, der Rang ordnet (Angelo 22.11.2026: Start dauert, stockt nach Kapitel 1):
+            // je Thema Abschnitte, dann alle Texte des Themas parallel, jedes Audio sofort nach seinem Text, auch
+            // parallel. Thema 1 hat immer Vorrang, damit die Wiedergabe schnell beginnt; die übrigen Fäden rechnen die
+            // folgenden Themen voraus.
+            List<CompletableFuture<List<CompletableFuture<Boolean>>>> chapters = new ArrayList<>();
             for (int t = 0; t < topics; t++) {
                 final int topic = t;
-                scripts.add(pool.submit(() -> {
-                    List<Segment> segments = segments(writer, key, material, planned, topic, names, repairs);
-                    List<Future<List<Turn>>> texts = new ArrayList<>();
+                chapters.add(pool.supply(rank(topic, Stage.SEGMENTS, 0),
+                        () -> segments(writer, key, material, planned, topic, names, repairs, fence))
+                        .thenApply(segments -> {
+                    List<CompletableFuture<Boolean>> audio = new ArrayList<>();
                     for (int s = 0; s < segments.size(); s++) {
                         final int segment = s;
-                        Segment before = segment > 0 ? segments.get(segment - 1) : previousLast(key, topic);
-                        boolean last = topic == topics - 1 && segment == segments.size() - 1;
-                        texts.add(CompletableFuture.completedFuture(script(writer, key, material, planned, topic,
-                                segments, segment, before, last, names, repairs)));
+                        audio.add(pool.supply(rank(topic, Stage.SCRIPT, segment), () -> {
+                            Segment before = segment > 0 ? segments.get(segment - 1) : previousLast(key, topic);
+                            boolean last = topic == topics - 1 && segment == segments.size() - 1;
+                            return script(writer, key, material, planned, topic, segments, segment, before, last,
+                                    names, repairs, fence);
+                        }).thenCompose(turns -> pool.supply(rank(topic, Stage.SPEECH, segment),
+                                () -> speak(speaker, voices, key, topic, segment, turns, repairs, fence))));
                     }
-                    return texts;
+                    return audio;
                 }));
             }
-            // Stufe 4 in Sendereihenfolge: das Abspielen kann beginnen, sobald der erste Abschnitt da ist.
-            context.phase("Podcast", "Sprachausgabe");
+            // Bilder je Thema erst, wenn der erste Abschnitt spricht, und hinter Text und Audio ihres Themas. Die
+            // Wiedergabe wartet nie darauf.
+            Pictures configured = pictures;
+            if (configured != null && topics > 0) {
+                CompletableFuture<?> firstAudio = chapters.get(0).thenCompose(audio -> audio.isEmpty()
+                        ? CompletableFuture.completedFuture(Boolean.FALSE) : audio.get(0));
+                drawing = picturesThread(key, origin.sourceId(), material, planned, configured, pool, firstAudio,
+                        context, repairs, fence);
+            }
+            context.phase("Podcast", "Texte und Sprachausgabe");
             List<int[]> failed = new ArrayList<>();
             for (int t = 0; t < topics; t++) {
-                List<Future<List<Turn>>> texts = await(scripts.get(t), context);
-                for (int s = 0; s < texts.size(); s++) {
-                    context.checkpoint();
-                    if (!speak(speaker, key, t, s, await(texts.get(s), context), repairs)) {
+                List<CompletableFuture<Boolean>> audio = await(chapters.get(t), context);
+                for (int s = 0; s < audio.size(); s++) {
+                    if (!await(audio.get(s), context)) {
                         failed.add(new int[]{t, s});
                     }
                 }
@@ -229,20 +250,22 @@ final class PodcastProduction {
             }
             // Gescheiterte Abschnitte ein zweites Mal, nachdem der Dienst Zeit hatte, sich zu erholen.
             List<int[]> missing = new ArrayList<>();
+            List<CompletableFuture<Boolean>> retries = new ArrayList<>();
             for (int[] part : failed) {
-                context.checkpoint();
                 List<Turn> turns = store.script(key, part[0], part[1]).orElse(List.of());
-                if (!speak(speaker, key, part[0], part[1], turns, repairs)) {
-                    missing.add(part);
+                retries.add(pool.supply(rank(part[0], Stage.SPEECH, part[1]),
+                        () -> speak(speaker, voices, key, part[0], part[1], turns, repairs, fence)));
+            }
+            for (int i = 0; i < failed.size(); i++) {
+                if (!await(retries.get(i), context)) {
+                    missing.add(failed.get(i));
                 }
             }
             if (drawing != null) {
                 context.phase("Podcast", "Bilder");
                 await(drawing, context);
             }
-            for (String repair : repairs) {
-                LOG.log(System.Logger.Level.INFO, "Podcast {0}: {1}", key, repair);
-            }
+            report(context, key, repairs, missing);
             if (!missing.isEmpty()) {
                 context.failed(missing.size());
                 context.incomplete();
@@ -256,31 +279,74 @@ final class PodcastProduction {
             if (drawing != null) {
                 drawing.cancel(true);
             }
-            pool.shutdownNow();
+            pool.close();
+        }
+    }
+
+    /** Arbeitsstufen in der Reihenfolge, in der die Wiedergabe sie braucht; Bilder zuletzt. */
+    enum Stage { SEGMENTS, SCRIPT, SPEECH, PICTURE }
+
+    /** Der Rang einer Arbeit: zuerst das Thema, dann die Stufe, dann der Abschnitt; kleiner = früher. */
+    static long rank(int topic, Stage stage, int segment) {
+        return (long) topic * 1_000_000L + stage.ordinal() * 10_000L + Math.min(segment, 9_999);
+    }
+
+    /**
+     * Schreibt die Auswege und fehlende Abschnitte in die Diagnose des Auftrags: jede Art Ausweg einmal mit Anzahl,
+     * fehlende Abschnitte als Warnung. Nie Text des Podcasts.
+     */
+    private static void report(JobContext context, String key, List<String> repairs, List<int[]> missing) {
+        java.util.Map<String, Integer> counted = new java.util.LinkedHashMap<>();
+        synchronized (repairs) {
+            for (String repair : repairs) {
+                counted.merge(repair, 1, Integer::sum);
+            }
+        }
+        int listed = 0;
+        for (java.util.Map.Entry<String, Integer> entry : counted.entrySet()) {
+            LOG.log(System.Logger.Level.INFO, "Podcast {0}: {1} ({2}×)", key, entry.getKey(), entry.getValue());
+            if (listed++ < MAX_REPORTED_REPAIRS) {
+                context.record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.info(COMPONENT,
+                        entry.getKey() + (entry.getValue() > 1 ? " (" + entry.getValue() + "×)" : "")));
+            }
+        }
+        if (!missing.isEmpty()) {
+            StringBuilder parts = new StringBuilder();
+            for (int[] part : missing) {
+                parts.append(parts.isEmpty() ? "" : ", ").append(part[0] + 1).append('.').append(part[1] + 1);
+            }
+            context.record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.warning(
+                    com.aresstack.spaceharvester.application.jobs.JobEvent.Category.JOB, COMPONENT,
+                    "PODCAST_AUDIO_MISSING", missing.size() + " Abschnitt(e) ohne Audio nach zwei Versuchen: "
+                            + parts + "; der nächste Start holt sie nach"));
         }
     }
 
     /** Startet die Bilder aller Themen in einem eigenen Faden; jedes fertige Bild meldet {@link #subscribe}. */
     private Future<?> picturesThread(String key, String sourceId, PodcastWriter.Material material, PodcastPlan plan,
-                                     Pictures configured, ExecutorService parts, JobContext context,
-                                     List<String> repairs, java.util.concurrent.atomic.AtomicBoolean ended) {
-        PodcastPictures.Fence fence = write -> {
-            synchronized (ended) {
-                if (ended.get() || revoked.contains(key)) {
-                    throw new PodcastPictures.Closed("Podcast-Lauf beendet oder zurückgezogen");
-                }
-                write.run();
-            }
-        };
+                                     Pictures configured, RankedPool pool, CompletableFuture<?> firstAudio,
+                                     JobContext context, List<String> repairs, PodcastPictures.Fence fence) {
+        // Jeder Modellaufruf eines Bildes läuft im Pool mit dem Rang seines Themas, hinter dessen Text und Audio.
+        java.util.concurrent.atomic.AtomicLong rank = new java.util.concurrent.atomic.AtomicLong(
+                rank(0, Stage.PICTURE, 0));
+        java.util.concurrent.Executor parts = work -> pool.execute(rank.get(), work);
         PodcastPictures maker = new PodcastPictures(store, model, configured.drawer(), configured.images(), parts,
                 attempt -> waits.accept(context, attempt), fence);
         List<PodcastPictures.Brief> briefs = briefs(material, plan);
         java.util.concurrent.FutureTask<Void> task = new java.util.concurrent.FutureTask<>(() -> {
+            try {
+                firstAudio.get();
+            } catch (ExecutionException firstFailed) {
+                // die Bilder kommen trotzdem; der Fehler des Abschnitts zeigt sich im Auftrag
+            } catch (InterruptedException stopped) {
+                return null;
+            }
             java.util.Set<String> used = new java.util.HashSet<>();
             for (PodcastPictures.Brief brief : briefs) {
                 if (Thread.currentThread().isInterrupted() || revoked.contains(key)) {
                     return null;
                 }
+                rank.set(rank(brief.topic(), Stage.PICTURE, 0));
                 boolean known = maker.picture(key, brief.topic()).isPresent();
                 maker.make(key, sourceId, brief, used, repairs);
                 if (!known) {
@@ -322,14 +388,14 @@ final class PodcastProduction {
     }
 
     private List<Segment> segments(PodcastWriter writer, String key, PodcastWriter.Material material,
-                                   PodcastPlan plan, int topic, PodcastWriter.Voices names, List<String> repairs) {
+                                   PodcastPlan plan, int topic, PodcastWriter.Voices names, List<String> repairs,
+                                   PodcastPictures.Fence fence) {
         Optional<List<Segment>> stored = store.segments(key, topic);
         if (stored.isPresent()) {
             return stored.get();
         }
         List<Segment> segments = writer.segments(material, plan, topic, names, repairs);
-        guard(key);
-        store.saveSegments(key, topic, segments);
+        fence.write(() -> store.saveSegments(key, topic, segments));
         notify(key);
         return segments;
     }
@@ -344,20 +410,20 @@ final class PodcastProduction {
 
     private List<Turn> script(PodcastWriter writer, String key, PodcastWriter.Material material, PodcastPlan plan,
                               int topic, List<Segment> segments, int segment, Segment before, boolean last,
-                              PodcastWriter.Voices names, List<String> repairs) {
+                              PodcastWriter.Voices names, List<String> repairs, PodcastPictures.Fence fence) {
         Optional<List<Turn>> stored = store.script(key, topic, segment);
         if (stored.isPresent()) {
             return stored.get();
         }
         List<Turn> turns = writer.script(material, plan, topic, segments, segment, before, last, names, repairs);
-        guard(key);
-        store.saveScript(key, topic, segment, turns);
+        fence.write(() -> store.saveScript(key, topic, segment, turns));
         return turns;
     }
 
     /** Spricht einen Abschnitt, falls sein Audio fehlt; {@code false}, wenn das nicht gelang. */
-    private boolean speak(PodcastSpeaker speaker, String key, int topic, int segment, List<Turn> turns,
-                          List<String> repairs) {
+    private boolean speak(PodcastSpeaker speaker, java.util.concurrent.Semaphore voices, String key, int topic,
+                          int segment, List<Turn> turns, List<String> repairs, PodcastPictures.Fence fence)
+            throws InterruptedException {
         if (store.audio(key, topic, segment).isPresent()) {
             return true;
         }
@@ -365,15 +431,19 @@ final class PodcastProduction {
             return false;
         }
         guard(key);
+        voices.acquire();
         try {
             byte[] wav = speaker.speak(turns, repairs);
-            guard(key);
-            store.saveAudio(key, topic, segment, wav);
+            fence.write(() -> store.saveAudio(key, topic, segment, wav));
             notify(key);
             return true;
+        } catch (PodcastPictures.Closed closed) {
+            throw closed;
         } catch (java.io.IOException | RuntimeException e) {
             repairs.add("Abschnitt " + (topic + 1) + "." + (segment + 1) + " ohne Audio (" + e.getMessage() + ")");
             return false;
+        } finally {
+            voices.release();
         }
     }
 
