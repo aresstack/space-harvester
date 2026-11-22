@@ -50,6 +50,14 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     public static final String TITLE = "Hintergrundfüllung";
     /** Fehlercode: Seiten ließen sich nicht laden. */
     public static final String PAGES_MISSING = PageLoads.PAGES_MISSING;
+    /**
+     * Angabe: der wievielte Versuch eines Teils (Angelo 22.11.2026). Holt die Füllung gescheiterte Seiten nach ihrer
+     * Wartezeit erneut, läuft der gescheiterte Teil des Space im selben Eintrag weiter
+     * ({@link BackgroundJobs#startOrRetryUnlessRunning}), statt je Versuch einen neuen Auftrag anzulegen.
+     */
+    public static final String ATTEMPTS = "fill.attempts";
+    /** Code der Meldung, mit der ein weiterer Versuch beginnt. */
+    public static final String RETRY = "RETRY";
     private static final String COMPONENT = "background-fill";
 
     private final BackgroundJobs background;
@@ -103,6 +111,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private static final class Live {
 
         final JobContext context;
+        /** Der wievielte Versuch ({@link #ATTEMPTS}). */
+        final int attempt;
         final CompletableFuture<Void> done = new CompletableFuture<>();
         long failed;
         long processed;
@@ -119,8 +129,9 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
          */
         boolean idleWhileScanAhead;
 
-        Live(JobContext context) {
+        Live(JobContext context, int attempt) {
             this.context = context;
+            this.attempt = attempt;
         }
     }
 
@@ -375,9 +386,10 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
         }
         if (start) {
             try {
-                // Liegt schon ein offener Teil (etwa nach dem Neustart fortgesetzt), entsteht kein zweiter.
-                background.startUnlessRunning(KIND, TITLE, new BackgroundPart.Draft(
-                        where.sourceId(), where.spaceKey(), Map.of()));
+                // Liegt schon ein offener Teil (etwa nach dem Neustart fortgesetzt), entsteht kein zweiter; ist der
+                // jüngste gescheitert, ist dies seine Wiederholung und er läuft im selben Eintrag weiter.
+                background.startOrRetryUnlessRunning(KIND, TITLE, new BackgroundPart.Draft(
+                        where.sourceId(), where.spaceKey(), Map.of()), ATTEMPTS);
             } catch (RuntimeException e) {
                 synchronized (monitor) {
                     open.remove(where);
@@ -489,8 +501,9 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private static void finish(Live part) {
         if (part.failed > 0) {
             part.done.completeExceptionally(new JobFailedException(PAGES_MISSING, part.failed
-                    + (part.failed == 1 ? " Seite ließ" : " Seiten ließen") + " sich nicht laden; die Füllung versucht "
-                    + "sie nach ihrer Wartezeit erneut"));
+                    + (part.failed == 1 ? " Seite ließ" : " Seiten ließen") + " sich nicht laden"
+                    + (part.attempt > 1 ? " (Versuch " + part.attempt + ")" : "")
+                    + "; die Füllung versucht sie nach ihrer Wartezeit erneut, in diesem Auftrag"));
         } else {
             part.done.complete(null);
         }
@@ -499,8 +512,14 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private JobTask work(BackgroundPart part) {
         BackgroundFill.Where where = new BackgroundFill.Where(part.sourceId() == null ? "" : part.sourceId(),
                 part.partitionKey());
+        int attempt = BackgroundJobs.attempt(part.parameters().get(ATTEMPTS));
         return context -> {
-            Live mine = new Live(context);
+            Live mine = new Live(context, attempt);
+            if (attempt > 1) {
+                // Jeder Versuch steht in der Diagnose, die Gründe der früheren bleiben darüber stehen.
+                context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, RETRY,
+                        "Versuch " + attempt + ": Die Füllung lädt die gescheiterten Seiten erneut", null, null, null));
+            }
             boolean woke;
             Early tally;
             Fill current = fill;
