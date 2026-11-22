@@ -20,6 +20,8 @@ public final class StatusLabel extends JLabel {
 
     /** Gelb der Ampel als Schrift: dunkel genug, um auf hellem Grund lesbar zu sein. */
     static final Color WARNING = Comic.STANDING_UNCLEAR;
+    /** Der Ton „gelb“ (bewusst ausgelassen, wartet) auch für Hinweise außerhalb der Statuszeile. */
+    public static final Color WARNING_COLOR = WARNING;
 
     private StatusNote note = StatusNote.plain(" ");
 

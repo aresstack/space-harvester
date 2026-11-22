@@ -732,6 +732,35 @@ public final class Workspace {
     }
 
     /**
+     * Der Auftrag, der die Daten einer entfernten Quelle dieser ID noch löscht (Fundstelle 22); solange lässt sich die
+     * Kennung nicht neu vergeben.
+     */
+    public java.util.Optional<JobStatus> sourceRemovalPending(String sourceId) {
+        return harvester.sourceManagement().removalPending(sourceId);
+    }
+
+    /**
+     * Die Quellen, deren Daten nach dem Entfernen noch gelöscht werden, je mit dem Auftrag; aus dem Speicher des Core,
+     * den die Auftragsmeldungen pflegen, darf also auf dem EDT laufen.
+     */
+    public java.util.Map<String, JobStatus> sourceRemovalsPending() {
+        return harvester.sourceManagement().removalsPending();
+    }
+
+    /**
+     * Ob die Daten der Quelle gerade gelöscht werden (entfernt oder umgestellt), auch angehalten oder gescheitert mit
+     * ausstehender Wiederholung; aus dem Speicher des Core.
+     */
+    public boolean sourceDataBeingDeleted(String sourceId) {
+        return harvester.sourceManagement().withdrawalOpen(sourceId) != null;
+    }
+
+    /** Ob {@code job} ein offenes Löschen der Daten einer Quelle ist; das bleibt, bis es gelingt oder abbricht. */
+    public boolean openWithdrawal(JobStatus job) {
+        return job.sourceId() != null && job.id().equals(harvester.sourceManagement().withdrawalOpen(job.sourceId()));
+    }
+
+    /**
      * „Daten bereinigen“: löscht als Auftrag alle lokal gespeicherten Daten dieser einen Quelle (Seiten, Katalog,
      * Suchindex, Analysen, Anhänge, Begriffsbeziehungen, geprüfte Fakten, Aussagen); die Quelle bleibt eingerichtet,
      * andere Quellen bleiben unberührt ({@code SourceManagement.purge}, {@code DELETE /api/v1/sources/{id}/data}).
@@ -2292,6 +2321,8 @@ public final class Workspace {
             // Metadaten und Analytics: ein neuer Lauf im selben Eintrag, auch nach einem Neustart (Angelo 17.11.2026).
             case METADATA_EXPORT, ANALYTICS_EXPORT -> harvester.jobActions().perform(jobId, Harvester.OWNER,
                     JobAction.RESUME);
+            // „Daten bereinigen“, auch das Löschen einer entfernten Quelle: im selben Eintrag von vorn (Fundstelle 22).
+            case PURGE -> harvester.jobActions().perform(jobId, Harvester.OWNER, JobAction.RESUME);
             default -> harvester.resumeExport(jobId);
         };
     }
@@ -3213,6 +3244,8 @@ public final class Workspace {
                     deleted++;
                 } catch (UnknownJobException e) {
                     activities.forget(status.id());
+                } catch (JobStillRunningException e) {
+                    // ein offenes Löschen der Daten einer Quelle bleibt
                 }
             }
         }
@@ -3369,6 +3402,12 @@ public final class Workspace {
         if (!Harvester.OWNER.equals(status.owner())) {
             // Läufe des Aufrufers (Zusammenfassen, Synonymlauf, Aussagenanalyse) gehören ihm selbst, auch
             // quellenübergreifende; die Rechte hat der Core schon beim Start geprüft.
+            return;
+        }
+        if (status.type() == JobType.PURGE && status.parameter(
+                com.aresstack.spaceharvester.application.sources.SourceDataPurge.REASON) != null) {
+            // Das Löschen einer entfernten oder umgestellten Quelle sieht, wer die Konfiguration verwalten darf, wie
+            // {@link #removeSource}; nach dem Neuladen steht die entfernte Quelle in keiner Richtlinie mehr.
             return;
         }
         if (!access.permits(caller, scope(status.sourceId(), status.partitionKey()), kind)) {

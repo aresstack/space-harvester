@@ -655,7 +655,8 @@ class WorkspaceTest {
 
     @Test
     void removingASourceDropsItsCachedPagesInTheCore() throws Exception {
-        Workspace workspace = start().workspace();
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
         assertThat(await(workspace, workspace.startSync("wiki", "DEV")).state()).isEqualTo(JobState.COMPLETED);
         assertThat(workspace.cachedPages("wiki", "DEV", null, 100).pages()).hasSize(2);
 
@@ -663,6 +664,28 @@ class WorkspaceTest {
 
         assertThat(workspace.sources()).extracting(HarvestSource::id).containsExactly("handbuch");
         assertThat(workspace.removeSource("wiki")).isFalse();
+        // Fundstelle 22: Die Daten löscht ein Auftrag in der Auftragsliste; bis er endet, ist die Kennung gesperrt.
+        JobStatus removal = workspace.jobs().stream()
+                .filter(job -> job.type() == com.aresstack.spaceharvester.application.jobs.JobType.PURGE)
+                .findFirst().orElseThrow();
+        assertThat(removal.sourceId()).isEqualTo("wiki");
+
+        // Nach dem Neuladen steht die entfernte Quelle in keiner Richtlinie mehr: Ihr Löschen bleibt sichtbar, für wen
+        // die Konfiguration verwaltet (Abnahme Punkt 6), samt Diagnose für den gelben Link.
+        Workspace reloaded = new Workspace(started.harvester(), new com.aresstack.spaceharvester.application.access
+                .AccessGuard(new LocalOperatorPolicy(com.aresstack.spaceharvester.application.access.AccessContext
+                .technicalClient(com.aresstack.spaceharvester.core.Harvester.OWNER), java.util.Set.of("handbuch"))),
+                new ActivityLog(home.resolve("neu-geladen.txt")));
+        assertThat(reloaded.jobs()).extracting(JobStatus::id).contains(removal.id());
+        assertThat(reloaded.events(removal.id())).isNotEmpty();
+
+        assertThat(await(workspace, removal).state()).isEqualTo(JobState.COMPLETED);
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(30).toNanos();
+        while (workspace.sourceRemovalPending("wiki").isPresent()) {
+            assertThat(System.nanoTime()).as("Sperre nach 30 s noch da").isLessThan(deadline);
+            Thread.sleep(10);
+        }
+        assertThat(workspace.sourceRemovalsPending()).isEmpty();
     }
 
     @Test

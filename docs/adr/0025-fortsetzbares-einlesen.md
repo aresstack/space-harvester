@@ -542,6 +542,47 @@ wird automatisch verwaltet.
     Fortsetzen holt nur, was fehlt; die Anhangsliste samt Rechten liefert die App, nach einem Neustart setzt deshalb
     der Benutzer fort. „Neu erzwingen“ und „Nur Fehler“ der Anhangbeschaffung eines Exports gelten hier nicht.
 
+17. **Quelle entfernen als Auftrag** (Angelo 21.11.2026, Fundstelle 22, Entwurf vom Architekten bestätigt). Entfernen
+    und Umstellen auf ein neues Ziel löschen die Daten der Quelle nicht mehr im aufrufenden Thread, sondern als
+    Auftrag „Daten bereinigen“ (`PURGE`, `purge.reason` = `removed` oder `moved`, `SourceDataPurge#startWithdrawal`)
+    mit denselben Ablagen wie „Daten bereinigen“, KI-Ergebnisse und Caches eingeschlossen.
+    - Der Auftrag trägt `Jobs.SURVIVES_SHUTDOWN`: Endet der Dienst, etwa weil die App nach dem Entfernen neu lädt, gilt
+      er wie ein Hintergrundauftrag als unterbrochen, nicht als abgebrochen; „wird abgebrochen“ zählt ihn nicht. Der
+      nächste Start setzt ihn im selben Eintrag fort (`SourceManagement#resumeWithdrawals`); ältere offene Einträge
+      derselben Quelle werden abgelöst (`Jobs#retire`). Ein vom Benutzer abgebrochenes Löschen bleibt abgebrochen, ein
+      angehaltenes angehalten, bis sein Besitzer fortsetzt.
+    - Scheitert er (Ablage nicht geleert, Laufzeitgrenze), wiederholt er sich von selbst im selben Eintrag
+      (`SourceDataPurge.HEAL_DELAYS`: 30 s, 2, 10, dann alle 30 min); „Fortsetzen“ in den Aufträgen geht jederzeit.
+      Auf laufende Aufträge der Quelle wartet er, statt nach 30 s zu scheitern.
+    - Bis er gelingt, lässt sich dieselbe Kennung nicht neu anlegen (`SourceRemovalPendingException`); das Formular
+      zeigt unter der Kennung einen gelben Hinweis mit dem Link „Aufträge“ (`StatusLabel`). Die Sperre liest einen
+      Speicher, den die Auftragsmeldungen pflegen, nie die Auftragsablage.
+    - Steht eine entfernte Quelle vor dem Neustart wieder in der Konfiguration (YAML), wird sie trotzdem erst zu Ende
+      gelöscht; bis dahin ist sie abgeschaltet und zeigt gelb „Wird noch entfernt“, danach ist sie leer und wieder an.
+    - Das Löschen entfernter Quellen sieht, wer die Konfiguration verwaltet, auch wenn die Quelle nach dem Neuladen in
+      keiner Richtlinie mehr steht.
+    - Beim Umstellen auf ein neues Ziel kehrt `SourceManagement#change` sofort zurück.
+    - **Eine Wahrheit „Löschen offen“** (zweite Abnahme): `SourceDataPurge#openWithdrawal` hält je Quelle den jüngsten
+      Löschauftrag im Speicher, gepflegt aus den Auftragsmeldungen und beim Start aus der Ablage aufgebaut. Offen ist er
+      von der Annahme bis `COMPLETED` oder `CANCELLED`, also auch angehalten, unterbrochen und gescheitert mit
+      ausstehender Selbstheilung. Daran hängen Halten, Sperre der Kennung, Abschalten und Löschschutz.
+    - Halten: Solange das Löschen offen ist, startet kein anderer Auftrag der Quelle (`Jobs#sourceHold`, auf jedem Weg:
+      Annahme, Fortsetzen, ↻, Hintergrund); er wartet und meldet einmal „wartet auf das Löschen der Daten der Quelle“
+      (`Jobs.WAITING_FOR_WITHDRAWAL`). Aufträge über alle Quellen überspringen die Quelle (`AccessGuard#withhold`).
+      Das Löschen beendet nur Aufträge, die vor ihm angenommen wurden, auch nach Anhalten und Fortsetzen (Annahmezeit
+      des Eintrags).
+    - Die Selbstheilung plant nach einem abgelehnten neuen Versuch (etwa volle Warteschlange) weiter; beim Start bekommt
+      jedes offene gescheiterte Löschen seinen Zeitgeber.
+    - Löschschutz: Der Besen („Abgeschlossene löschen“) lässt offenes Löschen stehen und meldet gelb „Löschen der Quelle
+      läuft noch“; einzeln lässt es sich nicht löschen (`JobStillRunningException`), die Aufbewahrungsfrist nimmt es
+      nicht mit. „Daten bereinigen …“ ist bis dahin gesperrt, mit Hinweis.
+    - Eine bis zum Ende des Löschens abgeschaltete Quelle merkt sich den Schalter des Benutzers getrennt; schaltet er
+      sie in der Zeit aus, bleibt sie danach aus. Freigegeben wird bei `COMPLETED` und `CANCELLED`. Beim Start wird
+      erst gehalten, dann fortgesetzt.
+    - Nimmt `Jobs` den Auftrag nicht an (Warteschlange voll), wird wie früher sofort gelöscht; die Daten bleiben nie
+      ohne Auftrag liegen. Ein unterbrochener, gescheiterter oder angehaltener Auftrag läuft nicht nach der
+      Aufbewahrungsfrist ab, solange ihn kein neuerer Auftrag derselben Art und Quelle ablöst (`Jobs#purgeExpired`).
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel
