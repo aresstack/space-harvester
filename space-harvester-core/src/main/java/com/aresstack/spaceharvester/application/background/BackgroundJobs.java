@@ -543,6 +543,20 @@ public final class BackgroundJobs {
         return cancelled;
     }
 
+    /**
+     * Bricht diesen Unterauftrag ab, solange er noch wartet, mit gelbem Grund ({@link Jobs#cancelIfWaiting}); ein
+     * laufender bleibt unberührt.
+     *
+     * @return der abgebrochene Unterauftrag, leer wenn er nicht mehr wartete oder fehlt
+     */
+    public Optional<JobStatus> cancelIfWaiting(String jobId, String reason) {
+        try {
+            return jobs.cancelIfWaiting(jobId, owner, reason);
+        } catch (UnknownJobException e) {
+            return Optional.empty();
+        }
+    }
+
     /** Die Gruppe, solange noch einer ihrer Unteraufträge in der Liste steht. */
     public Optional<BackgroundGroup> group(String groupId) {
         List<JobStatus> parts = all().stream().filter(status -> groupId.equals(status.parameter(GROUP)))

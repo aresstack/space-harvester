@@ -754,6 +754,10 @@ public final class Harvester implements AutoCloseable {
                         }
                     }, clock);
             opened.add(findings);
+            if (backgroundJobs != null) {
+                // Fundstelle 14: Funde katalogisieren als Hintergrundart „Funde katalogisieren“.
+                findings.background(backgroundJobs);
+            }
             this.navigation = new PageNavigation(catalog, reader, access, findings, pageLinks);
             this.search = new PageSearch(catalog, index, access);
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.

@@ -454,6 +454,19 @@ wird automatisch verwaltet.
     - Bei nur einem Platz unter „Vorbereitung“ (`BackgroundJobs#canRun()` falsch) nehmen Nachladen und Vorladen ihren
       bisherigen Weg.
 
+12. **Funde katalogisieren** (Angelo 21.11.2026, Fundstellen 14 und 23, Entwurf vom Architekten bestätigt).
+    - `FindingCataloging` ist die Art `catalog` „Funde katalogisieren“: je Angebot und Quelle ein Teil, die Funde als
+      Seiten-ID und Version in den Angaben (`pages`), der technische Aufrufer als Kennung (`finder`) und der Anlass im
+      Änderungsprotokoll (`change-trigger`). So setzt ein Teil auch nach einem Neustart mit denselben Rechten fort.
+    - Höchstens ein wartender Teil je Quelle, Aufrufer und Anlass: Ein neues Angebot ersetzt ihn und nimmt seine Funde
+      hinter den eigenen mit (höchstens 1000). Funde, die ein wartender oder laufender Teil schon katalogisiert, und
+      eben geprüfte (`RECHECK`, zehn Minuten) fallen vorher heraus; bleibt nichts Neues, entsteht kein Teil. Funde von
+      Endnutzern und delegierten Aufrufern fallen wie bisher still weg.
+    - Die Trefferliste sortiert denselben Stapel bei jedem Ladefortschritt neu (`SearchView#refresh`). Sie nennt dabei
+      ihre Suche (`KeywordSearch#search(…, searchId)`), und die Suche bietet nur Funde an, die sie in dieser Suche noch
+      nicht angeboten hat: Neusortieren allein erzeugt keinen Teil.
+    - Bei nur einem Platz unter „Vorbereitung“ bleibt es beim bisherigen Weg im Speicher.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel

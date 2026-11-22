@@ -129,6 +129,90 @@ class FindingCatalogingTest {
         assertThat(asked).isEmpty();
     }
 
+    /** Aufträge mit gehaltenem Ausführer, alle Plätze belegt: Ein Hintergrundteil wartet. */
+    private static com.aresstack.spaceharvester.application.jobs.Jobs busyJobs(java.util.Queue<Runnable> held,
+                                                                             int slots) {
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs.Jobs(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), held::add,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(slots, 10, Duration.ofHours(1)),
+                Clock.systemUTC());
+        for (int i = 0; i < slots; i++) {
+            jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "andere", null, "app",
+                    com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+                    }));
+        }
+        return jobs;
+    }
+
+    @Test
+    void asAJobTheFindingsOfASourceAreOneVisiblePartAndANewOfferReplacesTheWaitingOne() throws Exception {
+        // Fundstelle 14, Abnahme PR 4: sichtbar, höchstens ein wartender Teil je Quelle, ohne Neues kein Teil.
+        page("1", "DEV", "3");
+        page("2", "DEV", "7");
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(held, 2);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        cataloging.background(background);
+        try {
+            cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3")));
+            cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("2", "7")));
+            // Dieselbe Suche neu sortiert: nichts Neues, kein Teil.
+            cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3"),
+                    new FindingCatalog.Finding("2", "7")));
+
+            List<com.aresstack.spaceharvester.application.jobs.JobStatus> parts =
+                    background.parts(FindingCataloging.KIND);
+            assertThat(parts).hasSize(2);
+            com.aresstack.spaceharvester.application.jobs.JobStatus waiting = parts.stream().filter(part -> part
+                    .state() == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED).findFirst()
+                    .orElseThrow();
+            assertThat(waiting.parameter(FindingCataloging.PAGES)).isEqualTo("2\t7\n1\t3");
+            assertThat(waiting.parameter(FindingCataloging.FINDER)).isEqualTo("app");
+            assertThat(waiting.parameter(FindingCataloging.CHANGE_TRIGGER)).isEqualTo("SEARCH");
+            assertThat(asked).as("noch nichts gefragt").isEmpty();
+
+            Runnable next;
+            while ((next = held.poll()) != null) {
+                next.run();
+            }
+
+            assertThat(asked).containsExactlyInAnyOrder("1", "2");
+            assertThat(store.headers).containsOnlyKeys("1", "2");
+            assertThat(gaps).extracting(gap -> gap.key().pageId()).containsExactlyInAnyOrder("1", "2");
+            com.aresstack.spaceharvester.application.jobs.JobStatus done = background.part(waiting.id())
+                    .orElseThrow();
+            assertThat(done.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+            assertThat(done.progress().written()).isEqualTo(2);
+
+            // Eben geprüft: Ein neues Angebot legt vor RECHECK keinen Teil an.
+            cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3")));
+            assertThat(background.parts(FindingCataloging.KIND)).hasSize(2);
+        } finally {
+            jobs.close();
+        }
+    }
+
+    @Test
+    void withASingleSlotFindingsAreCataloguedTheFormerWay() throws Exception {
+        // Abnahme #1077/#1080: Bei nur einem Platz liefe kein Hintergrundteil.
+        page("1", "DEV", "3");
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = busyJobs(held, 1);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        cataloging.background(background);
+        try {
+            cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3")));
+            assertThat(cataloging.awaitIdle(WAIT)).isTrue();
+
+            assertThat(background.parts(FindingCataloging.KIND)).isEmpty();
+            assertThat(asked).containsExactly("1");
+        } finally {
+            jobs.close();
+        }
+    }
+
     private void page(String pageId, String spaceKey, String version) {
         spaces.put(pageId, spaceKey);
         versions.put(pageId, version);
