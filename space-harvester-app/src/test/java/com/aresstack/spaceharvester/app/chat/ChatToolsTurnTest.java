@@ -485,6 +485,55 @@ class ChatToolsTurnTest {
         assertThat(released()).containsExactly(evidence);
     }
 
+    @Test
+    void inTheTurnAFailedReleaseKeepsTheTermAnswerFromTheModel() throws Exception {
+        PageKey evidence = page("nachtlauf");
+        String spaceKey = workspace.spaces("handbuch").get(0).key();
+        TermKnowledge.Answer answer = found(evidence, spaceKey);
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.TERM, "{\"begriff\":\"Spool\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist ein Spool?", space, "Handbuch", events,
+                Runnable::run).knowledgeByTools(null).releasing(new ChatTurn.Releases() {
+                    @Override
+                    public int page(String spaceKey, PageKey key) {
+                        throw new IllegalStateException("Freigabeliste nicht schreibbar");
+                    }
+
+                    @Override
+                    public int selection() {
+                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
+                    }
+                }).termLookup((query, scope, delivery, cancelled) -> {
+                    answer.pages().forEach(page -> delivery.delivered(page.spaceKey(), page.key()));
+                    return answer;
+                }).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        assertThat(messages.get(messages.size() - 1).text())
+                .isEqualTo("Das Werkzeug ist gescheitert (IllegalStateException).");
+        assertThat(released()).isEmpty();
+    }
+
+    @Test
+    void featuresThatWereNotDeterminedAreNamedAsOpen() {
+        PageKey evidence = new PageKey("handbuch", "nachtlauf");
+        TermKnowledge.Statement statement = new TermKnowledge.Statement("Nachtlauf", "füllen", "Spool",
+                ParsedStatements.Negation.UNKNOWN, ParsedStatements.Modality.UNKNOWN,
+                ParsedStatements.Temporality.UNKNOWN, DomainTermGraph.Trust.UNGEPRUEFT, 1,
+                List.of(new TermKnowledge.Page(evidence, "HB", "Nachtlauf")), 0);
+        TermKnowledge.Answer answer = new TermKnowledge.Answer(TermKnowledge.Outcome.FOUND,
+                List.of(new TermKnowledge.Term("Spool", DomainTermGraph.NodeKind.TERM, List.of(statement))),
+                List.of(), List.of(), List.of(), limitsNone());
+
+        assertThat(ChatTools.render("Spool", answer)).contains("Nachtlauf —füllen→ Spool [ungeprüft, "
+                + "Zeitbezug offen, Verneinung offen, Verbindlichkeit offen, 1 Beleg]");
+    }
+
     private ChatTools tools(List<String> order) {
         return new ChatTools(workspace, space, java.util.Set.of(), sources(order));
     }

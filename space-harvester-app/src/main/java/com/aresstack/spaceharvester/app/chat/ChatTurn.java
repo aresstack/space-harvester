@@ -419,6 +419,11 @@ public final class ChatTurn {
             public void delivered(String spaceKey, PageKey key) {
                 releasePage(spaceKey, key);
             }
+
+            @Override
+            public void deliverBefore(String spaceKey, PageKey key) {
+                releasePageOrThrow(spaceKey, key);
+            }
         }).neighbors(neighbors).glossarySynonyms(glossarySynonyms);
         if (termLookup != null) {
             running.termLookup(termLookup);
@@ -575,6 +580,26 @@ public final class ChatTurn {
             }
         } catch (RuntimeException e) {
             onUi(() -> listener.releaseFailed(e));
+        }
+    }
+
+    /**
+     * Wie {@link #releasePage}, aber scheitert der Eintrag, wirft es nach der Meldung an die Oberfläche: Die Seite
+     * geht dann nicht an das Modell ({@value ChatTools#TERM}, ADR 0033 Punkt 8).
+     */
+    private void releasePageOrThrow(String spaceKey, PageKey key) {
+        if (!releasedHere.add(key)) {
+            return;
+        }
+        try {
+            int added = releases.page(spaceKey, key);
+            if (added > 0) {
+                onUi(() -> listener.released(added));
+            }
+        } catch (RuntimeException e) {
+            releasedHere.remove(key);
+            onUi(() -> listener.releaseFailed(e));
+            throw e;
         }
     }
 

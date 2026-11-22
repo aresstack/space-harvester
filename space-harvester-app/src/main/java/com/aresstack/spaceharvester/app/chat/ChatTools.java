@@ -85,6 +85,14 @@ final class ChatTools {
 
         /** Text oder Auszug der Seite ging eben an das Modell: Sie kommt auf die Liste freigegebener Seiten. */
         void delivered(String spaceKey, PageKey key);
+
+        /**
+         * Wie {@link #delivered}, aber die Seite geht erst danach an das Modell: Scheitert der Eintrag, wirft es, und
+         * nichts geht hinaus ({@value #TERM}, ADR 0033 Punkt 8). Ohne eigene Umsetzung wie {@link #delivered}.
+         */
+        default void deliverBefore(String spaceKey, PageKey key) {
+            delivered(spaceKey, key);
+        }
     }
 
     private final Workspace workspace;
@@ -473,7 +481,7 @@ final class ChatTools {
                 // Ohne Space lässt sich die Seite nicht freigeben; dann darf ihr Inhalt nicht hinaus.
                 throw new IllegalStateException("Belegseite ohne Space");
             }
-            sources.delivered(space, key);
+            sources.deliverBefore(space, key);
         }, () -> cancelled);
         return render(text, answer);
     }
@@ -554,7 +562,15 @@ final class ChatTools {
             case GEPLANT -> b.append(", geplant");
             case FRUEHER -> b.append(", früher");
             case VERWORFEN -> b.append(", verworfen");
-            default -> { }
+            case UNKNOWN -> b.append(", Zeitbezug offen");
+            case GILT -> { }
+        }
+        // Nicht bestimmte Merkmale ausdrücklich nennen, sonst läse das Modell eine sichere, bejahte Aussage.
+        if (statement.negation() == ParsedStatements.Negation.UNKNOWN) {
+            b.append(", Verneinung offen");
+        }
+        if (statement.modality() == ParsedStatements.Modality.UNKNOWN) {
+            b.append(", Verbindlichkeit offen");
         }
         b.append(", ").append(statement.evidence()).append(statement.evidence() == 1 ? " Beleg" : " Belege")
                 .append(']');
