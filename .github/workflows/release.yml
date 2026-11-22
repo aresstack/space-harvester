@@ -32,12 +32,11 @@ on:
 permissions:
   contents: read
 
-# Drei Gruppen: andere Branches teilen sich das Snapshot-Release, Pushes auf main das rollierende „latest“, Tags und
-# manuell angelegte Releases laufen nacheinander. Snapshot und latest: ein neuer Push bricht den laufenden Lauf ab, damit
-# nur der neueste Stand gebaut und veröffentlicht wird (Angelo 22.11.). Getaggte Releases werden nie abgebrochen.
-concurrency:
-  group: release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || ((github.event_name == 'push' && github.ref == 'refs/heads/main') && 'latest' || 'versioned') }}
-  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
+# Drei Gruppen für den Bau (Job app): andere Branches teilen sich das Snapshot-Release, main ohne Tag (Push oder manuell
+# ohne Tag) das rollierende „latest“, Tags und manuell angelegte Releases laufen nacheinander. Bei Snapshot und latest
+# bricht ein neuer Lauf den laufenden Bau ab, damit nur der neueste Stand gebaut wird (Angelo 22.11.). Das Veröffentlichen
+# der rollierenden Releases ist ein eigener Job, der nie abgebrochen wird und je Release nacheinander läuft, damit kein
+# Abbruch ein halb ersetztes Release hinterlässt. Getaggte Releases werden nie abgebrochen.
 
 env:
   # Rollierend ohne Versionsnummer: main aktualisiert das Release „latest“, andere Branches das Pre-Release „snapshot“.
@@ -53,6 +52,13 @@ jobs:
   app:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    concurrency:
+      group: release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || ((github.ref == 'refs/heads/main' && (inputs.tag == '' || inputs.tag == null)) && 'latest' || 'versioned') }}
+      cancel-in-progress: ${{ github.ref_type == 'branch' && (github.ref != 'refs/heads/main' || inputs.tag == '' || inputs.tag == null) }}
+    outputs:
+      mode: ${{ steps.version.outputs.mode }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
     permissions:
       contents: write
       id-token: write
@@ -247,14 +253,60 @@ jobs:
             { cat "$notes"; echo; echo '## Dateien'; echo; cat "$RUNNER_TEMP/RELEASE_NOTES.md"; } > "$RUNNER_TEMP/notes.tmp"
             mv "$RUNNER_TEMP/notes.tmp" "$RUNNER_TEMP/RELEASE_NOTES.md"
           fi
-      - name: Rollierendes Release latest bzw. snapshot aktualisieren
+      - name: Release-Notizen für das Veröffentlichen
         if: steps.version.outputs.mode == 'beta' || steps.version.outputs.mode == 'snapshot'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-${{ github.sha }}
+          path: ${{ runner.temp }}/RELEASE_NOTES.md
+          if-no-files-found: error
+      - name: Release anlegen
+        if: steps.version.outputs.mode == 'tag' || steps.version.outputs.mode == 'new-tag'
         working-directory: ${{ steps.dist.outputs.dir }}
         env:
-          BRANCH: ${{ github.ref_name }}
           MODE: ${{ steps.version.outputs.mode }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          # Keine Pre-Releases mehr (Angelo 16.11., wie aresstack/audio): das jeweils neueste Release ist „Latest“, also
+          # ein getaggtes, bis der nächste main-Lauf das rollierende „latest“ wieder zum Latest macht
+          # Beim Tag-Push existiert der Tag schon; sonst legt gh ihn auf dem gebauten Commit an
+          ref=--verify-tag
+          [ "$MODE" = "tag" ] || ref="--target=$GITHUB_SHA"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "$ref" --title "Space Harvester $VERSION" \
+            --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease=false --latest *.jar SHA256SUMS
+
+  publish:
+    # Veröffentlicht latest bzw. snapshot; nie abgebrochen, je Release nacheinander. Ältere Bauten bricht schon der
+    # Job app ab, darum veröffentlicht hier höchstens noch ein Stand, der vor dem neueren fertig gebaut war.
+    needs: app
+    if: needs.app.outputs.mode == 'beta' || needs.app.outputs.mode == 'snapshot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: release-publish-${{ needs.app.outputs.tag }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: space-harvester-${{ needs.app.outputs.version }}-${{ github.sha }}
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes-${{ github.sha }}
+          path: notes
+      - name: Rollierendes Release latest bzw. snapshot aktualisieren
+        working-directory: dist
+        env:
+          BRANCH: ${{ github.ref_name }}
+          MODE: ${{ needs.app.outputs.mode }}
+          TAG: ${{ needs.app.outputs.tag }}
+          VERSION: ${{ needs.app.outputs.version }}
         run: |
           set -euo pipefail
           title="Space Harvester – current build"
@@ -283,13 +335,13 @@ jobs:
           done
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "$title" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
+              --title "$title" --notes-file "$GITHUB_WORKSPACE/notes/RELEASE_NOTES.md" \
               "${flags[@]}" *.jar SHA256SUMS
           else
             # Release bleibt bestehen (feste Adresse), nur Tag, Text und Dateien wandern auf diesen Stand
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" -f sha="$GITHUB_SHA" -F force=true >/dev/null
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$title" \
-              --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" "${flags[@]}"
+              --notes-file "$GITHUB_WORKSPACE/notes/RELEASE_NOTES.md" "${flags[@]}"
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber *.jar SHA256SUMS
             # Dateien früherer Läufe, die dieser Stand nicht mehr enthält (z. B. alte Namen mit Versionsnummer)
             gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | while read -r asset; do
@@ -301,19 +353,3 @@ jobs:
               gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
             done
           fi
-      - name: Release anlegen
-        if: steps.version.outputs.mode == 'tag' || steps.version.outputs.mode == 'new-tag'
-        working-directory: ${{ steps.dist.outputs.dir }}
-        env:
-          MODE: ${{ steps.version.outputs.mode }}
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
-          PRERELEASE: ${{ steps.version.outputs.prerelease }}
-        run: |
-          # Keine Pre-Releases mehr (Angelo 16.11., wie aresstack/audio): das jeweils neueste Release ist „Latest“, also
-          # ein getaggtes, bis der nächste main-Lauf das rollierende „latest“ wieder zum Latest macht
-          # Beim Tag-Push existiert der Tag schon; sonst legt gh ihn auf dem gebauten Commit an
-          ref=--verify-tag
-          [ "$MODE" = "tag" ] || ref="--target=$GITHUB_SHA"
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "$ref" --title "Space Harvester $VERSION" \
-            --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease=false --latest *.jar SHA256SUMS
