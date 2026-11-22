@@ -48,12 +48,12 @@ class PodcastPicturesLiveTest {
             PodcastPictures.PageImageSource source = new PodcastPictures.PageImageSource() {
                 @Override
                 public List<Candidate> candidates(String sourceId, List<String> pageIds) {
-                    return List.of(new Candidate("p1", "a1", "logo.png", "Das Logo des Teams: ein blauer Kreis mit "
+                    return List.of(new Candidate("p1", "att-p1", "a1", "logo.png", "Das Logo des Teams: ein blauer Kreis mit "
                                     + "einem stilisierten Stern.", "image/png"),
-                            new Candidate("p2", "a2", "eskalation.png", "Ein Schaubild mit drei Stufen der "
+                            new Candidate("p2", "att-p2", "a2", "eskalation.png", "Ein Schaubild mit drei Stufen der "
                                     + "Eskalation beim Nachtlauf: Leitstand, Bereitschaft, Fachverantwortung, "
                                     + "verbunden durch Pfeile.", "image/png"),
-                            new Candidate("p3", "a3", "kantine.jpg", "Ein Foto der Kantine mit Tischen.",
+                            new Candidate("p3", "att-p3", "a3", "kantine.jpg", "Ein Foto der Kantine mit Tischen.",
                                     "image/jpeg"));
                 }
 

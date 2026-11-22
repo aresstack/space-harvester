@@ -116,6 +116,16 @@ public final class UpdatePodcasts {
         return production.available();
     }
 
+    /**
+     * Schaltet die Bilder je Thema ein (Angelo 21.11.2026): echte Seitenbilder nach ihrer Beschreibung, sonst ein
+     * Schaubild aus Teilen ({@link PodcastPictures}).
+     *
+     * @param drawer zeichnet die Schaubilder (Modell der Bildgenerierung)
+     */
+    public void pictures(StepModel drawer, PodcastPictures.PageImageSource images) {
+        production.pictures(new PodcastProduction.Pictures(drawer, images));
+    }
+
     /** Der Stand des Podcasts einer Zusammenfassung; leer, solange nichts erzeugt ist. */
     public Optional<Podcast> podcast(UpdateSummary summary) {
         Objects.requireNonNull(summary, "summary");

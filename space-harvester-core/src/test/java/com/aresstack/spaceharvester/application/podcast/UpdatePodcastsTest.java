@@ -68,6 +68,29 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void everyTopicGetsAPictureBesideTheAudio() throws Exception {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        AtomicInteger drawn = new AtomicInteger();
+        podcasts.pictures(DiagramComposerTest.model(DiagramComposerTest.PLAN, DiagramComposerTest.ICON, drawn),
+                PodcastPictures.PageImageSource.NONE);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+
+        assertThat(jobs.status(podcasts.start(caller, summary).id()).state()).isEqualTo(JobState.COMPLETED);
+
+        Podcast podcast = podcasts.podcast(summary).orElseThrow();
+        assertThat(podcast.parts()).allSatisfy(part -> {
+            assertThat(part.picture()).isNotNull();
+            assertThat(part.picture().vector()).isTrue();
+            assertThat(part.picture().file()).exists();
+        });
+        // je Thema ein Plan und drei Symbole
+        assertThat(drawn.get()).isEqualTo(3 * 4);
+        int before = drawn.get();
+        podcasts.start(caller, summary);
+        assertThat(drawn.get()).as("ein neuer Lauf nimmt die abgelegten Bilder").isEqualTo(before);
+    }
+
+    @Test
     void aSecondRunReusesEverythingOnDisk() throws Exception {
         FakeModel model = new FakeModel();
         FakeSpeech speech = new FakeSpeech(voice -> false);
