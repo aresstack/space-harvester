@@ -175,6 +175,72 @@ class AttachmentPrefetchesTest {
     }
 
     @Test
+    void aPageRequestedWhileTheRunningPartIsBeingCancelledGetsANewPart() throws Exception {
+        gates.put("a1", new CountDownLatch(1));
+        JobStatus first = prefetches.request("wiki", "DEV", "100", List.of("a1", "a2"), loader).orElseThrow();
+        eventually(() -> entered.contains("a1"));
+        background.cancel(first.parameter(BackgroundJobs.GROUP));
+
+        // Der Abbruch ist angefordert, der Download läuft noch: Die neue Seite gehört nicht mehr zu diesem Teil.
+        JobStatus second = prefetches.request("wiki", "DEV", "200", List.of("b1"), loader).orElseThrow();
+        gates.get("a1").countDown();
+
+        assertThat(second.id()).isNotEqualTo(first.id());
+        eventually(() -> loaded.contains("200/b1"));
+        assertThat(loaded).doesNotContain("100/a2");
+        assertThat(background.part(first.id()).orElseThrow().state()).isEqualTo(JobState.CANCELLED);
+    }
+
+    @Test
+    void withoutAPartNothingOfThePageWaits() {
+        Jobs closed = new Jobs(new InMemoryJobStore(), executor, new JobLimits(2, 10, Duration.ofHours(1)),
+                Clock.systemUTC());
+        try (AttachmentPrefetches broken = new AttachmentPrefetches(new BackgroundJobs(closed, "app"))) {
+            // Ein geschlossener Dienst nimmt keinen Teil mehr an.
+            closed.close();
+
+            assertThat(broken.request("wiki", "DEV", "100", List.of("a1"), loader)).isEmpty();
+            // Die App lädt dann selbst: Nichts davon darf noch im Hintergrund warten.
+            assertThat(broken.waitingPages("wiki", "DEV")).isZero();
+        }
+    }
+
+    @Test
+    void aFailureBeforePausingStillFailsThePartAfterResuming() throws Exception {
+        failing.add("a1");
+        gates.put("a2", new CountDownLatch(1));
+        prefetches.request("wiki", "DEV", "100", List.of("a1", "a2", "a3"), loader).orElseThrow();
+        eventually(() -> entered.contains("a2"));
+        String groupId = part(JobState.RUNNING).orElseThrow().parameter(BackgroundJobs.GROUP);
+
+        background.pause(groupId);
+        gates.get("a2").countDown();
+        eventually(() -> part(JobState.PAUSED).isPresent());
+        background.resume(groupId);
+
+        eventually(() -> part(JobState.FAILED).isPresent());
+        assertThat(loaded).containsExactly("100/a2", "100/a3");
+        assertThat(part(JobState.FAILED).orElseThrow().error().code())
+                .isEqualTo(AttachmentPrefetches.ATTACHMENTS_MISSING);
+    }
+
+    @Test
+    void aboveTheLimitOfASpaceTheCallerLoadsItself() throws Exception {
+        try (AttachmentPrefetches limited = new AttachmentPrefetches(background, 3)) {
+            gates.put("a1", new CountDownLatch(1));
+            limited.request("wiki", "DEV", "100", List.of("a1"), loader).orElseThrow();
+            eventually(() -> entered.contains("a1"));
+            assertThat(limited.request("wiki", "DEV", "200", List.of("b1", "b2"), loader)).isPresent();
+
+            assertThat(limited.request("wiki", "DEV", "300", List.of("c1", "c2"), loader)).isEmpty();
+            assertThat(limited.waitingPages("wiki", "DEV")).isEqualTo(1);
+            gates.get("a1").countDown();
+            eventually(() -> loaded.size() == 3);
+            assertThat(loaded).doesNotContain("300/c1", "300/c2");
+        }
+    }
+
+    @Test
     void aPartFromBeforeARestartEndsAtOnce() throws Exception {
         BackgroundGroup group = background.start(AttachmentPrefetches.KIND, AttachmentPrefetches.TITLE,
                 List.of(new BackgroundPart.Draft("wiki", "DEV", Map.of(AttachmentPrefetches.PAGE, "100"))));

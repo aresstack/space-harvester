@@ -606,7 +606,10 @@ wird automatisch verwaltet.
       laufender Teil nimmt weitere Seiten seines Space mit. Geladen und abgelegt wird mit den Rechten des Aufrufers
       wie beim Öffnen.
     - Anhalten legt den Rest zurück, Fortsetzen lädt ihn, Abbrechen oder Löschen verwirft ihn, auch bei einem Teil,
-      der noch wartet. Jeder Anhang wird einmal abgegeben; eine weitere Art derselben Seite kommt hinzu. Gescheiterte Anhänge
+      der noch wartet. Jede Seite gehört dem Teil, der sie annahm; was nach einem angeforderten Abbruch kommt, lädt
+      ein neuer Teil. Jeder Anhang wird einmal abgegeben; eine weitere Art derselben Seite kommt hinzu.
+    - Je Space warten höchstens 5.000 Anhänge (`AttachmentPrefetches#MAX_WAITING`). Darüber, oder wenn kein Teil
+      entsteht, wartet nichts von der Anfrage und die App lädt wie bisher selbst. Gescheiterte Anhänge
       stehen rot mit Grund im Teil, der dann scheitert (`attachments-missing`); sie laden beim Öffnen.
     - Die Seiten liegen nur im Speicher: Teile von vor einem Neustart werden beim Start abgeschlossen
       (`BackgroundJobs#retireResumable`). Endet der Teil, zeigt die
