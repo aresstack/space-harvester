@@ -866,14 +866,17 @@ public final class AppContext {
 
     /**
      * Die Aufträge, die {@link #reload} abbrechen würde (wartend oder laufend); leer ohne Laufzeit oder wenn die
-     * Auftragsablage nicht lesbar ist.
+     * Auftragsablage nicht lesbar ist. Hintergrundaufträge zählen nicht: Das Neuladen unterbricht sie nur, sie setzen
+     * danach von selbst fort (ADR 0025, Nachtrag Punkt 9); sonst fragte jedes Übernehmen kurz nach dem Start nach, weil
+     * die Abgleiche beim Start noch laufen.
      */
     public List<JobStatus> runningJobs() {
         if (runtime == null) {
             return List.of();
         }
         try {
-            return runtime.workspace().jobs().stream().filter(job -> !job.state().terminal()).toList();
+            return runtime.workspace().jobs().stream()
+                    .filter(job -> !job.state().terminal() && !job.type().background()).toList();
         } catch (RuntimeException e) {
             LOG.warn("Laufende Aufträge ließen sich nicht lesen: {}", e.getMessage());
             return List.of();

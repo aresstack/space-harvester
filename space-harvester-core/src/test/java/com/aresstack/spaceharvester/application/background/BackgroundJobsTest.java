@@ -153,6 +153,23 @@ class BackgroundJobsTest {
     }
 
     @Test
+    void startUnlessRunningForAllPartsOfAnOccasionLeavesOutWhatAlreadyWaitsOrRuns() {
+        // Ein Platz: der erste Teil wartet, wie ein nach dem Neustart fortgesetzter.
+        BackgroundJobs background = background(new Jobs(new InMemoryJobStore(), executor,
+                new JobLimits(1, 10, Duration.ofHours(1)), clock), new AtomicBoolean(true));
+        background.startUnlessWaiting("demo", "Demo", new BackgroundPart.Draft("wiki", "ALPHA")).orElseThrow();
+        List<BackgroundPart.Draft> both = List.of(new BackgroundPart.Draft("wiki", "ALPHA"),
+                new BackgroundPart.Draft("wiki", "BETA"));
+
+        BackgroundGroup started = background.startUnlessRunning("demo", "Beim Start", both).orElseThrow();
+
+        assertThat(started.parts()).extracting(JobStatus::partitionKey).containsExactly("BETA");
+        assertThat(started.parts()).allSatisfy(part -> assertThat(part.parameter(BackgroundJobs.TITLE))
+                .isEqualTo("Beim Start"));
+        assertThat(background.startUnlessRunning("demo", "Beim Start", both)).as("beide haben einen Teil").isEmpty();
+    }
+
+    @Test
     void aPausedGroupResumesInTheSameEntriesWithFreshWork() {
         BackgroundJobs background = background(jobs(executor), new AtomicBoolean(true));
         BackgroundGroup group = background.start("demo", "Demo", twoSpaces());

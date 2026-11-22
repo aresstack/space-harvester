@@ -461,6 +461,9 @@ public final class Harvester implements AutoCloseable {
 
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
+        // Abgleiche beim Start als Hintergrundaufträge (ADR 0025 Nachtrag, Punkt 9): erst nach dem Fortsetzen
+        // unterbrochener Teile, damit nichts doppelt beginnt.
+        List<Runnable> startScans = new ArrayList<>();
         StartTimer start = new StartTimer();
         try {
             this.networkFollows = builder.configuration != null && !builder.networkFixed;
@@ -639,13 +642,16 @@ public final class Harvester implements AutoCloseable {
                 // ADR 0028: Der Abgleich beim Start fragt je Seite auch die Liste freigegebener Seiten.
                 recomputation.pageReleases(pageReleases::contains);
                 // Was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach, gleicht der Start
-                // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten; mit Satzanalyse auch nur mit
-                // Chat-Modell.
+                // einmal ab, ohne den Start aufzuhalten; mit Satzanalyse auch nur mit Chat-Modell. Alle Läufe sind
+                // Hintergrundaufträge „KI-Freigabe prüfen“, „KI-Freigabe nachziehen“, „Seitenfreigabe nachziehen“.
                 StatementProcessor statementsOnStart = statementProcessor;
-                recomputation.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList(),
-                        () -> embeddings != null && embeddings.available()
-                                || statementsOnStart != null && statementsOnStart.available(),
-                        PassagePayload.REASON_NOT_APPROVED);
+                java.util.function.BooleanSupplier releaseModel = () -> embeddings != null && embeddings.available()
+                        || statementsOnStart != null && statementsOnStart.available();
+                recomputation.background(backgroundJobs, cache::find, releaseModel,
+                        PassagePayload.REASON_NOT_APPROVED, cache::pageCount);
+                List<String> releaseSources = catalog.configs().stream().map(SourceSettingsConfig::id).toList();
+                startScans.add(() -> recomputation.reconcileOnStart(releaseSources, releaseModel,
+                        PassagePayload.REASON_NOT_APPROVED));
                 // ADR 0028: Eintragen rechnet mit Modell, Entfernen ohne und löscht die KI-Ergebnisse; nur Seiten,
                 // deren Quelle nicht als Ganzes freigegeben ist, sonst ändert sich nichts.
                 opened.add(pageReleases.subscribe(change -> recomputation.recomputePages(
@@ -654,11 +660,14 @@ public final class Harvester implements AutoCloseable {
                 this.releaseRecomputation = recomputation;
             }
             // Ergebnisse lokaler Prozessoren einer älteren Version (etwa nach geänderter Akronymerkennung) rechnet der
-            // Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten.
+            // Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten, als Hintergrundauftrag
+            // „Analysen nach Update nachrechnen“.
             VersionRecomputation versions = new VersionRecomputation(enrichments, cache::snapshots);
             opened.add(versions);
             start.step("Anreicherung");
-            versions.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList());
+            versions.background(backgroundJobs, cache::pageCount);
+            List<String> versionSources = catalog.configs().stream().map(SourceSettingsConfig::id).toList();
+            startScans.add(() -> versions.reconcileOnStart(versionSources));
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
@@ -678,7 +687,11 @@ public final class Harvester implements AutoCloseable {
             opened.add(pageLinks);
             HoldingsChanges cacheChanges = HoldingsChanges.all(holdings, pageLinks);
             cache.changes(cacheChanges);
-            pageLinks.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList());
+            // Abgleich beim Start als Hintergrundauftrag „Verweise abgleichen“; nach einem Abgleich eines Space und
+            // für einzelne Seiten bleibt es beim Bündler.
+            pageLinks.background(backgroundJobs);
+            List<String> linkSources = catalog.configs().stream().map(SourceSettingsConfig::id).toList();
+            startScans.add(() -> pageLinks.reconcileOnStart(linkSources));
             // ADR 0028: Eintragen aus der Auswahl, gebündelte Liste und Entfernen für die Oberfläche.
             this.pageReleaseService = new PageReleaseService(pageReleases, holdings, access, cache::findHeader,
                     key -> enrichmentStore.find(key).stream().anyMatch(found -> "embedding".equals(found.processorId())
@@ -1519,6 +1532,8 @@ public final class Harvester implements AutoCloseable {
             // Hintergrundaufträge, die das Beenden unterbrochen hat, laufen von selbst weiter; erst jetzt, da alle Arten
             // angemeldet sind.
             backgroundJobs.resumeInterrupted();
+            // Danach die Abgleiche beim Start; Quellen mit fortgesetztem Teil derselben Art fallen heraus.
+            startScans.forEach(Runnable::run);
             start.step("Zeitpläne und Nachholen");
             this.resources = List.copyOf(opened);
             start.done();

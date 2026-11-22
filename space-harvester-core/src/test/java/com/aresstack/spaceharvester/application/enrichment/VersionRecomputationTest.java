@@ -68,6 +68,131 @@ class VersionRecomputationTest {
         });
     }
 
+    @Test
+    void withBackgroundJobsTheStartIsOneVisiblePartPerSourceThatPausesAndResumes() throws Exception {
+        // ADR 0025 Nachtrag, Punkt 9: „Analysen nach Update nachrechnen“, je Quelle höchstens ein offener Teil.
+        Counting terms = new Counting("terms", false, true);
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(terms), store, CLOCK);
+        PageSnapshot current = text("wiki", "p1", "1", "Eins");
+        PageSnapshot old = text("wiki", "p2", "1", "Zwei");
+        enrichments.recompute(current, "terms");
+        saveOld(old, "terms");
+        terms.calls.clear();
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), held::add,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (VersionRecomputation versions = new VersionRecomputation(enrichments,
+                sourceId -> sourceId.equals("wiki") ? List.of(current, old).iterator()
+                        : List.<PageSnapshot>of().iterator())) {
+            versions.background(background, sourceId -> sourceId.equals("wiki") ? 3 : 0);
+            versions.reconcileOnStart(List.of("wiki", "ops"));
+            versions.reconcileOnStart(List.of("wiki", "ops"));
+
+            assertThat(background.groups()).as("der zweite Anlauf findet die offenen Teile").singleElement()
+                    .satisfies(group -> {
+                        assertThat(group.title()).isEqualTo(VersionRecomputation.BACKGROUND_TITLE);
+                        assertThat(group.parts()).extracting(
+                                com.aresstack.spaceharvester.application.jobs.JobStatus::sourceId)
+                                .containsExactlyInAnyOrder("wiki", "ops");
+                    });
+            String groupId = background.groups().getFirst().groupId();
+
+            background.pause(groupId);
+            runAll(held);
+            assertThat(terms.calls).as("angehalten rechnet nichts").isEmpty();
+
+            background.resume(groupId);
+            runAll(held);
+            long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (terms.count("p2") == 0 && System.nanoTime() < end) {
+                Thread.onSpinWait();
+            }
+        }
+
+        assertThat(terms.calls).containsOnlyKeys("p2");
+        assertThat(background.group(background.groups().getFirst().groupId()).orElseThrow().completed()).isTrue();
+        assertThat(jobs.list("app", com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND))
+                .filteredOn(part -> part.sourceId().equals("wiki")).singleElement()
+                .satisfies(part -> {
+                    assertThat(part.progress().discovered()).isEqualTo(3);
+                    assertThat(part.progress().processed()).as("auch die Seite nur mit Kopfdaten").isEqualTo(3);
+                });
+    }
+
+    @Test
+    void closingWaitsForARunningBackgroundPartBeforeTheStoreCloses() throws Exception {
+        // Codex-Befund #1073: Der Teil läuft auf den Threads der Auftragsverwaltung, die erst nach der Ablage schließt.
+        Counting terms = new Counting("terms", false, true);
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(terms), store, CLOCK);
+        PageSnapshot page = text("wiki", "p1", "1", "Eins");
+        java.util.concurrent.CountDownLatch reading = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.Iterator<PageSnapshot> blocking = new java.util.Iterator<>() {
+            private boolean given;
+
+            @Override
+            public boolean hasNext() {
+                if (!given) {
+                    reading.countDown();
+                    try {
+                        release.await(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return !given;
+            }
+
+            @Override
+            public PageSnapshot next() {
+                given = true;
+                return page;
+            }
+        };
+        java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors.newSingleThreadExecutor();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), worker,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        VersionRecomputation versions = new VersionRecomputation(enrichments, sourceId -> blocking);
+        versions.background(background, sourceId -> 1);
+        try {
+            versions.reconcileOnStart(List.of("wiki"));
+            assertThat(reading.await(5, TimeUnit.SECONDS)).isTrue();
+
+            Thread closer = new Thread(() -> {
+                try {
+                    versions.close();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            closer.start();
+            closer.join(300);
+            assertThat(closer.isAlive()).as("wartet auf den laufenden Teil").isTrue();
+            release.countDown();
+            closer.join(5_000);
+            assertThat(closer.isAlive()).isFalse();
+        } finally {
+            release.countDown();
+            worker.shutdownNow();
+        }
+    }
+
+    private static void runAll(java.util.Queue<Runnable> held) {
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+    }
+
     private void saveOld(PageSnapshot page, String processorId) {
         store.save(new Enrichment(page.key(), processorId, "0", "x", "1", Enrichment.Status.OK, "{}", List.of(), null,
                 CLOCK.instant()));
