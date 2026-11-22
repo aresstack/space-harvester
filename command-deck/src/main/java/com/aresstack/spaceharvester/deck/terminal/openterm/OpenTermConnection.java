@@ -28,21 +28,42 @@ final class OpenTermConnection implements TerminalConnection {
         this.listener = listener;
     }
 
+    /**
+     * Baut die Verbindung auf. Wurde vorher oder währenddessen getrennt, bleibt keine Verbindung zum Host stehen:
+     * vor dem Aufbau wird abgebrochen, danach sofort wieder getrennt.
+     */
     @Override
     public void connect() throws IOException {
         ensureScreen();
+        if (closed.get()) {
+            return;
+        }
         terminal.connect();
+        if (closed.get()) {
+            quietlyDisconnect();
+            return;
+        }
         listener.connected();
     }
 
     @Override
     public void disconnect() {
+        close();
+        quietlyDisconnect();
+    }
+
+    /** Markiert die Verbindung als zu und gibt die Codepage genau einmal frei. */
+    private void close() {
         if (closed.compareAndSet(false, true)) {
-            try {
-                terminal.disconnect();
-            } catch (RuntimeException ignored) {
-                // Schon zu; OpenTerm meldet das nur noch einmal.
-            }
+            CodePages.release();
+        }
+    }
+
+    private void quietlyDisconnect() {
+        try {
+            terminal.disconnect();
+        } catch (RuntimeException ignored) {
+            // Schon zu oder nie verbunden.
         }
     }
 
@@ -89,11 +110,11 @@ final class OpenTermConnection implements TerminalConnection {
         switch (status) {
             case com.ascert.open.term.core.TnAction.READY -> listener.connected();
             case com.ascert.open.term.core.TnAction.DISCONNECTED_BY_REMOTE_HOST -> {
-                closed.set(true);
+                close();
                 listener.closed(null);
             }
             case com.ascert.open.term.core.TnAction.CONNECTION_ERROR -> {
-                closed.set(true);
+                close();
                 listener.closed("Verbindungsfehler");
             }
             default -> {

@@ -20,11 +20,16 @@ public final class OpenTermConnector implements TerminalConnector {
     @Override
     public TerminalConnection create(TerminalProfile profile, TerminalConnection.Listener listener) throws Exception {
         registerFactories();
-        CodePages.apply(profile.codePage());
-        Host host = new Host(profile.host(), profile.port(), profile.model().type(), profile.tls(),
-                profile.keepAliveSeconds());
-        Terminal terminal = TerminalFactoryRegistrar.createTerminal(host);
-        return new OpenTermConnection(terminal, profile, listener);
+        CodePages.acquire(profile.codePage());
+        try {
+            Host host = new Host(profile.host(), profile.port(), profile.model().type(), profile.tls(),
+                    profile.keepAliveSeconds());
+            Terminal terminal = TerminalFactoryRegistrar.createTerminal(host);
+            return new OpenTermConnection(terminal, profile, listener);
+        } catch (Exception | Error e) {
+            CodePages.release();
+            throw e;
+        }
     }
 
     private static void registerFactories() throws Exception {

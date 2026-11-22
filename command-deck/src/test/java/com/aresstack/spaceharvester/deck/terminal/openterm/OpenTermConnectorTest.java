@@ -90,4 +90,52 @@ class OpenTermConnectorTest {
             assertThat(session.state()).isEqualTo(SessionState.DISCONNECTED);
         }
     }
+
+    @Test
+    void aSecondCodePageIsRefusedWhileASessionIsOpenAndAllowedAfterwards() throws Exception {
+        try (FakeTn3270Host host = new FakeTn3270Host(java.util.List.of(
+                new FakeTn3270Host.Line(1, 2, "BEREIT", false)), "Cp273")) {
+            TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(),
+                    runnable -> Thread.ofVirtual().start(runnable));
+            int before = CodePages.users();
+            TerminalSession german = sessions.open(new TerminalProfile("127.0.0.1", host.port(),
+                    com.aresstack.spaceharvester.deck.terminal.TerminalModel.MODEL_2, false, 0, "Cp273"));
+            TerminalSession us = sessions.open(new TerminalProfile("127.0.0.1", host.port(),
+                    com.aresstack.spaceharvester.deck.terminal.TerminalModel.MODEL_2, false, 0, "Cp037"));
+            assertThat(us.state()).isEqualTo(SessionState.FAILED);
+            assertThat(us.failure()).hasValueSatisfying(reason -> assertThat(reason).contains("Cp273"));
+            assertThat((char) com.ascert.open.term.i3270.Tn3270StreamParser.ebc2asc[0xC0]).isEqualTo('ä');
+            german.disconnect();
+            assertThat(CodePages.users()).isEqualTo(before);
+            TerminalSession again = sessions.open(new TerminalProfile("127.0.0.1", host.port(),
+                    com.aresstack.spaceharvester.deck.terminal.TerminalModel.MODEL_2, false, 0, "Cp037"));
+            assertThat(again.state()).isNotEqualTo(SessionState.FAILED);
+            again.disconnect();
+            assertThat(CodePages.users()).isEqualTo(before);
+        }
+    }
+
+    @Test
+    void aConnectionClosedBeforeConnectingNeverReachesTheHost() throws Exception {
+        try (FakeTn3270Host host = new FakeTn3270Host(java.util.List.of(), "Cp273")) {
+            java.util.List<String> events = new java.util.concurrent.CopyOnWriteArrayList<>();
+            var connection = new OpenTermConnector().create(TerminalProfile.of("127.0.0.1", host.port()),
+                    new com.aresstack.spaceharvester.deck.terminal.TerminalConnection.Listener() {
+                        @Override
+                        public void connected() {
+                            events.add("connected");
+                        }
+
+                        @Override
+                        public void closed(String reason) {
+                            events.add("closed");
+                        }
+                    });
+            connection.disconnect();
+            connection.connect();
+            Thread.sleep(500);
+            assertThat(events).doesNotContain("connected");
+            assertThat(host.received()).as("keine Verbindung aufgebaut").isEmpty();
+        }
+    }
 }

@@ -12,15 +12,55 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * OpenTerm übersetzt EBCDIC fest nach CP037 (US). Deutsche Hosts nutzen CP273, wo etwa 0xC0 „ä“ ist und nicht „{“.
  * Wie in MainframeMate werden die Tabellen des Parsers vor dem Anlegen eines Terminals aus der Java-Codepage
- * neu gefüllt. Die Tabellen sind statisch: Alle Sitzungen eines Programmlaufs teilen sich die zuletzt gesetzte
- * Codepage.
+ * neu gefüllt. Die Tabellen sind statisch und gelten für alle Sitzungen zugleich: Solange eine Sitzung offen ist,
+ * nimmt keine zweite mit anderer Codepage sie in Beschlag ({@link #acquire}); sonst würden Umlaute der ersten zu
+ * Klammern und Eingaben verfälscht.
  */
 final class CodePages {
 
     private static final ReentrantLock LOCK = new ReentrantLock();
     private static String applied;
+    /** Offene Verbindungen, die die gesetzte Codepage nutzen. */
+    private static int users;
 
     private CodePages() {
+    }
+
+    /**
+     * Setzt die Codepage für eine neue Verbindung und zählt sie als Nutzer. Ist schon eine Verbindung mit einer
+     * anderen Codepage offen, bleibt alles, wie es ist, und es kommt eine lesbare Ablehnung.
+     */
+    static void acquire(String codePage) {
+        LOCK.lock();
+        try {
+            if (users > 0 && !codePage.equals(applied)) {
+                throw new IllegalStateException("Codepage " + codePage + " geht nicht, solange eine Sitzung mit "
+                        + applied + " offen ist; erst diese trennen");
+            }
+            apply(codePage);
+            users++;
+        } finally {
+            LOCK.unlock();
+        }
+    }
+
+    /** Eine Verbindung ist zu und nutzt die Codepage nicht mehr. */
+    static void release() {
+        LOCK.lock();
+        try {
+            users = Math.max(0, users - 1);
+        } finally {
+            LOCK.unlock();
+        }
+    }
+
+    static int users() {
+        LOCK.lock();
+        try {
+            return users;
+        } finally {
+            LOCK.unlock();
+        }
     }
 
     static void apply(String codePage) {
