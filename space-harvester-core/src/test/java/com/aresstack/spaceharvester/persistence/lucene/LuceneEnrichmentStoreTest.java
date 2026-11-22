@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.persistence.lucene;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
@@ -249,6 +250,24 @@ class LuceneEnrichmentStoreTest extends EnrichmentStoreContract {
         store.close();
 
         assertThatThrownBy(() -> store.find(new PageKey("wiki", "101"))).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void closingAfterAnInterruptedWriteReleasesTheStoreWithoutThrowing() {
+        // Roter develop-Build 22.11.2026: Ein Interrupt mitten in der Datei-Ein-/Ausgabe schließt den Writer; das
+        // commit beim Schließen warf danach AlreadyClosedException.
+        store.save(result(new PageKey("wiki", "101")));
+        Thread.currentThread().interrupt();
+        try {
+            assertThatThrownBy(store::flush).isInstanceOf(RuntimeException.class);
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertThatCode(store::close).doesNotThrowAnyException();
+        store = LuceneEnrichmentStore.open(directory);
+        store.save(result(new PageKey("wiki", "102")));
+        assertThat(store.find(new PageKey("wiki", "102"))).hasSize(1);
     }
 
     private static Enrichment result(PageKey key) {

@@ -218,9 +218,9 @@ public final class LuceneLinkIndex implements LinkIndex, AutoCloseable {
         }
         try {
             if (uncommitted > 0) {
-                writer.commit();
+                TragicWriters.commitOnClose(writer, "Verzeichnis der Verweise");
             }
-            writer.close();
+            TragicWriters.closeOnClose(writer, "Verzeichnis der Verweise");
         } catch (IOException e) {
             throw new PageCacheException("Verzeichnis der Verweise " + path + " kann nicht geschlossen werden", e);
         } finally {

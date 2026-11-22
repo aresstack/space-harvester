@@ -1653,7 +1653,7 @@ public class Jobs implements AutoCloseable {
                 } else {
                     job.finish(JobState.CANCELLED, null, now);
                 }
-                store.save(job.snapshot());
+                saveOnClose(job);
             }
             queued.clear();
             // Weckt, wer auf das Ende eines wartenden Auftrags wartet ({@link #await}).
@@ -1662,14 +1662,14 @@ public class Jobs implements AutoCloseable {
                 if (survivesShutdown(job)) {
                     // Abgelegt wird, was der Benutzer wollte: so erkennt der nächste Start ein Anhalten oder einen
                     // Abbruch des Benutzers ({@link #markInterrupted}) und setzt nur Unterbrochenes fort.
-                    store.save(job.snapshot());
+                    saveOnClose(job);
                     job.cancelRequested = true;
                     job.stopRequested();
                     continue;
                 }
                 job.cancelRequested = true;
                 job.stopRequested();
-                store.save(job.snapshot());
+                saveOnClose(job);
             }
             reconnects.clear();
             if (ownDeadlines != null) {
@@ -1682,6 +1682,21 @@ public class Jobs implements AutoCloseable {
             lock.unlock();
         }
         notifier.close();
+    }
+
+    /**
+     * Legt den Stand eines Auftrags beim Beenden ab. Scheitert die Ablage (etwa weil ein unterbrochener Thread ihren
+     * Lucene-Writer geschlossen hat), beendet {@link #close()} trotzdem alle übrigen Aufträge, Zeitgeber und Meldungen:
+     * Sonst blieben deren Threads stehen und das Schließen der übrigen Bausteine scheiterte mit. Der Auftrag gilt beim
+     * nächsten Start als unterbrochen ({@link #markInterrupted}); im Protokoll steht nur die Ausnahmeklasse.
+     */
+    private void saveOnClose(Job job) {
+        try {
+            store.save(job.snapshot());
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Auftragsstand beim Beenden nicht abgelegt ({0})",
+                    e.getClass().getName());
+        }
     }
 
     /**
