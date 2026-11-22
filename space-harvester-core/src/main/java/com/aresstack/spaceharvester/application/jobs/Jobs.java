@@ -132,7 +132,7 @@ public class Jobs implements AutoCloseable {
 
     /** Plant eine einmalige Aufgabe; das Ergebnis meldet sie wieder ab. In Tests von Hand. */
     @FunctionalInterface
-    interface DeadlineTimer {
+    public interface DeadlineTimer {
         AutoCloseable at(Duration delay, Runnable task);
     }
     /** Geplante Wiederanläufe je Auftrag; nur der zuletzt geplante zählt ({@link Reconnect#token}). */
@@ -2516,8 +2516,8 @@ public class Jobs implements AutoCloseable {
         }
     }
 
-    /** Nur für Tests: plant das Wecken bei Ablauf der Laufzeitgrenze von Hand. */
-    void deadlineTimer(DeadlineTimer timer) {
+    /** Nur für Tests (auch anderer Pakete): plant das Wecken bei Ablauf der Laufzeitgrenze von Hand. */
+    public void deadlineTimer(DeadlineTimer timer) {
         lock.lock();
         try {
             deadlines = java.util.Objects.requireNonNull(timer, "timer");
