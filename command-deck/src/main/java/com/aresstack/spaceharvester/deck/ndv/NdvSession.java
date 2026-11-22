@@ -150,20 +150,29 @@ public final class NdvSession {
         }
     }
 
-    /** Trennt; danach verbindet nichts von selbst. Wartet nicht auf ein laufendes Gespräch. */
+    /**
+     * Trennt; danach verbindet nichts von selbst. Wartet nicht auf ein laufendes Gespräch. Der Zustand wechselt
+     * zugleich mit dem Abhängen der Verbindung, damit ein paralleles Gespräch keine neue einhängen kann.
+     */
     public void disconnect() {
         NdvConnection current;
+        boolean changed;
         stateLock.lock();
         try {
             current = connection;
             connection = null;
+            changed = state != NdvState.DISCONNECTED;
+            state = NdvState.DISCONNECTED;
+            failure = null;
         } finally {
             stateLock.unlock();
         }
         if (current != null) {
             current.close();
         }
-        change(NdvState.DISCONNECTED, null);
+        if (changed) {
+            observers.forEach(observer -> observer.accept(this));
+        }
     }
 
     @FunctionalInterface

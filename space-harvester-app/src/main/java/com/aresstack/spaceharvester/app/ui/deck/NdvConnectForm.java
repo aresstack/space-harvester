@@ -17,7 +17,6 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.util.List;
-import java.util.Map;
 import javax.swing.BorderFactory;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JComboBox;
@@ -34,8 +33,6 @@ import javax.swing.JPanel;
 final class NdvConnectForm extends JPanel {
 
     static final String ENTRY_KEY = "deck.ndv.entry";
-    static final String HOST_KEY = "deck.ndv.host";
-    static final String PORT_KEY = "deck.ndv.port";
 
     /** Verbinden mit Profil, Eintragstitel für die Anzeige und der Quelle der Anmeldung. */
     @FunctionalInterface
@@ -53,6 +50,7 @@ final class NdvConnectForm extends JPanel {
     private final ServerAccounts accounts;
     private final Connect connect;
     private boolean loaded;
+    private ServerAccount shownAccount;
 
     NdvConnectForm(ServerAccounts accounts, Connect connect) {
         super(new BorderLayout());
@@ -113,7 +111,6 @@ final class NdvConnectForm extends JPanel {
         advancedToggle.setBorder(BorderFactory.createEmptyBorder(6, 0, 4, 0));
         problem.setBorder(BorderFactory.createEmptyBorder(4, 0, 6, 0));
         add(Comic.plate("Neue NDV-Verbindung", Comic.YELLOW, body), BorderLayout.CENTER);
-        recall();
         serverChanged();
         getAccessibleContext().setAccessibleName("Neue NDV-Verbindung");
         // Die Liste kommt beim ersten Zeigen (nur lesen, ohne Kopplungsdialog: der steht unter Sicherheit).
@@ -179,6 +176,13 @@ final class NdvConnectForm extends JPanel {
 
     private void serverChanged() {
         ServerAccount account = selected();
+        // Abweichender Host und Port gelten nur für den eben gewählten Server (wie ConnectForm): Wer den Server
+        // wechselt, verbindet sich mit dessen Adresse, damit Zugangsdaten nie an eine vergessene Adresse gehen.
+        if (account != shownAccount) {
+            host.setText("");
+            port.setText("");
+            shownAccount = account;
+        }
         host.setPlaceholder(account == null || account.host().isEmpty() ? "Rechnername oder Adresse"
                 : account.host());
     }
@@ -228,8 +232,8 @@ final class NdvConnectForm extends JPanel {
         }
         problem.setText(" ");
         ServerAccount account = selected();
-        AppState.shared().putAll(Map.of(ENTRY_KEY, account.entry(), HOST_KEY, host.getText().trim(),
-                PORT_KEY, port.getText().trim()));
+        // Nur der Server wird gemerkt; ein abweichender Host oder Port gilt nur für diese Wahl.
+        AppState.shared().put(ENTRY_KEY, account.entry());
         String entry = account.entry();
         connect.open(profile, entry, () -> accounts.credentials(entry));
     }
@@ -246,13 +250,4 @@ final class NdvConnectForm extends JPanel {
         server.requestFocusInWindow();
     }
 
-    private void recall() {
-        AppState state = AppState.shared();
-        host.setText(nonNull(state.get(HOST_KEY)));
-        port.setText(nonNull(state.get(PORT_KEY)));
-    }
-
-    private static String nonNull(String text) {
-        return text == null ? "" : text;
-    }
 }

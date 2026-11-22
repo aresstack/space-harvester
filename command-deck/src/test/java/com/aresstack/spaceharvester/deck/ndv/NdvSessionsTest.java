@@ -141,6 +141,58 @@ class NdvSessionsTest {
     }
 
     @Test
+    void aDisconnectDuringACallLeavesNoConnectionOpen() throws Exception {
+        java.util.concurrent.CountDownLatch inCall = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        NdvConnector slow = (profile, user, password) -> {
+            NdvConnection real = server.connect(profile, user, password);
+            return new NdvConnection() {
+                public List<String> libraries(String filter) throws IOException {
+                    inCall.countDown();
+                    try {
+                        release.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return real.libraries(filter);
+                }
+                public int objects(String library, String filter, Page page) throws IOException {
+                    return real.objects(library, filter, page);
+                }
+                public String read(NdvObject object) throws IOException {
+                    return real.read(object);
+                }
+                public void write(NdvObject object, String source) throws IOException {
+                    real.write(object, source);
+                }
+                public boolean open() {
+                    return real.open();
+                }
+                public void close() {
+                    real.close();
+                }
+            };
+        };
+        NdvSessions own = new NdvSessions(slow, Runnable::run);
+        NdvSession session = own.open(new NdvProfile("10.0.0.7", 2700), "", login("geheim"));
+        Thread call = Thread.ofVirtual().start(() -> {
+            try {
+                session.libraries("*");
+            } catch (IOException expected) {
+                // Verbindung beim Trennen geschlossen
+            }
+        });
+        inCall.await();
+        session.disconnect();
+        release.countDown();
+        call.join();
+
+        assertThat(session.state()).isEqualTo(NdvState.DISCONNECTED);
+        assertThat(server.openConnections()).as("keine Verbindung bleibt stehen").isZero();
+        assertThatThrownBy(() -> session.libraries("*")).hasMessageContaining("getrennt");
+    }
+
+    @Test
     void writesOnlyOnRequest() throws IOException {
         NdvSession session = connected();
         List<NdvObject> objects = new ArrayList<>();

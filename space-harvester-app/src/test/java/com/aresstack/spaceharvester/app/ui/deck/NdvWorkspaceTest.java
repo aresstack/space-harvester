@@ -49,8 +49,6 @@ class NdvWorkspaceTest {
     @Test
     void theFormNeedsAServerWithUserAndTakesPort2700() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
-            AppState.shared().put(NdvConnectForm.HOST_KEY, "");
-            AppState.shared().put(NdvConnectForm.PORT_KEY, "");
             NdvWorkspace workspace = new NdvWorkspace(sessions, accounts, Runnable::run);
             NdvConnectForm form = workspace.form();
             form.show(List.of(HOST, NO_USER));
@@ -72,6 +70,15 @@ class NdvWorkspaceTest {
             form.port.setText("x");
             form.submit();
             assertThat(form.problemText()).contains("Port muss eine Zahl sein");
+
+            // Ein abweichender Host gilt nur für den gewählten Server; ein Wechsel nimmt ihn zurück.
+            form.host.setText("10.9.9.9");
+            form.port.setText("2701");
+            form.server.setSelectedItem(NO_USER);
+            assertThat(form.host.getText()).isEmpty();
+            assertThat(form.port.getText()).isEmpty();
+            form.server.setSelectedItem(HOST);
+            assertThat(form.profile().host()).isEqualTo("10.0.0.7");
             assertThat(sessions.all()).isEmpty();
             assertThat(read).as("ohne Verbinden kein Passwort gelesen").isEmpty();
         });
