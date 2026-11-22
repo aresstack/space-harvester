@@ -197,8 +197,7 @@ public final class MainWindow implements AppContext.Navigator {
     /** Ob die linke Leiste des Space Harvesters zu war, als er verlassen wurde. */
     private boolean harvesterDrawerCollapsed;
     /** Das Command Deck (#1142); seine Sitzungen leben so lange wie das Fenster, über jeden Wechsel hinweg. */
-    private final com.aresstack.spaceharvester.app.ui.deck.CommandDeck commandDeck =
-            new com.aresstack.spaceharvester.app.ui.deck.CommandDeck();
+    private final com.aresstack.spaceharvester.app.ui.deck.CommandDeck commandDeck;
     private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
@@ -208,6 +207,8 @@ public final class MainWindow implements AppContext.Navigator {
 
     public MainWindow(AppContext context) {
         this.context = context;
+        commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
+                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
         context.setNavigator(this);
         statusView = new StatusView(context);
         sources = new SourcesView(context);

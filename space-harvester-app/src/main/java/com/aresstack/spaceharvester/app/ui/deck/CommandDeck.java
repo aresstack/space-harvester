@@ -3,8 +3,12 @@ package com.aresstack.spaceharvester.app.ui.deck;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess;
+import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewWorkspace;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
+import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
+import com.aresstack.spaceharvester.deck.betaview.http.HttpBetaViewServer;
 import com.aresstack.spaceharvester.deck.terminal.TerminalSessions;
 import com.aresstack.spaceharvester.deck.terminal.openterm.OpenTermConnector;
 import java.awt.BorderLayout;
@@ -36,11 +40,20 @@ public final class CommandDeck {
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
     private final TerminalWorkspace terminal;
+    private final BetaViewWorkspace betaView;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
 
+    /** Deck ohne App-Kontext (Tests): BetaView direkt ohne Proxy, ohne KeePass. */
     public CommandDeck() {
+        this(BetaViewAccess.direct());
+    }
+
+    /** Deck mit dem Netzweg (Proxy, Zertifikate) und der KeePass-Kopplung der App für BetaView. */
+    public CommandDeck(BetaViewAccess betaViewAccess) {
         terminal = new TerminalWorkspace(sessions);
+        betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
+                connecting), betaViewAccess);
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
@@ -55,7 +68,11 @@ public final class CommandDeck {
             group.add(button);
             buttons.put(candidate, button);
             navigation.add(button);
-            workspace.add(candidate == DeckArea.TERMINAL ? terminal : placeholder(candidate), candidate.name());
+            workspace.add(switch (candidate) {
+                case TERMINAL -> terminal;
+                case BETAVIEW -> betaView;
+                default -> placeholder(candidate);
+            }, candidate.name());
         }
         show(DeckArea.TERMINAL);
         perspective = Perspective.of(Perspectives.COMMAND_DECK, "Command Deck",
@@ -85,11 +102,16 @@ public final class CommandDeck {
     /** Trennt alle Sitzungen (Programmende). */
     public void shutdown() {
         sessions.closeAll();
+        betaView.shutdown();
         connecting.shutdownNow();
     }
 
     TerminalWorkspace terminal() {
         return terminal;
+    }
+
+    BetaViewWorkspace betaView() {
+        return betaView;
     }
 
     JComponent navigation() {

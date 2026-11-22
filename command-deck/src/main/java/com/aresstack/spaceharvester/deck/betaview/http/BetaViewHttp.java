@@ -154,6 +154,9 @@ final class BetaViewHttp {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Unterbrochen", e);
+        } catch (java.io.UncheckedIOException e) {
+            // Die Proxy-Regel der App meldet „kein Netzweg“ so (nie still direkt verbinden).
+            throw e.getCause();
         }
         storeCookies(response);
         byte[] body = response.body() == null ? new byte[0] : response.body();

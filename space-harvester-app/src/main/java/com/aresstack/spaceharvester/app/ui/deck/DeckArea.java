@@ -10,7 +10,7 @@ public enum DeckArea {
     TERMINAL("Terminal", "Interaktive TN3270-Sitzungen", true),
     FTP("FTP", "MVS-Datasets und Members, Transfers, JES-Jobs und Spool", false),
     NDV("NDV", "Natural Development Server", false),
-    BETAVIEW("BetaView", "Beleg- und Dokumentserver", false),
+    BETAVIEW("BetaView", "Beleg- und Dokumentserver", true),
     FILES("Dateien", "Lokale Dateien, SharePoint und weitere Dateisysteme", false);
 
     private final String title;
