@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
+import com.aresstack.spaceharvester.app.ui.Dialogs;
+import com.aresstack.spaceharvester.deck.editor.EditorSessions;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
@@ -47,15 +49,18 @@ public final class NdvWorkspace extends JPanel {
     private final CardLayout footCards = new CardLayout();
     private final JPanel foot = new JPanel(footCards);
     private final NdvConnectForm form;
+    private final EditorSessions editors;
     private NdvSession selected;
 
-    public NdvWorkspace(NdvSessions sessions, ServerAccounts accounts) {
-        this(sessions, accounts, com.aresstack.spaceharvester.app.ui.Background.executor());
+    /** @param editors der gemeinsame Editor des Command Deck; NDV öffnet seine Quelltexte darin */
+    public NdvWorkspace(NdvSessions sessions, ServerAccounts accounts, EditorSessions editors) {
+        this(sessions, accounts, editors, com.aresstack.spaceharvester.app.ui.Background.executor());
     }
 
-    NdvWorkspace(NdvSessions sessions, ServerAccounts accounts, Executor background) {
+    NdvWorkspace(NdvSessions sessions, ServerAccounts accounts, EditorSessions editors, Executor background) {
         super(new BorderLayout());
         this.sessions = sessions;
+        this.editors = editors;
         this.background = background;
         setBackground(Comic.SURFACE);
         getAccessibleContext().setAccessibleName("NDV");
@@ -111,7 +116,7 @@ public final class NdvWorkspace extends JPanel {
         if (pillOf.containsKey(session)) {
             return;
         }
-        NdvBrowser browser = new NdvBrowser(session, sessions, background, () -> closeSession(session));
+        NdvBrowser browser = new NdvBrowser(session, sessions, editors, background, () -> closeSession(session));
         browsers.put(session, browser);
         String key = session.id();
         center.add(browser, key);
@@ -156,10 +161,17 @@ public final class NdvWorkspace extends JPanel {
         }
     }
 
-    private void closeSession(NdvSession session) {
+    void closeSession(NdvSession session) {
+        NdvBrowser known = browsers.get(session);
+        if (known != null && !known.unsaved().isEmpty() && !Dialogs.confirm(this, "Sitzung schließen",
+                "Ungespeicherte Änderungen in " + known.unsaved().stream().map(doc -> "„" + doc.name() + "“")
+                        .collect(java.util.stream.Collectors.joining(", ")) + " wirklich verwerfen?")) {
+            return;
+        }
         sessions.close(session);
         NdvBrowser browser = browsers.remove(session);
         if (browser != null) {
+            browser.closeDocuments();
             center.remove(browser);
             tools.remove(browser.tools());
             foot.remove(browser.foot());

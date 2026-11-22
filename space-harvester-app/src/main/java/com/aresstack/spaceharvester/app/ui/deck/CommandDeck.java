@@ -47,7 +47,7 @@ public final class CommandDeck {
     private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(), connecting);
     private final TerminalWorkspace terminal;
     private final BetaViewWorkspace betaView;
-    /** Gemeinsamer Editor aller Bereiche (Dateien, später FTP und NDV); die Dokumente überleben jeden Wechsel. */
+    /** Gemeinsamer Editor aller Bereiche (Dateien, NDV, später FTP); die Dokumente überleben jeden Wechsel. */
     private final com.aresstack.spaceharvester.deck.editor.EditorSessions editors =
             new com.aresstack.spaceharvester.deck.editor.EditorSessions(connecting);
     private final FilesWorkspace files;
@@ -86,7 +86,7 @@ public final class CommandDeck {
                 connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore());
         ftp = new FtpWorkspace(ftpSessions, accounts, editors);
         tools.setOpaque(false);
-        ndv = new NdvWorkspace(ndvSessions, accounts);
+        ndv = new NdvWorkspace(ndvSessions, accounts, editors);
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
