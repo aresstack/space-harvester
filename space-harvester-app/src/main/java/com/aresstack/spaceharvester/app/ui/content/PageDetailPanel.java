@@ -5073,7 +5073,14 @@ public final class PageDetailPanel extends JPanel {
         int current = ++request;
         feedback.working("Analysen werden berechnet …");
         Background.run(() -> {
-            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, null);
+            // Abnahme #1078: Wartet der Auftrag hinter laufenden Folgeaufträgen, sagt die Statuszeile es.
+            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, null, state ->
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        if (current == request) {
+                            feedback.working(state == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED
+                                    ? "Wartet auf freien Platz …" : "Analysen werden berechnet …");
+                        }
+                    }));
             DeliveredPage cached = runtime.workspace().page(source, id, false);
             List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
             ReaderDocument document = document(source, id, updated, text, font);

@@ -722,6 +722,29 @@ public class Enrichments {
             this.groupId = groupId;
             this.sourceId = sourceId;
         }
+
+        /**
+         * Nimmt eine Berechnung auf (Abnahme #1078): Eine erzwungene ersetzt die gleiche ungezwungene an ihrer Stelle,
+         * statt daneben zu stehen; eine ungezwungene neben der gleichen erzwungenen entfällt. Unter {@link #pendingLock}.
+         */
+        void add(Work added) {
+            Work unforced = new Work(added.processorId(), added.key(), false);
+            Work forced = new Work(added.processorId(), added.key(), true);
+            if (!added.force()) {
+                if (!work.contains(forced)) {
+                    work.add(added);
+                }
+                return;
+            }
+            if (!work.contains(unforced)) {
+                work.add(added);
+                return;
+            }
+            List<Work> order = new java.util.ArrayList<>(work);
+            order.set(order.indexOf(unforced), forced);
+            work.clear();
+            work.addAll(order);
+        }
     }
 
     /**
@@ -769,7 +792,7 @@ public class Enrichments {
         synchronized (pendingLock) {
             Pending collecting = pending.get(key.sourceId());
             if (collecting != null) {
-                collecting.work.add(work);
+                collecting.add(work);
             } else {
                 Pending created = new Pending(BackgroundJobs.newGroupId(), key.sourceId());
                 created.work.add(work);

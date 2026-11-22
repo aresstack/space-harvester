@@ -240,6 +240,33 @@ class EnrichmentsBackgroundJobsTest {
     }
 
     @Test
+    void aForcedRecomputationReplacesTheSameUnforcedWorkInsteadOfComputingTwice() throws Exception {
+        // Abnahme #1078: Eine erzwungene Berechnung ersetzt die gleiche ungezwungene an ihrer Stelle.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.refresh(page("x", "1", "Vorne"));
+            PageSnapshot first = page("wiki", "1", "Eins");
+            enrichments.refresh(first);
+            enrichments.refresh(page("wiki", "2", "Zwei"));
+            assertThat(enrichments.recomputeInBackground(first, List.of("remote"))).isEqualTo(1);
+            enrichments.refresh(first);
+
+            runAll(held);
+
+            assertThat(remote.calls.get("wiki/1").get()).isEqualTo(1);
+            assertThat(remote.order).containsExactly("x/1", "wiki/1", "wiki/2");
+            assertThat(part(background, "wiki").progress().processed()).isEqualTo(2);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void withASingleSlotTheBackgroundNeverRunsSoTheWorkGoesTheFormerWay() throws Exception {
         // Abnahme #1077: Mit einem Platz läuft kein Hintergrundteil; die KI-Anreicherung stünde sonst still.
         Remote remote = new Remote();

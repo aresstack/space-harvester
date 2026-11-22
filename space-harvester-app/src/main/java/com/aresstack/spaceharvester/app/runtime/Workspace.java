@@ -796,9 +796,20 @@ public final class Workspace {
      * @throws com.aresstack.spaceharvester.application.jobs.JobCancelledException wenn der Auftrag abgebrochen wurde
      */
     public Enrichments.Run recomputeEnrichments(String sourceId, String pageId, String processor) {
+        return recomputeEnrichments(sourceId, pageId, processor, state -> {
+        });
+    }
+
+    /**
+     * Wie {@link #recomputeEnrichments(String, String, String)}; {@code state} erfährt, ob der Auftrag auf einen freien
+     * Platz wartet oder läuft (beliebiger Thread).
+     */
+    public Enrichments.Run recomputeEnrichments(String sourceId, String pageId, String processor,
+                                                java.util.function.Consumer<
+                                                        com.aresstack.spaceharvester.application.jobs.JobState> state) {
         DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
-        return harvester.pageRecomputation().recompute(caller.jobOwner(), page.snapshot(), processor);
+        return harvester.pageRecomputation().recompute(caller.jobOwner(), page.snapshot(), processor, state);
     }
 
     /** Gespeicherte Bilder und Beschreibungen einer gelieferten Seite ({@code GET …/images}); beschreibt nichts. */

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.enrichment;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
+import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -14,6 +15,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * „Neu berechnen“ einer Seite (Fundstelle 21, Architekt 21.11.2026): ein gewöhnlicher Auftrag
@@ -41,15 +44,30 @@ public final class PageRecomputation {
      *
      * @param owner       Auftraggeber, damit die Auftragsliste ihn zeigt
      * @param processorId ein Prozessor oder {@code null} für alle
-     * @throws JobCancelledException wenn der Auftrag abgebrochen wurde, vor oder während der Berechnung
+     * @throws JobCancelledException wenn der Auftrag abgebrochen oder angehalten wurde, vor oder während der Berechnung
+     * @throws IllegalStateException  wenn der Auftrag ohne Ergebnis scheiterte, mit seinem Grund
      */
     public Enrichments.Run recompute(String owner, PageSnapshot snapshot, String processorId) {
+        return recompute(owner, snapshot, processorId, state -> {
+        });
+    }
+
+    /**
+     * Wie {@link #recompute(String, PageSnapshot, String)}; {@code state} erfährt, ob der Auftrag auf einen freien Platz
+     * wartet ({@link JobState#QUEUED}, Abnahme #1078: etwa hinter laufenden Folgeaufträgen) und wann er anläuft
+     * ({@link JobState#RUNNING}), damit der Knopf nicht still hängt. Gerufen auf beliebigem Thread.
+     */
+    public Enrichments.Run recompute(String owner, PageSnapshot snapshot, String processorId,
+                                     Consumer<JobState> state) {
         Objects.requireNonNull(snapshot, "snapshot");
+        Objects.requireNonNull(state, "state");
+        AtomicReference<JobState> reported = new AtomicReference<>();
         CompletableFuture<Enrichments.Run> done = new CompletableFuture<>();
         JobStatus status = jobs.submitInteractive(JobType.ENRICHMENT, snapshot.key().sourceId(), snapshot.spaceKey(),
                 null, owner, Map.of(EnrichmentsAfterSync.TASK_PARAMETER, TASK, ROOT, snapshot.key().pageId()),
                 JobTask.blocking(context -> {
                     try {
+                        report(reported, state, JobState.RUNNING);
                         context.discovered(1);
                         Enrichments.Run run = recompute(snapshot, processorId, context);
                         enrichments.flush();
@@ -71,8 +89,13 @@ public final class PageRecomputation {
         Subscription watching = jobs.subscribe(owner, new JobListener() {
             @Override
             public void changed(JobStatus changed) {
-                if (changed.id().equals(status.id()) && changed.state().terminal()) {
-                    done.completeExceptionally(new JobCancelledException(status.id()));
+                if (!changed.id().equals(status.id())) {
+                    return;
+                }
+                if (changed.state().terminal()) {
+                    endedWithoutResult(done, changed);
+                } else {
+                    report(reported, state, changed.state());
                 }
             }
 
@@ -84,8 +107,11 @@ public final class PageRecomputation {
             }
         });
         try {
-            if (jobs.status(status.id(), owner).state().terminal()) {
-                done.completeExceptionally(new JobCancelledException(status.id()));
+            JobStatus now = jobs.status(status.id(), owner);
+            if (now.state().terminal()) {
+                endedWithoutResult(done, now);
+            } else {
+                report(reported, state, now.state());
             }
             return done.join();
         } catch (CompletionException e) {
@@ -95,6 +121,36 @@ public final class PageRecomputation {
             throw e;
         } finally {
             watching.close();
+        }
+    }
+
+    /**
+     * Ein Endzustand, bevor die Arbeit ein Ergebnis lieferte (Abnahme #1078): abgebrochen oder angehalten als
+     * {@link JobCancelledException}, gescheitert mit seinem Grund. Hat die Arbeit schon ein Ergebnis oder ihren eigenen
+     * Fehler gemeldet, bleibt es dabei.
+     */
+    private static void endedWithoutResult(CompletableFuture<Enrichments.Run> done, JobStatus ended) {
+        if (ended.state() == JobState.FAILED) {
+            String reason = ended.error() == null ? "unbekannter Grund"
+                    : ended.error().message() != null ? ended.error().message() : ended.error().code();
+            done.completeExceptionally(new IllegalStateException("Neuberechnung gescheitert: " + reason));
+        } else {
+            done.completeExceptionally(new JobCancelledException(ended.id()));
+        }
+    }
+
+    /** Meldet jeden Zustand höchstens einmal und nie rückwärts von „läuft“ auf „wartet“. */
+    private static void report(AtomicReference<JobState> reported, Consumer<JobState> state, JobState now) {
+        if (now != JobState.QUEUED && now != JobState.RUNNING) {
+            return;
+        }
+        JobState before = reported.getAndUpdate(previous -> previous == JobState.RUNNING ? previous : now);
+        if (before != now && before != JobState.RUNNING) {
+            try {
+                state.accept(now);
+            } catch (RuntimeException e) {
+                // Die Rückmeldung am Knopf darf die Berechnung nie aufhalten.
+            }
         }
     }
 

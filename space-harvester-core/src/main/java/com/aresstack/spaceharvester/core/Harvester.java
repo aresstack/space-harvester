@@ -923,7 +923,7 @@ public final class Harvester implements AutoCloseable {
             // ADR 0013, Punkt 3: mit Haken erst finden, laden und fehlende Embeddings berechnen.
             SemanticPreparation preparation = embedding == null || prefetch == null ? null
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
-                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
+                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT, jobs);
             // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
             EnrichmentSettings searchEnrichment = builder.enrichment;
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
