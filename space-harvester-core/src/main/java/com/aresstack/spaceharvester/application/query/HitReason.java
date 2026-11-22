@@ -71,6 +71,15 @@ public record HitReason(Kind kind, String query, Relation relation, Variant vari
                 "via"));
     }
 
+    /**
+     * Suchmethode „Fachbegriffe“ (W8): Die Seite belegt Aussagen des Wissensgraphen zum bestätigten Fachbegriff
+     * {@code term} der Anfrage und wurde mit ihm als Suchtext auf genau diesen Seiten gefunden; die Ursachen dieser
+     * Suche stehen daneben.
+     */
+    public static HitReason term(String term) {
+        return new HitReason(Kind.TERM, Objects.requireNonNull(term, "term"), null, null, List.of(), List.of());
+    }
+
     /** Dieselbe Ursache als Ergebnis einer Variante der progressiven Suche; {@code null} für die ursprüngliche. */
     public HitReason fromVariant(Variant variant) {
         return new HitReason(kind, query, relation, variant, inTitle, inText, via);
@@ -167,7 +176,12 @@ public record HitReason(Kind kind, String query, Relation relation, Variant vari
          * Suchmethode „Nachbarseiten“ (R2, nur mit Haken): Die Seite ist Eltern-, Unterseite oder Verweisziel bzw.
          * -quelle eines besseren Treffers und traf die Anfrage danach in derselben Bewertung wie jeder Treffer.
          */
-        NEIGHBOR
+        NEIGHBOR,
+        /**
+         * Suchmethode „Fachbegriffe“ (W8, nur mit Haken): Die Anfrage nennt einen bestätigten Fachbegriff, und die
+         * Seite belegt Aussagen des Wissensgraphen zu ihm; {@link HitReason#query()} ist der Fachbegriff.
+         */
+        TERM
     }
 
     /**

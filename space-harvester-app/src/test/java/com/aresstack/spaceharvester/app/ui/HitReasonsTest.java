@@ -88,6 +88,35 @@ class HitReasonsTest {
     }
 
     @Test
+    void aHitThroughATechnicalTermIsMarkedWithTheTermEvenThoughItsTextReasonLooksOriginal() {
+        // W8: Die Suche auf den Belegseiten lief mit dem Fachbegriff als Wortlaut; die Marke nennt ihn.
+        List<HitReason> reasons = List.of(HitReason.text("Wolkenpegel", null, List.of(), List.of("wolkenpegel")),
+                HitReason.term("Wolkenpegel"));
+
+        assertThat(HitReasons.mark(reasons)).isEqualTo(new MarkedTextRenderer.Mark("Fachbegriff „Wolkenpegel“",
+                "Fachbegriff"));
+        assertThat(HitReasons.tip(reasons)).isEqualTo("Aussagen zum Fachbegriff „Wolkenpegel“ auf dieser Seite");
+        assertThat(HitReasons.details(reasons)).contains("nennt den Fachbegriff „Wolkenpegel“")
+                .contains("Wissensgraph belegt auf dieser Seite Aussagen");
+    }
+
+    @Test
+    void theTermPagesNoteIsYellowOnlyWhenCappedOrUnchecked() {
+        assertThat(SearchView.termPagesNote(
+                com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.TechnicalTerms.CHECKED))
+                .isNull();
+        assertThat(SearchView.termPagesNote(
+                com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.TechnicalTerms.OFF))
+                .isNull();
+        assertThat(SearchView.termPagesNote(
+                com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.TechnicalTerms.CAPPED))
+                .isEqualTo(SearchView.TERM_PAGES_CAPPED).contains("500");
+        assertThat(SearchView.termPagesNote(
+                com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.TechnicalTerms.UNCHECKED))
+                .isEqualTo(SearchView.TERM_PAGES_UNCHECKED);
+    }
+
+    @Test
     void aNeighborIsMarkedShortWithTheSeedInTheTipAndTheOverlay() {
         HitReason.Neighbor via = new HitReason.Neighbor("wiki", "1", "Betrieb", HitReason.Neighbor.Edge.CHILD);
         List<HitReason> reasons = List.of(HitReason.text("Nachtlauf", null, List.of(), List.of("nachtlauf")),

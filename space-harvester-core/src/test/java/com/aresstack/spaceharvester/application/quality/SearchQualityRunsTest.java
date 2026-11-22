@@ -119,6 +119,26 @@ class SearchQualityRunsTest {
     }
 
     @Test
+    void aRunWithTechnicalTermsIsNamedAndProfiledSoQ1CanCompareItWithARunWithout() throws Exception {
+        SearchQualityRuns runs = runs(search);
+        JobStatus without = runs.submit(CALLER, request(suite()));
+        SearchQualityRuns.Request base = request(suite());
+        JobStatus with = runs.submit(CALLER, new SearchQualityRuns.Request(base.suite(), null, base.output(), 8,
+                Duration.ofSeconds(90), "1.0", false, false, true));
+
+        Path plain = Path.of(jobs.status(without.id(), CALLER.jobOwner()).parameter(
+                SearchQualityRuns.RESULT_PARAMETER));
+        Path terms = Path.of(jobs.status(with.id(), CALLER.jobOwner()).parameter(
+                SearchQualityRuns.RESULT_PARAMETER));
+        assertThat(plain.getFileName().toString()).doesNotContain("Fachbegriffen");
+        assertThat(terms.getFileName().toString()).endsWith(SearchQualityRuns.TECHNICAL_TERMS_SUFFIX + ".tsv");
+        assertThat(jobs.status(with.id(), CALLER.jobOwner()).parameter(
+                SearchQualityRuns.TECHNICAL_TERMS_PARAMETER)).isEqualTo("true");
+        assertThat(Files.readString(terms)).contains("Fachbegriffe an");
+        assertThat(Files.readString(plain)).doesNotContain("Fachbegriffe an");
+    }
+
+    @Test
     void resumingMeasuresOnlyWhatTheResultFileLacks() throws Exception {
         SearchQualityRuns runs = runs(search);
         JobStatus first = runs.submit(CALLER, request(suite()));

@@ -27,6 +27,16 @@ class SearchMethodsTest {
     }
 
     @Test
+    void termPagesAreOffByDefaultAndKeepTheirSetting() {
+        assertThat(new SearchMethods(node).termPages()).isFalse();
+
+        new SearchMethods(node).termPages(true);
+
+        assertThat(new SearchMethods(node).termPages()).isTrue();
+        assertThat(new SearchMethods(node).neighbors()).as("eigene Stellung").isFalse();
+    }
+
+    @Test
     void glossarySynonymsAreOffByDefaultAndHoldOnlyForTheSession() {
         // K5a: Standard aus, gemerkt für die Sitzung, nicht über den Neustart.
         SearchMethods methods = new SearchMethods(node);

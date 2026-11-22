@@ -84,6 +84,10 @@ public final class SearchQualityRuns {
     public static final String SYNONYMS_PARAMETER = "synonyme";
     /** Zusatz im Namen eines Laufs mit „Synonyme der Fachbegriffe“; ohne bleibt der Name wie bisher. */
     public static final String SYNONYMS_SUFFIX = " – mit Synonymen";
+    /** Ob mit der Suchmethode „Fachbegriffe“ (W8) gemessen wird; fehlt er, ohne. */
+    public static final String TECHNICAL_TERMS_PARAMETER = "fachbegriffe";
+    /** Zusatz im Namen eines Laufs mit „Fachbegriffe“; ohne bleibt der Name wie bisher. */
+    public static final String TECHNICAL_TERMS_SUFFIX = " – mit Fachbegriffen";
 
     static final String COMPONENT = "Suchqualität";
     /** Unterordner des Ausgabeordners für Ergebnisse und Berichte. */
@@ -101,9 +105,16 @@ public final class SearchQualityRuns {
      * @param version     App-Version
      * @param neighbors   mit der Suchmethode „Nachbarseiten“ (R2), damit ihr Nutzen neben einem Lauf ohne messbar ist
      * @param synonyms    mit der Suchmethode „Synonyme der Fachbegriffe“ (K5a)
+     * @param technicalTerms mit der Suchmethode „Fachbegriffe“ (W8)
      */
     public record Request(Path suite, Path previous, Path output, int contextSize, Duration timeout, String version,
-                          boolean neighbors, boolean synonyms) {
+                          boolean neighbors, boolean synonyms, boolean technicalTerms) {
+
+        /** Ohne „Fachbegriffe“. */
+        public Request(Path suite, Path previous, Path output, int contextSize, Duration timeout, String version,
+                       boolean neighbors, boolean synonyms) {
+            this(suite, previous, output, contextSize, timeout, version, neighbors, synonyms, false);
+        }
 
         /** Ohne „Synonyme der Fachbegriffe“. */
         public Request(Path suite, Path previous, Path output, int contextSize, Duration timeout, String version,
@@ -200,7 +211,8 @@ public final class SearchQualityRuns {
         Path output = request.output().toAbsolutePath().resolve(FOLDER);
         Path result = reserve(output, baseName(suite) + " – "
                 + STAMP.format(clock.instant().atZone(ZoneId.systemDefault()))
-                + (request.neighbors() ? NEIGHBORS_SUFFIX : "") + (request.synonyms() ? SYNONYMS_SUFFIX : ""));
+                + (request.neighbors() ? NEIGHBORS_SUFFIX : "") + (request.synonyms() ? SYNONYMS_SUFFIX : "")
+                + (request.technicalTerms() ? TECHNICAL_TERMS_SUFFIX : ""));
         Map<String, String> parameters = new LinkedHashMap<>();
         parameters.put(SUITE_PARAMETER, suite.toString());
         parameters.put(RESULT_PARAMETER, result.toString());
@@ -215,6 +227,9 @@ public final class SearchQualityRuns {
         }
         if (request.synonyms()) {
             parameters.put(SYNONYMS_PARAMETER, "true");
+        }
+        if (request.technicalTerms()) {
+            parameters.put(TECHNICAL_TERMS_PARAMETER, "true");
         }
         return jobs.submit(JobType.SEARCH_QUALITY, Jobs.ALL_SOURCES, null, null, caller.jobOwner(), parameters,
                 task(caller, parameters));
@@ -284,12 +299,14 @@ public final class SearchQualityRuns {
         String version = parameters.getOrDefault(VERSION_PARAMETER, "");
         boolean neighbors = Boolean.parseBoolean(parameters.get(NEIGHBORS_PARAMETER));
         boolean synonyms = Boolean.parseBoolean(parameters.get(SYNONYMS_PARAMETER));
+        boolean technicalTerms = Boolean.parseBoolean(parameters.get(TECHNICAL_TERMS_PARAMETER));
         return JobTask.blocking(context -> run(caller, suite, result, previous == null ? null : Path.of(previous),
-                contextSize, timeout, version, neighbors, synonyms, context));
+                contextSize, timeout, version, neighbors, synonyms, technicalTerms, context));
     }
 
     private void run(AccessContext caller, Path suitePath, Path resultPath, Path previousPath, int contextSize,
-                     Duration timeout, String version, boolean neighbors, boolean synonyms, JobContext context)
+                     Duration timeout, String version, boolean neighbors, boolean synonyms, boolean technicalTerms,
+                     JobContext context)
             throws IOException {
         context.phase(COMPONENT, "Testbestand lesen");
         QualitySuite suite;
@@ -305,7 +322,7 @@ public final class SearchQualityRuns {
         }
         Map<String, CaseResult> done = new HashMap<>();
         Instant started = clock.instant();
-        SearchProfile settings = profile.get().withNeighbors(neighbors);
+        SearchProfile settings = profile.get().withNeighbors(neighbors).withTechnicalTerms(technicalTerms);
         // Eine leere Datei ist die beim Start reservierte: noch nichts gemessen.
         if (Files.exists(resultPath) && Files.size(resultPath) > 0) {
             QualityResults.Stored earlier = QualityResults.read(Files.readString(resultPath, StandardCharsets.UTF_8));
@@ -392,7 +409,8 @@ public final class SearchQualityRuns {
                 + ", Ziel " + profile.minRelevantHits() + " Treffer ab " + profile.minScore()
                 + ", Budget " + profile.timeBudget().toSeconds() + " s / " + profile.searchBudget() + " Anfragen"
                 // Nur wenn an: frühere Ergebnisse ohne die Methode behalten ihre Beschreibung (Fortsetzen).
-                + (profile.neighbors() ? ", Nachbarseiten an" : "");
+                + (profile.neighbors() ? ", Nachbarseiten an" : "")
+                + (profile.technicalTerms() ? ", Fachbegriffe an" : "");
     }
 
     /** Wie {@link #describe(SearchProfile)}, mit „Synonyme der Fachbegriffe“ (K5a) nur, wenn an. */

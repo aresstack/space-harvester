@@ -24,10 +24,20 @@ import java.util.Objects;
  * @param failedNeighborQueries davon gescheiterte
  * @param neighborLoad          das Nachladen fehlender Nachbarn im Hintergrund oder {@code null}; nach seinem Ende
  *                              findet {@link NeighborSearch} die geladenen, wenn sie die Anfrage treffen
+ * @param technicalTerms        Stand der Suchmethode „Fachbegriffe“ (W8)
  */
 public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
                                 Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors,
-                                int neighborQueries, int failedNeighborQueries, NeighborLoader.Load neighborLoad) {
+                                int neighborQueries, int failedNeighborQueries, NeighborLoader.Load neighborLoad,
+                                TechnicalTerms technicalTerms) {
+
+    /** Ohne die Suchmethode „Fachbegriffe“. */
+    public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
+                             Duration elapsed, AiServiceException.Reason failure, Neighbors neighbors,
+                             int neighborQueries, int failedNeighborQueries, NeighborLoader.Load neighborLoad) {
+        this(hits, variants, reason, loads, elapsed, failure, neighbors, neighborQueries, failedNeighborQueries,
+                neighborLoad, TechnicalTerms.OFF);
+    }
 
     /** Ohne Nachladen fehlender Nachbarn. */
     public ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Completion reason, List<String> loads,
@@ -67,8 +77,24 @@ public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Co
         UNCHECKED
     }
 
+    /**
+     * Stand der Suchmethode „Fachbegriffe“ (W8). {@link #CAPPED} und {@link #UNCHECKED} sind Hinweise, nie Fehler: Die
+     * gefundenen Treffer bleiben stehen.
+     */
+    public enum TechnicalTerms {
+        /** Nicht zugeschaltet. */
+        OFF,
+        /** Zugeschaltet und ganz gelaufen; auch, wenn die Anfrage keinen Fachbegriff nennt. */
+        CHECKED,
+        /** Gelaufen, aber der Bereich war größer als die Grenze des Begriffswissens; nur ein Teil wurde gelesen. */
+        CAPPED,
+        /** Zugeschaltet, aber nicht (ganz) gelaufen: Frist, Abbruch, Grenze der Proben oder Fehler. */
+        UNCHECKED
+    }
+
     public ProgressiveResult {
         neighbors = neighbors == null ? Neighbors.OFF : neighbors;
+        technicalTerms = technicalTerms == null ? TechnicalTerms.OFF : technicalTerms;
         if (neighborQueries < 0 || failedNeighborQueries < 0 || failedNeighborQueries > neighborQueries) {
             throw new IllegalArgumentException("Zählung der Nachbarsuche ungültig");
         }
