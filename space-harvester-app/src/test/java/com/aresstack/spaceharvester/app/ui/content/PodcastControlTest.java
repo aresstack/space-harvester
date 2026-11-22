@@ -210,7 +210,8 @@ class PodcastControlTest {
                 assertFalse(control.stageShown());
                 assertTrue(events.getLast() instanceof ContentOverlayEvent hidden && !hidden.getPayload().show());
                 // An der Zeitleiste steht kein Schalter für die Bilder mehr (Angelo 22.11.2026).
-                assertEquals(1, ((java.awt.Container) control.timelineRow()).getComponentCount());
+                assertTrue(java.util.Arrays.stream(((java.awt.Container) control.timelineRow()).getComponents())
+                        .noneMatch(javax.swing.AbstractButton.class::isInstance));
                 // „Esc“ auf der Bühne nimmt dieses Bild weg; das nächste erscheint wieder.
                 control.pictureOf(0);
                 assertTrue(control.stageShown());
@@ -262,6 +263,71 @@ class PodcastControlTest {
             control.summary(null);
             assertFalse(control.transcriptCopy().isVisible());
         });
+    }
+
+    /** Angelo 22.11.2026: Untertitel unter der Zeitleiste, Schalter rechts unten, aus bleibt gemerkt. */
+    @Test
+    void subtitlesStandUnderTheTimelineAndTheSwitchIsRemembered() throws Exception {
+        int before = com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(PodcastControl.SUBTITLES_KEY, 1);
+        try {
+            onEdt(() -> {
+                com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PodcastControl.SUBTITLES_KEY, 1);
+                control = control();
+                control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+                javax.swing.AbstractButton toggle = (javax.swing.AbstractButton) control.subtitleToggle();
+                // Ohne Wiedergabe gibt es nichts zu schalten.
+                assertFalse(toggle.isVisible());
+                control.orb().doClick();
+                assertTrue(toggle.isVisible());
+                assertEquals(PodcastControl.SUBTITLES_ON, toggle.getToolTipText());
+                javax.swing.JComponent row = control.timelineRow();
+                assertTrue(SwingUtilities.isDescendingFrom(control.subtitle(), row));
+                int timeline = control.timeline().getPreferredSize().height;
+                int withSubtitles = row.getPreferredSize().height;
+                assertTrue(withSubtitles > timeline);
+                row.setSize(900, withSubtitles);
+                row.doLayout();
+                // Zwischen den Zeitangaben: links und rechts bleibt ihr Platz frei, die erste Zeile auf ihrer Höhe.
+                assertEquals(PodcastControl.SUBTITLE_SIDE, control.subtitle().getX());
+                assertEquals(900 - 2 * PodcastControl.SUBTITLE_SIDE, control.subtitle().getWidth());
+                assertTrue(control.subtitle().getY() < timeline);
+                String shot = System.getenv("SCREENSHOTS_DIR");
+                if (shot != null && !shot.isBlank()) {
+                    control.timeline().update(59_000, 1_035_000);
+                    control.subtitle().show("Die neue Startseite von Nordlicht zeigt jetzt zuerst, was sich seit dem "
+                            + "letzten Besuch geändert hat, und erst danach die Kacheln der einzelnen Bereiche.", 0.2);
+                    try {
+                        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(900,
+                                withSubtitles, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                        java.awt.Graphics2D g = image.createGraphics();
+                        g.setColor(com.aresstack.spaceharvester.app.ui.Comic.SURFACE);
+                        g.fillRect(0, 0, 900, withSubtitles);
+                        row.paint(g);
+                        g.dispose();
+                        javax.imageio.ImageIO.write(image, "png",
+                                Path.of(shot).resolve("podcast-untertitel.png").toFile());
+                    } catch (Exception e) {
+                        throw new IllegalStateException(e);
+                    }
+                }
+
+                toggle.doClick();
+                assertEquals(PodcastControl.SUBTITLES_OFF, toggle.getToolTipText());
+                assertFalse(control.subtitle().isVisible());
+                assertEquals(timeline, row.getPreferredSize().height);
+                assertEquals(0, com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(
+                        PodcastControl.SUBTITLES_KEY, 1));
+                // Ein anderer Podcast kennt die Einstellung ebenfalls.
+                PodcastControl<UpdateSummary> other = control();
+                assertEquals(PodcastControl.SUBTITLES_OFF, other.subtitleToggle().getToolTipText());
+                toggle.doClick();
+                assertTrue(control.subtitle().isVisible());
+                assertEquals(1, com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(
+                        PodcastControl.SUBTITLES_KEY, 0));
+            });
+        } finally {
+            com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PodcastControl.SUBTITLES_KEY, before);
+        }
     }
 
     @Test

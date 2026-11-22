@@ -393,7 +393,7 @@ public final class PageDetailPanel extends JPanel {
     private final JPanel pageFoot = footRow();
 
     private static JPanel footRow() {
-        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+        JPanel row = new JPanel(new BorderLayout());
         row.setOpaque(false);
         return row;
     }
@@ -553,8 +553,11 @@ public final class PageDetailPanel extends JPanel {
             }
         }, PodcastControl.Labels.PAGE);
         pagePodcast.events(context.events()::publish);
-        pageFoot.add(pagePodcast.transcriptCopy());
-        sourceFoot.add(sourceView.podcast().transcriptCopy());
+        // Links neben der Lupe das Kopieren, rechtsbündig der Schalter „Untertitel“ (Angelo 22.11.2026).
+        pageFoot.add(Comic.row(pagePodcast.transcriptCopy()), BorderLayout.WEST);
+        pageFoot.add(Comic.row(pagePodcast.subtitleToggle()), BorderLayout.EAST);
+        sourceFoot.add(Comic.row(sourceView.podcast().transcriptCopy()), BorderLayout.WEST);
+        sourceFoot.add(Comic.row(sourceView.podcast().subtitleToggle()), BorderLayout.EAST);
         readerPage.setOrb(pagePodcast.orb());
         textBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(readerPage);
         textBusy.setHighlight(Comic.BLUE);

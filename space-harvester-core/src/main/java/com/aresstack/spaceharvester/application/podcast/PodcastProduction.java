@@ -107,8 +107,12 @@ final class PodcastProduction {
                 continue;
             }
             for (int s = 0; s < segments.get().size(); s++) {
+                List<Podcast.Line> lines = store.script(key, t, s).orElse(List.of()).stream()
+                        .filter(turn -> !turn.text().isBlank())
+                        .map(turn -> new Podcast.Line(turn.speaker() == PodcastPlan.Speaker.HOST, turn.text()))
+                        .toList();
                 parts.add(new Podcast.Part(t, s, topicTitle, segments.get().get(s).title(),
-                        store.audio(key, t, s).orElse(null), picture));
+                        store.audio(key, t, s).orElse(null), picture, lines));
             }
         }
         // Fehlen noch Bilder, ist der Podcast nicht fertig: Ein neuer Lauf zeichnet nur sie (Audio bleibt).
