@@ -129,7 +129,12 @@ final class UpdateSummarizer {
 
     /** Das Ergebnis, bereit zur Ablage. */
     record Result(String text, List<StoredSummary.Statement> statements, int unreadable,
-                  List<StoredSummary.InputPage> inputPages) {
+                  List<StoredSummary.InputPage> inputPages, int lost) {
+
+        Result(String text, List<StoredSummary.Statement> statements, int unreadable,
+               List<StoredSummary.InputPage> inputPages) {
+            this(text, statements, unreadable, inputPages, 0);
+        }
     }
 
     /** Eine Seite, wie sie an das Modell geht. */
@@ -197,7 +202,10 @@ final class UpdateSummarizer {
         });
         // Die Teile sind unabhängig: bis zu ai.parallel zugleich (Angelo, 22.11.2026); nur das Zusammenführen wartet.
         AtomicReference<RuntimeException> lost = new AtomicReference<>();
-        List<Answer> answers = inParallel(parts, context, part -> part(part, frame, context, lost)).stream()
+        java.util.concurrent.atomic.AtomicInteger lostPages = new java.util.concurrent.atomic.AtomicInteger();
+        // Hälften eines geteilten Teils bleiben eigene Antworten und gehen durch das begrenzte, stufenweise Zusammenführen.
+        List<Answer> answers = inParallel(parts, context, part -> part(part, frame, context, lost, lostPages)).stream()
+                .flatMap(List::stream)
                 .filter(partial -> !partial.text().isBlank() || !partial.statements().isEmpty()).toList();
         if (answers.isEmpty()) {
             // Kein Teil kam durch: der Auftrag scheitert mit dem echten Grund.
@@ -210,7 +218,7 @@ final class UpdateSummarizer {
                 .map(material -> new StoredSummary.InputPage(material.page().spaceKey(), material.page().pageId(),
                         material.content()))
                 .toList();
-        return new Result(answer.text(), answer.statements(), withheld + unknown, inputs);
+        return new Result(answer.text(), answer.statements(), withheld + unknown, inputs, lostPages.get());
     }
 
     private static String spaceName(ReportedPage page, Map<String, String> spaceNames) {
@@ -608,15 +616,16 @@ final class UpdateSummarizer {
      * durchkommt, fehlt in der Zusammenfassung, der Auftrag gilt dann als unvollständig, scheitert aber nicht
      * (Angelo, 22.11.2026: ein einzelner Fehler kippt nicht den Auftrag).
      */
-    private Answer part(List<Material> part, ObjectNode frame, JobContext context,
-                        AtomicReference<RuntimeException> lost) {
+    private List<Answer> part(List<Material> part, ObjectNode frame, JobContext context,
+                              AtomicReference<RuntimeException> lost, java.util.concurrent.atomic.AtomicInteger lostPages) {
+        context.checkpoint();
         ObjectNode input = frame.deepCopy();
         ArrayNode changes = input.putArray("aenderungen");
         part.forEach(material -> changes.add(material.node()));
         try {
-            return ask(INSTRUCTIONS, input.toString(), ids(part), context);
+            return List.of(ask(INSTRUCTIONS, input.toString(), ids(part), context));
         } catch (AiServiceException e) {
-            if (!transientFailure(e)) {
+            if (!transientFailure(e) || part.isEmpty()) {
                 throw e;
             }
             lost.set(e);
@@ -624,15 +633,15 @@ final class UpdateSummarizer {
                 context.processed(1);
                 context.failed(1);
                 context.incomplete();
-                return new Answer("", List.of());
+                lostPages.incrementAndGet();
+                return List.of();
             }
+            context.checkpoint();
             context.discovered(1);
             int half = part.size() / 2;
-            Answer first = part(part.subList(0, half), frame, context, lost);
-            Answer second = part(part.subList(half, part.size()), frame, context, lost);
-            List<StoredSummary.Statement> statements = new ArrayList<>(first.statements());
-            statements.addAll(second.statements());
-            return new Answer((first.text() + " " + second.text()).trim(), statements);
+            List<Answer> answers = new ArrayList<>(part(part.subList(0, half), frame, context, lost, lostPages));
+            answers.addAll(part(part.subList(half, part.size()), frame, context, lost, lostPages));
+            return answers;
         }
     }
 

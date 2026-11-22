@@ -605,7 +605,10 @@ public final class ChangeLog implements AutoCloseable {
                     Instant now = runtime.clock().instant();
                     store.saveSummary(new StoredSummary(sourceId, update, spaceKey, result.text(), result.statements(),
                             runtime.model().version(), now, report.update().to() != null ? report.update().to() : now,
-                            result.unreadable(), UpdateSummarizer.reportSha256(report, page -> contentState(page, span)),
+                            result.unreadable(), UpdateSummarizer.reportSha256(report, page -> contentState(page, span))
+                                    // Fehlen Seiten, weil der Dienst sie nie annahm, gilt die Zusammenfassung als veraltet
+                                    // und wird nicht als vollständig gezeigt.
+                                    + (result.lost() > 0 ? "+unvollstaendig:" + result.lost() : ""),
                             result.inputPages(), span.from()));
                     context.written(1);
                 }));

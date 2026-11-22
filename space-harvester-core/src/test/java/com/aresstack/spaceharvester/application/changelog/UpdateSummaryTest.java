@@ -162,7 +162,7 @@ class UpdateSummaryTest {
 
         @Override
         public String complete(String given, String input) {
-            if (failFirst.getAndDecrement() > 0) {
+            if (failFirst.getAndDecrement() > 0 || failWhen != null && input.contains(failWhen)) {
                 throw new com.aresstack.spaceharvester.ai.AiServiceException(
                         com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNREACHABLE,
                         "Chat-Dienst: PROVIDER_ERROR (HTTP 504)");
@@ -184,6 +184,7 @@ class UpdateSummaryTest {
         }
     };
     private int parallel = 1;
+    private volatile String failWhen;
     private final java.util.concurrent.atomic.AtomicInteger failFirst = new java.util.concurrent.atomic.AtomicInteger();
     private long delayMillis;
     private final java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
@@ -645,6 +646,29 @@ class UpdateSummaryTest {
             assertThat(instructions).contains(UpdateSummarizer.INSTRUCTIONS);
         } finally {
             UpdateSummarizer.backoffMillis = before;
+        }
+    }
+
+    /** Eine Seite, die der Dienst nie annimmt, kippt den Auftrag nicht; die Zusammenfassung gilt dann als veraltet. */
+    @Test
+    void aPageTheServiceNeverAcceptsIsLeftOutAndTheSummaryIsNotShownAsComplete() {
+        long before = UpdateSummarizer.backoffMillis;
+        UpdateSummarizer.backoffMillis = 1;
+        try {
+            row(1, "100", "DEV", ChangeKind.NEW, "Start");
+            mark(10, true);
+            row(12, "102", "DEV", ChangeKind.NEW, "Gute Seite");
+            row(12, "103", "DEV", ChangeKind.NEW, "Kaputte Seite");
+            released.add("102");
+            released.add("103");
+            failWhen = "Kaputte Seite";
+            answer = """
+                    {"zusammenfassung": "Gute Seite neu.", "themen": [{"titel": "Gut", "text": "Neu.", "seiten": ["102"]}]}""";
+            assertThat(run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state()).isEqualTo(JobState.COMPLETED);
+            assertThat(summaries.get(key("wiki", ChangeUpdate.OPEN, null)).reportSha256()).contains("unvollstaendig");
+        } finally {
+            UpdateSummarizer.backoffMillis = before;
+            failWhen = null;
         }
     }
 
