@@ -75,9 +75,8 @@ public final class BackgroundJobs {
     private final List<Runnable> afterResume = new java.util.concurrent.CopyOnWriteArrayList<>();
     /** Ob {@link #resumeInterrupted()} schon lief; dann läuft {@link #afterResume} sofort. */
     private volatile boolean resumedOnce;
-    /** Je Art ein Riegel, damit zwei gleichzeitige Anlässe nicht beide einen Teil starten. */
     /**
-     * Startsperre je Art; {@link java.util.concurrent.locks.ReentrantLock} statt Monitor (Abnahme #1133): Darunter
+     * Startsperre je Art, damit zwei gleichzeitige Anlässe nicht beide einen Teil starten; {@link java.util.concurrent.locks.ReentrantLock} statt Monitor (Abnahme #1133): Darunter
      * laufen Schreibzugriffe auf den Auftragsspeicher und die Sperre der Aufträge, ein virtueller Thread gibt dabei
      * seinen Träger frei.
      */

@@ -96,9 +96,9 @@ public final class PageLoads {
     private final java.util.concurrent.locks.ReentrantLock image = new java.util.concurrent.locks.ReentrantLock();
     /** Gruppen, die {@link #join} gerade startet, bis ihre Teile im Abbild stehen. */
     private final Set<String> starting = new java.util.HashSet<>();
-    /** Teile, die gerade im selben Eintrag neu starten ({@link BackgroundJobs#onRerun}), bis ihr Stand im Abbild steht. */
     /**
-     * Je Teil die Zahl laufender Neustarts, nicht nur ob einer läuft (Abnahme #1133): Zwei können überlappen, etwa ein
+     * Teile, die gerade im selben Eintrag neu starten ({@link BackgroundJobs#onRerun}), bis ihr Stand im Abbild steht;
+     * je Teil die Zahl laufender Neustarts, nicht nur ob einer läuft (Abnahme #1133): Zwei können überlappen, etwa ein
      * Doppelklick auf Fortsetzen; der gescheiterte darf {@link #gone} nicht räumen, solange der andere noch läuft.
      */
     private final Map<String, Integer> rerunning = new java.util.HashMap<>();
@@ -153,11 +153,13 @@ public final class PageLoads {
 
         @Override
         public void after(String partId, com.aresstack.spaceharvester.application.jobs.JobStatus rerun) {
-            if (rerun != null && KIND.equals(rerun.parameter(BackgroundJobs.KIND))) {
-                adopt(rerun);
-            }
             guard(() -> {
-                // Erst der letzte überlappende Neustart räumt; vorher hält gone ein gemeldetes Ende fest.
+                // In einem Zug (Abnahme #1137): Ist das Ende schon gemeldet, bringt kein Neustart seinen älteren Stand
+                // zurück, und die Marke bleibt für die übrigen überlappenden stehen; erst der letzte räumt sie.
+                if (rerun != null && KIND.equals(rerun.parameter(BackgroundJobs.KIND))
+                        && !gone.containsKey(partId) && !gone.containsKey(rerun.id())) {
+                    adopt(rerun);
+                }
                 if (rerunning.merge(partId, -1, Integer::sum) <= 0) {
                     rerunning.remove(partId);
                     gone.values().removeIf(partId::equals);

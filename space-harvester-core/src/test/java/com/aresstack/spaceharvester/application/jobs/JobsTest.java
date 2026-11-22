@@ -73,6 +73,32 @@ class JobsTest {
     }
 
     @Test
+    void aFailingStopListenerNeverSkipsTheOthers() {
+        // Abnahme #1137: Wirft ein Zuhörer beim Anhalten, laufen die übrigen trotzdem, und der Abbruch greift.
+        Jobs jobs = jobs(1, 5);
+        AtomicReference<String> id = new AtomicReference<>();
+        List<String> fired = new java.util.concurrent.CopyOnWriteArrayList<>();
+        JobStatus job = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> {
+            try (AutoCloseable failing = context.whenStopRequested(() -> {
+                fired.add("erster");
+                throw new IllegalStateException("erfunden");
+            });
+                 AutoCloseable other = context.whenStopRequested(() -> fired.add("zweiter"))) {
+                jobs.cancel(id.get(), "client-a");
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+            context.checkpoint();
+        }));
+        id.set(job.id());
+
+        executor.runNext();
+
+        assertThat(fired).containsExactly("erster", "zweiter");
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.CANCELLED);
+    }
+
+    @Test
     void submitReturnsQueuedJobAtOnceAndRunsItLater() {
         Jobs jobs = jobs(1, 5);
         FakePageReader reader = new FakePageReader(3);

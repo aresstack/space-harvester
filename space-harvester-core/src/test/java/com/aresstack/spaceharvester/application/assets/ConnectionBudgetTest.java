@@ -23,19 +23,22 @@ class ConnectionBudgetTest {
         // Architekt 22.11.2026: Mit synchronized und wait() hielte jeder Wartende seinen Träger fest.
         int waiters = 400;
         ConnectionBudget budget = new ConnectionBudget(0);
-        CountDownLatch entered = new CountDownLatch(waiters);
         java.util.List<java.util.concurrent.Future<?>> waiting = new java.util.ArrayList<>();
+        List<Thread> threads = new CopyOnWriteArrayList<>();
         try (java.util.concurrent.ExecutorService virtual =
                      java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             for (int i = 0; i < waiters; i++) {
                 waiting.add(virtual.submit(() -> {
-                    entered.countDown();
+                    threads.add(Thread.currentThread());
                     budget.awaitAvailable(NOTHING);
                     return null;
                 }));
             }
             try {
-                assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                // Abnahme #1137: Alle parken wirklich, nicht nur betreten; erst dann zählt der freie Träger.
+                assertThat(within(() -> threads.size() == waiters && threads.stream().allMatch(thread ->
+                        thread.getState() == Thread.State.WAITING
+                                || thread.getState() == Thread.State.TIMED_WAITING))).isTrue();
                 assertThat(virtual.submit(() -> "frei").get(10, TimeUnit.SECONDS)).isEqualTo("frei");
 
                 budget.total(4);
