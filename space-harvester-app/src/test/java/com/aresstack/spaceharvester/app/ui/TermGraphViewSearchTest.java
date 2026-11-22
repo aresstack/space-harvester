@@ -24,6 +24,13 @@ import org.junit.jupiter.api.Test;
  */
 class TermGraphViewSearchTest {
 
+    /**
+     * Klein genug, dass der dichte Graph es auf jeder Maschine erreicht (kleine Graphen brauchen schon bis zu rund
+     * 480.000 Einheiten); das echte Budget hängt mit den Schriftmaßen zusammen und ist dafür kein fester Prüfstein.
+     */
+    private static final long SMALL_BUDGET = 100_000L;
+
+
     private static final String[] WORDS = {"Antrag", "Sachbearbeiter", "Nachweis", "Beleg", "Plan", "Ziel", "Start",
             "Akte", "Bescheid", "Prüfstelle", "Gebühr", "Vorgang", "Frist", "Kunde", "Vertrag", "Rechnung"};
 
@@ -93,6 +100,7 @@ class TermGraphViewSearchTest {
             TermGraphView.Canvas canvas = new TermGraphView.Canvas();
             ref.set(canvas);
             canvas.searches(tasks::add);
+            canvas.budget(SMALL_BUDGET);
             canvas.onBusy(busy::add);
             canvas.setSize(980, 560);
             canvas.domain(true);
@@ -119,9 +127,11 @@ class TermGraphViewSearchTest {
             assertThat(canvas.busy()).isFalse();
             assertThat(busy).containsExactly(false, true, false);
             assertThat(canvas.lastWork()).as("das Budget ist erreicht: die Suche wurde gekürzt")
-                    .isGreaterThanOrEqualTo(TermGraphView.Canvas.WORK_BUDGET);
+                    .isGreaterThanOrEqualTo(SMALL_BUDGET);
+            // Ein Schritt (eine Ausdehnung bzw. Beschriftungsrunde) darf das Budget überschreiten, höchstens um so viel
+            // wie beim echten Budget erlaubt (2 %).
             assertThat(canvas.lastWork()).as("und nur um einen Schritt überschritten")
-                    .isLessThanOrEqualTo(TermGraphView.Canvas.WORK_BUDGET + TermGraphView.Canvas.WORK_BUDGET / 50);
+                    .isLessThanOrEqualTo(SMALL_BUDGET + TermGraphView.Canvas.WORK_BUDGET / 50);
             assertThat(canvas.lastVariants()).as("nicht alle 180 Ausdehnungen").isBetween(1, 179);
             Map<String, Rectangle2D> boxes = canvas.layout(980, 560);
             assertThat(canvas.searchCount()).as("die fertige Lage gilt, keine neue Suche").isEqualTo(1);
@@ -139,6 +149,7 @@ class TermGraphViewSearchTest {
             // Fest: derselbe Graph auf derselben Fläche ergibt dieselbe Lage, auch synchron gerechnet.
             TermGraphView.Canvas again = new TermGraphView.Canvas();
             again.searches(tasks::add);
+            again.budget(SMALL_BUDGET);
             again.setSize(980, 560);
             again.domain(true);
             again.centred(false);

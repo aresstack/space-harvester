@@ -860,6 +860,17 @@ public final class TermGraphView {
             searches = java.util.Objects.requireNonNull(executor, "executor");
         }
 
+        /**
+         * Das Arbeitsbudget der Suche (Tests: klein, damit es unabhängig von den Schriftmaßen der Maschine sicher
+         * erreicht wird).
+         */
+        void budget(long budget) {
+            if (budget < 1) {
+                throw new IllegalArgumentException("Budget mindestens 1");
+            }
+            this.budget = budget;
+        }
+
         /** Die Suche selbst (Tests: etwa eine, die scheitert). */
         void searcher(java.util.function.Function<Geometry, Layout> searcher) {
             this.searcher = java.util.Objects.requireNonNull(searcher, "searcher");
@@ -1075,7 +1086,7 @@ public final class TermGraphView {
         /** Die Rechnung für den jetzigen Stand und diese Fläche; liest danach nichts mehr von der Fläche. */
         private Geometry geometry(int width, int height, java.util.function.BooleanSupplier cancelled) {
             return new Geometry(graph, domain, centred, flags(), getFontMetrics(getFont()),
-                    getFontMetrics(Comic.regular(11f)), width, height, WORK_BUDGET, cancelled);
+                    getFontMetrics(Comic.regular(11f)), width, height, budget, cancelled);
         }
 
         /**
@@ -1441,6 +1452,8 @@ public final class TermGraphView {
          * darunter und werden ganz durchsucht.
          */
         static final long WORK_BUDGET = 24_000_000L;
+        /** Das geltende Budget, sonst {@link #WORK_BUDGET}. */
+        private long budget = WORK_BUDGET;
 
         /**
          * Übereinanderliegende oder angeschnittene Knoten wiegen schwerer als alle Berührungen von Beschriftungen
