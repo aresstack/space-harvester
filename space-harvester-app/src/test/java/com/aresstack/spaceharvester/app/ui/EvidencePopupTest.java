@@ -234,6 +234,39 @@ class EvidencePopupTest {
     }
 
     @Test
+    void reopenedWhileSavingTheNewRowWaitsForTheWriteAndTakesItsValueAndRevision() throws Exception {
+        Core core = new Core();
+        List<Runnable> later = new ArrayList<>();
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            EvidencePopup popup = new EvidencePopup().reviewing(core, deferred(later));
+            List<DomainTermGraph.Evidence> evidence = List.of(evidence(PLAN, "Plan", false));
+            popup.fill("Plan startet Nachtlauf", 1, evidence, sentences(), false);
+            later.removeFirst().run();
+            popup.toggle(0).clickConfirm();
+            Runnable write = later.removeFirst();
+            // Overlay zu und gleich wieder auf: das Lesen sieht den Stand vor dem Schreiben.
+            popup.fill("Plan startet Nachtlauf", 1, evidence, sentences(), false);
+            Runnable read = later.removeFirst();
+            read.run();
+            seen.add(popup.toggle(0).state());
+            popup.toggle(0).clickReject();
+            seen.add(popup.toggle(0).state());
+            seen.add(later.isEmpty());
+            write.run();
+            seen.add(popup.toggle(0).state());
+            seen.add(popup.stageTexts().getFirst());
+            popup.toggle(0).clickConfirm();
+            later.removeFirst().run();
+            seen.add(popup.toggle(0).state());
+        });
+        assertThat(seen).containsExactly(ReviewToggle.State.OPEN, ReviewToggle.State.OPEN, true,
+                ReviewToggle.State.CONFIRMED, GraphSource.STAGE_BY_HAND, ReviewToggle.State.OPEN);
+        assertThat(core.calls).as("das zweite Lesen läuft vor dem Schreiben").containsExactly("reviews 1",
+                "reviews 1", "review " + id(PLAN) + " CONFIRMED", "withdraw " + id(PLAN) + " 1");
+    }
+
+    @Test
     void aMessageNamesTheSentenceBrieflyOrElseThePage() {
         assertThat(EvidencePopup.brief("Kurz.", "Plan")).isEqualTo("„Kurz.“");
         assertThat(EvidencePopup.brief("Der Plan beschreibt den Start des Nachtlaufs und das Ziel der Sicherung.",
@@ -260,6 +293,24 @@ class EvidencePopupTest {
         popup.fill("Plan startet Nachtlauf", 3, List.of(evidence(PLAN, "Plan", false),
                 checkedEvidence(ZIEL, "Ziel"), evidence(NACHTLAUF, "Nachtlauf", true)), sentences(), false);
         return popup;
+    }
+
+    private static EvidencePopup.Runner deferred(List<Runnable> later) {
+        return new EvidencePopup.Runner() {
+            @Override
+            public <T> void run(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
+                later.add(() -> {
+                    T result;
+                    try {
+                        result = work.call();
+                    } catch (Exception e) {
+                        onFailure.accept(e);
+                        return;
+                    }
+                    onSuccess.accept(result);
+                });
+            }
+        };
     }
 
     static Map<String, SentenceText> sentences() {

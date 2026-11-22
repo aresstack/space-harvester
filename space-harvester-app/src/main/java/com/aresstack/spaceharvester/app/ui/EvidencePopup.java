@@ -170,6 +170,14 @@ public final class EvidencePopup extends JPopupMenu {
     private Runner runner;
     /** Zählt {@link #fill}: Antworten für eine frühere Füllung ändern nichts mehr. */
     private int generation;
+    /**
+     * Aussagen, für die gerade geschrieben wird, auch aus einer früheren Füllung (Overlay zu und gleich wieder auf):
+     * Solange springt ein Klick auf sie zurück, damit sich zwei Schreibvorgänge nicht überholen.
+     */
+    private final java.util.Set<String> writing = new java.util.HashSet<>();
+    /** Zähler beendeter Schreibvorgänge; je Aussage sein Stand beim letzten (seit der letzten Füllung). */
+    private int writes;
+    private final Map<String, Integer> lastWrite = new java.util.HashMap<>();
 
     public EvidencePopup() {
         setOpaque(true);
@@ -258,6 +266,7 @@ public final class EvidencePopup extends JPopupMenu {
         texts.clear();
         otherTexts.clear();
         hideStatus();
+        lastWrite.clear();
         for (DomainTermGraph.Evidence item : evidence) {
             Row row = new Row(item, sentences.get(item.statement().id()), failed, mine);
             shown.add(row);
@@ -351,12 +360,15 @@ public final class EvidencePopup extends JPopupMenu {
             wanted.computeIfAbsent(row.page(), unused -> new ArrayList<>()).add(row.statementId());
         }
         Reviewing current = reviewing;
+        int since = writes;
         runner.run(() -> current.reviews(wanted), found -> {
             if (mine != generation) {
                 return;
             }
             for (Row row : shown) {
-                row.loaded(found.getOrDefault(row.page(), StatusQuo.Reviews.NONE));
+                // Hat ein Schreiben aus der vorigen Füllung erst nach dem Start dieses Lesens geendet, gilt sein Wert.
+                row.loaded(found.getOrDefault(row.page(), StatusQuo.Reviews.NONE),
+                        lastWrite.getOrDefault(row.key(), Integer.MIN_VALUE) > since);
             }
         }, failure -> {
             if (mine != generation) {
@@ -517,16 +529,44 @@ public final class EvidencePopup extends JPopupMenu {
             return item.statement().id();
         }
 
-        /** Der gelesene Prüfstand: Revision, Wert der Entscheidung und Recht. */
-        void loaded(StatusQuo.Reviews reviews) {
-            StandingDecision decision = reviews.decisions().get(statementId());
-            revision = decision == null ? 0L : decision.revision();
+        String key() {
+            return page().sourceId() + '\u0000' + page().pageId() + '\u0000' + statementId();
+        }
+
+        /**
+         * Der gelesene Prüfstand: Revision, Wert der Entscheidung und Recht. {@code newer}: Ein Schreiben hat danach
+         * geendet und Wert und Revision schon gesetzt ({@link #finished}); dann gilt nur das Recht.
+         */
+        void loaded(StatusQuo.Reviews reviews, boolean newer) {
             loaded = true;
-            ReviewToggle.State state = stateOf(decision);
-            if (state != toggle.state()) {
-                show(state);
+            if (!newer) {
+                StandingDecision decision = reviews.decisions().get(statementId());
+                revision = decision == null ? 0L : decision.revision();
+                ReviewToggle.State state = stateOf(decision);
+                if (state != toggle.state()) {
+                    show(state);
+                }
             }
             toggle.locked(reviews.writable() ? null : NO_RIGHT);
+        }
+
+        /**
+         * Ein Schreiben ist gespeichert. Ist das Overlay inzwischen neu gefüllt und zeigt dieselbe Aussage, übernimmt
+         * deren Zeile Wert und Revision, denn ihr Lesen kann älter sein.
+         */
+        private void finished(ReviewToggle.State state, Long kept) {
+            writing.remove(key());
+            pending = false;
+            revision = kept;
+            lastWrite.put(key(), ++writes);
+            if (mine != generation) {
+                for (Row next : shown) {
+                    if (next.key().equals(key())) {
+                        next.revision = kept;
+                        next.show(state);
+                    }
+                }
+            }
         }
 
         /** Pille und Satz zum Zustand; der Knopf zeigt ihn mit. Die Zeile bleibt an ihrem Platz. */
@@ -555,22 +595,21 @@ public final class EvidencePopup extends JPopupMenu {
 
         /** Ein Klick auf ✓ oder ✕: sofort zeigen, abseits des EDT speichern. */
         private void changed(ReviewToggle.State from, ReviewToggle.State to) {
-            if (mine != generation || !loaded || pending || reviewing == null) {
+            if (mine != generation || !loaded || pending || reviewing == null || writing.contains(key())) {
                 toggle.state(from);
                 return;
             }
             pending = true;
+            writing.add(key());
             show(to);
             Reviewing current = reviewing;
             PageKey page = page();
             String id = statementId();
             if (to == ReviewToggle.State.OPEN) {
                 long expected = revision == null ? 0L : revision;
-                runner.run(() -> current.withdraw(page, id, expected), withdrawn -> {
-                    pending = false;
-                    // Danach steht der Eintrag mit neuer Revision (Stand von Hand) oder fehlt; ✓/✕ prüfen sie nicht.
-                    revision = null;
-                }, failure -> {
+                // Danach steht der Eintrag mit neuer Revision (Stand von Hand) oder fehlt; ✓/✕ prüfen sie nicht.
+                runner.run(() -> current.withdraw(page, id, expected),
+                        withdrawn -> finished(ReviewToggle.State.OPEN, null), failure -> {
                     if (failure instanceof StandingConflictException) {
                         changedMeanwhile();
                     } else {
@@ -580,10 +619,9 @@ public final class EvidencePopup extends JPopupMenu {
             } else {
                 ParsedStatements.Review review = to == ReviewToggle.State.CONFIRMED ? ParsedStatements.Review.CONFIRMED
                         : ParsedStatements.Review.REJECTED;
-                runner.run(() -> current.review(page, id, review), decision -> {
-                    pending = false;
-                    revision = decision == null ? null : decision.revision();
-                }, failure -> refused(from, to, failure));
+                runner.run(() -> current.review(page, id, review),
+                        decision -> finished(to, decision == null ? null : decision.revision()),
+                        failure -> refused(from, to, failure));
             }
         }
 
@@ -593,14 +631,16 @@ public final class EvidencePopup extends JPopupMenu {
             PageKey page = page();
             String id = statementId();
             runner.run(() -> current.reviews(Map.of(page, List.of(id))), found -> {
+                writing.remove(key());
                 pending = false;
                 if (mine != generation) {
                     return;
                 }
-                loaded(found.getOrDefault(page, StatusQuo.Reviews.NONE));
+                loaded(found.getOrDefault(page, StatusQuo.Reviews.NONE), false);
                 message(brief + " wurde " + CHANGED + "; die Zeile zeigt den aktuellen Stand.",
                         StatusNote.Tone.WARNING);
             }, failure -> {
+                writing.remove(key());
                 pending = false;
                 if (mine != generation) {
                     return;
@@ -617,6 +657,7 @@ public final class EvidencePopup extends JPopupMenu {
 
         /** Der Core lehnt ab: der Knopf springt zurück, eine rote Meldung nennt die Aussage. */
         private void refused(ReviewToggle.State from, ReviewToggle.State to, Throwable failure) {
+            writing.remove(key());
             pending = false;
             if (mine != generation) {
                 return;
