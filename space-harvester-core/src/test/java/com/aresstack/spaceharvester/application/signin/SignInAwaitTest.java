@@ -76,8 +76,9 @@ class SignInAwaitTest {
     }
 
     @Test
-    void anExceededRunTimeLimitEndsTheJobRightAfterWakingUp() throws Exception {
-        // Architekt 22.11.2026: Die Laufzeitgrenze meldet sich nicht; geprüft wird direkt nach dem Aufwachen.
+    void aRunTimeLimitExpiringWhileWaitingEndsTheJobAtOnceWithTimeout() throws Exception {
+        // Architekt 22.11.2026: Die Laufzeitgrenze meldet ihr Ablaufen über whenStopRequested (Zeitgeber in Jobs);
+        // niemand antwortet, und die Anmelde-Wartezeit von 15 Minuten ist nicht um, trotzdem sofort TIMEOUT.
         SignInRequests signIns = new SignInRequests(Duration.ofMinutes(15), new FixedClock());
         CountDownLatch joined = new CountDownLatch(1);
         signIns.onChange(joined::countDown);
@@ -85,10 +86,8 @@ class SignInAwaitTest {
         CompletableFuture<SignInRequests.Outcome> waiter = CompletableFuture.supplyAsync(
                 () -> signIns.await("wiki", "job-1", new Challenge(), null, context));
         assertThat(joined.await(5, TimeUnit.SECONDS)).isTrue();
-        context.timedOut = true;
 
-        assertThat(signIns.submit(signIns.pendingFor("wiki").orElseThrow().id(), "123456".toCharArray()))
-                .isEqualTo(SignInRequest.Answer.ACCEPTED);
+        context.expire();
 
         assertThat(waiter).failsWithin(5, TimeUnit.SECONDS).withThrowableThat().havingCause()
                 .isInstanceOfSatisfying(JobFailedException.class, e -> assertThat(e.code()).isEqualTo("TIMEOUT"));
@@ -145,6 +144,16 @@ class SignInAwaitTest {
 
         StopContext(String jobId) {
             this.jobId = jobId;
+        }
+
+        /** Wie der Zeitgeber der Laufzeitgrenze in {@code Jobs}: überfällig, dann die Wartenden wecken. */
+        void expire() {
+            timedOut = true;
+            for (Runnable listener : listeners) {
+                if (listeners.remove(listener)) {
+                    listener.run();
+                }
+            }
         }
 
         void cancel() {

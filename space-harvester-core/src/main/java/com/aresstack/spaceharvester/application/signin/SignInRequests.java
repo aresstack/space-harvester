@@ -205,12 +205,12 @@ public class SignInRequests {
 
     /**
      * Wartet, bis die Quelle freigeschaltet ist. Blockiert ohne Takt (ADR 0027): geweckt wird nur durch Freischalten,
-     * Ablehnen, das Ende der Wartezeit und eine Anforderung zum Abbrechen oder Anhalten des Auftrags
-     * ({@link JobContext#whenStopRequested}). Dann ruft es {@link JobContext#checkpoint()} auf, das mit einer Ausnahme
-     * abbricht und die Anforderung für diesen Auftrag zurückzieht. Der Thread hält beim Warten keinen Monitor, ein
-     * virtueller Thread gibt seinen Träger frei. Die Laufzeitgrenze des Auftrags meldet sich nicht; sie wird direkt
-     * nach jedem Aufwachen geprüft und greift damit spätestens nach der Anmelde-Wartezeit ({@link #waitTime()}), weil
-     * der Auftrag hier auf den Menschen wartet (Architekt 22.11.2026).
+     * Ablehnen, das Ende der Wartezeit und über {@link JobContext#whenStopRequested}: Abbrechen, Anhalten und den
+     * Ablauf der Laufzeitgrenze, den {@code Jobs} mit einem einmaligen Zeitgeber je Lauf meldet. Dann ruft es
+     * {@link JobContext#checkpoint()} auf, das mit einer Ausnahme abbricht und die Anforderung für diesen Auftrag
+     * zurückzieht. Der Thread hält beim Warten keinen Monitor, ein virtueller Thread gibt seinen Träger frei. Läuft die
+     * Laufzeitgrenze während des Wartens ab, endet der Auftrag sofort mit {@code TIMEOUT}, nicht erst nach der
+     * Anmelde-Wartezeit (Architekt 22.11.2026, ersetzt „erst nach dem Aufwachen“).
      *
      * @param failedAt wann die Anfrage begann, die den Code verlangt hat; eine Freischaltung danach gilt schon
      * @param context  der wartende Auftrag oder {@code null} (dann weckt nur die Anforderung selbst)
@@ -283,7 +283,7 @@ public class SignInRequests {
                 } finally {
                     lock.unlock();
                 }
-                // Direkt nach jedem Aufwachen: Abbruch, Anhalten und die Laufzeitgrenze (TIMEOUT) greifen sofort.
+                // Direkt nach jedem Aufwachen: Abbruch, Anhalten und die abgelaufene Laufzeitgrenze (TIMEOUT) greifen sofort.
                 if (context != null) {
                     context.checkpoint();
                 }
