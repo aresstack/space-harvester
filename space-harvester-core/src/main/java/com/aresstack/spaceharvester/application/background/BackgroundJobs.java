@@ -180,6 +180,12 @@ public final class BackgroundJobs {
      *                                  späteren wartet
      */
     public BackgroundGroup startSteps(String groupId, String groupKind, String title, List<Step> steps) {
+        return startSteps(groupId, groupKind, title, steps, false);
+    }
+
+    /** Wie {@link #startSteps(String, String, String, List)}; mit {@code orderOnly} warten die Teile nur der Reihe wegen. */
+    private BackgroundGroup startSteps(String groupId, String groupKind, String title, List<Step> steps,
+                                       boolean orderOnly) {
         Objects.requireNonNull(groupId, "groupId");
         Objects.requireNonNull(groupKind, "groupKind");
         Objects.requireNonNull(title, "title");
@@ -203,6 +209,9 @@ public final class BackgroundJobs {
                 parameters.put(GROUP_KIND, groupKind);
                 parameters.put(TITLE, title);
                 parameters.put(STEP_TITLE, step.stepTitle());
+                if (orderOnly) {
+                    parameters.put(ORDER_ONLY, "true");
+                }
                 List<String> after = new ArrayList<>(step.afterJobs());
                 step.afterSteps().forEach(index -> after.add(started.get(index).id()));
                 if (!after.isEmpty()) {
@@ -332,6 +341,75 @@ public final class BackgroundJobs {
                     .filter(part -> open(kind, part.sourceId(), part.partitionKey()).isEmpty()).toList();
             return missing.isEmpty() ? Optional.empty() : Optional.of(start(kind, title, missing));
         }
+    }
+
+    /**
+     * Wie {@link #startUnlessRunning(String, String, List)}, nur ersetzt ein offener Teil einen neuen allein, wenn er
+     * {@code covers} erfüllt (Abnahme #1073): Ein angehaltener Teil, der etwas anderes tut als der neue Anlass, etwa
+     * „Freigabe erteilen“ statt „Freigabe prüfen“, hält ihn nicht auf.
+     *
+     * @param covers ob ein offener Teil derselben Art für Quelle und Space die Arbeit des neuen mitnimmt
+     * @return die neue Gruppe mit den übrigen Teilen, oder leer, wenn keiner übrig bleibt
+     */
+    public Optional<BackgroundGroup> startUnlessRunning(String kind, String title, List<BackgroundPart.Draft> parts,
+                                                        Predicate<JobStatus> covers) {
+        Objects.requireNonNull(parts, "parts");
+        Objects.requireNonNull(covers, "covers");
+        synchronized (startLock(kind)) {
+            List<BackgroundPart.Draft> missing = parts.stream()
+                    .filter(part -> openParts(kind).noneMatch(status -> covers.test(status)
+                            && Objects.equals(part.sourceId(), status.sourceId())
+                            && Objects.equals(part.partitionKey(), status.partitionKey()))).toList();
+            return missing.isEmpty() ? Optional.empty() : Optional.of(start(kind, title, missing));
+        }
+    }
+
+    /**
+     * Wie {@link #startUnlessRunning(String, String, List)}, die Teile aber nacheinander ({@link Jobs#AFTER}, Abnahme
+     * #1073): Jeder wartet auf den vorigen, der erste auf jeden schon offenen Teil der Art, etwa einen nach dem Neustart
+     * fortgesetzten. Für Arten, deren Teile sich sonst gegenseitig aufhielten und dabei Plätze belegten. Ein Teil gilt
+     * hier nur als Glied der Reihe: Bricht der vorige ab, läuft er ohne gelben Hinweis ({@value #ORDER_ONLY}).
+     *
+     * @return die neue Gruppe mit den übrigen Teilen, oder leer, wenn keiner übrig bleibt
+     */
+    public Optional<BackgroundGroup> startInSequenceUnlessRunning(String kind, String title,
+                                                                  List<BackgroundPart.Draft> parts) {
+        Objects.requireNonNull(parts, "parts");
+        Objects.requireNonNull(title, "title");
+        synchronized (startLock(kind)) {
+            List<BackgroundPart.Draft> missing = parts.stream()
+                    .filter(part -> open(kind, part.sourceId(), part.partitionKey()).isEmpty()).toList();
+            if (missing.isEmpty()) {
+                return Optional.empty();
+            }
+            List<String> openIds = openParts(kind).map(JobStatus::id).toList();
+            List<Step> steps = new ArrayList<>();
+            for (int i = 0; i < missing.size(); i++) {
+                BackgroundPart.Draft draft = missing.get(i);
+                List<String> afterJobs = i == 0 ? openIds : List.of();
+                List<Integer> afterSteps = i == 0 ? List.of() : List.of(i - 1);
+                steps.add(new Step(kind, title, draft, afterJobs, afterSteps,
+                        afterJobs.isEmpty() && afterSteps.isEmpty() ? List.of() : List.of(title)));
+            }
+            return Optional.of(startSteps(newGroupId(), kind, title, steps, true));
+        }
+    }
+
+    /**
+     * Angabe eines Teils, der nur der Reihenfolge wegen auf seinen Vorgänger wartet
+     * ({@link #startInSequenceUnlessRunning}): Dessen Ergebnis braucht er nicht.
+     */
+    public static final String ORDER_ONLY = PREFIX + "orderOnly";
+
+    /** Alle Teile dieser Art, älteste zuerst, in jedem Zustand; etwa für Teile, die der Start zu Ende führt. */
+    public List<JobStatus> parts(String kind) {
+        Objects.requireNonNull(kind, "kind");
+        return all().stream().filter(status -> kind.equals(status.parameter(KIND)))
+                .sorted(Comparator.comparing(JobStatus::createdAt)).toList();
+    }
+
+    private java.util.stream.Stream<JobStatus> openParts(String kind) {
+        return all().stream().filter(status -> isOpen(status.state()) && kind.equals(status.parameter(KIND)));
     }
 
     private Object startLock(String kind) {
@@ -676,7 +754,7 @@ public final class BackgroundJobs {
      */
     private void notePredecessors(JobStatus status, com.aresstack.spaceharvester.application.jobs.JobContext context) {
         String after = status.parameter(Jobs.AFTER);
-        if (after == null || after.isBlank()) {
+        if (after == null || after.isBlank() || "true".equals(status.parameter(ORDER_ONLY))) {
             return;
         }
         for (String id : after.split(",")) {

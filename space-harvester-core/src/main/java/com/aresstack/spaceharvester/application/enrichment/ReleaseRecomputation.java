@@ -10,7 +10,10 @@ import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Duration;
@@ -113,6 +116,11 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     /** Angabe am Teil der Art {@value #PAGES_KIND}: die entfernten Seiten-IDs der Quelle, je Zeile eine. */
     static final String REMOVED = "removed";
     private static final String SEPARATOR = "\n";
+    /**
+     * Am Teil, der zurücknimmt ({@link Jobs#CANCEL_NOTE}): Abbrechen verwirft den Entzug nicht, der nächste Start setzt
+     * jeden abgebrochenen oder gescheiterten Entzugsteil fort ({@link #reconcileOnStart}, Abnahme #1073).
+     */
+    static final String WITHDRAWAL_CANCEL_NOTE = "der nächste Start führt den Entzug zu Ende";
     /** Hintergrundaufträge; ohne sie im eigenen Thread (Dienst). */
     private volatile BackgroundJobs background;
     /** Der gespeicherte Snapshot einer Seite, für Teile der Art {@value #PAGES_KIND}. */
@@ -203,30 +211,48 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         if (changed.isEmpty() && imagesOnly.isEmpty()) {
             return Preparation.NOTHING;
         }
-        return () -> {
-            BackgroundJobs hosted = background;
-            if (hosted != null) {
-                // Ein Wechsel, eine Gruppe: je Quelle ein Teil.
-                List<BackgroundPart.Draft> parts = new ArrayList<>();
-                changed.forEach((sourceId, release) -> parts.add(new BackgroundPart.Draft(sourceId, null,
-                        Map.of(MODE, release ? GRANT : WITHDRAW))));
-                imagesOnly.forEach(sourceId -> parts.add(new BackgroundPart.Draft(sourceId, null,
-                        Map.of(MODE, IMAGES))));
-                start(hosted, BACKGROUND_KIND, CHANGE_TITLE, parts);
-                return;
-            }
-            changed.forEach(this::recompute);
-            imagesOnly.forEach(this::withdraw);
-        };
+        return () -> apply(changed, imagesOnly);
     }
 
-    /** Startet eine Gruppe; was nicht angenommen wird, holt der Abgleich beim nächsten Start nach. */
-    private static void start(BackgroundJobs hosted, String kind, String title, List<BackgroundPart.Draft> parts) {
+    /**
+     * Zieht einen Wechsel nach: je Quelle ein Lauf, mit Hintergrundaufträgen eine Gruppe mit einem Teil je Quelle.
+     *
+     * @param changed    Quellen, deren Freigabe wechselt ({@link #changes})
+     * @param imagesOnly entzogene Quellen nur mit Rücknahme der Bildbeschreibungen ({@link #withdrawnImages})
+     */
+    void apply(Map<String, Boolean> changed, List<String> imagesOnly) {
+        BackgroundJobs hosted = background;
+        if (hosted != null) {
+            // Ein Wechsel, eine Gruppe: je Quelle ein Teil.
+            List<BackgroundPart.Draft> parts = new ArrayList<>();
+            changed.forEach((sourceId, release) -> parts.add(new BackgroundPart.Draft(sourceId, null,
+                    release ? Map.of(MODE, GRANT)
+                            : Map.of(MODE, WITHDRAW, Jobs.CANCEL_NOTE, WITHDRAWAL_CANCEL_NOTE))));
+            imagesOnly.forEach(sourceId -> parts.add(new BackgroundPart.Draft(sourceId, null,
+                    Map.of(MODE, IMAGES, Jobs.CANCEL_NOTE, WITHDRAWAL_CANCEL_NOTE))));
+            if (start(hosted, BACKGROUND_KIND, CHANGE_TITLE, parts)) {
+                return;
+            }
+        }
+        changed.forEach(this::recompute);
+        imagesOnly.forEach(this::withdraw);
+    }
+
+    /**
+     * Startet eine Gruppe, ganz oder gar nicht. Nimmt der Hintergrund sie nicht an (voll oder beim Beenden), läuft die
+     * Arbeit wie ohne Hintergrundaufträge im eigenen Thread (Abnahme #1073): Ein Entzug holt sonst niemand nach, denn
+     * der Abgleich beim Start nimmt keine Bildbeschreibungen zurück.
+     *
+     * @return ob die Gruppe angenommen ist; sonst übernimmt der Aufrufer
+     */
+    private static boolean start(BackgroundJobs hosted, String kind, String title, List<BackgroundPart.Draft> parts) {
         try {
             hosted.start(kind, title, parts);
+            return true;
         } catch (JobCapacityExceededException | IllegalStateException e) {
-            LOG.log(System.Logger.Level.WARNING, "{0} für {1} Quellen nicht gestartet ({2})", title, parts.size(),
-                    e.getClass().getSimpleName());
+            LOG.log(System.Logger.Level.WARNING, "{0} für {1} Quellen nicht als Hintergrundauftrag gestartet ({2}), "
+                    + "läuft im eigenen Thread", title, parts.size(), e.getClass().getSimpleName());
+            return false;
         }
     }
 
@@ -362,11 +388,13 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
                 List<String> removedHere = removedIds.getOrDefault(sourceId, List.of());
                 if (!removedHere.isEmpty()) {
                     parameters.put(REMOVED, String.join(SEPARATOR, removedHere));
+                    parameters.put(Jobs.CANCEL_NOTE, WITHDRAWAL_CANCEL_NOTE);
                 }
                 parts.add(new BackgroundPart.Draft(sourceId, null, parameters));
             });
-            start(hosted, PAGES_KIND, PAGES_TITLE, parts);
-            return;
+            if (start(hosted, PAGES_KIND, PAGES_TITLE, parts)) {
+                return;
+            }
         }
         try {
             runs.execute(() -> recomputeListed(pending, withdrawn, lookup, null));
@@ -456,8 +484,10 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
      *
      * Ohne Modell beim Lauf tut er nichts. Wechselt die Freigabe währenddessen, endet er für die Quelle, und der Lauf
      * des Wechsels übernimmt. Mit Hintergrundaufträgen ({@link #background}) eine Gruppe „{@value #CHECK_TITLE}“ mit
-     * einem Teil je Quelle, für die nicht schon ein Teil wartet oder läuft, etwa nach einem Neustart fortgesetzt; ohne
-     * Modell keine.
+     * einem Teil je Quelle, für die nicht schon ein Prüfteil wartet, angehalten ist oder läuft, etwa nach einem
+     * Neustart fortgesetzt; ein offener Teil, der Freigabe erteilt oder entzieht, ersetzt die Prüfung nicht (Abnahme
+     * #1073). Ohne Modell keine. Vorher setzt er jeden abgebrochenen oder gescheiterten Entzugsteil fort
+     * ({@link #resumeUnfinishedWithdrawals}), auch ohne Modell: Bildbeschreibungen nimmt nur ein Entzug zurück.
      *
      * @param sourceIds   die Quellen; ohne Seiten im Cache geschieht für eine Quelle nichts
      * @param model       ob ein Embedding-Modell eingestellt ist, z. B. {@code EmbeddingProcessor::available}
@@ -470,12 +500,14 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         Objects.requireNonNull(notApproved, "notApproved");
         BackgroundJobs hosted = background;
         if (hosted != null) {
+            resumeUnfinishedWithdrawals(hosted);
             if (!model.getAsBoolean()) {
                 return;
             }
             try {
                 hosted.startUnlessRunning(BACKGROUND_KIND, CHECK_TITLE, ids.stream()
-                        .map(sourceId -> new BackgroundPart.Draft(sourceId, null, Map.of(MODE, CHECK))).toList());
+                        .map(sourceId -> new BackgroundPart.Draft(sourceId, null, Map.of(MODE, CHECK))).toList(),
+                        open -> CHECK.equals(Objects.requireNonNullElse(open.parameter(MODE), CHECK)));
             } catch (JobCapacityExceededException | IllegalStateException e) {
                 LOG.log(System.Logger.Level.INFO, "Abgleich der Freigabe beim Start nicht gestartet ({0})",
                         e.getClass().getSimpleName());
@@ -497,6 +529,34 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         } catch (RejectedExecutionException e) {
             LOG.log(System.Logger.Level.INFO, "Abgleich der Freigabe beim Start nicht gestartet");
         }
+    }
+
+    /**
+     * Setzt jeden Teil fort, der zurücknimmt und abgebrochen oder gescheitert ist (auch nach Überschreiten der
+     * Laufzeit): der Art {@value #BACKGROUND_KIND} mit Entzug oder nur Bildbeschreibungen, der Art {@value #PAGES_KIND}
+     * mit entfernten Seiten (Abnahme #1073). Ein Entzug geht so nie still verloren; fortgesetzt prüft er gegen die
+     * Freigabe von jetzt. Wer ihn verwerfen will, löscht den Eintrag.
+     */
+    private static void resumeUnfinishedWithdrawals(BackgroundJobs hosted) {
+        List<JobStatus> unfinished = new ArrayList<>();
+        hosted.parts(BACKGROUND_KIND).stream().filter(ReleaseRecomputation::unfinished)
+                .filter(part -> WITHDRAW.equals(part.parameter(MODE)) || IMAGES.equals(part.parameter(MODE)))
+                .forEach(unfinished::add);
+        hosted.parts(PAGES_KIND).stream().filter(ReleaseRecomputation::unfinished)
+                .filter(part -> part.parameter(REMOVED) != null && !part.parameter(REMOVED).isEmpty())
+                .forEach(unfinished::add);
+        for (JobStatus part : unfinished) {
+            try {
+                hosted.resumeJob(part.id());
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Entzug der KI-Freigabe, Quelle {0}, beim Start nicht fortgesetzt "
+                        + "({1}); der nächste Start versucht es wieder", part.sourceId(), e.getClass().getName());
+            }
+        }
+    }
+
+    private static boolean unfinished(JobStatus part) {
+        return part.state() == JobState.CANCELLED || part.state() == JobState.FAILED;
     }
 
     /**

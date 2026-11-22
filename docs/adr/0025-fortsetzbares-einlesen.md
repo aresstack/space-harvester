@@ -336,10 +336,22 @@ wird automatisch verwaltet.
      die Seiten-IDs stehen als Angaben `pages` und, nur wenn es welche gibt, `removed` am Teil). Die Freigabe fragt
      jeder Teil wie bisher je Seite bei der Ausführung. Ein fortgesetzter Teil nach neuer Freigabe rechnet nur noch,
      was nicht zur Freigabe passt (wie der Abgleich beim Start); nach einem Entzug nimmt er die Rücknahme erneut
-     vor. Nicht exklusiv: Prüfen und Nachziehen derselben Quelle sind verschiedene Arbeit.
+     vor. Nicht exklusiv: Prüfen und Nachziehen derselben Quelle sind verschiedene Arbeit; die Prüfung beim Start
+     fällt daher nur weg, wenn schon ein Prüfteil der Quelle offen ist, ein angehaltener Teil „erteilen“ oder
+     „entziehen“ hält sie nicht auf (`startUnlessRunning` mit Bedingung, Abnahme #1073).
+     **Ein Entzug geht nie still verloren** (Abnahme #1073): Der Start setzt jeden abgebrochenen oder gescheiterten
+     Teil, der zurücknimmt (`withdraw`, `images`, `page-release` mit `removed`), fort, auch nach
+     Zeitüberschreitung und auch ohne Modell, denn Bildbeschreibungen nimmt nur ein Entzug zurück, nie die Prüfung.
+     Das Ereignis des Abbruchs sagt das im Auftrag („der nächste Start führt den Entzug zu Ende“, Angabe
+     `Jobs#CANCEL_NOTE`, ob der Teil wartete oder lief). Verwerfen heißt: den Eintrag löschen. Nimmt der Hintergrund
+     die Gruppe eines Wechsels nicht an (voll, beim Beenden), läuft die Arbeit wie im Dienst im eigenen Thread.
    - `versions` „Analysen nach Update nachrechnen“ (`VersionRecomputation`, lokale Prozessoren einer älteren
      Version, ein Teil je Quelle, exklusiv).
-   - `links` „Verweise abgleichen“ (`PageLinks#reconcileOnStart`, ein Teil je Quelle, exklusiv). Der Abgleich nach
+   - `links` „Verweise abgleichen“ (`PageLinks#reconcileOnStart`, ein Teil je Quelle, exklusiv). Die Teile laufen
+     nacheinander (`BackgroundJobs#startInSequenceUnlessRunning`, `Jobs#AFTER`, der erste hinter jedem schon offenen
+     Teil der Art; Abnahme #1073), denn ein Teil hält den Riegel der Erfassung über seine ganze Quelle und ein
+     zweiter belegte sonst nur einen Platz, um zu warten. Ein angehaltener Teil hält die folgenden auf („wartet auf
+     …“); bricht einer ab, laufen die folgenden ohne gelben Hinweis, sie warten nur der Reihe wegen. Der Abgleich nach
      einer Änderung eines ganzen Space oder einer ganzen Quelle und einzelne Seiten bleiben beim Bündler, sonst gäbe
      jeder Abgleich eine eigene Gruppe. Bis der erste Abgleich einer Quelle seit dem Start endet, gilt sie als nicht
      vollständig; wird der Teil abgebrochen, holt das der nächste Abgleich eines Space nach.

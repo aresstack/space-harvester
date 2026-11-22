@@ -262,13 +262,16 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
 
     /**
      * Reiht den Abgleich der Quellen mit dem Cache ein und kehrt sofort zurück; mit Hintergrundaufträgen eine Gruppe
-     * mit einem Teil je Quelle, für die nicht schon einer wartet oder läuft, etwa nach einem Neustart fortgesetzt.
+     * mit einem Teil je Quelle, für die nicht schon einer wartet oder läuft, etwa nach einem Neustart fortgesetzt. Die
+     * Teile laufen nacheinander ({@link BackgroundJobs#startInSequenceUnlessRunning}, Abnahme #1073): Ein Teil hält den
+     * Riegel der Erfassung über seine ganze Quelle, ein zweiter liefe sonst nur, um auf ihn zu warten, und belegte dabei
+     * einen Platz.
      */
     public void reconcileOnStart(Collection<String> sourceIds) {
         BackgroundJobs hosted = background;
         if (hosted != null) {
             try {
-                hosted.startUnlessRunning(BACKGROUND_KIND, BACKGROUND_TITLE, List.copyOf(sourceIds).stream()
+                hosted.startInSequenceUnlessRunning(BACKGROUND_KIND, BACKGROUND_TITLE, List.copyOf(sourceIds).stream()
                         .map(sourceId -> new BackgroundPart.Draft(sourceId, null)).toList());
             } catch (JobCapacityExceededException | IllegalStateException e) {
                 LOG.log(System.Logger.Level.INFO, "Abgleich der Verweise beim Start nicht gestartet ({0})",
@@ -349,7 +352,11 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
         }
     }
 
-    /** Ein Teil der Art {@value #BACKGROUND_KIND}: der Abgleich der Quelle, zusammen mit dem Bündler nacheinander. */
+    /**
+     * Ein Teil der Art {@value #BACKGROUND_KIND}: der Abgleich der Quelle, zusammen mit dem Bündler nacheinander. Auf
+     * andere Teile wartet er nicht hier, sie sind schon hintereinander gereiht ({@link #reconcileOnStart}); der Riegel
+     * hält nur den Bündler und {@link #close} fern.
+     */
     private void reconcilePart(String sourceId, JobContext context) {
         synchronized (work) {
             if (closed) {

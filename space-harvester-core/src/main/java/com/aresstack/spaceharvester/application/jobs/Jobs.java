@@ -237,6 +237,11 @@ public class Jobs implements AutoCloseable {
      * Hintergrundauftrag vorbei.
      */
     public static final String INTERACTIVE = "jobs.interactive";
+    /**
+     * Angabe: was nach einem Abbruch mit der Arbeit geschieht, etwa „der nächste Start führt den Entzug zu Ende“; das
+     * Ereignis des Abbruchs nennt es (Abnahme #1073), ob der Auftrag wartete oder lief.
+     */
+    public static final String CANCEL_NOTE = "jobs.cancelNote";
 
     /**
      * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)} für einen Klick des Benutzers, etwa
@@ -1425,11 +1430,12 @@ public class Jobs implements AutoCloseable {
                 }
                 // Erst das Ereignis, dann der Zustand: Ein beendeter Auftrag bekommt danach nie mehr ein Ereignis, sonst
                 // könnte eine Löschung dazwischen eines verwaist zurücklassen.
+                String note = job.parameters == null ? null : job.parameters.get(CANCEL_NOTE);
                 job.emit(wasQueued, wasQueued ? JobEvent.Severity.WARNING : JobEvent.Severity.INFO,
                         JobEvent.Category.JOB, COMPONENT, wasQueued ? "CANCELLED" : null,
-                        wasQueued ? (reason == null ? "Auftrag vor dem Start abgebrochen" : reason)
-                                : "Abbruch angefordert", null, null, null,
-                        null);
+                        (wasQueued ? (reason == null ? "Auftrag vor dem Start abgebrochen" : reason)
+                                : "Abbruch angefordert") + (note == null || note.isBlank() ? "" : "; " + note),
+                        null, null, null, null);
                 JobStatus status = job.snapshot();
                 store.save(status);
                 return status;

@@ -331,6 +331,119 @@ class ReleaseRecomputationTest {
         assertThat(withdrawn).containsExactly("alt");
     }
 
+    @Test
+    void aPausedGrantPartDoesNotHoldBackTheStartCheckButAnOpenCheckDoes() throws Exception {
+        // Abnahme #1073: Nur ein offener Prüfteil ersetzt die Prüfung beim Start.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        // Ein Platz: Teile warten und laufen nicht.
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = singleSlot(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore());
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> List.<PageSnapshot>of().iterator(), sourceId -> true, List.of("navigation"))) {
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 0);
+            String grant = background.start(ReleaseRecomputation.BACKGROUND_KIND, ReleaseRecomputation.CHANGE_TITLE,
+                    List.of(new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", null,
+                            Map.of(ReleaseRecomputation.MODE, ReleaseRecomputation.GRANT)))).groupId();
+            background.pause(grant);
+
+            recomputation.reconcileOnStart(List.of("wiki"), () -> true, NOT_APPROVED);
+            recomputation.reconcileOnStart(List.of("wiki"), () -> true, NOT_APPROVED);
+        }
+
+        assertThat(background.groups()).extracting(
+                        com.aresstack.spaceharvester.application.background.BackgroundGroup::title)
+                .as("eine Prüfung neben dem angehaltenen Teil, die zweite fällt weg")
+                .containsExactlyInAnyOrder(ReleaseRecomputation.CHANGE_TITLE, ReleaseRecomputation.CHECK_TITLE);
+    }
+
+    @Test
+    void aCancelledWithdrawalSaysSoAndTheNextStartFinishesItEvenWithoutModel() throws Exception {
+        // Abnahme #1073: Ein Entzug geht nie still verloren.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        List<PageSnapshot> pages = List.of(text("intern", "p1", "1", "Eins"), text("intern", "p2", "1", "Zwei"));
+        PageSnapshot removed = text("ops", "alt", "1", "Alt");
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.aresstack.spaceharvester.application.jobs.InMemoryJobStore stored =
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore();
+        com.aresstack.spaceharvester.application.jobs.Jobs before = singleSlot(stored);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs first =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(before, "app");
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> false, List.of("navigation"))) {
+            recomputation.background(first, key -> Optional.empty(), () -> false, NOT_APPROVED, sourceId -> 2);
+            recomputation.apply(Map.of("intern", false), List.of());
+            recomputation.recomputePages(List.of(), List.of(removed.key()), key -> Optional.empty());
+            first.groups().forEach(group -> first.cancel(group.groupId()));
+        }
+        List<com.aresstack.spaceharvester.application.jobs.JobStatus> cancelled = before.listAll(
+                com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND);
+        assertThat(cancelled).hasSize(2).allSatisfy(part -> {
+            assertThat(part.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED);
+            assertThat(before.events(part.id())).as("der Abbruch sagt, dass der nächste Start ihn zu Ende führt")
+                    .anySatisfy(event -> assertThat(event.message())
+                            .endsWith("; " + ReleaseRecomputation.WITHDRAWAL_CANCEL_NOTE));
+        });
+        assertThat(withdrawn).isEmpty();
+
+        // Neustart: andere Jobs über demselben Bestand, ohne Modell.
+        com.aresstack.spaceharvester.application.jobs.Jobs after = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(stored, Runnable::run, new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10,
+                java.time.Duration.ofHours(1)), CLOCK);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs second =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(after, "app");
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments, sourceId -> pages.iterator(),
+                sourceId -> false, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.background(second, key -> Optional.of(removed).filter(page -> page.key().equals(key)),
+                    () -> false, NOT_APPROVED, sourceId -> 2);
+            second.resumeInterrupted();
+            recomputation.reconcileOnStart(List.of("intern", "ops"), () -> false, NOT_APPROVED);
+            awaitUntil(() -> withdrawn.size() == 3);
+        }
+
+        assertThat(withdrawn).containsExactlyInAnyOrder("p1", "p2", "alt");
+        assertThat(after.listAll(com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND))
+                .extracting(com.aresstack.spaceharvester.application.jobs.JobStatus::state)
+                .containsOnly(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+    }
+
+    @Test
+    void aWithdrawalTheBackgroundDoesNotTakeRunsInItsOwnThread() throws Exception {
+        // Abnahme #1073: Nimmt der Hintergrund die Gruppe nicht an, geht der Entzug nicht verloren.
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"STRUCTURE\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK);
+        PageSnapshot removed = text("ops", "alt", "1", "Alt");
+        List<String> withdrawn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = jobs(Runnable::run);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> List.<PageSnapshot>of().iterator(), sourceId -> false, List.of("navigation"))) {
+            recomputation.withdrawal(batch -> batch.forEach(page -> withdrawn.add(page.key().pageId())));
+            recomputation.background(background, key -> Optional.empty(), () -> true, NOT_APPROVED, sourceId -> 0);
+            jobs.close();
+            recomputation.recomputePages(List.of(), List.of(removed.key()),
+                    key -> Optional.of(removed).filter(page -> page.key().equals(key)));
+            awaitUntil(() -> !withdrawn.isEmpty());
+        }
+
+        assertThat(background.groups()).isEmpty();
+        assertThat(withdrawn).containsExactly("alt");
+    }
+
+    private static com.aresstack.spaceharvester.application.jobs.Jobs singleSlot(
+            com.aresstack.spaceharvester.application.jobs.InMemoryJobStore stored) {
+        return new com.aresstack.spaceharvester.application.jobs.Jobs(stored, Runnable::run,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(1, 10, java.time.Duration.ofHours(1)),
+                CLOCK);
+    }
+
     private static com.aresstack.spaceharvester.application.jobs.Jobs jobs(java.util.concurrent.Executor executor) {
         return new com.aresstack.spaceharvester.application.jobs.Jobs(
                 new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), executor,

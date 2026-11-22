@@ -323,6 +323,52 @@ class PageLinksTest {
     }
 
     @Test
+    void theStartPartsRunOneAfterTheOtherBehindAPartThatIsAlreadyOpen() {
+        // Abnahme #1073: Ein Teil hält den Riegel über seine ganze Quelle; die Teile reihen sich über Jobs.AFTER, statt
+        // mit belegtem Platz im Riegel zu warten.
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs
+                .Jobs(new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), held::add,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10, Duration.ofHours(1)),
+                java.time.Clock.systemUTC());
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        links.background(background);
+        pages.page("1", "DEV", "Start", "id:2");
+        pages.page("2", "DEV", "Ziel", "");
+        String open = background.start(PageLinks.BACKGROUND_KIND, PageLinks.BACKGROUND_TITLE, List.of(
+                new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("vorher", null)))
+                .parts().getFirst().id();
+
+        links.reconcileOnStart(List.of("vorher", "wiki", "ops"));
+
+        com.aresstack.spaceharvester.application.background.BackgroundGroup started = background.groups().stream()
+                .filter(group -> group.parts().stream().noneMatch(part -> part.id().equals(open)))
+                .findFirst().orElseThrow();
+        assertThat(started.parts()).extracting(com.aresstack.spaceharvester.application.jobs.JobStatus::sourceId)
+                .as("„vorher“ ist schon offen").containsExactly("wiki", "ops");
+        assertThat(started.parts().get(0).parameter(com.aresstack.spaceharvester.application.jobs.Jobs.AFTER))
+                .isEqualTo(open);
+        assertThat(started.parts().get(1).parameter(com.aresstack.spaceharvester.application.jobs.Jobs.AFTER))
+                .isEqualTo(started.parts().get(0).id());
+        assertThat(held).as("nur der offene Teil belegt einen Platz").hasSize(1);
+
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+
+        assertThat(jobs.listAll(com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND))
+                .extracting(com.aresstack.spaceharvester.application.jobs.JobStatus::state)
+                .containsOnly(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+        assertThat(started.parts()).allSatisfy(part -> assertThat(jobs.events(part.id()))
+                .as("nur eine Reihe, keine fehlende Vorstufe").noneSatisfy(event -> assertThat(event.code())
+                        .isEqualTo(com.aresstack.spaceharvester.application.background.BackgroundJobs
+                                .PREDECESSOR_MISSING)));
+        assertThat(links.links(CALLER, key("1")).outgoing()).containsExactly(key("2"));
+    }
+
+    @Test
     void changesAreAnnouncedByTheObserverWithoutPolling() throws InterruptedException {
         pages.page("1", "DEV", "Start", "");
         pages.page("2", "DEV", "Ziel", "");
