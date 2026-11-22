@@ -91,12 +91,19 @@ public record Podcast(String key, String title, List<Part> parts, boolean runnin
     /**
      * Ein Beitrag eines Abschnitts, wie er gesprochen wird.
      *
-     * @param host ob der Gastgeber spricht (sonst der Co-Host)
-     * @param text der gesprochene Text
+     * @param host        ob der Gastgeber spricht (sonst der Co-Host)
+     * @param text        der gesprochene Text
+     * @param startMillis wo der Beitrag im Audio des Abschnitts beginnt, gemessen beim Vertonen; {@code -1}, wenn
+     *                    unbekannt (Audio aus der Zeit davor oder noch nicht gesprochen)
      */
-    public record Line(boolean host, String text) {
+    public record Line(boolean host, String text, long startMillis) {
         public Line {
             text = text == null ? "" : text.strip();
+            startMillis = startMillis < 0 ? -1 : startMillis;
+        }
+
+        public Line(boolean host, String text) {
+            this(host, text, -1);
         }
     }
 }

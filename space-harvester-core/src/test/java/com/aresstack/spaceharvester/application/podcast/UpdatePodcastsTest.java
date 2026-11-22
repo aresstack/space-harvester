@@ -190,6 +190,24 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void everyLineKnowsWhereItStartsInItsSectionAudio() throws Exception {
+        // Für die Untertitel (UX 22.11.2026): echte Zeiten statt der Schätzung nach Textlänge.
+        FakeSpeech speech = new FakeSpeech(voice -> false);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        podcasts(new FakeModel(), speech).start(caller, summary);
+
+        List<Podcast.Part> spoken = podcasts(new FakeModel(), speech).podcast(summary).orElseThrow().parts().stream()
+                .filter(part -> part.audio() != null).toList();
+
+        assertThat(spoken).isNotEmpty().allSatisfy(part -> {
+            assertThat(part.lines()).isNotEmpty();
+            assertThat(part.lines().get(0).startMillis()).isZero();
+            assertThat(part.lines()).extracting(Podcast.Line::startMillis).isSorted()
+                    .allSatisfy(start -> assertThat(start).isNotNegative());
+        });
+    }
+
+    @Test
     void pointsEachTopicToTheStatementsOfTheSummaryItTells() throws Exception {
         UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
         // die erste Aussage ohne Text zählt nicht als Meldung: Meldung 1 ist Aussage 1

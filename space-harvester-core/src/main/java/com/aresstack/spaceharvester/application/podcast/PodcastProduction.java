@@ -107,10 +107,18 @@ final class PodcastProduction {
                 continue;
             }
             for (int s = 0; s < segments.get().size(); s++) {
-                List<Podcast.Line> lines = store.script(key, t, s).orElse(List.of()).stream()
-                        .filter(turn -> !turn.text().isBlank())
-                        .map(turn -> new Podcast.Line(turn.speaker() == PodcastPlan.Speaker.HOST, turn.text()))
-                        .toList();
+                List<Turn> script = store.script(key, t, s).orElse(List.of());
+                // Gemessen beim Vertonen (für die Untertitel); passt die Messung nicht zum Text, gilt sie nicht.
+                List<Long> starts = store.starts(key, t, s);
+                boolean measured = starts.size() == script.size();
+                List<Podcast.Line> lines = new ArrayList<>();
+                for (int i = 0; i < script.size(); i++) {
+                    Turn turn = script.get(i);
+                    if (!turn.text().isBlank()) {
+                        lines.add(new Podcast.Line(turn.speaker() == PodcastPlan.Speaker.HOST, turn.text(),
+                                measured ? starts.get(i) : -1));
+                    }
+                }
                 parts.add(new Podcast.Part(t, s, topicTitle, segments.get().get(s).title(),
                         store.audio(key, t, s).orElse(null), picture, lines));
             }
@@ -506,8 +514,11 @@ final class PodcastProduction {
         guard(key);
         voices.acquire();
         try {
-            byte[] wav = speaker.speak(turns, repairs);
-            fence.write(() -> store.saveAudio(key, topic, segment, wav));
+            PodcastSpeaker.Section spoken = speaker.section(turns, repairs);
+            fence.write(() -> {
+                store.saveStarts(key, topic, segment, spoken.starts());
+                store.saveAudio(key, topic, segment, spoken.wav());
+            });
             notify(key);
             return true;
         } catch (PodcastPictures.Closed closed) {

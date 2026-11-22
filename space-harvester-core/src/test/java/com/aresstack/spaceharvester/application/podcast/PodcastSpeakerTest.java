@@ -81,6 +81,19 @@ class PodcastSpeakerTest {
         assertThat(PodcastSpeaker.pronounced("Confluence und BSCWX")).isEqualTo("Confluence und BSCWX");
     }
 
+    @Test
+    void measuresWhereEachTurnStartsInTheSectionForTheSubtitles() throws IOException {
+        // Jedes Stück der Attrappe dauert 100 ms, dazu 350 ms Pause nach jedem Beitrag.
+        PodcastSpeaker speaker = new PodcastSpeaker(new Recording(call -> false), MODEL,
+                new PodcastVoices.Pair("Jana", "Thomas"));
+
+        PodcastSpeaker.Section section = speaker.section(List.of(new Turn(Speaker.HOST, "Hallo."),
+                new Turn(Speaker.COHOST, " "), new Turn(Speaker.COHOST, "Hallo zurück."),
+                new Turn(Speaker.HOST, "Los geht es.")), new ArrayList<>());
+
+        assertThat(section.starts()).containsExactly(0L, -1L, 450L, 900L);
+    }
+
     /** Merkt sich jeden Aufruf als „Stimme|Text|Art“. */
     private static final class Recording implements PodcastSpeech {
 
