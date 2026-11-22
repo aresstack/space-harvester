@@ -25,7 +25,7 @@ class ActivitiesBackgroundScreenshotTest {
                 home.resolve("app.yml"), "test");
         try {
             for (String tab : new String[] {ActivitiesView.BACKGROUND_TAB, ActivitiesView.JOBS_TAB}) {
-                for (int width : new int[] {1280, 960}) {
+                for (int width : new int[] {1280, 960, 420}) {
                     SwingUtilities.invokeAndWait(() -> {
                         ActivitiesView view = new ActivitiesView(context, null);
                         view.tabs.select(tab);

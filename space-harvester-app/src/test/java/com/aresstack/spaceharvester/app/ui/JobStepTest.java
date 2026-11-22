@@ -35,6 +35,51 @@ class JobStepTest {
                 .isEqualTo("0/5 · 5 Fehler");
     }
 
+    /** Angelo 22.11.2026: „Quelle“ und „Space“ sind zwei Spalten; die Startseite steht beim Space. */
+    @Test
+    void sourceAndSpaceAreSeparateColumns() {
+        assertThat(ActivitiesView.source(job(null, null))).isEqualTo("wiki");
+        assertThat(ActivitiesView.space(job(null, null))).isEqualTo("OPS");
+        assertThat(ActivitiesView.space(job("42", "Betriebshandbuch"))).isEqualTo("OPS ab „Betriebshandbuch“");
+        JobStatus glossary = new JobStatus("j2", JobType.GLOSSARY, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, "42", "Betriebshandbuch");
+        assertThat(ActivitiesView.space(glossary)).isEqualTo("OPS · „Betriebshandbuch“ samt Unterseiten");
+        JobStatus whole = new JobStatus("j4", JobType.PURGE, "wiki", null, "local", JobState.RUNNING,
+                new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, null, null);
+        assertThat(ActivitiesView.space(whole)).isEmpty();
+    }
+
+    /** Der Balken trägt die Zahlen in der Mitte, Zustand und Zeit im Tooltip (statt eigener Spalten). */
+    @Test
+    void theBarCarriesCountsStateAndCreationTime() {
+        JobStatus running = running(JobType.SYNC, new JobProgress(100, 37, 30, 0));
+        RowActions.Action bar = ActivitiesView.progressSlots(running, null, ActivitiesView.stateText(running)).get(0);
+        assertThat(((ActivitiesView.ProgressIcon) bar.icon()).label()).isEqualTo("37/100");
+        assertThat(bar.tooltip()).startsWith(Texts.state(running) + " · 37 von 100 ")
+                .endsWith(" · angelegt " + Texts.time(running.createdAt()));
+
+        JobStatus done = finished(JobType.BACKGROUND, new JobProgress(398, 398, 398, 0));
+        assertThat(ActivitiesView.stateText(done)).isEqualTo(Texts.state(JobState.COMPLETED) + ", fehlerfrei");
+        JobStatus withErrors = finished(JobType.BACKGROUND, new JobProgress(398, 398, 397, 1));
+        assertThat(ActivitiesView.stateText(withErrors)).doesNotContain("fehlerfrei");
+        RowActions.Action failedBar = ActivitiesView.progressSlots(withErrors, null,
+                ActivitiesView.stateText(withErrors)).get(0);
+        assertThat(((ActivitiesView.ProgressIcon) failedBar.icon()).label()).isEqualTo("397/398");
+
+        // Solange nichts gefunden ist, sagt der Balken den Zustand statt „0/0“.
+        JobStatus fresh = running(JobType.SYNC, new JobProgress(0, 0, 0, 0));
+        RowActions.Action empty = ActivitiesView.progressSlots(fresh, null, ActivitiesView.stateText(fresh)).get(0);
+        assertThat(((ActivitiesView.ProgressIcon) empty.icon()).label()).isEqualTo(Texts.state(fresh));
+        assertThat(empty.tooltip()).isEqualTo(Texts.state(fresh) + " · angelegt " + Texts.time(fresh.createdAt()));
+    }
+
+    @Test
+    void everyJobTypeHasAnIcon() {
+        for (JobType type : JobType.values()) {
+            assertThat(ActivitiesView.typeIcon(type)).as(type.name()).isNotNull();
+        }
+    }
+
     private static JobStatus finished(JobType type, JobProgress progress) {
         return new JobStatus("j3", type, "wiki", "OPS", "local", JobState.COMPLETED, progress, null, false,
                 Instant.EPOCH, Instant.EPOCH, Instant.EPOCH, null, null);

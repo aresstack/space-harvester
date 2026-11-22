@@ -211,8 +211,13 @@ public final class ActivitiesView implements View {
             + "löschen“ wirken nur auf den gewählten Reiter.";
     static final String BACKGROUND_TIP = "Hintergrundaufträge: was die App von sich aus anstößt, etwa fehlende "
             + "Seiten nachladen oder Bilder beschreiben; nachrangig, nach einem Neustart fortgesetzt";
-    /** Unter dieser Breite der Liste zeigt „Angelegt“ keine Sekunden, damit der Titel Platz hat. */
-    static final int COMPACT_TIME_BELOW = 1100;
+    /**
+     * Unter dieser Breite ist die Liste schmal (Seitenleiste): „Art“ zeigt nur ihr Symbol, die Spalte „Space“ weicht
+     * (Angelo 22.11.2026); Name und Space stehen dann im Tooltip.
+     */
+    static final int NARROW_BELOW = 640;
+    /** Breite der Spalte „Art“ in der schmalen Liste: Aufklapp-Pfeil und Symbol. */
+    static final int ART_ICON_WIDTH = 50;
     /** Alle zuletzt gelesenen Aufträge, beide Reiter. */
     private List<JobStatus> lastJobs = List.of();
     /** Ablage des zuletzt gewählten Reiters, oder {@code null}. */
@@ -234,11 +239,13 @@ public final class ActivitiesView implements View {
         this.signIn = new SignInSlot(context, requests -> selectedId == null
                 ? requests.pending().stream().findFirst() : requests.waiting(selectedId));
         root.setBackground(Comic.SURFACE);
-        table.getColumnModel().getColumn(2).setCellRenderer(new StateRenderer());
-        table.getColumnModel().getColumn(0).setCellRenderer(new TypeRenderer());
-        // Der Titel braucht den meisten Platz (UX 21.11.2026); volle Zeit und voller Titel im Tooltip.
-        table.getColumnModel().getColumn(0).setPreferredWidth(170);
-        table.getColumnModel().getColumn(4).setCellRenderer(new TimeRenderer());
+        table.getColumnModel().getColumn(JobsModel.TYPE).setCellRenderer(new TypeRenderer());
+        // Der Titel braucht den meisten Platz (UX 21.11.2026); voller Titel im Tooltip.
+        table.getColumnModel().getColumn(JobsModel.TYPE).setPreferredWidth(220);
+        table.getColumnModel().getColumn(JobsModel.SOURCE).setCellRenderer(new WhereRenderer());
+        table.getColumnModel().getColumn(JobsModel.SOURCE).setPreferredWidth(170);
+        table.getColumnModel().getColumn(JobsModel.SPACE).setCellRenderer(new WhereRenderer());
+        table.getColumnModel().getColumn(JobsModel.SPACE).setPreferredWidth(170);
 
         // Ein Klick auf die Art eines Exports klappt seine Bilder und Anhänge auf oder zu (Angelo 11.11.2026).
         table.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -1076,6 +1083,28 @@ public final class ActivitiesView implements View {
                 : where + " ab „" + startPage(status) + "“";
     }
 
+    /** Spalte „Quelle“: die Wissensquelle des Auftrags, bei der Suchqualität der Testbestand. */
+    static String source(JobStatus status) {
+        if (status.type() == JobType.SEARCH_QUALITY) {
+            return where(status);
+        }
+        return status.sourceId() == null ? "" : status.sourceId();
+    }
+
+    /** Spalte „Space“: der Space und, wenn der Auftrag nur einen Teil betrifft, seine Startseite; sonst leer. */
+    static String space(JobStatus status) {
+        if (status.type() == JobType.SEARCH_QUALITY) {
+            return "";
+        }
+        String space = status.partitionKey() == null || status.partitionKey().isBlank() ? "" : status.partitionKey();
+        if (status.rootPageId() == null) {
+            return space;
+        }
+        String page = status.type() == JobType.GLOSSARY ? "„" + startPage(status) + "“ samt Unterseiten"
+                : "ab „" + startPage(status) + "“";
+        return space.isEmpty() ? page : space + (status.type() == JobType.GLOSSARY ? " · " : " ") + page;
+    }
+
     /** Titel der Startseite, solange der Auftrag sie noch nicht gelesen hat ihre ID; „–“ für ganze Spaces. */
     static String startPage(JobStatus status) {
         if (status.rootPageId() == null) {
@@ -1172,7 +1201,8 @@ public final class ActivitiesView implements View {
         }
         JobStatus job = model.rows.get(index);
         List<RowActions.Action> actions = new ArrayList<>();
-        actions.addAll(progressSlots(job, remaining(job, averages.get(job.type()), parallelNow)));
+        actions.addAll(progressSlots(job, remaining(job, averages.get(job.type()), parallelNow),
+                waitingForSignIn(job.id()) ? SIGN_IN : stateText(job)));
         actions.add(RowActions.EMPTY);
         boolean failed = job.state() == JobState.FAILED;
         boolean group = groupRow(job);
@@ -1246,6 +1276,34 @@ public final class ActivitiesView implements View {
     }
 
     /**
+     * Der Balken der Liste (Angelo 22.11.2026): Er ersetzt die Spalten „Zustand“, „Fortschritt“ und „Angelegt“. In
+     * seiner Mitte steht „erledigt/gefunden“, solange nichts gefunden ist der Zustand; im Tooltip der Zustand, die
+     * Zahlen, die Restzeit und wann der Auftrag angelegt wurde.
+     *
+     * @param state der Zustand in Worten, etwa „Läuft“ oder „Fertig, fehlerfrei“
+     */
+    static List<RowActions.Action> progressSlots(JobStatus job, java.time.Duration remaining, String state) {
+        List<RowActions.Action> plain = progressSlots(job, remaining);
+        JobProgress p = job.progress();
+        boolean counted = p.discovered() > 0;
+        String label = counted ? done(job) + "/" + p.discovered() : state;
+        String tip = state + (counted ? " · " + plain.get(0).tooltip() : "") + " · angelegt "
+                + Texts.time(job.createdAt());
+        List<RowActions.Action> slots = new ArrayList<>(plain);
+        slots.set(0, new RowActions.Action(new ProgressIcon(PROGRESS_SLOTS * RowActions.SLOT - 8, p.discovered(),
+                p.processed(), p.failed(), skipped(job), label, counted ? null : Comic.tone(Texts.tone(job))), tip,
+                true, () -> { }));
+        return slots;
+    }
+
+    /** Der Zustand für den Tooltip des Balkens; ein Lauf ohne Fehlschlag heißt „Fertig, fehlerfrei“. */
+    static String stateText(JobStatus job) {
+        String state = Texts.state(job);
+        return job.state() == JobState.COMPLETED && job.progress().failed() == 0
+                && state.equals(Texts.state(JobState.COMPLETED)) ? state + ", fehlerfrei" : state;
+    }
+
+    /**
      * Schmaler Balken: gefüllt nach Anteil des Erledigten, Gescheitertes rot am Ende, in der Mitte die geschätzte
      * Restzeit ({@code label}, sonst leer). Die Schrift ist auf der Füllung hell, auf der leeren Spur dunkel.
      */
@@ -1254,8 +1312,13 @@ public final class ActivitiesView implements View {
      * Einstellung ausgelassene Anhänge), am Ende Rot nur für Fehler und fehlenden Zugriff (Angelo, 13.11.2026: „sonst
      * denkt der User, alles, was rot ist, ist ein Fehler“).
      */
-    record ProgressIcon(int width, long total, long done, long failed, long skipped, String label)
-            implements javax.swing.Icon {
+    record ProgressIcon(int width, long total, long done, long failed, long skipped, String label,
+                        java.awt.Color ink) implements javax.swing.Icon {
+
+        /** @param label Schrift in der Mitte; dunkel auf der leeren Spur, hell auf der Füllung */
+        ProgressIcon(int width, long total, long done, long failed, long skipped, String label) {
+            this(width, total, done, failed, skipped, label, null);
+        }
 
         ProgressIcon(int width, long total, long done, long failed) {
             this(width, total, done, failed, 0, null);
@@ -1303,7 +1366,7 @@ public final class ActivitiesView implements View {
                     g.drawString(label, tx, ty);
                     g.setClip(clip);
                     g.clipRect(x + filled, y, width - filled, h);
-                    g.setColor(Comic.INK);
+                    g.setColor(ink == null ? Comic.INK : ink);
                     g.drawString(label, tx, ty);
                 }
             } finally {
@@ -1778,15 +1841,22 @@ public final class ActivitiesView implements View {
      */
     static String progressText(JobStatus status) {
         JobProgress p = status.progress();
+        // Gescheitertes zählt nicht als erledigt, aber nur, wo beide Zähler dieselbe Einheit zählen (Codex #1103): Eine
+        // Anreicherung zählt Abschnitte als erledigt, Fehlschläge aber je Prozessor.
+        long skipped = skipped(status);
+        return done(status) + "/" + p.discovered() + (skipped > 0 ? " · " + skipped + " ausgelassen" : "")
+                + (p.failed() > 0 ? " · " + p.failed() + " Fehler" : "");
+    }
+
+    /** Wie viel erledigt ist, in der Einheit von „gefunden“ ({@link #progressText}). */
+    static long done(JobStatus status) {
+        JobProgress p = status.progress();
         boolean fetching = status.type() == JobType.EXPORT && !status.state().terminal() && p.written() == 0;
         // Gescheitertes zählt nicht als erledigt, aber nur, wo beide Zähler dieselbe Einheit zählen (Codex #1103): Eine
         // Anreicherung zählt Abschnitte als erledigt, Fehlschläge aber je Prozessor.
         boolean sameUnit = status.type() != JobType.EXPORT && status.type() != JobType.ENRICHMENT;
-        long done = status.type() == JobType.EXPORT && !fetching ? p.written()
+        return status.type() == JobType.EXPORT && !fetching ? p.written()
                 : Math.max(0, p.processed() - (sameUnit ? p.failed() : 0));
-        long skipped = skipped(status);
-        return done + "/" + p.discovered() + (skipped > 0 ? " · " + skipped + " ausgelassen" : "")
-                + (p.failed() > 0 ? " · " + p.failed() + " Fehler" : "");
     }
 
     /**
@@ -2506,20 +2576,13 @@ public final class ActivitiesView implements View {
 
     static final class JobsModel extends AbstractTableModel {
 
-        static final int ACTIONS = 5;
-        private static final String[] COLUMNS = {"Art", "Quelle / Space", "Zustand", "Fortschritt", "Angelegt", ""};
+        static final int TYPE = 0;
+        static final int SOURCE = 1;
+        static final int SPACE = 2;
+        static final int ACTIONS = 3;
+        private static final String[] COLUMNS = {"Art", "Quelle", "Space", ""};
         private List<JobStatus> rows = new ArrayList<>();
         private List<JobStatus> all = List.of();
-        /** Schmale Liste: „Angelegt“ ohne Sekunden ({@link #COMPACT_TIME_BELOW}). */
-        private boolean compactTime;
-
-        /** Schaltet die kurze Zeit ein oder aus. */
-        void compactTime(boolean compact) {
-            if (compact != compactTime) {
-                compactTime = compact;
-                fireTableRowsUpdated(0, Math.max(0, rows.size() - 1));
-            }
-        }
         private Map<String, List<JobStatus>> children = Map.of();
         /** Zugeklappte Exporte; neue Gruppen sind aufgeklappt. */
         private final Set<String> collapsed = new HashSet<>();
@@ -2592,11 +2655,9 @@ public final class ActivitiesView implements View {
         public Object getValueAt(int row, int column) {
             JobStatus status = rows.get(row);
             return switch (column) {
-                case 0 -> Texts.type(status);
-                case 1 -> where(status);
-                case 2 -> status;
-                case 3 -> progressText(status);
-                case 4 -> compactTime ? Texts.shortTime(status.createdAt()) : Texts.time(status.createdAt());
+                case TYPE -> Texts.type(status);
+                case SOURCE -> source(status);
+                case SPACE -> space(status);
                 default -> "";
             };
         }
@@ -2614,10 +2675,12 @@ public final class ActivitiesView implements View {
             super(model);
         }
 
-        /** Beim Anordnen: in schmaler Liste „Angelegt“ ohne Sekunden, damit der Titel Platz hat. */
+        /** Beim Anordnen: In der schmalen Liste zeigt „Art“ nur ihr Symbol und „Space“ weicht. */
         @Override
         public void doLayout() {
-            ActivitiesView.this.model.compactTime(getWidth() > 0 && getWidth() < COMPACT_TIME_BELOW);
+            if (getWidth() > 0) {
+                narrow(getWidth() < NARROW_BELOW);
+            }
             super.doLayout();
         }
 
@@ -2728,9 +2791,14 @@ public final class ActivitiesView implements View {
             JobStatus job = row < model.rows.size() ? model.rows.get(row) : null;
             super.getTableCellRendererComponent(table, value, selected, focus, row, column);
             // Gezeichnete Symbole statt ▸/▾/└: die Swing-Schrift zeigt diese Zeichen als Kästchen (Angelo 11.11.2026).
-            setIcon(job == null ? null : groupIcon(model.group(job), model.collapsed(job), model.child(job)));
-            setIconTextGap(4);
-            setBorder(BorderFactory.createEmptyBorder(0, job != null && model.child(job) ? 18 : 4, 0, 4));
+            // Davor das Symbol der Art; in der schmalen Liste steht es allein, der Name im Tooltip (Angelo 22.11.2026).
+            setIcon(job == null ? null : new PairIcon(groupIcon(model.group(job), model.collapsed(job),
+                    model.child(job)), typeIcon(job.type())));
+            setIconTextGap(6);
+            if (narrow) {
+                setText("");
+            }
+            setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 4));
             boolean background = job != null && groupRow(job);
             String full = value == null ? null : value.toString();
             setToolTipText(job != null && model.group(job) ? full + " · " + (model.collapsed(job)
@@ -2740,15 +2808,87 @@ public final class ActivitiesView implements View {
         }
     }
 
-    /** „Angelegt“: in schmaler Liste ohne Sekunden, die volle Zeit im Tooltip. */
-    private final class TimeRenderer extends DefaultTableCellRenderer {
+    /** „Quelle“ und „Space“: im Tooltip stehen immer beide, auch wenn die Zelle kürzt oder „Space“ gewichen ist. */
+    private final class WhereRenderer extends DefaultTableCellRenderer {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
                                                        int row, int column) {
             super.getTableCellRendererComponent(table, value, selected, focus, row, column);
             JobStatus job = row < model.rows.size() ? model.rows.get(row) : null;
-            setToolTipText(job == null ? null : Texts.time(job.createdAt()));
+            setToolTipText(job == null ? null : where(job));
             return this;
+        }
+    }
+
+    /** Ob die Liste gerade schmal ist ({@link #NARROW_BELOW}). */
+    private boolean narrow;
+
+    /** Stellt die Spalten für die schmale bzw. breite Liste; nur beim Wechsel. */
+    private void narrow(boolean value) {
+        if (value == narrow && table.getColumnModel().getColumn(JobsModel.TYPE).getMaxWidth() > 0) {
+            return;
+        }
+        narrow = value;
+        javax.swing.table.TableColumn type = table.getColumnModel().getColumn(JobsModel.TYPE);
+        type.setMinWidth(value ? ART_ICON_WIDTH : 15);
+        type.setMaxWidth(value ? ART_ICON_WIDTH : Integer.MAX_VALUE);
+        type.setPreferredWidth(value ? ART_ICON_WIDTH : 220);
+        javax.swing.table.TableColumn space = table.getColumnModel().getColumn(JobsModel.SPACE);
+        space.setMinWidth(value ? 0 : 15);
+        space.setMaxWidth(value ? 0 : Integer.MAX_VALUE);
+        space.setPreferredWidth(value ? 0 : 170);
+    }
+
+    /** Für Tests: ob die Liste schmal dargestellt wird. */
+    boolean narrow() {
+        return narrow;
+    }
+
+    /**
+     * Das Symbol einer Auftragsart; verwandte Arten teilen sich eines (Laden, Export, Analyse, Video), der genaue
+     * Name steht daneben bzw. im Tooltip.
+     */
+    static javax.swing.Icon typeIcon(JobType type) {
+        return switch (type) {
+            case SYNC -> Glyph.SYNC;
+            case HARVEST, IMPORT, REREAD, READING_PREFETCH -> ComposerIcons.download();
+            case EXPORT, CONVERSION, METADATA_EXPORT, ANALYTICS_EXPORT, PRESENTATION_EXPORT -> ComposerIcons.export();
+            case KNOWLEDGE_GRAPH_EXPORT -> Glyph.GRAPH;
+            case ASSETS -> ComposerIcons.picture();
+            case ATTACHMENTS -> ComposerIcons.paperclip();
+            case ENRICHMENT, STATEMENT_ANALYSIS, STATEMENT_CHECK -> Glyph.SPARKLE;
+            case GLOSSARY -> ComposerIcons.openBook();
+            case SEARCH_QUALITY -> ComposerIcons.magnifier();
+            case UPDATE_SUMMARY -> Glyph.SUMMARIZE;
+            case UPDATE_PODCAST -> ComposerIcons.microphone();
+            case VIDEO_TRANSCRIPT, VIDEO_SLIDES, TRANSCRIPT_CORRECTION, SLIDE_NOTES -> ComposerIcons.play();
+            case PURGE -> Glyph.TRASH;
+            case BACKGROUND -> ComposerIcons.gear();
+        };
+    }
+
+    /** Zwei Symbole nebeneinander auf festen Plätzen: Aufklapp-Pfeil bzw. Winkel (oder frei) und die Art. */
+    private record PairIcon(javax.swing.Icon first, javax.swing.Icon second) implements javax.swing.Icon {
+        private static final int SLOT = 16;
+        private static final int GAP = 4;
+
+        @Override
+        public void paintIcon(Component c, java.awt.Graphics g, int x, int y) {
+            if (first != null) {
+                first.paintIcon(c, g, x + (SLOT - first.getIconWidth()) / 2, y + (SLOT - first.getIconHeight()) / 2);
+            }
+            second.paintIcon(c, g, x + SLOT + GAP + (SLOT - second.getIconWidth()) / 2,
+                    y + (SLOT - second.getIconHeight()) / 2);
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 2 * SLOT + GAP;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return SLOT;
         }
     }
 
@@ -2785,21 +2925,6 @@ public final class ActivitiesView implements View {
             return 16;
         }
     };
-
-    private final class StateRenderer extends DefaultTableCellRenderer {
-        @Override
-        public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
-                                                       int row, int column) {
-            JobStatus status = (JobStatus) value;
-            boolean waiting = waitingForSignIn(status.id());
-            super.getTableCellRendererComponent(table, waiting ? SIGN_IN : Texts.state(status), selected, focus, row,
-                    column);
-            setForeground(selected ? Comic.INK : waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status)));
-            // Schmale Spalte: der volle Zustand steht immer im Tooltip, auch wenn die Zelle ihn kürzt.
-            setToolTipText(waiting ? SIGN_IN : Texts.state(status));
-            return this;
-        }
-    }
 
     /** Ob der Auftrag auf eine Anmeldung wartet (ADR 0018). */
     boolean waitingForSignIn(String jobId) {
