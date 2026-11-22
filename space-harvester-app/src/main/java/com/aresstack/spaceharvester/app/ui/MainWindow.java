@@ -496,7 +496,8 @@ public final class MainWindow implements AppContext.Navigator {
         perspectives.add(new Perspective(Perspectives.HARVESTER, "Space Harvester",
                 "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null));
         perspectives.add(commandDeck.perspective());
-        perspectives.add(Perspectives.missionProtocol());
+        perspectives.add(Perspectives.provingGround());
+        perspectives.add(Perspectives.missionControl());
         for (Perspective perspective : perspectives.all()) {
             stage.add(perspective.workspace(), perspective.id());
         }

@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Der Titel schaltet die Perspektiven um (#1141): Space Harvester, Command Deck, Mission Protocol. Die rechte
+ * Der Titel schaltet die Perspektiven um (#1141): Space Harvester, Command Deck, Proving Ground, Mission Control. Die rechte
  * Seitenleiste bleibt dieselbe Instanz samt Zustand, ein Bereich des Space Harvesters führt in ihn zurück.
  */
 class MainWindowPerspectiveTest {
@@ -66,25 +66,27 @@ class MainWindowPerspectiveTest {
             window.show(AppContext.Section.CONTENT);
             Perspectives perspectives = window.perspectives();
 
-            // Menü: genau drei Einträge in dieser Reihenfolge, Mission Protocol als Platzhalter gekennzeichnet.
+            // Menü: genau vier Einträge in dieser Reihenfolge, Proving Ground und Mission Control als Platzhalter.
             var menu = window.perspectiveSwitcher().menu();
-            assertThat(menu.getComponents()).hasSize(3);
+            assertThat(menu.getComponents()).hasSize(4);
             assertThat(((JMenuItem) menu.getComponent(0)).getAccessibleContext().getAccessibleName())
                     .isEqualTo("Space Harvester");
             assertThat(((JMenuItem) menu.getComponent(0)).isSelected()).isTrue();
             assertThat(((JMenuItem) menu.getComponent(1)).getAccessibleContext().getAccessibleName())
                     .isEqualTo("Command Deck");
             assertThat(((JMenuItem) menu.getComponent(2)).getAccessibleContext().getAccessibleName())
-                    .isEqualTo("Mission Protocol, in Vorbereitung");
+                    .isEqualTo("Proving Ground, in Vorbereitung");
+            assertThat(((JMenuItem) menu.getComponent(3)).getAccessibleContext().getAccessibleName())
+                    .isEqualTo("Mission Control, in Vorbereitung");
             assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Space Harvester");
 
             window.chatOpen(true);
             Component sidebar = window.sideDeck();
             Component harvesterWork = window.chatSplit().getLeftComponent();
 
-            ((JMenuItem) menu.getComponent(2)).doClick();
-            assertThat(perspectives.isCurrent(Perspectives.MISSION_PROTOCOL)).isTrue();
-            assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Mission Protocol");
+            ((JMenuItem) menu.getComponent(3)).doClick();
+            assertThat(perspectives.isCurrent(Perspectives.MISSION_CONTROL)).isTrue();
+            assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Mission Control");
             assertThat(visible(window.stage())).isInstanceOf(Starfield.class);
             assertThat(window.split().isLeftCollapsed()).as("ohne linke Leiste").isTrue();
             assertThat(window.split().getDividerSize()).isZero();
@@ -95,7 +97,7 @@ class MainWindowPerspectiveTest {
             assertThat(window.chatOpen()).isTrue();
             // Aufträge öffnen die globale Leiste, die Perspektive bleibt.
             window.show(AppContext.Section.ACTIVITIES);
-            assertThat(perspectives.isCurrent(Perspectives.MISSION_PROTOCOL)).isTrue();
+            assertThat(perspectives.isCurrent(Perspectives.MISSION_CONTROL)).isTrue();
             assertThat(window.jobsOpen()).isTrue();
 
             // Ein Bereich des Space Harvesters (Suche, auch über einen Link) führt in dessen Perspektive zurück.
@@ -112,8 +114,11 @@ class MainWindowPerspectiveTest {
             assertThat(window.commandDeck().sessions().all()).as("Wechsel verbindet nicht").isEmpty();
             assertThat(SwingUtilities.isDescendingFrom(window.commandDeck().perspective().navigation(),
                     window.windowBar())).isTrue();
-            perspectives.select(Perspectives.MISSION_PROTOCOL);
+            perspectives.select(Perspectives.MISSION_CONTROL);
             assertThat(window.commandDeck().perspective().navigation().isShowing()).isFalse();
+            perspectives.select(Perspectives.PROVING_GROUND);
+            assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Proving Ground");
+            assertThat(visible(window.stage())).isInstanceOf(Starfield.class);
             perspectives.select(Perspectives.HARVESTER);
             assertThat(window.split().isLeftCollapsed()).isTrue();
             assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
