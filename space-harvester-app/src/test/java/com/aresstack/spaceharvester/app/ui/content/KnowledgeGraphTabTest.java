@@ -1005,10 +1005,34 @@ class KnowledgeGraphTabTest {
         assertThat(GraphGeneration.notReleasedLine(model)).isEqualTo("3 ohne KI-Freigabe (werden ausgelassen)");
         assertThat(GraphGeneration.text(model)).doesNotContain("€").doesNotContain("EUR").doesNotContain("Kosten");
 
-        GraphGeneration.Preview parser = preview(AnalyzerChoice.PARSER, 3, List.of(),
+        // Mit dem Parser geht die Aussagenanalyse nicht an den KI-Dienst; ohne Bilder zählt der Core keine Seite ohne
+        // Freigabe.
+        GraphGeneration.Preview parser = preview(AnalyzerChoice.PARSER, 0, List.of(),
                 stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 12, 0, 0, 1), goal(15));
         assertThat(GraphGeneration.modelLine(parser)).isNull();
         assertThat(GraphGeneration.notReleasedLine(parser)).isNull();
+    }
+
+    /**
+     * „Bilder beschreiben“ gibt immer Seiten an den KI-Dienst, auch mit dem Parser; die gelbe Zeile nennt dann die
+     * Bildseiten ohne Freigabe (der Core zählt sie mit). Mit dem KI-Analysator zählt eine Seite, die in beiden Stufen
+     * ans Modell ginge, nur einmal.
+     */
+    @Test
+    void imagesToDescribeGoToTheAiServiceWithAnyAnalyzerAndPagesCountOnce() {
+        GraphGeneration.Preview parser = new GraphGeneration.Preview(new ServicePreview(List.of(
+                stage("images", "Bilder beschreiben", ServicePreview.State.PLANNED, 4, 0, 0, 1),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 2, 0, 0, 1), goal(5)),
+                List.of(), 0, Map.of("images", PageSet.of(Map.of("wiki", List.of("1", "2", "3", "4"))),
+                "statements", PageSet.of(Map.of("wiki", List.of("1", "5"))))), AnalyzerChoice.PARSER, 2);
+        assertThat(GraphGeneration.modelLine(parser)).as("nur die Bildseiten").isEqualTo(
+                "4 Seiten gehen an den KI-Dienst.");
+        assertThat(GraphGeneration.notReleasedLine(parser)).isEqualTo("2 ohne KI-Freigabe (werden ausgelassen)");
+        assertThat(GraphGeneration.text(parser)).contains("\nBilder beschreiben · 4 Seiten\n");
+
+        GraphGeneration.Preview model = new GraphGeneration.Preview(parser.plan(), AnalyzerChoice.MODEL, 2);
+        assertThat(GraphGeneration.modelLine(model)).as("Seite 1 in beiden Stufen zählt einmal").isEqualTo(
+                "5 Seiten gehen an den KI-Dienst.");
     }
 
     /**
@@ -1298,6 +1322,170 @@ class KnowledgeGraphTabTest {
     }
 
     /**
+     * Lässt sich nichts fortsetzen, sagt der Kreispfeil das: ohne Grund gelb „nichts zu wiederholen“ hinter der
+     * gescheiterten Stufe, mit Grund (etwa ein fremder Eigentümer) rot; die Gruppe wird nicht noch einmal „fertig“ und
+     * nicht neu geladen. Auch angehalten bleibt die Statuszeile nicht bei „wird wiederholt …“ stehen.
+     */
+    @Test
+    void theRetryArrowSaysWhenNothingWasResumed() {
+        int[] generated = {0};
+        tab.onGenerated(() -> generated[0]++);
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+        actions.watcher.accept(group(part("p-1", JobState.FAILED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        String failed = "Vorstufe „Aussagenanalyse“ gescheitert (DEV)";
+        actions.calls.clear();
+
+        actions.retryOutcome = new com.aresstack.spaceharvester.app.runtime.AllJobs.Outcome(0, 0, null);
+        tab.generateNoteForTests().icon().action().run();
+        runner.runAll();
+
+        StatusNote nothing = tab.generateNoteForTests();
+        assertThat(nothing.text()).contains(failed + " · nichts zu wiederholen")
+                .endsWith("Einzelheiten unter Hintergrund");
+        assertThat(nothing.toneOf("nichts zu wiederholen")).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(nothing.toneOf(failed)).isEqualTo(StatusNote.Tone.ERROR);
+        assertThat(nothing.icon()).as("kein Kreispfeil, der wieder nichts täte").isNull();
+        assertThat(actions.watched).as("nicht wieder verfolgt").containsExactly("g-1");
+        assertThat(actions.calls).as("nicht neu geladen").isEmpty();
+        assertThat(generated[0]).isEqualTo(1);
+        assertThat(tab.generateOffered()).isTrue();
+
+        // Mit Grund: rot, mit dem Grund.
+        tab.clickGenerate();
+        runner.runAll();
+        actions.watcher.accept(group(part("p-1", JobState.FAILED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        actions.retryOutcome = new com.aresstack.spaceharvester.app.runtime.AllJobs.Outcome(0, 1,
+                new IllegalStateException("Nur der Eigentümer kann fortsetzen"));
+        tab.generateNoteForTests().icon().action().run();
+        runner.runAll();
+        assertThat(tab.generateNoteForTests().text()).startsWith("„Aussagenanalyse“ ließ sich nicht wiederholen");
+        assertThat(tab.generateNoteForTests().tone()).isEqualTo(StatusNote.Tone.ERROR);
+
+        // Angehalten (der Abschlussteil wartet hinter einem angehaltenen Teil): kein Ereignis kommt, trotzdem eine
+        // Antwort statt „wird wiederholt …“.
+        tab.clickGenerate();
+        runner.runAll();
+        actions.watcher.accept(group(part("p-1", JobState.FAILED, "Aussagenanalyse"),
+                part("p-3", JobState.PAUSED, "Bilder beschreiben"),
+                part("p-2", JobState.QUEUED, "Wissensgraph", "p-3")));
+        runner.runAll();
+        assertThat(tab.generateNoteForTests().text()).startsWith("Wissensgraph angehalten");
+        actions.retryOutcome = new com.aresstack.spaceharvester.app.runtime.AllJobs.Outcome(0, 0, null);
+        tab.generateNoteForTests().icon().action().run();
+        runner.runAll();
+        assertThat(tab.generateNoteForTests().text()).startsWith("Wissensgraph angehalten")
+                .contains(failed + " · nichts zu wiederholen").doesNotContain("wird wiederholt");
+    }
+
+    /**
+     * Wechselt die Laufzeit, während der Kreispfeil wiederholt, verfolgt der Reiter die Gruppe danach auf der neuen
+     * Laufzeit, nie auf der alten.
+     */
+    @Test
+    void aRetryDuringARuntimeChangeFollowsTheGroupOnTheNewRuntime() {
+        java.util.concurrent.atomic.AtomicReference<FakeActions> runtime = new java.util.concurrent.atomic
+                .AtomicReference<>(actions);
+        KnowledgeGraphTab tab = new KnowledgeGraphTab(runtime::get, runner);
+        tab.confirmGenerateWith(preview -> true);
+        tab.showingForTests(true);
+        tab.page(WIKI);
+        runner.runAll();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+        actions.watcher.accept(group(part("p-1", JobState.FAILED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+
+        tab.generateNoteForTests().icon().action().run();
+        FakeActions next = new FakeActions();
+        runtime.set(next);
+        tab.runtimeChanged();
+        runner.runAll();
+
+        assertThat(actions.retried).containsExactly("g-1 [p-1]");
+        assertThat(actions.watched).as("auf der alten nicht wieder").containsExactly("g-1");
+        assertThat(next.watched).containsExactly("g-1");
+        next.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        assertThat(tab.generateNoteForTests().text()).startsWith("Wissensgraph erzeugt");
+        assertThat(tab.generateOffered()).isTrue();
+    }
+
+    /**
+     * Läuft über die Seite schon eine Gruppe des Aufrufers, die der Reiter nicht selbst gestartet hat (nach einem
+     * Neustart fortgesetzt, anderswo gestartet), verfolgt er sie wie eine eigene: Knopf gesperrt mit „wird schon
+     * erzeugt“, Fortschritt mit ✕, am Ende neu laden; ein Klick legt keine zweite an.
+     */
+    @Test
+    void aGroupAlreadyRunningForThePageIsFollowedLikeAnOwnOne() {
+        int[] generated = {0};
+        tab.onGenerated(() -> generated[0]++);
+        actions.running = group(part("p-1", JobState.RUNNING, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph", "p-1"));
+        showPage();
+
+        assertThat(actions.lookedUp).hasSize(1);
+        assertThat(actions.lookedUp.get(0).pagesOf("wiki")).containsExactly("1");
+        assertThat(actions.watched).containsExactly("g-1");
+        assertThat(tab.generateOffered()).isFalse();
+        assertThat(tab.generateTooltip()).isEqualTo("Wissensgraph wird schon erzeugt");
+        StatusNote progress = tab.generateNoteForTests();
+        assertThat(progress.text()).startsWith("Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig");
+        assertThat(progress.icon().glyph()).isEqualTo(com.aresstack.spaceharvester.app.ui.Glyph.CANCEL);
+        tab.clickGenerate();
+        runner.runAll();
+        assertThat(actions.previewed).isEmpty();
+        assertThat(actions.started).isEmpty();
+
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph", "p-1")));
+        runner.runAll();
+        assertThat(actions.calls).as("am Ende neu geladen").containsExactly("page wiki/1");
+        assertThat(generated[0]).isEqualTo(1);
+        assertThat(tab.generateOffered()).isTrue();
+        assertThat(tab.generateNoteForTests().text()).startsWith("Wissensgraph erzeugt");
+    }
+
+    /** Nach dem Wechsel der Laufzeit fragt der Reiter einmal, ob dort schon eine Gruppe läuft; angehalten gelb. */
+    @Test
+    void afterARuntimeChangeARunningGroupOfTheNewRuntimeIsFollowed() {
+        java.util.concurrent.atomic.AtomicReference<FakeActions> runtime = new java.util.concurrent.atomic
+                .AtomicReference<>(actions);
+        KnowledgeGraphTab tab = new KnowledgeGraphTab(runtime::get, runner);
+        tab.showingForTests(true);
+        tab.page(WIKI);
+        runner.runAll();
+        assertThat(actions.watched).isEmpty();
+        assertThat(tab.generateOffered()).isTrue();
+
+        FakeActions next = new FakeActions();
+        next.running = group(part("p-1", JobState.PAUSED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph", "p-1"));
+        runtime.set(next);
+        tab.runtimeChanged();
+        runner.runAll();
+
+        assertThat(next.watched).containsExactly("g-1");
+        assertThat(tab.generateOffered()).isFalse();
+        assertThat(tab.generateNoteForTests().text()).startsWith("Wissensgraph angehalten");
+        assertThat(tab.generateNoteForTests().tone()).isEqualTo(StatusNote.Tone.WARNING);
+    }
+
+    /**
      * „ohne Zugriff“ ist rot, Ausgelassenes gelb, auch im Fortschritt; der Fortschritt selbst bleibt grau mit ✕. Am
      * Ende ohne Fehler bleibt „Wissensgraph erzeugt“ grau.
      */
@@ -1427,6 +1615,46 @@ class KnowledgeGraphTabTest {
         assertThat(tab.selectedNode()).isNull();
         assertThat(tab.viewport()).containsExactly(viewport);
         assertThat(tab.positionOf(DOC)).isEqualTo(doc);
+    }
+
+    /**
+     * Auch Knoten aus „Nachbarn erweitern“ und verschobene behalten beim Neuladen am Ende ihren Platz; neue Knoten des
+     * Einstiegs (der Lauf brachte „Nachtlauf“) suchen sich erst danach einen freien.
+     */
+    @Test
+    void theReloadAtTheEndKeepsExpandedAndDraggedNodesInPlace() {
+        tab.setSize(900, 600);
+        layoutTree(tab);
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        tab.selectNode(BELEG);
+        tab.clickExpand();
+        runner.runAll();
+        assertThat(tab.nodeIds()).contains(OTHER);
+        tab.dragNode(OTHER, 420, -260);
+        java.util.Map<String, java.awt.geom.Point2D> before = new java.util.LinkedHashMap<>();
+        for (String id : tab.nodeIds()) {
+            before.put(id, tab.positionOf(id));
+        }
+
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        tab.clickGenerate();
+        runner.runAll();
+        actions.calls.clear();
+        actions.grown = true;
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+
+        assertThat(actions.calls).as("Einstieg und Erweiterung neu abgespielt").containsExactly("page wiki/1",
+                "node " + BELEG);
+        assertThat(tab.nodeIds()).contains(NACHTLAUF, OTHER);
+        before.forEach((id, at) -> assertThat(tab.positionOf(id)).as("Platz von %s", id).isEqualTo(at));
+        java.awt.geom.Point2D added = tab.positionOf(NACHTLAUF);
+        assertThat(before.values()).as("der neue Knoten liegt auf keinem vorhandenen").noneMatch(at ->
+                Math.abs(at.getX() - added.getX()) < 1 && Math.abs(at.getY() - added.getY()) < 1);
     }
 
     /** Unsichtbar am Ende: Der Reiter lädt beim nächsten Anzeigen neu, ebenfalls ohne zu verspringen. */
@@ -1691,9 +1919,30 @@ class KnowledgeGraphTabTest {
         /** Der Knoten „den Beleg“ fehlt (etwa nach einer neuen Analyse). */
         boolean dropBeleg;
 
+        /** Was der Kreispfeil bewirkt; {@code null}: alle übergebenen Teile fortgesetzt. */
+        com.aresstack.spaceharvester.app.runtime.AllJobs.Outcome retryOutcome;
+        /** Eine laufende Gruppe, die der Reiter nicht selbst gestartet hat; {@code null} ohne. */
+        BackgroundGroup running;
+        final List<PageSet> lookedUp = new ArrayList<>();
+        Object origin = this;
+
         @Override
-        public void retryGraph(String groupId, List<String> jobIds) {
+        public com.aresstack.spaceharvester.app.runtime.AllJobs.Outcome retryGraph(String groupId,
+                List<String> jobIds) {
             retried.add(groupId + " " + jobIds);
+            return retryOutcome != null ? retryOutcome
+                    : new com.aresstack.spaceharvester.app.runtime.AllJobs.Outcome(jobIds.size(), 0, null);
+        }
+
+        @Override
+        public Optional<BackgroundGroup> runningGraph(PageSet pages) {
+            lookedUp.add(pages);
+            return Optional.ofNullable(running);
+        }
+
+        @Override
+        public Object origin() {
+            return origin;
         }
 
         @Override

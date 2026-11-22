@@ -2448,11 +2448,44 @@ public final class Workspace {
     }
 
     /**
-     * Wie viele Seiten von {@code pages} der KI-Analysator ausließe, weil sie keine KI-Freigabe haben; nach derselben
-     * Regel, nach der der Planer zählt (W5). Nie auf dem EDT.
+     * Wie viele Seiten von {@code pages} „Wissensgraph erzeugen“ (W5) ohne KI-Freigabe ausließe, jede nur einmal: mit
+     * dem KI-Analysator die der Aussagenanalyse, dazu immer die Seiten mit Bildern, die „Bilder beschreiben“ ohne
+     * Freigabe nicht beschreibt ({@code Harvester#knowledgeGraphNotReleased}). Nie auf dem EDT.
      */
     public int knowledgeGraphNotReleased(com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
-        return harvester.statementAnalysisJobs().coverage(caller, pages, AnalyzerChoice.MODEL).notReleased();
+        return harvester.knowledgeGraphNotReleased(caller, pages).size();
+    }
+
+    /**
+     * Eine laufende oder angehaltene Gruppe von „Wissensgraph erzeugen“ (W5) des Aufrufers, die eine Seite von
+     * {@code pages} betrifft, etwa nach einem Neustart weiterlaufend oder in einem anderen Fenster gestartet; die
+     * jüngste. Des Aufrufers heißt: Ihr Abschlussteil gehört ihm ({@code KnowledgeGraphJobs.OWNER}) und er darf ihn
+     * sehen. Einmal gefragt, danach folgt der Reiter ihr über {@link #watchBackground}; nie auf dem EDT.
+     */
+    public Optional<com.aresstack.spaceharvester.application.background.BackgroundGroup> runningKnowledgeGraph(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        String kind = com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND;
+        for (com.aresstack.spaceharvester.application.background.BackgroundGroup group
+                : harvester.backgroundJobs().groups()) {
+            if (!kind.equals(group.kind()) || group.parts().stream().noneMatch(part -> !part.state().terminal()
+                    || part.state() == com.aresstack.spaceharvester.application.jobs.JobState.PAUSED)) {
+                continue;
+            }
+            boolean mine = group.parts().stream()
+                    .filter(part -> kind.equals(part.parameter(
+                            com.aresstack.spaceharvester.application.background.BackgroundJobs.KIND)))
+                    .filter(part -> caller.jobOwner().equals(part.parameter(
+                            com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.OWNER)))
+                    .filter(part -> access.permits(caller, scope(part.sourceId(), part.partitionKey()),
+                            AccessKind.METADATA))
+                    .anyMatch(part -> com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs
+                            .pages(part).asMap().getOrDefault(part.sourceId(), java.util.Set.of()).stream()
+                            .anyMatch(pageId -> pages.contains(part.sourceId(), pageId)));
+            if (mine) {
+                return Optional.of(group);
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -2479,7 +2512,15 @@ public final class Workspace {
                 }
                 if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.COVERAGE
                         .equals(event.code())) {
-                    notes.add((part.partitionKey() == null ? "" : part.partitionKey() + ": ") + event.message());
+                    String coverage = event.message();
+                    if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs
+                            .coverageOutdated(part, group.parts())) {
+                        // Eine Vorstufe wurde nach dem Abschlussteil wiederholt: neu zählen statt des alten Stands.
+                        coverage = currentCoverage(part);
+                    }
+                    if (coverage != null) {
+                        notes.add((part.partitionKey() == null ? "" : part.partitionKey() + ": ") + coverage);
+                    }
                 } else if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.RESUME_BY_HAND
                         .equals(event.code())) {
                     notes.add(event.message());
@@ -2491,6 +2532,23 @@ public final class Workspace {
                     + " bewusst ausgelassen (ohne KI-Freigabe oder Modell)");
         }
         return List.copyOf(notes);
+    }
+
+    /**
+     * Die Abdeckung eines Abschlussteils von „Wissensgraph erzeugen“ jetzt, mit seinem Analysator und über seine
+     * Seiten; {@code null}, wenn nichts fehlt (dann gibt es keinen gelben Hinweis) oder sie sich nicht zählen lässt.
+     */
+    private String currentCoverage(JobStatus goal) {
+        try {
+            StatementAnalysisJobs.Coverage coverage = harvester.statementAnalysisJobs().coverage(caller,
+                    com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.pages(goal),
+                    com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice.parse(goal.parameter(
+                            com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.ANALYZER)));
+            return coverage.complete() ? null
+                    : com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.message(coverage);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** Die Aufträge eines Reiters: nur Hintergrundaufträge oder nur die übrigen. */

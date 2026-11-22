@@ -1,6 +1,9 @@
 package com.aresstack.spaceharvester.application.background.services;
 
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
+
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -11,12 +14,26 @@ import java.util.Objects;
  * @param stages       je Dienst der Kette eine Stufe, Vorstufen in topologischer Reihenfolge, das Ziel zuletzt
  * @param notes        gelbe Hinweise, wörtlich dieselben wie in {@link ServicePlan#notes()}; nie mit Seitentiteln
  * @param inaccessible Seiten der Menge ohne Zugriff des Aufrufers, nur als Zahl
+ * @param planned      je Stufe ({@link Stage#id()}) die Seiten, für die neue Teile entstünden ({@link Stage#pages()}),
+ *                     etwa damit die Rückfrage eine Seite, die an zwei Stufen ans Modell ginge, nur einmal zählt;
+ *                     nur für den Aufrufer, nie in Hinweisen
  */
-public record ServicePreview(List<Stage> stages, List<String> notes, int inaccessible) {
+public record ServicePreview(List<Stage> stages, List<String> notes, int inaccessible, Map<String, PageSet> planned) {
 
     public ServicePreview {
         stages = List.copyOf(stages);
         notes = List.copyOf(notes);
+        planned = Map.copyOf(Objects.requireNonNullElse(planned, Map.of()));
+    }
+
+    /** Ohne die Seiten je Stufe (nur Zahlen). */
+    public ServicePreview(List<Stage> stages, List<String> notes, int inaccessible) {
+        this(stages, notes, inaccessible, Map.of());
+    }
+
+    /** Die Seiten, für die die Stufe {@code stageId} neue Teile anlegte; leer ohne. */
+    public PageSet planned(String stageId) {
+        return planned.getOrDefault(stageId, PageSet.EMPTY);
     }
 
     /**

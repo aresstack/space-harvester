@@ -627,6 +627,10 @@ class ServicePlannerTest {
         assertThat(stage(covered, "pre")).isEqualTo(new ServicePreview.Stage("pre", "Vorstufe",
                 ServicePreview.State.RUNNING, 0, 0, 1, 0));
         assertThat(covered.nothingMissing()).as("das Ziel wartet auf den laufenden Teil").isFalse();
+        // Die Seiten der neuen Teile, ohne die des laufenden: für die Rückfrage (eine Seite zählt nur einmal).
+        assertThat(partly.planned("pre").asMap()).isEqualTo(Map.of("wiki", Set.of("a2")));
+        assertThat(covered.planned("pre").size()).isZero();
+        assertThat(partly.planned("goal").asMap()).isEqualTo(Map.of("wiki", Set.of("a1", "a2")));
     }
 
     @Test

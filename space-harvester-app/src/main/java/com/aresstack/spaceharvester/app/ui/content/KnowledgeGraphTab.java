@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
+import com.aresstack.spaceharvester.app.runtime.AllJobs;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -211,7 +212,7 @@ final class KnowledgeGraphTab extends JPanel {
     private final IconButton view = new IconButton(Glyph.TABLE, TABLE_TIP);
     private final IconButton deleteAll = new IconButton(Glyph.TRASH, DELETE_ALL_TIP);
     private final JButton export = Comic.exportButton(EXPORT_TIP);
-    /** „Wissensgraph erzeugen“ (W5): vor dem Export; gesperrt, solange eine Gruppe dieses Reiters läuft. */
+    /** „Wissensgraph erzeugen“ (W5): vor dem Export; gesperrt, solange eine verfolgte Gruppe über die Seiten läuft. */
     private final IconButton generate = new IconButton(Glyph.GRAPH_PLUS, GENERATE_TIP);
     private Predicate<GraphGeneration.Preview> confirmGenerate = preview -> Dialogs.confirmOverlay(this,
             GraphGeneration.TITLE, GraphGeneration.body(preview));
@@ -225,6 +226,8 @@ final class KnowledgeGraphTab extends JPanel {
     private Object graphOrigin;
     /** Ob die verfolgte Gruppe fertig ist (nicht nur angehalten); dann ist die Beobachtung zu. */
     private boolean graphEnded;
+    /** Zählt die Fragen nach einer schon laufenden Gruppe ({@link #findRunningGraph}); nur die jüngste gilt. */
+    private int graphLookups;
     /** Die Hinweise des Planers beim Start (ausgelassene Stufen, erst laden, ohne Zugriff), gelb bis zum Ende. */
     private List<String> planNotes = List.of();
     /** Was die Statuszeile zu „Wissensgraph erzeugen“ sagt, vor dem Stand des Graphen; {@code null} ohne. */
@@ -523,6 +526,7 @@ final class KnowledgeGraphTab extends JPanel {
         } else {
             refresh();
         }
+        findRunningGraph();
     }
 
     /**
@@ -815,7 +819,9 @@ final class KnowledgeGraphTab extends JPanel {
             expansions.clear();
             this.appliedFilters = filters;
             if (loaded.stack() != null) {
-                apply(loaded.stack().graph(), false, kept);
+                // An Ort und Stelle behält jeder Knoten seinen Platz, der in einem der Teilgraphen wiederkommt, auch
+                // einer aus „Nachbarn erweitern“ und ein verschobener: Erst danach suchen neue Knoten freie Plätze.
+                apply(loaded.stack().graph(), false, kept == null ? null : keptOf(kept, loaded));
                 coverage = loaded.coverage();
             }
             for (int i = 0; i < loaded.more().size(); i++) {
@@ -826,6 +832,10 @@ final class KnowledgeGraphTab extends JPanel {
                 }
                 expansions.add(step);
                 apply(loaded.more().get(i), true);
+            }
+            if (kept != null) {
+                // Plätze von Knoten, deren Erweiterung die Filter ausblenden, belegen nichts.
+                positions.keySet().retainAll(nodes.keySet());
             }
             if (!replay) {
                 expansions.addAll(0, steps.subList(0, steps.size() - run.size()));
@@ -964,17 +974,30 @@ final class KnowledgeGraphTab extends JPanel {
         apply(subgraph, merge, null);
     }
 
-    /** Wie {@link #apply(GraphNeighbourhood.Subgraph, boolean)}; Knoten aus {@code kept} behalten dort ihren Platz. */
+    /**
+     * Die gemerkten Plätze der Knoten, die beim Laden an Ort und Stelle wiederkommen: im Einstieg oder in einer der
+     * neu abgespielten Erweiterungen.
+     */
+    private static Map<String, Point2D> keptOf(Map<String, Point2D> kept, Loaded loaded) {
+        Set<String> ids = new java.util.HashSet<>();
+        if (loaded.stack() != null) {
+            loaded.stack().graph().nodes().forEach(node -> ids.add(node.id()));
+        }
+        loaded.more().forEach(sub -> sub.nodes().forEach(node -> ids.add(node.id())));
+        Map<String, Point2D> back = new LinkedHashMap<>(kept);
+        back.keySet().retainAll(ids);
+        return back;
+    }
+
+    /**
+     * Wie {@link #apply(GraphNeighbourhood.Subgraph, boolean)}; ohne {@code merge} bekommen alle Knoten aus
+     * {@code kept} ihren Platz zurück, bevor neue angeordnet werden.
+     */
     private void apply(GraphNeighbourhood.Subgraph subgraph, boolean merge, Map<String, Point2D> kept) {
         if (!merge) {
             clear();
             if (kept != null) {
-                for (GraphNeighbourhood.Node node : subgraph.nodes()) {
-                    Point2D at = kept.get(node.id());
-                    if (at != null) {
-                        positions.put(node.id(), at);
-                    }
-                }
+                positions.putAll(kept);
             }
         }
         String anchor = merge ? subgraph.focus() : null;
@@ -1605,6 +1628,8 @@ final class KnowledgeGraphTab extends JPanel {
      */
     void runtimeChanged() {
         if (!graphAttached()) {
+            // Auf der neuen Laufzeit kann schon eine Gruppe laufen (etwa nach einem Neustart fortgesetzt).
+            findRunningGraph();
             return;
         }
         Actions current = actions.get();
@@ -1622,6 +1647,34 @@ final class KnowledgeGraphTab extends JPanel {
             return;
         }
         graphWatch = current.watchGraph(graphGroupId, this::graphChanged);
+    }
+
+    /**
+     * Fragt einmal, ob über die Seiten des Reiters schon eine Gruppe von „Wissensgraph erzeugen“ des Aufrufers läuft
+     * oder angehalten ist, die dieser Reiter nicht selbst gestartet hat (nach einem Neustart fortgesetzt, anderswo
+     * gestartet), und verfolgt sie dann wie eine eigene: Knopf gesperrt, Fortschritt mit ✕, am Ende neu laden. Danach
+     * meldet der Core jede Änderung (Beobachter, keine Abfragen).
+     */
+    private void findRunningGraph() {
+        int mine = ++graphLookups;
+        Actions current = actions.get();
+        PageKey key = page;
+        if (current == null || key == null || preparing || graphAttached()) {
+            return;
+        }
+        PageSet pages = generatePages();
+        Object origin = current.origin();
+        runner.run(() -> current.runningGraph(pages), found -> {
+            Actions now = actions.get();
+            if (mine != graphLookups || found.isEmpty() || preparing || graphAttached() || !Objects.equals(key, page)
+                    || now == null || now.origin() != origin) {
+                return;
+            }
+            attach(current, found.get(), List.of());
+            graphChanged(found.get());
+        }, error -> {
+            // Ohne Antwort bleibt der Knopf frei; ein Start legt dann eine eigene Gruppe an.
+        });
     }
 
     /** Ein neuer Stand der verfolgten Gruppe, auf dem EDT. */
@@ -1766,12 +1819,15 @@ final class KnowledgeGraphTab extends JPanel {
         if (firstFailed != null) {
             String groupId = group.groupId();
             String stage = stageKey(firstFailed);
-            List<String> ids = group.parts().stream().filter(part -> stage.equals(stageKey(part)))
-                    .filter(part -> part.state() == JobState.FAILED || part.state() == JobState.CANCELLED)
-                    .map(JobStatus::id).toList();
+            List<JobStatus> retryable = group.parts().stream().filter(part -> stage.equals(stageKey(part)))
+                    .filter(part -> part.state() == JobState.FAILED || part.state() == JobState.CANCELLED).toList();
+            List<String> ids = retryable.stream().map(JobStatus::id).toList();
             String title = stageTitle(firstFailed);
-            retry = new StatusNote.IconLink(Glyph.REFRESH, failedNote, "„" + title + "“ " + RETRY_TIP,
-                    () -> retryStage(groupId, ids, title));
+            // Nur, wenn sich wenigstens ein Teil fortsetzen lässt; sonst täte der Kreispfeil nichts.
+            if (retryable.stream().anyMatch(part -> part.lifecycle().allows(JobAction.RESUME))) {
+                retry = new StatusNote.IconLink(Glyph.REFRESH, failedNote, "„" + title + "“ " + RETRY_TIP,
+                        () -> retryStage(groupId, ids, title));
+            }
         }
         return new StatusNote(text, note.tone(), JOBS_LINK, open, marks, retry);
     }
@@ -1841,22 +1897,42 @@ final class KnowledgeGraphTab extends JPanel {
         }
         preparing = true;
         refreshButtons();
+        StatusNote before = generateNote;
         generateNote(StatusNote.plain("„" + title + "“ wird wiederholt …"));
-        runner.run(() -> {
-            current.retryGraph(groupId, jobIds);
-            return null;
-        }, ignored -> {
+        runner.run(() -> current.retryGraph(groupId, jobIds), outcome -> {
             preparing = false;
             if (!groupId.equals(graphGroupId)) {
                 refreshButtons();
                 return;
             }
-            if (graphEnded) {
-                // Die Beobachtung war zu: wieder anlegen; sie meldet den jetzigen Stand sofort.
+            if (outcome.changed() == 0) {
+                // Nichts fortgesetzt: Kein Ereignis wird kommen, also gleich sagen, warum (oder dass nichts zu tun
+                // war).
+                refreshButtons();
+                generateNote(outcome.problem() != null
+                        ? new StatusNote("„" + title + "“ ließ sich nicht wiederholen: "
+                                + Problems.describe(outcome.problem()).title(), StatusNote.Tone.ERROR, null, null)
+                        : nothingToRetry(before, title));
+                return;
+            }
+            // Die Laufzeit kann inzwischen gewechselt haben (runtimeChanged tat nichts, solange die Gruppe als fertig
+            // galt): auf der jetzigen beobachten, nie auf der alten.
+            Actions now = actions.get();
+            if (now == null) {
+                closeGraphWatch();
+                graphGroupId = null;
+                graphLast = null;
+                graphOrigin = null;
+                generateNote(null);
+                refreshButtons();
+                return;
+            }
+            if (graphEnded || now.origin() != graphOrigin) {
+                // Die Beobachtung war zu oder galt der alten Laufzeit: neu anlegen; sie meldet den Stand sofort.
                 closeGraphWatch();
                 graphEnded = false;
-                graphOrigin = current.origin();
-                graphWatch = current.watchGraph(groupId, this::graphChanged);
+                graphOrigin = now.origin();
+                graphWatch = now.watchGraph(groupId, this::graphChanged);
             }
             refreshButtons();
         }, error -> {
@@ -1865,6 +1941,27 @@ final class KnowledgeGraphTab extends JPanel {
             generateNote(new StatusNote("„" + title + "“ ließ sich nicht wiederholen: "
                     + Problems.describe(error).title(), StatusNote.Tone.ERROR, null, null));
         });
+    }
+
+    /**
+     * Das vorige Ergebnis ohne Kreispfeil, dahinter gelb „nichts zu wiederholen“: Kein Teil der Stufe ließ sich (noch)
+     * fortsetzen.
+     */
+    private static StatusNote nothingToRetry(StatusNote before, String title) {
+        String nothing = "nichts zu wiederholen";
+        if (before == null || before.icon() == null) {
+            return new StatusNote("„" + title + "“: " + nothing, StatusNote.Tone.WARNING, null, null);
+        }
+        String after = before.icon().after();
+        String text = before.text().replaceFirst(java.util.regex.Pattern.quote(after),
+                java.util.regex.Matcher.quoteReplacement(after + " · " + nothing));
+        // Der Kreispfeil steht nur hinter Gescheitertem, die Zeile ist also rot; der Zusatz bleibt gelb.
+        List<StatusNote.Mark> marks = new ArrayList<>(before.marks());
+        StatusNote.Tone tone = stronger(before.tone(), StatusNote.Tone.WARNING);
+        if (tone != StatusNote.Tone.WARNING) {
+            marks.add(new StatusNote.Mark(nothing, StatusNote.Tone.WARNING));
+        }
+        return new StatusNote(text, tone, before.link(), before.action(), marks, null);
     }
 
     /** ✕ in der Statuszeile: bricht die verfolgte Gruppe ab; fertige Teilergebnisse bleiben. */
@@ -2542,9 +2639,20 @@ final class KnowledgeGraphTab extends JPanel {
 
         /**
          * Setzt die gescheiterten und abgebrochenen Teile {@code jobIds} der Gruppe fort, wie ▶ in der
-         * Auftragsverwaltung (mit den Rechten des Aufrufers); nie auf dem EDT.
+         * Auftragsverwaltung (mit den Rechten des Aufrufers); nie auf dem EDT. Sagt, wie viele fortgesetzt wurden und
+         * woran es sonst scheiterte (etwa am Eigentümer).
          */
-        default void retryGraph(String groupId, List<String> jobIds) {
+        default AllJobs.Outcome retryGraph(String groupId, List<String> jobIds) {
+            return new AllJobs.Outcome(0, 0, null);
+        }
+
+        /**
+         * Eine laufende oder angehaltene Gruppe von „Wissensgraph erzeugen“ des Aufrufers über eine Seite von
+         * {@code pages}, die dieser Reiter nicht selbst gestartet hat (nach einem Neustart, anderswo gestartet); nie
+         * auf dem EDT. Ohne Umsetzung keine.
+         */
+        default Optional<BackgroundGroup> runningGraph(PageSet pages) {
+            return Optional.empty();
         }
 
         /**
@@ -2607,8 +2715,7 @@ final class KnowledgeGraphTab extends JPanel {
                 public GraphGeneration.Preview previewGraph(PageSet pages) {
                     ServicePreview plan = workspace.previewKnowledgeGraph(pages);
                     AnalyzerChoice analyzer = workspace.statementAnalyzer();
-                    return new GraphGeneration.Preview(plan, analyzer, analyzer == AnalyzerChoice.MODEL
-                            ? workspace.knowledgeGraphNotReleased(pages) : 0);
+                    return new GraphGeneration.Preview(plan, analyzer, workspace.knowledgeGraphNotReleased(pages));
                 }
 
                 @Override
@@ -2632,8 +2739,13 @@ final class KnowledgeGraphTab extends JPanel {
                 }
 
                 @Override
-                public void retryGraph(String groupId, List<String> jobIds) {
-                    workspace.retryBackgroundParts(groupId, jobIds);
+                public AllJobs.Outcome retryGraph(String groupId, List<String> jobIds) {
+                    return workspace.retryBackgroundParts(groupId, jobIds);
+                }
+
+                @Override
+                public Optional<BackgroundGroup> runningGraph(PageSet pages) {
+                    return workspace.runningKnowledgeGraph(pages);
                 }
             };
         }
@@ -2691,6 +2803,12 @@ final class KnowledgeGraphTab extends JPanel {
     /** Für Tests: wie Mausrad an der Stelle {@code (x, y)} der Fläche. */
     void zoomAt(double factor, double x, double y) {
         canvas.zoom(factor, x, y);
+    }
+
+    /** Für Tests: wie Ziehen eines Knotens mit der Maus an {@code (x, y)} in Weltkoordinaten. */
+    void dragNode(String nodeId, double x, double y) {
+        positions.put(nodeId, new Point2D.Double(x, y));
+        canvas.repaint();
     }
 
     /** Für Tests: der Platz eines Knotens in Weltkoordinaten oder {@code null}. */

@@ -150,8 +150,37 @@ public class KnowledgeGraphJobs {
         });
     }
 
+    /**
+     * Ob die festgehaltene Abdeckung ({@value #COVERAGE}) eines fertigen Abschlussteils überholt ist: Eine seiner
+     * Vorstufen ({@link com.aresstack.spaceharvester.application.jobs.Jobs#AFTER}) endete nach ihm, wurde also nach
+     * ihrem Scheitern wiederholt (der Kreispfeil setzt nur die Vorstufe fort, der fertige Abschlussteil läuft nicht
+     * noch einmal). Dann zählt die Abdeckung neu ({@link StatementAnalysisJobs#coverage}, {@link #message}).
+     *
+     * @param goal  ein Teil der Art {@value #KIND}
+     * @param parts die Teile seiner Gruppe
+     */
+    public static boolean coverageOutdated(JobStatus goal, java.util.Collection<JobStatus> parts) {
+        String after = goal.parameter(com.aresstack.spaceharvester.application.jobs.Jobs.AFTER);
+        if (!KIND.equals(goal.parameter(BackgroundJobs.KIND)) || goal.finishedAt() == null || after == null
+                || after.isBlank()) {
+            return false;
+        }
+        java.util.Set<String> predecessors = new java.util.HashSet<>(Arrays.asList(after.split(",")));
+        return parts.stream().filter(part -> predecessors.contains(part.id()))
+                .anyMatch(part -> part.state().terminal() && part.finishedAt() != null
+                        && part.finishedAt().isAfter(goal.finishedAt()));
+    }
+
+    /** Die Seiten eines Teils ({@link AnalysisService#PAGES}) als Menge seiner Quelle. */
+    public static PageSet pages(JobStatus part) {
+        String value = part.parameter(AnalysisService.PAGES);
+        return value == null || part.sourceId() == null ? PageSet.EMPTY
+                : PageSet.of(Map.of(part.sourceId(), Arrays.stream(value.split("\n")).filter(id -> !id.isBlank())
+                        .distinct().toList()));
+    }
+
     /** Die Abdeckung für Menschen, nur Zahlen. */
-    static String message(StatementAnalysisJobs.Coverage coverage) {
+    public static String message(StatementAnalysisJobs.Coverage coverage) {
         StringBuilder text = new StringBuilder();
         text.append(coverage.current()).append(" von ").append(coverage.pages())
                 .append(coverage.pages() == 1 ? " Seite" : " Seiten").append(" mit aktueller Analyse");

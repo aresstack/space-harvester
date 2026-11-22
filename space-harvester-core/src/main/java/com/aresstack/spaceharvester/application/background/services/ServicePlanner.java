@@ -103,7 +103,7 @@ public final class ServicePlanner {
      */
     public ServicePreview preview(AccessContext caller, String target, PageSet pages) {
         Plan plan = plan(caller, target, pages, false);
-        return new ServicePreview(plan.stages(), plan.notes(), plan.inaccessible());
+        return new ServicePreview(plan.stages(), plan.notes(), plan.inaccessible(), plan.planned());
     }
 
     /**
@@ -117,10 +117,11 @@ public final class ServicePlanner {
         AnalysisService goal = require(target);
         List<String> notes = new ArrayList<>();
         List<ServicePreview.Stage> stages = new ArrayList<>();
+        Map<String, PageSet> plannedPages = new LinkedHashMap<>();
         if (goal.start().get() == ServiceStart.DISABLED) {
             notes.add(skipped(goal));
             stages.add(new ServicePreview.Stage(goal.id(), goal.title(), ServicePreview.State.DISABLED, 0, 0, 0, 0));
-            return new Plan(goal, List.of(), notes, 0, stages);
+            return new Plan(goal, List.of(), notes, 0, stages, plannedPages);
         }
         if (goal.kind() == null) {
             throw new IllegalArgumentException("„" + goal.title() + "“ hat noch keine Arbeit");
@@ -157,6 +158,7 @@ public final class ServicePlanner {
             int planned = 0;
             int reused = 0;
             int parts = 0;
+            Map<String, Set<String>> plannedHere = new LinkedHashMap<>();
             for (Map.Entry<MissingPages.Scope, Set<String>> entry : missing.pages().entrySet()) {
                 MissingPages.Scope area = entry.getKey();
                 List<Ref> after = new ArrayList<>(new LinkedHashSet<>(waitsFor(service, area, produced, all)));
@@ -181,6 +183,7 @@ public final class ServicePlanner {
                 refs.add(new Ref(null, steps.size(), service.title()));
                 own.put(area, refs);
                 planned += rest.size();
+                plannedHere.computeIfAbsent(area.sourceId(), ignored -> new LinkedHashSet<>()).addAll(rest);
                 parts++;
                 steps.add(new BackgroundJobs.Step(service.kind(), service.title(),
                         new BackgroundPart.Draft(area.sourceId(), area.spaceKey(),
@@ -193,11 +196,14 @@ public final class ServicePlanner {
                     : reused > 0 ? ServicePreview.State.RUNNING : ServicePreview.State.NOTHING_MISSING;
             stages.add(new ServicePreview.Stage(service.id(), service.title(), state, planned, missing.toLoad(),
                     reused, parts));
+            if (!plannedHere.isEmpty()) {
+                plannedPages.put(service.id(), PageSet.of(plannedHere));
+            }
         }
         if (inaccessible > 0) {
             notes.add(inaccessible + (inaccessible == 1 ? " Seite" : " Seiten") + " ohne Zugriff ausgelassen");
         }
-        return new Plan(goal, steps, notes, inaccessible, stages);
+        return new Plan(goal, steps, notes, inaccessible, stages, plannedPages);
     }
 
     /** Die Angaben eines Teils: die des Dienstes und seine Seiten. */
@@ -335,7 +341,7 @@ public final class ServicePlanner {
 
     /** Der Plan: Teile für {@link BackgroundJobs#startSteps}, Hinweise und die Zahlen je Stufe. */
     private record Plan(AnalysisService goal, List<BackgroundJobs.Step> steps, List<String> notes, int inaccessible,
-                        List<ServicePreview.Stage> stages) {
+                        List<ServicePreview.Stage> stages, Map<String, PageSet> planned) {
     }
 
     /** Ein Vorgänger: ein bestehender Auftrag oder ein Teil dieser Gruppe. */

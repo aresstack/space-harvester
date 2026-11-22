@@ -606,6 +606,23 @@ public class StatementAnalysisJobs {
         return new Coverage(current, open, toLoad, noText, notReleased);
     }
 
+    /**
+     * Die Seiten der Menge, die der KI-Analysator ohne KI-Freigabe ausließe, nach derselben Regel wie {@link #coverage}
+     * (dort {@link Coverage#notReleased()}): für die Rückfrage von „Wissensgraph erzeugen“ (W5), die eine Seite, die
+     * auch beim Bilderbeschreiben ausgelassen wird, nur einmal zählt. Nur aus Bestand und Cache; rechnet nie.
+     *
+     * @throws IllegalStateException ohne angeschlossenen Bestand ({@link #local})
+     */
+    public PageSet notReleased(AccessContext caller, PageSet pages) {
+        List<PageKey> keys = new java.util.ArrayList<>();
+        classify(caller, pages, AnalyzerChoice.MODEL).forEach((key, standing) -> {
+            if (standing == Standing.NOT_RELEASED) {
+                keys.add(key);
+            }
+        });
+        return PageSet.ofKeys(keys);
+    }
+
     /** Der eingestellte Analysator ({@code statements.analyzer}), aus dessen Ablage Graph und Stand lesen. */
     public AnalyzerChoice selected() {
         return analysis.selected();

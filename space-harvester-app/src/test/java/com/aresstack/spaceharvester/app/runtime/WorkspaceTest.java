@@ -1069,7 +1069,9 @@ class WorkspaceTest {
             assertThat(ended.finished()).isTrue();
             assertThat(workspace.knowledgeGraphNotes(ended)).as("nur Zahlen, keine Seitentitel")
                     .noneMatch(note -> note.contains("Betrieb und Wartung"));
+            assertThat(workspace.runningKnowledgeGraph(pages)).as("eine beendete Gruppe läuft nicht mehr").isEmpty();
         }
+        assertThat(workspace.knowledgeGraphNotReleased(pages)).as("ohne KI-Modell nichts ohne Freigabe").isZero();
     }
 
     /**

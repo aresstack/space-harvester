@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.application.background.services.ServicePreview;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -11,16 +12,19 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Die Rückfrage von „Wissensgraph erzeugen“ im Reiter „Graph“ (W5, UX 22.11.2026): „Wissensgraph wirklich erzeugen?“,
  * darunter eine Tabelle je Stufe des Dienst-Planers: Stufe, Zahl der Seiten und gedämpft in eigener Spalte, was dazu
  * gehört („4 erst laden“, „läuft schon“), bewusst abgeschaltete Stufen gelb „abgeschaltet (wird ausgelassen)“. Darunter
- * gelb, wie viele Seiten ohne KI-Freigabe ausgelassen werden, rot die ohne Zugriff; mit dem KI-Analysator steht in
- * eigener Zeile direkt über Ja/Nein, wie viele Seiten an den KI-Dienst gehen (nur die Zahl, kein Geldbetrag; Seiten
- * ohne KI-Freigabe zählen nicht mit). Stufen, die noch keine Arbeit haben, erscheinen nicht.
+ * gelb, wie viele Seiten ohne KI-Freigabe ausgelassen werden, rot die ohne Zugriff; in eigener Zeile direkt über
+ * Ja/Nein steht, wie viele Seiten an den KI-Dienst gehen: die von „Bilder beschreiben“ immer, die der Aussagenanalyse
+ * nur mit dem KI-Analysator, jede Seite nur einmal (nur die Zahl, kein Geldbetrag; Seiten ohne KI-Freigabe zählen
+ * nicht mit). Stufen, die noch keine Arbeit haben, erscheinen nicht.
  */
 final class GraphGeneration {
 
@@ -38,7 +42,8 @@ final class GraphGeneration {
      *
      * @param plan        die Vorschau des Dienst-Planers
      * @param analyzer    der eingestellte Aussagenanalysator
-     * @param notReleased mit dem KI-Analysator: Seiten ohne KI-Freigabe, die ausgelassen werden; sonst 0
+     * @param notReleased Seiten ohne KI-Freigabe, die ausgelassen werden, jede nur einmal: beim Bilderbeschreiben
+     *                    immer, bei der Aussagenanalyse nur mit dem KI-Analysator
      */
     record Preview(ServicePreview plan, AnalyzerChoice analyzer, int notReleased) {
 
@@ -52,18 +57,35 @@ final class GraphGeneration {
             return plan.nothingMissing();
         }
 
-        /** Seiten, die an den KI-Dienst gehen: die der Aussagenanalyse, nur mit dem KI-Analysator. */
+        /**
+         * Seiten, die an den KI-Dienst gehen: die neuen von „Bilder beschreiben“ immer (es gibt nur freigegebene ans
+         * Modell), die der Aussagenanalyse nur mit dem KI-Analysator; eine Seite in beiden zählt einmal. Ohne die
+         * Seiten je Stufe ({@link ServicePreview#planned}) bleibt nur die Summe der Zahlen.
+         */
         int toModel() {
-            if (analyzer != AnalyzerChoice.MODEL) {
-                return 0;
+            Set<String> union = new HashSet<>();
+            int counted = 0;
+            for (ServicePreview.Stage stage : plan.stages()) {
+                boolean toModel = IMAGES.equals(stage.id())
+                        || STATEMENTS.equals(stage.id()) && analyzer == AnalyzerChoice.MODEL;
+                if (!toModel || stage.state() != ServicePreview.State.PLANNED || stage.pages() <= 0) {
+                    continue;
+                }
+                PageSet pages = plan.planned(stage.id());
+                if (pages.size() == 0) {
+                    counted += stage.pages();
+                    continue;
+                }
+                pages.asMap().forEach((sourceId, ids) -> ids.forEach(id -> union.add(sourceId + "\n" + id)));
             }
-            return plan.stages().stream().filter(stage -> STATEMENTS.equals(stage.id()))
-                    .mapToInt(ServicePreview.Stage::pages).sum();
+            return union.size() + counted;
         }
     }
 
     /** Kennung der Stufe „Aussagenanalyse“ im Dienst-Planer. */
     static final String STATEMENTS = "statements";
+    /** Kennung der Stufe „Bilder beschreiben“ im Dienst-Planer; sie gibt nur freigegebene Seiten ans Modell. */
+    static final String IMAGES = "images";
 
     /**
      * Eine Zeile der Rückfrage.
@@ -95,7 +117,7 @@ final class GraphGeneration {
         return lines;
     }
 
-    /** Der Satz zum KI-Dienst direkt über Ja/Nein, oder {@code null} ohne KI-Analysator oder ohne Seiten dafür. */
+    /** Der Satz zum KI-Dienst direkt über Ja/Nein, oder {@code null}, wenn keine Seite an den KI-Dienst geht. */
     static String modelLine(Preview preview) {
         int pages = preview.toModel();
         return pages <= 0 ? null : pages(pages) + " gehen an den KI-Dienst.";
@@ -103,7 +125,7 @@ final class GraphGeneration {
 
     /** Gelb: Seiten ohne KI-Freigabe, die ausgelassen werden; {@code null} ohne. */
     static String notReleasedLine(Preview preview) {
-        return preview.analyzer() != AnalyzerChoice.MODEL || preview.notReleased() <= 0 ? null
+        return preview.notReleased() <= 0 ? null
                 : preview.notReleased() + " ohne KI-Freigabe (" + (preview.notReleased() == 1 ? "wird" : "werden")
                 + " ausgelassen)";
     }

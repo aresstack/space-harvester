@@ -256,6 +256,43 @@ class KnowledgeGraphJobsTest {
                         + "1 ohne KI-Freigabe ausgelassen");
         assertThat(service.analyses().missing(APP, pages("plan", "ziel")).pages().pagesOf("wiki"))
                 .containsExactly("plan");
+        assertThat(service.analyses().notReleased(APP, pages("plan", "ziel")).pagesOf("wiki"))
+                .as("dieselbe Regel wie die Zählung, als Seiten").containsExactly("ziel");
+        assertThat(preview.planned("statements").pagesOf("wiki")).as("die Seiten der neuen Teile")
+                .containsExactly("plan");
+    }
+
+    /**
+     * Die festgehaltene Abdeckung eines fertigen Abschlussteils ist überholt, wenn eine seiner Vorstufen nach ihm
+     * endete (wiederholt nach dem Scheitern); sonst nicht. Seine Seiten stehen in seinen Angaben.
+     */
+    @Test
+    void theCoverageOfAClosingPartIsOutdatedWhenAPrerequisiteEndedAfterIt() {
+        Instant early = Instant.parse("2026-11-22T08:00:00Z");
+        Instant late = early.plusSeconds(60);
+        JobStatus statements = status("s-1", "statements", JobState.COMPLETED, late, Map.of());
+        JobStatus closing = status("g-1", KnowledgeGraphJobs.KIND, JobState.COMPLETED, early,
+                Map.of(Jobs.AFTER, "s-1", AnalysisService.PAGES, "plan\nziel"));
+        assertThat(KnowledgeGraphJobs.coverageOutdated(closing, List.of(statements, closing))).isTrue();
+
+        JobStatus before = status("s-1", "statements", JobState.FAILED, early.minusSeconds(5), Map.of());
+        assertThat(KnowledgeGraphJobs.coverageOutdated(closing, List.of(before, closing))).isFalse();
+        JobStatus running = status("s-1", "statements", JobState.RUNNING, null, Map.of());
+        assertThat(KnowledgeGraphJobs.coverageOutdated(closing, List.of(running, closing)))
+                .as("erst, wenn die Vorstufe wieder fertig ist").isFalse();
+        assertThat(KnowledgeGraphJobs.coverageOutdated(statements, List.of(statements, closing)))
+                .as("nur Abschlussteile").isFalse();
+        assertThat(KnowledgeGraphJobs.pages(closing).pagesOf("wiki")).containsExactlyInAnyOrder("plan", "ziel");
+    }
+
+    private static JobStatus status(String id, String kind, JobState state, Instant finished,
+                                    Map<String, String> more) {
+        Map<String, String> parameters = new HashMap<>(more);
+        parameters.put(BackgroundJobs.KIND, kind);
+        return new JobStatus(id, com.aresstack.spaceharvester.application.jobs.JobType.BACKGROUND, "wiki", "DEV",
+                OWNER, state, com.aresstack.spaceharvester.application.jobs.JobProgress.NONE, state == JobState.FAILED
+                        ? new com.aresstack.spaceharvester.application.jobs.JobError("TEST", "Fehler") : null, false,
+                Instant.EPOCH, null, finished, null, null, parameters, false, false, null);
     }
 
     @Test
