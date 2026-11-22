@@ -11,12 +11,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Regelbasierter Ersatz für MaltParser in Core-Tests: je Satz (bis {@code .}) großgeschriebene Wörter außer Artikeln
+ * Regelbasierter Ersatz für MaltParser in Tests (Core, Chat-Werkzeuge der App): je Satz (bis {@code .}) großgeschriebene Wörter außer Artikeln
  * als Erwähnungen, {@code er}/{@code sie}/{@code ihn} als offene Pronomen, das erste Wort aus {@link #VERBS} als
  * Prädikat; erste Erwähnung handelt, letzte ist betroffen, eine Erwähnung nach {@code des} hängt nominal an der
  * vorherigen.
  */
-final class FakeStatementAnalyzer implements StatementAnalyzer {
+public final class FakeStatementAnalyzer implements StatementAnalyzer {
 
     static final Set<String> VERBS = Set.of("übermittelt", "prüft", "sendet", "genehmigt");
     private static final Set<String> ARTICLES = Set.of("Der", "Die", "Das", "Dem", "Den", "Des", "Ein", "Eine");

@@ -6,12 +6,16 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.holdings.HoldingState;
 import com.aresstack.spaceharvester.application.holdings.PageHolding;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
+import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
+import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
+import com.aresstack.spaceharvester.application.knowledge.TermKnowledge;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -29,6 +33,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 /**
  * Die Werkzeuge des Chats (ADR 0033): Was nicht offen ist, holt sich das Modell selbst, und zwar nur aus dem Bereich,
@@ -41,6 +46,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *   mit Kennzeichen „hat Unterseiten“, wie der Baum links; Titel aus den Kopfdaten, nie aus dem Lesetext.</li>
  *   <li>{@value #READ}: der Lesetext einer Seite in Stücken von {@value #READ_CHARS} Zeichen mit Versatz.</li>
  *   <li>{@value #SEARCH}: dieselbe Suche wie die Suche mit Auswahl links, nie über den Bereich hinaus.</li>
+ *   <li>{@value #TERM}: was der Wissensgraph im Bereich über einen bestätigten Fachbegriff weiß (Paket W7, auf
+ *   {@link TermKnowledge#answer}): Aussagen mit Stufe und Belegseiten, Nachbarbegriffe und was gekappt
+ *   wurde. Bereich und Obergrenzen erzwingt der Kern; jede Belegseite, deren Aussagen geliefert werden, geht vor der
+ *   Antwort an {@link Sources#delivered} (ADR 0033 Punkt 8).</li>
  * </ul>
  *
  * <p>Seiten werden über eine Kennung {@code Quelle/Seite} angesprochen. Was das Modell gelesen hat, wird als
@@ -51,6 +60,7 @@ final class ChatTools {
     static final String LIST = "seiten_auflisten";
     static final String READ = "seite_lesen";
     static final String SEARCH = "im_bereich_suchen";
+    static final String TERM = "begriff_nachschlagen";
 
     /** So viele Einträge je Blatt der Liste. */
     static final int PAGE_SIZE = 100;
@@ -66,15 +76,37 @@ final class ChatTools {
     static final String NOT_STORED = "Diese Seite liegt im gewählten Bereich, ist aber nicht lokal gespeichert.";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final System.Logger LOG = System.getLogger(ChatTools.class.getName());
+    /** Wohin Fehlergründe gehen (nur Werkzeug und Klasse, nie Argumente oder Inhalte); für Tests austauschbar. */
+    static volatile java.util.function.Consumer<String> diagnosis = reason -> LOG.log(System.Logger.Level.WARNING,
+            reason);
 
     /** Was das Modell gelesen hat, als nummerierte Quelle, und was an das Modell ging (KI-Freigabe, ADR 0033). */
     interface Sources {
         /** Nimmt die Seite auf (oder findet sie wieder) und gibt ihre Nummer. */
         int cite(ChatKnowledge.Excerpt excerpt, PageKey key);
 
-        /** Text oder Auszug der Seite ging eben an das Modell: Sie kommt auf die Liste freigegebener Seiten. */
+        /**
+         * Text oder Auszug der Seite geht gleich an das Modell: Sie kommt vorher auf die Liste freigegebener Seiten.
+         * Scheitert der Eintrag, wirft es, und die Seite geht nicht hinaus (ADR 0033 Punkt 8, für alle Werkzeuge).
+         */
         void delivered(String spaceKey, PageKey key);
     }
+
+    /** Der Eintrag in die Liste freigegebener Seiten ist gescheitert; die Seite geht nicht an das Modell. */
+    static final class ReleaseFailed extends RuntimeException {
+
+        ReleaseFailed(RuntimeException cause) {
+            super(cause.getClass().getSimpleName(), cause);
+        }
+
+        String reason() {
+            return getCause().getClass().getSimpleName();
+        }
+    }
+
+    static final String RELEASE_FAILED = "Die Seite ließ sich nicht für die KI freigeben (%s); ihr Inhalt geht "
+            + "nicht an das Modell.";
 
     private final Workspace workspace;
     private final PageSelection scope;
@@ -94,8 +126,17 @@ final class ChatTools {
 
     private HoldingsReader reader;
 
+    /** Fragt das Begriffswissen des Core ({@link Workspace#termKnowledge}); für Tests austauschbar. */
+    interface TermLookup {
+        TermKnowledge.Answer answer(String query, PageSet scope, TermKnowledge.Delivery delivery,
+                                    BooleanSupplier cancelled);
+    }
+
+    private TermLookup terms;
+
     ChatTools(Workspace workspace, PageSelection scope, Set<PageKey> granted, Sources sources) {
         this.reader = (sourceId, spaceKey) -> workspace.holdings(sourceId, spaceKey).pages();
+        this.terms = workspace::termKnowledge;
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.scope = scope;
         this.granted = Set.copyOf(granted);
@@ -127,6 +168,12 @@ final class ChatTools {
         return this;
     }
 
+    /** Für Tests: ein anderes Begriffswissen. */
+    ChatTools termLookup(TermLookup terms) {
+        this.terms = Objects.requireNonNull(terms, "terms");
+        return this;
+    }
+
     /** Die Definitionen für die Anfrage. */
     static List<AiChat.Tool> definitions() {
         return List.of(
@@ -145,7 +192,13 @@ final class ChatTools {
                         + " Zeichen je Aufruf; lange Seiten mit versatz weiterlesen. Liefert die Quellennummer, "
                         + "mit der du die Seite zitierst.",
                         "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"},"
-                                + "\"versatz\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"kennung\"]}"));
+                                + "\"versatz\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"kennung\"]}"),
+                new AiChat.Tool(TERM, "Schlägt einen Fachbegriff im gewählten Bereich nach: was der Wissensgraph "
+                        + "dort über ihn weiß, als Aussagen mit Verb, Vertrauensstufe und Belegseiten, dazu verwandte "
+                        + "Begriffe. Die Belegseiten vor dem Zitieren mit " + READ + " lesen.",
+                        "{\"type\":\"object\",\"properties\":{\"begriff\":{\"type\":\"string\","
+                                + "\"description\":\"Der Fachbegriff, etwa ein Wort aus der Frage\"}},"
+                                + "\"required\":[\"begriff\"]}"));
     }
 
     /** Kurz, was der Aufruf tut, für die Statuszeile; ohne Argumente des Modells. */
@@ -154,6 +207,7 @@ final class ChatTools {
             case SEARCH -> "Sucht im Bereich";
             case LIST -> "Listet Seiten";
             case READ -> "Liest eine Seite";
+            case TERM -> "Schlägt einen Fachbegriff nach";
             default -> "Werkzeug";
         };
     }
@@ -183,9 +237,17 @@ final class ChatTools {
                 case LIST -> list(arguments.path("knoten").asString(""), Math.max(1, arguments.path("blatt").asInt(1)));
                 case READ -> read(arguments.path("kennung").asString(""), Math.max(0, arguments.path("versatz")
                         .asInt(0)));
+                case TERM -> term(arguments.path("begriff").asString(""));
                 default -> "Unbekanntes Werkzeug.";
             };
+        } catch (CancellationException e) {
+            return "Abgebrochen.";
+        } catch (ReleaseFailed e) {
+            diagnosis.accept("Chat-Werkzeug " + call.name() + ": Freigabe gescheitert: " + e.reason());
+            return RELEASE_FAILED.formatted(e.reason());
         } catch (RuntimeException e) {
+            // Grund in die Diagnose, ohne Argumente oder Inhalte (ADR 0033, Folgen).
+            diagnosis.accept("Chat-Werkzeug " + call.name() + " gescheitert: " + e.getClass().getSimpleName());
             return "Das Werkzeug ist gescheitert (" + e.getClass().getSimpleName() + ").";
         }
     }
@@ -213,6 +275,15 @@ final class ChatTools {
         return key != null && (scope != null && scope.contains(key) || granted.contains(key));
     }
 
+    /** Trägt die Seite ein, bevor ihr Inhalt an das Modell geht; scheitert es, {@link ReleaseFailed}. */
+    private void release(String spaceKey, PageKey key) {
+        try {
+            sources.delivered(spaceKey, key);
+        } catch (RuntimeException e) {
+            throw new ReleaseFailed(e);
+        }
+    }
+
     // ------------------------------------------------------------------ Lesen
 
     String read(String ref, int offset) {
@@ -227,15 +298,17 @@ final class ChatTools {
         String text = page.text();
         int from = Math.min(offset, text.length());
         int to = Math.min(text.length(), from + READ_CHARS);
-        int number = sources.cite(new ChatKnowledge.Excerpt(page.title(), key.sourceId(), page.location(),
-                ChatKnowledge.excerpt(text, ChatKnowledge.MAX_HIT_CHARS), key.pageId()), key);
         String spaceKey = spaceOf(key);
         if (spaceKey == null) {
             spaceKey = page.spaceKey();
         }
-        if (spaceKey != null) {
-            sources.delivered(spaceKey, key);
+        if (spaceKey == null) {
+            // Ohne Space lässt sich die Seite nicht freigeben; dann geht ihr Text nicht hinaus.
+            throw new ReleaseFailed(new IllegalStateException("Seite ohne Space"));
         }
+        release(spaceKey, key);
+        int number = sources.cite(new ChatKnowledge.Excerpt(page.title(), key.sourceId(), page.location(),
+                ChatKnowledge.excerpt(text, ChatKnowledge.MAX_HIT_CHARS), key.pageId()), key);
         StringBuilder b = new StringBuilder();
         b.append("Quelle [").append(number).append("] ").append(oneLine(page.title())).append('\n');
         b.append("Zeichen ").append(from).append(" bis ").append(to).append(" von ").append(text.length())
@@ -406,6 +479,187 @@ final class ChatTools {
     private record Entry(PageKey key, String title, int size) {
     }
 
+    // ------------------------------------------------------------------ Fachbegriff (W7)
+
+    /** Obergrenze für die Eingabe; längeres ist kein Fachbegriff. */
+    static final int MAX_TERM_CHARS = 200;
+
+    /**
+     * Was der Wissensgraph im Bereich über {@code query} weiß. Der Bereich ist die Auswahl beim Senden, je Aufruf;
+     * die Belegseiten meldet der Kern vor der Antwort an {@link Sources#delivered}. Wirft diese Meldung, gibt es keine
+     * Antwort (ADR 0033 Punkt 8).
+     */
+    String term(String query) {
+        if (scope == null || scope.pages().isEmpty()) {
+            return "Es ist kein Bereich gewählt.";
+        }
+        String text = query.strip().replaceAll("\\s+", " ");
+        if (text.isEmpty()) {
+            return "Bitte einen Fachbegriff angeben.";
+        }
+        text = cut(text, MAX_TERM_CHARS);
+        TermKnowledge.Answer answer = terms.answer(text, scope.pages(), (spaceKey, key) -> {
+            String space = spaceKey != null ? spaceKey : spaceOf(key);
+            if (space == null) {
+                // Ohne Space lässt sich die Seite nicht freigeben; dann darf ihr Inhalt nicht hinaus.
+                throw new ReleaseFailed(new IllegalStateException("Belegseite ohne Space"));
+            }
+            release(space, key);
+        }, () -> cancelled);
+        return render(text, answer);
+    }
+
+    /** Höchstens {@code max} Zeichen, ohne ein Surrogatpaar zu zerteilen. */
+    static String cut(String text, int max) {
+        if (text.length() <= max) {
+            return text;
+        }
+        int end = Character.isHighSurrogate(text.charAt(max - 1)) ? max - 1 : max;
+        return text.substring(0, end);
+    }
+
+    /**
+     * Die Antwort als Text für das Modell: knapp, je Aussage eine Zeile, Belegseiten mit Kennung. Nur Namen aus
+     * gelieferten Aussagen des Bereichs: Ähnliche Fachbegriffe und Synonyme kommen aus dem ganzen Glossar und gehen
+     * deshalb nicht hinaus (Auflage Architekt, bis der Core sie auf den Bereich beschränkt).
+     */
+    static String render(String query, TermKnowledge.Answer answer) {
+        StringBuilder b = new StringBuilder();
+        switch (answer.outcome()) {
+            case EMPTY_QUERY -> {
+                return "Bitte einen Fachbegriff angeben.";
+            }
+            case EMPTY_SCOPE -> {
+                return "Der Bereich enthält keine Seiten.";
+            }
+            case NOT_A_TERM -> {
+                return noTerm(query, answer.limits());
+            }
+            case FOUND -> {
+                // weiter unten
+            }
+        }
+        List<TermKnowledge.Term> terms = answer.terms();
+        int statements = terms.stream().mapToInt(term -> term.statements().size()).sum();
+        if (statements == 0) {
+            // Ohne gelieferte Aussage derselbe Text wie „kein Fachbegriff“: Sonst verriete die Antwort, dass der
+            // Begriff irgendwo im Glossar bestätigt ist (Auflage Architekt, bis der Core FOUND nur im Bereich meldet).
+            return noTerm(query, answer.limits());
+        }
+        String main = terms.getFirst().term();
+        boolean named = terms.stream().flatMap(term -> term.statements().stream())
+                .anyMatch(statement -> statement.subject().equals(main) || statement.object().equals(main));
+        // Den Namen des Fachbegriffs nur, wenn eine gelieferte Aussage ihn trägt; sonst die Eingabe.
+        b.append("Fachbegriff: ").append(oneLine(named ? main : query)).append('\n');
+        TermKnowledge.Limits limits = answer.limits();
+        b.append("Aussagen (Stufe: geprüft, einig, ungeprüft, abweichend):\n");
+        for (TermKnowledge.Term term : terms) {
+            for (TermKnowledge.Statement statement : term.statements()) {
+                b.append("- ").append(statement(statement)).append('\n');
+            }
+        }
+        if (!answer.neighbours().isEmpty()) {
+            b.append("Verwandte Begriffe: ").append(String.join(", ", answer.neighbours().stream()
+                    .map(ChatTools::oneLine).toList())).append('\n');
+        }
+        String cut = limits(limits);
+        if (!cut.isEmpty()) {
+            b.append("Unvollständig: ").append(cut).append('\n');
+        }
+        b.append("Lies eine Belegseite mit ").append(READ).append(", bevor du dich auf sie berufst.");
+        return b.toString().stripTrailing();
+    }
+
+    /** Kein Fachbegriff mit Aussagen im Bereich; bei gekapptem Bereich mit dem Hinweis, was ungelesen blieb. */
+    private static String noTerm(String query, TermKnowledge.Limits limits) {
+        StringBuilder b = new StringBuilder("„").append(oneLine(query))
+                .append("“ ist im gewählten Bereich kein bestätigter Fachbegriff");
+        if (limits.pagesRead() < limits.pagesInScope()) {
+            b.append(" (gelesen wurden ").append(limits.pagesRead()).append(" von ").append(limits.pagesInScope())
+                    .append(" Seiten des Bereichs, die übrigen sind ungelesen)");
+        }
+        return b.append("; nutze ").append(SEARCH).append('.').toString();
+    }
+
+    private static String statement(TermKnowledge.Statement statement) {
+        StringBuilder b = new StringBuilder();
+        b.append(oneLine(statement.subject())).append(" —");
+        switch (statement.modality()) {
+            case MUSS -> b.append("muss ");
+            case SOLL -> b.append("soll ");
+            case KANN -> b.append("kann ");
+            case DARF -> b.append("darf ");
+            default -> { }
+        }
+        if (statement.negation() == ParsedStatements.Negation.NEGATED) {
+            b.append("nicht ");
+        }
+        b.append(oneLine(statement.verb())).append("→ ").append(oneLine(statement.object()));
+        b.append(" [").append(trust(statement.trust()));
+        switch (statement.temporality()) {
+            case GEPLANT -> b.append(", geplant");
+            case FRUEHER -> b.append(", früher");
+            case VERWORFEN -> b.append(", verworfen");
+            case UNKNOWN -> b.append(", Zeitbezug offen");
+            case GILT -> { }
+        }
+        // Nicht bestimmte Merkmale ausdrücklich nennen, sonst läse das Modell eine sichere, bejahte Aussage.
+        if (statement.negation() == ParsedStatements.Negation.UNKNOWN) {
+            b.append(", Verneinung offen");
+        }
+        if (statement.modality() == ParsedStatements.Modality.UNKNOWN) {
+            b.append(", Verbindlichkeit offen");
+        }
+        b.append(", ").append(statement.evidence()).append(statement.evidence() == 1 ? " Beleg" : " Belege")
+                .append(']');
+        if (!statement.pages().isEmpty()) {
+            b.append(" Seiten: ").append(String.join("; ", statement.pages().stream()
+                    .map(page -> ref(page.key()) + " (" + oneLine(page.title() == null ? page.key().pageId()
+                            : page.title()) + ")").toList()));
+            if (statement.omittedPages() > 0) {
+                b.append(" und ").append(statement.omittedPages()).append(" weitere");
+            }
+        }
+        return b.toString();
+    }
+
+    private static String trust(DomainTermGraph.Trust trust) {
+        return switch (trust) {
+            case GEPRUEFT -> "geprüft";
+            case EINIG -> "einig";
+            case UNGEPRUEFT -> "ungeprüft";
+            case ABWEICHEND -> "abweichend";
+        };
+    }
+
+    /** Was gekappt wurde, als kurze Liste; leer, wenn die Antwort vollständig ist. */
+    static String limits(TermKnowledge.Limits limits) {
+        if (!limits.cut()) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        if (limits.pagesRead() < limits.pagesInScope()) {
+            parts.add(limits.pagesRead() + " von " + limits.pagesInScope() + " Seiten des Bereichs gelesen");
+        }
+        if (limits.omittedStatements() > 0) {
+            parts.add(limits.omittedStatements() + " weitere Aussagen");
+        }
+        if (limits.omittedNeighbours() > 0) {
+            parts.add(limits.omittedNeighbours() + " weitere verwandte Begriffe");
+        }
+        if (limits.omittedEvidencePages() > 0) {
+            parts.add(limits.omittedEvidencePages() + (limits.omittedEvidencePages() == 1 ? " weitere Belegseite"
+                    : " weitere Belegseiten"));
+        }
+        if (limits.graphTruncated()) {
+            parts.add("der Wissensgraph ist an seiner Obergrenze");
+        }
+        if (limits.skippedStale() > 0) {
+            parts.add(limits.skippedStale() + " Aussagen veralteter Seiten ausgelassen");
+        }
+        return String.join("; ", parts);
+    }
+
     // ------------------------------------------------------------------ Suche
 
     String search(String text) {
@@ -430,10 +684,21 @@ final class ChatTools {
             b.append("- ").append(ref(key)).append(" | ").append(oneLine(hit.title() == null ? hit.pageId()
                     : hit.title()));
             if (hit.snippet() != null && !hit.snippet().isBlank()) {
-                b.append(" | ").append(oneLine(ChatKnowledge.excerpt(hit.snippet(), 300)));
+                // Der Auszug geht nur hinaus, wenn die Seite vorher eingetragen ist; sonst nur der Titel.
                 String spaceKey = hit.spaceKey() != null ? hit.spaceKey() : spaceOf(key);
-                if (spaceKey != null) {
-                    sources.delivered(spaceKey, key);
+                String reason = spaceKey == null ? "ohne Space" : null;
+                if (reason == null) {
+                    try {
+                        release(spaceKey, key);
+                    } catch (ReleaseFailed failed) {
+                        reason = failed.reason();
+                        diagnosis.accept("Chat-Werkzeug " + SEARCH + ": Freigabe gescheitert: " + reason);
+                    }
+                }
+                if (reason == null) {
+                    b.append(" | ").append(oneLine(ChatKnowledge.excerpt(hit.snippet(), 300)));
+                } else {
+                    b.append(" | (Auszug nicht freigegeben: ").append(reason).append(')');
                 }
             }
             b.append('\n');

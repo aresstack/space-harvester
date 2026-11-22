@@ -8,6 +8,9 @@ import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.holdings.Selection;
+import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
+import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
+import com.aresstack.spaceharvester.application.knowledge.TermKnowledge;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
@@ -103,7 +106,7 @@ class ChatToolsTurnTest {
         assertThat(events.completed).isEqualTo("Bei vollem Spool [2].");
         AiChat.Request first = port.requests.get(0);
         assertThat(first.tools()).extracting(AiChat.Tool::name)
-                .containsExactlyInAnyOrder(ChatTools.SEARCH, ChatTools.LIST, ChatTools.READ);
+                .containsExactlyInAnyOrder(ChatTools.SEARCH, ChatTools.LIST, ChatTools.READ, ChatTools.TERM);
         assertThat(first.messages().get(0).text()).startsWith(ChatKnowledge.TOOL_PROMPT)
                 .contains("[1] ").contains("Berechtigungsmanagement").contains(ChatTools.ref(open))
                 .doesNotContain("vollem Spool");
@@ -376,6 +379,475 @@ class ChatToolsTurnTest {
 
         assertThat(events.completed).isEqualTo("Ich schaue nach. Drei Seiten.");
         assertThat(events.deltas).containsExactly("Ich schaue nach. ", "Drei Seiten.");
+    }
+
+    // ------------------------------------------------------------------ begriff_nachschlagen (W7)
+
+    @Test
+    void theTermToolAsksOnlyTheAreaAndReleasesTheEvidencePagesBeforeAnswering() throws Exception {
+        PageKey evidence = page("nachtlauf");
+        String spaceKey = workspace.spaces("handbuch").get(0).key();
+        List<String> order = new CopyOnWriteArrayList<>();
+        List<PageSet> asked = new CopyOnWriteArrayList<>();
+        ChatTools tools = tools(order).termLookup((query, scope, delivery, cancelled) -> {
+            asked.add(scope);
+            TermKnowledge.Answer answer = found(evidence, spaceKey);
+            answer.pages().forEach(page -> delivery.delivered(page.spaceKey(), page.key()));
+            order.add("antwort");
+            return answer;
+        });
+
+        String text = tools.run(new AiChat.ToolCall("c1", ChatTools.TERM, "{\"begriff\":\"  Spool \"}"));
+
+        assertThat(asked).containsExactly(space.pages());
+        assertThat(order).containsExactly("geliefert " + ChatTools.ref(evidence), "antwort");
+        assertThat(text).contains("Fachbegriff: Spool").doesNotContain("Ausgabeablage")
+                .contains("Nachtlauf —muss nicht füllen→ Spool [geprüft, 2 Belege]")
+                .contains(ChatTools.ref(evidence) + " (Nachtlauf) und 1 weitere")
+                .contains("Verwandte Begriffe: Nachtlauf")
+                .contains("Unvollständig: 3 weitere Aussagen; 1 weitere Belegseite")
+                .contains(ChatTools.READ);
+    }
+
+    @Test
+    void whenTheReleaseFailsTheTermToolGivesNoAnswer() {
+        PageKey evidence = page("nachtlauf");
+        String spaceKey = workspace.spaces("handbuch").get(0).key();
+        ChatTools tools = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+                throw new IllegalStateException("Freigabe gescheitert");
+            }
+        }).termLookup((query, scope, delivery, cancelled) -> {
+            TermKnowledge.Answer answer = found(evidence, spaceKey);
+            answer.pages().forEach(page -> delivery.delivered(page.spaceKey(), page.key()));
+            return answer;
+        });
+
+        String text = tools.run(new AiChat.ToolCall("c1", ChatTools.TERM, "{\"begriff\":\"Spool\"}"));
+
+        assertThat(text).isEqualTo(ChatTools.RELEASE_FAILED.formatted("IllegalStateException"))
+                .doesNotContain("Nachtlauf");
+    }
+
+    @Test
+    void aWordThatIsNoTermNamesNoTermsFromOutsideAndWithoutAreaNothingIsAsked() {
+        ChatTools tools = tools(new ArrayList<>()).termLookup((query, scope, delivery, cancelled) ->
+                new TermKnowledge.Answer(TermKnowledge.Outcome.NOT_A_TERM, List.of(), List.of(),
+                        List.of("Spool", "Spoolbereich"), List.of(), limitsNone()));
+        // Ähnliche Fachbegriffe kommen aus dem ganzen Glossar, nicht aus dem Bereich: Sie gehen nicht hinaus.
+        assertThat(tools.term("Spol")).isEqualTo("„Spol“ ist im gewählten Bereich kein bestätigter Fachbegriff; "
+                + "nutze " + ChatTools.SEARCH + ".");
+        assertThat(tools.term("   ")).isEqualTo("Bitte einen Fachbegriff angeben.");
+
+        ChatTools nowhere = new ChatTools(workspace, null, java.util.Set.of(), sources(new ArrayList<>()))
+                .termLookup((query, scope, delivery, cancelled) -> {
+                    throw new AssertionError("ohne Bereich nie fragen");
+                });
+        assertThat(nowhere.term("Spool")).isEqualTo("Es ist kein Bereich gewählt.");
+    }
+
+    @Test
+    void theRealTermKnowledgeAnswersInTheAreaWithoutReleasingAnything() {
+        List<String> order = new ArrayList<>();
+        // Im erfundenen Handbuch ist nichts als Fachbegriff bestätigt: kein Fachbegriff, nichts geliefert.
+        String text = tools(order).run(new AiChat.ToolCall("c1", ChatTools.TERM, "{\"begriff\":\"Spool\"}"));
+        assertThat(text).startsWith("„Spool“ ist im gewählten Bereich kein bestätigter Fachbegriff");
+        assertThat(order).isEmpty();
+    }
+
+    @Test
+    void inTheTurnTheTermToolReleasesOnlyTheEvidencePages() throws Exception {
+        PageKey evidence = page("nachtlauf");
+        String spaceKey = workspace.spaces("handbuch").get(0).key();
+        TermKnowledge.Answer answer = found(evidence, spaceKey);
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.TERM, "{\"begriff\":\"Spool\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist ein Spool?", space, "Handbuch", events,
+                Runnable::run).knowledgeByTools(null).releasing(releases())
+                .termLookup((query, scope, delivery, cancelled) -> {
+                    answer.pages().forEach(page -> delivery.delivered(page.spaceKey(), page.key()));
+                    return answer;
+                }).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(events.using).contains("Schlägt einen Fachbegriff nach");
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        assertThat(messages.get(messages.size() - 1).text()).contains("Fachbegriff: Spool");
+        assertThat(released()).containsExactly(evidence);
+    }
+
+    @Test
+    void inTheTurnAFailedReleaseKeepsTheTermAnswerFromTheModel() throws Exception {
+        PageKey evidence = page("nachtlauf");
+        String spaceKey = workspace.spaces("handbuch").get(0).key();
+        TermKnowledge.Answer answer = found(evidence, spaceKey);
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.TERM, "{\"begriff\":\"Spool\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist ein Spool?", space, "Handbuch", events,
+                Runnable::run).knowledgeByTools(null).releasing(new ChatTurn.Releases() {
+                    @Override
+                    public int page(String spaceKey, PageKey key) {
+                        throw new IllegalStateException("Freigabeliste nicht schreibbar");
+                    }
+
+                    @Override
+                    public int selection() {
+                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
+                    }
+                }).termLookup((query, scope, delivery, cancelled) -> {
+                    answer.pages().forEach(page -> delivery.delivered(page.spaceKey(), page.key()));
+                    return answer;
+                }).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        assertThat(messages.get(messages.size() - 1).text())
+                .isEqualTo(ChatTools.RELEASE_FAILED.formatted("IllegalStateException"));
+        assertThat(released()).isEmpty();
+    }
+
+    @Test
+    void featuresThatWereNotDeterminedAreNamedAsOpen() {
+        PageKey evidence = new PageKey("handbuch", "nachtlauf");
+        TermKnowledge.Statement statement = new TermKnowledge.Statement("Nachtlauf", "füllen", "Spool",
+                ParsedStatements.Negation.UNKNOWN, ParsedStatements.Modality.UNKNOWN,
+                ParsedStatements.Temporality.UNKNOWN, DomainTermGraph.Trust.UNGEPRUEFT, 1,
+                List.of(new TermKnowledge.Page(evidence, "HB", "Nachtlauf")), 0);
+        TermKnowledge.Answer answer = new TermKnowledge.Answer(TermKnowledge.Outcome.FOUND,
+                List.of(new TermKnowledge.Term("Spool", DomainTermGraph.NodeKind.TERM, List.of(statement))),
+                List.of(), List.of(), List.of(), limitsNone());
+
+        assertThat(ChatTools.render("Spool", answer)).contains("Nachtlauf —füllen→ Spool [ungeprüft, "
+                + "Zeitbezug offen, Verneinung offen, Verbindlichkeit offen, 1 Beleg]");
+    }
+
+    // ------------------------------------------------------------------ Freigabe dicht für alle Werkzeuge
+
+    @Test
+    void aFailedReleaseKeepsTheReadPageFromTheModelAndALaterLookupReportsItAgain() throws Exception {
+        PageKey read = page("nachtlauf");
+        String spaceKey = workspace.spaces("handbuch").get(0).key();
+        List<PageKey> attempts = new CopyOnWriteArrayList<>();
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.READ, "{\"kennung\":\"" + ChatTools.ref(read) + "\"}"))),
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c2", ChatTools.TERM, "{\"begriff\":\"Spool\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", space, "Handbuch",
+                events, Runnable::run).knowledgeByTools(null).releasing(new ChatTurn.Releases() {
+                    @Override
+                    public int page(String spaceKey, PageKey key) {
+                        attempts.add(key);
+                        if (attempts.size() == 1) {
+                            throw new IllegalStateException("Freigabeliste nicht schreibbar");
+                        }
+                        return workspace.releasePageForChat(spaceKey, key).size();
+                    }
+
+                    @Override
+                    public int selection() {
+                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
+                    }
+                }).termLookup((query, scope, delivery, cancelled) -> {
+                    TermKnowledge.Answer answer = found(read, spaceKey);
+                    answer.pages().forEach(page -> delivery.delivered(page.spaceKey(), page.key()));
+                    return answer;
+                }).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        List<AiChat.Message> first = port.requests.get(1).messages();
+        assertThat(first.get(first.size() - 1).text())
+                .isEqualTo(ChatTools.RELEASE_FAILED.formatted("IllegalStateException"))
+                .doesNotContain("vollem Spool");
+        assertThat(events.context == null ? List.of() : events.context.accepted()).as("nichts zitiert").isEmpty();
+        assertThat(attempts).as("die gescheiterte Seite wird beim nächsten Werkzeug wieder gemeldet")
+                .containsExactly(read, read);
+        assertThat(released()).containsExactly(read);
+    }
+
+    @Test
+    void aFailedReleaseKeepsTheSearchExcerptFromTheModel() throws Exception {
+        ChatTools probe = tools(new ArrayList<>());
+        await(() -> probe.search("Spool").lines().anyMatch(line -> line.split(" \\| ").length >= 3) ? true : null);
+        List<String> reasons = new CopyOnWriteArrayList<>();
+        java.util.function.Consumer<String> before = ChatTools.diagnosis;
+        ChatTools.diagnosis = reasons::add;
+        try {
+            ChatTools failing = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
+                @Override
+                public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                    return 1;
+                }
+
+                @Override
+                public void delivered(String spaceKey, PageKey key) {
+                    throw new IllegalStateException("Freigabeliste nicht schreibbar");
+                }
+            });
+
+            String hits = failing.search("Spool");
+
+            assertThat(hits).contains("(Auszug nicht freigegeben: IllegalStateException)")
+                    .doesNotContain("vollem Spool").doesNotContain("Ablage der Ausgaben");
+            assertThat(reasons).isNotEmpty().allSatisfy(reason -> assertThat(reason)
+                    .isEqualTo("Chat-Werkzeug " + ChatTools.SEARCH + ": Freigabe gescheitert: IllegalStateException"));
+        } finally {
+            ChatTools.diagnosis = before;
+        }
+    }
+
+    @Test
+    void inTheTurnAFailedReleaseKeepsTheSearchExcerptFromTheModel() throws Exception {
+        ChatTools probe = tools(new ArrayList<>());
+        await(() -> probe.search("Spool").lines().anyMatch(line -> line.split(" \\| ").length >= 3) ? true : null);
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.SEARCH, "{\"text\":\"Spool\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist ein Spool?", space, "Handbuch", events,
+                Runnable::run).knowledgeByTools(null).releasing(new ChatTurn.Releases() {
+                    @Override
+                    public int page(String spaceKey, PageKey key) {
+                        throw new IllegalStateException("Freigabeliste nicht schreibbar");
+                    }
+
+                    @Override
+                    public int selection() {
+                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
+                    }
+                }).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        assertThat(messages.get(messages.size() - 1).text())
+                .contains("(Auszug nicht freigegeben: IllegalStateException)")
+                .doesNotContain("vollem Spool").doesNotContain("Ablage der Ausgaben");
+        assertThat(released()).isEmpty();
+    }
+
+    @Test
+    void anOpenPageWhoseReleaseFailsDoesNotGoAlong() throws Exception {
+        PageKey open = page("datenhaus");
+        ScriptedChat port = new ScriptedChat(List.of((request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Worum geht es?", space, "Handbuch", events,
+                Runnable::run).knowledgeByTools(open).releasing(new ChatTurn.Releases() {
+                    @Override
+                    public int page(String spaceKey, PageKey key) {
+                        throw new IllegalStateException("Freigabeliste nicht schreibbar");
+                    }
+
+                    @Override
+                    public int selection() {
+                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
+                    }
+                }).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests.get(0).messages().get(0).text()).doesNotContain("Berechtigungsmanagement")
+                .contains(ChatKnowledge.NO_OPEN_PAGE);
+    }
+
+    // ------------------------------------------------------------------ begriff_nachschlagen: Kanten
+
+    @Test
+    void theRealTermKnowledgeFindsAConfirmedTermInTheAreaAndReportsOnlyItsEvidenceBeforeAnswering() {
+        String spaceKey = workspace.spaces("handbuch").get(0).key();
+        PageKey inside = page("nachtlauf");
+        PageKey outside = new PageKey("handbuch", "fremd");
+        com.aresstack.spaceharvester.application.access.AccessContext caller =
+                com.aresstack.spaceharvester.application.access.AccessContext.technicalClient("desktop");
+        com.aresstack.spaceharvester.application.knowledge.InMemoryKnowledgeGraphStore store =
+                new com.aresstack.spaceharvester.application.knowledge.InMemoryKnowledgeGraphStore();
+        com.aresstack.spaceharvester.application.access.AccessGuard access =
+                new com.aresstack.spaceharvester.application.access.AccessGuard((context, scope, kind) ->
+                        com.aresstack.spaceharvester.application.access.AccessDecision.ALLOW);
+        Map<PageKey, com.aresstack.spaceharvester.application.snapshot.PageSnapshot> cache = new java.util.HashMap<>();
+        java.util.function.Function<com.aresstack.spaceharvester.application.snapshot.PageSnapshot,
+                java.util.Optional<com.aresstack.spaceharvester.application.enrichment.PageText>> texts = snapshot ->
+                java.util.Optional.of(new com.aresstack.spaceharvester.application.enrichment.PageText("test/v1",
+                        new String(snapshot.payload().bytes(), java.nio.charset.StandardCharsets.UTF_8), List.of()));
+        com.aresstack.spaceharvester.application.knowledge.StatementAnalysis analysis =
+                new com.aresstack.spaceharvester.application.knowledge.StatementAnalysis(texts, store, access,
+                        com.aresstack.spaceharvester.application.knowledge.FakeStatementAnalyzer::new,
+                        java.time.Clock.fixed(java.time.Instant.parse("2026-11-22T15:00:00Z"),
+                                java.time.ZoneOffset.UTC));
+        com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph graph =
+                new com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph(store, access,
+                        key -> java.util.Optional.ofNullable(cache.get(key)), texts, analysis,
+                        com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph.TermExpansion.NONE);
+        for (var page : List.of(Map.entry(inside, "Der Nachtlauf prüft den Spool."),
+                Map.entry(outside, "Der Nachtlauf sendet den Spool."))) {
+            var snapshot = com.aresstack.spaceharvester.application.snapshot.PageSnapshot.of("handbuch",
+                    new com.aresstack.spaceharvester.application.sources.PageMetadata(page.getKey().pageId(),
+                            "files:" + page.getKey().pageId(), "Seite " + page.getKey().pageId(), spaceKey, null,
+                            "1", java.time.Instant.parse("2026-11-22T10:00:00Z"),
+                            java.net.URI.create("file:///handbuch/" + page.getKey().pageId()),
+                            com.aresstack.spaceharvester.application.sources.PageMetadata.sorted(Map.of())),
+                    new com.aresstack.spaceharvester.application.snapshot.NativePayload(page.getValue()
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8), "text/plain", "test-text"),
+                    java.time.Instant.parse("2026-11-22T10:00:00Z"));
+            cache.put(snapshot.key(), snapshot);
+            analysis.analyze(caller, snapshot, () -> false);
+        }
+        DomainTermGraph.Vocabulary vocabulary = new DomainTermGraph.Vocabulary() {
+            @Override
+            public List<DomainTermGraph.Term> terms(
+                    com.aresstack.spaceharvester.application.access.AccessContext who) {
+                return List.of(new DomainTermGraph.Term("Nachtlauf",
+                                new com.aresstack.spaceharvester.application.terms.RelationScope(null, null)),
+                        new DomainTermGraph.Term("Spool",
+                                new com.aresstack.spaceharvester.application.terms.RelationScope(null, null)));
+            }
+
+            @Override
+            public List<DomainTermGraph.Synonym> synonyms(
+                    com.aresstack.spaceharvester.application.access.AccessContext who) {
+                return List.of();
+            }
+        };
+        TermKnowledge knowledge = new TermKnowledge(new DomainTermGraph(graph, vocabulary));
+        List<String> order = new CopyOnWriteArrayList<>();
+
+        String text = tools(order).termLookup((query, scope, delivery, cancelled) -> {
+            TermKnowledge.Answer answer = knowledge.answer(caller, query, scope, delivery, cancelled);
+            order.add("antwort");
+            return answer;
+        }).term("Spool");
+
+        assertThat(text).contains("Fachbegriff: Spool").contains("Nachtlauf —prüft→ Spool")
+                .contains(ChatTools.ref(inside)).doesNotContain("sendet").doesNotContain("fremd");
+        assertThat(order).containsExactly("geliefert " + ChatTools.ref(inside), "antwort");
+    }
+
+    @Test
+    void anEvidencePageWithoutSpaceGivesNoAnswer() {
+        PageKey unknown = new PageKey("handbuch", "ohne-space");
+        ChatTools tools = tools(new ArrayList<>()).termLookup((query, scope, delivery, cancelled) -> {
+            TermKnowledge.Answer answer = found(unknown, null);
+            answer.pages().forEach(page -> delivery.delivered(page.spaceKey(), page.key()));
+            return answer;
+        });
+
+        assertThat(tools.run(new AiChat.ToolCall("c1", ChatTools.TERM, "{\"begriff\":\"Spool\"}")))
+                .isEqualTo(ChatTools.RELEASE_FAILED.formatted("IllegalStateException"));
+    }
+
+    @Test
+    void cancellingStopsTheLookupWithAShortAnswer() {
+        ChatTools tools = tools(new ArrayList<>()).termLookup((query, scope, delivery, cancelled) -> {
+            if (cancelled.getAsBoolean()) {
+                throw new java.util.concurrent.CancellationException();
+            }
+            throw new AssertionError("Abbruch nicht durchgereicht");
+        });
+        tools.cancel();
+
+        assertThat(tools.run(new AiChat.ToolCall("c1", ChatTools.TERM, "{\"begriff\":\"Spool\"}")))
+                .isEqualTo("Abgebrochen.");
+    }
+
+    @Test
+    void theInputIsCappedWithoutSplittingASurrogatePair() {
+        List<String> asked = new CopyOnWriteArrayList<>();
+        ChatTools tools = tools(new ArrayList<>()).termLookup((query, scope, delivery, cancelled) -> {
+            asked.add(query);
+            return new TermKnowledge.Answer(TermKnowledge.Outcome.NOT_A_TERM, List.of(), List.of(), List.of(),
+                    List.of(), limitsNone());
+        });
+        String input = "a".repeat(ChatTools.MAX_TERM_CHARS - 1) + "😀" + "rest";
+
+        tools.term(input);
+
+        assertThat(asked).singleElement().isEqualTo("a".repeat(ChatTools.MAX_TERM_CHARS - 1));
+        assertThat(ChatTools.cut("kurz", ChatTools.MAX_TERM_CHARS)).isEqualTo("kurz");
+    }
+
+    @Test
+    void aFailingLookupNamesItsReasonAndTheDiagnosisOnlyItsClass() {
+        List<String> reasons = new CopyOnWriteArrayList<>();
+        java.util.function.Consumer<String> before = ChatTools.diagnosis;
+        ChatTools.diagnosis = reasons::add;
+        try {
+            ChatTools tools = tools(new ArrayList<>()).termLookup((query, scope, delivery, cancelled) -> {
+                throw new IllegalArgumentException("Inhalt der Seite Nachtlauf");
+            });
+
+            String text = tools.run(new AiChat.ToolCall("c1", ChatTools.TERM, "{\"begriff\":\"Spool\"}"));
+
+            assertThat(text).isEqualTo("Das Werkzeug ist gescheitert (IllegalArgumentException).");
+            assertThat(reasons).containsExactly("Chat-Werkzeug " + ChatTools.TERM
+                    + " gescheitert: IllegalArgumentException");
+        } finally {
+            ChatTools.diagnosis = before;
+        }
+    }
+
+    @Test
+    void withoutStatementsInAPartlyReadAreaTheAnswerSaysWhatWasRead() {
+        TermKnowledge.Answer answer = new TermKnowledge.Answer(TermKnowledge.Outcome.FOUND,
+                List.of(new TermKnowledge.Term("Spool", DomainTermGraph.NodeKind.TERM, List.of())), List.of(),
+                List.of(), List.of(), new TermKnowledge.Limits(800, 500, 0, 0, 0, 0, false, 0));
+
+        assertThat(ChatTools.render("Spule", answer))
+                .as("ohne gelieferte Aussage wie „kein Fachbegriff“, mit dem Teil-Lesen, ohne Namen aus dem Glossar")
+                .isEqualTo("„Spule“ ist im gewählten Bereich kein bestätigter Fachbegriff (gelesen wurden 500 von "
+                        + "800 Seiten des Bereichs, die übrigen sind ungelesen); nutze " + ChatTools.SEARCH + ".");
+    }
+
+    private ChatTools tools(List<String> order) {
+        return new ChatTools(workspace, space, java.util.Set.of(), sources(order));
+    }
+
+    private static ChatTools.Sources sources(List<String> order) {
+        return new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+                order.add("geliefert " + ChatTools.ref(key));
+            }
+        };
+    }
+
+    /** Eine erfundene Antwort: Spool mit einem Synonym, eine verneinte Muss-Aussage, drei gekappte Aussagen. */
+    private static TermKnowledge.Answer found(PageKey evidence, String spaceKey) {
+        TermKnowledge.Page page = new TermKnowledge.Page(evidence, spaceKey, "Nachtlauf");
+        TermKnowledge.Statement statement = new TermKnowledge.Statement("Nachtlauf", "füllen", "Spool",
+                ParsedStatements.Negation.NEGATED, ParsedStatements.Modality.MUSS, ParsedStatements.Temporality.GILT,
+                DomainTermGraph.Trust.GEPRUEFT, 2, List.of(page), 1);
+        return new TermKnowledge.Answer(TermKnowledge.Outcome.FOUND, List.of(
+                new TermKnowledge.Term("Spool", DomainTermGraph.NodeKind.TERM, List.of(statement)),
+                new TermKnowledge.Term("Ausgabeablage", DomainTermGraph.NodeKind.SYNONYM, List.of())),
+                List.of("Nachtlauf"), List.of(), List.of(page),
+                new TermKnowledge.Limits(3, 3, 0, 3, 0, 1, false, 0));
+    }
+
+    private static TermKnowledge.Limits limitsNone() {
+        return new TermKnowledge.Limits(0, 0, 0, 0, 0, 0, false, 0);
     }
 
     private ChatTurn.Releases releases() {

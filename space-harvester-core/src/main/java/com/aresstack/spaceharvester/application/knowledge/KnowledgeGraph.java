@@ -165,6 +165,8 @@ public class KnowledgeGraph {
     private final Map<PageKey, InputMemo> inputs;
     /** {@code PageText#inputSha256()} eines Anhangs oder einer enthaltenen Datei; leer, solange keiner vorliegt. */
     private final Function<DocumentKey, Optional<String>> documentInputs;
+    /** Space einer Seite aus den Kopfdaten des Bestands (ohne Text); leer, wenn sie dort nicht liegt. */
+    private final Function<PageKey, Optional<String>> spaces;
     private final com.aresstack.spaceharvester.application.observe.Listeners<Runnable> listeners =
             new com.aresstack.spaceharvester.application.observe.Listeners<>("Aussagenanalysen");
     /** Bündelt Meldungen neuer und ersetzter Analysen: ein Auftrag über viele Seiten meldet höchstens alle 250 ms. */
@@ -206,6 +208,20 @@ public class KnowledgeGraph {
                           TermExpansion expansions, Predicate<String> activeSources,
                           Function<DocumentKey, Optional<String>> documentInputs) {
         this(store, access, snapshots, texts, statements, expansions, activeSources, documentInputs,
+                key -> snapshots.apply(key).map(PageSnapshot::spaceKey));
+    }
+
+    /**
+     * Wie oben, mit {@code spaces}: der Space einer Seite aus den Kopfdaten des Bestands, ohne den ganzen Snapshot samt
+     * Text zu laden (für {@link #place}); leer, wenn die Seite dort nicht liegt.
+     */
+    public KnowledgeGraph(KnowledgeGraphStore store, AccessGuard access,
+                          Function<PageKey, Optional<PageSnapshot>> snapshots,
+                          Function<PageSnapshot, Optional<PageText>> texts, StatementAnalysis statements,
+                          TermExpansion expansions, Predicate<String> activeSources,
+                          Function<DocumentKey, Optional<String>> documentInputs,
+                          Function<PageKey, Optional<String>> spaces) {
+        this(store, access, snapshots, texts, statements, expansions, activeSources, documentInputs, spaces,
                 new ConcurrentHashMap<>());
     }
 
@@ -213,7 +229,9 @@ public class KnowledgeGraph {
                            Function<PageKey, Optional<PageSnapshot>> snapshots,
                            Function<PageSnapshot, Optional<PageText>> texts, StatementAnalysis statements,
                            TermExpansion expansions, Predicate<String> activeSources,
-                           Function<DocumentKey, Optional<String>> documentInputs, Map<PageKey, InputMemo> inputs) {
+                           Function<DocumentKey, Optional<String>> documentInputs,
+                           Function<PageKey, Optional<String>> spaces, Map<PageKey, InputMemo> inputs) {
+        this.spaces = Objects.requireNonNull(spaces, "spaces");
         this.documentInputs = Objects.requireNonNull(documentInputs, "documentInputs");
         this.activeSources = Objects.requireNonNull(activeSources, "activeSources");
         this.store = Objects.requireNonNull(store, "store");
@@ -232,7 +250,7 @@ public class KnowledgeGraph {
      */
     public KnowledgeGraph sharingInputs(KnowledgeGraphStore other) {
         return new KnowledgeGraph(other, access, snapshots, texts, statements, expansions, activeSources,
-                documentInputs, inputs);
+                documentInputs, spaces, inputs);
     }
 
     /**
@@ -277,6 +295,31 @@ public class KnowledgeGraph {
         }
         String space = snapshots.apply(key).map(PageSnapshot::spaceKey).orElse(spaceKey);
         return access.canRead(caller, key.sourceId(), space, key.pageId());
+    }
+
+    /** Quelle, Seite und Space einer Seite im Bestand. */
+    public record Place(PageKey key, String spaceKey) {
+        public Place {
+            Objects.requireNonNull(key, "key");
+        }
+    }
+
+    /**
+     * Wo eine Seite im Bestand liegt (Space aus dem Bestand), gleich ob sie analysiert ist; leer, wenn sie dort nicht
+     * liegt, ihre Quelle abgeschaltet ist oder der Aufrufer sie nicht lesen darf (wie {@link #readable}).
+     */
+    public Optional<Place> place(AccessContext caller, PageKey key) {
+        if (!activeSources.test(key.sourceId())) {
+            return Optional.empty();
+        }
+        // Nur die Kopfdaten: der Space genügt, der Text der Seite wird hier nie gebraucht.
+        Optional<String> found = spaces.apply(key);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        String space = found.get();
+        return access.canRead(caller, key.sourceId(), space, key.pageId()) ? Optional.of(new Place(key, space))
+                : Optional.empty();
     }
 
     /**

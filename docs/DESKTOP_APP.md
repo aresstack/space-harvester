@@ -403,8 +403,9 @@ Core selbst.
   Senden (`ChatTurn`): die eigene Nachricht als Sprechblase, dann das Wissen aus dem Bestand nach
   [ADR 0033](adr/0033-wissen-des-chats-per-verweis-und-werkzeug.md): Ist links eine Seite gewählt, geht sie im
   Volltext als Quelle [1] mit (sehr lange Seiten: der Anfang, der Rest per Werkzeug), alles andere im Bereich holt sich
-  das Modell selbst über die Werkzeuge `im_bereich_suchen`, `seiten_auflisten` (je Knoten, blätternd) und
-  `seite_lesen` (`ChatTools`); jeder Aufruf wird gegen den Bereich beim Senden geprüft, gelesene Seiten werden
+  das Modell selbst über die Werkzeuge `im_bereich_suchen`, `seiten_auflisten` (je Knoten, blätternd),
+  `seite_lesen` und `begriff_nachschlagen` (Begriffswissen des Wissensgraphen zu einem bestätigten Fachbegriff,
+  `TermKnowledge`, Paket W7) (`ChatTools`); jeder Aufruf wird gegen den Bereich beim Senden geprüft, gelesene Seiten werden
   fortlaufend nummeriert, die Statuszeile nennt, was das Modell gerade holt. Lehnt der Dienst Werkzeuge ab, gilt für
   dieses Modell bis zum Neustart der frühere Weg (ADR 0029: bis drei gewählte Seiten gehen ganz mit, sonst sucht die progressive Suche des Core, ADR 0017, nur in den gewählten Seiten
   und die besten acht Treffer kommen als Absatz samt Nachbarn oder Lesetext-Auszug mit; Kontextblock wie
