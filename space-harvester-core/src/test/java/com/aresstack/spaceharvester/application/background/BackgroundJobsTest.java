@@ -179,7 +179,7 @@ class BackgroundJobsTest {
         assertThat(background.group(group.groupId()).orElseThrow().paused()).isTrue();
         assertThat(paused.jobIds()).containsExactlyElementsOf(group.jobIds());
 
-        background.resume(group.groupId());
+        background.resumeGroupWithoutCaller(group.groupId());
         executor.runAll();
 
         BackgroundGroup done = background.group(group.groupId()).orElseThrow();
@@ -254,7 +254,7 @@ class BackgroundJobsTest {
         assertThat(after.resumeInterrupted()).isEmpty();
         assertThat(restarted.status(group.parts().get(0).id()).state()).isEqualTo(JobState.FAILED);
         // Von Hand fortsetzen geht trotzdem.
-        after.resumeJob(group.parts().get(0).id());
+        after.resumeWithoutCaller(group.parts().get(0).id());
         executor.runAll();
         assertThat(restarted.status(group.parts().get(0).id()).state()).isEqualTo(JobState.COMPLETED);
     }
@@ -397,22 +397,22 @@ class BackgroundJobsTest {
         BackgroundGroup open = background.startUnlessRunning("solo", "Solo", alpha).orElseThrow();
         String openId = open.parts().getFirst().id();
 
-        assertThatThrownBy(() -> background.resumeJob(cancelledId)).as("läuft schon")
+        assertThatThrownBy(() -> background.resumeWithoutCaller(cancelledId)).as("läuft schon")
                 .isInstanceOfSatisfying(BackgroundPartOpenException.class,
                         refused -> assertThat(refused.openJobId()).isEqualTo(openId));
-        background.resume(cancelled.groupId());
+        background.resumeGroupWithoutCaller(cancelled.groupId());
         assertThat(jobs.status(cancelledId).state()).isEqualTo(JobState.CANCELLED);
 
         background.pause(open.groupId());
         executor.runAll();
         assertThat(jobs.status(openId).state()).isEqualTo(JobState.PAUSED);
-        assertThatThrownBy(() -> background.resumeJob(cancelledId)).as("der angehaltene nimmt die Arbeit mit")
+        assertThatThrownBy(() -> background.resumeWithoutCaller(cancelledId)).as("der angehaltene nimmt die Arbeit mit")
                 .isInstanceOf(BackgroundPartOpenException.class);
 
-        background.resumeJob(openId);
+        background.resumeWithoutCaller(openId);
         executor.runAll();
         assertThat(jobs.status(openId).state()).isEqualTo(JobState.COMPLETED);
-        background.resumeJob(cancelledId);
+        background.resumeWithoutCaller(cancelledId);
         executor.runAll();
         assertThat(jobs.status(cancelledId).state()).as("ist keiner mehr offen, geht es").isEqualTo(JobState.COMPLETED);
         assertThat(seen).extracting(BackgroundPart::jobId).containsExactly(openId, cancelledId);
@@ -428,7 +428,7 @@ class BackgroundJobsTest {
         executor.runAll();
         background.start("demo", "Demo", List.of(alpha));
 
-        background.resumeJob(cancelled.parts().getFirst().id());
+        background.resumeWithoutCaller(cancelled.parts().getFirst().id());
         executor.runAll();
 
         assertThat(jobs.status(cancelled.parts().getFirst().id()).state()).isEqualTo(JobState.COMPLETED);

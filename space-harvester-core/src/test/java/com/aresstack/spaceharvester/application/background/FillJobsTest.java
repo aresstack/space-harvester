@@ -205,7 +205,7 @@ class FillJobsTest {
         assertThat(started).containsExactly("1");
         assertThat(background.parts(FillJobs.KIND)).hasSize(1);
 
-        background.resume(groupId);
+        background.resumeGroupWithoutCaller(groupId);
         gates.values().forEach(CountDownLatch::countDown);
 
         eventually(() -> loaded.containsAll(List.of("1", "2", "3")));
@@ -336,7 +336,7 @@ class FillJobsTest {
         gates.get("1").countDown();
         eventually(() -> loaded.contains("1"));
 
-        background.resume(groupId);
+        background.resumeGroupWithoutCaller(groupId);
 
         eventually(() -> loaded.contains("2"));
         eventually(() -> part(JobState.COMPLETED).isPresent());
@@ -429,7 +429,7 @@ class FillJobsTest {
         searchedAgain(after);
         assertThat(started).containsExactly("1");
 
-        restartedJobs.resume(groupId);
+        restartedJobs.resumeGroupWithoutCaller(groupId);
         eventually(() -> loaded.contains("2"));
         eventually(() -> !afterJobs.resting(DEV));
     }

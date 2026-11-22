@@ -2362,7 +2362,8 @@ public final class Workspace {
         JobStatus status = job(jobId);
         if (!Harvester.OWNER.equals(status.owner())) {
             // Aufträge des Aufrufers (Zusammenfassen, Synonymlauf, Aussagenanalyse) setzt der Core selbst fort.
-            return harvester.jobActions().perform(jobId, status.owner(), JobAction.RESUME);
+            return harvester.jobActions().perform(jobId, status.owner(), JobAction.RESUME,
+                    java.util.function.UnaryOperator.identity(), caller);
         }
         if (imageRun(status)) {
             return harvester.imageDescriptions().resume(caller, jobId);
@@ -2433,7 +2434,8 @@ public final class Workspace {
             return harvester.knowledgeGraphJobs().resume(caller, jobId);
         }
         JobStatus status = Harvester.OWNER.equals(owner) ? harvester.performJobAction(jobId, action)
-                : harvester.jobActions().perform(jobId, owner, action);
+                : harvester.jobActions().perform(jobId, owner, action, java.util.function.UnaryOperator.identity(),
+                        caller);
         if (action == JobAction.DELETE) {
             activities.forget(jobId);
         }

@@ -241,7 +241,7 @@ public class StatementAnalysisJobs {
      * Setzt eine Gruppe von Hand fort, mit den Rechten des Fortsetzenden; auch nach {@value #RESUME_BY_HAND}. Trägt
      * die Gruppe Teile des Dienst-Planers ({@value #CALLER}, etwa „Wissensgraph erzeugen“, W5), gelten dessen Rechte
      * nur, wenn er ihr Eigentümer ({@value #OWNER}) ist; ein fremder Teil läuft nie mit den Rechten dessen weiter, der
-     * ihn fortsetzt, und hält wieder gelb an.
+     * ihn fortsetzt: Er bleibt stehen ({@link BackgroundJobs#mayContinue}, Abnahme #1112).
      *
      * @return die Gruppe, leer ohne Hintergrund oder unbekannte Gruppe
      */
@@ -259,7 +259,7 @@ public class StatementAnalysisJobs {
         if (!foreign) {
             callers.put(groupId, caller);
         }
-        return group.resume(groupId);
+        return group.resume(groupId, caller);
     }
 
     /** Ob überhaupt analysiert werden kann (Analysator eingerichtet); lädt kein Modell. */

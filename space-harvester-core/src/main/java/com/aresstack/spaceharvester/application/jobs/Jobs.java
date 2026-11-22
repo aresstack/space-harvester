@@ -1912,10 +1912,11 @@ public class Jobs implements AutoCloseable {
                 && "true".equals(status.parameter(SURVIVES_SHUTDOWN));
     }
 
-    /**
-     * Unter dem Sperrobjekt: ob das offene Löschen der Daten seiner Quelle den Auftrag hält ({@link #sourceHold});
-     * meldet „wartet auf …“ einmal je Sperre.
-     */
+    /** Der Auftrag, der die Daten der Quelle gerade löscht ({@link #sourceHold}), sonst {@code null}. */
+    public String sourceHolder(String sourceId) {
+        return holder(sourceId);
+    }
+
     /** Der Auftrag, der die Daten der Quelle gerade löscht ({@link #sourceHold}), sonst {@code null}. */
     private String holder(String sourceId) {
         try {
@@ -1931,6 +1932,10 @@ public class Jobs implements AutoCloseable {
         return holder != null && !holder.equals(job.id);
     }
 
+    /**
+     * Unter dem Sperrobjekt: ob das offene Löschen der Daten seiner Quelle den Auftrag hält ({@link #sourceHold});
+     * meldet „wartet auf …“ einmal je Sperre.
+     */
     private boolean heldBySource(Job job) {
         String holder = holder(job.sourceId);
         boolean held = holder != null && !holder.equals(job.id);

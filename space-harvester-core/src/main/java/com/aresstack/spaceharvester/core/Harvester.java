@@ -639,7 +639,10 @@ public final class Harvester implements AutoCloseable {
                 // ADR 0025 Nachtrag, Punkt 10: die Warteschlange der Netz-Prozessoren als „KI-Anreicherung“ je Quelle;
                 // schließt nach den Komponenten, die einreihen, und vor der Ablage.
                 Enrichments hostedEnrichments = enrichments;
-                hostedEnrichments.background(backgroundJobs, cache::find);
+                // Angelo 22.11.2026: Die Warteschlange überlebt den Neustart (nur Schlüssel, nie Text).
+                hostedEnrichments.background(backgroundJobs, cache::find,
+                        new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(
+                                cacheDirectory.resolve("enrichment-queue")));
                 opened.add(() -> hostedEnrichments.closeBackground(Duration.ofSeconds(10)));
             }
             this.pageRecomputation = new com.aresstack.spaceharvester.application.enrichment.PageRecomputation(jobs,
@@ -1583,6 +1586,10 @@ public final class Harvester implements AutoCloseable {
                             fillQueue.removeSource(sourceId);
                         }
                     })
+                    // Auch ohne gehostete Warteschlange: Dateien eines früheren Laufs gehören mit zur Quelle.
+                    .enrichmentQueue(background != null ? enrichments::forgetQueued
+                            : new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(
+                                    cacheDirectory.resolve("enrichment-queue"))::removeSource)
                     .pageReleases(pageReleases)
                     .pageCache(cache)
                     .fullText(textIndex)
@@ -3168,10 +3175,11 @@ public final class Harvester implements AutoCloseable {
 
     /**
      * Führt eine Aktion auf einem Auftrag dieser App aus ({@link JobActions#perform}); Exporte prüfen dabei Lesbarkeit
-     * und Exportrecht wie beim Start ({@link #exportAccess()}).
+     * und Exportrecht wie beim Start ({@link #exportAccess()}); Hintergrundteile eines Benutzers setzt nur er selbst
+     * fort ({@link #caller()}).
      */
     public JobStatus performJobAction(String jobId, JobAction action) {
-        return jobActions.perform(jobId, OWNER, action, exportAccess());
+        return jobActions.perform(jobId, OWNER, action, exportAccess(), caller);
     }
 
     /** Setzt einen Export dieser App im selben Eintrag fort, mit Lese- und Exportprüfung wie beim Start. */

@@ -278,7 +278,7 @@ class SynonymAutomaticTest {
         assertThat(synonyms()).isEmpty();
 
         hosting.parallelPreparations(2);
-        background.resume(group);
+        background.resumeGroupWithoutCaller(group);
 
         assertThat(hosting.status(first.id()).state()).isEqualTo(JobState.COMPLETED);
         assertThat(synonyms()).isNotEmpty();

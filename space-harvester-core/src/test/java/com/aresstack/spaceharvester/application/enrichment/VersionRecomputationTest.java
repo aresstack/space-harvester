@@ -106,7 +106,7 @@ class VersionRecomputationTest {
             runAll(held);
             assertThat(terms.calls).as("angehalten rechnet nichts").isEmpty();
 
-            background.resume(groupId);
+            background.resumeGroupWithoutCaller(groupId);
             runAll(held);
             long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
             while (terms.count("p2") == 0 && System.nanoTime() < end) {

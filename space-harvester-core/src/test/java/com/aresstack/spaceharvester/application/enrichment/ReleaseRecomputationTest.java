@@ -249,7 +249,7 @@ class ReleaseRecomputationTest {
             runAll(held);
             assertThat(navigation.calls).as("angehalten rechnet nichts").isEmpty();
 
-            background.resume(groupId);
+            background.resumeGroupWithoutCaller(groupId);
             runAll(held);
             awaitUntil(() -> navigation.count("p2") > 0
                     && background.group(groupId).orElseThrow().finished());
@@ -287,7 +287,7 @@ class ReleaseRecomputationTest {
             assertThat(background.group(groupId).orElseThrow().paused()).isTrue();
 
             jobs.parallelPreparations(2);
-            background.resume(groupId);
+            background.resumeGroupWithoutCaller(groupId);
             awaitUntil(() -> navigation.count("p2") > 0
                     && background.group(groupId).orElseThrow().finished());
         }

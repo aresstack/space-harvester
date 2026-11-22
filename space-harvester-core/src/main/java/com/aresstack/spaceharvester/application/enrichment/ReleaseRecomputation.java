@@ -547,7 +547,7 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
                 .forEach(unfinished::add);
         for (JobStatus part : unfinished) {
             try {
-                hosted.resumeJob(part.id());
+                hosted.resumeWithoutCaller(part.id());
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.WARNING, "Entzug der KI-Freigabe, Quelle {0}, beim Start nicht fortgesetzt "
                         + "({1}); der nächste Start versucht es wieder", part.sourceId(), e.getClass().getName());
