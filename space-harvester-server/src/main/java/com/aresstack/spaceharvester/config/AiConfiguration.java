@@ -237,6 +237,18 @@ class AiConfiguration {
         return new ChatUpdateSummaryModel(() -> live.current().ai(), catalog, trust, userAgent(build));
     }
 
+    /** Der Plan-Schritt der Zusammenfassung (Angelo 22.11.2026), Zeile „Zusammenfassung – Plan“. */
+    @Bean
+    UpdateSummaryPlanner updateSummaryPlanner(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                              ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new UpdateSummaryPlanner(ChatUpdateSummaryModel.plan(() -> live.current().ai(), catalog, trust,
+                userAgent(build)));
+    }
+
+    /** Eigener Typ, damit der Planer nicht mit dem Modell der Teilaufgaben verwechselt wird. */
+    record UpdateSummaryPlanner(SummaryModel model) {
+    }
+
     /** Bedeutungsprüfung der Synonymerkennung (#336) über dasselbe Chat-Modell wie die Akronymauflösung. */
     @Bean
     SynonymJudgmentModel synonymJudgments(ConfiguredSourceCatalog catalog, TrustBundles trust,

@@ -1040,7 +1040,10 @@ public final class Harvester implements AutoCloseable {
                             summaryRelease::mayProcess, clock,
                             // Worum es geht (Angelo, 21.11.2026): Lesetext und Space-Namen aus dem Cache.
                             new com.aresstack.spaceharvester.application.changelog.SnapshotSummaryMaterial(
-                                    cache::find, pageTexts)))
+                                    cache::find, pageTexts),
+                            // Plan vorab (Angelo 22.11.2026), Zeile „Zusammenfassung – Plan“.
+                            ChatUpdateSummaryModel.plan(() -> liveAi ? this.settings.ai() : startAi, catalog,
+                                    trustBundles, builder.userAgent)))
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault());
             opened.add(changeLog);
@@ -1048,9 +1051,15 @@ public final class Harvester implements AutoCloseable {
             // TTS-Modelle des Dienstes; Ablage unter data/podcasts, damit ein neuer Lauf dort weitermacht.
             java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastAi =
                     () -> liveAi ? this.settings.ai() : startAi;
+            // Plan und Sprechertexte mit eigener Zeile „Podcast“ (Angelo 22.11.2026): ai.podcast-model,
+            // ai.podcast-max-tokens, ai.podcast-thinking; Sprache (TTS) bleibt bei podcastAi.
+            java.util.function.Supplier<com.aresstack.spaceharvester.ai.AiServiceSettings> podcastText = () -> {
+                com.aresstack.spaceharvester.ai.AiServiceSettings ai = podcastAi.get();
+                return ai == null ? null : ai.podcast();
+            };
             this.podcasts = new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts(jobs,
                     new ChatStepModel(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.VERSION,
-                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                            podcastText, () -> null, catalog, trustBundles, builder.userAgent),
                     new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
                             builder.userAgent, sentences),
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(
@@ -1070,7 +1079,7 @@ public final class Harvester implements AutoCloseable {
             ChangeLog podcastChangeLog = this.changeLog;
             this.pagePodcasts = new com.aresstack.spaceharvester.application.podcast.PagePodcasts(jobs,
                     new ChatStepModel(com.aresstack.spaceharvester.application.podcast.PagePodcasts.VERSION,
-                            podcastAi, () -> null, catalog, trustBundles, builder.userAgent),
+                            podcastText, () -> null, catalog, trustBundles, builder.userAgent),
                     new com.aresstack.spaceharvester.source.ai.RemotePodcastSpeech(podcastAi, catalog, trustBundles,
                             builder.userAgent, sentences),
                     new com.aresstack.spaceharvester.application.podcast.PodcastStore(
@@ -1175,18 +1184,22 @@ public final class Harvester implements AutoCloseable {
             opened.add(durations);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder im Podcast (Angelo 21.11.2026): je Thema ein Seitenbild nach seiner Beschreibung, sonst ein
-            // Schaubild aus Teilen. Gezeichnet wird mit der Einstellung „Bildgenerierung“ (ai.image-model,
-            // ai.image-max-tokens, ai.image-thinking), damit lange SVG-Antworten nicht abbrechen.
+            // Schaubild aus Teilen. Plan und Einzelteile sind getrennt einstellbar (Angelo 22.11.2026):
+            // „Bildgenerierung – Plan“ (ai.image-plan-*) und „– Einzelteile“ (ai.image-*), damit lange SVG-Antworten
+            // nicht abbrechen und jede Stufe für sich justiert werden kann.
             com.aresstack.spaceharvester.application.podcast.StoredPageImages podcastImages =
                     new com.aresstack.spaceharvester.application.podcast.StoredPageImages(cache::find,
                             this.imageAnalysis, assets);
+            ChatStepModel podcastPlanner = new ChatStepModel("podcast-picture-plan", () -> {
+                AiServiceSettings ai = liveAi ? this.settings.ai() : startAi;
+                return ai == null ? null : ai.imagePlan();
+            }, () -> null, catalog, trustBundles, builder.userAgent);
             ChatStepModel podcastDrawer = new ChatStepModel("podcast-pictures", () -> {
                 AiServiceSettings ai = liveAi ? this.settings.ai() : startAi;
-                return ai == null ? null : ai.imageGeneration();
-            }, () -> null, catalog, trustBundles,
-                    builder.userAgent);
-            this.podcasts.pictures(podcastDrawer, podcastImages);
-            this.pagePodcasts.pictures(podcastDrawer, podcastImages);
+                return ai == null ? null : ai.imageParts();
+            }, () -> null, catalog, trustBundles, builder.userAgent);
+            this.podcasts.pictures(podcastPlanner, podcastDrawer, podcastImages);
+            this.pagePodcasts.pictures(podcastPlanner, podcastDrawer, podcastImages);
             // B1: Bilder automatisch beschreiben nach dem Abgleich und nach neuer KI-Freigabe, nur mit images.automatic.
             com.aresstack.spaceharvester.application.configuration.ImageSettings startImages = builder.images;
             // D2: jeder Lauf „Bilder beschreiben“ über das Auftragssystem, im Hintergrund ein Unterauftrag je Space.

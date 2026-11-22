@@ -163,7 +163,32 @@ public final class DiagramComposer {
         }
     }
 
-    private final StepModel model;
+    /**
+     * Die Modelle der beiden Stufen (Angelo 22.11.2026: getrennt einstellbar, weil Planen und Zeichnen sich
+     * verschieden fein justieren): der Plan zerlegt das Schaubild, die Einzelteile zeichnen je ein Symbol.
+     *
+     * @param planner entwirft den Plan (Einstellung „Bildgenerierung – Plan“)
+     * @param icons   zeichnet die Einzelteile (Einstellung „Bildgenerierung – Einzelteile“)
+     */
+    public record Models(StepModel planner, StepModel icons) {
+        public Models {
+            Objects.requireNonNull(planner, "planner");
+            Objects.requireNonNull(icons, "icons");
+        }
+
+        /** Ein Modell für beide Stufen. */
+        public static Models of(StepModel both) {
+            return new Models(both, both);
+        }
+
+        /** Ohne Plan kein Schaubild; ein fehlendes Symbol ersetzt das Programm durch einen Kreis. */
+        public boolean available() {
+            return planner.available();
+        }
+    }
+
+    private final StepModel planner;
+    private final StepModel iconModel;
     private final Executor parts;
     private final PodcastWriter.Pause pause;
 
@@ -171,7 +196,16 @@ public final class DiagramComposer {
      * @param parts führt die Symbole aus; seine Größe begrenzt, wie viele Aufrufe zugleich zum Modell gehen
      */
     public DiagramComposer(StepModel model, Executor parts, PodcastWriter.Pause pause) {
-        this.model = Objects.requireNonNull(model, "model");
+        this(Models.of(model), parts, pause);
+    }
+
+    /**
+     * @param models die Modelle für Plan und Einzelteile
+     * @param parts  führt alle Aufrufe aus; seine Größe begrenzt, wie viele Aufrufe zugleich zum Modell gehen
+     */
+    public DiagramComposer(Models models, Executor parts, PodcastWriter.Pause pause) {
+        this.planner = models.planner();
+        this.iconModel = models.icons();
         this.parts = Objects.requireNonNull(parts, "parts");
         this.pause = Objects.requireNonNull(pause, "pause");
     }
@@ -275,7 +309,7 @@ public final class DiagramComposer {
                 return null;
             }
             try {
-                Plan plan = readPlan(call(parts, () -> model.complete(PLAN_SYSTEM, prompt)), repairs);
+                Plan plan = readPlan(call(parts, () -> planner.complete(PLAN_SYSTEM, prompt)), repairs);
                 if (plan != null) {
                     return plan;
                 }
@@ -332,7 +366,7 @@ public final class DiagramComposer {
                     + ". Follow the rules exactly and answer with the corrected SVG only.");
             String answer;
             try {
-                answer = model.complete(ICON_SYSTEM, prompt);
+                answer = iconModel.complete(ICON_SYSTEM, prompt);
             } catch (RuntimeException e) {
                 repairs.add("Symbol \"" + element.label() + "\": Versuch " + attempt + " gescheitert ("
                         + e.getClass().getSimpleName() + ")");
