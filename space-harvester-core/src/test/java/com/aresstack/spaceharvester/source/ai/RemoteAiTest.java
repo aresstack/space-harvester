@@ -46,6 +46,7 @@ class RemoteAiTest {
     private final List<String> authorizations = new CopyOnWriteArrayList<>();
     private final List<String> bodies = new CopyOnWriteArrayList<>();
     private volatile int status = 200;
+    private volatile boolean rejectNone;
     private volatile String chatAnswer = """
             {"choices":[{"index":0,"message":{"role":"assistant",
               "content":"{\\"queries\\":[{\\"text\\":\\"Nachtlauf Abbruch\\",\\"priority\\":1}]}"}}]}""";
@@ -78,6 +79,16 @@ class RemoteAiTest {
             authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
             String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             bodies.add(request);
+            if (rejectNone && request.replace(" ", "").contains("\"reasoning_effort\":\"none\"")) {
+                // Wie ein Gateway: HTTP 200, die Ablehnung als Fehler im Ereignisstrom.
+                byte[] bytes = "data: {\"error\":{\"message\":\"unsupported reasoning_effort\"}}\n\n"
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+                return;
+            }
             if (status == 200 && ChatSse.wanted(request)) {
                 byte[] bytes = ChatSse.of(chatAnswer).getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
@@ -239,6 +250,24 @@ class RemoteAiTest {
         assertThat(model.version()).startsWith(ChatAcronymExpansionModel.ID + ":gpt-x@")
                 .doesNotContain(base().getHost());
         assertThat(new ChatAcronymExpansionModel(() -> AiServiceSettings.NONE, this::remote).available()).isFalse();
+    }
+
+    /**
+     * Angelo 22.11.2026: Der Dienst meldete „none“ als Fehler im Ereignisstrom (HTTP 200); das galt als Ausfall, wurde
+     * wiederholt und kostete jede Seite. Jetzt weicht die Anfrage aus und kommt durch.
+     */
+    @Test
+    void aRejectionInsideTheStreamFallsBackToTheSmallestThinking() {
+        rejectNone = true;
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of())
+                .withStepThinking("none");
+
+        String answer = remote(settings).summaryCompletions().apply("Anweisung", "{}");
+
+        assertThat(answer).isNotBlank();
+        assertThat(bodies).hasSize(2);
+        assertThat(bodies.get(0)).contains("\"reasoning_effort\":\"none\"");
+        assertThat(bodies.get(1)).contains("\"reasoning_effort\":\"low\"");
     }
 
     @Test

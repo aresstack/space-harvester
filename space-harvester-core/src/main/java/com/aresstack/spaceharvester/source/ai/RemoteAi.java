@@ -235,7 +235,7 @@ public final class RemoteAi {
                 String effort = options == null ? null : options.reasoningEffort();
                 // Lehnt der Dienst das eingestellte Nachdenken technisch ab (HTTP 400), weicht die Anfrage aus:
                 // „none“ zum kleinsten Nachdenken, sonst ohne Angabe (Angelo 22.11.2026).
-                if (e.kind() != ChatErrorKind.INVALID_REQUEST || effort == null) {
+                if (!rejection(e) || effort == null) {
                     throw e;
                 }
                 current = new ChatRequest(current.messages(),
@@ -1016,11 +1016,21 @@ public final class RemoteAi {
     /** Das kleinste Nachdenken, das OpenAI-kompatible Dienste wie gpt-oss annehmen ({@code reasoning_effort}). */
     static final String MIN_REASONING_EFFORT = "low";
 
+    /**
+     * Ob der Dienst die Anfrage abgelehnt hat: HTTP 4xx oder eine Fehlermeldung im Ereignisstrom (HTTP 200 mit
+     * {@code error}, so melden etwa Gateways einen nicht unterstützten Wert wie {@code reasoning_effort: none}). Ein
+     * echter Ausfall (HTTP 5xx, Verbindung) ist keine Ablehnung.
+     */
+    static boolean rejection(ChatCompletionException e) {
+        return e.kind() == ChatErrorKind.INVALID_REQUEST
+                || e.kind() == ChatErrorKind.PROVIDER_ERROR && e.statusCode() < 500;
+    }
+
     /** Ob der Dienst die Anfrage nur wegen des hier ergänzten {@code reasoning_effort} abgelehnt hat. */
     private static boolean rejectedEffort(ChatCompletionException e, ChatRequest original, ChatRequest sent) {
         boolean added = sent.options() != null && sent.options().reasoningEffort() != null
                 && (original.options() == null || original.options().reasoningEffort() == null);
-        return added && e.kind() == ChatErrorKind.INVALID_REQUEST;
+        return added && rejection(e);
     }
 
     private static ChatRequest withLimit(ChatRequest request, int maxTokens, String effort) {
@@ -1160,7 +1170,8 @@ public final class RemoteAi {
             case INVALID_REQUEST, PROTOCOL -> AiServiceException.Reason.INVALID_RESPONSE;
         };
         return new AiServiceException(reason, "Chat-Dienst: " + e.kind()
-                + (e.statusCode() > 0 ? " (HTTP " + e.statusCode() + ")" : ""));
+                + (e.statusCode() > 0 ? " (HTTP " + e.statusCode() + ")"
+                : e.kind() == ChatErrorKind.PROVIDER_ERROR ? " (Fehlermeldung im Antwortstrom)" : ""));
     }
 
     /**

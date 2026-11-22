@@ -369,6 +369,7 @@ final class UpdateSummarizer {
                     }
                     // Auch nach Wiederholungen nicht durchgekommen oder am Ausgabelimit abgeschnitten: die Themen der
                     // Teile bleiben unverändert.
+                    failure(lane, "Zusammenführen gescheitert, Themen der Teile bleiben", e);
                     raw = null;
                     lane.incomplete();
                 }
@@ -873,17 +874,27 @@ final class UpdateSummarizer {
         ArrayNode changes = input.putArray("aenderungen");
         part.forEach(material -> changes.add(material.node()));
         try {
-            return List.of(ask(INSTRUCTIONS, input.toString(), ids(part), context));
+            List<Answer> answered = List.of(ask(INSTRUCTIONS, input.toString(), ids(part), context));
+            answeredParts.incrementAndGet();
+            return answered;
         } catch (AiServiceException e) {
             if (!splittable(e) || part.isEmpty()) {
                 throw e;
             }
             lost.set(e);
             if (part.size() == 1) {
+                // Sichtbar im Auftrag, warum die Seite fehlt (nur Art und Status, nie Text der Anfrage).
+                failure(context, "Seite " + part.getFirst().page().pageId() + " ausgelassen", e);
                 context.processed(1);
                 context.failed(1);
                 context.incomplete();
-                lostPages.incrementAndGet();
+                if (lostPages.incrementAndGet() >= FAIL_FAST_PAGES && answeredParts.get() == 0) {
+                    // Jede Anfrage scheitert gleich (Angelo 22.11.2026: „jeder einzelne Step schlägt fehl“): nicht
+                    // unsichtbar weiterrechnen, sondern mit dem echten Grund abbrechen.
+                    throw new JobFailedException("SUMMARY_ALL_FAILED", "Zusammenfassen abgebrochen: " + FAIL_FAST_PAGES
+                            + " Seiten nacheinander gescheitert, keine Anfrage kam durch. Letzter Grund: "
+                            + e.getMessage());
+                }
                 return List.of();
             }
             context.checkpoint();
@@ -894,6 +905,26 @@ final class UpdateSummarizer {
             return answers;
         }
     }
+
+    /**
+     * Ein gescheiterter Aufruf als Fehler in der Diagnose (Angelo 22.11.2026: „In der Diagnose steht nicht mal
+     * irgendwelche Informationen“): Komponente, Code, HTTP-Status, Grund und Exception-Klasse; nie Text der Anfrage.
+     */
+    static void failure(JobContext context, String what, AiServiceException e) {
+        java.util.regex.Matcher status = java.util.regex.Pattern.compile("HTTP (\\d{3})").matcher(
+                String.valueOf(e.getMessage()));
+        context.record(new com.aresstack.spaceharvester.application.jobs.JobEvent.Draft(
+                com.aresstack.spaceharvester.application.jobs.JobEvent.Severity.ERROR,
+                com.aresstack.spaceharvester.application.jobs.JobEvent.Category.JOB, "RemoteAi",
+                "AI_" + e.reason().name(), what + ": " + e.getMessage(),
+                status.find() ? Integer.valueOf(status.group(1)) : null, null, e));
+    }
+
+    /** So viele verlorene Seiten ohne eine einzige gelungene Anfrage brechen den Auftrag mit dem Grund ab. */
+    static final int FAIL_FAST_PAGES = 3;
+    /** Gelungene Teilanfragen dieses Laufs; solange keine gelang, zählt jeder Verlust zum frühen Abbruch. */
+    private final java.util.concurrent.atomic.AtomicInteger answeredParts =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     /** Vorübergehend: keine Verbindung, überlastet oder 5xx (UNREACHABLE) und Fristen; nie Anmeldung oder Format. */
     static boolean transientFailure(AiServiceException e) {
@@ -927,6 +958,7 @@ final class UpdateSummarizer {
                 if (!transientFailure(e) || attempt >= retries || context.cancelRequested()) {
                     throw e;
                 }
+                failure(context, "Anfrage gescheitert, Versuch " + (attempt + 2) + " folgt", e);
                 try {
                     Thread.sleep(Math.min(30_000, backoffMillis << attempt));
                 } catch (InterruptedException interrupted) {

@@ -656,6 +656,29 @@ class UpdateSummaryTest {
         }
     }
 
+    /** Scheitert jede Anfrage gleich, bricht der Auftrag früh mit dem echten Grund ab, statt still weiterzurechnen. */
+    @Test
+    void whenEveryRequestFailsTheJobStopsEarlyWithTheReason() {
+        long before = UpdateSummarizer.backoffMillis;
+        UpdateSummarizer.backoffMillis = 1;
+        try {
+            row(1, "100", "DEV", ChangeKind.NEW, "Start");
+            mark(10, true);
+            for (int i = 0; i < 8; i++) {
+                row(12, "30" + i, "DEV", ChangeKind.NEW, "Seite " + i);
+                released.add("30" + i);
+            }
+            failWhen = "Seite";
+            JobStatus done = run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN));
+            assertThat(done.state()).isEqualTo(JobState.FAILED);
+            assertThat(done.error().code()).isEqualTo("SUMMARY_ALL_FAILED");
+            assertThat(done.error().message()).contains("PROVIDER_ERROR (HTTP 504)");
+        } finally {
+            UpdateSummarizer.backoffMillis = before;
+            failWhen = null;
+        }
+    }
+
     /** Eine Seite, die der Dienst nie annimmt, kippt den Auftrag nicht; die Zusammenfassung gilt dann als veraltet. */
     @Test
     void aPageTheServiceNeverAcceptsIsLeftOutAndTheSummaryIsNotShownAsComplete() {
