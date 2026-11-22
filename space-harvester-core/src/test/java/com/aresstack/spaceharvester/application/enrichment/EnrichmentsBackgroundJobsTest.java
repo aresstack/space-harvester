@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import com.aresstack.spaceharvester.application.background.BackgroundJobs;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -214,6 +215,14 @@ class EnrichmentsBackgroundJobsTest {
             });
             assertThat(store.find(broken.key())).singleElement().satisfies(result -> assertThat(result.status())
                     .isEqualTo(Enrichment.Status.FAILED));
+            // Angelo 22.11.2026: Der Fehler steht rot mit Grund in der Diagnose, ohne Meldungstext des Dienstes.
+            assertThat(jobs.events(part(background, "wiki").id())).anySatisfy(event -> {
+                assertThat(event.severity()).isEqualTo(JobEvent.Severity.ERROR);
+                assertThat(event.code()).isEqualTo(Enrichments.WORK_FAILED);
+                assertThat(event.message()).contains(remote.id(), "Seite 2", "wiki", "IllegalStateException")
+                        .doesNotContain("Dienst nicht erreichbar");
+                assertThat(event.detail()).isNull();
+            });
         } finally {
             executor.shutdownNow();
         }
@@ -413,7 +422,10 @@ class EnrichmentsBackgroundJobsTest {
             assertThat(remote.calls).containsOnlyKeys("wiki/2");
             assertThat(jobs.events(wiki.id())).anySatisfy(event -> {
                 assertThat(event.code()).isEqualTo(Enrichments.WORK_FAILED);
-                assertThat(event.message()).contains("wiki", "IllegalStateException").doesNotContain("kaputt");
+                assertThat(event.severity()).isEqualTo(JobEvent.Severity.ERROR);
+                // Die Seite als Verweis, nie der Meldungstext (Abnahme 22.11.2026).
+                assertThat(event.message()).contains("wiki", "Seite kaputt", "IllegalStateException")
+                        .doesNotContain("Ablage nicht lesbar");
             });
         } finally {
             executor.shutdownNow();

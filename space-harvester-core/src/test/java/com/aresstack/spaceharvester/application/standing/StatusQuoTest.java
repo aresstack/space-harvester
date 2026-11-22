@@ -72,6 +72,53 @@ class StatusQuoTest {
     }
 
     @Test
+    void aLockedPageStaysInTheViewButTakesNoStandingNeitherForAStatementNorForThePage() {
+        StandingFixtures.PageBuilder plan = page("1", "Plan", 'a').action("Nachtlauf", "startet", "Sicherung",
+                features(Temporality.GILT));
+        StandingFixtures.PageBuilder ziel = page("2", "Ziel", 'b').action("Start", "folgt", "Plan",
+                features(Temporality.GILT));
+        pages.add(plan.build());
+        pages.add(ziel.build());
+        String id = plan.statements.getFirst().id();
+        String other = ziel.statements.getFirst().id();
+        statusQuo.decide(EDITOR, plan.key, id, Standing.GEPLANT, 0L);
+        List<java.util.Collection<PageKey>> asked = new ArrayList<>();
+        statusQuo.lockedPages((caller, keys) -> {
+            asked.add(List.copyOf(keys));
+            return keys.contains(plan.key) ? java.util.Set.of(plan.key) : java.util.Set.of();
+        });
+
+        StatusQuoView view = statusQuo.view(EDITOR, key -> true);
+        assertThat(view.lockedPages()).containsExactly(plan.key);
+        assertThat(view.locked(plan.key)).isTrue();
+        assertThat(view.locked(ziel.key)).isFalse();
+        assertThat(view.entries()).as("die Analyse bleibt lesbar").hasSize(2);
+        assertThat(asked).as("ein Blick in den Bestand für die ganze Sicht").hasSize(1);
+
+        assertThatThrownBy(() -> statusQuo.decide(EDITOR, plan.key, id, Standing.GILT, 1L))
+                .isInstanceOf(LockedPageException.class);
+        assertThatThrownBy(() -> statusQuo.decide(EDITOR, plan.key, null, Standing.UEBERHOLT, null))
+                .as("auch der Stand der Seite").isInstanceOf(LockedPageException.class);
+        assertThatThrownBy(() -> statusQuo.clear(EDITOR, plan.key, id, 1L)).isInstanceOf(LockedPageException.class);
+        assertThat(store.all()).singleElement().satisfies(decision -> {
+            assertThat(decision.standing()).isEqualTo(Standing.GEPLANT);
+            assertThat(decision.revision()).isEqualTo(1);
+        });
+
+        // Die nicht gesperrte Seite nimmt weiter Stand an und lässt ihn löschen.
+        StandingDecision kept = statusQuo.decide(EDITOR, ziel.key, other, Standing.GILT, 0L);
+        assertThat(kept.standing()).isEqualTo(Standing.GILT);
+        assertThat(statusQuo.decide(EDITOR, ziel.key, null, Standing.UNKLAR, null).standing())
+                .isEqualTo(Standing.UNKLAR);
+        assertThat(statusQuo.clear(EDITOR, ziel.key, other, kept.revision())).isTrue();
+
+        // Wieder frei: dieselbe Entscheidung geht durch.
+        statusQuo.lockedPages(StatusQuo.LockedPages.NONE);
+        assertThat(statusQuo.view(EDITOR, key -> true).lockedPages()).isEmpty();
+        assertThat(statusQuo.clear(EDITOR, plan.key, id, 1L)).isTrue();
+    }
+
+    @Test
     void staleAnalysesAreShownButNeverCountedAsCurrent() {
         pages.add(page("1", "Aktuell", 'a')
                 .action("Kasse", "zahlt", "Zuschuss", features(Temporality.GILT)).build());

@@ -13,17 +13,22 @@ import java.util.Objects;
  * @param title   Titel der Folge; {@code null}, solange die Grobübersicht fehlt
  * @param parts   die Abschnitte in Sendereihenfolge; leer, solange die Grobübersicht fehlt
  * @param running ob gerade ein Auftrag daran arbeitet
+ * @param picturesPending ob noch ein Bild aussteht, das ein Lauf zeichnen kann (dann gilt der Podcast als unfertig)
  */
-public record Podcast(String key, String title, List<Part> parts, boolean running) {
+public record Podcast(String key, String title, List<Part> parts, boolean running, boolean picturesPending) {
 
     public Podcast {
         Objects.requireNonNull(key, "key");
         parts = List.copyOf(parts);
     }
 
-    /** Ob alle Abschnitte ihr Audio haben. */
+    public Podcast(String key, String title, List<Part> parts, boolean running) {
+        this(key, title, parts, running, false);
+    }
+
+    /** Ob alle Abschnitte ihr Audio haben und kein Bild mehr aussteht (sonst setzt ein Lauf die Bilder fort). */
     public boolean complete() {
-        return !parts.isEmpty() && parts.stream().allMatch(part -> part.audio() != null);
+        return !parts.isEmpty() && parts.stream().allMatch(part -> part.audio() != null) && !picturesPending;
     }
 
     /** Ob mindestens ein Abschnitt hörbar ist. */
