@@ -153,6 +153,11 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
     private final Object monitor = new Object();
     /** Ersetzen eines wartenden Teils und Anlegen des neuen geschehen am Stück. */
     private final Object jobLock = new Object();
+    /**
+     * Höchstens {@value #PARALLELISM} Kopfdatenabrufe zugleich, über alle Teile und den bisherigen Weg hinweg
+     * (Codex-Befund #1082): So bleibt die Quelle auch bei vielen Plätzen unter „Vorbereitung“ geschont.
+     */
+    private final java.util.concurrent.Semaphore metadataSlots = new java.util.concurrent.Semaphore(PARALLELISM);
     private final Deque<Task> waiting = new ArrayDeque<>();
     private final Set<PageKey> queued = new HashSet<>();
     private final LinkedHashMap<PageKey, Checked> checked = new LinkedHashMap<>(16, 0.75f, true) {
@@ -259,13 +264,21 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
                 }
             }
             String version = task.version();
+            boolean slot = false;
             try {
+                metadataSlots.acquire();
+                slot = true;
                 version = task.trigger().call(() -> catalog(task)).version();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             } catch (RuntimeException e) {
                 count(() -> failed++);
                 LOG.log(System.Logger.Level.DEBUG, "Fund in {0} nicht katalogisiert ({1})", task.key().sourceId(),
                         e.getClass().getName());
             } finally {
+                if (slot) {
+                    metadataSlots.release();
+                }
                 Instant at = clock.instant();
                 String seen = version;
                 synchronized (monitor) {
@@ -459,7 +472,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
             }
             AccessContext finder = AccessContext.technicalClient(finderId);
             context.discovered(entries.size());
-            java.util.concurrent.Semaphore slots = new java.util.concurrent.Semaphore(PARALLELISM);
+            java.util.concurrent.Semaphore slots = metadataSlots;
             try (java.util.concurrent.ExecutorService runner = java.util.concurrent.Executors.newThreadPerTaskExecutor(
                     Thread.ofVirtual().name("finding-catalog-job-", 0).factory())) {
                 for (Listed entry : entries) {
