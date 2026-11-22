@@ -426,3 +426,9 @@ Windows-Dienste mit Starttyp (Angelo 21.11.2026, freigegeben vom Architekten).
    Lauf rechnet mit den Rechten des Start-Aufrufers, nach einem Neustart nur der gleiche Eigentümer; ein fremder Teil
    hält gelb mit `RESUME_BY_HAND` an. Er läuft nie mit den Rechten dessen weiter, der ihn fortsetzt: ▶ führt ihn ohne
    bekannten Aufrufer erneut in dieselbe gelbe Pause, nur sein Eigentümer setzt ihn fort.
+   **App.** Der Knopf „Wissensgraph erzeugen“ steht im Reiter „Graph“ vor dem Export; die Menge ist die Seite, mit
+   „mit Unterseiten“ dazu ihre nicht gesperrten Unterseiten. Fehlt nach der Vorschau nichts, lädt der Reiter nur neu;
+   sonst fragt ein Overlay (Ja/Nein, Esc-Kreis) mit den Zahlen je Stufe, mit dem KI-Analysator auch, wie viele Seiten
+   an den KI-Dienst gehen (nur die Zahl). Die Gruppe steht im Reiter „Hintergrund“; der Reiter „Graph“ folgt ihr über
+   `watchBackground` mit Fortschritt und ✕ (Abbrechen über die Gruppe), bleibt nach dem Anhalten gelb dran und lädt am
+   Ende neu. Hinweise des Planers, gescheiterte Stufen und fehlende Abdeckung stehen gelb in der Statuszeile.

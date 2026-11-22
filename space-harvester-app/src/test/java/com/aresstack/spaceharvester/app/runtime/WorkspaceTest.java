@@ -1027,6 +1027,51 @@ class WorkspaceTest {
         }
     }
 
+    /**
+     * W5: „Wissensgraph erzeugen“ über Seiten des Space „DEV“. Die Vorschau startet nichts und zählt je Stufe so viele
+     * Teile, wie der Start danach anlegt; der Start legt eine Gruppe der Art „knowledge-graph“ mit dem Abschlussteil je
+     * Space an, und sie lässt sich über die Gruppe abbrechen. Ihr Ende kommt über die Meldung des Core.
+     */
+    @Test
+    void theKnowledgeGraphIsPreviewedWithoutStartingAndStartedAsOneBackgroundGroup() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL)).state())
+                .isEqualTo(JobState.COMPLETED);
+        var pages = com.aresstack.spaceharvester.application.snapshot.PageSet.of(Map.of("wiki", List.of("100", "102")));
+        var background = started.harvester().backgroundJobs();
+        int groups = background.groups().size();
+
+        var preview = workspace.previewKnowledgeGraph(pages);
+
+        assertThat(background.groups()).as("die Vorschau startet nichts").hasSize(groups);
+        var goal = preview.goal().orElseThrow();
+        assertThat(goal.id()).isEqualTo(com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND);
+        assertThat(goal.pages()).as("beide Seiten sichtbar").isEqualTo(2);
+        assertThat(goal.parts()).as("ein Abschlussteil für den Space").isEqualTo(1);
+
+        var plan = workspace.startKnowledgeGraph(pages);
+        var group = plan.group().orElseThrow();
+        assertThat(plan.notes()).isEqualTo(preview.notes());
+        assertThat(group.kind()).isEqualTo(com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND);
+        for (var stage : preview.stages()) {
+            // Die Kennung eines angebundenen Dienstes ist auch seine Art.
+            assertThat(group.parts().stream().filter(part -> stage.id().equals(part.parameter(BackgroundJobs.KIND)))
+                    .count()).as("Teile der Stufe %s wie in der Vorschau", stage.id()).isEqualTo(stage.parts());
+        }
+
+        workspace.performBackgroundGroupAction(group.groupId(),
+                com.aresstack.spaceharvester.application.jobs.JobAction.CANCEL);
+        java.util.concurrent.CompletableFuture<com.aresstack.spaceharvester.application.background.BackgroundGroup>
+                finished = new java.util.concurrent.CompletableFuture<>();
+        try (var watch = workspace.whenBackgroundFinished(group.groupId(), finished::complete)) {
+            var ended = finished.get(60, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(ended.finished()).isTrue();
+            assertThat(workspace.knowledgeGraphNotes(ended)).as("nur Zahlen, keine Seitentitel")
+                    .noneMatch(note -> note.contains("Betrieb und Wartung"));
+        }
+    }
+
     private AppRuntime start() throws Exception {
         runtime = AppRuntime.start(settings(Map.of("WIKI_TOKEN", TOKEN,
                 "CLIENT_PASSWORD", TestCertificates.CLIENT_PASSWORD)), new AppRuntime.SessionSecrets(), "test");

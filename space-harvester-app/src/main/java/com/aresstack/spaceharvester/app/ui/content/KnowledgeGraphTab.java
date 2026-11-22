@@ -10,9 +10,17 @@ import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
+import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
+import com.aresstack.spaceharvester.application.background.BackgroundGroup;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
+import com.aresstack.spaceharvester.application.background.services.ServicePlan;
+import com.aresstack.spaceharvester.application.background.services.ServicePreview;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
+import com.aresstack.spaceharvester.application.jobs.JobAction;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
@@ -72,14 +80,15 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
  * Der Unterreiter „Analysen → Graph“ (#499 Abschnitt F, ADR 0024): fokussierte, begrenzte Teilgraphen des globalen,
  * nur manuell befüllten Knowledge Graph. Einstieg ist die geöffnete Seite, ein gewählter Knoten oder ein Suchbegriff;
  * gezeigt werden die direkten Nachbarn bis zu einer Knoten- und Kantengrenze, weitere Nachbarschaften lädt
- * „Nachbarn erweitern“ (oder Doppelklick) gezielt nach. Nie wird der ganze Graph geladen oder gezeichnet, und nichts
- * hier startet eine Analyse.
+ * „Nachbarn erweitern“ (oder Doppelklick) gezielt nach. Nie wird der ganze Graph geladen oder gezeichnet, und außer
+ * „Wissensgraph erzeugen“ startet nichts hier eine Analyse.
  *
  * <p>Dokument (Rechteck), Aussage (abgerundet) und Erwähnung (Ellipse) sind an der Form unterscheidbar, Kanten
  * gerichtet und benannt. Verbindungen zu anderen Seiten sind gestrichelt: gleiche Grundform ist ein unbestätigter
@@ -90,6 +99,12 @@ import java.util.function.Supplier;
  * <p>Das Export-Symbol rechts startet den JSON-LD-Export vorhandener Analysen als Auftrag; der Umfang (Seite,
  * Unterzweig, Space, Quelle oder gesamter Graph) wird im Menü gewählt, veraltete Analysen nur mit eigenem Haken dort.
  * Der Export stößt nie eine Analyse an.
+ *
+ * <p>„Wissensgraph erzeugen“ (W5, Knopf vor dem Export) ist der einzige Weg aus diesem Reiter, der Analysen anstößt: über
+ * die Seite und, mit „mit Unterseiten“, ihre nicht gesperrten Unterseiten startet der Dienst-Planer die fehlenden
+ * Vorstufen und je Space den Abschlussteil als eine Hintergrundgruppe, nach einer Rückfrage mit den Zahlen je Stufe;
+ * fehlt nichts, lädt der Reiter nur neu. Die Statuszeile folgt der Gruppe über Meldungen des Core (kein Abfragen) mit
+ * Fortschritt und ✕, bleibt nach dem Anhalten gelb dran und lädt am Ende neu.
  *
  * <p>Alle Methoden nur auf dem EDT; Core-Aufrufe laufen im Hintergrund, späte Ergebnisse werden verworfen.
  */
@@ -103,6 +118,18 @@ final class KnowledgeGraphTab extends JPanel {
     static final String EXPORT_TIP = "Graph exportieren (JSON-LD): Umfang wählen; exportiert nur vorhandene "
             + "Analysen, analysiert nichts";
     static final String EXPORT_STARTED = "Graph-Export gestartet – Fortschritt unter Aufträge";
+    static final String GENERATE_TIP = "Wissensgraph erzeugen";
+    static final String GENERATE_BUSY_TIP = "Wissensgraph wird schon erzeugt";
+    /** Fehlt nichts, sagt die Statuszeile nur das; der Graph lädt neu. */
+    static final String COMPLETE = "Wissensgraph ist vollständig";
+    static final String GENERATING = "Wissensgraph wird erzeugt";
+    /** Nichts gestartet, etwa weil der Dienst abgeschaltet ist; die Hinweise sagen, warum. */
+    static final String NOT_GENERATED = "Wissensgraph nicht erzeugt";
+    static final String COUNTING = "Wissensgraph: Vorstufen werden gezählt …";
+    /** Das Zeichen in der Statuszeile, das die laufende Gruppe abbricht. */
+    static final String CANCEL_LINK = "✕";
+    /** Link der Ergebnisse auf den Reiter „Hintergrund“ der Auftragsverwaltung. */
+    static final String JOBS_LINK = "Hintergrund";
     static final String FILTERED_TERM = "Treffer gibt es, aber die gewählten Filter blenden sie aus "
             + "(z. B. „Nur diese Quelle“ oder „Veraltete zeigen“).";
     /** Abstand zwischen Knoten bei der Anordnung (Weltkoordinaten). */
@@ -167,6 +194,25 @@ final class KnowledgeGraphTab extends JPanel {
     private final IconButton view = new IconButton(Glyph.TABLE, TABLE_TIP);
     private final IconButton deleteAll = new IconButton(Glyph.TRASH, DELETE_ALL_TIP);
     private final JButton export = Comic.exportButton(EXPORT_TIP);
+    /** „Wissensgraph erzeugen“ (W5): vor dem Export; gesperrt, solange eine Gruppe dieses Reiters läuft. */
+    private final IconButton generate = new IconButton(Glyph.GRAPH_PLUS, GENERATE_TIP);
+    private Predicate<GraphGeneration.Preview> confirmGenerate = preview -> Dialogs.confirmOverlay(this,
+            GraphGeneration.TITLE, GraphGeneration.body(preview));
+    /** Ob Vorschau oder Start von „Wissensgraph erzeugen“ gerade laufen. */
+    private boolean preparing;
+    /** Die verfolgte Gruppe von „Wissensgraph erzeugen“; {@code null} ohne. */
+    private String graphGroupId;
+    private AutoCloseable graphWatch;
+    private BackgroundGroup graphLast;
+    /** Ob die verfolgte Gruppe fertig ist (nicht nur angehalten); dann ist die Beobachtung zu. */
+    private boolean graphEnded;
+    /** Die Hinweise des Planers beim Start (ausgelassene Stufen, erst laden, ohne Zugriff), gelb bis zum Ende. */
+    private List<String> planNotes = List.of();
+    /** Was die Statuszeile zu „Wissensgraph erzeugen“ sagt, vor dem Stand des Graphen; {@code null} ohne. */
+    private StatusNote generateNote;
+    private Consumer<StatusNote> onNote;
+    private Consumer<String> showJob = jobId -> { };
+    private Runnable onGenerated = () -> { };
     /** Rückmeldung zum Export, in der Statuszeile hinter dem Stand des Graphen; leer ohne. */
     private String exportNote = "";
     private String statusText = " ";
@@ -252,7 +298,7 @@ final class KnowledgeGraphTab extends JPanel {
         head.search(InputFrame.search(search));
         head.action(pageButton, expand, back);
         head.copy(this::copyText);
-        head.tool(filter, fit, view, export, deleteAll);
+        head.tool(filter, fit, view, generate, export, deleteAll);
         for (JCheckBoxMenuItem box : List.of(documents, statements, mentions, roles, nominal, crossPage, candidates,
                 stale, thisSource, selectionOnly)) {
             box.addActionListener(e -> reloadFocus());
@@ -272,6 +318,7 @@ final class KnowledgeGraphTab extends JPanel {
         export.addActionListener(e -> PopupHover.clearOnClose(exportMenu(), export)
                 .show(export, 0, export.getHeight()));
         deleteAll.addActionListener(e -> deleteAllStatements());
+        generate.addActionListener(e -> generateGraph());
 
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setAutoCreateRowSorter(true);
@@ -343,10 +390,43 @@ final class KnowledgeGraphTab extends JPanel {
         pushStatus();
     }
 
-    /** Stand des Graphen und, solange vorhanden, die Rückmeldung zum Export, in einer Zeile. */
+    /** Wie {@link #onStatus}, mit Ampelton und Link ({@link StatusNote}): gelbe Hinweise und ✕ von W5. */
+    void onNote(Consumer<StatusNote> listener) {
+        onNote = Objects.requireNonNull(listener, "listener");
+        pushStatus();
+    }
+
+    /** {@code listener} öffnet einen Auftrag in der Auftragsverwaltung (Link „Hintergrund“ der Ergebnisse). */
+    void onShowJob(Consumer<String> listener) {
+        showJob = Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * {@code listener} läuft, wenn eine Gruppe von „Wissensgraph erzeugen“ fertig ist (auch abgebrochen): Die
+     * Seitenansicht liest dann Aussagen und Verben neu.
+     */
+    void onGenerated(Runnable listener) {
+        onGenerated = Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * Stand des Graphen und, solange vorhanden, die Rückmeldung zum Export, in einer Zeile; davor, was „Wissensgraph
+     * erzeugen“ meldet, mit dessen Ton und Link.
+     */
     private void pushStatus() {
         String base = statusText == null ? " " : statusText;
-        onStatus.accept(exportNote.isBlank() ? base : base.isBlank() ? exportNote : base + " · " + exportNote);
+        String line = exportNote.isBlank() ? base : base.isBlank() ? exportNote : base + " · " + exportNote;
+        StatusNote note = generateNote == null ? StatusNote.plain(line)
+                : generateNote.withText(line.isBlank() ? generateNote.text() : generateNote.text() + " · " + line);
+        onStatus.accept(note.text());
+        if (onNote != null) {
+            onNote.accept(note);
+        }
+    }
+
+    private void generateNote(StatusNote note) {
+        generateNote = note;
+        pushStatus();
     }
 
     /** Der Inhalt als Text für die Zwischenablage: die Tabellenzeilen (Knoten und Kanten), tabulatorgetrennt. */
@@ -389,6 +469,10 @@ final class KnowledgeGraphTab extends JPanel {
         page = key;
         this.spaceKey = key == null ? null : spaceKey;
         pageChanges++;
+        if (!graphAttached()) {
+            // Was „Wissensgraph erzeugen“ zuletzt sagte, galt der vorigen Seite; eine laufende Gruppe bleibt verfolgt.
+            generateNote = null;
+        }
         exportNote("");
         pageLoaded = false;
         generation++;
@@ -1209,6 +1293,9 @@ final class KnowledgeGraphTab extends JPanel {
         filter.setForeground(filtered ? Comic.BLUE : Comic.INK);
         export.setEnabled(actions.get() != null && !exporting);
         deleteAll.setEnabled(actions.get() != null && !deleting);
+        boolean busy = preparing || graphAttached();
+        generate.setEnabled(actions.get() != null && page != null && !busy);
+        generate.setToolTipText(graphAttached() ? GENERATE_BUSY_TIP : GENERATE_TIP);
     }
 
     /** Umfänge des Exports, in dieser Reihenfolge; ohne geöffnete Seite nur der gesamte Graph. */
@@ -1286,6 +1373,231 @@ final class KnowledgeGraphTab extends JPanel {
     /** {@code listener} läuft, nachdem alle Aussagen gelöscht sind (Seitenansicht lädt den Aussagen-Reiter neu). */
     void onDeleted(Runnable listener) {
         onDeleted = Objects.requireNonNull(listener, "listener");
+    }
+
+    // ---- Wissensgraph erzeugen (W5)
+
+    /**
+     * Die Seiten von „Wissensgraph erzeugen“: die geöffnete Seite, mit „mit Unterseiten“ dazu ihre Unterseiten ohne die
+     * gesperrten (die haben keinen Inhalt); sonst nur die Seite.
+     */
+    PageSet generatePages() {
+        if (page == null) {
+            return PageSet.EMPTY;
+        }
+        List<PageKey> keys = new ArrayList<>();
+        keys.add(page);
+        if (subpages != null) {
+            for (Map.Entry<String, Set<String>> source : subpages.pages().asMap().entrySet()) {
+                for (String pageId : source.getValue()) {
+                    if (!subpages.locked().contains(source.getKey(), pageId)) {
+                        keys.add(new PageKey(source.getKey(), pageId));
+                    }
+                }
+            }
+        }
+        return PageSet.ofKeys(keys);
+    }
+
+    /**
+     * „Wissensgraph erzeugen“: zählt im Hintergrund, was fehlt ({@link Actions#previewGraph}). Fehlt nichts, lädt der
+     * Graph nur neu; sonst fragt das Overlay mit den Zahlen je Stufe, und erst „Ja“ startet die Gruppe.
+     */
+    void generateGraph() {
+        Actions current = actions.get();
+        PageKey key = page;
+        if (current == null || key == null || preparing || graphAttached()) {
+            return;
+        }
+        PageSet pages = generatePages();
+        preparing = true;
+        refreshButtons();
+        generateNote(StatusNote.plain(COUNTING));
+        runner.run(() -> current.previewGraph(pages), preview -> {
+            preparing = false;
+            refreshButtons();
+            if (!Objects.equals(key, page)) {
+                generateNote(null); // inzwischen eine andere Seite: nicht ungefragt für die alte fragen
+                return;
+            }
+            if (preview.nothingMissing()) {
+                boolean off = preview.plan().goal()
+                        .filter(goal -> goal.state() == ServicePreview.State.DISABLED).isPresent();
+                generateNote(notes(off ? NOT_GENERATED : COMPLETE, preview.plan().notes(), StatusNote.Tone.PLAIN));
+                reloadFocus();
+                return;
+            }
+            generateNote(null);
+            if (confirmGenerate.test(preview)) {
+                startGraph(current, pages);
+            }
+        }, error -> {
+            preparing = false;
+            refreshButtons();
+            generateNote(new StatusNote("Wissensgraph ließ sich nicht prüfen: " + Problems.describe(error).title(),
+                    StatusNote.Tone.ERROR, null, null));
+        });
+    }
+
+    /** Startet die Gruppe nach „Ja“ und verfolgt sie. */
+    private void startGraph(Actions current, PageSet pages) {
+        preparing = true;
+        refreshButtons();
+        generateNote(StatusNote.plain(GENERATING + " …"));
+        runner.run(() -> current.startGraph(pages), plan -> {
+            preparing = false;
+            Optional<BackgroundGroup> group = plan.group();
+            if (group.isEmpty()) {
+                // Nichts angelegt (etwa das Ziel abgeschaltet): die Hinweise sagen, warum.
+                refreshButtons();
+                generateNote(notes(NOT_GENERATED, plan.notes(), StatusNote.Tone.PLAIN));
+                reloadFocus();
+                return;
+            }
+            attach(current, group.get(), plan.notes());
+        }, error -> {
+            preparing = false;
+            refreshButtons();
+            generateNote(new StatusNote("Wissensgraph ließ sich nicht starten: " + Problems.describe(error).title(),
+                    StatusNote.Tone.ERROR, null, null));
+        });
+    }
+
+    /** Verfolgt {@code group} über Meldungen des Core, bis sie fertig ist; auch nach dem Anhalten. */
+    private void attach(Actions current, BackgroundGroup group, List<String> notes) {
+        closeGraphWatch();
+        graphGroupId = group.groupId();
+        graphLast = group;
+        graphEnded = false;
+        planNotes = List.copyOf(notes);
+        refreshButtons();
+        showGraphProgress();
+        graphWatch = current.watchGraph(group.groupId(), this::graphChanged);
+    }
+
+    /** Ein neuer Stand der verfolgten Gruppe, auf dem EDT. */
+    private void graphChanged(BackgroundGroup group) {
+        if (graphGroupId == null || !graphGroupId.equals(group.groupId()) || graphEnded) {
+            return;
+        }
+        graphLast = group;
+        if (!group.finished()) {
+            // Läuft (wieder): Fortschritt mit ✕ statt „angehalten“.
+            showGraphProgress();
+            return;
+        }
+        Actions current = actions.get();
+        if (group.paused()) {
+            // Angehalten: gelb, und weiter beobachten, bis die Gruppe fertig ist (fortsetzen unter „Hintergrund“).
+            generateNote(result(group, List.of()));
+            runner.run(() -> current == null ? List.<String>of() : current.graphNotes(group), notes -> {
+                if (group == graphLast && !graphEnded) {
+                    generateNote(result(group, notes));
+                }
+            }, error -> { });
+            return;
+        }
+        graphEnded = true;
+        closeGraphWatch();
+        refreshButtons();
+        // Die Ereignisse der Teile (Abdeckung, angehaltene fremde Teile) liest der Reiter abseits des EDT.
+        runner.run(() -> current == null ? List.<String>of() : current.graphNotes(group),
+                notes -> graphFinished(group, notes), error -> graphFinished(group, List.of()));
+    }
+
+    /** Das Ende der Gruppe: Ergebnis in die Statuszeile, dann neu laden (sichtbar sofort, sonst beim Anzeigen). */
+    private void graphFinished(BackgroundGroup group, List<String> notes) {
+        if (!group.groupId().equals(graphGroupId)) {
+            return;
+        }
+        generateNote(result(group, notes));
+        analysisChanged();
+        onGenerated.run();
+    }
+
+    /** Fortschritt der Gruppe in der Statuszeile: Teile fertig, die laufende Stufe, gelbe Hinweise, ✕ bricht ab. */
+    private void showGraphProgress() {
+        BackgroundGroup group = graphLast;
+        long done = group.parts().stream().filter(part -> part.state().terminal()).count();
+        String stage = group.parts().stream().filter(part -> part.state() == JobState.RUNNING).findFirst()
+                .or(() -> group.parts().stream().filter(part -> !part.state().terminal()).findFirst())
+                .map(part -> part.parameter(BackgroundJobs.STEP_TITLE)).orElse(null);
+        String text = GENERATING + (stage == null ? "" : " · " + stage) + ": " + done + " von "
+                + GraphGeneration.parts(group.parts().size()) + " fertig";
+        String joined = planNotes.isEmpty() ? "" : " · " + String.join(" · ", planNotes);
+        generateNote(new StatusNote(text + joined + " " + CANCEL_LINK, planNotes.isEmpty() ? StatusNote.Tone.PLAIN
+                : StatusNote.Tone.WARNING, CANCEL_LINK, this::cancelGraph));
+    }
+
+    /**
+     * Das Ergebnis einer angehaltenen oder fertigen Gruppe: grau ohne Auffälligkeit, gelb mit Hinweisen (ausgelassene
+     * Stufen, ohne Zugriff, gescheiterte Stufe, fehlende Abdeckung) oder angehalten; „Hintergrund“ bleibt ein Link.
+     */
+    private StatusNote result(BackgroundGroup group, List<String> eventNotes) {
+        List<String> all = new ArrayList<>(planNotes);
+        group.parts().stream().filter(part -> part.state() == JobState.FAILED)
+                .map(part -> "„" + Objects.requireNonNullElse(part.parameter(BackgroundJobs.STEP_TITLE), "Teil")
+                        + "“ gescheitert" + (part.partitionKey() == null ? "" : " (" + part.partitionKey() + ")"))
+                .forEach(all::add);
+        all.addAll(eventNotes);
+        String jobId = group.parts().isEmpty() ? null : group.parts().get(0).id();
+        Runnable open = jobId == null ? null : () -> showJob.accept(jobId);
+        long done = group.parts().stream().filter(part -> part.state() == JobState.COMPLETED).count();
+        String head;
+        StatusNote.Tone tone = StatusNote.Tone.PLAIN;
+        if (group.paused()) {
+            head = "Wissensgraph angehalten nach " + done + " von " + GraphGeneration.parts(group.parts().size())
+                    + "; fortsetzen unter " + JOBS_LINK;
+            tone = StatusNote.Tone.WARNING;
+        } else if (group.completed()) {
+            head = "Wissensgraph erzeugt";
+        } else if (group.parts().stream().anyMatch(part -> part.state() == JobState.FAILED)) {
+            head = "Wissensgraph mit Fehler beendet";
+        } else {
+            head = "Wissensgraph abgebrochen; fertige Teilergebnisse bleiben";
+        }
+        StatusNote note = notes(head, all, tone);
+        String text = group.paused() ? note.text() : note.text() + " · Einzelheiten unter " + JOBS_LINK;
+        return new StatusNote(text, note.tone(), JOBS_LINK, open);
+    }
+
+    /** {@code head}, dahinter die Hinweise; mit Hinweisen gelb, sonst {@code tone}. */
+    private static StatusNote notes(String head, List<String> notes, StatusNote.Tone tone) {
+        List<String> distinct = notes.stream().distinct().toList();
+        String text = distinct.isEmpty() ? head : head + " · " + String.join(" · ", distinct);
+        return new StatusNote(text, distinct.isEmpty() ? tone : StatusNote.Tone.WARNING, null, null);
+    }
+
+    /** ✕ in der Statuszeile: bricht die verfolgte Gruppe ab; fertige Teilergebnisse bleiben. */
+    void cancelGraph() {
+        Actions current = actions.get();
+        String groupId = graphGroupId;
+        if (current == null || groupId == null || graphEnded || graphLast == null || graphLast.finished()) {
+            return;
+        }
+        generateNote(StatusNote.plain("Wissensgraph wird abgebrochen …"));
+        runner.run(() -> {
+            current.cancelGraph(groupId);
+            return null;
+        }, ignored -> { }, error -> generateNote(new StatusNote("Abbrechen ging nicht: "
+                + Problems.describe(error).title(), StatusNote.Tone.ERROR, null, null)));
+    }
+
+    /** Ob eine Gruppe von „Wissensgraph erzeugen“ verfolgt wird, die noch läuft oder angehalten ist. */
+    private boolean graphAttached() {
+        return graphGroupId != null && !graphEnded;
+    }
+
+    private void closeGraphWatch() {
+        AutoCloseable watch = graphWatch;
+        graphWatch = null;
+        if (watch != null) {
+            try {
+                watch.close();
+            } catch (Exception e) {
+                // schon beendet
+            }
+        }
     }
 
     /**
@@ -1904,6 +2216,30 @@ final class KnowledgeGraphTab extends JPanel {
         /** Löscht alle gespeicherten Aussagen-Analysen, die der Aufrufer lesen darf; liefert die Zahl der Seiten. */
         int deleteAllStatements();
 
+        /** Was „Wissensgraph erzeugen“ über {@code pages} täte, ohne zu starten (W5); ohne Umsetzung fehlt nichts. */
+        default GraphGeneration.Preview previewGraph(PageSet pages) {
+            return new GraphGeneration.Preview(new ServicePreview(List.of(), List.of(), 0), AnalyzerChoice.PARSER, 0);
+        }
+
+        /** Startet „Wissensgraph erzeugen“ über {@code pages} als Hintergrundgruppe; ohne Umsetzung nichts. */
+        default ServicePlan startGraph(PageSet pages) {
+            return new ServicePlan(Optional.empty(), List.of(), 0);
+        }
+
+        /** Verfolgt die Gruppe über Meldungen des Core, auf dem EDT, auch nach dem Anhalten, bis {@code close()}. */
+        default AutoCloseable watchGraph(String groupId, Consumer<BackgroundGroup> listener) {
+            return () -> { };
+        }
+
+        /** Bricht die Gruppe ab; fertige Teilergebnisse bleiben. */
+        default void cancelGraph(String groupId) {
+        }
+
+        /** Gelbe Hinweise aus den Ereignissen der Teile (Abdeckung, angehaltene fremde Teile); nie auf dem EDT. */
+        default List<String> graphNotes(BackgroundGroup group) {
+            return List.of();
+        }
+
         static Actions of(Workspace workspace) {
             if (workspace == null) {
                 return null;
@@ -1946,6 +2282,34 @@ final class KnowledgeGraphTab extends JPanel {
                 public int deleteAllStatements() {
                     return workspace.deleteAllStatements();
                 }
+
+                @Override
+                public GraphGeneration.Preview previewGraph(PageSet pages) {
+                    ServicePreview plan = workspace.previewKnowledgeGraph(pages);
+                    AnalyzerChoice analyzer = workspace.statementAnalyzer();
+                    return new GraphGeneration.Preview(plan, analyzer, analyzer == AnalyzerChoice.MODEL
+                            ? workspace.knowledgeGraphNotReleased(pages) : 0);
+                }
+
+                @Override
+                public ServicePlan startGraph(PageSet pages) {
+                    return workspace.startKnowledgeGraph(pages);
+                }
+
+                @Override
+                public AutoCloseable watchGraph(String groupId, Consumer<BackgroundGroup> listener) {
+                    return workspace.watchBackground(groupId, listener);
+                }
+
+                @Override
+                public void cancelGraph(String groupId) {
+                    workspace.performBackgroundGroupAction(groupId, JobAction.CANCEL);
+                }
+
+                @Override
+                public List<String> graphNotes(BackgroundGroup group) {
+                    return workspace.knowledgeGraphNotes(group);
+                }
             };
         }
     }
@@ -1954,6 +2318,39 @@ final class KnowledgeGraphTab extends JPanel {
 
     void confirmDeleteWith(BooleanSupplier confirm) {
         confirmDelete = Objects.requireNonNull(confirm, "confirm");
+    }
+
+    void confirmGenerateWith(Predicate<GraphGeneration.Preview> confirm) {
+        confirmGenerate = Objects.requireNonNull(confirm, "confirm");
+    }
+
+    /** Ob „Wissensgraph erzeugen“ in der Kopfleiste steht und klickbar ist. */
+    boolean generateOffered() {
+        return generate.isVisible() && generate.isEnabled() && generate.getParent() != null;
+    }
+
+    /** Die Knöpfe rechts in der Kopfleiste, wie sie nebeneinander stehen (Tooltips). */
+    List<String> headerTools() {
+        List<String> tips = new ArrayList<>();
+        for (java.awt.Component c : generate.getParent().getComponents()) {
+            if (c instanceof JComponent component) {
+                tips.add(component.getToolTipText());
+            }
+        }
+        return tips;
+    }
+
+    String generateTooltip() {
+        return generate.getToolTipText();
+    }
+
+    void clickGenerate() {
+        generate.doClick();
+    }
+
+    /** Was die Statuszeile zu „Wissensgraph erzeugen“ sagt, oder {@code null}. */
+    StatusNote generateNoteForTests() {
+        return generateNote;
     }
 
     boolean deleteAllOffered() {

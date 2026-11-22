@@ -85,6 +85,29 @@ class ActivitiesBackgroundTabTest {
         assertThat(images.finishedAt()).isNull();
     }
 
+    /**
+     * W5: „Wissensgraph erzeugen“ steht im Reiter „Hintergrund“ als eine Gruppe „Wissensgraph“ aus der Aussagenanalyse
+     * und dem Abschlussteil; sie läuft, solange ein Teil läuft, und lässt sich als Ganzes abbrechen.
+     */
+    @Test
+    void aKnowledgeGraphGroupIsOneRowNamedAfterTheGraph() {
+        Map<String, String> statements = Map.of(BackgroundJobs.GROUP, "g-w5", BackgroundJobs.TITLE, "Wissensgraph",
+                BackgroundJobs.KIND, "statements", BackgroundJobs.GROUP_KIND, "knowledge-graph",
+                BackgroundJobs.STEP_TITLE, "Aussagenanalyse");
+        Map<String, String> closing = Map.of(BackgroundJobs.GROUP, "g-w5", BackgroundJobs.TITLE, "Wissensgraph",
+                BackgroundJobs.KIND, "knowledge-graph", BackgroundJobs.GROUP_KIND, "knowledge-graph",
+                BackgroundJobs.STEP_TITLE, "Wissensgraph");
+        List<JobStatus> rows = ActivitiesView.groupRows(ActivitiesView.tabJobs(List.of(
+                job("k1", JobType.BACKGROUND, "DEV", JobState.RUNNING, statements, 1, new JobProgress(12, 4, 4, 0)),
+                job("k2", JobType.BACKGROUND, "DEV", JobState.QUEUED, closing, 1, JobProgress.NONE)), true));
+
+        assertThat(rows).hasSize(1);
+        assertThat(ActivitiesView.groupRow(rows.get(0))).isTrue();
+        assertThat(Texts.type(rows.get(0))).isEqualTo("Wissensgraph");
+        assertThat(rows.get(0).state()).isEqualTo(JobState.RUNNING);
+        assertThat(rows.get(0).lifecycle().actions()).contains(JobAction.CANCEL);
+    }
+
     @Test
     void theViewShowsTheTabsAndCountsRunningBackgroundJobs() throws Exception {
         Path home = Files.createTempDirectory("bgtab");

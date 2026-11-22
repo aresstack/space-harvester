@@ -19,7 +19,7 @@ import java.awt.geom.RoundRectangle2D;
  * Papierkorb, Schlüssel, Mehr, Aufklappen (Pfeil rechts), Zuklappen (Pfeil unten),
  * Übernehmen (Haken), Verwerfen (Kreuz),
  * Alles zuklappen (Minus im Kasten), Fadenkreuz (aktuelles Dokument zeigen), Einpassen (Ecken), Tabelle (Raster),
- * Graph (verbundene Knoten), Filter (Trichter), Zurück (Pfeil links), Nachbarn (Knoten mit Plus), Puls (Diagnose).
+ * Graph (verbundene Knoten), Graph erzeugen (Knoten mit Plus), Filter (Trichter), Zurück (Pfeil links), Nachbarn (Knoten mit Plus), Puls (Diagnose).
  * Bestandszeichen des Explorers wie bei OneDrive (Angelo, 13.11.2026): Wolke (nur in der Quelle), Haken im Kreis
  * (lokal und aktuell), Kreispfeile (wird geladen), Warndreieck (veraltet), Schloss (gesperrt), voller, halber und
  * leerer Kreis (Knoten mit Kindern, Spaces). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
@@ -42,7 +42,12 @@ public enum Glyph implements Icon {
     /** „Synonyme vorschlagen“ (KI-Vorschlag): ein großes und ein kleines Funkeln. */
     SPARKLE,
     /** QR-Code (drei Suchmuster und ein paar Module): Zertifikat aus einem QR-Bild lesen (Strang ZX). */
-    QR;
+    QR,
+    /**
+     * „Wissensgraph erzeugen“ (W5): drei verbundene Knoten, unten rechts ein Plus; bewusst ohne Funkeln, denn erzeugt
+     * wird auch ohne KI.
+     */
+    GRAPH_PLUS;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -346,6 +351,15 @@ public enum Glyph implements Icon {
                     g.fill(new Arc2D.Double(4.3, 4.3, 7.4, 7.4, 90, 180, Arc2D.PIE));
                 }
                 case CIRCLE_EMPTY -> g.draw(new Ellipse2D.Double(2.5, 2.5, 11, 11));
+                case GRAPH_PLUS -> {
+                    g.draw(new Line2D.Double(3.6, 3.6, 10.4, 3.6));
+                    g.draw(new Line2D.Double(3.6, 3.6, 3.6, 10.4));
+                    g.fill(new Ellipse2D.Double(1.4, 1.4, 4.4, 4.4));
+                    g.fill(new Ellipse2D.Double(8.2, 1.4, 4.4, 4.4));
+                    g.fill(new Ellipse2D.Double(1.4, 8.2, 4.4, 4.4));
+                    g.draw(new Line2D.Double(11.6, 8.4, 11.6, 14.8));
+                    g.draw(new Line2D.Double(8.4, 11.6, 14.8, 11.6));
+                }
                 case PLUS -> {
                     g.draw(new Line2D.Double(8, 3, 8, 13));
                     g.draw(new Line2D.Double(3, 8, 13, 8));

@@ -2411,6 +2411,72 @@ public final class Workspace {
         }
     }
 
+    /**
+     * Was „Wissensgraph erzeugen“ (W5) über {@code pages} jetzt anlegen würde: je Stufe des Dienst-Planers die Zahl der
+     * Seiten, erst zu ladende, schon laufende und abgeschaltete; startet nichts. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.background.services.ServicePreview previewKnowledgeGraph(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.servicePlanner().preview(caller,
+                com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND, pages);
+    }
+
+    /**
+     * Startet „Wissensgraph erzeugen“ (W5) über {@code pages}: die fehlenden Vorstufen und je Space den Abschlussteil als
+     * eine Hintergrundgruppe, sichtbar im Reiter „Hintergrund“. Nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.background.services.ServicePlan startKnowledgeGraph(
+            com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.servicePlanner().start(caller,
+                com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.KIND, pages);
+    }
+
+    /**
+     * Wie viele Seiten von {@code pages} der KI-Analysator ausließe, weil sie keine KI-Freigabe haben; nach derselben
+     * Regel, nach der der Planer zählt (W5). Nie auf dem EDT.
+     */
+    public int knowledgeGraphNotReleased(com.aresstack.spaceharvester.application.snapshot.PageSet pages) {
+        return harvester.statementAnalysisJobs().coverage(caller, pages, AnalyzerChoice.MODEL).notReleased();
+    }
+
+    /**
+     * Die gelben Hinweise aus den Ereignissen einer Gruppe von „Wissensgraph erzeugen“ (W5): die Abdeckung je Space,
+     * wenn etwas fehlt ({@code KnowledgeGraphJobs.COVERAGE}, nur Zahlen), angehaltene fremde Teile
+     * ({@code RESUME_BY_HAND}) und Seiten, die der KI-Analysator bewusst ausließ. Gelesen mit demselben Recht wie
+     * {@link #statementGroupOmitted}; nie auf dem EDT, ein schon gelöschter Teil zählt nicht.
+     */
+    public List<String> knowledgeGraphNotes(
+            com.aresstack.spaceharvester.application.background.BackgroundGroup group) {
+        java.util.Set<String> notes = new java.util.LinkedHashSet<>();
+        long omitted = 0;
+        for (JobStatus part : group.parts()) {
+            if (!access.permits(caller, scope(part.sourceId(), part.partitionKey()), AccessKind.METADATA)) {
+                continue;
+            }
+            List<JobEvent> events = ownEvents(part.id());
+            if (StatementAnalysisJobs.isAnalysis(part)) {
+                omitted += StatementAnalysisJobs.omitted(events);
+            }
+            for (JobEvent event : events) {
+                if (event.severity() != JobEvent.Severity.WARNING || event.message() == null) {
+                    continue;
+                }
+                if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.COVERAGE
+                        .equals(event.code())) {
+                    notes.add((part.partitionKey() == null ? "" : part.partitionKey() + ": ") + event.message());
+                } else if (com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphJobs.RESUME_BY_HAND
+                        .equals(event.code())) {
+                    notes.add(event.message());
+                }
+            }
+        }
+        if (omitted > 0) {
+            notes.add("Aussagenanalyse: " + (omitted == 1 ? "1 Seite" : omitted + " Seiten")
+                    + " bewusst ausgelassen (ohne KI-Freigabe oder Modell)");
+        }
+        return List.copyOf(notes);
+    }
+
     /** Die Aufträge eines Reiters: nur Hintergrundaufträge oder nur die übrigen. */
     private List<JobStatus> jobs(boolean background) {
         return jobs().stream().filter(job -> job.type().background() == background).toList();

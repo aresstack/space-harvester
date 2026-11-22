@@ -68,6 +68,43 @@ public final class Dialogs {
     }
 
     /**
+     * Ja/Nein-Rückfrage als Overlay ({@link #escFrame}): {@code body} zeigt Frage und Angaben, darunter „Nein“ und „Ja“
+     * als Pillen im App-Stil; Abbrechen über den Esc-Kreis oben rechts und die Taste Esc heißt „Nein“ (W5, UX
+     * 22.11.2026). Die Frage im {@code body} sagt „wirklich“.
+     *
+     * @return {@code true} nur nach „Ja“
+     */
+    public static boolean confirmOverlay(Component parent, String title, JComponent body) {
+        boolean[] result = {false};
+        JDialog dialog = dialog(parent, title);
+        ComposerButton yes = Comic.primary(YES, null);
+        ComposerButton no = Comic.button(NO, null);
+        yes.addActionListener(e -> {
+            result[0] = true;
+            dialog.dispose();
+        });
+        no.addActionListener(e -> dialog.dispose());
+        escFrame(dialog, title, confirmStack(body, no, yes), dialog::dispose);
+        dialog.getRootPane().setDefaultButton(yes);
+        present(dialog, new Dimension(420, 0));
+        return result[0];
+    }
+
+    /** Inhalt von {@link #confirmOverlay} ohne Fenster: {@code body}, darunter rechtsbündig die Knöpfe. */
+    static JPanel confirmStack(JComponent body, ComposerButton... buttons) {
+        JPanel stack = new JPanel(new BorderLayout(0, 14));
+        stack.setOpaque(false);
+        stack.add(body, BorderLayout.CENTER);
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        row.setOpaque(false);
+        for (ComposerButton button : buttons) {
+            row.add(button);
+        }
+        stack.add(row, BorderLayout.SOUTH);
+        return stack;
+    }
+
+    /**
      * Wie {@link #confirm} mit einem Ankreuzfeld {@code option} (anfangs leer) unter dem Text.
      *
      * @return {@code null} ohne Bestätigung, sonst ob das Feld angekreuzt war

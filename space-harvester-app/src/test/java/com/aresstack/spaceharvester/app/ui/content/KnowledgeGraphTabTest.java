@@ -2,6 +2,11 @@ package com.aresstack.spaceharvester.app.ui.content;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
+import com.aresstack.spaceharvester.application.background.BackgroundGroup;
+import com.aresstack.spaceharvester.application.background.BackgroundJobs;
+import com.aresstack.spaceharvester.application.background.services.ServicePlan;
+import com.aresstack.spaceharvester.application.background.services.ServicePreview;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
@@ -9,12 +14,18 @@ import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageGraph;
 import com.aresstack.spaceharvester.application.knowledge.PageStatements;
 import com.aresstack.spaceharvester.application.knowledge.export.KnowledgeGraphExportUseCase;
+import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
@@ -849,6 +860,290 @@ class KnowledgeGraphTabTest {
         assertThat(tab.exportEnabled()).isTrue();
     }
 
+    // ---- Wissensgraph erzeugen (W5)
+
+    /** Der Knopf steht rechts in der Kopfleiste direkt vor dem Export, mit zugänglichem Namen. */
+    @Test
+    void theGenerateButtonSitsInTheHeaderRightBeforeTheExport() {
+        tab.page(WIKI);
+        tab.refreshNow();
+
+        assertThat(tab.generateOffered()).isTrue();
+        List<String> tools = tab.headerTools();
+        assertThat(tools.indexOf(KnowledgeGraphTab.GENERATE_TIP)).isEqualTo(
+                tools.indexOf(KnowledgeGraphTab.EXPORT_TIP) - 1);
+        tab.page(null);
+        assertThat(tab.generateOffered()).as("ohne Seite gesperrt").isFalse();
+    }
+
+    /** Fehlt nichts, lädt der Graph nur neu: keine Rückfrage, kein Start, grau „vollständig“. */
+    @Test
+    void whenNothingIsMissingTheGraphOnlyReloadsWithoutAQuestion() {
+        List<GraphGeneration.Preview> asked = new ArrayList<>();
+        tab.confirmGenerateWith(preview -> asked.add(preview));
+        showPage();
+        actions.preview = preview(AnalyzerChoice.PARSER, 0, List.of(),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.NOTHING_MISSING, 0, 0, 0, 0),
+                goal(2));
+
+        tab.clickGenerate();
+        assertThat(tab.generateOffered()).as("gesperrt, solange gezählt wird").isFalse();
+        runner.runAll();
+
+        assertThat(asked).isEmpty();
+        assertThat(actions.started).isEmpty();
+        assertThat(actions.calls).containsExactly("preview wiki/1", "page wiki/1");
+        assertThat(tab.generateNoteForTests().text()).isEqualTo(KnowledgeGraphTab.COMPLETE);
+        assertThat(tab.generateNoteForTests().tone()).isEqualTo(StatusNote.Tone.PLAIN);
+        assertThat(tab.generateOffered()).isTrue();
+    }
+
+    /** Mit „mit Unterseiten“ gehören die Seite und ihre nicht gesperrten Unterseiten dazu, sonst nur die Seite. */
+    @Test
+    void theSetIsThePageAndWithSubpagesItsUnlockedSubpages() {
+        tab.page(WIKI);
+        assertThat(tab.generatePages().asMap()).isEqualTo(Map.of("wiki", java.util.Set.of("1")));
+
+        tab.subpages(new PageSelection(PageSet.of(Map.of("wiki", List.of("2", "3"))), HoldingCounts.ZERO, List.of(),
+                true, PageSet.of(Map.of("wiki", List.of("3")))), false);
+        tab.confirmGenerateWith(preview -> false);
+        actions.preview = missing();
+        tab.refreshNow();
+        tab.clickGenerate();
+        runner.runAll();
+
+        assertThat(actions.previewed).hasSize(1);
+        assertThat(actions.previewed.get(0).asMap()).isEqualTo(Map.of("wiki", java.util.Set.of("1", "2")));
+    }
+
+    /**
+     * Fehlt etwas, fragt das Overlay mit den Zahlen je Stufe: Seiten, gedämpft „erst laden“ und „läuft schon“,
+     * abgeschaltete Stufen gelb, Stufen ohne Arbeit gar nicht; „Nein“ startet nichts.
+     */
+    @Test
+    void whenSomethingIsMissingTheQuestionNamesTheNumbersPerStageAndNoStartsNothing() {
+        List<GraphGeneration.Preview> asked = new ArrayList<>();
+        tab.confirmGenerateWith(preview -> {
+            asked.add(preview);
+            return false;
+        });
+        showPage();
+        actions.preview = preview(AnalyzerChoice.PARSER, 0, List.of(),
+                stage("index", "Indexieren", ServicePreview.State.NOT_WIRED, 0, 0, 0, 0),
+                stage("images", "Bilder beschreiben", ServicePreview.State.DISABLED, 0, 0, 0, 0),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 12, 4, 0, 1),
+                stage("glossary", "Glossar", ServicePreview.State.RUNNING, 0, 0, 3, 0),
+                goal(16));
+        actions.calls.clear();
+
+        tab.clickGenerate();
+        runner.runAll();
+
+        assertThat(asked).hasSize(1);
+        assertThat(GraphGeneration.lines(asked.get(0))).containsExactly(
+                new GraphGeneration.Line("Bilder beschreiben", "abgeschaltet (wird ausgelassen)", true),
+                new GraphGeneration.Line("Aussagenanalyse · 12 Seiten", "4 erst laden", false),
+                new GraphGeneration.Line("Glossar · 3 Seiten", "läuft schon", false),
+                new GraphGeneration.Line("Wissensgraph · 16 Seiten", "", false));
+        assertThat(GraphGeneration.text(asked.get(0))).startsWith("Wissensgraph wirklich erzeugen?")
+                .doesNotContain("Indexieren").doesNotContain("KI-Dienst");
+        assertThat(GraphGeneration.body(asked.get(0)).getAccessibleContext().getAccessibleName())
+                .isEqualTo(GraphGeneration.text(asked.get(0)));
+        assertThat(actions.started).as("Nein startet nichts").isEmpty();
+        assertThat(actions.calls).as("und lädt nichts").containsExactly("preview wiki/1");
+        assertThat(tab.generateOffered()).isTrue();
+    }
+
+    /** Mit dem KI-Analysator: wie viele Seiten an den KI-Dienst gehen (nur die Zahl) und gelb die ohne Freigabe. */
+    @Test
+    void withTheModelAnalyzerTheQuestionCountsPagesForTheAiServiceWithoutAnAmount() {
+        GraphGeneration.Preview model = preview(AnalyzerChoice.MODEL, 3, List.of(),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 12, 0, 0, 1), goal(15));
+        assertThat(GraphGeneration.modelLine(model)).isEqualTo("12 Seiten gehen an den KI-Dienst.");
+        assertThat(GraphGeneration.notReleasedLine(model)).isEqualTo("3 ohne KI-Freigabe (werden ausgelassen)");
+        assertThat(GraphGeneration.text(model)).doesNotContain("€").doesNotContain("EUR").doesNotContain("Kosten");
+
+        GraphGeneration.Preview parser = preview(AnalyzerChoice.PARSER, 3, List.of(),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 12, 0, 0, 1), goal(15));
+        assertThat(GraphGeneration.modelLine(parser)).isNull();
+        assertThat(GraphGeneration.notReleasedLine(parser)).isNull();
+    }
+
+    /**
+     * „Ja“ startet die Gruppe; die Statuszeile folgt ihr mit Fortschritt und ✕ (bricht über die Gruppe ab), der Knopf
+     * ist gesperrt, und am Ende lädt der Graph genau einmal neu.
+     */
+    @Test
+    void yesStartsTheGroupWhichTheStatusLineFollowsWithProgressAndCancelAndReloadsAtTheEnd() {
+        int[] generated = {0};
+        tab.onGenerated(() -> generated[0]++);
+        List<StatusNote> notes = new ArrayList<>();
+        tab.onNote(notes::add);
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        actions.calls.clear();
+
+        tab.clickGenerate();
+        runner.runAll();
+        assertThat(actions.calls).as("Ja lädt nicht schon beim Start neu").containsExactly("preview wiki/1");
+        actions.calls.clear();
+
+        assertThat(actions.started).hasSize(1);
+        assertThat(actions.watched).containsExactly("g-1");
+        StatusNote progress = tab.generateNoteForTests();
+        assertThat(progress.text()).isEqualTo("Wissensgraph wird erzeugt · Aussagenanalyse: 0 von 2 Teilen fertig ✕");
+        assertThat(progress.link()).isEqualTo(KnowledgeGraphTab.CANCEL_LINK);
+        assertThat(notes.get(notes.size() - 1).text()).startsWith(progress.text()).contains("3 Knoten");
+        assertThat(tab.generateOffered()).as("gesperrt, solange die Gruppe läuft").isFalse();
+        assertThat(tab.generateTooltip()).isEqualTo(KnowledgeGraphTab.GENERATE_BUSY_TIP);
+
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.RUNNING, "Wissensgraph")));
+        assertThat(tab.generateNoteForTests().text()).contains("Wissensgraph: 1 von 2 Teilen fertig");
+
+        tab.generateNoteForTests().action().run();
+        runner.runAll();
+        assertThat(actions.cancelled).containsExactly("g-1");
+
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        assertThat(actions.watchesClosed).isEqualTo(1);
+        runner.runAll();
+
+        assertThat(actions.calls).as("am Ende genau einmal neu geladen").containsExactly("page wiki/1");
+        assertThat(tab.generateNoteForTests().text()).isEqualTo("Wissensgraph erzeugt · Einzelheiten unter Hintergrund");
+        assertThat(tab.generateNoteForTests().tone()).isEqualTo(StatusNote.Tone.PLAIN);
+        assertThat(tab.generateNoteForTests().link()).isEqualTo(KnowledgeGraphTab.JOBS_LINK);
+        assertThat(generated[0]).isEqualTo(1);
+        assertThat(tab.generateOffered()).isTrue();
+
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        assertThat(actions.calls).as("späte Meldungen laden nicht noch einmal").hasSize(1);
+    }
+
+    /** Angehalten: gelb „angehalten“, der Reiter bleibt dran und folgt dem Fortsetzen bis zum Ende. */
+    @Test
+    void aPausedGroupStaysAttachedYellowAndIsFollowedAfterResuming() {
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.RUNNING, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(), 0);
+        actions.graphNotes = List.of("Nach dem Neustart nicht von selbst fortgesetzt");
+        tab.clickGenerate();
+        runner.runAll();
+        actions.calls.clear();
+
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.PAUSED, "Wissensgraph")));
+        runner.runAll();
+
+        StatusNote paused = tab.generateNoteForTests();
+        assertThat(paused.tone()).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(paused.text()).startsWith("Wissensgraph angehalten nach 1 von 2 Teilen")
+                .contains("Nach dem Neustart nicht von selbst fortgesetzt");
+        assertThat(actions.watchesClosed).as("bleibt dran").isZero();
+        assertThat(actions.calls).as("lädt beim Anhalten nicht neu").isEmpty();
+        assertThat(tab.generateOffered()).isFalse();
+
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.RUNNING, "Wissensgraph")));
+        assertThat(tab.generateNoteForTests().text()).startsWith(KnowledgeGraphTab.GENERATING);
+        actions.watcher.accept(group(part("p-1", JobState.COMPLETED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+        assertThat(actions.watchesClosed).isEqualTo(1);
+        assertThat(actions.calls).containsExactly("page wiki/1");
+    }
+
+    /** Hinweise des Planers, eine gescheiterte Stufe und fehlende Abdeckung stehen gelb in der Statuszeile. */
+    @Test
+    void planNotesAFailedStageAndMissingCoverageAreYellow() {
+        tab.confirmGenerateWith(preview -> true);
+        showPage();
+        actions.preview = missing();
+        String skipped = "„Bilder beschreiben“ ist abgeschaltet und wurde bewusst ausgelassen";
+        actions.plan = new ServicePlan(Optional.of(group(part("p-1", JobState.QUEUED, "Aussagenanalyse"),
+                part("p-2", JobState.QUEUED, "Wissensgraph"))), List.of(skipped), 0);
+        actions.graphNotes = List.of("DEV: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden");
+        tab.clickGenerate();
+        runner.runAll();
+
+        assertThat(tab.generateNoteForTests().tone()).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(tab.generateNoteForTests().text()).contains(skipped).endsWith(KnowledgeGraphTab.CANCEL_LINK);
+
+        actions.watcher.accept(group(part("p-1", JobState.FAILED, "Aussagenanalyse"),
+                part("p-2", JobState.COMPLETED, "Wissensgraph")));
+        runner.runAll();
+
+        StatusNote end = tab.generateNoteForTests();
+        assertThat(end.tone()).isEqualTo(StatusNote.Tone.WARNING);
+        assertThat(end.text()).startsWith("Wissensgraph mit Fehler beendet").contains(skipped)
+                .contains("„Aussagenanalyse“ gescheitert (DEV)")
+                .contains("DEV: 3 von 5 Seiten mit aktueller Analyse, 2 erst laden");
+    }
+
+    /** Ein abgeschaltetes Ziel startet nichts; die Statuszeile sagt gelb, warum. */
+    @Test
+    void aDisabledGoalStartsNothingAndSaysWhy() {
+        showPage();
+        String off = "„Wissensgraph“ ist abgeschaltet und wurde bewusst ausgelassen";
+        actions.preview = preview(AnalyzerChoice.PARSER, 0, List.of(off),
+                new ServicePreview.Stage("knowledge-graph", "Wissensgraph", ServicePreview.State.DISABLED, 0, 0, 0,
+                        0));
+
+        tab.clickGenerate();
+        runner.runAll();
+
+        assertThat(actions.started).isEmpty();
+        assertThat(tab.generateNoteForTests().text()).isEqualTo(KnowledgeGraphTab.NOT_GENERATED + " · " + off);
+        assertThat(tab.generateNoteForTests().tone()).isEqualTo(StatusNote.Tone.WARNING);
+    }
+
+    private void showPage() {
+        tab.showingForTests(true);
+        tab.page(WIKI);
+        runner.runAll();
+        actions.calls.clear();
+    }
+
+    private static GraphGeneration.Preview missing() {
+        return preview(AnalyzerChoice.PARSER, 0, List.of(),
+                stage("statements", "Aussagenanalyse", ServicePreview.State.PLANNED, 1, 0, 0, 1), goal(1));
+    }
+
+    private static GraphGeneration.Preview preview(AnalyzerChoice analyzer, int notReleased, List<String> notes,
+                                                   ServicePreview.Stage... stages) {
+        return new GraphGeneration.Preview(new ServicePreview(List.of(stages), notes, 0), analyzer, notReleased);
+    }
+
+    private static ServicePreview.Stage stage(String id, String title, ServicePreview.State state, int pages,
+                                              int toLoad, int reused, int parts) {
+        return new ServicePreview.Stage(id, title, state, pages, toLoad, reused, parts);
+    }
+
+    private static ServicePreview.Stage goal(int pages) {
+        return stage("knowledge-graph", "Wissensgraph", ServicePreview.State.PLANNED, pages, 0, 0, 1);
+    }
+
+    private static BackgroundGroup group(JobStatus... parts) {
+        return new BackgroundGroup("g-1", "knowledge-graph", "Wissensgraph", List.of(parts));
+    }
+
+    /** Ein Teil der Gruppe in Space „DEV“ der Quelle „wiki“, mit dem Titel seiner Stufe. */
+    private static JobStatus part(String id, JobState state, String stage) {
+        return new JobStatus(id, JobType.BACKGROUND, "wiki", "DEV", "app", state, JobProgress.NONE,
+                state == JobState.FAILED ? new com.aresstack.spaceharvester.application.jobs.JobError("TEST", "Fehler")
+                        : null, false,
+                Instant.EPOCH, null, null, "1", null, Map.of(BackgroundJobs.GROUP, "g-1", BackgroundJobs.STEP_TITLE,
+                stage), false, false, null);
+    }
+
     /** Unterseiten wie aus {@code Holdings#descendants}, erfundene Seiten-IDs der Quelle „wiki“. */
     private static PageSelection below(String... pageIds) {
         return new PageSelection(PageSet.of(Map.of("wiki", List.of(pageIds))), HoldingCounts.ZERO, List.of(), true);
@@ -873,6 +1168,46 @@ class KnowledgeGraphTabTest {
         RuntimeException exportFailure;
         RuntimeException deleteFailure;
         int deletedPages = 3;
+        GraphGeneration.Preview preview;
+        ServicePlan plan = new ServicePlan(Optional.empty(), List.of(), 0);
+        final List<PageSet> previewed = new ArrayList<>();
+        final List<PageSet> started = new ArrayList<>();
+        final List<String> watched = new ArrayList<>();
+        final List<String> cancelled = new ArrayList<>();
+        Consumer<BackgroundGroup> watcher;
+        int watchesClosed;
+        List<String> graphNotes = List.of();
+
+        @Override
+        public GraphGeneration.Preview previewGraph(PageSet pages) {
+            previewed.add(pages);
+            calls.add("preview " + pages.asMap().entrySet().iterator().next().getKey() + "/"
+                    + String.join(",", new java.util.TreeSet<>(pages.asMap().values().iterator().next())));
+            return preview;
+        }
+
+        @Override
+        public ServicePlan startGraph(PageSet pages) {
+            started.add(pages);
+            return plan;
+        }
+
+        @Override
+        public AutoCloseable watchGraph(String groupId, Consumer<BackgroundGroup> listener) {
+            watched.add(groupId);
+            watcher = listener;
+            return () -> watchesClosed++;
+        }
+
+        @Override
+        public void cancelGraph(String groupId) {
+            cancelled.add(groupId);
+        }
+
+        @Override
+        public List<String> graphNotes(BackgroundGroup group) {
+            return graphNotes;
+        }
 
         @Override
         public int deleteAllStatements() {
