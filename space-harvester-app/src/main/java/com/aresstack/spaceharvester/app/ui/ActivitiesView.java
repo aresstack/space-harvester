@@ -1656,12 +1656,14 @@ public final class ActivitiesView implements View {
      * Abrufen die geladenen oder geprüften Seiten und erst beim Exportieren die exportierten (vorher stünde dort
      * 0 von N, obwohl die Statuszeile längst hochzählt); die Zeile kennt keine Phase, aber exportiert ist erst, wenn
      * das Abrufen durch ist. Ein beendeter Download zeigt immer die exportierten Seiten, auch 0 von N, wenn alle
-     * fehlten. Alle anderen Arten zählen verarbeitete Seiten.
+     * fehlten. Alle anderen Arten zählen verarbeitete Seiten ohne die gescheiterten (Angelo 22.11.2026: ein Fehler
+     * soll nicht als „398/398“ erscheinen); die stehen dahinter.
      */
     static String progressText(JobStatus status) {
         JobProgress p = status.progress();
         boolean fetching = status.type() == JobType.EXPORT && !status.state().terminal() && p.written() == 0;
-        long done = status.type() == JobType.EXPORT && !fetching ? p.written() : p.processed();
+        long done = status.type() == JobType.EXPORT && !fetching ? p.written()
+                : Math.max(0, p.processed() - (status.type() == JobType.EXPORT ? 0 : p.failed()));
         long skipped = skipped(status);
         return done + "/" + p.discovered() + (skipped > 0 ? " · " + skipped + " ausgelassen" : "")
                 + (p.failed() > 0 ? " · " + p.failed() + " Fehler" : "");

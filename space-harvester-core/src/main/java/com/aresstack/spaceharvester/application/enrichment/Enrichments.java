@@ -648,26 +648,27 @@ public class Enrichments {
      * sich ändern, während die Berechnung wartet oder läuft, ohne neue Payload (etwa ein neues Transkript eines Videos):
      * Gerechnet und gespeichert wird nur der aktuelle; ist er weggefallen, nichts.
      */
-    private Outcome computeQueued(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input,
-                                  boolean force) {
+    private Queued computeQueued(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input,
+                                 boolean force) {
         try {
             PageText current = text;
             String currentInput = input;
             for (int attempt = 0; attempt < TEXT_CHANGE_ATTEMPTS; attempt++) {
                 if (!processor.appliesTo(snapshot.key())) {
-                    return Outcome.SKIPPED;
+                    return Queued.SKIPPED;
                 }
                 Enrichment previous = store.find(snapshot.key()).stream()
                         .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
                         .orElse(null);
                 if (!force && previous != null && previous.freshness(currentInput, processor.version())
                         == Enrichment.Freshness.CURRENT) {
-                    return Outcome.SKIPPED;
+                    return Queued.SKIPPED;
                 }
-                Enrichment result = compute(processor, snapshot, current, currentInput);
+                Computed computed = attempt(processor, snapshot, current, currentInput);
+                Enrichment result = computed.result();
                 Optional<PageText> now = projection(snapshot);
                 if (now.isEmpty()) {
-                    return Outcome.SKIPPED;
+                    return Queued.SKIPPED;
                 }
                 if (!now.get().inputSha256().equals(currentInput)) {
                     current = now.get();
@@ -675,17 +676,27 @@ public class Enrichments {
                     continue;
                 }
                 if (!saveWhileApplies(processor, result)) {
-                    return Outcome.SKIPPED;
+                    return Queued.SKIPPED;
                 }
                 store.flush();
-                return result.status() == Enrichment.Status.FAILED ? Outcome.FAILED : Outcome.WRITTEN;
+                return result.status() == Enrichment.Status.FAILED ? new Queued(Outcome.FAILED, computed.cause())
+                        : new Queued(Outcome.WRITTEN, null);
             }
-            return Outcome.SKIPPED;
+            return Queued.SKIPPED;
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Hintergrundberechnung {0} scheiterte ({1})",
                     processor.id(), e.getClass().getName());
-            return Outcome.FAILED;
+            return new Queued(Outcome.FAILED, e);
         }
+    }
+
+    /**
+     * Was eine Berechnung der Warteschlange ergab, mit der Ursache eines Fehlschlags (für das Ereignis des Teils; nur
+     * die Ausnahme selbst, nie im Ergebnis gespeichert).
+     */
+    private record Queued(Outcome outcome, Throwable cause) {
+
+        static final Queued SKIPPED = new Queued(Outcome.SKIPPED, null);
     }
 
     /** Was eine Berechnung der Warteschlange ergab, für den Fortschritt des Teils (Codex-Befund #1077). */
@@ -701,7 +712,7 @@ public class Enrichments {
     // --- Warteschlange als Hintergrundauftrag (ADR 0025 Nachtrag, Punkt 10) ----------------------------------------
 
     /** Eine wartende Berechnung: nur Prozessor und Seite, den Snapshot liest der Teil beim Rechnen. */
-    private record Work(String processorId, PageKey key, boolean force) {
+    record Work(String processorId, PageKey key, boolean force) {
     }
 
     /** Die wartenden Berechnungen einer Quelle und die Gruppe, deren Teil sie abholt. */
@@ -942,20 +953,21 @@ public class Enrichments {
                 next = waiting.next();
                 waiting.remove();
             }
-            Outcome outcome;
+            Queued queued;
             try {
-                outcome = computeWork(next);
+                queued = computeWork(next);
             } catch (JobCancelledException e) {
                 throw e;
             } catch (RuntimeException e) {
-                // Abnahme #1077: Sonst scheiterte der Teil, und jeder Ersatzteil verlöre die nächste Berechnung. Nur
-                // Quelle und Exception-Klasse, die Meldung könnte Text der Seite enthalten.
+                // Abnahme #1077: Sonst scheiterte der Teil, und jeder Ersatzteil verlöre die nächste Berechnung. Im Log
+                // nur Quelle und Exception-Klasse, die Meldung könnte Text der Seite enthalten.
                 LOG.log(System.Logger.Level.WARNING, "KI-Anreicherung {0} in Quelle {1} gescheitert ({2})",
                         next.processorId(), mine.sourceId, e.getClass().getName());
-                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, WORK_FAILED,
-                        "Berechnung " + next.processorId() + " in Quelle " + mine.sourceId + " gescheitert ("
-                                + e.getClass().getSimpleName() + "), weiter mit der nächsten"));
-                outcome = Outcome.FAILED;
+                queued = new Queued(Outcome.FAILED, e);
+            }
+            Outcome outcome = queued.outcome();
+            if (outcome == Outcome.FAILED) {
+                context.record(failure(next, mine.sourceId, queued.cause()));
             }
             switch (outcome) {
                 case WRITTEN -> context.written(1);
@@ -967,13 +979,42 @@ public class Enrichments {
         }
     }
 
+    /**
+     * Das rote Ereignis einer gescheiterten Berechnung (Angelo 22.11.2026: jeder Fehler mit Grund in der Diagnose).
+     * Abnahme: nur Quelle, Seite als Verweis, Prozessor, Exception-Klassen und die Befunde der Kette (Bereich, HTTP,
+     * TLS, Stelle im Space Harvester), nie Meldungstexte, denn die könnten Seiteninhalt oder eine Modellantwort
+     * enthalten.
+     */
+    static JobEvent.Draft failure(Work work, String sourceId, Throwable cause) {
+        String where = "Berechnung " + work.processorId() + " der Seite " + work.key().pageId() + " in Quelle "
+                + sourceId + " gescheitert";
+        if (cause == null) {
+            return new JobEvent.Draft(JobEvent.Severity.ERROR, JobEvent.Category.JOB, COMPONENT, WORK_FAILED,
+                    where + ", weiter mit der nächsten", null, null, null);
+        }
+        com.aresstack.spaceharvester.application.jobs.FailureDiagnosis.Findings findings =
+                com.aresstack.spaceharvester.application.jobs.FailureDiagnosis.of(cause, WORK_FAILED);
+        Throwable root = cause;
+        java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        while (root.getCause() != null && seen.add(root)) {
+            root = root.getCause();
+        }
+        String reason = cause.getClass().getSimpleName()
+                + (root == cause ? "" : " ← " + root.getClass().getSimpleName())
+                + (findings.httpStatus() == null ? "" : ", HTTP " + findings.httpStatus())
+                + (findings.component() == null ? "" : ", in " + findings.component());
+        return new JobEvent.Draft(JobEvent.Severity.ERROR, findings.category(), COMPONENT, WORK_FAILED,
+                where + ": " + reason + "; weiter mit der nächsten", findings.httpStatus(), findings.tlsFinding(),
+                null);
+    }
+
     /** Rechnet eine Berechnung der Warteschlange mit dem Snapshot von jetzt. */
-    private Outcome computeWork(Work work) {
+    private Queued computeWork(Work work) {
         EnrichmentProcessor processor = processors.get(work.processorId());
         Optional<PageSnapshot> snapshot = processor == null ? Optional.empty() : lookup.apply(work.key());
         Optional<PageText> text = snapshot.flatMap(this::projection);
         if (text.isEmpty()) {
-            return Outcome.SKIPPED;
+            return Queued.SKIPPED;
         }
         return computeQueued(processor, snapshot.get(), text.get(), text.get().inputSha256(), work.force());
     }
@@ -1031,23 +1072,32 @@ public class Enrichments {
 
     /** @return das Ergebnis oder {@code null}, wenn der Prozessor die Seite nicht bearbeiten darf */
     private Enrichment compute(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input) {
+        return attempt(processor, snapshot, text, input).result();
+    }
+
+    /** Ein Ergebnis und, wenn der Prozessor scheiterte, seine Ausnahme. */
+    private record Computed(Enrichment result, RuntimeException cause) {
+    }
+
+    /** Wie {@link #compute}, mit der Ausnahme eines gescheiterten Prozessors für die Diagnose des Teils. */
+    private Computed attempt(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input) {
         try {
             EnrichmentOutput output = processor.process(snapshot, text);
             String version = output.version() != null ? output.version() : processor.version();
-            return new Enrichment(snapshot.key(), processor.id(), version, input, snapshot.revision(),
-                    Enrichment.Status.OK, output.payloadJson(), output.warnings(), null, clock.instant());
+            return new Computed(new Enrichment(snapshot.key(), processor.id(), version, input, snapshot.revision(),
+                    Enrichment.Status.OK, output.payloadJson(), output.warnings(), null, clock.instant()), null);
         } catch (ProcessingNotAllowedException e) {
             // Kein Fehler der Seite: nichts speichern, die Seite nicht nennen.
             LOG.log(System.Logger.Level.DEBUG, "Prozessor {0} übersprungen, Quelle {1} nicht freigegeben",
                     processor.id(), snapshot.key().sourceId());
-            return null;
+            return new Computed(null, null);
         } catch (RuntimeException e) {
             // Keine Meldung in Ergebnis oder Log: sie könnte Text der Seite enthalten.
             LOG.log(System.Logger.Level.WARNING, "Prozessor {0} {1} scheiterte an Seite {2}/{3} ({4})",
                     processor.id(), processor.version(), snapshot.key().sourceId(), snapshot.key().pageId(),
                     e.getClass().getName());
-            return new Enrichment(snapshot.key(), processor.id(), processor.version(), input, snapshot.revision(),
-                    Enrichment.Status.FAILED, "{}", List.of(), PROCESSOR_ERROR, clock.instant());
+            return new Computed(new Enrichment(snapshot.key(), processor.id(), processor.version(), input,
+                    snapshot.revision(), Enrichment.Status.FAILED, "{}", List.of(), PROCESSOR_ERROR, clock.instant()), e);
         }
     }
 
