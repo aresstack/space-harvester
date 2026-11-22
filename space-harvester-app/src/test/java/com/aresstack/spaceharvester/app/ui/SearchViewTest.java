@@ -474,31 +474,43 @@ class SearchViewTest {
             assertThat(view[0].sourceBoxes.values()).allMatch(AbstractButton::isSelected);
             assertThat(view[0].chosenSources()).isEmpty();
             assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
-            // Eine Quelle abgehakt: die nächste Suche nennt die übrigen ausdrücklich.
+            // Eine Quelle abgehakt: Auswahl sind die übrigen ganz, die nächste Suche nennt sie ausdrücklich.
             view[0].sourceBoxes.get("alpha").doClick();
             assertThat(view[0].chosenSources()).containsExactly("beta", "dateien");
             assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Beta, Dateien");
-            // Die Auswahl im Explorer grenzt unter den angehakten ein.
+            // Links nur ein Space: die Quelle ist teilweise gewählt, der Space steht hinter ihrem Namen.
             view[0].scope(List.of(new Explorer.Scope("beta", "DEV")));
             assertThat(view[0].chosenSources()).containsExactly("beta");
             assertThat(view[0].chosenSpaces()).containsExactly("DEV");
             assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Beta › DEV");
-            // Eine ganze abgehakte Quelle in der Auswahl hebt den Space-Filter der angehakten nicht auf.
-            view[0].scope(List.of(new Explorer.Scope("alpha", null), new Explorer.Scope("beta", "DEV")));
-            assertThat(view[0].chosenSources()).containsExactly("beta");
-            assertThat(view[0].chosenSpaces()).containsExactly("DEV");
-            // Die gewählte Quelle ist abgehakt: nichts zu durchsuchen, das Häkchen bleibt.
-            view[0].scope(List.of(new Explorer.Scope("alpha", null)));
+            assertThat(view[0].sourceBoxes.get("beta").isSelected()).isTrue();
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(
+                    view[0].sourceBoxes.get("beta"))).isTrue();
+            assertThat(view[0].sourceBoxes.get("beta").getText()).isEqualTo("Beta · DEV");
             assertThat(view[0].sourceBoxes.get("alpha").isSelected()).isFalse();
-            assertThat(view[0].searchedSources()).isEmpty();
-            assertThat(view[0].scopeLabel.getText()).isEqualTo("In: keine Wissensquelle angehakt");
+            // Ein Klick auf die teilweise gewählte Quelle wählt sie ganz.
+            view[0].sourceBoxes.get("beta").doClick();
+            assertThat(view[0].sourceBoxes.get("beta").isSelected()).isTrue();
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(
+                    view[0].sourceBoxes.get("beta"))).isFalse();
+            assertThat(view[0].sourceBoxes.get("beta").getText()).isEqualTo("Beta");
+            assertThat(view[0].chosenSources()).containsExactly("beta");
+            assertThat(view[0].chosenSpaces()).isEmpty();
+            // Die letzte Quelle lässt sich nicht abhaken.
+            view[0].sourceBoxes.get("beta").doClick();
+            assertThat(view[0].sourceBoxes.get("beta").isSelected()).isTrue();
+            assertThat(view[0].chosenSources()).containsExactly("beta");
             view[0].search("betrieb");
-            assertThat(view[0].statusText()).doesNotContain("Treffer");
-            // Wieder angehakt gilt die Auswahl.
-            view[0].sourceBoxes.get("alpha").doClick();
-            assertThat(view[0].chosenSources()).containsExactly("alpha");
-            assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alpha");
+            assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Beta");
         });
+    }
+
+    @Test
+    void spacesOfSeveralSourcesAreTheScopeAndAreListedBehindTheirSource() {
+        assertThat(SearchView.boxText("Confluence HaVdB", List.of("CL2", "CL3")))
+                .isEqualTo("Confluence HaVdB · CL2, CL3");
+        assertThat(SearchView.boxText("Wiki", List.of("A", "B", "C", "D", "E"))).isEqualTo("Wiki · A, B, C +2");
+        assertThat(SearchView.boxText("Wiki", List.of())).isEqualTo("Wiki");
     }
 
     /** Ein Häkchen je Dateityp, Vorgabe alle; die abgehakten fehlen in der Anfrage, die Zeile nennt die Auswahl. */
@@ -852,6 +864,52 @@ class SearchViewTest {
         });
         assertThat(view[0].cancel.isVisible()).isTrue();
         assertThat(view[0].cancel.isEnabled()).isTrue();
+    }
+
+    @Test
+    void theSelectionOnTheLeftChecksTheSourcesAndCheckingSelectsThemOnTheLeft() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        await(() -> view[0].sourceBoxes.size() == 3);
+        List<List<Explorer.Scope>> selectedLeft = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            // Wie das Hauptfenster: der Baum wählt und meldet die Auswahl zurück.
+            view[0].onSourcesChecked(scopes -> {
+                selectedLeft.add(scopes);
+                view[0].scope(scopes);
+            });
+            view[0].scope(List.of(new Explorer.Scope("alpha", null)));
+            assertThat(view[0].sourceBoxes.get("alpha").isSelected()).isTrue();
+            assertThat(view[0].sourceBoxes.get("beta").isSelected()).as("nur die links gewählte Quelle").isFalse();
+            assertThat(view[0].searchedSources()).containsExactly("alpha");
+
+            // Beta anhaken: links werden Alpha und Beta gewählt.
+            view[0].sourceBoxes.get("beta").doClick();
+            assertThat(selectedLeft).last().isEqualTo(List.of(new Explorer.Scope("alpha", null),
+                    new Explorer.Scope("beta", null)));
+            // Dateien dazu: alle angehakt heißt links „Wissensquellen“.
+            view[0].sourceBoxes.get("dateien").doClick();
+            assertThat(selectedLeft).last().isEqualTo(List.of());
+            assertThat(view[0].sourceBoxes.values()).allMatch(javax.swing.AbstractButton::isSelected);
+
+            // Alpha abhaken: links bleiben Beta und Dateien gewählt.
+            view[0].sourceBoxes.get("alpha").doClick();
+            assertThat(selectedLeft).last().isEqualTo(List.of(new Explorer.Scope("beta", null),
+                    new Explorer.Scope("dateien", null)));
+            assertThat(view[0].searchedSources()).containsExactly("beta", "dateien");
+
+            // Links ein Space aus Beta und einer aus Dateien: beide teilweise, Alpha abgehakt.
+            view[0].scope(List.of(new Explorer.Scope("beta", "DEV"), new Explorer.Scope("dateien", "ABL")));
+            assertThat(view[0].chosenSpaces()).containsExactlyInAnyOrder("DEV", "ABL");
+            assertThat(view[0].sourceBoxes.get("alpha").isSelected()).isFalse();
+            assertThat(view[0].sourceBoxes.get("dateien").getText()).isEqualTo("Dateien · ABL");
+
+            // „Wissensquellen“ links: alles angehakt.
+            view[0].scope(List.of());
+            assertThat(view[0].sourceBoxes.values()).allMatch(javax.swing.AbstractButton::isSelected);
+        });
     }
 
     private static SearchView.Hit row(String pageId) {
