@@ -155,6 +155,12 @@ final class PodcastControl<S> {
     private Consumer<List<Integer>> follower = statements -> { };
     /** Das Thema, dem die Ansicht gerade folgt; -1 = keinem. */
     private int followedTopic = -1;
+    /** Öffnet und schließt das Bild des laufenden Kapitels in der Ansicht; ohne bleibt es bei der Bühne. */
+    private Cue cue;
+    /** Das Kapitel, dessen Bild gerade offen ist; -1 = keines. */
+    private int openedTopic = -1;
+    /** Das Kapitel, dessen Bild der Benutzer selbst geschlossen hat: es geht in diesem Kapitel nicht wieder auf. */
+    private int dismissedTopic = -1;
 
     private Source<S> source = Source.none();
     private S summary;
@@ -251,6 +257,7 @@ final class PodcastControl<S> {
         WindowSizes.rememberInt(PICTURES_KEY, show ? 1 : 0);
         showPicturesToggle();
         showPicture();
+        cueAt(player.position());
     }
 
     boolean pictures() {
@@ -278,6 +285,77 @@ final class PodcastControl<S> {
             runningPicture = next;
             showPicture();
         }
+    }
+
+    /** Ab diesem Anteil eines Kapitels geht sein Bild auf (Angelo 22.11.2026: anteilig, nie eine feste Zeit). */
+    static final double OPEN_SHARE = 0.2;
+    /** Ab diesem Anteil schließt es wieder, damit es vor dem nächsten Kapitel an seine Stelle zurückgeschrumpft ist. */
+    static final double CLOSE_SHARE = 0.85;
+
+    /** Die Ansicht zeigt die Bilder an ihrer Stelle im Text und öffnet sie im Betrachter. */
+    interface Cue {
+        /** Öffnet das Bild von Kapitel {@code topic}; {@code false}, wenn es (noch) keines gibt. */
+        boolean open(int topic);
+
+        /** Schließt das offene Bild wieder an seine Stelle. */
+        void close();
+    }
+
+    /**
+     * Statt der Bühne öffnet die Ansicht das Bild des laufenden Kapitels selbst, nach {@link #OPEN_SHARE} des Kapitels,
+     * und schließt es nach {@link #CLOSE_SHARE} (Angelo 22.11.2026).
+     */
+    void cue(Cue cue) {
+        this.cue = Objects.requireNonNull(cue, "cue");
+        showStage(false);
+    }
+
+    /** Der Benutzer hat das Bild selbst geschlossen: in diesem Kapitel nicht wieder öffnen. */
+    void pictureClosed() {
+        if (openedTopic >= 0) {
+            dismissedTopic = openedTopic;
+            openedTopic = -1;
+        }
+    }
+
+    private void cueAt(long millis) {
+        if (cue == null) {
+            return;
+        }
+        Podcast podcast = last;
+        int track = player.trackAt(millis);
+        int topic = podcast == null || !timelineShown || track < 0 || track >= podcast.parts().size() ? -1
+                : podcast.parts().get(track).topic();
+        if (topic != dismissedTopic) {
+            dismissedTopic = -1;
+        }
+        double share = share(millis, player.topicStarts(), player.total());
+        boolean wantOpen = pictures && topic >= 0 && topic != dismissedTopic && share >= OPEN_SHARE
+                && share < CLOSE_SHARE;
+        if (wantOpen && openedTopic != topic) {
+            if (openedTopic >= 0) {
+                cue.close();
+            }
+            openedTopic = cue.open(topic) ? topic : -1;
+        } else if (!wantOpen && openedTopic >= 0) {
+            openedTopic = -1;
+            cue.close();
+        }
+    }
+
+    /** Wie weit {@code millis} im laufenden Kapitel steht, 0 am Anfang, 1 am Ende. */
+    static double share(long millis, List<Long> topicStarts, long total) {
+        long start = 0;
+        long end = total;
+        for (long at : topicStarts) {
+            if (at <= millis) {
+                start = at;
+            } else {
+                end = at;
+                break;
+            }
+        }
+        return end <= start ? 0 : Math.max(0, Math.min(1, (double) (millis - start) / (end - start)));
     }
 
     /**
@@ -318,7 +396,8 @@ final class PodcastControl<S> {
 
     /** Zeigt das Bild des laufenden Abschnitts auf der Bühne oder nimmt die Bühne weg; lädt es bei Bedarf. */
     private void showPicture() {
-        Podcast.Picture wantedPicture = pictures ? runningPicture : null;
+        // Öffnet die Ansicht die Bilder selbst (cue), bleibt die Bühne aus.
+        Podcast.Picture wantedPicture = pictures && cue == null ? runningPicture : null;
         if (wantedPicture == null) {
             showStage(false);
             return;
@@ -591,6 +670,7 @@ final class PodcastControl<S> {
         // Ein Bild, das erst jetzt fertig wurde, erscheint zum laufenden Thema.
         pictureAt(player.position());
         followAt(player.position());
+        cueAt(player.position());
         if (!player.playing() || player.total() > 0 && !timeline.isDragging()) {
             timeline.update(player.position(), player.total());
         }
@@ -618,6 +698,11 @@ final class PodcastControl<S> {
             runningPicture = null;
             showStage(false);
             followTrack(-1);
+            if (openedTopic >= 0 && cue != null) {
+                cue.close();
+            }
+            openedTopic = -1;
+            dismissedTopic = -1;
         }
     }
 
@@ -637,6 +722,7 @@ final class PodcastControl<S> {
                 resumeAt = millis;
                 pictureAt(millis);
                 followAt(millis);
+                cueAt(millis);
                 if (retrying) {
                     // Das Wiederholen hat geklappt: wieder blau.
                     retrying = false;
