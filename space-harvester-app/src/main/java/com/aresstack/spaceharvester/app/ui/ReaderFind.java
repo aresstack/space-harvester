@@ -554,7 +554,11 @@ final class ReaderFind {
             // Ein Renderer benutzt eine Fläche für alle Zellen: Die Markierung der vorigen Zelle erst zurücknehmen.
             for (Map.Entry<JComponent, Object[]> entry : painted.entrySet()) {
                 entry.getKey().setOpaque((Boolean) entry.getValue()[0]);
-                entry.getKey().setBackground((Color) entry.getValue()[1]);
+                // Ein DefaultTableCellRenderer merkt sich jede gesetzte Farbe als Grundfarbe aller unmarkierten
+                // Zellen: Die gezeigte Farbe (Markierung, Auswahl) zurückzusetzen ließe sie in die Spalte auslaufen.
+                // null gibt ihm die Farbe der Tabelle zurück.
+                entry.getKey().setBackground(entry.getKey() instanceof javax.swing.table.DefaultTableCellRenderer
+                        ? null : (Color) entry.getValue()[1]);
             }
             painted.clear();
             Component component = delegate.getTableCellRendererComponent(table, value, selected, focused, row,

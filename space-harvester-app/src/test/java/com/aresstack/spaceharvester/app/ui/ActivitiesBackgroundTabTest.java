@@ -135,9 +135,17 @@ class ActivitiesBackgroundTabTest {
                         assertThat(other.getBackground()).isNotIn(ReaderFind.CURRENT_HIT, ReaderFind.HIT);
                     }
                 }
+                // Ein gewählter Treffer lässt weder Markierung noch Auswahlfarbe in der Spalte zurück.
+                String state = ((javax.swing.JLabel) table.prepareRenderer(table.getCellRenderer(0, 2), 0, 2))
+                        .getText();
+                bar.search(state);
+                table.getCellRenderer(0, 2).getTableCellRendererComponent(table, table.getValueAt(0, 2), true,
+                        false, 0, 2);
                 bar.search("");
-                assertThat(table.prepareRenderer(table.getCellRenderer(0, 2), 0, 2).getBackground())
-                        .isNotIn(ReaderFind.CURRENT_HIT, ReaderFind.HIT);
+                for (int row = 0; row < table.getRowCount(); row++) {
+                    assertThat(table.prepareRenderer(table.getCellRenderer(row, 2), row, 2).getBackground())
+                            .as("Zeile " + row).isEqualTo(table.getBackground());
+                }
             });
         } finally {
             context.shutdown();
