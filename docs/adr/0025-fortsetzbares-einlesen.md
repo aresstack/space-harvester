@@ -433,10 +433,15 @@ wird automatisch verwaltet.
       (`resumeInterrupted`), im selben Eintrag; ein angehaltener bleibt mit seiner Arbeit angehalten; ein von einem
       Benutzer gestarteter Teil (`startedByUser`) hält gelb an „bitte von Hand fortsetzen“. Die Arbeit eines
       gescheiterten Teils übernimmt ein neuer, erst zusammen mit dem Fortsetzen (`BackgroundJobs#afterResume`), wenn das
-      offene Löschen von Quellen angemeldet ist (`Jobs#sourceHold`); bis der neue seinen Stand abgelegt hat, bleibt die
-      alte Datei unverändert, und für eine Quelle mit offenem oder erledigtem Löschen entfällt die Arbeit. War der
-      gescheiterte von einem Benutzer gestartet, übernimmt der neue dessen Angaben und hält bei jedem Lauf ohne Menschen
-      gelb an. Was vorher scheiterte, zählt in jedem neuen Lauf weiter als Fehler,
+      offene Löschen von Quellen angemeldet ist (`Jobs#sourceHold`). Erst wenn der neue seinen Stand nachweislich
+      abgelegt hat (synchron, mit Rückmeldung), verliert die alte Datei die Arbeit und der alte Teil wird abgeschlossen;
+      scheitern Start oder Ablegen, bleiben alter Teil und alte Datei unverändert, nie der bisherige Weg, der nächste
+      Start übergibt erneut. Der neue trägt `enrichment.taken-over-from` = alter Teil: Stürzt der Dienst dazwischen ab,
+      mustert der nächste Start den alten ohne zweite Übergabe aus. Für eine Quelle mit offenem oder erledigtem Löschen
+      entfällt die Arbeit, und „Daten bereinigen“ schließt auch den alten Teil ab. War der gescheiterte von einem
+      Benutzer gestartet, übernimmt der neue dessen Angaben, hält bei jedem Lauf ohne Menschen gelb an und lässt sich
+      nur von diesem Benutzer fortsetzen oder per ↻ wiederholen (`BackgroundJobs#mayContinue`, sonst
+      `JobNotResumableException`). Was vorher scheiterte, zählt in jedem neuen Lauf weiter als Fehler,
       damit ↻ auch nach Fortsetzen oder Neustart angeboten wird. Die KI-Freigabe prüft jede Berechnung bei der
       Ausführung. Beim Start abgeschlossen (Info „Warteschlange nach Neustart leer“) werden angehaltene oder
       gescheiterte Teile ohne abgelegte Arbeit sowie gescheiterte, deren Arbeit ein neuer Teil übernimmt. „Daten

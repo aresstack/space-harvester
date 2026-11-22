@@ -121,6 +121,17 @@ public class JobActions {
      *                                                                           dieser ID gibt
      */
     public JobStatus perform(String jobId, String owner, JobAction action, UnaryOperator<ExportRequest> access) {
+        return perform(jobId, owner, action, access, null);
+    }
+
+    /**
+     * Wie {@link #perform(String, String, JobAction, UnaryOperator)}, für einen Klick von {@code caller}: Fortsetzen
+     * und ↻ am Hintergrundteil eines Benutzers nur durch ihn selbst ({@link com.aresstack.spaceharvester.application.background.BackgroundJobs#mayContinue}).
+     *
+     * @param caller wer klickt, {@code null} ohne diese Prüfung (etwa die Wiederaufnahme nach dem Neustart)
+     */
+    public JobStatus perform(String jobId, String owner, JobAction action, UnaryOperator<ExportRequest> access,
+                             com.aresstack.spaceharvester.application.access.AccessContext caller) {
         Objects.requireNonNull(action, "action");
         Objects.requireNonNull(access, "access");
         JobStatus current = jobs.status(jobId, owner);
@@ -138,7 +149,7 @@ public class JobActions {
             case START_NOW -> jobs.prioritize(jobId, owner);
             case PAUSE -> sync ? syncs.pause(jobId, owner).status() : jobs.pause(jobId, owner);
             case CANCEL -> sync ? syncs.cancel(jobId, owner).status() : jobs.cancel(jobId, owner);
-            case RESUME -> resume(current, owner, access);
+            case RESUME -> resume(current, owner, access, caller);
             case RETRY_FAILED -> {
                 if (current.type() == JobType.BACKGROUND) {
                     // Die Art legt ihre gescheiterte Arbeit bereit, der Teil läuft im selben Eintrag neu.
@@ -146,7 +157,7 @@ public class JobActions {
                     if (bound == null) {
                         throw new JobNotResumableException(jobId, "kein Hintergrund angebunden");
                     }
-                    yield bound.retryFailed(jobId);
+                    yield bound.retryFailed(jobId, caller);
                 }
                 if (state instanceof JobLifecycleState.Running || state instanceof JobLifecycleState.Preparing) {
                     // Während des Laufs: der Durchgang hält an und läuft sofort im selben Eintrag neu (Angelo
@@ -165,7 +176,7 @@ public class JobActions {
                         || current.type().sourceQuery() || current.type().presentation()) {
                     // Angehalten oder abgebrochen: Fortsetzen holt nur, was fehlt, das Gescheiterte eingeschlossen.
                     // Metadaten und Analytics auch nach „fertig, unvollständig“: ein neuer Lauf im selben Eintrag.
-                    yield resume(current, owner, access);
+                    yield resume(current, owner, access, caller);
                 }
                 if (sync) {
                     yield syncs.retryFailed(jobId, owner).status();
@@ -202,7 +213,8 @@ public class JobActions {
         };
     }
 
-    private JobStatus resume(JobStatus current, String owner, UnaryOperator<ExportRequest> access) {
+    private JobStatus resume(JobStatus current, String owner, UnaryOperator<ExportRequest> access,
+                             com.aresstack.spaceharvester.application.access.AccessContext caller) {
         return switch (current.type()) {
             case SYNC -> {
                 if (syncs == null) {
@@ -248,7 +260,7 @@ public class JobActions {
             case UPDATE_PODCAST -> jobs.resume(current.id(), owner);
             case BACKGROUND -> {
                 com.aresstack.spaceharvester.application.background.BackgroundJobs bound = background;
-                yield bound != null ? bound.resumeJob(current.id()) : jobs.resume(current.id(), owner);
+                yield bound != null ? bound.resumeJob(current.id(), caller) : jobs.resume(current.id(), owner);
             }
             case PURGE -> {
                 com.aresstack.spaceharvester.application.sources.SourceDataPurge bound = purge;

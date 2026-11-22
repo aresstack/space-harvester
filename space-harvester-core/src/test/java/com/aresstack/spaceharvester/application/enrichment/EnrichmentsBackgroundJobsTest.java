@@ -937,6 +937,208 @@ class EnrichmentsBackgroundJobsTest {
         }
     }
 
+    @Test
+    void aHandOverWhoseStateCannotBeSavedKeepsTheOldPartAndFileForTheNextStart() throws Exception {
+        // Abnahme #1112 Runde 3: Die alte Datei verliert ihre Arbeit erst, wenn der neue Stand sicher abgelegt ist.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue files =
+                new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
+        try {
+            BackgroundJobs first = restart(jobStore, null, remote, executor, files);
+            page("ops", "1", "Drei");
+            JobStatus failed = failedPart(first, jobStore, files, "ops", Map.of("owner", "TECHNICAL_CLIENT:anna"));
+
+            java.util.concurrent.atomic.AtomicBoolean broken = new java.util.concurrent.atomic.AtomicBoolean(true);
+            EnrichmentQueueStore flaky = new EnrichmentQueueStore() {
+                @Override
+                public void save(Saved saved) {
+                    if (broken.get() && !saved.partId().equals(failed.id())) {
+                        throw new java.io.UncheckedIOException(new java.io.IOException("Platte voll (erfunden)"));
+                    }
+                    files.save(saved);
+                }
+
+                @Override
+                public void delete(String groupId) {
+                    files.delete(groupId);
+                }
+
+                @Override
+                public List<Saved> all() {
+                    return files.all();
+                }
+
+                @Override
+                public void removeSource(String sourceId) {
+                    files.removeSource(sourceId);
+                }
+            };
+            Jobs second = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs backgroundSecond = restart(jobStore, second, remote, executor, flaky);
+            backgroundSecond.resumeInterrupted();
+
+            assertThat(backgroundSecond.part(failed.id()).orElseThrow().state()).isEqualTo(JobState.FAILED);
+            assertThat(files.all()).singleElement().satisfies(saved -> {
+                assertThat(saved.partId()).isEqualTo(failed.id());
+                assertThat(saved.work()).hasSize(1);
+            });
+            assertThat(backgroundSecond.parts(Enrichments.BACKGROUND_KIND)).filteredOn(part -> !part.state().terminal())
+                    .as("kein offener neuer Teil").isEmpty();
+
+            broken.set(false);
+            Jobs third = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs backgroundThird = restart(jobStore, third, remote, executor, files);
+            backgroundThird.resumeInterrupted();
+
+            assertThat(backgroundThird.part(failed.id()).orElseThrow().state()).isEqualTo(JobState.CANCELLED);
+            JobStatus handedOver = files.all().stream().map(EnrichmentQueueStore.Saved::partId)
+                    .map(id -> backgroundThird.part(id).orElseThrow()).findFirst().orElseThrow();
+            assertThat(handedOver.parameter(Enrichments.TAKEN_OVER_FROM)).isEqualTo(failed.id());
+            assertThat(handedOver.state()).isEqualTo(JobState.PAUSED);
+            assertThat(remote.calls).isEmpty();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void aCrashAfterTheNewPartSavedItsStateRetiresTheOldPartWithoutASecondHandOver() throws Exception {
+        // Abnahme #1112 Runde 3: Absturz zwischen dem Ablegen des neuen Teils und dem Abschließen des alten.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue queue =
+                new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
+        try {
+            BackgroundJobs first = restart(jobStore, null, remote, executor, queue);
+            page("wiki", "1", "Eins");
+            JobStatus failed = failedPart(first, jobStore, queue, "wiki", Map.of());
+            com.aresstack.spaceharvester.application.background.BackgroundGroup taking = first.start(
+                    Enrichments.BACKGROUND_KIND, Enrichments.BACKGROUND_TITLE, List.of(
+                            new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft("wiki", null,
+                                    Map.of(Enrichments.TAKEN_OVER_FROM, failed.id()))));
+            String takingId = taking.parts().getFirst().id();
+            queue.save(new EnrichmentQueueStore.Saved(taking.groupId(), "wiki", takingId,
+                    List.of(new EnrichmentQueueStore.Entry("remote", "1", false)), List.of()));
+
+            Jobs after = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs background = restart(jobStore, after, remote, executor, queue);
+            background.resumeInterrupted();
+
+            assertThat(background.part(failed.id()).orElseThrow().state()).isEqualTo(JobState.CANCELLED);
+            assertThat(background.parts(Enrichments.BACKGROUND_KIND)).as("kein dritter Teil")
+                    .extracting(JobStatus::id).containsExactlyInAnyOrder(failed.id(), takingId);
+            assertThat(remote.calls).containsOnlyKeys("wiki/1");
+            assertThat(remote.calls.get("wiki/1").get()).as("einmal, nicht doppelt").isEqualTo(1);
+            assertThat(queue.all()).isEmpty();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void aHandOverThatCannotStartNeverFallsBackAndWaitsForTheNextStart() throws Exception {
+        // Abnahme #1112 Runde 3: Der bisherige Weg liefe ohne die Rechte des Benutzers; alter Teil und Datei bleiben.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue queue =
+                new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
+        try {
+            BackgroundJobs first = restart(jobStore, null, remote, executor, queue);
+            page("ops", "1", "Drei");
+            JobStatus failed = failedPart(first, jobStore, queue, "ops", Map.of("owner", "TECHNICAL_CLIENT:anna"));
+
+            Jobs second = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs backgroundSecond = new BackgroundJobs(second, "app");
+            // Die Auftragsverwaltung endet, bevor die Übergabe ihren Teil startet.
+            backgroundSecond.afterResume(second::close);
+            Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
+            enrichments.background(backgroundSecond, key -> Optional.ofNullable(cache.get(key)), queue);
+            backgroundSecond.resumeInterrupted();
+            executor.shutdown();
+            assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(remote.calls).as("nie auf dem bisherigen Weg").isEmpty();
+            assertThat(jobStore.find(failed.id()).orElseThrow().state()).isEqualTo(JobState.FAILED);
+            assertThat(queue.all()).singleElement().satisfies(saved -> {
+                assertThat(saved.partId()).isEqualTo(failed.id());
+                assertThat(saved.work()).hasSize(1);
+            });
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void onlyTheUserWhoStartedAPartMayResumeOrRetryTheHandedOverPart() throws Exception {
+        // Abnahme #1112 Runde 3: Fortsetzen (▶) und ↻ eines übernommenen Teils nur durch seinen Eigentümer.
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue queue =
+                new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
+        com.aresstack.spaceharvester.application.access.AccessContext anna =
+                com.aresstack.spaceharvester.application.access.AccessContext.technicalClient("anna");
+        com.aresstack.spaceharvester.application.access.AccessContext bert =
+                com.aresstack.spaceharvester.application.access.AccessContext.technicalClient("bert");
+        try {
+            BackgroundJobs first = restart(jobStore, null, remote, executor, queue);
+            page("ops", "1", "Drei");
+            failedPart(first, jobStore, queue, "ops", Map.of("owner", anna.jobOwner()));
+
+            Jobs after = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs background = restart(jobStore, after, remote, executor, queue);
+            background.resumeInterrupted();
+            JobStatus handedOver = background.parts(Enrichments.BACKGROUND_KIND).stream()
+                    .filter(part -> part.state() == JobState.PAUSED).findFirst().orElseThrow();
+
+            assertThatThrownBy(() -> background.resumeJob(handedOver.id(), bert))
+                    .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobNotResumableException.class)
+                    .hasMessageContaining("nur der Benutzer");
+            assertThatThrownBy(() -> background.retryFailed(handedOver.id(), bert))
+                    .isInstanceOf(com.aresstack.spaceharvester.application.jobs.JobNotResumableException.class)
+                    .hasMessageContaining("nur der Benutzer");
+            assertThat(BackgroundJobs.mayContinue(handedOver, bert)).isFalse();
+            assertThat(remote.calls).isEmpty();
+            assertThat(background.part(handedOver.id()).orElseThrow().state()).isEqualTo(JobState.PAUSED);
+
+            background.resumeJob(handedOver.id(), anna);
+            assertThat(remote.calls).containsOnlyKeys("ops/1");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void purgingASourceAlsoRetiresTheFailedPartWhoseWorkWasStillToBeHandedOver() throws Exception {
+        Remote remote = new Remote();
+        ExecutorService executor = Enrichments.background(10);
+        InMemoryJobStore jobStore = new InMemoryJobStore();
+        com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue queue =
+                new com.aresstack.spaceharvester.persistence.files.FileEnrichmentQueue(queueDirectory);
+        try {
+            BackgroundJobs first = restart(jobStore, null, remote, executor, queue);
+            page("wiki", "1", "Eins");
+            JobStatus failed = failedPart(first, jobStore, queue, "wiki", Map.of());
+
+            Jobs after = new Jobs(jobStore, Runnable::run, new JobLimits(4, 10, Duration.ofHours(1)), CLOCK);
+            BackgroundJobs background = new BackgroundJobs(after, "app");
+            Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, executor);
+            enrichments.background(background, key -> Optional.ofNullable(cache.get(key)), queue);
+            enrichments.forgetQueued("wiki");
+
+            assertThat(background.part(failed.id()).orElseThrow().state()).isEqualTo(JobState.CANCELLED);
+            background.resumeInterrupted();
+            assertThat(remote.calls).isEmpty();
+            assertThat(queue.all()).isEmpty();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     /** Ein Start: neue Auftragsverwaltung (ohne {@code jobs} eine, die nichts ausführt) über derselben Ablage. */
     private BackgroundJobs restart(InMemoryJobStore jobStore, Jobs jobs, Remote remote, ExecutorService executor,
                                    EnrichmentQueueStore queue) {

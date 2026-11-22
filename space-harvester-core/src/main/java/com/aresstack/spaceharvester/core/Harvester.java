@@ -3008,10 +3008,11 @@ public final class Harvester implements AutoCloseable {
 
     /**
      * Führt eine Aktion auf einem Auftrag dieser App aus ({@link JobActions#perform}); Exporte prüfen dabei Lesbarkeit
-     * und Exportrecht wie beim Start ({@link #exportAccess()}).
+     * und Exportrecht wie beim Start ({@link #exportAccess()}); Hintergrundteile eines Benutzers setzt nur er selbst
+     * fort ({@link #caller()}).
      */
     public JobStatus performJobAction(String jobId, JobAction action) {
-        return jobActions.perform(jobId, OWNER, action, exportAccess());
+        return jobActions.perform(jobId, OWNER, action, exportAccess(), caller);
     }
 
     /** Setzt einen Export dieser App im selben Eintrag fort, mit Lese- und Exportprüfung wie beim Start. */
