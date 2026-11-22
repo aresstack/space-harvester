@@ -1,5 +1,6 @@
-// Command Deck (#1142): interaktive Host-Systeme, zuerst TN3270. Fachmodell und Anwendungsfälle in
+// Command Deck (#1142): interaktive Host-Systeme, zuerst TN3270, dann BetaView. Fachmodell und Anwendungsfälle in
 // com.aresstack.spaceharvester.deck.terminal (ohne Swing, ohne OpenTerm), der OpenTerm-Adapter in ...terminal.openterm.
+// BetaView: Fachmodell in ...deck.betaview (ohne Swing, ohne HTTP/HTML), der HTTP-Adapter in ...betaview.http.
 // Gehört nur zur Desktop-App: Eine Terminal-Sitzung ist keine indizierbare Quelle, deshalb nie im Core oder Dienst.
 // Aufbau nach dem Muster von aresstack/corenth (Ports und Adapter; UI -> Anwendungsfall -> Fachmodell <- Adapter).
 plugins {
@@ -8,7 +9,7 @@ plugins {
     id 'java-test-fixtures'
 }
 
-description = 'Command Deck: interaktive Sitzungen mit Host-Systemen (TN3270 über OpenTerm).'
+description = 'Command Deck: interaktive Sitzungen mit Host-Systemen (TN3270 über OpenTerm, BetaView über HTTP).'
 
 java {
     toolchain {
@@ -19,6 +20,8 @@ java {
 dependencies {
     // TN3270-Emulation wie in MainframeMate (reines Java, LGPL, keine nativen Teile)
     implementation libs.openterm
+    // BetaView-Seiten lesen wie in MainframeMate (betaview-integration nutzt ebenfalls jsoup)
+    implementation libs.jsoup
 
     testImplementation platform(libs.junit.bom)
     testImplementation 'org.junit.jupiter:junit-jupiter'
