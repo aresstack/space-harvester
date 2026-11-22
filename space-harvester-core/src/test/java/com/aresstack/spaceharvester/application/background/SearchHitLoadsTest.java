@@ -162,6 +162,24 @@ class SearchHitLoadsTest {
     }
 
     @Test
+    void pausingWithdrawsTheAdoptedTicketsAndResumingRequestsThemAgain() throws Exception {
+        Map<PageKey, AcquisitionScheduler.Ticket> tickets = tickets("1", "2");
+        loads.offer("stapel-1", APP, tickets);
+        eventually(() -> onlyGroup().isPresent());
+        String groupId = onlyGroup().orElseThrow().groupId();
+
+        background.pause(groupId);
+
+        eventually(() -> tickets.values().stream().allMatch(ticket -> ticket.done().isCancelled()));
+        assertThat(requests).hasValue(0);
+        gate.countDown();
+        background.resume(groupId);
+        eventually(() -> background.group(groupId).orElseThrow().completed());
+        assertThat(requests).hasValue(2);
+        assertThat(background.group(groupId).orElseThrow().written()).isEqualTo(2);
+    }
+
+    @Test
     void aResumedPartRequestsEachMissingPageOnce() throws Exception {
         // Nach einem Neustart fehlen die Abrufe: Der Teil fordert an, was in seinen Angaben steht.
         gate.countDown();

@@ -236,12 +236,13 @@ public final class SearchHitLoads implements AutoCloseable {
         List<AcquisitionScheduler.Ticket> withdrawn = new ArrayList<>();
         if (part.state().terminal()) {
             synchronized (monitor) {
-                // Endete der Teil, bevor er seine Abrufe nahm: Nur ein Abbruch des Benutzers zieht sie zurück.
+                // Endete der Teil, bevor er seine Abrufe nahm: Nur der Benutzer (Abbrechen, Anhalten) zieht sie zurück;
+                // Fortsetzen fordert sie neu an.
                 Map<PageKey, AcquisitionScheduler.Ticket> group = adopted.get(part.parameter(BackgroundJobs.GROUP));
                 if (group != null) {
                     for (PageKey key : keys(part)) {
                         AcquisitionScheduler.Ticket ticket = group.remove(key);
-                        if (ticket != null && part.state() == JobState.CANCELLED) {
+                        if (ticket != null && byUser(part.state())) {
                             withdrawn.add(ticket);
                         }
                     }
@@ -263,6 +264,10 @@ public final class SearchHitLoads implements AutoCloseable {
                 }
             }
         }
+    }
+
+    private static boolean byUser(JobState state) {
+        return state == JobState.CANCELLED || state == JobState.PAUSED;
     }
 
     private void ended(JobStatus last) {
