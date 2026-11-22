@@ -165,12 +165,6 @@ public final class ActivitiesView implements View {
     private GlobalPause globalPause = GlobalPause.NONE;
     /** Eine Aktion für alle läuft; beide Knöpfe warten, bis sie fertig ist. */
     private boolean busyAll;
-    /** Breite der beiden Knöpfe mit Text; „Alle anhalten“ so breit wie „Alle fortsetzen“, damit nichts springt. */
-    private final java.awt.Dimension pauseAllFull;
-    private final java.awt.Dimension cancelAllFull;
-    /** Zu schmal für die Texte: beide Knöpfe nur mit Symbol, der Name steht im Tooltip und für Bildschirmleser. */
-    private boolean compactHead;
-    static final java.awt.Dimension COMPACT_BUTTON = new java.awt.Dimension(30, 28);
     /** Gesamtstand aller Aufträge für die Statuszeile und die Balken hinter laufenden Exporten. */
     private final OverallProgress overall = new OverallProgress();
     /** Geschätzter Stand je Export-Gruppe, in der gerade etwas läuft (Export-ID). */
@@ -186,11 +180,18 @@ public final class ActivitiesView implements View {
     private List<Note> stageNotes = List.of();
     /** Bildlauf des Detailbereichs unter der Liste. */
     final javax.swing.JScrollPane detailScroll;
+    /** Liste oben, Details unten; die Details stehen nur, solange ein Auftrag gewählt ist. */
+    private final javax.swing.JSplitPane split;
+    /** Wo der Trenner steht, solange die Details offen sind; gilt wieder, wenn sie sich das nächste Mal öffnen. */
+    private int detailDivider = 260;
     /**
      * Reiter über der Liste (Angelo 21.11.2026, Form vom UX-Manager): „Aufträge“ zeigt die Aufträge des Benutzers,
      * „Hintergrund“ die Hintergrundaufträge ({@link JobType#background()}); jeder Auftrag steht in genau einem.
      */
-    final PillTabs tabs = new PillTabs();
+    private JComponent tools;
+    /** „Aufträge“ / „Hintergrund“ als Wippe, mittig in der Werkzeugleiste unten ({@link #tools()}). */
+    final com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle tabs =
+            new com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle();
     static final String JOBS_TAB = "Aufträge";
     static final String BACKGROUND_TAB = "Hintergrund";
     /** Sehr heller Petrol-Ton hinter der Zeile einer Hintergrundgruppe. */
@@ -244,6 +245,10 @@ public final class ActivitiesView implements View {
             @Override
             public void mouseClicked(java.awt.event.MouseEvent event) {
                 int row = table.rowAtPoint(event.getPoint());
+                if (row < 0 && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    deselect();
+                    return;
+                }
                 if (row >= 0 && table.columnAtPoint(event.getPoint()) == table.convertColumnIndexToView(0)
                         && javax.swing.SwingUtilities.isLeftMouseButton(event)) {
                     toggleGroup(row);
@@ -266,7 +271,7 @@ public final class ActivitiesView implements View {
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
         HelpButton hint = new HelpButton(24, "Aufträge", HELP);
-        tabs.tab(JOBS_TAB, emptyCard()).tab(BACKGROUND_TAB, emptyCard());
+        tabs.segment(JOBS_TAB).segment(BACKGROUND_TAB);
         tabs.button(JOBS_TAB).setToolTipText("Aufträge, die du gestartet hast");
         tabs.button(BACKGROUND_TAB).setToolTipText(BACKGROUND_TIP);
         String remembered = rememberedTab();
@@ -274,8 +279,11 @@ public final class ActivitiesView implements View {
             tabs.select(BACKGROUND_TAB);
         }
         tabs.onSelect(this::tabChanged);
-        // Der Titelbereich enthält nur die Reiter; der Hinweis steht bei den Werkzeugen (UX 21.11.2026).
-        JPanel listTitle = Comic.row(tabs);
+        // Die Wippe „Aufträge / Hintergrund“ ist zugleich die Überschrift der Liste und steht links in der
+        // Kopfzeile, immer einzeilig (Angelo 22.11.2026). GridBagLayout hält sie in ihrer eigenen Höhe mittig.
+        JPanel listTitle = new JPanel(new java.awt.GridBagLayout());
+        listTitle.setOpaque(false);
+        listTitle.add(tabs);
         JLabel downloadsLabel = new JLabel("Downloads");
         downloadsLabel.setToolTipText(downloads.box().getToolTipText());
         JLabel preparationsLabel = new JLabel("Vorbereitung");
@@ -291,30 +299,52 @@ public final class ActivitiesView implements View {
         preparationsLabel.setLabelFor(preparations.box());
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
-        JPanel listTools = Comic.row(expandAll, collapseAll, preparationsLabel, preparations.box(), downloadsLabel,
+        JPanel listTools = Comic.row(preparationsLabel, preparations.box(), downloadsLabel,
                 downloads.box(), connectionsLabel, connections.box(), hint, deleteFinished, moreJobs);
-        // Mittig in der Kopfzeile, für alle Aufträge zugleich (Angelo 11.11.2026).
+        // „Alle anhalten“ und „Alle abbrechen“ sind Aktionen und stehen mittig in der Werkzeugleiste unten
+        // (tools(), Angelo 22.11.2026); oben bleibt Platz für die Wippe.
         pauseAll.addActionListener(e -> pauseOrResumeAll());
         cancelAll.addActionListener(e -> cancelAll());
-        pauseAllFull = widest(pauseAll, PAUSE_ALL, RESUME_ALL);
-        cancelAllFull = cancelAll.getPreferredSize();
-        pauseAll.setPreferredSize(pauseAllFull);
-        cancelAll.setPreferredSize(cancelAllFull);
+        pauseAll.setPreferredSize(widest(pauseAll, PAUSE_ALL, RESUME_ALL));
         JPanel global = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 6, 0));
         global.setOpaque(false);
         global.add(pauseAll);
         global.add(cancelAll);
+        // Auf- und Zuklappen stehen gleich rechts der Lupe, die beiden Aktionen mittig in der ganzen Leiste.
+        JPanel folding = Comic.row(expandAll, collapseAll);
+        JPanel globalRow = new JPanel(new ToolsLayout(folding, global));
+        globalRow.setOpaque(false);
+        globalRow.putClientProperty(View.TOOLS_FILL, Boolean.TRUE);
+        globalRow.add(folding);
+        globalRow.add(global);
+        tools = globalRow;
+        // Wird die Kopfzeile zu schmal für Wippe und Werkzeuge, weichen die drei Beschriftungen der Auswahlfelder
+        // (ihre Tooltips nennen sie weiter), statt dass die Wippe umbricht oder Knöpfe abgeschnitten werden.
+        List<JLabel> headLabels = List.of(preparationsLabel, downloadsLabel, connectionsLabel);
+        int labelsWidth = headLabels.stream().mapToInt(label -> label.getPreferredSize().width + 6).sum();
         JPanel listHead = new JPanel();
-        listHead.setLayout(new HeadLayout(listTitle, global, listTools, global.getPreferredSize().width,
-                this::compactHead));
+        listHead.setLayout(new HeadLayout(listTitle, listTools, labelsWidth, narrow -> {
+            for (JLabel label : headLabels) {
+                label.setVisible(!narrow);
+            }
+        }));
         listHead.setOpaque(false);
         listHead.add(listTitle);
-        listHead.add(global);
         listHead.add(listTools);
         updateGlobalButtons(List.of());
         model.addTableModelListener(e -> layoutBands());
         list.add(listHead, BorderLayout.NORTH);
-        list.add(Comic.scroll(table), BorderLayout.CENTER);
+        javax.swing.JScrollPane listScroll = Comic.scroll(table);
+        // Ein Klick in die leere Fläche unter den Zeilen hebt die Auswahl auf (Angelo 22.11.2026).
+        listScroll.getViewport().addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent event) {
+                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    deselect();
+                }
+            }
+        });
+        list.add(listScroll, BorderLayout.CENTER);
 
         title.setFont(Comic.semiBold(17f));
         title.setForeground(Comic.INK);
@@ -332,6 +362,21 @@ public final class ActivitiesView implements View {
         head.add(titleRow, BorderLayout.NORTH);
         head.add(signIn, BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
+        // Codefeld und Meldung erscheinen auch ohne gewählten Auftrag (Anmeldung auf Abruf, „Nicht übernommen“):
+        // Der Detailbereich öffnet sich dann für sie und schließt sich mit ihnen wieder.
+        java.awt.event.ComponentAdapter opens = new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentShown(java.awt.event.ComponentEvent event) {
+                syncDetails();
+            }
+
+            @Override
+            public void componentHidden(java.awt.event.ComponentEvent event) {
+                syncDetails();
+            }
+        };
+        signIn.addComponentListener(opens);
+        feedback.addComponentListener(opens);
 
         // Eine Kachel über die volle Breite; Ergebnis und Ausgabe stehen unter Inhalte › Export.
         JComponent tiles = stack(Comic.plate("Auftrag", Comic.PETROL, facts));
@@ -343,13 +388,14 @@ public final class ActivitiesView implements View {
         this.details = details;
 
         detailScroll = Comic.column(details);
-        javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, list,
-                detailScroll);
+        split = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, list, detailScroll);
         split.setBackground(Comic.SURFACE);
         // Derselbe Trenner wie neben der Wissensquellen-Liste, nur liegend.
         ComicDivider.install(split, Comic.PALETTE);
         split.setResizeWeight(0.4);
-        split.setDividerLocation(260);
+        split.setDividerLocation(detailDivider);
+        // Ohne gewählten Auftrag gibt es keinen Detailbereich: Er öffnet sich erst mit einer Auswahl.
+        showDetails(false);
         split.setContinuousLayout(true);
         root.add(split, BorderLayout.CENTER);
 
@@ -373,6 +419,12 @@ public final class ActivitiesView implements View {
         c.weighty = 1;
         stack.add(Box.createVerticalGlue(), c);
         return stack;
+    }
+
+    /** Die Wippe „Aufträge / Hintergrund“ für die Mitte der Werkzeugleiste. */
+    @Override
+    public JComponent tools() {
+        return tools;
     }
 
     @Override
@@ -654,6 +706,8 @@ public final class ActivitiesView implements View {
             details.revalidate();
             details.repaint();
             feedback.clear();
+            // Der Detailbereich öffnet sich sofort mit der Auswahl, nicht erst, wenn der Auftrag gelesen ist.
+            render();
         }
         poll();
     }
@@ -726,6 +780,65 @@ public final class ActivitiesView implements View {
         }
     }
 
+    /** Hebt die Auswahl auf; der Detailbereich schließt sich. */
+    private void deselect() {
+        if (selectedId == null && table.getSelectedRow() < 0) {
+            return;
+        }
+        selectedId = null;
+        detail = null;
+        table.clearSelection();
+        // Die Meldung gehörte zum abgewählten Auftrag; sie hielte den Detailbereich sonst offen.
+        feedback.clear();
+        render();
+    }
+
+    /** Der Detailbereich ist offen, solange er etwas zeigt: einen Auftrag, das Codefeld oder eine Meldung. */
+    private void syncDetails() {
+        boolean job = selectedId != null || currentStatus().isPresent();
+        // Ohne Auftrag steht dort nur das Codefeld oder die Meldung, kein „Kein Auftrag gewählt“.
+        title.setVisible(job);
+        showDetails(job || signIn.isVisible() || feedback.isVisible());
+    }
+
+    /**
+     * Öffnet oder schließt den Detailbereich unter der Liste. Geschlossen gehört die ganze Fläche der Liste, der
+     * Trenner verschwindet; geöffnet steht er wieder dort, wo er zuletzt stand, und die gewählte Zeile bleibt sichtbar.
+     */
+    private void showDetails(boolean show) {
+        if (detailScroll.isVisible() == show) {
+            return;
+        }
+        if (!show && split.getHeight() > 0) {
+            detailDivider = split.getDividerLocation();
+        }
+        detailScroll.setVisible(show);
+        split.setDividerSize(show ? ComicDivider.THICKNESS : 0);
+        if (show) {
+            int room = split.getHeight() - split.getDividerSize();
+            // Der Liste bleiben mindestens ein paar Zeilen, den Details mindestens ein Drittel.
+            int location = room <= 0 ? detailDivider : Math.max(90, Math.min(detailDivider, room * 2 / 3));
+            split.setDividerLocation(location);
+        }
+        split.revalidate();
+        split.repaint();
+        if (show) {
+            int row = table.getSelectedRow();
+            if (row >= 0) {
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (row < table.getRowCount()) {
+                        table.scrollRectToVisible(table.getCellRect(row, 0, true));
+                    }
+                });
+            }
+        }
+    }
+
+    /** Ob der Detailbereich offen ist (für Tests). */
+    boolean detailsShown() {
+        return detailScroll.isVisible();
+    }
+
     /** Was der Detailbereich zuletzt gezeigt hat ({@link #drawnState}). */
     private Object drawn;
 
@@ -743,8 +856,10 @@ public final class ActivitiesView implements View {
         signIn.refresh();
         Optional<JobStatus> current = currentStatus();
         facts.reset();
+        syncDetails();
         if (current.isEmpty()) {
-            title.setText(model.rows.isEmpty() ? "Noch keine Aufträge" : "Kein Auftrag gewählt");
+            title.setText(selectedId != null ? "Auftrag wird geladen …"
+                    : model.rows.isEmpty() ? "Noch keine Aufträge" : "Kein Auftrag gewählt");
             details.revalidate();
             details.repaint();
             updateButtons();
@@ -1525,14 +1640,6 @@ public final class ActivitiesView implements View {
                 (int) Math.round(a.getBlue() * (1 - weight) + b.getBlue() * weight));
     }
 
-    /** Ein leerer Inhalt für die Reiter: die Liste darunter ist für beide dieselbe. */
-    private static JComponent emptyCard() {
-        JPanel empty = new JPanel();
-        empty.setOpaque(false);
-        empty.setPreferredSize(new java.awt.Dimension(0, 0));
-        return empty;
-    }
-
     private static java.util.prefs.Preferences userPreferences() {
         try {
             return java.util.prefs.Preferences.userNodeForPackage(ActivitiesView.class);
@@ -1561,6 +1668,10 @@ public final class ActivitiesView implements View {
     }
 
     /** Für Tests. */
+    Feedback feedbackForTest() {
+        return feedback;
+    }
+
     /** Für Tests und Proben: die Überschrift des Detailbereichs. */
     String detailTitleForTest() {
         return title.getText();
@@ -1953,68 +2064,98 @@ public final class ActivitiesView implements View {
         return widest;
     }
 
-    /** Schaltet die schmale Kopfzeile ein oder aus ({@link HeadLayout}). */
-    private void compactHead(boolean compact) {
-        if (compact != compactHead) {
-            compactHead = compact;
-            labelGlobalButtons();
-        }
-    }
-
-    /** Symbol, Text und Größe der beiden Knöpfe: mit Text oder, wenn die Zeile zu schmal ist, nur mit Symbol. */
+    /** Symbol und Text von „Alle anhalten“ bzw. „Alle fortsetzen“. */
     private void labelGlobalButtons() {
         boolean resume = globalPause == GlobalPause.RESUME;
         String pauseName = resume ? RESUME_ALL : PAUSE_ALL;
         pauseAll.setIcon(resume ? RESUME : PAUSE);
-        label(pauseAll, pauseName, pauseAllFull);
-        label(cancelAll, CANCEL_ALL, cancelAllFull);
-    }
-
-    private void label(ComposerButton button, String name, java.awt.Dimension full) {
-        String text = compactHead ? null : name;
-        if (!Objects.equals(button.getText(), text)) {
-            button.setText(text);
+        if (!Objects.equals(pauseAll.getText(), pauseName)) {
+            pauseAll.setText(pauseName);
         }
-        button.getAccessibleContext().setAccessibleName(name);
-        java.awt.Dimension size = compactHead ? COMPACT_BUTTON : full;
-        if (!size.equals(button.getPreferredSize())) {
-            button.setPreferredSize(size);
-            button.revalidate();
-        }
-    }
-
-    /** Für Tests: ob die Knöpfe der Kopfzeile nur ihr Symbol zeigen. */
-    boolean compactHead() {
-        return compactHead;
+        pauseAll.getAccessibleContext().setAccessibleName(pauseName);
+        cancelAll.getAccessibleContext().setAccessibleName(CANCEL_ALL);
     }
 
     /**
-     * Kopfzeile der Liste (Angelo 11.11.2026): links der Titel, rechts Auf- und Zuklappen, Plätze und Aufräumen, in der
-     * Mitte „Alle anhalten“ und „Alle abbrechen“, mittig über der ganzen Zeile. Reicht der Platz dafür nicht, rücken
-     * die Knöpfe zwischen Titel und rechte Gruppe; ist es auch dort zu eng für ihre Texte, zeigen sie nur ihr Symbol,
-     * und zuletzt gibt der Titel Platz ab, damit beide Knöpfe ganz sichtbar bleiben.
+     * Die Werkzeuge der Leiste unten: {@code west} links (gleich rechts der Lupe), {@code center} mittig zur ganzen
+     * Leiste, nicht nur zum Platz rechts der Lupe; wird es eng, rückt die Mitte neben die linke Gruppe.
      */
-    static final class HeadLayout implements java.awt.LayoutManager {
+    static final class ToolsLayout implements java.awt.LayoutManager {
 
-        /** Mindestabstand der Mitte zum Titel und zur rechten Gruppe, zusätzlich zu deren eigenen Rändern. */
-        static final int GAP = 2;
+        static final int GAP = 12;
 
         private final Component west;
         private final Component center;
-        private final Component east;
-        private final int fullWidth;
-        private final Consumer<Boolean> compact;
 
-        /**
-         * @param fullWidth Breite der Mitte mit Texten
-         * @param compact   schaltet die Mitte auf nur Symbole ({@code true}) oder zurück auf Texte
-         */
-        HeadLayout(Component west, Component center, Component east, int fullWidth, Consumer<Boolean> compact) {
+        ToolsLayout(Component west, Component center) {
             this.west = west;
             this.center = center;
+        }
+
+        @Override
+        public void layoutContainer(Container parent) {
+            int height = parent.getHeight();
+            java.awt.Dimension westSize = west.getPreferredSize();
+            java.awt.Dimension centerSize = center.getPreferredSize();
+            west.setBounds(0, (height - westSize.height) / 2, westSize.width, westSize.height);
+            // Die Leiste ist der nächste Vorfahr mit eigener Breite über die ganze Zeile (FindBar); ohne sie mittig
+            // im eigenen Platz.
+            Container bar = javax.swing.SwingUtilities.getAncestorOfClass(FindBar.class, parent);
+            int middle = bar == null ? parent.getWidth() / 2
+                    : javax.swing.SwingUtilities.convertPoint(bar, bar.getWidth() / 2, 0, parent).x;
+            int x = Math.max(westSize.width + GAP, middle - centerSize.width / 2);
+            x = Math.max(westSize.width + GAP, Math.min(x, parent.getWidth() - centerSize.width));
+            center.setBounds(x, (height - centerSize.height) / 2,
+                    Math.max(0, Math.min(centerSize.width, parent.getWidth() - x)), centerSize.height);
+        }
+
+        @Override
+        public java.awt.Dimension preferredLayoutSize(Container parent) {
+            java.awt.Dimension westSize = west.getPreferredSize();
+            java.awt.Dimension centerSize = center.getPreferredSize();
+            return new java.awt.Dimension(westSize.width + GAP + centerSize.width,
+                    Math.max(westSize.height, centerSize.height));
+        }
+
+        @Override
+        public java.awt.Dimension minimumLayoutSize(Container parent) {
+            return preferredLayoutSize(parent);
+        }
+
+        @Override
+        public void addLayoutComponent(String name, Component component) {
+        }
+
+        @Override
+        public void removeLayoutComponent(Component component) {
+        }
+    }
+
+    /**
+     * Die Kopfzeile der Liste: links die Wippe in ihrer vollen Breite, rechts die Werkzeuge, immer in einer Zeile.
+     * Reicht die Breite nicht für beide, meldet die Zeile „schmal“; der Aufrufer nimmt dann Beiwerk aus der rechten
+     * Gruppe (die Beschriftungen der Auswahlfelder), das {@code saved} Pixel spart.
+     */
+    static final class HeadLayout implements java.awt.LayoutManager {
+
+        /** Mindestabstand zwischen Wippe und Werkzeugen. */
+        static final int GAP = 8;
+
+        private final Component west;
+        private final Component east;
+        private final int saved;
+        private final Consumer<Boolean> narrow;
+        private boolean isNarrow;
+
+        /**
+         * @param saved  um wie viel die rechte Gruppe schmaler wird, sobald {@code narrow} gemeldet ist
+         * @param narrow nimmt das Beiwerk der rechten Gruppe weg ({@code true}) oder zeigt es wieder
+         */
+        HeadLayout(Component west, Component east, int saved, Consumer<Boolean> narrow) {
+            this.west = west;
             this.east = east;
-            this.fullWidth = fullWidth;
-            this.compact = compact;
+            this.saved = saved;
+            this.narrow = narrow;
         }
 
         @Override
@@ -2025,37 +2166,32 @@ public final class ActivitiesView implements View {
             int top = in.top;
             int height = Math.max(0, parent.getHeight() - in.top - in.bottom);
             int westWidth = west.getPreferredSize().width;
-            int eastWidth = east.getPreferredSize().width;
-            int space = right - left - westWidth - eastWidth - 2 * GAP;
-            compact.accept(space < fullWidth);
-            int width = center.getPreferredSize().width;
-            if (space < width) {
-                westWidth = Math.max(0, westWidth - (width - space));
+            // Gemessen wird immer gegen die volle rechte Gruppe, sonst kippte die Zeile an der Grenze hin und her.
+            int eastFull = east.getPreferredSize().width + (isNarrow ? saved : 0);
+            boolean now = right - left < westWidth + GAP + eastFull;
+            if (now != isNarrow) {
+                isNarrow = now;
+                narrow.accept(now);
             }
-            west.setBounds(left, top, westWidth, height);
-            east.setBounds(Math.max(left, right - eastWidth), top, eastWidth, height);
-            int from = left + westWidth + GAP;
-            int to = right - eastWidth - GAP;
-            int x = Math.max(from, Math.min(to - width, left + (right - left - width) / 2));
-            center.setBounds(x, top, Math.max(0, Math.min(width, to - x)), height);
+            int eastWidth = Math.min(east.getPreferredSize().width, Math.max(0, right - left - westWidth - GAP));
+            west.setBounds(left, top, Math.min(westWidth, right - left), height);
+            east.setBounds(right - eastWidth, top, eastWidth, height);
         }
 
         @Override
         public java.awt.Dimension preferredLayoutSize(Container parent) {
-            return size(parent, west.getPreferredSize(), fullWidth, east.getPreferredSize());
+            return size(parent, west.getPreferredSize(), east.getPreferredSize());
         }
 
         @Override
         public java.awt.Dimension minimumLayoutSize(Container parent) {
-            return size(parent, west.getMinimumSize(), 0, east.getMinimumSize());
+            return size(parent, west.getPreferredSize(), new java.awt.Dimension(0, east.getMinimumSize().height));
         }
 
-        private java.awt.Dimension size(Container parent, java.awt.Dimension westSize, int centerWidth,
-                                        java.awt.Dimension eastSize) {
+        private java.awt.Dimension size(Container parent, java.awt.Dimension westSize, java.awt.Dimension eastSize) {
             java.awt.Insets in = parent.getInsets();
-            int height = Math.max(Math.max(westSize.height, eastSize.height), center.getPreferredSize().height);
-            return new java.awt.Dimension(in.left + in.right + westSize.width + centerWidth + eastSize.width + 2 * GAP,
-                    in.top + in.bottom + height);
+            return new java.awt.Dimension(in.left + in.right + westSize.width + GAP + eastSize.width,
+                    in.top + in.bottom + Math.max(westSize.height, eastSize.height));
         }
 
         @Override
