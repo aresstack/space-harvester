@@ -269,6 +269,15 @@ public class Jobs implements AutoCloseable {
     public static final String SURVIVES_SHUTDOWN = "jobs.survivesShutdown";
 
     /**
+     * Angabe eines Auftrags, hinter dem jeder später angenommene Auftrag derselben Quelle startet ({@link #AFTER}),
+     * solange er offen oder angehalten ist, etwa das Löschen der alten Daten einer auf ein neues Ziel umgestellten
+     * Quelle (Fundstelle 22): Ein Abgleich gleich nach dem Umstellen wartet, statt vom Löschen beendet zu werden.
+     */
+    public static final String HOLDS_SOURCE = "jobs.holdsSource";
+    /** Text in „wartet auf …“ hinter einem {@link #HOLDS_SOURCE}-Auftrag. */
+    static final String HOLDS_SOURCE_TITLE = "das Löschen der alten Daten der Quelle";
+
+    /**
      * Wie {@link #submit(JobType, String, String, String, String, Map, JobTask)} für einen Klick des Benutzers, etwa
      * „Bilder beschreiben“ je Seite oder „Fachbegriffe ermitteln“: Ein Klick wartet nie hinter Hintergrund. Er nimmt
      * den nächsten freien Platz vor jedem wartenden Hintergrundteil, und laufende Hintergrundteile zählen für ihn nicht
@@ -306,6 +315,7 @@ public class Jobs implements AutoCloseable {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
             }
             requireCapacity(type, owner);
+            holdBehindSource(job);
             // Vor dem Einreihen: sonst könnte ein paralleler dispatch() den Start vor der Annahme festhalten.
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
                     null, null);
@@ -345,6 +355,7 @@ public class Jobs implements AutoCloseable {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Hintergrundaufträge mehr an");
             }
             requireCapacity(type, owner);
+            holdBehindSource(job);
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
                     null, null);
             open.put(job.id, job);
@@ -1313,11 +1324,24 @@ public class Jobs implements AutoCloseable {
      * @param exceptJobId Auftrag, der weiterläuft, oder {@code null}
      */
     public boolean cancelSource(String sourceId, String exceptJobId, Duration timeout) throws InterruptedException {
+        return cancelSource(sourceId, exceptJobId, null, timeout);
+    }
+
+    /**
+     * Wie {@link #cancelSource(String, String, Duration)}, aber nur für Aufträge, die vor {@code createdBefore}
+     * angenommen wurden: Das Löschen der Daten einer Quelle beendet keinen Auftrag, der erst danach kam und hinter ihm
+     * wartet ({@link #HOLDS_SOURCE}).
+     *
+     * @param createdBefore Grenze oder {@code null} für alle
+     */
+    public boolean cancelSource(String sourceId, String exceptJobId, Instant createdBefore, Duration timeout)
+            throws InterruptedException {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(timeout, "timeout");
         // Quellenübergreifende Aufträge (ALL_SOURCES) können Daten jeder Quelle enthalten: sie enden mit.
         java.util.function.Predicate<Job> affected = job -> (job.sourceId.equals(sourceId)
-                || ALL_SOURCES.equals(job.sourceId)) && !job.id.equals(exceptJobId);
+                || ALL_SOURCES.equals(job.sourceId)) && !job.id.equals(exceptJobId)
+                && (createdBefore == null || job.createdAt.isBefore(createdBefore));
         List<String> ids;
         synchronized (lock) {
             ids = open.values().stream().filter(affected).map(job -> job.id).toList();
@@ -1576,7 +1600,8 @@ public class Jobs implements AutoCloseable {
     private void markInterrupted() {
         Instant now = clock.instant();
         for (JobStatus status : store.all()) {
-            if (!status.state().terminal() && status.type().background()
+            if (!status.state().terminal()
+                    && (status.type().background() || "true".equals(status.parameter(SURVIVES_SHUTDOWN)))
                     && (status.pauseRequested() || status.cancelRequested())) {
                 // Angehalten oder abgebrochen kurz vor dem Ende oder Absturz: bleibt beim Wunsch des Benutzers, nie
                 // fortsetzen (Abnahme #1030).
@@ -1755,6 +1780,10 @@ public class Jobs implements AutoCloseable {
                 }
                 continue;
             }
+            if (job.parameters != null && job.parameters.containsKey(AFTER) && held(job)) {
+                // Hinter einem Auftrag, der die Quelle hält ({@link #HOLDS_SOURCE}): zählt nicht als wartend.
+                continue;
+            }
             othersWaiting = true;
             if (job.type.download() ? preparations : general && !job.type.followUp()) {
                 pick = job;
@@ -1840,11 +1869,47 @@ public class Jobs implements AutoCloseable {
                 || job.parameters != null && "true".equals(job.parameters.get(SURVIVES_SHUTDOWN));
     }
 
-    /** Ob ein Auftrag mit {@value #SURVIVES_SHUTDOWN} vom Ende des Dienstes unterbrochen wurde und fortzusetzen ist. */
+    /**
+     * Ob ein Auftrag mit {@value #SURVIVES_SHUTDOWN} noch fortzusetzen ist: unterbrochen, gescheitert oder angehalten,
+     * etwa das Löschen der Daten einer entfernten Quelle, das bis zum Erfolg wiederholt wird.
+     */
     private static boolean pendingAfterShutdown(JobStatus status) {
-        return !status.type().background() && status.sourceId() != null && status.state() == JobState.FAILED
-                && status.error() != null && INTERRUPTED.equals(status.error().code())
+        return !status.type().background() && status.sourceId() != null
+                && (status.state() == JobState.FAILED || status.state() == JobState.PAUSED)
                 && "true".equals(status.parameter(SURVIVES_SHUTDOWN));
+    }
+
+    /**
+     * Unter dem Sperrobjekt, vor dem Einreihen: Hält ein offener oder angehaltener Auftrag die Quelle
+     * ({@link #HOLDS_SOURCE}), startet {@code job} erst nach ihm ({@link #AFTER}).
+     */
+    private void holdBehindSource(Job job) {
+        if (job.sourceId == null || job.type.background()) {
+            return;
+        }
+        List<String> holders = new ArrayList<>();
+        for (Job other : open.values()) {
+            if (other != job && job.sourceId.equals(other.sourceId) && other.parameters != null
+                    && "true".equals(other.parameters.get(HOLDS_SOURCE))) {
+                holders.add(other.id);
+            }
+        }
+        for (Job other : stopped.values()) {
+            if (other.state == JobState.PAUSED && job.sourceId.equals(other.sourceId) && other.parameters != null
+                    && "true".equals(other.parameters.get(HOLDS_SOURCE)) && !holders.contains(other.id)) {
+                holders.add(other.id);
+            }
+        }
+        if (holders.isEmpty() || job.parameters != null && "true".equals(job.parameters.get(HOLDS_SOURCE))) {
+            return;
+        }
+        Map<String, String> held = new java.util.HashMap<>(job.parameters == null ? Map.of() : job.parameters);
+        String after = held.get(AFTER);
+        held.put(AFTER, (after == null || after.isBlank() ? "" : after + ",") + String.join(",", holders));
+        String titles = held.get(AFTER_TITLES);
+        held.put(AFTER_TITLES, titles == null || titles.isBlank() ? HOLDS_SOURCE_TITLE
+                : titles + ", " + HOLDS_SOURCE_TITLE);
+        job.parameters = Map.copyOf(held);
     }
 
     /** Ob der Auftrag auf eigener Spur läuft ({@value #OWN_LANE}). */

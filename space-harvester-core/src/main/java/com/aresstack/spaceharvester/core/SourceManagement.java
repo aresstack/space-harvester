@@ -40,9 +40,6 @@ public final class SourceManagement {
     /** So lange warten Entfernen und Ändern auf laufende Aufträge der Quelle. */
     static final Duration JOB_STOP_TIMEOUT = Duration.ofSeconds(30);
 
-    /** So lange wartet {@link #change} auf das Löschen der alten Daten; danach läuft der Auftrag sichtbar weiter. */
-    static final Duration WITHDRAWAL_WAIT = Duration.ofMinutes(5);
-
     private static final System.Logger LOG = System.getLogger(SourceManagement.class.getName());
 
     private final ConfiguredSourceCatalog catalog;
@@ -57,6 +54,7 @@ public final class SourceManagement {
         this.purge = Objects.requireNonNull(purge, "purge");
         this.diagnostics = new SourceDiagnostics(catalog);
         this.certificates = new SourceCertificates(catalog);
+        purge.onWithdrawn(this::withdrawn);
     }
 
     /** Die Einstellungen aller Quellen in ihrer Reihenfolge; ihr {@code toString} zeigt keine Geheimnisse. */
@@ -170,18 +168,9 @@ public final class SourceManagement {
                 || !Objects.equals(previous.baseUrl(), config.baseUrl());
         LOG.log(System.Logger.Level.INFO, "Quelle {0} geändert{1}", config.id(), moved ? ", neues Ziel" : "");
         if (moved) {
-            // Fundstelle 22: als Auftrag „Daten bereinigen“, sichtbar und fortsetzbar. Gewartet wird wie bisher: Ein
-            // gleich danach gestarteter Abgleich der Quelle darf nicht vom Löschen der alten Daten beendet werden.
-            Optional<JobStatus> withdrawal = startWithdrawal(config.id(), SourceDataPurge.MOVED);
-            try {
-                if (withdrawal.isPresent()) {
-                    jobs.await(withdrawal.get().id(), Harvester.OWNER, WITHDRAWAL_WAIT);
-                }
-            } catch (java.util.concurrent.TimeoutException e) {
-                LOG.log(System.Logger.Level.WARNING, "Daten der Quelle {0} werden noch gelöscht", config.id());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            // Fundstelle 22: als Auftrag „Daten bereinigen“, sichtbar und fortsetzbar. Er hält die Quelle: Ein gleich
+            // danach gestarteter Abgleich wartet hinter ihm (Jobs.HOLDS_SOURCE), statt von ihm beendet zu werden.
+            startWithdrawal(config.id(), SourceDataPurge.MOVED);
         }
         return moved;
     }
@@ -268,9 +257,47 @@ public final class SourceManagement {
         return purge.withdrawing(sourceId);
     }
 
-    /** Beim Start: setzt unterbrochenes Löschen entfernter oder umgestellter Quellen fort. */
-    public List<JobStatus> resumeWithdrawals() {
-        return purge.resumeInterrupted();
+    /**
+     * Die Quellen, deren Daten nach dem Entfernen noch gelöscht werden, je mit dem Auftrag ({@link #removalPending});
+     * aus dem Speicher, darf auf dem EDT laufen.
+     */
+    public java.util.Map<String, JobStatus> removalsPending() {
+        return purge.withdrawals();
+    }
+
+    /**
+     * Beim Start: setzt unterbrochenes oder gescheitertes Löschen entfernter oder umgestellter Quellen im selben Eintrag
+     * fort. Ist eine entfernte Quelle inzwischen wieder eingerichtet (etwa per YAML), bleibt sie abgeschaltet, bis ihre
+     * alten Daten gelöscht sind; danach ist sie wieder eingeschaltet und leer (Abnahme zu Fundstelle 22).
+     */
+    public synchronized List<JobStatus> resumeWithdrawals() {
+        List<JobStatus> resumed = purge.resumePending();
+        purge.withdrawals().keySet().forEach(this::holdWhileWithdrawing);
+        return resumed;
+    }
+
+    /** Quellen, die bis zum Ende ihres Löschens abgeschaltet sind ({@link #resumeWithdrawals}). */
+    private final java.util.Set<String> heldInactive = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private void holdWhileWithdrawing(String sourceId) {
+        if (catalog.config(sourceId).isPresent() && catalog.setEnabled(sourceId, false)) {
+            heldInactive.add(sourceId);
+            LOG.log(System.Logger.Level.INFO, "Quelle {0} bleibt abgeschaltet, bis ihre alten Daten gelöscht sind",
+                    sourceId);
+        }
+    }
+
+    private void withdrawn(String sourceId) {
+        if (heldInactive.remove(sourceId)) {
+            try {
+                catalog.setEnabled(sourceId, true);
+                LOG.log(System.Logger.Level.INFO, "Quelle {0} nach dem Löschen ihrer alten Daten wieder eingeschaltet",
+                        sourceId);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Quelle {0} nicht wieder eingeschaltet ({1})", sourceId,
+                        e.getClass().getName());
+            }
+        }
     }
 
     /** Die Ablagen, die {@link #purge} und das Entfernen leeren, in ihrer Reihenfolge. */

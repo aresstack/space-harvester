@@ -951,6 +951,16 @@ public final class SourcesView implements View {
         SourceForm.open(root, context, editable, this::select);
     }
 
+    /** Ob die Daten einer entfernten Quelle dieser ID noch gelöscht werden; aus dem Speicher des Core. */
+    private boolean removing(AppSettings.SourceEntry entry) {
+        try {
+            return context.runtime() != null
+                    && context.runtime().workspace().sourceRemovalsPending().containsKey(entry.id());
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private boolean disabled(AppSettings.SourceEntry entry) {
         return context.settings() != null && context.settings().disabled(entry.id());
     }
@@ -1888,7 +1898,13 @@ public final class SourcesView implements View {
             String text;
             Color color;
             StatusMark.State mode;
-            if (disabled(entry)) {
+            boolean removing = removing(entry);
+            if (removing) {
+                // Fundstelle 22: wieder eingerichtet, aber die Daten der entfernten Quelle werden noch gelöscht.
+                text = "Wird noch entfernt · danach leer und wieder bereit";
+                color = com.aresstack.spaceharvester.app.ui.controls.StatusLabel.WARNING_COLOR;
+                mode = StatusMark.State.UNCHECKED;
+            } else if (disabled(entry)) {
                 text = "Abgeschaltet · Einstellungen und Bestand bleiben";
                 color = Comic.MUTED;
                 mode = StatusMark.State.UNCHECKED;
@@ -1924,7 +1940,8 @@ public final class SourcesView implements View {
             state.setForeground(color);
             mark.state(mode, text);
             // Ausgegraut, bis alle gestarteten Aufträge durch oder gescheitert sind, wie die Knöpfe beim Export.
-            sync.setEnabled(!disabled(entry) && !waiting && connection.state() == AppContext.Connection.State.CONNECTED
+            sync.setEnabled(!removing && !disabled(entry) && !waiting
+                    && connection.state() == AppContext.Connection.State.CONNECTED
                     && !catchingUp.contains(entry.id()));
             revalidate();
             repaint();

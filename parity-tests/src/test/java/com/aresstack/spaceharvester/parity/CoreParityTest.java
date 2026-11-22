@@ -688,6 +688,8 @@ class CoreParityTest {
             management.change(config("wiki", "Handbuch-Wiki", server.baseUrl()));
             CORE_MANAGEMENT.put("change.same-target.withdrawn", String.valueOf(!cached(harvester)));
             management.change(config("wiki", "Handbuch-Wiki", URI.create("http://127.0.0.1:1/wiki")));
+            // Fundstelle 22: Die alten Daten löscht ein Auftrag „Daten bereinigen“.
+            withdrawn(harvester);
             CORE_MANAGEMENT.put("change.other-target.withdrawn", String.valueOf(!cached(harvester)));
 
             management.setEnabled("wiki", false);
@@ -699,9 +701,9 @@ class CoreParityTest {
             management.remove("wiki");
             CORE_MANAGEMENT.put("remove.listed", String.valueOf(listed(management, "wiki")));
             // Fundstelle 22: Die Daten löscht ein Auftrag; bis er endet, ist die ID gesperrt.
-            var removal = management.removalPending("wiki");
-            if (removal.isPresent()) {
-                assertThat(harvester.await(removal.get().id(), WAIT).state()).isEqualTo(JobState.COMPLETED);
+            withdrawn(harvester);
+            while (management.removalPending("wiki").isPresent()) {
+                Thread.sleep(10);
             }
             management.add(wiki);
             CORE_MANAGEMENT.put("remove.withdrawn", String.valueOf(!cached(harvester)));
@@ -729,6 +731,15 @@ class CoreParityTest {
         JobStatus sync = harvester.await(harvester.sync("wiki", ParityConfluence.SPACE).id(), WAIT);
         assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
         assertThat(cached(harvester)).as("Seiten nach dem Abgleich im Cache").isTrue();
+    }
+
+    /** Wartet auf jedes Löschen der Daten der Quelle „wiki“ (Fundstelle 22). */
+    private static void withdrawn(Harvester harvester) throws Exception {
+        for (JobStatus job : harvester.jobs().listAll(com.aresstack.spaceharvester.application.jobs.JobType.PURGE)) {
+            if ("wiki".equals(job.sourceId())) {
+                assertThat(harvester.await(job.id(), WAIT).state()).isEqualTo(JobState.COMPLETED);
+            }
+        }
     }
 
     private static boolean cached(Harvester harvester) {

@@ -27,6 +27,9 @@ class AppContextReloadTest {
     void backgroundPartsAUserStartedCountAutomaticOnesAndTheStartScansNot() {
         assertThat(AppContext.abortedByReload(job(JobType.SYNC, JobState.RUNNING, Map.of())))
                 .as("Abgleich des Benutzers").isTrue();
+        // Fundstelle 22: Das Löschen einer entfernten Quelle übersteht das Neuladen und setzt danach fort.
+        assertThat(AppContext.abortedByReload(job(JobType.PURGE, JobState.RUNNING, Map.of(
+                com.aresstack.spaceharvester.application.jobs.Jobs.SURVIVES_SHUTDOWN, "true")))).isFalse();
         assertThat(AppContext.abortedByReload(job(JobType.SYNC, JobState.COMPLETED, Map.of())))
                 .as("fertig").isFalse();
 

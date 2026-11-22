@@ -71,14 +71,8 @@ class SourceManagementTest {
             assertThat(sources.remove("wiki")).isFalse();
             assertThatThrownBy(() -> harvester.sources().partitions("wiki"))
                     .isInstanceOf(UnknownSourceException.class);
-            // Fundstelle 22: Die Daten löscht ein Auftrag; bis er endet, ist die ID gesperrt.
-            String removal = sources.removalPending("wiki").map(job -> job.id()).orElse(null);
-            if (removal != null) {
-                assertThatThrownBy(() -> sources.add(wiki(SERVER.baseUrl())))
-                        .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceRemovalPendingException.class);
-                assertThat(harvester.await(removal, Duration.ofSeconds(30)).state()).isEqualTo(JobState.COMPLETED);
-            }
-            assertThat(sources.removalPending("wiki")).isEmpty();
+            // Fundstelle 22: Die Daten löscht ein Auftrag (die Sperre prüft SourceManagementWithdrawalTest).
+            awaitWithdrawals(harvester, sources, "wiki");
 
             // Wieder hinzugefügt ist die Quelle leer: Cache und Abgleichstand sind mit ihr gegangen.
             sources.add(wiki(SERVER.baseUrl()));
@@ -105,9 +99,7 @@ class SourceManagementTest {
             URI elsewhere = URI.create(SERVER.baseUrl().toString().replace("127.0.0.1", "localhost"));
             assertThat(sources.change(wiki(elsewhere))).isTrue();
             // Fundstelle 22: Die alten Daten löscht ein Auftrag „Daten bereinigen“.
-            for (var job : harvester.jobs().listAll(com.aresstack.spaceharvester.application.jobs.JobType.PURGE)) {
-                assertThat(harvester.await(job.id(), Duration.ofSeconds(30)).state()).isEqualTo(JobState.COMPLETED);
-            }
+            awaitWithdrawals(harvester, sources, "wiki");
             assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10))
                     .isInstanceOf(CacheMissException.class);
 
@@ -247,6 +239,60 @@ class SourceManagementTest {
                     null, null, null, Map.of()), false);
             assertThat(invalid.successful()).isFalse();
             assertThat(invalid.message()).startsWith("Einstellungen: ").contains("base-url fehlt");
+        }
+    }
+
+    /** Wartet auf jedes Löschen der Quelle, bis auch der Speicher der Sperre es kennt. */
+    private static void awaitWithdrawals(Harvester harvester, SourceManagement sources, String sourceId)
+            throws Exception {
+        for (JobStatus job : harvester.jobs().listAll(JobType.PURGE)) {
+            if (sourceId.equals(job.sourceId())) {
+                assertThat(harvester.await(job.id(), Duration.ofSeconds(30)).state()).isEqualTo(JobState.COMPLETED);
+            }
+        }
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+        while (sources.removalPending(sourceId).isPresent()) {
+            assertThat(System.nanoTime()).as("Sperre nach 30 s noch da").isLessThan(deadline);
+            Thread.sleep(10);
+        }
+    }
+
+    @Test
+    void aRemovalHeldUpByARunningJobSurvivesARestartOfTheHarvester() throws Exception {
+        java.util.concurrent.CountDownLatch running = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        String removal;
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            SourceManagement sources = harvester.sourceManagement();
+            sources.add(wiki(SERVER.baseUrl()));
+            assertThat(harvester.await(harvester.sync("wiki", "DEV").id(), Duration.ofSeconds(30)).state())
+                    .isEqualTo(JobState.COMPLETED);
+            // Ein Auftrag der Quelle, der nicht gleich endet: Das Löschen wartet auf ihn, statt zu scheitern.
+            harvester.jobs().submit(JobType.REREAD, "wiki", "DEV", Harvester.OWNER,
+                    com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+                        running.countDown();
+                        release.await(30, java.util.concurrent.TimeUnit.SECONDS);
+                    }));
+            assertThat(running.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            assertThat(sources.remove("wiki")).isTrue();
+            removal = sources.removalPending("wiki").orElseThrow().id();
+            Thread.sleep(200);
+            assertThat(harvester.jobs().status(removal).state()).isEqualTo(JobState.RUNNING);
+            assertThatThrownBy(() -> sources.add(wiki(SERVER.baseUrl())))
+                    .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceRemovalPendingException.class);
+        } finally {
+            release.countDown();
+        }
+
+        // Neustart mit derselben Auftragsablage (Lucene): Das Löschen setzt im selben Eintrag fort.
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            SourceManagement sources = harvester.sourceManagement();
+            assertThat(harvester.await(removal, Duration.ofSeconds(30)).state()).isEqualTo(JobState.COMPLETED);
+            awaitWithdrawals(harvester, sources, "wiki");
+            sources.add(wiki(SERVER.baseUrl()));
+            assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10))
+                    .isInstanceOf(CacheMissException.class);
         }
     }
 

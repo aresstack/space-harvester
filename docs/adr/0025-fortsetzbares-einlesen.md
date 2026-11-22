@@ -547,16 +547,26 @@ wird automatisch verwaltet.
     Auftrag „Daten bereinigen“ (`PURGE`, `purge.reason` = `removed` oder `moved`, `SourceDataPurge#startWithdrawal`)
     mit denselben Ablagen wie „Daten bereinigen“, KI-Ergebnisse und Caches eingeschlossen.
     - Der Auftrag trägt `Jobs.SURVIVES_SHUTDOWN`: Endet der Dienst, etwa weil die App nach dem Entfernen neu lädt, gilt
-      er wie ein Hintergrundauftrag als unterbrochen, nicht als abgebrochen. Der nächste Start setzt ihn mit einem
-      neuen Auftrag derselben Angaben fort (`SourceManagement#resumeWithdrawals`), außer die entfernte Quelle ist
-      inzwischen wieder eingerichtet.
-    - Bis er endet, lässt sich dieselbe Kennung nicht neu anlegen (`SourceRemovalPendingException`); das Formular zeigt
-      unter der Kennung einen gelben Hinweis, der den Auftrag öffnet.
-    - Beim Umstellen auf ein neues Ziel wartet `SourceManagement#change` wie bisher auf den Auftrag (höchstens fünf
-      Minuten): Ein gleich danach gestarteter Abgleich der Quelle darf nicht vom Löschen der alten Daten beendet werden.
+      er wie ein Hintergrundauftrag als unterbrochen, nicht als abgebrochen; „wird abgebrochen“ zählt ihn nicht. Der
+      nächste Start setzt ihn im selben Eintrag fort (`SourceManagement#resumeWithdrawals`); ältere offene Einträge
+      derselben Quelle werden abgelöst (`Jobs#retire`). Ein vom Benutzer abgebrochenes Löschen bleibt abgebrochen, ein
+      angehaltenes angehalten, bis sein Besitzer fortsetzt.
+    - Scheitert er (Ablage nicht geleert, Laufzeitgrenze), wiederholt er sich von selbst im selben Eintrag
+      (`SourceDataPurge.HEAL_DELAYS`: 30 s, 2, 10, dann alle 30 min); „Fortsetzen“ in den Aufträgen geht jederzeit.
+      Auf laufende Aufträge der Quelle wartet er, statt nach 30 s zu scheitern.
+    - Bis er gelingt, lässt sich dieselbe Kennung nicht neu anlegen (`SourceRemovalPendingException`); das Formular
+      zeigt unter der Kennung einen gelben Hinweis mit dem Link „Aufträge“ (`StatusLabel`). Die Sperre liest einen
+      Speicher, den die Auftragsmeldungen pflegen, nie die Auftragsablage.
+    - Steht eine entfernte Quelle vor dem Neustart wieder in der Konfiguration (YAML), wird sie trotzdem erst zu Ende
+      gelöscht; bis dahin ist sie abgeschaltet und zeigt gelb „Wird noch entfernt“, danach ist sie leer und wieder an.
+    - Das Löschen entfernter Quellen sieht, wer die Konfiguration verwaltet, auch wenn die Quelle nach dem Neuladen in
+      keiner Richtlinie mehr steht.
+    - Beim Umstellen auf ein neues Ziel kehrt `SourceManagement#change` sofort zurück. Der Auftrag hält die Quelle
+      (`Jobs.HOLDS_SOURCE`): Jeder später angenommene Auftrag der Quelle startet erst nach ihm (`Jobs.AFTER`, „wartet
+      auf das Löschen der alten Daten der Quelle“), und das Löschen beendet nur Aufträge, die vor ihm angenommen wurden.
     - Nimmt `Jobs` den Auftrag nicht an (Warteschlange voll), wird wie früher sofort gelöscht; die Daten bleiben nie
-      ohne Auftrag liegen. Ein unterbrochener Auftrag läuft nicht nach der Aufbewahrungsfrist ab, solange ihn kein
-      neuerer Auftrag derselben Art und Quelle ablöst (`Jobs#purgeExpired`).
+      ohne Auftrag liegen. Ein unterbrochener, gescheiterter oder angehaltener Auftrag läuft nicht nach der
+      Aufbewahrungsfrist ab, solange ihn kein neuerer Auftrag derselben Art und Quelle ablöst (`Jobs#purgeExpired`).
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

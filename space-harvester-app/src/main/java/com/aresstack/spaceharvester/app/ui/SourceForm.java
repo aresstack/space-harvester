@@ -135,8 +135,10 @@ final class SourceForm {
     private final Form form = new Form();
     /** Anfang der Meldung, wenn eine entfernte Quelle dieser ID noch gelöscht wird (Fundstelle 22). */
     static final String REMOVAL_PENDING = "Die Quelle mit der ID ";
-    /** Der gelbe Hinweis unter der Kennung; ein Klick öffnet den Auftrag. */
-    static final String REMOVAL_HINT = "Diese Kennung wird noch entfernt; Fortschritt unter Aufträge (klicken).";
+    /** Der gelbe Hinweis unter der Kennung; das Wort {@link #REMOVAL_LINK} öffnet den Auftrag. */
+    static final String REMOVAL_HINT = "Diese Kennung wird noch entfernt; Fortschritt unter Aufträge.";
+    /** Das Link-Wort in {@link #REMOVAL_HINT}. */
+    static final String REMOVAL_LINK = "Aufträge";
     /** Der Auftrag, der die Daten der entfernten Quelle dieser ID löscht; sonst {@code null}. */
     private String removalJob;
     private final JLabel loginSection = Form.section("Anmeldung");
@@ -948,7 +950,7 @@ final class SourceForm {
             if (problem.startsWith(REMOVAL_PENDING) && form.has(id)) {
                 // Gelb, kein Fehler: Es wartet nur; der Hinweis öffnet den Auftrag (AT zu Fundstelle 22).
                 String job = removalJob;
-                form.warn(id, REMOVAL_HINT, job == null ? null : () -> context.navigator().showJob(job));
+                form.warn(id, REMOVAL_HINT, REMOVAL_LINK, job == null ? null : () -> context.navigator().showJob(job));
                 first = first == null ? id : first;
             } else if (form.has(field)) {
                 form.error(field, shortly(problem));
@@ -1824,7 +1826,9 @@ final class SourceForm {
             return field != null && rows.stream().anyMatch(row -> row.key() == field && row.field().isVisible());
         }
 
-        private static final String LINK = "sourceForm.hintLink";
+        /** Gelbe Hinweise mit Link je Feld ({@link #warn}); liegen über der Hinweiszeile und ersetzen sie. */
+        private final java.util.Map<JComponent, com.aresstack.spaceharvester.app.ui.controls.StatusLabel> notes =
+                new java.util.HashMap<>();
 
         void error(JComponent field, String message) {
             for (Row row : rows) {
@@ -1837,24 +1841,26 @@ final class SourceForm {
             }
         }
 
-        /** Ein gelber Hinweis unter dem Feld, der beim Klick {@code link} ausführt (ohne Link nur gelb). */
-        void warn(JComponent field, String message, Runnable link) {
+        /**
+         * Ein gelber Hinweis unter dem Feld, das Wort {@code link} darin als Link ({@link
+         * com.aresstack.spaceharvester.app.ui.controls.StatusLabel}: Maus, Tab, Enter, Bildschirmleser); ohne
+         * {@code action} nur gelb.
+         */
+        void warn(JComponent field, String message, String link, Runnable action) {
             for (Row row : rows) {
                 if (row.key() == field) {
-                    row.hint().setText(message);
-                    row.hint().setToolTipText(message);
-                    row.hint().setForeground(com.aresstack.spaceharvester.app.ui.controls.StatusLabel.WARNING_COLOR);
-                    if (link != null) {
-                        java.awt.event.MouseAdapter click = new java.awt.event.MouseAdapter() {
-                            @Override
-                            public void mouseClicked(java.awt.event.MouseEvent e) {
-                                link.run();
-                            }
-                        };
-                        row.hint().putClientProperty(LINK, click);
-                        row.hint().addMouseListener(click);
-                        row.hint().setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
-                    }
+                    com.aresstack.spaceharvester.app.ui.controls.StatusLabel note = notes.computeIfAbsent(field, key -> {
+                        com.aresstack.spaceharvester.app.ui.controls.StatusLabel created =
+                                new com.aresstack.spaceharvester.app.ui.controls.StatusLabel();
+                        add(created, ((GridBagLayout) getLayout()).getConstraints(row.hint()));
+                        return created;
+                    });
+                    note.show(new com.aresstack.spaceharvester.app.ui.controls.StatusNote(message,
+                            com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.WARNING, link, action));
+                    note.setVisible(true);
+                    row.hint().setVisible(false);
+                    revalidate();
+                    repaint();
                 }
             }
         }
@@ -1873,10 +1879,10 @@ final class SourceForm {
         }
 
         private void clear(Row row) {
-            if (row.hint().getClientProperty(LINK) instanceof java.awt.event.MouseListener click) {
-                row.hint().removeMouseListener(click);
-                row.hint().putClientProperty(LINK, null);
-                row.hint().setCursor(java.awt.Cursor.getDefaultCursor());
+            com.aresstack.spaceharvester.app.ui.controls.StatusLabel note = notes.get(row.key());
+            if (note != null && note.isVisible()) {
+                note.setVisible(false);
+                row.hint().setVisible(row.field().isVisible());
             }
             row.hint().setText(row.text());
             row.hint().setToolTipText(null);

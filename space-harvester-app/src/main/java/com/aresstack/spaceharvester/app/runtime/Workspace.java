@@ -740,6 +740,14 @@ public final class Workspace {
     }
 
     /**
+     * Die Quellen, deren Daten nach dem Entfernen noch gelöscht werden, je mit dem Auftrag; aus dem Speicher des Core,
+     * den die Auftragsmeldungen pflegen, darf also auf dem EDT laufen.
+     */
+    public java.util.Map<String, JobStatus> sourceRemovalsPending() {
+        return harvester.sourceManagement().removalsPending();
+    }
+
+    /**
      * „Daten bereinigen“: löscht als Auftrag alle lokal gespeicherten Daten dieser einen Quelle (Seiten, Katalog,
      * Suchindex, Analysen, Anhänge, Begriffsbeziehungen, geprüfte Fakten, Aussagen); die Quelle bleibt eingerichtet,
      * andere Quellen bleiben unberührt ({@code SourceManagement.purge}, {@code DELETE /api/v1/sources/{id}/data}).
@@ -2300,6 +2308,8 @@ public final class Workspace {
             // Metadaten und Analytics: ein neuer Lauf im selben Eintrag, auch nach einem Neustart (Angelo 17.11.2026).
             case METADATA_EXPORT, ANALYTICS_EXPORT -> harvester.jobActions().perform(jobId, Harvester.OWNER,
                     JobAction.RESUME);
+            // „Daten bereinigen“, auch das Löschen einer entfernten Quelle: im selben Eintrag von vorn (Fundstelle 22).
+            case PURGE -> harvester.jobActions().perform(jobId, Harvester.OWNER, JobAction.RESUME);
             default -> harvester.resumeExport(jobId);
         };
     }
@@ -3377,6 +3387,12 @@ public final class Workspace {
         if (!Harvester.OWNER.equals(status.owner())) {
             // Läufe des Aufrufers (Zusammenfassen, Synonymlauf, Aussagenanalyse) gehören ihm selbst, auch
             // quellenübergreifende; die Rechte hat der Core schon beim Start geprüft.
+            return;
+        }
+        if (status.type() == JobType.PURGE && status.parameter(
+                com.aresstack.spaceharvester.application.sources.SourceDataPurge.REASON) != null) {
+            // Das Löschen einer entfernten oder umgestellten Quelle sieht, wer die Konfiguration verwalten darf, wie
+            // {@link #removeSource}; nach dem Neuladen steht die entfernte Quelle in keiner Richtlinie mehr.
             return;
         }
         if (!access.permits(caller, scope(status.sourceId(), status.partitionKey()), kind)) {

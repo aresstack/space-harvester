@@ -872,6 +872,11 @@ public final class AppContext {
      * nach.
      */
     static boolean abortedByReload(JobStatus job) {
+        // Was das Ende des Dienstes übersteht, etwa das Löschen einer entfernten Quelle (Fundstelle 22), setzt danach
+        // von selbst fort und wird nicht abgebrochen.
+        if ("true".equals(job.parameter(com.aresstack.spaceharvester.application.jobs.Jobs.SURVIVES_SHUTDOWN))) {
+            return false;
+        }
         return !job.state().terminal() && (!job.type().background()
                 || com.aresstack.spaceharvester.application.background.BackgroundJobs.startedByUser(job));
     }

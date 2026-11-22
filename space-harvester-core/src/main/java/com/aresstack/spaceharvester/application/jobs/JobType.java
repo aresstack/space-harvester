@@ -183,11 +183,13 @@ public enum JobType {
      * gelesen ist. „Zusammenfassen“ ({@link #UPDATE_SUMMARY}) legt erst am Ende ab und fragt beim neuen Lauf von vorn.
      * Metadaten ({@link #METADATA_EXPORT}) legen jede abgefragte Seite sofort in einer Teildatei ab und fragen beim
      * neuen Lauf nur Seiten ohne Daten; Analytics ({@link #ANALYTICS_EXPORT}) fragt von vorn (Angelo 17.11.2026).
+     * „Daten bereinigen“ ({@link #PURGE}) löscht beim neuen Lauf von vorn; schon geleerte Ablagen bleiben leer
+     * (Fundstelle 22).
      */
     public boolean resumable() {
         return this == SYNC || this == EXPORT || this == ASSETS || this == ATTACHMENTS || this == REREAD
                 || this == UPDATE_SUMMARY || this == METADATA_EXPORT || this == ANALYTICS_EXPORT || presentation()
-                || this == SEARCH_QUALITY || this == UPDATE_PODCAST || this == BACKGROUND;
+                || this == SEARCH_QUALITY || this == UPDATE_PODCAST || this == BACKGROUND || this == PURGE;
     }
 
     /** Export aus der Quelle per REST-Abfrage (Metadaten, Analytics): Gescheitertes fragt ein neuer Lauf erneut. */

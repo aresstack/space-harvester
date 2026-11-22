@@ -436,6 +436,10 @@ final class SetupWizard {
 
     private Status status(AppSettings.SourceEntry entry) {
         AppRuntime runtime = context.runtime();
+        if (runtime != null && removing(runtime, entry.id())) {
+            // Fundstelle 22: Eine wieder eingerichtete Quelle ruht, bis die Daten der entfernten gelöscht sind.
+            return new Status("wird noch entfernt", com.aresstack.spaceharvester.app.ui.controls.StatusLabel.WARNING_COLOR);
+        }
         if (context.settings() != null && context.settings().disabled(entry.id())) {
             return new Status("abgeschaltet", Comic.MUTED);
         }
@@ -453,6 +457,15 @@ final class SetupWizard {
             case FAILED -> new Status("Eingerichtet · Verbindung fehlgeschlagen", Comic.RED);
             case NOT_CHECKED -> new Status("Eingerichtet · Prüfung ausstehend", Comic.MUTED);
         };
+    }
+
+    /** Ob die Daten einer entfernten Quelle dieser ID noch gelöscht werden; aus dem Speicher des Core. */
+    private static boolean removing(AppRuntime runtime, String sourceId) {
+        try {
+            return runtime.workspace().sourceRemovalsPending().containsKey(sourceId);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private static String name(AppSettings.SourceEntry entry) {
