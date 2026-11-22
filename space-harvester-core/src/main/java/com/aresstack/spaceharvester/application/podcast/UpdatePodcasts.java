@@ -265,8 +265,8 @@ public final class UpdatePodcasts {
 
     /**
      * Erstellt den Podcast neu (Angelo 22.11.2026, „Podcast neu erstellen“): Plan, Texte, Audio und Bilder fallen weg,
-     * dann beginnt ein neuer Auftrag. Während ein Auftrag dieses Podcasts läuft, geht das nicht: er würde mitten im
-     * Ablegen seine Grundlage verlieren.
+     * dann beginnt ein neuer Auftrag. Solange ein Auftrag dieses Podcasts nicht geendet hat (auch nach angefordertem
+     * Abbruch), geht das nicht: er würde mitten im Ablegen seine Grundlage verlieren.
      *
      * @throws IllegalStateException ohne Chat-Modell oder Sprachausgabe oder während der Podcast entsteht
      */
@@ -278,7 +278,9 @@ public final class UpdatePodcasts {
         }
         String key = key(summary);
         synchronized (starting) {
-            if (open(key) != null) {
+            // Auch ein abgebrochener Auftrag läuft bis zu seinem nächsten Haltepunkt weiter und könnte seinen alten Plan
+            // in die geleerte Ablage zurückschreiben; erst wenn er wirklich endet, darf neu erstellt werden.
+            if (unfinished(jobs, key)) {
                 throw new IllegalStateException("Der Podcast entsteht gerade; neu erstellen geht, sobald er fertig "
                         + "ist oder abgebrochen wurde");
             }
@@ -320,6 +322,16 @@ public final class UpdatePodcasts {
 
     private JobStatus open(String key) {
         return open(jobs, key);
+    }
+
+    /** Ob ein Auftrag dieses Podcasts noch nicht geendet hat, auch einer, dessen Abbruch erst angefordert ist. */
+    static boolean unfinished(Jobs jobs, String key) {
+        for (JobStatus status : jobs.listAll(JobType.UPDATE_PODCAST)) {
+            if (!status.state().terminal() && key.equals(status.parameters().get(PODCAST_PARAMETER))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Der offene Auftrag eines Podcasts, {@code null} ohne. */

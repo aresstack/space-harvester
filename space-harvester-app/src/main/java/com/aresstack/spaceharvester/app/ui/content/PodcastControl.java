@@ -646,11 +646,13 @@ final class PodcastControl<S> {
         retrying = false;
         orb.setState(PodcastOrb.State.WAITING);
         orb.setToolTipText("Podcast wird neu erstellt");
+        // Der Wunsch abzuspielen gilt ab hier; ein Klick auf den wartenden Knopf nimmt ihn zurück (wie bei play).
+        wanted = true;
         Source<S> current = source;
         S shown = summary;
         int mine = generation;
         runner.run(() -> current.renew(shown), started -> {
-            if (mine == generation) {
+            if (mine == generation && wanted) {
                 play(0);
             }
         }, failure -> {

@@ -117,6 +117,36 @@ class PodcastControlTest {
     }
 
     @Test
+    void aClickOnTheWaitingButtonDuringRenewalKeepsThePodcastSilent() throws Exception {
+        onEdt(() -> {
+            List<Runnable> pending = new java.util.ArrayList<>();
+            control = new PodcastControl<>(() -> source, new SourceUpdatesView.Runner() {
+                @Override
+                public <T> void run(java.util.concurrent.Callable<T> work, java.util.function.Consumer<T> onSuccess,
+                        java.util.function.Consumer<Throwable> onFailure) {
+                    pending.add(() -> new SourceUpdatesViewTest.SyncRunner().run(work, onSuccess, onFailure));
+                }
+            });
+            control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+            while (!pending.isEmpty()) {
+                pending.remove(0).run();
+            }
+
+            control.renew();
+            assertEquals(PodcastOrb.State.WAITING, control.orb().state());
+            control.orb().doClick();
+            assertEquals(PodcastOrb.State.PLAY, control.orb().state());
+            List<Runnable> now = List.copyOf(pending);
+            pending.clear();
+            now.forEach(Runnable::run);
+
+            assertEquals(1, source.renews);
+            assertTrue(pending.isEmpty(), "nach dem Neuerstellen spielt nichts von selbst los");
+            assertEquals(PodcastOrb.State.PLAY, control.orb().state());
+        });
+    }
+
+    @Test
     void anotherSummaryStopsPlaybackAndHidesTheTimeline() throws Exception {
         onEdt(() -> {
             control = control();

@@ -355,6 +355,31 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void aCancelledPodcastIsOnlyRenewedOnceItsJobHasEnded() {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        java.util.concurrent.atomic.AtomicReference<Throwable> refused = new java.util.concurrent.atomic
+                .AtomicReference<>();
+        // Abbruch angefordert, der Auftrag läuft aber noch bis zu seinem Haltepunkt: Er könnte seinen alten Plan in
+        // die geleerte Ablage zurückschreiben, also kein Neuerstellen.
+        jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.UPDATE_PODCAST, summary.sourceId(),
+                summary.spaceKey(), null, caller.jobOwner(), java.util.Map.of(UpdatePodcasts.PODCAST_PARAMETER,
+                        UpdatePodcasts.key(summary)), com.aresstack.spaceharvester.application.jobs.JobTask.blocking(
+                        context -> {
+                            jobs.cancel(context.jobId());
+                            try {
+                                podcasts.renew(caller, summary);
+                            } catch (IllegalStateException e) {
+                                refused.set(e);
+                            }
+                        }));
+
+        assertThat(refused.get()).isInstanceOf(IllegalStateException.class).hasMessageContaining("entsteht gerade");
+        // Nachdem der Auftrag geendet hat, geht es.
+        assertThat(podcasts.renew(caller, summary)).isNotNull();
+    }
+
+    @Test
     void prunesPodcastsWhoseSummaryIsGone() throws Exception {
         UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
         UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
