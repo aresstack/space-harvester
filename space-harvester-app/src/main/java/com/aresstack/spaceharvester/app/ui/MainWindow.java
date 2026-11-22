@@ -179,6 +179,7 @@ public final class MainWindow implements AppContext.Navigator {
     /** Die Perspektiven des Fensters (#1141); entsteht mit {@link #content}. */
     private Perspectives perspectives;
     private PerspectiveSwitcher switcher;
+    private AvengerEasterEgg avenger;
     /** Navigation der gewählten Perspektive rechts neben dem Titel. */
     private final JPanel navigationSlot = new JPanel(new BorderLayout()) {
         @Override
@@ -394,6 +395,10 @@ public final class MainWindow implements AppContext.Navigator {
         west.setOpaque(false);
         perspectives = new Perspectives();
         switcher = new PerspectiveSwitcher(ApplicationIcons.titleLogo(), perspectives);
+        // Avenger-Easter-Egg (#1141): vorläufiger Auslöser fünf Klicks auf das Logo; Ablauf und Auslöser sind getrennt.
+        avenger = new AvengerEasterEgg(switcher);
+        com.aresstack.spaceharvester.app.ui.controls.ClickBurst.install(switcher.logo(), 5,
+                java.time.Duration.ofMillis(700), avenger::reveal);
         west.add(switcher, BorderLayout.CENTER);
         navigationSlot.setOpaque(false);
         west.add(navigationSlot, BorderLayout.EAST);
@@ -872,6 +877,10 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /** Der Umschalter im Titel (für Tests). */
+    AvengerEasterEgg avenger() {
+        return avenger;
+    }
+
     PerspectiveSwitcher perspectiveSwitcher() {
         return switcher;
     }
