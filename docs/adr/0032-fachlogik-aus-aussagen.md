@@ -410,6 +410,6 @@ Auftrag des Architekten, Form A des UX-Managers.
   die übrigen zugeklappt (Abschnittskopf `SectionHeader`); kein
   „dafür/dagegen“. Eine Aussage allein zeigt das Overlay wie bisher, Kopf „Plan – prüfen – Ziel“.
 - Die Statuszeile zählt jede Aussage als Verbindung, auch die hinter „+ n weitere“.
-- Verbraucher der Kante: nur Fachsicht (Übersicht und Reiter „Graph“), Overlay und Begriffswissen (W6, Wortlaut über
-  `Statement#phrase`). Verben-Reiter, Glossar und Stand lesen `DomainTermGraph.Edge` nicht; der Export des
+- Verbraucher der Kante: nur Fachsicht (Übersicht und Reiter „Graph“), Overlay und Begriffswissen (W6: Verb und Merkmale je
+  Aussage, den Wortlaut setzt der Chat selbst). Verben-Reiter, Glossar und Stand lesen `DomainTermGraph.Edge` nicht; der Export des
   Bestandsgraphen bleibt unberührt. Andere Listen oder Tabellen der Fachsicht gibt es nicht.

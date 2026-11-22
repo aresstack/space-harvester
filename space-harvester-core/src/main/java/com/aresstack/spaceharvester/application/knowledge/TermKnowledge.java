@@ -124,15 +124,6 @@ public final class TermKnowledge {
             Objects.requireNonNull(trust, "trust");
             pages = List.copyOf(pages);
         }
-
-        /**
-         * Der Wortlaut wie an der Kante der Fachsicht ({@link DomainTermGraph.Qualifiers#phrase}): „nicht prüfen“,
-         * „muss prüfen (geplant)“.
-         */
-        public String phrase() {
-            return new DomainTermGraph.Qualifiers(negation == ParsedStatements.Negation.NEGATED, modality, temporality)
-                    .phrase(verb);
-        }
     }
 
     /** Ein Begriff der Antwort mit seinen Aussagen. */
