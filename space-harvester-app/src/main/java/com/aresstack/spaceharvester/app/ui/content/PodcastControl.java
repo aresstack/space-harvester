@@ -153,6 +153,7 @@ final class PodcastControl<S> {
     private Consumer<ApplicationEvent<?>> events = event -> { };
     /** Bekommt die Stellen des laufenden Themas, leer ohne Thema oder nach dem Abspielen (Angelo 22.11.2026). */
     private Consumer<List<Integer>> follower = statements -> { };
+    private Runnable stored = () -> { };
     /** Das Thema, dem die Ansicht gerade folgt; -1 = keinem. */
     private int followedTopic = -1;
     /** Öffnet und schließt das Bild des laufenden Kapitels in der Ansicht; ohne bleibt es bei der Bühne. */
@@ -366,6 +367,11 @@ final class PodcastControl<S> {
         this.follower = Objects.requireNonNull(follower, "follower");
     }
 
+    /** Wer erfährt, dass der Core eine Stufe dieses Podcasts abgelegt hat (etwa ein fertiges Bild), auf dem EDT. */
+    void stored(Runnable listener) {
+        this.stored = Objects.requireNonNull(listener, "listener");
+    }
+
     private void followAt(long millis) {
         followTrack(player.trackAt(millis));
     }
@@ -501,6 +507,7 @@ final class PodcastControl<S> {
         stages = current.subscribe(watched, () -> SwingUtilities.invokeLater(() -> {
             if (mine == generation) {
                 refresh();
+                stored.run();
             }
         }));
         jobs = current.subscribeJobs(new JobListener() {
