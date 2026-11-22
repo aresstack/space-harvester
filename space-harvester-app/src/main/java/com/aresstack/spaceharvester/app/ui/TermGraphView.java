@@ -226,6 +226,11 @@ public final class TermGraphView {
             reload();
         });
         evidence.onOpen(target -> onOpen.accept(target));
+        if (context != null) {
+            // ✓/✕ je Beleg (W3): gespeichert abseits des EDT; der Graph zieht über den Beobachter nach, sobald das
+            // Overlay zu ist (userBusy hält eine stille Neuberechnung bis dahin zurück).
+            evidence.reviewing(EvidencePopup.Reviewing.of(context::runtime), Background::run);
+        }
         // Aufgeschobene Meldungen des Core holen nach, sobald Belege, Vorschläge oder das Startfeld frei sind.
         javax.swing.event.PopupMenuListener closed = new javax.swing.event.PopupMenuListener() {
             @Override

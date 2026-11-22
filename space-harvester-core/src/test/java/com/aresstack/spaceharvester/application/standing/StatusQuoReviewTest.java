@@ -23,6 +23,7 @@ import java.time.Clock;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -264,6 +265,43 @@ class StatusQuoReviewTest {
                     assertThat(entry.action()).isEqualTo("remove");
                     assertThat(entry.review()).isEqualTo(Review.REJECTED);
                 });
+    }
+
+    @Test
+    void reviewsNameTheRightAndTheStoredRevisionPerPageForTheEvidenceOverlay() {
+        StandingFixtures.PageBuilder plan = page("1", "Plan", 'a')
+                .action("Nachtlauf", "startet", "Sicherung", features(Temporality.GILT))
+                .action("Team", "prüft", "Ziel", features(Temporality.GILT));
+        StandingFixtures.PageBuilder ziel = page("2", "Ziel", 'b').action("Start", "folgt", "Plan",
+                features(Temporality.GILT));
+        pages.add(plan.build());
+        pages.add(ziel.build());
+        String confirmed = plan.statements.getFirst().id();
+        String open = plan.statements.get(1).id();
+        String other = ziel.statements.getFirst().id();
+        statusQuo.review(EDITOR, plan.key, confirmed, Review.CONFIRMED, null);
+        statusQuo.decide(EDITOR, plan.key, confirmed, Standing.GILT, 1L);
+        statusQuo.review(EDITOR, ziel.key, other, Review.REJECTED, null);
+        PageKey unknown = new PageKey("wiki", "9");
+
+        Map<PageKey, StatusQuo.Reviews> seen = statusQuo.reviews(EDITOR, Map.of(plan.key, List.of(confirmed, open),
+                ziel.key, List.of(other), unknown, List.of("wiki/9@x#s0.v1")));
+
+        assertThat(seen.get(plan.key).writable()).isTrue();
+        assertThat(seen.get(plan.key).decisions()).as("ohne Entscheidung fehlt die Aussage").containsOnlyKeys(confirmed);
+        assertThat(seen.get(plan.key).decisions().get(confirmed)).satisfies(decision -> {
+            assertThat(decision.review()).isEqualTo(Review.CONFIRMED);
+            assertThat(decision.revision()).as("die Revision, gegen die das Zurücknehmen prüft").isEqualTo(2);
+        });
+        assertThat(seen.get(ziel.key).decisions().get(other).review()).isEqualTo(Review.REJECTED);
+        assertThat(seen.get(unknown)).as("nicht sichtbar analysiert").isEqualTo(StatusQuo.Reviews.NONE);
+        assertThat(statusQuo.withdrawReview(EDITOR, plan.key, confirmed,
+                seen.get(plan.key).decisions().get(confirmed).revision())).isTrue();
+
+        Map<PageKey, StatusQuo.Reviews> reader = statusQuo.reviews(READER, Map.of(ziel.key, List.of(other)));
+        assertThat(reader.get(ziel.key).writable()).as("ohne sync bzw. gesperrt: nicht prüfbar").isFalse();
+        assertThat(reader.get(ziel.key).decisions()).as("lesen wie die Sicht").containsOnlyKeys(other);
+        assertThat(statusQuo.reviews(EDITOR, Map.of())).isEmpty();
     }
 
     /** Dieselbe Analyse, als hätte der KI-Analysator sie gerechnet (gleiche IDs, andere Ablage). */

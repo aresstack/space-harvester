@@ -333,6 +333,66 @@ public final class StatusQuo {
         return store.history(target(visible(caller, page), page, statementId, false));
     }
 
+    /**
+     * Prüfstand von Aussagen je Seite, etwa für ✓/✕ im Overlay „Belege“ (ADR 0032, W3): ob der Aufrufer sie prüfen
+     * darf (dieselbe Regel wie {@link #review}: sichtbar analysiert und {@link AccessKind#SYNC}, eine gesperrte Seite
+     * nicht) und die gespeicherten Entscheidungen samt Revision, gegen die {@link #withdrawReview} prüft. Lesen wie die
+     * Sicht: Eine Seite, die der Aufrufer nicht analysiert sieht, ist nicht prüfbar und ohne Entscheidungen; eine
+     * Aussage ohne Entscheidung fehlt. Die Ablage des Analysators wie beim Schreiben. Liest die Analysen einmal für
+     * alle Seiten; speichert nichts.
+     *
+     * @param statements Aussage-IDs je Seite
+     * @return je angefragter Seite ihr Prüfstand
+     */
+    public Map<PageKey, Reviews> reviews(AccessContext caller, Map<PageKey, ? extends Collection<String>> statements) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(statements, "statements");
+        if (statements.isEmpty()) {
+            return Map.of();
+        }
+        Map<PageKey, List<KnowledgeGraph.AnalysedPage>> visible = new HashMap<>();
+        for (KnowledgeGraph.AnalysedPage candidate : analysed.apply(caller)) {
+            if (statements.containsKey(candidate.page().key())) {
+                visible.computeIfAbsent(candidate.page().key(), ignored -> new ArrayList<>()).add(candidate);
+            }
+        }
+        Map<PageKey, Reviews> result = new LinkedHashMap<>();
+        statements.forEach((page, ids) -> {
+            List<KnowledgeGraph.AnalysedPage> pages = visible.get(page);
+            if (pages == null) {
+                result.put(page, Reviews.NONE);
+                return;
+            }
+            String spaceKey = pages.getFirst().page().spaceKey();
+            boolean writable = access.permits(caller, spaceKey == null ? ResourceScope.source(page.sourceId())
+                    : ResourceScope.page(page.sourceId(), spaceKey, page.pageId()), AccessKind.SYNC);
+            Map<String, StandingDecision> decisions = new LinkedHashMap<>();
+            for (String id : ids) {
+                if (id != null) {
+                    store.find(target(pages, page, id, false)).ifPresent(found -> decisions.put(id, found));
+                }
+            }
+            result.put(page, new Reviews(writable, decisions));
+        });
+        return result;
+    }
+
+    /**
+     * Prüfstand der Aussagen einer Seite ({@link #reviews}).
+     *
+     * @param writable  ob der Aufrufer Aussagen dieser Seite prüfen darf
+     * @param decisions gespeicherte Entscheidung je Aussage-ID; ohne Entscheidung fehlt die Aussage
+     */
+    public record Reviews(boolean writable, Map<String, StandingDecision> decisions) {
+
+        /** Nicht sichtbar analysiert: nicht prüfbar, keine Entscheidungen. */
+        public static final Reviews NONE = new Reviews(false, Map.of());
+
+        public Reviews {
+            decisions = Map.copyOf(Objects.requireNonNull(decisions, "decisions"));
+        }
+    }
+
     /** Entfernt alle Entscheidungen einer Quelle („Daten bereinigen“, „Quelle entfernen“). */
     public int removeSource(String sourceId, String actor) {
         Objects.requireNonNull(sourceId, "sourceId");

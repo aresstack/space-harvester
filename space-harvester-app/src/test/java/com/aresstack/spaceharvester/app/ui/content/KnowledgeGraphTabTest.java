@@ -2497,6 +2497,35 @@ class KnowledgeGraphTabTest {
     }
 
     @Test
+    void aChangedReviewReloadsOnlyTheShownDomainViewWithItsCentre() {
+        tab.page(WIKI);
+        tab.showingForTests(true);
+        tab.domainChanged();
+        assertThat(actions.domainCalls).as("ohne Fachsicht nichts").isEmpty();
+        tab.showPageNow();
+        tab.domainChoice().doClick();
+        runner.runAll();
+        tab.clickDomainNode("Plan");
+        runner.runAll();
+        actions.domainCalls.clear();
+        actions.calls.clear();
+
+        // Beobachter nach ✓/✕ im Overlay „Belege“ (W3): dieselbe Mitte neu, der Bestand bleibt.
+        tab.domainChanged();
+        runner.runAll();
+
+        assertThat(actions.domainCalls).containsExactly("around Plan {wiki=[1]}");
+        assertThat(actions.calls).as("der Bestand rechnet nicht neu").isEmpty();
+        assertThat(tab.domainCentre()).isEqualTo("Plan");
+
+        // Verdeckt: erst beim nächsten Anzeigen.
+        tab.showingForTests(false);
+        tab.domainChanged();
+        runner.runAll();
+        assertThat(actions.domainCalls).hasSize(1);
+    }
+
+    @Test
     void checkedAndStaleReloadTheDomainViewAndKeepTheCentre() {
         tab.page(WIKI);
         tab.showPageNow();

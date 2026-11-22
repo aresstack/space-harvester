@@ -454,6 +454,42 @@ final class KnowledgeGraphTab extends JPanel {
         }
         overview.addActionListener(e -> showDomainOverview());
         evidence.onOpen(target -> onEvidenceOpen.accept(target));
+        // ✓/✕ je Beleg (W3) über dieselben Aktionen und denselben Hintergrund wie der Reiter.
+        evidence.reviewing(new EvidencePopup.Reviewing() {
+            @Override
+            public Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews> reviews(
+                    Map<PageKey, List<String>> statements) {
+                return actionsOrThrow().statementReviews(statements);
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.standing.StandingDecision review(PageKey key,
+                    String statementId, ParsedStatements.Review review) {
+                return actionsOrThrow().reviewStatement(key, statementId, review);
+            }
+
+            @Override
+            public boolean withdraw(PageKey key, String statementId, long expectedRevision) {
+                return actionsOrThrow().withdrawStatementReview(key, statementId, expectedRevision);
+            }
+        }, runner::run);
+        // Eine Meldung des Core, solange das Overlay offen war: erst jetzt nachziehen, damit seine Zeilen stehen blieben.
+        evidence.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) {
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) {
+                if (domainDirty) {
+                    later.accept(KnowledgeGraphTab.this::domainChanged);
+                }
+            }
+
+            @Override
+            public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) {
+            }
+        });
         domainCanvas.domain(true);
         domainCanvas.centred(false);
         domainCanvas.addMouseListener(new MouseAdapter() {
@@ -1678,6 +1714,30 @@ final class KnowledgeGraphTab extends JPanel {
         }
         refreshButtons();
         pushStatus();
+    }
+
+    /** Ob eine Meldung des Core für die Fachsicht ansteht, weil das Overlay „Belege“ offen war. */
+    private boolean domainDirty;
+
+    /**
+     * Gespeicherte Analysen oder ihre Prüfung durch Menschen haben sich geändert (Beobachter, ADR 0027; etwa ✓/✕ im
+     * Overlay „Belege“, W3): Eine gezeigte Fachsicht rechnet dieselbe Mitte an Ort und Stelle neu, eine verdeckte beim
+     * nächsten Anzeigen. Ist das Overlay offen, erst nach dem Schließen, damit seine Zeilen nicht springen. Der Bestand
+     * bleibt unberührt.
+     */
+    void domainChanged() {
+        domainDirty = false;
+        if (page == null || !domainMode() || !domainLoaded) {
+            return;
+        }
+        if (evidence.isVisible()) {
+            domainDirty = true;
+        } else if (showing()) {
+            loadDomain(domainCentre);
+        } else {
+            domainRequest++;
+            domainLoaded = false;
+        }
     }
 
     /** „Nur geprüft“ oder „Veraltete zeigen“ geändert: dieselbe Fachsicht (samt Mitte) neu rechnen. */
@@ -3247,6 +3307,26 @@ final class KnowledgeGraphTab extends JPanel {
                     Set.of());
         }
 
+        /**
+         * Prüfstand der Belege je Seite für ✓/✕ im Overlay „Belege“ (W3, {@code StatusQuo#reviews}); ohne eigene
+         * Umsetzung keiner (Knöpfe gesperrt); nie auf dem EDT.
+         */
+        default Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews> statementReviews(
+                Map<PageKey, List<String>> statements) {
+            return Map.of();
+        }
+
+        /** Bestätigt oder verwirft eine Aussage von Hand, fester Wert ohne Revisionsprüfung (W3); nie auf dem EDT. */
+        default com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey key,
+                String statementId, ParsedStatements.Review review) {
+            throw new UnsupportedOperationException("Prüfen von Hand nicht verfügbar");
+        }
+
+        /** Nimmt die Prüfung zurück, nur bei passender Revision (W3); nie auf dem EDT. */
+        default boolean withdrawStatementReview(PageKey key, String statementId, long expectedRevision) {
+            throw new UnsupportedOperationException("Prüfen von Hand nicht verfügbar");
+        }
+
         /** Wortlaut der Belege je Aussage-ID für das Overlay „Belege“; ohne eigene Umsetzung keiner. */
         default Map<String, SentenceText> sentences(Map<KnowledgeGraph.PageRef,
                 List<ParsedStatements.Statement>> byPage) {
@@ -3365,6 +3445,23 @@ final class KnowledgeGraphTab extends JPanel {
                 public Map<String, SentenceText> sentences(Map<KnowledgeGraph.PageRef,
                         List<ParsedStatements.Statement>> byPage) {
                     return workspace.statementSentences(byPage);
+                }
+
+                @Override
+                public Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews>
+                        statementReviews(Map<PageKey, List<String>> statements) {
+                    return workspace.statementReviews(statements);
+                }
+
+                @Override
+                public com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey key,
+                        String statementId, ParsedStatements.Review review) {
+                    return workspace.reviewStatement(key, statementId, review, (Long) null);
+                }
+
+                @Override
+                public boolean withdrawStatementReview(PageKey key, String statementId, long expectedRevision) {
+                    return workspace.withdrawStatementReview(key, statementId, expectedRevision);
                 }
 
                 @Override

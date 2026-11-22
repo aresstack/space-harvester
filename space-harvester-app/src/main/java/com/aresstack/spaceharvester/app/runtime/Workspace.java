@@ -3210,9 +3210,28 @@ public final class Workspace {
         return harvester.statusQuo().review(caller, page, statementId, review, expectedRevision);
     }
 
+    /**
+     * Wie {@link #reviewStatement(PageKey, String, com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review, long)};
+     * {@code expectedRevision == null} setzt den festen Wert ohne Revisionsprüfung (✓/✕ im Overlay „Belege“, W3).
+     */
+    public com.aresstack.spaceharvester.application.standing.StandingDecision reviewStatement(PageKey page,
+            String statementId, com.aresstack.spaceharvester.application.knowledge.ParsedStatements.Review review,
+            Long expectedRevision) {
+        return harvester.statusQuo().review(caller, page, statementId, review, expectedRevision);
+    }
+
     /** Nimmt die Prüfung einer Aussage zurück (eigener Eintrag im Protokoll); ein Stand von Hand bleibt. */
     public boolean withdrawStatementReview(PageKey page, String statementId, long expectedRevision) {
         return harvester.statusQuo().withdrawReview(caller, page, statementId, expectedRevision);
+    }
+
+    /**
+     * Prüfstand von Aussagen je Seite für ✓/✕ im Overlay „Belege“ (W3): ob der Nutzer prüfen darf (sync, nicht
+     * gesperrt) und die gespeicherten Entscheidungen samt Revision ({@code StatusQuo#reviews}). Nie auf dem EDT.
+     */
+    public java.util.Map<PageKey, com.aresstack.spaceharvester.application.standing.StatusQuo.Reviews>
+            statementReviews(java.util.Map<PageKey, ? extends java.util.Collection<String>> statements) {
+        return harvester.statusQuo().reviews(caller, statements);
     }
 
     /** Das Protokoll der Entscheidungen zu Aussage oder Seite, älteste zuerst. */
