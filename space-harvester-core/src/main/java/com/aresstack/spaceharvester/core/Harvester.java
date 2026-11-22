@@ -739,6 +739,10 @@ public final class Harvester implements AutoCloseable {
             this.passages = new PassageQueries(pages, enrichments, projector, documentTexts);
             this.documentNavigation = new NavigationQueries(pages, enrichments, projector, navigationBuilder);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
+            if (backgroundJobs != null) {
+                // Fundstelle 15: Vorladen beim Aufklappen als Hintergrundauftrag „Lese-Ansichten vorladen“.
+                readingViews.background(backgroundJobs, AccessContext.technicalClient(OWNER));
+            }
             // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
             // Füllung erfährt die neuen Lücken, auch in Spaces ohne bestätigte Generation.
             AtomicReference<BackgroundFill> filling = new AtomicReference<>();
@@ -918,7 +922,10 @@ public final class Harvester implements AutoCloseable {
                 opened.add(() -> {
                     Enrichments.stop(renewals, Duration.ofSeconds(10));
                 });
-                renewal = new PageRenewal(pages, renewals);
+                // Fundstelle 10: Mit Hintergrundaufträgen sichtbar als „Veraltete Treffer nachladen“.
+                PageRenewal visible = new PageRenewal(pages, renewals, pageLoads);
+                opened.add(visible);
+                renewal = visible;
             }
             // ADR 0013, Punkt 3: mit Haken erst finden, laden und fehlende Embeddings berechnen.
             SemanticPreparation preparation = embedding == null || prefetch == null ? null

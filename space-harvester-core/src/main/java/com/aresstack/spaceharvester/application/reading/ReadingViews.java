@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.lang.ref.SoftReference;
 import java.time.Clock;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -158,6 +159,10 @@ public class ReadingViews {
     public void prefetch(AccessContext caller, String sourceId, Collection<String> pageIds) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(sourceId, "sourceId");
+        if (hosted != null) {
+            prefetchAsJob(caller, sourceId, pageIds);
+            return;
+        }
         int started = 0;
         java.util.concurrent.atomic.AtomicBoolean gaveUp = new java.util.concurrent.atomic.AtomicBoolean();
         for (String pageId : pageIds) {
@@ -199,6 +204,185 @@ public class ReadingViews {
                     prefetching.remove(key);
                 }
             });
+        }
+    }
+
+    // --- Vorladen als Hintergrundauftrag (Fundstelle 15, Abnahme PR 4) ----------------------------------------------
+
+    /** Kennung der Art. */
+    public static final String KIND = "reading-prefetch";
+    /** Titel der Gruppe in der Auftragsliste. */
+    public static final String TITLE = "Lese-Ansichten vorladen";
+    /** Angabe: die Seiten-IDs des Teils, durch Zeilenumbruch getrennt. */
+    public static final String PAGES = "pages";
+    /** Angabe eines Teils mit der Anmeldung eines Benutzers: Kennung seines Aufrufers in diesem Prozess. */
+    public static final String CALLER = "caller";
+    /** Angabe dazu: Eigentümer ({@link AccessContext#jobOwner()}) des Aufrufers. */
+    public static final String OWNER = "owner";
+    /** Fehlercode: Die Quelle war nicht erreichbar, verlangte eine Anmeldung oder drosselte. */
+    public static final String SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE";
+    /** Code des gelben Hinweises: Nach dem Neustart fehlt die Anmeldung des Benutzers, der Teil endet. */
+    public static final String NOT_RESUMED = "NOT_RESUMED";
+    /** Info am ersetzten wartenden Teil. */
+    static final String REPLACED = "Durch einen neueren Aufruf ersetzt: er lädt diese Seiten mit";
+    private static final String COMPONENT = "reading-prefetch";
+    private static final String SEPARATOR = "\n";
+
+    private volatile com.aresstack.spaceharvester.application.background.BackgroundJobs hosted;
+    private volatile AccessContext technical;
+    /** Aufrufer der jüngsten Aufrufe, älteste zuerst verdrängt; danach und nach einem Neustart gilt {@link #technical}. */
+    private final Map<String, AccessContext> callers = java.util.Collections.synchronizedMap(
+            new java.util.LinkedHashMap<>() {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, AccessContext> eldest) {
+                    return size() > 256;
+                }
+            });
+
+    /**
+     * Macht das Vorladen sichtbar (Fundstelle 15, Abnahme PR 4): je Aufruf und Quelle ein Teil der Art {@value #KIND},
+     * höchstens ein wartender je Quelle; ein neuer Aufruf ersetzt ihn und nimmt seine Seiten hinter den eigenen mit.
+     * Innen höchstens {@value #PREFETCH_PARALLEL} zugleich, nie mit Anmelde- oder Codedialog. Ist die Quelle nicht
+     * erreichbar, verlangt sie eine Anmeldung oder drosselt sie, startet der Teil keine weitere Seite und endet
+     * gescheitert mit Grund, ohne automatische Wiederholung.
+     *
+     * @param technical der technische Aufrufer des Dienstes, für fortgesetzte Teile nach einem Neustart
+     */
+    public void background(com.aresstack.spaceharvester.application.background.BackgroundJobs background,
+                           AccessContext technical) {
+        Objects.requireNonNull(background, "background");
+        this.technical = Objects.requireNonNull(technical, "technical");
+        background.register(new com.aresstack.spaceharvester.application.background.BackgroundKind(KIND,
+                this::work));
+        this.hosted = background;
+    }
+
+    private synchronized void prefetchAsJob(AccessContext caller, String sourceId, Collection<String> pageIds) {
+        com.aresstack.spaceharvester.application.background.BackgroundJobs jobs = hosted;
+        java.util.LinkedHashSet<String> wanted = new java.util.LinkedHashSet<>();
+        for (String pageId : pageIds) {
+            if (!prefetching.contains(new PageKey(sourceId, pageId))) {
+                wanted.add(pageId);
+            }
+        }
+        // Höchstens ein wartender Teil je Quelle: Er geht in diesem auf, seine Seiten hinter den neuen.
+        for (com.aresstack.spaceharvester.application.jobs.JobStatus waiting : jobs.parts(KIND)) {
+            if (waiting.state() == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED
+                    && sourceId.equals(waiting.sourceId()) && waiting.parameter(PAGES) != null) {
+                for (String pageId : waiting.parameter(PAGES).split(SEPARATOR)) {
+                    if (!pageId.isBlank()) {
+                        wanted.add(pageId);
+                    }
+                }
+            }
+        }
+        if (wanted.isEmpty()) {
+            return;
+        }
+        jobs.cancelWaiting(KIND, sourceId, null, REPLACED);
+        List<String> limited = wanted.stream().limit(MAX_PREFETCH).toList();
+        Map<String, String> parameters = new java.util.LinkedHashMap<>();
+        parameters.put(PAGES, String.join(SEPARATOR, limited));
+        String groupId = com.aresstack.spaceharvester.application.background.BackgroundJobs.newGroupId();
+        callers.put(groupId, caller);
+        if (caller.credential() != null) {
+            String token = java.util.UUID.randomUUID().toString();
+            callers.put(token, caller);
+            parameters.put(CALLER, token);
+            parameters.put(OWNER, caller.jobOwner());
+        }
+        try {
+            jobs.start(groupId, KIND, TITLE, List.of(
+                    new com.aresstack.spaceharvester.application.background.BackgroundPart.Draft(sourceId, null,
+                            parameters)));
+        } catch (RuntimeException e) {
+            // Voll oder beendet: Das Öffnen lädt selbst.
+            LOG.log(System.Logger.Level.DEBUG, "Vorladen in {0} nicht als Auftrag gestartet ({1})", sourceId,
+                    e.getClass().getName());
+        }
+    }
+
+    private com.aresstack.spaceharvester.application.jobs.JobTask work(
+            com.aresstack.spaceharvester.application.background.BackgroundPart part) {
+        String token = part.parameter(CALLER);
+        AccessContext caller = token != null ? callers.get(token)
+                : callers.getOrDefault(part.groupId(), technical);
+        String sourceId = part.sourceId();
+        List<String> pageIds = new java.util.ArrayList<>();
+        String pages = part.parameter(PAGES);
+        if (pages != null) {
+            for (String pageId : pages.split(SEPARATOR)) {
+                if (!pageId.isBlank()) {
+                    pageIds.add(pageId);
+                }
+            }
+        }
+        return com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> {
+            if (caller == null) {
+                // Nie mit technischen Rechten für einen Benutzer weiterladen.
+                context.record(com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.warning(
+                        com.aresstack.spaceharvester.application.jobs.JobEvent.Category.JOB, COMPONENT, NOT_RESUMED,
+                        "Nach dem Neustart nicht fortgesetzt: Die Anmeldung des Benutzers lag nur im Speicher"));
+                context.incomplete();
+                return;
+            }
+            prefetchAll(context, caller, sourceId, pageIds);
+        });
+    }
+
+    /** Der Teil: höchstens {@value #PREFETCH_PARALLEL} zugleich; eine nicht erreichbare Quelle beendet ihn rot. */
+    private void prefetchAll(com.aresstack.spaceharvester.application.jobs.JobContext context, AccessContext caller,
+                             String sourceId, List<String> pageIds) throws InterruptedException {
+        context.discovered(pageIds.size());
+        Semaphore slots = new Semaphore(PREFETCH_PARALLEL);
+        java.util.concurrent.atomic.AtomicReference<SourceAccessException> gaveUp =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean anyFailed = new java.util.concurrent.atomic.AtomicBoolean();
+        try (ExecutorService runner = Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("reading-prefetch-job-", 0).factory())) {
+            for (String pageId : pageIds) {
+                context.checkpoint();
+                slots.acquire();
+                PageKey key = new PageKey(sourceId, pageId);
+                if (gaveUp.get() != null || !prefetching.add(key)) {
+                    slots.release();
+                    context.processed(1);
+                    if (gaveUp.get() != null) {
+                        break;
+                    }
+                    continue;
+                }
+                runner.execute(() -> {
+                    try {
+                        ChangeTrigger.BACKGROUND.call(() -> view(caller, sourceId, pageId, false));
+                        context.written(1);
+                    } catch (SourceAccessException e) {
+                        if (e.reason() != SourceAccessException.Reason.NOT_FOUND) {
+                            gaveUp.compareAndSet(null, e);
+                            context.failed(1);
+                        }
+                    } catch (RuntimeException e) {
+                        LOG.log(System.Logger.Level.DEBUG, "Vorladen einer Lese-Ansicht in {0} ausgelassen ({1})",
+                                sourceId, e.getClass().getName());
+                        anyFailed.set(true);
+                        context.failed(1);
+                    } finally {
+                        context.processed(1);
+                        prefetching.remove(key);
+                        slots.release();
+                    }
+                });
+            }
+        }
+        SourceAccessException unavailable = gaveUp.get();
+        if (unavailable != null) {
+            // Abnahme PR 4: kein bewusstes Auslassen, sondern ein Fehler mit Grund, ohne automatische Wiederholung.
+            throw new com.aresstack.spaceharvester.application.jobs.JobFailedException(SOURCE_UNAVAILABLE,
+                    "Quelle " + sourceId + " nicht erreichbar (" + unavailable.reason() + "); weitere Seiten nicht "
+                            + "vorgeladen");
+        }
+        if (anyFailed.get()) {
+            context.incomplete();
         }
     }
 

@@ -125,6 +125,61 @@ class PageLoadsTest {
     }
 
     @Test
+    void aRefreshLoadsPagesThatAreAlreadyCached() throws Exception {
+        // Fundstelle 10: Die Suche meldet eine gespeicherte Seite als veraltet.
+        cache.add(new PageKey("wiki", "1"));
+        java.util.concurrent.atomic.AtomicInteger loaded = new java.util.concurrent.atomic.AtomicInteger();
+        AcquisitionScheduler counting = new AcquisitionScheduler((caller, key) -> loaded.incrementAndGet(),
+                new AcquisitionScheduler.Limits(2, 0, 2, 50));
+        try {
+            BackgroundJobs own = new BackgroundJobs(jobs, "app-refresh");
+            PageLoads refreshing = new PageLoads(own, counting, AccessContext.technicalClient("app"),
+                    cache::contains, key -> Optional.of("ALPHA"));
+            assertThat(refreshing.join(AccessContext.technicalClient("app"), "x", pages("1"), false).started())
+                    .as("ohne refresh fällt die gespeicherte Seite heraus").isEmpty();
+
+            BackgroundGroup group = refreshing.join(AccessContext.technicalClient("app"), "Veraltete Treffer nachladen",
+                    pages("1"), true).started().orElseThrow();
+            executor.runAll();
+
+            assertThat(loaded).hasValue(1);
+            assertThat(own.group(group.groupId()).orElseThrow().parts()).singleElement().satisfies(part -> {
+                assertThat(part.parameter(PageLoads.REFRESH)).isEqualTo("true");
+                assertThat(part.state()).isEqualTo(JobState.COMPLETED);
+            });
+        } finally {
+            counting.close();
+        }
+    }
+
+    @Test
+    void aUsersSignInLivesOnlyInMemoryAndAfterARestartThePartEndsYellow() {
+        // Abnahme PR 4: auch Benutzer mit Anmeldung sichtbar; nach einem Neustart nie mit technischen Rechten weiter.
+        AccessContext delegated = AccessContext.endUser("erfunden", "app",
+                new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "erfunden"));
+        BackgroundGroup group = loads.join(delegated, "Veraltete Treffer nachladen", pages("1"), true).started()
+                .orElseThrow();
+        JobStatus part = group.parts().getFirst();
+        assertThat(part.parameter(PageLoads.CALLER)).isNotBlank();
+        assertThat(part.parameter(PageLoads.OWNER)).isEqualTo(delegated.jobOwner());
+        background.pause(group.groupId());
+        executor.runAll();
+
+        // Neustart: eine neue Laufzeit kennt den Aufrufer nicht.
+        new PageLoads(background, scheduler, AccessContext.technicalClient("app"), cache::contains,
+                key -> Optional.ofNullable(spaces.get(key.pageId())));
+        background.resume(group.groupId());
+        executor.runAll();
+
+        JobStatus ended = background.group(group.groupId()).orElseThrow().parts().getFirst();
+        assertThat(ended.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(ended.incomplete()).isTrue();
+        assertThat(jobs.events(ended.id())).anySatisfy(event -> assertThat(event.code())
+                .isEqualTo(PageLoads.NOT_RESUMED));
+        assertThat(cache).as("nichts mit fremden Rechten geladen").doesNotContain(new PageKey("wiki", "1"));
+    }
+
+    @Test
     void theBackgroundNeverLoadsWithAUsersSignIn() {
         AccessContext delegated = AccessContext.endUser("erfunden", "app",
                 new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "erfunden"));

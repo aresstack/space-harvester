@@ -146,6 +146,74 @@ class ReadingViewsTest {
     }
 
     @Test
+    void asAJobPrefetchIsVisibleAndANewCallReplacesTheWaitingPart() {
+        // Fundstelle 15, Abnahme PR 4: höchstens ein wartender Teil je Quelle, der neue nimmt die Seiten mit.
+        ReadingViews views = views((context, scope, kind) -> AccessDecision.ALLOW);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs.Jobs(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), held::add,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(1, 10, java.time.Duration.ofHours(1)), CLOCK);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        views.background(background, CALLER);
+
+        // Ein Platz: der Teil wartet (gelb), bis ein zweiter frei wird.
+        views.prefetch(CALLER, "wiki", List.of("100"));
+        views.prefetch(CALLER, "wiki", List.of("101"));
+
+        List<com.aresstack.spaceharvester.application.jobs.JobStatus> parts = background.parts(ReadingViews.KIND);
+        assertThat(parts).hasSize(2);
+        assertThat(parts).filteredOn(part -> part.state()
+                == com.aresstack.spaceharvester.application.jobs.JobState.CANCELLED).hasSize(1);
+        com.aresstack.spaceharvester.application.jobs.JobStatus waiting = parts.stream().filter(part -> part.state()
+                == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED).findFirst().orElseThrow();
+        assertThat(waiting.parameter(ReadingViews.PAGES)).isEqualTo("101\n100");
+
+        jobs.parallelPreparations(2);
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+
+        assertThat(views.cached(CALLER, "wiki", "100")).isPresent();
+        assertThat(views.cached(CALLER, "wiki", "101")).isPresent();
+        assertThat(background.part(waiting.id()).orElseThrow().state())
+                .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+    }
+
+    @Test
+    void asAJobAnUnreachableSourceFailsThePartWithItsReason() {
+        // Abnahme PR 4: kein bewusstes Auslassen, sondern rot mit Grund.
+        List<com.aresstack.spaceharvester.application.snapshot.PageSnapshot> pages = new java.util.ArrayList<>();
+        List<String> ids = new java.util.ArrayList<>();
+        for (int i = 300; i < 310; i++) {
+            pages.add(page("wiki", "DEV", String.valueOf(i), null));
+            ids.add(String.valueOf(i));
+        }
+        cache.publish("wiki", "DEV", confirmed("g3"), pages);
+        source.unreachable = true;
+        ReadingViews views = views((context, scope, kind) -> AccessDecision.ALLOW);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        com.aresstack.spaceharvester.application.jobs.Jobs jobs = new com.aresstack.spaceharvester.application.jobs.Jobs(
+                new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), held::add,
+                new com.aresstack.spaceharvester.application.jobs.JobLimits(2, 10, java.time.Duration.ofHours(1)), CLOCK);
+        com.aresstack.spaceharvester.application.background.BackgroundJobs background =
+                new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        views.background(background, CALLER);
+
+        views.prefetch(CALLER, "wiki", ids);
+        Runnable next;
+        while ((next = held.poll()) != null) {
+            next.run();
+        }
+
+        com.aresstack.spaceharvester.application.jobs.JobStatus part = background.parts(ReadingViews.KIND).getFirst();
+        assertThat(part.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.FAILED);
+        assertThat(part.error().code()).isEqualTo(ReadingViews.SOURCE_UNAVAILABLE);
+        assertThat(source.attempts.get()).as("danach keine weitere Seite").isLessThanOrEqualTo(2);
+    }
+
+    @Test
     void includedContentNeedsTheWholeSourceAndIsFetchedEveryTime() {
         ReadingView restricted = views((context, scope, kind) -> AccessDecision.ALLOW).view(CALLER, "wiki", "101",
                 false);

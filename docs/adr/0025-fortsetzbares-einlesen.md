@@ -430,6 +430,19 @@ wird automatisch verwaltet.
       vor jedem Prozessor; der Knopf wartet auf das Ende und sagt „Wartet auf freien Platz …“, solange der Auftrag
       hinter laufenden Folgeaufträgen wartet. Abgebrochen oder angehalten meldet er als Info, gescheitert rot mit Grund.
 
+11. **Seiten nachladen** (Angelo 21.11.2026, Fundstellen 10 und 15, Entwurf vom Architekten bestätigt).
+    - Veraltete Treffer der semantischen Suche (`PageRenewal`) sammeln sich je Aufrufer kurz und gehen als eine
+      Gruppe „Veraltete Treffer nachladen“ an `PageLoads#join(…, refresh)`: Mit der Angabe `refresh` lädt der Teil
+      auch Seiten, die im Cache liegen, und schließt sich nur Teilen an, die ebenfalls nachladen.
+    - Auch Benutzer mit Anmeldung laden sichtbar: Ihr Aufrufer liegt nur im Speicher (Angaben `caller`, `owner`),
+      die Abrufe gehen über den Vordergrund des Planers. Nach einem Neustart endet so ein Teil gelb
+      (`NOT_RESUMED`, unvollständig) statt mit technischen Rechten weiterzuladen; die nächste Suche holt nach.
+    - Vorladen der Lese-Ansichten beim Aufklappen (`ReadingViews#prefetch`) ist die Art `reading-prefetch`
+      „Lese-Ansichten vorladen“: höchstens ein wartender Teil je Quelle, ein neuer Aufruf ersetzt ihn und nimmt
+      seine Seiten hinter den eigenen mit (höchstens 25). Innen höchstens zwei zugleich, nie mit Anmeldedialog. Ist
+      die Quelle nicht erreichbar, verlangt sie eine Anmeldung oder drosselt sie, startet der Teil keine weitere Seite
+      und endet gescheitert mit Grund (`SOURCE_UNAVAILABLE`), ohne automatische Wiederholung.
+
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 
 Analysedienste bauen aufeinander auf (etwa Wissensgraph nach Aussagenanalyse und Bildbeschreibung). Wer ein Ziel

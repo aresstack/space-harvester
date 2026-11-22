@@ -43,6 +43,17 @@ public final class PageLoads {
     static final int WINDOW = 32;
     /** Fehlercode: Seiten ließen sich nicht laden. */
     public static final String PAGES_MISSING = "PAGES_MISSING";
+    /** Angabe: {@code true}, wenn der Teil auch Seiten im Cache lädt, etwa veraltete Treffer (Fundstelle 10). */
+    public static final String REFRESH = "refresh";
+    /**
+     * Angabe eines Teils mit der Anmeldung eines Benutzers: Kennung seines Aufrufers in diesem Prozess (wie
+     * {@code StatementAnalysisJobs#CALLER}). Den Aufrufer selbst hält nur der Speicher.
+     */
+    public static final String CALLER = "caller";
+    /** Angabe dazu: Eigentümer ({@link AccessContext#jobOwner()}) des Aufrufers. */
+    public static final String OWNER = "owner";
+    /** Code des gelben Hinweises: Nach dem Neustart fehlt die Anmeldung des Benutzers, der Teil endet. */
+    public static final String NOT_RESUMED = "NOT_RESUMED";
     private static final String COMPONENT = "background-pages";
 
     private final BackgroundJobs background;
@@ -100,7 +111,21 @@ public final class PageLoads {
         if (caller.credential() != null) {
             throw new IllegalArgumentException("Der Hintergrund lädt nie mit der Anmeldung eines Benutzers");
         }
-        Map<PageKey, String> queued = queued();
+        return join(caller, title, keys, false);
+    }
+
+    /**
+     * Wie {@link #join(AccessContext, String, Collection)}, auch für einen Benutzer mit Anmeldung und auf Wunsch für
+     * Seiten im Cache (Fundstelle 10, Abnahme PR 4): Mit {@code refresh} lädt der Teil auch Seiten, die schon gespeichert
+     * sind, etwa weil die Suche sie als veraltet meldet. Die Anmeldung eines Benutzers hält nur der Speicher
+     * ({@value #CALLER}); seine Abrufe gehen über den Vordergrund des Planers, der den Hintergrund nie mit einer
+     * Anmeldung lädt. Nach einem Neustart endet so ein Teil gelb ({@value #NOT_RESUMED}), statt mit fremden Rechten
+     * weiterzuladen; die nächste Suche holt nach.
+     */
+    public synchronized Joined join(AccessContext caller, String title, Collection<PageKey> keys, boolean refresh) {
+        Objects.requireNonNull(caller, "caller");
+        // Ein Teil ohne refresh überspränge eine veraltete Seite im Cache: Nachladen schließt sich nur seinesgleichen an.
+        Map<PageKey, String> queued = queued(refresh);
         Set<String> joined = new LinkedHashSet<>();
         Map<List<String>, Set<String>> bySpace = new LinkedHashMap<>();
         for (PageKey key : keys) {
@@ -109,7 +134,7 @@ public final class PageLoads {
                 joined.add(loading);
                 continue;
             }
-            if (cached.test(key)) {
+            if (!refresh && cached.test(key)) {
                 continue;
             }
             String spaceKey = space.apply(key).orElse(null);
@@ -119,12 +144,25 @@ public final class PageLoads {
         if (bySpace.isEmpty()) {
             return new Joined(Optional.empty(), joined);
         }
-        List<BackgroundPart.Draft> parts = new ArrayList<>();
-        bySpace.forEach((where, pageIds) -> parts.add(new BackgroundPart.Draft(where.get(0), where.get(1),
-                Map.of(PAGES, String.join(SEPARATOR, pageIds)))));
+        Map<String, String> common = new LinkedHashMap<>();
+        if (refresh) {
+            common.put(REFRESH, "true");
+        }
         // Den Aufrufer vor dem Start ablegen: ein Unterauftrag kann schon während start() laufen.
         String groupId = BackgroundJobs.newGroupId();
         callers.put(groupId, caller);
+        if (caller.credential() != null) {
+            String token = java.util.UUID.randomUUID().toString();
+            callers.put(token, caller);
+            common.put(CALLER, token);
+            common.put(OWNER, caller.jobOwner());
+        }
+        List<BackgroundPart.Draft> parts = new ArrayList<>();
+        bySpace.forEach((where, pageIds) -> {
+            Map<String, String> parameters = new LinkedHashMap<>(common);
+            parameters.put(PAGES, String.join(SEPARATOR, pageIds));
+            parts.add(new BackgroundPart.Draft(where.get(0), where.get(1), parameters));
+        });
         return new Joined(Optional.of(background.start(groupId, KIND, title, parts)), joined);
     }
 
@@ -153,8 +191,10 @@ public final class PageLoads {
     /**
      * Seiten, die ein wartender, laufender oder angehaltener Unterauftrag dieser Art schon lädt, mit seiner Gruppe.
      * Angehalten zählt mit: Er lädt weiter, sobald er fortgesetzt wird.
+     *
+     * @param refreshing nur Teile, die auch Seiten im Cache laden ({@value #REFRESH})
      */
-    private Map<PageKey, String> queued() {
+    private Map<PageKey, String> queued(boolean refreshing) {
         Map<PageKey, String> queued = new java.util.HashMap<>();
         for (BackgroundGroup group : background.groups()) {
             if (!KIND.equals(group.kind())) {
@@ -162,7 +202,8 @@ public final class PageLoads {
             }
             for (com.aresstack.spaceharvester.application.jobs.JobStatus part : group.parts()) {
                 String pages = part.parameter(PAGES);
-                if (!loading(part.state()) || pages == null || part.sourceId() == null) {
+                if (!loading(part.state()) || pages == null || part.sourceId() == null
+                        || refreshing && !"true".equals(part.parameter(REFRESH))) {
                     continue;
                 }
                 for (String pageId : pages.split(SEPARATOR)) {
@@ -181,7 +222,18 @@ public final class PageLoads {
     }
 
     private JobTask work(BackgroundPart part) {
-        AccessContext caller = callers.getOrDefault(part.groupId(), technical);
+        String token = part.parameter(CALLER);
+        boolean refresh = "true".equals(part.parameter(REFRESH));
+        AccessContext caller = token != null ? callers.get(token) : callers.getOrDefault(part.groupId(), technical);
+        if (caller == null) {
+            // Abnahme PR 4: nie mit technischen Rechten für einen Benutzer weiterladen.
+            return JobTask.blocking(context -> {
+                context.record(JobEvent.Draft.warning(JobEvent.Category.JOB, COMPONENT, NOT_RESUMED,
+                        "Nach dem Neustart nicht fortgesetzt: Die Anmeldung des Benutzers lag nur im Speicher; die "
+                                + "nächste Suche lädt nach"));
+                context.incomplete();
+            });
+        }
         List<PageKey> keys = new ArrayList<>();
         String pages = part.parameter(PAGES);
         if (pages != null) {
@@ -191,11 +243,12 @@ public final class PageLoads {
                 }
             }
         }
-        return JobTask.blocking(context -> run(context, caller, keys));
+        return JobTask.blocking(context -> run(context, caller, keys, refresh));
     }
 
-    private void run(JobContext context, AccessContext caller, List<PageKey> keys) throws InterruptedException {
-        List<PageKey> missing = keys.stream().filter(key -> !cached.test(key)).toList();
+    private void run(JobContext context, AccessContext caller, List<PageKey> keys, boolean refresh)
+            throws InterruptedException {
+        List<PageKey> missing = refresh ? keys : keys.stream().filter(key -> !cached.test(key)).toList();
         context.discovered(keys.size());
         context.processed(keys.size() - missing.size());
         java.util.ArrayDeque<AcquisitionScheduler.Ticket> open = new java.util.ArrayDeque<>();
@@ -216,7 +269,7 @@ public final class PageLoads {
                     }
                     long seen = wake.mark();
                     try {
-                        open.addLast(scheduler.request(caller, key, priority()));
+                        open.addLast(scheduler.request(caller, key, priority(caller)));
                         break;
                     } catch (java.util.concurrent.RejectedExecutionException e) {
                         if (!open.isEmpty()) {
@@ -308,9 +361,10 @@ public final class PageLoads {
      * Der Weg im Planer: der Hintergrund, wenn er Plätze hat; sonst der Vordergrund, denn ohne Hintergrundfüllung ist
      * dessen Weg abgeschaltet. Nachrangig ist der Auftrag schon in der Auftragsliste.
      */
-    private AcquisitionScheduler.Priority priority() {
-        return scheduler.limits().background() > 0 ? AcquisitionScheduler.Priority.BACKGROUND
-                : AcquisitionScheduler.Priority.FOREGROUND;
+    private AcquisitionScheduler.Priority priority(AccessContext caller) {
+        // Mit der Anmeldung eines Benutzers nie über den Hintergrund des Planers (der lehnt sie ab).
+        return caller.credential() == null && scheduler.limits().background() > 0
+                ? AcquisitionScheduler.Priority.BACKGROUND : AcquisitionScheduler.Priority.FOREGROUND;
     }
 
     /**
