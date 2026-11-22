@@ -582,6 +582,17 @@ wird automatisch verwaltet.
     - Nimmt `Jobs` den Auftrag nicht an (Warteschlange voll), wird wie früher sofort gelöscht; die Daten bleiben nie
       ohne Auftrag liegen. Ein unterbrochener, gescheiterter oder angehaltener Auftrag läuft nicht nach der
       Aufbewahrungsfrist ab, solange ihn kein neuerer Auftrag derselben Art und Quelle ablöst (`Jobs#purgeExpired`).
+18. **Verbindung prüfen ab einer Sekunde sichtbar** (Angelo 21.11.2026, Fundstelle 17, Entwurf vom Architekten
+    bestätigt). Die App prüft Quellen nach jedem Neuladen und Speichern weiter selbst (Spaces live abfragen). Je Prüfung
+    läuft ein einmaliger Zeitgeber von einer Sekunde, kein Polling (`AppContext.VisibleCheck`). Läuft die Prüfung dann
+    noch, entsteht ein Hintergrundteil „Verbindung prüfen“ (`ConnectionChecks`, Art `connection`), der mit der Prüfung
+    grün oder rot mit Grund (`connection-failed`) endet; endet sie vorher, entsteht kein Teil. Der Grund ist ein Code
+    (`SourceAccessException.Reason`, sonst die Klasse), nie die Nachricht. Nur diese Art läuft zusätzlich auf eigener
+    Spur (`Jobs.OWN_LANE`, `BackgroundKind.OWN_LANE_KINDS`): Der Teil rechnet nichts, die Prüfung hat ihre eigene
+    Zeitgrenze, und so erscheint er auch bei belegten Plätzen während der Prüfung. Abbrechen oder Anhalten beendet nur
+    den Teil (abgebrochen bzw. angehalten, nicht grün), die Prüfung selbst läuft zu Ende. Teile von vor einem Neustart
+    werden beim Start abgeschlossen (`BackgroundJobs#retireResumable`). Das Ende des Teils läuft nie auf dem EDT. Mit
+    nur einem Platz gilt der bisherige Weg.
 
 ## Nachtrag 21.11.2026: Dienst-Planer (D1)
 

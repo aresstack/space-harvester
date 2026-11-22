@@ -121,6 +121,15 @@ public final class Workspace {
                 source -> ResourceScope.source(source.id()));
     }
 
+    /**
+     * Macht eine laufende Verbindungsprüfung als Hintergrundteil sichtbar (Fundstelle 17); die App ruft das erst nach
+     * einer Sekunde. Leer bei nur einem Platz (bisheriger Weg).
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.background.ConnectionChecks.Check>
+            beginConnectionCheck(String sourceId) {
+        return harvester.connectionChecks().begin(sourceId);
+    }
+
     /** Spaces einer Quelle, live ({@code GET /api/v1/sources/{id}/spaces}); zugleich die Verbindungsprüfung. */
     public List<Partition> spaces(String sourceId) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);

@@ -376,6 +376,7 @@ public final class Harvester implements AutoCloseable {
     private final JobActions jobActions;
     /** Hintergrundaufträge (Angelo 21.11.2026, ADR 0025 Nachtrag). */
     private final com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs;
+    private final com.aresstack.spaceharvester.application.background.ConnectionChecks connectionChecks;
     /** „Seiten nachladen“ als Hintergrundauftrag. */
     private final com.aresstack.spaceharvester.application.background.PageLoads pageLoads;
     private final com.aresstack.spaceharvester.application.background.services.ServicePlanner servicePlanner;
@@ -510,6 +511,9 @@ public final class Harvester implements AutoCloseable {
             // Hintergrundaufträge (ADR 0025 Nachtrag): was die App von sich aus anstößt, nachrangig und nach einem
             // Neustart fortgesetzt. Früh, damit sich jeder Baustein mit seiner Art anmelden kann.
             this.backgroundJobs = new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, OWNER);
+            // Fundstelle 17: eine Verbindungsprüfung, die länger als eine Sekunde dauert, als Hintergrundteil.
+            this.connectionChecks = new com.aresstack.spaceharvester.application.background.ConnectionChecks(
+                    backgroundJobs);
 
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
@@ -2432,6 +2436,11 @@ public final class Harvester implements AutoCloseable {
 
     /** Vorgabe für {@link Builder#maxTextFileBytes}: 200 MiB. */
     public static final long DEFAULT_MAX_TEXT_FILE_BYTES = 200L * 1024 * 1024;
+
+    /** Verbindungsprüfungen, die länger als eine Sekunde dauern, als Hintergrundteil (Fundstelle 17). */
+    public com.aresstack.spaceharvester.application.background.ConnectionChecks connectionChecks() {
+        return connectionChecks;
+    }
 
     /** Abgleich eines Space in den Cache als Auftrag; Status und Delta über {@link SpaceSyncJobs#status}. */
     /** „Anhänge ablegen“ einer Seite als Auftrag (Fundstelle 24). */
