@@ -87,6 +87,33 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void theOpenPageGoesAlongEvenWhenTheResolvedScopeDoesNotKnowIt() throws Exception {
+        // Ein Ticket aus der Suche, das die Auflösung des Bereichs nicht kennt: es ist trotzdem das, was man sieht.
+        PageKey open = page("datenhaus");
+        PageKey other = page("nachtlauf");
+        com.aresstack.spaceharvester.application.holdings.PageSelection elsewhere =
+                new com.aresstack.spaceharvester.application.holdings.PageSelection(
+                        com.aresstack.spaceharvester.application.snapshot.PageSet.of(
+                                java.util.Map.of(other.sourceId(), List.of(other.pageId()))),
+                        space.counts(), space.spaces(), space.complete());
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c1", ChatTools.READ,
+                        "{\"kennung\":\"" + ChatTools.ref(open) + "\",\"versatz\":10}"))),
+                (request, listener) -> listener.completed("Steht oben [1].")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was steht auf der aktuellen Seite?", elsewhere,
+                "Ticket", events, Runnable::run).knowledgeByTools(open).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests.get(0).messages().get(0).text()).contains("[1] ").contains("Berechtigungsmanagement")
+                .doesNotContain(ChatKnowledge.NO_OPEN_PAGE);
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        assertThat(messages.get(messages.size() - 1).text()).as("weiterlesen in der offenen Seite")
+                .doesNotContain(ChatTools.UNAVAILABLE);
+    }
+
+    @Test
     void theOpenPageGoesAlongAndOtherPagesAreReadByToolWithTheirNumber() throws Exception {
         PageKey open = page("datenhaus");
         PageKey other = page("nachtlauf");
