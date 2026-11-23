@@ -379,6 +379,7 @@ public final class Harvester implements AutoCloseable {
     private final com.aresstack.spaceharvester.application.background.BackgroundJobs backgroundJobs;
     private final com.aresstack.spaceharvester.application.background.ConnectionChecks connectionChecks;
     private final com.aresstack.spaceharvester.application.background.AttachmentPrefetches attachmentPrefetches;
+    private final com.aresstack.spaceharvester.application.network.NetworkState network;
     /** „Seiten nachladen“ als Hintergrundauftrag. */
     private final com.aresstack.spaceharvester.application.background.PageLoads pageLoads;
     private final com.aresstack.spaceharvester.application.background.services.ServicePlanner servicePlanner;
@@ -524,9 +525,13 @@ public final class Harvester implements AutoCloseable {
             this.connectionChecks = new com.aresstack.spaceharvester.application.background.ConnectionChecks(
                     backgroundJobs);
             // Fundstelle 18: die übrigen Anhänge einer geöffneten Art je Quelle und Space als Hintergrundteil.
+            // Angelo 22.11.2026: ohne Netz warten statt scheitern; ein Netzzustand für alle Netz-Aufträge.
+            this.network = new com.aresstack.spaceharvester.application.network.NetworkState();
+            opened.add(network);
             this.attachmentPrefetches = new com.aresstack.spaceharvester.application.background.AttachmentPrefetches(
                     backgroundJobs);
             opened.add(attachmentPrefetches);
+            attachmentPrefetches.network(network);
 
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
@@ -1030,6 +1035,7 @@ public final class Harvester implements AutoCloseable {
             // Space höchstens ein Teil, Arbeit aus den Anhängen der Seiten des Space, Start erst nach dem Abgleich.
             documentEnrichments.background(backgroundJobs, (sourceId, spaceKey) -> spaceKey == null ? List.of()
                     : cache.knownPages(sourceId, spaceKey).keySet());
+            documentEnrichments.network(network);
             opened.add(documentEnrichments);
             sectionTexts.set(documentEnrichments);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
@@ -1638,12 +1644,14 @@ public final class Harvester implements AutoCloseable {
                         BackgroundFill.Timing.DEFAULT,
                         fillFollows ? settings.sync().backgroundFillAnywhere() : builder.backgroundFill);
                 opened.add(fill);
+                fill.network(network);
                 this.backgroundFill = fill;
                 filling.set(fill);
                 // Fundstelle 12: sichtbar als „Hintergrundfüllung“, je Quelle und Space ein Teil auf eigener Spur.
                 com.aresstack.spaceharvester.application.background.FillJobs fillJobs =
                         new com.aresstack.spaceharvester.application.background.FillJobs(backgroundJobs, jobs);
                 opened.add(fillJobs);
+                fillJobs.network(network);
                 fillJobs.attach(fill, key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
                 // ADR 0027: jeder Commit des Seiten-Cache weckt die Suche nach Lücken, nie in Abständen.
                 cache.changes(cacheChanges.andThen(fill::wake));
@@ -2647,6 +2655,14 @@ public final class Harvester implements AutoCloseable {
     }
 
     /** „Anhänge vorladen“ als Hintergrundteil je Quelle und Space (Fundstelle 18). */
+    /**
+     * Der Netzzustand (Angelo 22.11.2026): offline nach einem Netzfehler, zurück mit dem ersten Abruf mit Antwort;
+     * Netz-Aufträge warten offline, statt zu scheitern. Beobachter über {@code network().subscribe(...)}.
+     */
+    public com.aresstack.spaceharvester.application.network.NetworkState network() {
+        return network;
+    }
+
     public com.aresstack.spaceharvester.application.background.AttachmentPrefetches attachmentPrefetches() {
         return attachmentPrefetches;
     }
