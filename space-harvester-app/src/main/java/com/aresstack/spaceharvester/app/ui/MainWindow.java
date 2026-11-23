@@ -219,6 +219,17 @@ public final class MainWindow implements AppContext.Navigator {
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());
+        // Verlauf des Editors (Vergleich mit früheren Versionen) unter <Benutzer>/.space-harvester/history.
+        commandDeck.history(new com.aresstack.spaceharvester.deck.editor.local.LocalVersionHistory(
+                com.aresstack.spaceharvester.app.settings.AppSettingsLoader.defaultHome().resolve("history")));
+        // SharePoint-Sites für „Orte“: die SharePoint-Quellen der Einstellungen (Titel und Adresse).
+        commandDeck.sharePointSites(() -> context.settings() == null ? java.util.List.of()
+                : context.settings().sources().stream()
+                .filter(entry -> "sharepoint".equalsIgnoreCase(entry.config().type())
+                        && entry.config().baseUrl() != null)
+                .map(entry -> new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite(
+                        entry.config().title(), entry.config().baseUrl().toString()))
+                .toList());
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);

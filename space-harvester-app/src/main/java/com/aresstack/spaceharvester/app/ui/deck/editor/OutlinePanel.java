@@ -1,0 +1,179 @@
+package com.aresstack.spaceharvester.app.ui.deck.editor;
+
+import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.mainframe.model.JclElement;
+import com.aresstack.spaceharvester.mainframe.outline.Outline;
+import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.IntConsumer;
+import javax.swing.BorderFactory;
+import javax.swing.JComboBox;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JTree;
+import javax.swing.KeyStroke;
+import javax.swing.ToolTipManager;
+import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.DefaultTreeCellRenderer;
+import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.TreePath;
+
+/**
+ * Gliederung neben dem Editor wie das Outline von MainframeMate ({@code JclOutlinePanel}): Überschrift je Sprache,
+ * Filter („Alle“ gruppiert, sonst flach), Baum mit Tooltip je Element, Doppelklick oder Enter springt zur Zeile, unten
+ * die Zählzeile. Die Gliederung selbst kommt aus {@code mainframe-languages}.
+ */
+final class OutlinePanel extends JPanel {
+
+    private final JLabel title = Comic.caption("Gliederung");
+    private final JComboBox<String> filter = Comic.combo();
+    private final DefaultMutableTreeNode root = new DefaultMutableTreeNode("Gliederung");
+    private final DefaultTreeModel model = new DefaultTreeModel(root);
+    private final JTree tree = new JTree(model);
+    private final JLabel status = Comic.muted(" ");
+    private final IntConsumer navigator;
+    private Outline outline;
+    private boolean filling;
+
+    OutlinePanel(IntConsumer navigator) {
+        super(new BorderLayout(0, 6));
+        this.navigator = navigator;
+        setOpaque(true);
+        setBackground(Comic.SURFACE);
+        setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(8, 8, 6, 8)));
+        filter.getAccessibleContext().setAccessibleName("Filter der Gliederung");
+        filter.setToolTipText("Welche Elemente die Gliederung zeigt");
+        filter.addActionListener(e -> {
+            if (!filling) {
+                build();
+            }
+        });
+        JPanel head = new JPanel(new BorderLayout(6, 0));
+        head.setOpaque(false);
+        head.add(title, BorderLayout.CENTER);
+        head.add(filter, BorderLayout.EAST);
+
+        tree.setRootVisible(false);
+        tree.setShowsRootHandles(true);
+        tree.setFont(Comic.regular(13f));
+        tree.setCellRenderer(new Renderer());
+        tree.getAccessibleContext().setAccessibleName("Gliederung");
+        ToolTipManager.sharedInstance().registerComponent(tree);
+        tree.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (event.getClickCount() == 2) {
+                    jump();
+                }
+            }
+        });
+        tree.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "outline-jump");
+        tree.getActionMap().put("outline-jump", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                jump();
+            }
+        });
+
+        add(head, BorderLayout.NORTH);
+        add(Comic.scroll(tree), BorderLayout.CENTER);
+        add(status, BorderLayout.SOUTH);
+        show(Optional.empty());
+    }
+
+    /** Zeigt eine neue Gliederung; der gewählte Filter bleibt, wenn die Sprache ihn kennt. */
+    void show(Optional<Outline> next) {
+        String chosen = (String) filter.getSelectedItem();
+        outline = next.orElse(null);
+        filling = true;
+        try {
+            filter.removeAllItems();
+            List<String> filters = outline == null ? List.of(Outline.ALL) : outline.filters();
+            filters.forEach(filter::addItem);
+            filter.setSelectedItem(chosen != null && filters.contains(chosen) ? chosen : Outline.ALL);
+        } finally {
+            filling = false;
+        }
+        filter.setEnabled(outline != null && !outline.isEmpty());
+        title.setText(outline == null ? "Gliederung" : outline.title());
+        build();
+    }
+
+    private void build() {
+        root.removeAllChildren();
+        if (outline == null) {
+            root.add(new DefaultMutableTreeNode("Keine Gliederung – unten rechts JCL, COBOL oder Natural wählen"));
+            status.setText(" ");
+        } else if (outline.isEmpty()) {
+            root.add(new DefaultMutableTreeNode("Keine Struktur erkannt"));
+            status.setText(outline.status());
+        } else {
+            for (Outline.Group group : outline.groups((String) filter.getSelectedItem())) {
+                DefaultMutableTreeNode parent = root;
+                if (!group.label().isEmpty()) {
+                    parent = new DefaultMutableTreeNode(group.label());
+                    root.add(parent);
+                }
+                for (JclElement element : group.elements()) {
+                    DefaultMutableTreeNode node = new DefaultMutableTreeNode(element);
+                    for (JclElement child : element.getChildren()) {
+                        node.add(new DefaultMutableTreeNode(child));
+                    }
+                    parent.add(node);
+                }
+            }
+            status.setText(outline.status());
+        }
+        model.reload();
+        for (int row = 0; row < tree.getRowCount(); row++) {
+            tree.expandRow(row);
+        }
+    }
+
+    private void jump() {
+        TreePath path = tree.getSelectionPath();
+        if (path != null && ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject()
+                instanceof JclElement element && element.getLineNumber() > 0) {
+            navigator.accept(element.getLineNumber());
+        }
+    }
+
+    // ---- für Tests -------------------------------------------------------------------------------------------------
+
+    JTree tree() {
+        return tree;
+    }
+
+    JComboBox<String> filter() {
+        return filter;
+    }
+
+    String statusText() {
+        return status.getText();
+    }
+
+    private static final class Renderer extends DefaultTreeCellRenderer {
+
+        Renderer() {
+            putClientProperty("html.disable", Boolean.TRUE);
+        }
+
+        @Override
+        public Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected, boolean expanded,
+                                                      boolean leaf, int row, boolean focus) {
+            Object item = ((DefaultMutableTreeNode) value).getUserObject();
+            JLabel label = (JLabel) super.getTreeCellRendererComponent(tree, item instanceof JclElement element
+                    ? element.getDisplayText() : String.valueOf(item), selected, expanded, leaf, row, focus);
+            label.setIcon(null);
+            label.setToolTipText(item instanceof JclElement element ? element.getTooltipText() : null);
+            return label;
+        }
+    }
+}

@@ -270,16 +270,16 @@ public class JclElement {
         sb.append("<html>");
         sb.append("<b>").append(type.getDisplayName()).append("</b>");
         if (name != null && !name.isEmpty()) {
-            sb.append(": ").append(name);
+            sb.append(": ").append(escapeHtml(name));
         }
         sb.append("<br>");
-        sb.append("Line: ").append(lineNumber);
+        sb.append("Zeile: ").append(lineNumber);
         if (endLineNumber > lineNumber) {
             sb.append(" - ").append(endLineNumber);
         }
 
         if (!parameters.isEmpty()) {
-            sb.append("<br><br><b>Parameters:</b><br>");
+            sb.append("<br><br><b>Parameter:</b><br>");
             for (Map.Entry<String, String> entry : parameters.entrySet()) {
                 sb.append("&nbsp;&nbsp;").append(entry.getKey())
                   .append(" = ").append(escapeHtml(entry.getValue())).append("<br>");

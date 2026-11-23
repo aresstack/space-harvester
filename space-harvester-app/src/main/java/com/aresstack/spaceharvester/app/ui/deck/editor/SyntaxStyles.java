@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.deck.editor;
 
+import com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax;
 import java.util.Map;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 
@@ -37,7 +38,37 @@ public final class SyntaxStyles {
             Map.entry("md", SyntaxConstants.SYNTAX_STYLE_MARKDOWN),
             Map.entry("csv", SyntaxConstants.SYNTAX_STYLE_CSV),
             Map.entry("asm", SyntaxConstants.SYNTAX_STYLE_ASSEMBLER_X86),
-            Map.entry("dockerfile", SyntaxConstants.SYNTAX_STYLE_DOCKERFILE));
+            Map.entry("dockerfile", SyntaxConstants.SYNTAX_STYLE_DOCKERFILE),
+            // Großrechner (mainframe-languages, Endungen wie in MainframeMate)
+            Map.entry("jcl", MainframeSyntax.JCL),
+            Map.entry("proc", MainframeSyntax.JCL),
+            Map.entry("prc", MainframeSyntax.JCL),
+            Map.entry("cntl", MainframeSyntax.JCL),
+            Map.entry("cbl", MainframeSyntax.COBOL),
+            Map.entry("cob", MainframeSyntax.COBOL),
+            Map.entry("cobol", MainframeSyntax.COBOL),
+            Map.entry("cpy", MainframeSyntax.COBOL),
+            Map.entry("nat", MainframeSyntax.NATURAL),
+            Map.entry("nsp", MainframeSyntax.NATURAL),
+            Map.entry("nsn", MainframeSyntax.NATURAL),
+            Map.entry("nss", MainframeSyntax.NATURAL),
+            Map.entry("nsh", MainframeSyntax.NATURAL),
+            Map.entry("nsc", MainframeSyntax.NATURAL),
+            Map.entry("nsl", MainframeSyntax.NATURAL),
+            Map.entry("nsa", MainframeSyntax.NATURAL),
+            Map.entry("nsg", MainframeSyntax.NATURAL),
+            Map.entry("nsm", MainframeSyntax.NATURAL),
+            Map.entry("nsd", MainframeSyntax.NATURAL),
+            Map.entry("ns3", MainframeSyntax.NATURAL),
+            Map.entry("ns4", MainframeSyntax.NATURAL),
+            Map.entry("ns5", MainframeSyntax.NATURAL),
+            Map.entry("ns6", MainframeSyntax.NATURAL),
+            Map.entry("ns7", MainframeSyntax.NATURAL),
+            Map.entry("ns8", MainframeSyntax.NATURAL));
+
+    static {
+        MainframeSyntax.register();
+    }
 
     private SyntaxStyles() {
     }
