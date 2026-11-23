@@ -88,6 +88,7 @@ public class ConnectionService {
             PalTrace.header("connect");
             IPalPreferences prefs = ctx.getPalPreferences();
             Ndv ndv = new Ndv(prefs != null ? prefs.getTimeOut() : 0, ctx.getTimeoutHandler());
+            ndv.setProxy(ctx.getProxy());
             ndv.connect(ctx.getHost(), ctx.getPort());
             ctx.setPal(ndv);
 
