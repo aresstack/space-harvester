@@ -1681,10 +1681,6 @@ public final class ChatPanel extends JPanel {
                 return runtime.workspace().releasePageForChat(spaceKey, key).size();
             }
 
-            @Override
-            public int selection() {
-                return current == null ? 0 : runtime.workspace().releasePagesForChat(current.toCore(runtime)).size();
-            }
         };
     }
 
