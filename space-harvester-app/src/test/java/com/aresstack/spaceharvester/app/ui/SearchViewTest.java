@@ -123,6 +123,17 @@ class SearchViewTest {
         assertThat(view[0].progressText.getText()).isEqualTo("Die Suche ist abgeschlossen · "
                 + (2 * PAGES_PER_SOURCE) + " Treffer");
 
+        // Überschrift „Suche in …“ (Angelo, 23.11.2026): nennt den Bereich, ein Klick wählt ihn links, gelb markiert.
+        List<List<Explorer.Scope>> located = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].onLocate(located::add);
+            view[0].heading.select();
+        });
+        assertThat(view[0].heading.titleText()).isEqualTo("Suche in Wissensquellen");
+        assertThat(view[0].heading.selected()).isTrue();
+        assertThat(view[0].repeat.isEnabled()).isTrue();
+        assertThat(located).containsExactly(List.of());
+
         // Ein Klick (Auswahl) zeigt die Seite des Treffers schon im Explorer, ohne sie zu öffnen.
         List<String> revealed = new ArrayList<>();
         List<String> opened = new ArrayList<>();
@@ -144,6 +155,7 @@ class SearchViewTest {
         });
         assertThat(revealed).containsExactly(expected[0]);
         assertThat(opened).isEmpty();
+        assertThat(view[0].heading.selected()).as("ein gewählter Treffer hebt die Markierung auf").isFalse();
     }
 
     @Test

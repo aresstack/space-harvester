@@ -106,6 +106,30 @@ public final class SearchView implements View {
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
+    /** Die ganze Ansicht: oben {@link #heading} über volle Breite, darunter {@link #root} mit Innenabstand. */
+    private final JPanel frame = new JPanel(new BorderLayout());
+    /**
+     * Überschrift „Suche in …“ wie im Lesebereich (Angelo, 23.11.2026): nennt den Bereich der letzten Suche, ein
+     * Klick markiert ihn gelb und wählt ihn links im Baum; rechts wiederholt der Kreispfeil die Suche darin.
+     */
+    final com.aresstack.spaceharvester.app.ui.controls.SelectableHeading heading =
+            new com.aresstack.spaceharvester.app.ui.controls.SelectableHeading(HEADING_EMPTY);
+    static final String HEADING_EMPTY = "Suche";
+    static final String HEADING_PREFIX = "Suche in ";
+    static final String REPEAT_TIP = "Suche im selben Bereich wiederholen (nicht im links gewählten)";
+    /** Wiederholt die letzte Suche in ihrem Bereich; erst nach einer Suche wählbar. */
+    final javax.swing.AbstractButton repeat;
+    /** Der Bereich der letzten Suche als Schnappschuss beim Start; {@code null} vor der ersten. */
+    List<Explorer.Scope> searchedScopes;
+    /** Wählt links den Bereich der Suche; {@code null} ohne Explorer. */
+    private java.util.function.Consumer<List<Explorer.Scope>> locateListener;
+    /**
+     * Abgesetzt über den Treffern (Angelo, 23.11.2026): die Seite zu einer eingefügten Adresse bzw. Seiten, deren
+     * Titel dem Suchtext genau oder fast entspricht. Ausgeblendet, solange es keine gibt.
+     */
+    final PinnedHits pinned = new PinnedHits();
+    /** Zählt die Titelabfragen; eine überholte verfällt. */
+    private int titleRequest;
     private final JTextField query = Comic.field(30);
     /** Progressive Suche des Core (ADR 0017): Originalanfrage, dann Varianten bis zum Qualitätsziel. */
     final JCheckBox semantic = checkBox(SEMANTIC, "Sucht zusätzlich mit Varianten der Anfrage und ordnet alle Treffer "
@@ -295,6 +319,24 @@ public final class SearchView implements View {
     public SearchView(AppContext context) {
         this.context = context;
         root.setBackground(Comic.SURFACE);
+        frame.setBackground(Comic.SURFACE);
+        frame.add(heading, BorderLayout.NORTH);
+        frame.add(root, BorderLayout.CENTER);
+        repeat = heading.tool(Glyph.SYNC, REPEAT_TIP, this::repeat);
+        repeat.setEnabled(false);
+        heading.onSelect(() -> {
+            table.clearSelection();
+            pinned.clearSelection();
+            if (searchedScopes != null && locateListener != null) {
+                locateListener.accept(searchedScopes);
+            }
+        });
+        pinned.onSelect(hit -> {
+            table.clearSelection();
+            heading.selected(false);
+            context.navigator().revealPage(hit.sourceId(), hit.pageId());
+        });
+        pinned.onOpen(hit -> context.navigator().openPage(hit.sourceId(), hit.pageId()));
         query.setToolTipText("Wörter in Titel und Inhalt; die Quellen werden live durchsucht");
         query.addActionListener(e -> {
             onSubmit.run();
@@ -350,6 +392,8 @@ public final class SearchView implements View {
         table.getSelectionModel().addListSelectionListener(e -> {
             int row = table.getSelectedRow();
             if (!e.getValueIsAdjusting() && row >= 0 && table.getSelectedRowCount() == 1) {
+                heading.selected(false);
+                pinned.clearSelection();
                 Hit hit = model.rows.get(table.convertRowIndexToModel(row));
                 context.navigator().revealPage(hit.sourceId(), hit.pageId());
             }
@@ -403,6 +447,7 @@ public final class SearchView implements View {
         overlay.setVeilColor(Comic.SURFACE);
         overlay.onCancel(this::cancelSearch);
         list.add(overlay, BorderLayout.CENTER);
+        list.add(pinned, BorderLayout.NORTH);
         more.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         more.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, more.getPreferredSize().height));
         list.add(more, BorderLayout.SOUTH);
@@ -604,7 +649,7 @@ public final class SearchView implements View {
 
     @Override
     public JComponent component() {
-        return root;
+        return frame;
     }
 
     @Override
@@ -746,6 +791,117 @@ public final class SearchView implements View {
     /** Wer links die Quellen wählt, die in der Suche angehakt werden (das Hauptfenster: der Explorer). */
     public void onSourcesChecked(java.util.function.Consumer<List<Explorer.Scope>> listener) {
         this.sourcesListener = listener;
+    }
+
+    /** Wer links den Bereich der Suche wählt, wenn ihre Überschrift angeklickt wird (das Hauptfenster: der Explorer). */
+    public void onLocate(java.util.function.Consumer<List<Explorer.Scope>> listener) {
+        this.locateListener = listener;
+    }
+
+    /** Der Bereich als Text für die Überschrift: „Wissensquellen“, eine Quelle oder „Quelle › Space“. */
+    String areaTitle(List<Explorer.Scope> area) {
+        if (area.isEmpty()) {
+            return "Wissensquellen";
+        }
+        return String.join(", ", area.stream().map(scope -> title(scope.sourceId())
+                + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList());
+    }
+
+    /**
+     * Merkt den Bereich einer startenden Suche für Überschrift und Wiederholen und sucht abgesetzt nach Seiten, deren
+     * Titel dem Text entspricht (nur die Titelsuche der Quellen, die Suche selbst bleibt, wie sie ist).
+     */
+    private void started(AppRuntime runtime, String text) {
+        searchedScopes = List.copyOf(scopes);
+        heading.title(HEADING_PREFIX + areaTitle(searchedScopes));
+        heading.selected(false);
+        repeat.setEnabled(true);
+        pinned.clear();
+        int id = ++titleRequest;
+        Set<String> sources = chosenSources();
+        Set<String> spaces = chosenSpaces();
+        Background.run(() -> titleHits(runtime, sources, spaces, text), hits -> {
+            if (id == titleRequest) {
+                pinned.show(PinnedHits.TITLES, hits);
+            }
+        }, error -> { });
+    }
+
+    /** Höchstens so viele Titeltreffer stehen oben. */
+    static final int MAX_TITLE_HITS = 5;
+
+    private static List<Hit> titleHits(AppRuntime runtime, Set<String> sources, Set<String> spaces, String text) {
+        List<Hit> hits = new ArrayList<>();
+        for (String source : sources) {
+            try {
+                for (HarvestSource.PageNode page : runtime.workspace().findByTitle(source, spaces, text, 20).pages()) {
+                    if (similarTitle(page.title(), text)) {
+                        hits.add(new Hit(source, page.pageId(), page.title(), page.partitionKey(), "", null));
+                    }
+                }
+            } catch (RuntimeException e) {
+                // Ohne Titelsuche der Quelle bleibt der Bereich leer; die Suche selbst meldet Fehler.
+            }
+        }
+        hits.sort(java.util.Comparator.comparingInt(hit -> titleDistance(hit.title(), text)));
+        return hits.size() > MAX_TITLE_HITS ? List.copyOf(hits.subList(0, MAX_TITLE_HITS)) : hits;
+    }
+
+    /** Titel ohne Groß-/Kleinschreibung, Satzzeichen und mehrfache Leerzeichen. */
+    static String normalTitle(String text) {
+        return text == null ? "" : text.toLowerCase(java.util.Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", " ").strip();
+    }
+
+    /** Abstand zweier Titel nach Bearbeitungsschritten (Levenshtein) über die normalisierte Form. */
+    static int titleDistance(String title, String text) {
+        String a = normalTitle(title);
+        String b = normalTitle(text);
+        int[] prev = new int[b.length() + 1];
+        int[] cur = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) {
+            prev[j] = j;
+        }
+        for (int i = 1; i <= a.length(); i++) {
+            cur[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                cur[j] = Math.min(Math.min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+            }
+            int[] swap = prev;
+            prev = cur;
+            cur = swap;
+        }
+        return prev[b.length()];
+    }
+
+    /**
+     * Ob ein Titel dem Suchtext genau oder sehr ähnlich entspricht: gleich bis auf Schreibung und Satzzeichen, wenige
+     * Tippfehler (ein Schritt je fünf Zeichen) oder der Text macht den Titel zu mindestens 70 % aus.
+     */
+    static boolean similarTitle(String title, String text) {
+        String a = normalTitle(title);
+        String b = normalTitle(text);
+        if (a.isEmpty() || b.isEmpty()) {
+            return false;
+        }
+        if (a.equals(b) || titleDistance(a, b) <= Math.max(1, b.length() / 5)) {
+            return true;
+        }
+        return a.contains(b) && b.length() * 10 >= a.length() * 7;
+    }
+
+    /** Wiederholt die letzte Suche in ihrem gemerkten Bereich, nicht im links gewählten (Angelo, 23.11.2026). */
+    void repeat() {
+        if (searchedScopes == null || searchedText == null) {
+            return;
+        }
+        query.setText(searchedText);
+        List<Explorer.Scope> before = scopes;
+        scope(searchedScopes);
+        if (scopes.equals(before)) {
+            // Gleicher Bereich: {@link #applyScope} sucht nicht von selbst.
+            search();
+        }
     }
 
     /** Übernimmt den Umfang; die Häkchen setzt {@link #syncBoxesToScope}. */
@@ -1158,6 +1314,7 @@ public final class SearchView implements View {
         run.setEnabled(false);
         more.setVisible(false);
         feedback.clear();
+        pinned.clear();
         starting("Adresse wird aufgelöst …");
         searching = Background.start(() -> runtime.workspace().resolveAddress(address), resolution -> {
             if (id != request) {
@@ -1168,20 +1325,27 @@ public final class SearchView implements View {
             stopLoading();
             states.clear();
             List<Hit> hits = resolution.matches().stream().map(Hit::of).toList();
-            model.set(hits);
+            // Die Seite zur Adresse steht abgesetzt oben wie Titeltreffer (Angelo, 23.11.2026), statt sofort zu öffnen.
+            model.set(List.of());
+            searchedText = address;
+            searchedScopes = List.copyOf(scopes);
+            heading.title(HEADING_PREFIX + areaTitle(searchedScopes));
+            heading.selected(false);
+            repeat.setEnabled(true);
+            titleRequest++;
+            pinned.show(PinnedHits.ADDRESS, hits);
             String unavailable = resolution.unavailableSources().isEmpty() ? ""
                     : " Nicht erreichbar: " + String.join(", ", resolution.unavailableSources()) + ".";
             if (hits.size() == 1) {
                 feedback.clear();
                 status.setText("Adresse aufgelöst: " + hits.get(0).title());
-                context.navigator().openPage(hits.get(0).sourceId(), hits.get(0).pageId());
             } else if (hits.isEmpty()) {
                 status.setText(" ");
                 feedback.info("Keine Seite zu dieser Adresse", "Keine eingerichtete Quelle kennt eine Seite unter "
                         + "dieser Adresse, die du lesen darfst." + unavailable);
             } else {
                 status.setText(Texts.count(hits.size(), "Seite", "Seiten") + " zu dieser Adresse");
-                feedback.info("Mehrere Quellen", "Die Adresse passt in mehreren Quellen; Doppelklick öffnet die Seite."
+                feedback.info("Mehrere Quellen", "Die Adresse passt in mehreren Quellen; Doppelklick oben öffnet die Seite."
                         + unavailable);
             }
         }, error -> {
@@ -1253,6 +1417,7 @@ public final class SearchView implements View {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
         }
+        started(runtime, text);
         if (semantic.isSelected()) {
             progressive(runtime, q);
             checkSynonyms(runtime, q, request);
