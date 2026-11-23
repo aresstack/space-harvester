@@ -155,6 +155,8 @@ class MainWindowPerspectiveTest {
             perspectives.select(Perspectives.HARVESTER);
             assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
             assertThat(window.split().isLeftCollapsed()).as("Explorer bleibt zu").isTrue();
+            // Gemerkten Zustand zurückstellen: Die Tests teilen sich den App-Zustand.
+            window.toggleDrawer();
         });
     }
 
