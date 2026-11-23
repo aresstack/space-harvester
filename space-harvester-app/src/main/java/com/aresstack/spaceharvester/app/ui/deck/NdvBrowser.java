@@ -501,7 +501,10 @@ final class NdvBrowser extends JPanel {
         // Statuszeile der App. „Neu verbinden“ erscheint nur, wenn die Verbindung weg ist.
         open.addActionListener(e -> openSelected());
         save.addActionListener(e -> save());
-        reconnect.addActionListener(e -> sessions.reconnect(session));
+        reconnect.addActionListener(e -> {
+            beforeReconnect.run(); // vom Menschen ausgelöst: darf auch mit gesperrtem Eintrag
+            sessions.reconnect(session);
+        });
         foot.setOpaque(false);
         foot.add(DeckBars.tools(open, save, reconnect), BorderLayout.CENTER);
 
@@ -534,6 +537,13 @@ final class NdvBrowser extends JPanel {
 
     JComponent tools() {
         return tools;
+    }
+
+    /** Läuft, bevor der Mensch „Neu verbinden“ drückt (der Bereich gibt den Sperrschutz dafür einmal frei). */
+    private Runnable beforeReconnect = () -> { };
+
+    void beforeReconnect(Runnable action) {
+        beforeReconnect = action == null ? () -> { } : action;
     }
 
     JComponent foot() {

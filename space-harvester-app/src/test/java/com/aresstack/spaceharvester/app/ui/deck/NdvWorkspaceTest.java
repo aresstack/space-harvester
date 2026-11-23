@@ -362,6 +362,30 @@ class NdvWorkspaceTest {
     }
 
     @Test
+    void selfHealingAfterALostConnectionDoesNotTryALockedEntry() throws Exception {
+        AppState.shared().put(ConnectForm.ENTRY_KEY, "Testhost NDV");
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            workspace[0].shown();
+        });
+        flush();
+        NdvSession session = workspace[0].selected();
+        assertThat(session.state()).isEqualTo(NdvState.CONNECTED);
+        int connects = server.connects();
+        int reads = read.size();
+        // Woanders ist die Anmeldung mit demselben Eintrag fehlgeschlagen; dann reißt die Verbindung ab.
+        DeckLogin.guard().failed("Testhost NDV", "Passwort abgelaufen");
+        server.dropConnections();
+        SwingUtilities.invokeAndWait(() -> workspace[0].browser(session).refresh());
+        flush();
+        assertThat(server.connects()).as("Selbstheilen versucht den gesperrten Eintrag nicht").isEqualTo(connects);
+        assertThat(read).hasSize(reads);
+        assertThat(DeckLogin.notice("Testhost NDV")).as("der Grund bleibt der ursprüngliche")
+                .contains("Passwort abgelaufen");
+    }
+
+    @Test
     void withoutRememberedEntryOpeningTheAreaShowsTheForm() throws Exception {
         NdvWorkspace[] workspace = new NdvWorkspace[1];
         SwingUtilities.invokeAndWait(() -> {
