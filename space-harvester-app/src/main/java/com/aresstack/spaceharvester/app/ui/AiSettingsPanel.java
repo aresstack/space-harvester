@@ -215,6 +215,12 @@ final class AiSettingsPanel {
     final ThinkingBox imagePlanThinking = new ThinkingBox();
     final ComposerButton pickImagePlan = Comic.button("▾", "Modell für den Plan der Schaubilder aus der Liste des "
             + "Dienstes wählen");
+    /** Fristenextraktion (ADR 0035): liest Erlasse und liefert Merkmale mit wörtlichem Zitat. */
+    final JTextField deadlineModel = Comic.field(24);
+    final TokenLengthBox deadlineMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_DEADLINE_MAX_TOKENS);
+    final ThinkingBox deadlineThinking = new ThinkingBox();
+    final ComposerButton pickDeadline = Comic.button("▾", "Modell für die Fristen aus der Liste des Dienstes wählen");
     final JTextField chunkOverlap = Comic.field(6);
     final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     private final SettingDialogs.Rows modelRows;
@@ -527,6 +533,8 @@ final class AiSettingsPanel {
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Vision-Modell", modelRow(Comic.fieldWithButton(visionModel, pickVision), visionMaxTokens,
                 visionThinking, "Vision-Modell", VISION_MAX_TOKENS_HELP), null);
+        modelRows.add(DEADLINE_LABEL, modelRow(Comic.fieldWithButton(deadlineModel, pickDeadline),
+                deadlineMaxTokens, deadlineThinking, DEADLINE_LABEL, DEADLINE_HELP), null);
         modelRows.add(IMAGE_PLAN_LABEL, modelRow(Comic.fieldWithButton(imagePlanModel, pickImagePlan),
                 imagePlanMaxTokens, imagePlanThinking, IMAGE_PLAN_LABEL, IMAGE_PLAN_HELP), null);
         modelRows.add(IMAGE_LABEL, modelRow(Comic.fieldWithButton(imageModel, pickImage), imageMaxTokens,
@@ -626,6 +634,7 @@ final class AiSettingsPanel {
         pickSummaryPlan.setEnabled(false);
         pickPodcast.setEnabled(false);
         pickImagePlan.setEnabled(false);
+        pickDeadline.setEnabled(false);
         loadModels.addActionListener(e -> loadModels());
         pickSimplify.addActionListener(e -> pick(pickSimplify, simplifyModel, AiModel.CHAT));
         pickCheck.addActionListener(e -> pick(pickCheck, checkModel, AiModel.CHAT));
@@ -639,6 +648,7 @@ final class AiSettingsPanel {
         pickSummaryPlan.addActionListener(e -> pick(pickSummaryPlan, summaryPlanModel, AiModel.CHAT));
         pickPodcast.addActionListener(e -> pick(pickPodcast, podcastModel, AiModel.CHAT));
         pickImagePlan.addActionListener(e -> pick(pickImagePlan, imagePlanModel, AiModel.CHAT));
+        pickDeadline.addActionListener(e -> pick(pickDeadline, deadlineModel, AiModel.CHAT));
         released.setOpaque(false);
         released.setLayout(new javax.swing.BoxLayout(released, javax.swing.BoxLayout.Y_AXIS));
         rows.add("An den Dienst senden", released, "Nur freigegebene Quellen bekommen Embeddings und Reranking");
@@ -697,6 +707,7 @@ final class AiSettingsPanel {
         showUse(current.summaryPlan(), summaryPlanModel, summaryPlanMaxTokens, summaryPlanThinking);
         showUse(current.podcast(), podcastModel, podcastMaxTokens, podcastThinking);
         showUse(current.imagePlan(), imagePlanModel, imagePlanMaxTokens, imagePlanThinking);
+        showUse(current.deadline(), deadlineModel, deadlineMaxTokens, deadlineThinking);
         loadPollInterval.setText(current.loadPollInterval() == null ? "" : current.loadPollInterval());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
@@ -1010,7 +1021,8 @@ final class AiSettingsPanel {
                 new AiDraft.Use(summaryModel.getText(), summaryMaxTokens.text(), summaryThinking.level()),
                 new AiDraft.Use(summaryPlanModel.getText(), summaryPlanMaxTokens.text(), summaryPlanThinking.level()),
                 new AiDraft.Use(podcastModel.getText(), podcastMaxTokens.text(), podcastThinking.level()),
-                new AiDraft.Use(imagePlanModel.getText(), imagePlanMaxTokens.text(), imagePlanThinking.level()));
+                new AiDraft.Use(imagePlanModel.getText(), imagePlanMaxTokens.text(), imagePlanThinking.level()),
+                new AiDraft.Use(deadlineModel.getText(), deadlineMaxTokens.text(), deadlineThinking.level()));
     }
 
     /** Zeigt eine eigene Modellzeile aus der Datei. */
@@ -1675,6 +1687,12 @@ final class AiSettingsPanel {
             + "Text-Modell.\n\n" + TOKENS_HELP_TAIL + "\n\nStandard " + AiServiceSettings.DEFAULT_IMAGE_PLAN_MAX_TOKENS
             + " Tokens, denkt nicht. Schlüssel in der Konfigurationsdatei: space-harvester.ai.image-plan-model, "
             + ".image-plan-max-tokens und .image-plan-thinking.";
+    static final String DEADLINE_LABEL = "Fristen";
+    static final String DEADLINE_HELP = "Dieses Modell liest Erlasse und Verfügungen für die Fristenprüfung: Konten, "
+            + "Fristaussagen, Ausnahmen, Antrag oder Genehmigung, jeweils mit wörtlichem Zitat. Leer: das Text-Modell."
+            + "\n\n" + TOKENS_HELP_TAIL + "\n\nStandard " + AiServiceSettings.DEFAULT_DEADLINE_MAX_TOKENS
+            + " Tokens, denkt nicht. Schlüssel in der Konfigurationsdatei: space-harvester.ai.deadline-model, "
+            + ".deadline-max-tokens und .deadline-thinking.";
     static final String SUMMARY_PLAN_LABEL = "Zusammenfassung – Plan";
     static final String SUMMARY_PLAN_HELP = "Dieses Modell plant die Update-Zusammenfassung: welche Themen es gibt und "
             + "welche Seiten dazugehören. Dafür passt ein großes Modell (etwa gpt-oss 120b). Leer: das Text-Modell.\n\n"
@@ -1905,6 +1923,7 @@ final class AiSettingsPanel {
         pickSummaryPlan.setEnabled(false);
         pickPodcast.setEnabled(false);
         pickImagePlan.setEnabled(false);
+        pickDeadline.setEnabled(false);
     }
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
@@ -2028,6 +2047,7 @@ final class AiSettingsPanel {
         pickSummaryPlan.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickPodcast.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickImagePlan.setEnabled(!choices(AiModel.CHAT).isEmpty());
+        pickDeadline.setEnabled(!choices(AiModel.CHAT).isEmpty());
         long embeddings = this.loaded.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
         if (this.loaded.isEmpty()) {
             modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");

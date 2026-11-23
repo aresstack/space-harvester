@@ -1161,14 +1161,16 @@ class ConfigFileEditorTest {
         AiDraft ai = new AiDraft("https://ki.firma.de/v1", "text-modell", null, null, null, java.util.List.of())
                 .withUses(new AiDraft.Use(null, "65536", "low"), new AiDraft.Use("plan-modell", null, "high"),
                         new AiDraft.Use("podcast-modell", "8192", null))
-                .withImagePlan(new AiDraft.Use("schaubild-plan", "32768", "none"));
+                .withImagePlan(new AiDraft.Use("schaubild-plan", "32768", "none"))
+                .withDeadline(new AiDraft.Use("fristen-modell", "4096", "low"));
 
         editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
 
         assertThat(Files.readString(file)).contains("summary-max-tokens: 65536", "summary-thinking: low",
                 "summary-plan-model: \"plan-modell\"", "summary-plan-thinking: high",
                 "podcast-model: \"podcast-modell\"", "podcast-max-tokens: 8192",
-                "image-plan-model: \"schaubild-plan\"", "image-plan-max-tokens: 32768", "image-plan-thinking: none")
+                "image-plan-model: \"schaubild-plan\"", "image-plan-max-tokens: 32768", "image-plan-thinking: none",
+                "deadline-model: \"fristen-modell\"", "deadline-max-tokens: 4096", "deadline-thinking: low")
                 .doesNotContain("summary-model:");
         AppSettings settings = loader.load(file);
         assertThat(settings.problems()).isEmpty();
@@ -1178,6 +1180,8 @@ class ConfigFileEditorTest {
         assertThat(settings.ai().podcast().maxTokens()).isEqualTo(8192);
         assertThat(settings.ai().imagePlan()).isEqualTo(
                 new com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse("schaubild-plan", 32768, "none"));
+        assertThat(settings.ai().deadline()).isEqualTo(
+                new com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse("fristen-modell", 4096, "low"));
         assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
         assertThat(ai.withUses(new AiDraft.Use(null, "viel", null), null, null).problems())
                 .anyMatch(p -> p.contains("„Zusammenfassung“"));
