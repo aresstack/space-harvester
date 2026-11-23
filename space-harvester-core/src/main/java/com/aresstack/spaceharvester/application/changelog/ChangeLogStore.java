@@ -41,6 +41,17 @@ public interface ChangeLogStore extends UpdateMarks {
         return java.util.Optional.empty();
     }
 
+    /**
+     * Die abgelegte Zusammenfassung eines Platzes (ADR 0034 §7). Angeschlossen ist bisher nur das Update einer Ebene;
+     * eine Auswahl hat noch keine Ablage und liefert nichts.
+     */
+    default java.util.Optional<StoredSummary> summary(SummaryScope scope) {
+        return switch (scope) {
+            case SummaryScope.Update update -> summary(update.sourceId(), update.updateId(), update.spaceKey());
+            case SummaryScope.Selected ignored -> java.util.Optional.empty();
+        };
+    }
+
     /** Die Updates einer Quelle mit abgelegter Zusammenfassung in einer Ebene ({@code null}: ganze Quelle). */
     default java.util.Set<String> summarizedUpdates(String sourceId, String spaceKey) {
         return java.util.Set.of();
@@ -58,6 +69,15 @@ public interface ChangeLogStore extends UpdateMarks {
 
     /** Entfernt die Zusammenfassung eines Updates in einer Ebene, ohne Meldung. */
     default void deleteSummary(String sourceId, String updateId, String spaceKey) {
+    }
+
+    /** Entfernt die Zusammenfassung eines Platzes, ohne Meldung (ADR 0034 §7: {@code forget}). */
+    default void deleteSummary(SummaryScope scope) {
+        switch (scope) {
+            case SummaryScope.Update update -> deleteSummary(update.sourceId(), update.updateId(), update.spaceKey());
+            case SummaryScope.Selected ignored -> {
+            }
+        }
     }
 
     /**

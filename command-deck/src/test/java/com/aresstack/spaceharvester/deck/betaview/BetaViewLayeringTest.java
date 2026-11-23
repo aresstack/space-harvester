@@ -26,8 +26,9 @@ class BetaViewLayeringTest {
     }
 
     @Test
-    void onlyTheAdapterReadsHtml() {
-        noClasses().that().resideOutsideOfPackage("com.aresstack.spaceharvester.deck.betaview.http..")
+    void onlyTheHttpAdaptersReadHtml() {
+        noClasses().that().resideOutsideOfPackages("com.aresstack.spaceharvester.deck.betaview.http..",
+                        "com.aresstack.spaceharvester.deck.eakte.http..")
                 .should().dependOnClassesThat().resideInAPackage("org.jsoup..")
                 .check(classes);
     }

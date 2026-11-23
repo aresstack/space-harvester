@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.deck.betaview.OpenedDocument;
 import com.aresstack.spaceharvester.deck.betaview.ResultTable;
 import com.aresstack.spaceharvester.deck.betaview.SavedSearch;
 import com.aresstack.spaceharvester.deck.betaview.SearchFilter;
+import com.aresstack.spaceharvester.deck.http.HttpClientFactory;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;

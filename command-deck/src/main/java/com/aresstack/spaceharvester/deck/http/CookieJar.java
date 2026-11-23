@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.deck.betaview.http;
+package com.aresstack.spaceharvester.deck.http;
 
 import java.net.HttpCookie;
 import java.net.URI;
@@ -9,12 +9,12 @@ import java.util.Locale;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Cookies einer BetaView-Sitzung nach RFC 6265, wie ein Browser sie hält: {@code Domain} (mit oder ohne führenden
+ * Cookies einer HTTP-Sitzung des Command Deck (BetaView, E-Akte) nach RFC 6265, wie ein Browser sie hält: {@code Domain} (mit oder ohne führenden
  * Punkt, nur der eigene Host oder eine übergeordnete Domain), sonst nur der setzende Host; {@code Path} (Vorgabe: der
  * Ordner der Anfrage); {@code Secure} nur über HTTPS; Ablauf über {@code Max-Age}/{@code Expires}. Gesendet werden
  * passende Cookies, die genaueren Pfade zuerst. So erreicht keine Sitzungs-ID einen fremden Host.
  */
-final class CookieJar {
+public final class CookieJar {
 
     private record Entry(String name, String value, String domain, boolean hostOnly, String path, boolean secure,
                          long expiresAt) {
@@ -28,7 +28,7 @@ final class CookieJar {
     private final List<Entry> entries = new ArrayList<>();
 
     /** Übernimmt die {@code Set-Cookie}-Zeilen einer Antwort von {@code origin}; ungültige werden verworfen. */
-    void store(URI origin, List<String> setCookieHeaders) {
+    public void store(URI origin, List<String> setCookieHeaders) {
         String host = host(origin);
         if (host.isEmpty()) {
             return;
@@ -81,7 +81,24 @@ final class CookieJar {
     }
 
     /** Die {@code Cookie}-Zeile für {@code target}, leer wenn nichts passt. */
-    String header(URI target) {
+    public String header(URI target) {
+        return String.join("; ", matching(target).stream().map(entry -> entry.name + '=' + entry.value).toList());
+    }
+
+    /**
+     * Name und Pfad der Cookies, die an {@code target} gingen, nie ihr Wert (für die Diagnose: welche Sitzung erreicht
+     * welchen Pfad).
+     */
+    public List<String> describe(URI target) {
+        return matching(target).stream().map(entry -> entry.name + " (Pfad " + entry.path + ")").toList();
+    }
+
+    /** Ob ein Cookie dieses Namens an {@code target} ginge. */
+    public boolean has(URI target, String name) {
+        return matching(target).stream().anyMatch(entry -> entry.name.equalsIgnoreCase(name));
+    }
+
+    private List<Entry> matching(URI target) {
         String host = host(target);
         String path = target.getRawPath() == null || target.getRawPath().isEmpty() ? "/" : target.getRawPath();
         boolean https = "https".equalsIgnoreCase(target.getScheme());
@@ -99,14 +116,7 @@ final class CookieJar {
         } finally {
             lock.unlock();
         }
-        StringBuilder line = new StringBuilder();
-        for (Entry entry : matching) {
-            if (line.length() > 0) {
-                line.append("; ");
-            }
-            line.append(entry.name).append('=').append(entry.value);
-        }
-        return line.toString();
+        return matching;
     }
 
     private static String host(URI uri) {
