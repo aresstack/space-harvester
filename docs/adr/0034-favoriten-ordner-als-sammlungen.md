@@ -1,7 +1,7 @@
 # ADR 0034: Favoriten-Ordner als eigene Sammlungen
 
-- Status: **Entwurf** (23.11.2026). UX-Manager abgenommen; Urteil des Architekten (A bis E, Zuschnitt) eingearbeitet,
-  Abnahme der geänderten Abschnitte offen. Vorgaben Angelos bindend, der Rest ist Vorschlag.
+- Status: **Angenommen** (23.11.2026) für Angelos Vorgaben; Zuschnitt von UX-Manager und Architekt abgenommen. Die
+  offenen Punkte unten gelten als Empfehlung, bis Angelo widerspricht.
 - Bezüge: [ADR 0027](0027-beobachter-statt-abfragen.md) (kein Polling), [ADR 0028](0028-ki-freigabe-je-seite.md)
   (KI-Freigabe), [ADR 0029](0029-auswahl-und-ausgabe-aus-dem-bestand.md) (Auswahl), ADR 0030/0031
   (Update-Zusammenfassung, Quellenseite), [ADR 0033](0033-wissen-des-chats-per-verweis-und-werkzeug.md) (Chat-Wissen).
@@ -99,14 +99,17 @@ abgeleitet aus der heutigen `toCore`-Logik.
   byteweise gleich (`UpdateSummaryTest`).
 - **Ablage nicht nach Ordner-ID.** Schlüssel des Bereichs: Update (wie heute) oder Auswahl =
   `sha256(Version, caller.jobOwner(), kanonische Auswahl)`; kanonisch = Wurzeln sortiert, ohne Doppelte, je mit
-  Unterseiten-Flag (Vorbild `PagePodcasts.key`). Die Core-API nimmt eine `holdings.Selection`; Ordner-ID und Name sind
+  Unterseiten-Flag (Vorbild `PagePodcasts.key`). Gemeint sind die aufgelösten Wurzeln nach Anwendung von
+  `withSubfolders`, so bekommen beide Stellungen der Checkbox getrennte Zusammenfassungen; das Unterseiten-Flag ist nach
+  Abschnitt 1 immer gesetzt und bleibt nur für eine spätere Wurzel „nur Seite“ im Schlüssel. Die Core-API nimmt eine `holdings.Selection`; Ordner-ID und Name sind
   nur Beschriftung der App. So überschreiben sich Benutzer auf dem Server nicht und sehen keine fremden Inhalte.
 - **Prüfung beim Lesen:** Jedes Lesen prüft Rechte und KI-Freigabe; `ChangeLog.valid()` wird dafür zu einem gemeinsamen
   Helfer verallgemeinert. Entzug deckt der vorhandene Weg (`ChangeLog.withdrawn`) mit demselben Prädikat.
 - **Veraltet** = Fingerabdruck der Wurzeln oder Inhalte (Abschnitt 4) hat sich geändert. **Eine Änderung am Ordner
   startet nie von selbst einen KI-Lauf**, sie markiert nur „veraltet“; neu erstellt wird über den Symbolknopf
   „Zusammenfassen“. Fehlt die Zusammenfassung bei einem nie zusammengefassten Ordner, startet sie beim Öffnen wie bei
-  Updates. Leerer Ordner: Hinweis, kein Modellaufruf.
+  Updates. Leerer Ordner: Hinweis, kein Modellaufruf. Feste Regel: Der automatische Lauf beim Öffnen ist ein
+  Hintergrundauftrag (BACKGROUND), ein Klick auf „Zusammenfassen“ ein normaler Auftrag (`submitInteractive`).
 - **Aufräumen:** Eine neue Zusammenfassung ersetzt die vorige desselben Platzes samt Podcasts. Beim Löschen eines
   Ordners ruft die App nach „wirklich …?“ `forget(caller, Selection)` auf; Rückfallnetz ist die vorhandene
   Aufbewahrungsfrist.
