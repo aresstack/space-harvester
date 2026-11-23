@@ -27,9 +27,9 @@ import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 
 /**
- * „Neue Anmeldung“ am BetaView-Server: Adresse und Anmeldung. Mit „KeePass“ kommen Benutzer und Kennwort (und ohne
- * eingetragene Adresse auch diese) aus einem Eintrag der vorhandenen KeePass-Kopplung der App, mit „Manuell“ aus den
- * Feldern. Die Adresse ist beim ersten Mal mit der Vorgabe von MainframeMate belegt
+ * „Neue Anmeldung“ am BetaView-Server: Adresse und Anmeldung. Mit „KeePass“ kommen Benutzer und Kennwort aus einem
+ * Eintrag der vorhandenen KeePass-Kopplung der App, mit „Manuell“ aus den Feldern. Ein leeres Adressfeld gilt als die
+ * Vorgabe von MainframeMate, die auch als Platzhalter im Feld steht. Die Adresse ist beim ersten Mal mit der Vorgabe von MainframeMate belegt
  * ({@link com.aresstack.spaceharvester.deck.betaview.BetaViewProfile#DEFAULT_ADDRESS}), sonst nichts; die zuletzt
  * benutzte Adresse, Anmeldeart, der Eintrag bzw. Benutzer stehen
  * beim nächsten Mal wieder da, nie ein Kennwort. Angemeldet wird erst auf „Anmelden“ (oder Eingabe).
@@ -43,7 +43,7 @@ final class BetaViewConnectForm extends JPanel {
     static final String KEEPASS = "KeePass";
     static final String MANUAL = "Manuell";
 
-    final PlaceholderField address = new PlaceholderField(28, "https://server/betaview/");
+    final PlaceholderField address = new PlaceholderField(28, BetaViewProfile.DEFAULT_ADDRESS);
     final SegmentedToggle login = new SegmentedToggle().segment(KEEPASS).segment(MANUAL);
     final JComboBox<String> entry = Comic.combo();
     final PlaceholderField user = new PlaceholderField(20, "Benutzer");
@@ -164,14 +164,16 @@ final class BetaViewConnectForm extends JPanel {
     /** Prüft die Felder, holt bei KeePass Benutzer und Kennwort im Hintergrund und meldet dann an. */
     void submit() {
         problem.setText(" ");
-        String typedAddress = address.getText().strip();
+        // Leeres Feld = Vorgabe von MainframeMate (steht als Platzhalter im Feld).
+        String typedAddress = address.getText().isBlank() ? BetaViewProfile.DEFAULT_ADDRESS
+                : address.getText().strip();
         if (KEEPASS.equals(login.selected())) {
             String title = entryTitle();
             if (title.isEmpty()) {
                 problem.setText("KeePass-Eintrag fehlt");
                 return;
             }
-            if (!typedAddress.isEmpty() && !validAddress(typedAddress)) {
+            if (!validAddress(typedAddress)) {
                 return;
             }
             submit.setEnabled(false);
@@ -180,12 +182,7 @@ final class BetaViewConnectForm extends JPanel {
                 submit.setEnabled(true);
                 keePassHint.setText(" ");
                 try (read) {
-                    String where = typedAddress.isEmpty() ? read.account().location() : typedAddress;
-                    if (where.isEmpty()) {
-                        problem.setText("Adresse fehlt (auch im KeePass-Eintrag steht keine)");
-                        return;
-                    }
-                    start(where, read.user(), read.copyPassword(), Map.of(ENTRY_KEY, title));
+                    start(typedAddress, read.user(), read.copyPassword(), Map.of(ENTRY_KEY, title));
                 }
             }, error -> {
                 submit.setEnabled(true);
@@ -246,7 +243,7 @@ final class BetaViewConnectForm extends JPanel {
         AppState state = AppState.shared();
         // Noch nie angemeldet: die Adresse von MainframeMate (betaview.properties) steht schon da.
         String remembered = state.get(ADDRESS_KEY);
-        address.setText(remembered == null ? com.aresstack.spaceharvester.deck.betaview.BetaViewProfile.DEFAULT_ADDRESS
+        address.setText(remembered == null ? BetaViewProfile.DEFAULT_ADDRESS
                 : remembered);
         String mode = state.get(LOGIN_KEY);
         login.select(MANUAL.equals(mode) ? MANUAL : KEEPASS);
