@@ -34,6 +34,11 @@ eine angepasste Kopie (siehe `document-export/UPSTREAM.md` und [CONVERTERS.md �
 hängt von ihr ab; sie hat eine eigene Publikation (`com.aresstack:space-harvester-document-export`), damit die Core-POM
 keine unveröffentlichte Projektabhängigkeit nennt.
 
+`:nlp-lexicon` enthält die deutschen Wortlisten für Verneinung und Modalverben ohne Abhängigkeiten
+([ADR 0035](adr/0035-fristen-fachlogik-grundsatz-und-ausnahme.md), O4). Der Core (Fristsätze der Regex-Stufe) und
+`:nlp-parser` lesen dieselben Listen, ohne voneinander abzuhängen; eigene Publikation
+(`com.aresstack:space-harvester-nlp-lexicon`) aus demselben Grund wie bei `:document-export`.
+
 Die Desktop-App `:space-harvester-app` (#103, [ADR 0008](adr/0008-desktop-app.md)) hängt nur am Core und an
 `:comic-controls` (Kopie aus enterprise-ai-client), nie am Server.
 
@@ -211,8 +216,8 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
    Projektabhängigkeit enthält; der Code der Kopie bleibt unverändert, nur ihr `build.gradle` gehört uns. Eine
    Gradle-Prüfung stellt sicher, dass die Core-POM weder Spring Boot noch Servlet noch unbekannte Projekte nennt.
    Nur nach Bedarf und nur manuell (Actions › Maven Central › Run workflow, Workflow `maven-central.yml`, am besten
-   auf einem Release-Tag) signiert der Workflow die drei Publikationen
-   (`com.aresstack:space-harvester-core`, `-enterprise-ai-sources`, `-document-export`) und lädt sie als Bundle
+   auf einem Release-Tag) signiert der Workflow die vier Publikationen
+   (`com.aresstack:space-harvester-core`, `-enterprise-ai-sources`, `-document-export`, `-nlp-lexicon`) und lädt sie als Bundle
    (`./gradlew centralBundle -PreleaseVersion=<v>`) über das Central Publisher Portal hoch. Secrets wie bei
    `win-proxy-java` aus der Organisation aresstack: `CENTRAL_USERNAME`, `CENTRAL_PASSWORD`, `GPG_PRIVATE_KEY`,
    `GPG_PASSPHRASE`. Das GitHub-Release (`release.yml`) lädt nie nach Maven Central.
