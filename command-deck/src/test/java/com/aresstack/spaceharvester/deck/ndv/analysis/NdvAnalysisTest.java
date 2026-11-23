@@ -1,0 +1,187 @@
+package com.aresstack.spaceharvester.deck.ndv.analysis;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.aresstack.spaceharvester.deck.ndv.FakeNdvServer;
+import com.aresstack.spaceharvester.deck.ndv.NdvObject;
+import com.aresstack.spaceharvester.deck.ndv.NdvProfile;
+import com.aresstack.spaceharvester.deck.ndv.NdvSession;
+import com.aresstack.spaceharvester.deck.ndv.NdvSessions;
+import com.aresstack.spaceharvester.deck.ndv.cache.FileNdvSourceStore;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/** NDV-Analyse wie in MainframeMate: Zwischenspeicher, Vorabladen, Abhängigkeiten, Sperrliste, Suchreihenfolge. */
+class NdvAnalysisTest {
+
+    private static final String PROGRAM = """
+            * Lagerbestand (erfundenes Beispiel)
+            DEFINE DATA
+            LOCAL USING LAGERL01
+            LOCAL
+            1 ART VIEW OF ARTIKEL
+            END-DEFINE
+            INCLUDE LAGERC01
+            READ ART BY NUMMER
+            END-READ
+            CALLNAT 'LAGERN01' #ARTIKEL
+            PERFORM PRUEFEN
+            FETCH 'MENU'
+            END""";
+
+    private final FakeNdvServer server = FakeNdvServer.sample();
+    private final NdvSessions sessions = new NdvSessions(server, Runnable::run);
+    private final NdvSession session = sessions.open(new NdvProfile("10.0.0.7", 8011), "",
+            () -> new com.aresstack.spaceharvester.deck.access.ServerCredentials(
+                    new com.aresstack.spaceharvester.deck.access.ServerAccount("Host", "10.0.0.7", "PILOT"),
+                    "geheim".toCharArray()));
+
+    @Test
+    void dependenciesAreFoundLikeNaturalOneActiveXRefs() {
+        NaturalDependencyService.DependencyResult result = new NaturalDependencyService().analyze(PROGRAM, "LAGER001");
+        Map<NaturalDependencyService.DependencyKind, List<String>> found = new HashMap<>();
+        result.getGrouped().forEach((kind, deps) -> found.put(kind,
+                deps.stream().map(NaturalDependencyService.Dependency::getTargetName).toList()));
+        assertThat(found.get(NaturalDependencyService.DependencyKind.USING)).containsExactly("LAGERL01");
+        assertThat(found.get(NaturalDependencyService.DependencyKind.VIEW)).containsExactly("ARTIKEL");
+        assertThat(found.get(NaturalDependencyService.DependencyKind.INCLUDE)).containsExactly("LAGERC01");
+        assertThat(found.get(NaturalDependencyService.DependencyKind.CALLNAT)).containsExactly("LAGERN01");
+        assertThat(found.get(NaturalDependencyService.DependencyKind.PERFORM)).containsExactly("PRUEFEN");
+        assertThat(found.get(NaturalDependencyService.DependencyKind.FETCH)).containsExactly("MENU");
+        assertThat(result.getExternalCallTargets()).containsExactly("LAGERN01", "MENU");
+        assertThat(NdvAnalysis.callKind(NaturalDependencyService.DependencyKind.CALLNAT)).isTrue();
+        assertThat(NdvAnalysis.callKind(NaturalDependencyService.DependencyKind.USING)).isFalse();
+    }
+
+    @Test
+    void theGraphKnowsCallersAndTheHierarchyMarksRecursion() {
+        NaturalDependencyGraph graph = new NaturalDependencyGraph();
+        graph.addSource("LAGER", "A", "CALLNAT 'B'\nEND");
+        graph.addSource("LAGER", "B", "CALLNAT 'C'\nEND");
+        graph.addSource("LAGER", "C", "CALLNAT 'A'\nCALLNAT 'X'\nEND");
+        graph.build();
+        assertThat(graph.getPassiveXRefs("B")).extracting(NaturalDependencyGraph.CallerInfo::getCallerName)
+                .containsExactly("A");
+        NaturalDependencyGraph.CallHierarchyNode callees = graph.getCallHierarchy("A", true, 5);
+        NaturalDependencyGraph.CallHierarchyNode c = callees.getChildren().getFirst().getChildren().getFirst();
+        assertThat(c.getObjectName()).isEqualTo("C");
+        assertThat(c.getChildren()).extracting(NaturalDependencyGraph.CallHierarchyNode::isRecursive)
+                .containsExactly(true, false);
+        assertThat(graph.getUnresolvedTargets()).containsExactly("X");
+        assertThat(graph.getEntryPoints()).isEmpty();
+    }
+
+    @Test
+    void accessRulesWorkLikeTheSecurityFilter() {
+        NdvAccessRules rules = new NdvAccessRules();
+        List<String> events = new ArrayList<>();
+        rules.observe(() -> events.add("x"));
+        String lib = NdvAccessRules.path("lager", "");
+        String obj = NdvAccessRules.path("LAGER", "lager001");
+        assertThat(obj).isEqualTo("ndv://LAGER/LAGER001");
+        assertThat(rules.isAllowed(obj)).isTrue();
+        rules.blacklist(List.of(lib));
+        assertThat(rules.isAllowed(obj)).as("Bibliothek gesperrt gilt für alles darin").isFalse();
+        assertThat(rules.describe(obj)).isEqualTo("gesperrt");
+        rules.whitelist(List.of(lib));
+        assertThat(rules.isAllowed(obj)).isTrue();
+        rules.blacklist(List.of(obj));
+        assertThat(rules.isAllowed(obj)).as("Sperrliste gewinnt").isFalse();
+        assertThat(rules.isAllowed(NdvAccessRules.path("LAGER", "LAGER002"))).isTrue();
+        assertThat(rules.countBlacklistedDescendants(lib)).isEqualTo(1);
+        rules.remove(List.of(obj, lib));
+        rules.blacklistAll(true);
+        assertThat(rules.isAllowed(obj)).isFalse();
+        rules.whitelist(List.of(obj + "/"));
+        assertThat(rules.isAllowed(obj)).isTrue();
+        assertThat(rules.hasWhitelistedDescendants(lib)).isTrue();
+        assertThat(events).hasSize(6);
+
+        NdvAccessRules copy = new NdvAccessRules();
+        copy.restore(rules.snapshot());
+        assertThat(copy.snapshot()).isEqualTo(rules.snapshot());
+    }
+
+    @Test
+    void prefetchLoadsOnlyChangedAllowedSourcesAndSurvivesARestart(@TempDir Path folder) throws Exception {
+        NdvAccessRules rules = new NdvAccessRules();
+        rules.blacklist(List.of(NdvAccessRules.path("LAGER", "LAGERM01")));
+        NdvSourceCache cache = new NdvSourceCache("10.0.0.7:8011", new FileNdvSourceStore(folder), rules);
+        List<NdvObject> objects = new ArrayList<>();
+        session.objects("LAGER", "*", (page, total) -> objects.addAll(page));
+        List<String> progress = new ArrayList<>();
+        NdvSourceCache.PrefetchListener listener = new NdvSourceCache.PrefetchListener() {
+            @Override
+            public void progress(int current, int total, String name) {
+                progress.add(name);
+            }
+
+            @Override
+            public void complete(NdvSourceCache.PrefetchResult result) {
+            }
+        };
+        NdvSourceCache.PrefetchResult first = cache.prefetch(session, "LAGER", objects, listener);
+        assertThat(first.blocked()).isEqualTo(1);
+        assertThat(first.loaded()).isEqualTo(first.total() - 1);
+        assertThat(cache.source("LAGER", "LAGER001")).hasValueSatisfying(s -> assertThat(s).contains("READ ARTIKEL"));
+        assertThat(cache.source("LAGER", "LAGERM01")).as("gesperrt wird nicht gespeichert").isEmpty();
+        assertThat(server.writes()).isEmpty();
+
+        NdvSourceCache.PrefetchResult second = cache.prefetch(session, "LAGER", objects, listener);
+        assertThat(second.loaded()).as("unverändert wird nicht neu geladen").isZero();
+        assertThat(second.unchanged()).isEqualTo(first.loaded());
+
+        NdvSourceCache restarted = new NdvSourceCache("10.0.0.7:8011", new FileNdvSourceStore(folder), rules);
+        assertThat(restarted.size("LAGER")).isEqualTo(first.loaded());
+        assertThat(restarted.search("lager", "callnat", 10)).extracting(NdvSourceCache.Hit::name)
+                .containsExactly("LAGER002");
+
+        NdvAnalysis analysis = new NdvAnalysis(restarted);
+        NaturalDependencyGraph graph = analysis.build("LAGER");
+        assertThat(graph.getPassiveXRefs("LAGERN01")).extracting(NaturalDependencyGraph.CallerInfo::getCallerName)
+                .containsExactly("LAGER002");
+        // Wie in MainframeMate erkennt der Parser USING nur in eigener Zeile (LOCAL USING …), nicht in
+        // „DEFINE DATA LOCAL USING …“ auf einer Zeile wie im Schein-Server.
+        assertThat(graph.getPassiveXRefs("LAGERL01")).isEmpty();
+        NdvObject lager002 = objects.stream().filter(o -> o.displayName().equals("LAGER002")).findFirst().orElseThrow();
+        analysis.saved(lager002, "* geändert\nEND");
+        assertThat(analysis.graph("LAGER").orElseThrow().getPassiveXRefs("LAGERN01")).isEmpty();
+
+        analysis.clear("LAGER");
+        assertThat(analysis.graph("LAGER")).isEmpty();
+        assertThat(new NdvSourceCache("10.0.0.7:8011", new FileNdvSourceStore(folder), rules).size("LAGER")).isZero();
+    }
+
+    @Test
+    void theResolverFollowsTheSearchOrderAndStepLibs() {
+        NdvSourceCache cache = new NdvSourceCache("h:1", new NdvSourceCache.Store() {
+            @Override
+            public Map<String, NdvSourceCache.Entry> load(String server, String library) {
+                return library.equals("KASSE") ? Map.of("KASSE001",
+                        new NdvSourceCache.Entry("KASSE", "KASSE001", "NSP", "END", 3, "")) : Map.of();
+            }
+
+            @Override
+            public void put(String server, NdvSourceCache.Entry entry) {
+            }
+
+            @Override
+            public void removeLibrary(String server, String library) {
+            }
+        }, new NdvAccessRules());
+        NdvLibraryResolver resolver = new NdvLibraryResolver(List.of("system", "kasse", "SYSTEM"),
+                Map.of("abak-m", "abak-t"));
+        assertThat(resolver.candidates("", "LAGER")).containsExactly("LAGER", "SYSTEM", "KASSE");
+        assertThat(resolver.resolve("kasse001", "", "LAGER", cache)).contains("KASSE");
+        assertThat(resolver.resolve("UNBEKANNT", "", "LAGER", cache)).as("sonst die erste").contains("LAGER");
+        assertThat(new NdvLibraryResolver(List.of(), Map.of()).resolve("X", "", "", cache)).isEmpty();
+        assertThat(resolver.forStepLib("ABAK-M")).contains("ABAK-T");
+        assertThat(NdvLibraryResolver.suggest("abak-m")).isEqualTo("ABAK-T");
+        assertThat(resolver.withStepLib("x-p", "y").forStepLib("X-P")).contains("Y");
+    }
+}
