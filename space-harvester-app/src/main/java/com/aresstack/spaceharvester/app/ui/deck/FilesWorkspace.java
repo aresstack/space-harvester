@@ -138,6 +138,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private final SharePointAccess sharePoint;
     private final Supplier<List<SharePointSite>> sites;
     private final ServerAccounts accounts;
+    /**
+     * Schutz vor der Kontosperre (Deck-Regel): Ein abgelehnter Login sperrt den Zugang für jeden automatischen Versuch,
+     * bis eine Anmeldung klappt. KeePass-Zugänge über ihren Eintrag, gespeicherte über {@link #savedEntry}.
+     */
+    private com.aresstack.spaceharvester.deck.access.LoginGuard guard = DeckLogin.guard();
     /** Nach der ersten erfolgreichen Anmeldung gespeicherte SharePoint-Zugangsdaten (die App setzt den Tresor). */
     private volatile com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins savedLogins =
             com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory();
@@ -912,6 +917,19 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 : logins;
     }
 
+    /**
+     * Sperrschlüssel für gespeicherte SharePoint-Zugangsdaten: der Benutzer, denn gesperrt wird sein Konto, gleich auf
+     * welcher Site.
+     */
+    static String savedEntry(String user) {
+        return "SharePoint " + (user == null ? "" : user.strip());
+    }
+
+    /** Für Tests: ein eigener Wächter statt des gemeinsamen der App. */
+    void loginGuard(com.aresstack.spaceharvester.deck.access.LoginGuard guard) {
+        this.guard = guard;
+    }
+
     private static String loginHost(String unc) {
         return SharePointPaths.host(unc).orElse("").replaceAll("(?i)@SSL", "").replaceAll("@\\d+$", "");
     }
@@ -932,11 +950,22 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 return;
             }
             var login = saved.get();
+            String entry = savedEntry(login.user());
+            if (!guard.mayTry(entry)) {
+                // Letzter Versuch abgelehnt: nicht noch einmal automatisch, der Mensch prüft im Dialog.
+                java.util.Arrays.fill(login.password(), '\0');
+                SwingUtilities.invokeLater(() -> askLogin(tab, unc, DeckLogin.notice(entry), login.user()));
+                return;
+            }
             sharePoint.connect(unc, login.user(), login.password(), result -> SwingUtilities.invokeLater(() -> {
                 busy().setBusy(browser.loading());
                 if (result.connected()) {
+                    guard.succeeded(entry);
                     tab.open(unc);
                 } else {
+                    if (result.outcome().needsCredentials()) {
+                        guard.failed(entry, result.outcome().reason());
+                    }
                     tryKeePass(tab, unc, "Gespeicherte Zugangsdaten passen nicht: " + result.outcome().reason(),
                             login.user());
                 }
@@ -957,7 +986,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             }
             Optional<ServerAccount> found = account;
             SwingUtilities.invokeLater(() -> {
-                if (found.isPresent() && !reason.startsWith("KeePass")) {
+                if (found.isPresent() && !guard.mayTry(found.get().entry())) {
+                    askLogin(tab, unc, DeckLogin.notice(found.get().entry()), found.get().user());
+                } else if (found.isPresent() && !reason.startsWith("KeePass")) {
                     loginWithKeePass(tab, unc, found.get());
                 } else {
                     askLogin(tab, unc, reason, found.map(ServerAccount::user).orElse(user));
@@ -974,8 +1005,12 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 sharePoint.connect(unc, credentials.user(), password, result -> SwingUtilities.invokeLater(() -> {
                     busy().setBusy(browser.loading());
                     if (result.connected()) {
+                        guard.succeeded(account.entry());
                         tab.open(unc);
                     } else {
+                        if (result.outcome().needsCredentials()) {
+                            guard.failed(account.entry(), result.outcome().reason());
+                        }
                         askLogin(tab, unc, "KeePass-Eintrag „" + account.entry() + "“ passt nicht: "
                                 + result.outcome().reason(), credentials.user());
                     }
@@ -1014,6 +1049,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         sharePoint.connect(unc, entered, password, result -> SwingUtilities.invokeLater(() -> {
             busy().setBusy(browser.loading());
             if (result.connected()) {
+                guard.succeeded(savedEntry(entered));
                 // Nach dem ersten Erfolg merken: beim nächsten Mal kein Dialog (Angelo, 23.11.).
                 Thread.ofVirtual().name("deck-sharepoint-save").start(() -> {
                     try {
@@ -1028,6 +1064,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 tab.open(unc);
             } else {
                 java.util.Arrays.fill(password, '\0');
+                if (result.outcome().needsCredentials()) {
+                    guard.failed(savedEntry(entered), result.outcome().reason());
+                }
                 askLogin(tab, unc, result.outcome().reason(), entered);
             }
         }));
