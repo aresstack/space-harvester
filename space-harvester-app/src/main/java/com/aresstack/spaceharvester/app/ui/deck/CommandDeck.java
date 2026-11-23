@@ -69,7 +69,21 @@ public final class CommandDeck {
     private final JPanel tools = new JPanel(new BorderLayout());
     /** Links in der Statuszeile der App: der Stand des gewählten Bereichs, eine Karte je Bereich. */
     private final CardLayout statusCards = new CardLayout();
-    private final JPanel status = new JPanel(statusCards);
+    /**
+     * So breit wie der Stand des gewählten Bereichs: Ein Kartenstapel wäre so breit wie sein breitester, auch
+     * unsichtbarer Stand (etwa ein langer Pfad der Dateien) und nähme dem Stand der Aufträge daneben den Platz.
+     */
+    private final JPanel status = new JPanel(statusCards) {
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            for (java.awt.Component card : getComponents()) {
+                if (card.isVisible()) {
+                    return card.getPreferredSize();
+                }
+            }
+            return new java.awt.Dimension(0, 0);
+        }
+    };
     private final NdvWorkspace ndv;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;

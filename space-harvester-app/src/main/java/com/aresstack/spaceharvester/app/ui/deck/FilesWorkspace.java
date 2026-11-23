@@ -99,6 +99,18 @@ public final class FilesWorkspace extends JPanel {
         return statusInfo;
     }
 
+    /** Was gerade in der Statuszeile steht (für Tests und zum Vergleich). */
+    private com.aresstack.spaceharvester.app.ui.controls.StatusNote shownStatus =
+            com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(" ");
+
+    /** Zeigt den Stand in der Statuszeile der App; Fehler rot. Die untere Leiste trägt nur Aktionen. */
+    private void status(String text, boolean error) {
+        shownStatus = new com.aresstack.spaceharvester.app.ui.controls.StatusNote(text.isBlank() ? " " : text,
+                error ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR
+                        : com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.PLAIN, null, null);
+        statusInfo.show(shownStatus);
+    }
+
     static final String LOCATION_KEY = "deck.files.location";
     static final String SORT_KEY = "deck.files.sort";
     static final String BOOKMARKS_KEY = "deck.files.bookmarks";
@@ -148,7 +160,6 @@ public final class FilesWorkspace extends JPanel {
     private final JTextField name = Comic.field(24);
     private final EntryModel model = new EntryModel();
     private final JTable table = Comic.table(new JTable(model));
-    private final JLabel status = Comic.muted(" ");
     private final JPanel browserActions;
     private final JPanel documentActions;
     private final ComposerButton open;
@@ -227,18 +238,13 @@ public final class FilesWorkspace extends JPanel {
         browserTools.add(detailsToggle);
         browserTools.add(filterFrame);
         browserTools.add(sortButton);
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        head.add(pills, BorderLayout.CENTER);
-        head.add(browserTools, BorderLayout.EAST);
+        JPanel head = DeckBars.head(pills, browserTools);
 
         // Durchsuchen: Pfadzeile, Namenszeile (nur beim Anlegen), Liste.
         center.setOpaque(false);
         center.add(browserCard(), BROWSER);
 
-        // Fußzeile: Status und die Aktionen des gewählten Reiters.
+        // Fußzeile: die Aktionen des gewählten Reiters; der Stand steht in der Statuszeile der App.
         open = Comic.button("Öffnen", "Ordner öffnen bzw. Datei im Editor öffnen (Enter)");
         open.addActionListener(e -> openSelected());
         ComposerButton newFolder = Comic.button(FilesIcons.newFolder(), "Neuer Ordner", "Ordner anlegen");
@@ -268,12 +274,7 @@ public final class FilesWorkspace extends JPanel {
         actions.setOpaque(false);
         actions.add(browserActions, BROWSER);
         actions.add(documentActions, "document");
-        JPanel foot = new JPanel(new BorderLayout(12, 0));
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(status, BorderLayout.CENTER);
-        foot.add(actions, BorderLayout.EAST);
+        JPanel foot = DeckBars.foot(null, actions);
 
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
@@ -515,8 +516,7 @@ public final class FilesWorkspace extends JPanel {
                 text += " · Filter ist kein gültiger regulärer Ausdruck";
             }
         }
-        status.setText(text);
-        status.setForeground(color);
+        status(text, color == Comic.RED);
     }
 
     private void showDocumentStatus() {
@@ -534,8 +534,7 @@ public final class FilesWorkspace extends JPanel {
         }
         String charset = session.document().map(document -> " · " + document.charset()
                 + ("\r\n".equals(document.lineEnding()) ? " · CRLF" : "")).orElse("");
-        status.setText(text + charset);
-        status.setForeground(color);
+        status(text + charset, color == Comic.RED);
     }
 
     private void showActions() {
@@ -762,16 +761,14 @@ public final class FilesWorkspace extends JPanel {
         if (SharePointPaths.isWebUrl(text)) {
             Optional<String> unc = SharePointPaths.toUncPath(text);
             if (unc.isEmpty()) {
-                status.setText("„" + text + "“ ist keine gültige SharePoint-Adresse.");
-                status.setForeground(Comic.RED);
+                status("„" + text + "“ ist keine gültige SharePoint-Adresse.", true);
                 return;
             }
             text = unc.get();
         }
         if (sharePoint.needsLogin(text)) {
             String unc = text;
-            status.setText("Melde an " + SharePointPaths.displayName(SharePointPaths.toWebUrl(unc)) + " an …");
-            status.setForeground(Comic.MUTED);
+            status("Melde an " + SharePointPaths.displayName(SharePointPaths.toWebUrl(unc)) + " an …", false);
             busy().setBusy(true);
             sharePoint.connect(unc, result -> SwingUtilities.invokeLater(() -> connected(result)));
             return;
@@ -786,8 +783,7 @@ public final class FilesWorkspace extends JPanel {
             return;
         }
         if (!result.outcome().needsCredentials()) {
-            status.setText(result.outcome().reason());
-            status.setForeground(Comic.RED);
+            status(result.outcome().reason(), true);
             return;
         }
         String host = SharePointPaths.host(result.uncPath()).orElse("").replaceAll("(?i)@SSL", "")
@@ -849,8 +845,7 @@ public final class FilesWorkspace extends JPanel {
         form.add(Comic.caption("Kennwort"));
         form.add(new InputFrame(passwordField));
         if (!Dialogs.formOverlay(this, "SharePoint-Anmeldung", form, "Anmelden")) {
-            status.setText("Anmeldung abgebrochen");
-            status.setForeground(Comic.MUTED);
+            status("Anmeldung abgebrochen", false);
             return;
         }
         char[] password = passwordField.getPassword();
@@ -1144,7 +1139,7 @@ public final class FilesWorkspace extends JPanel {
     }
 
     String statusText() {
-        return status.getText();
+        return shownStatus.text();
     }
 
     EditorSession selected() {

@@ -1,0 +1,110 @@
+package com.aresstack.spaceharvester.app.ui.deck;
+
+import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.content.ChatSidebar;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Dimension;
+import java.awt.Insets;
+import java.awt.LayoutManager;
+import javax.swing.BorderFactory;
+import javax.swing.JComponent;
+import javax.swing.JPanel;
+
+/**
+ * Kopf- und Fußleiste der Arbeitsbereiche des Command Deck, so hoch wie die des Space Harvesters (Angelo,
+ * 23.11.2026): der Kopf wie die Kopfzeile der Seitenleiste, der Fuß wie die Leiste mit der Lupe. So laufen die Linien
+ * beim Wechsel der Perspektive durch. Die Leisten tragen nur Bedienelemente; der Stand eines Bereichs steht in der
+ * Statuszeile der App ({@code statusInfo()} des Bereichs).
+ */
+public final class DeckBars {
+
+    /** Höhe der Kopfleiste samt Linie darunter. */
+    public static final int HEAD_HEIGHT = ChatSidebar.HEAD_HEIGHT;
+    /** Höhe der Fußleiste samt Linie darüber: wie die Fußleiste des Hauptfensters (Lupe, Suchfeld). */
+    public static final int FOOT_HEIGHT = 43;
+    private static final int SIDE = 12;
+    private static final int GAP = 12;
+
+    private DeckBars() {
+    }
+
+    /** Kopfleiste: {@code main} links (Sitzungen, Reiter), {@code tools} rechts; beide dürfen {@code null} sein. */
+    public static JPanel head(JComponent main, JComponent tools) {
+        return bar(main, tools, HEAD_HEIGHT, true);
+    }
+
+    /** Fußleiste: {@code main} links, {@code actions} rechts; beide dürfen {@code null} sein. */
+    public static JPanel foot(JComponent main, JComponent actions) {
+        return bar(main, actions, FOOT_HEIGHT, false);
+    }
+
+    private static JPanel bar(JComponent main, JComponent east, int height, boolean head) {
+        JPanel bar = new JPanel(new Row(main, east, height));
+        bar.setOpaque(false);
+        bar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(head ? 0 : 1, 0, head ? 1 : 0, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(0, SIDE, 0, SIDE)));
+        if (main != null) {
+            bar.add(main);
+        }
+        if (east != null) {
+            bar.add(east);
+        }
+        return bar;
+    }
+
+    /**
+     * Feste Höhe; jedes Element behält seine eigene Höhe und sitzt senkrecht mittig. Rechts steht {@code east} in
+     * seiner Wunschbreite, {@code main} bekommt den Rest.
+     */
+    private record Row(JComponent main, JComponent east, int height) implements LayoutManager {
+
+        @Override
+        public void addLayoutComponent(String name, Component component) {
+        }
+
+        @Override
+        public void removeLayoutComponent(Component component) {
+        }
+
+        @Override
+        public Dimension preferredLayoutSize(Container parent) {
+            Insets insets = parent.getInsets();
+            int width = insets.left + insets.right;
+            if (main != null && main.isVisible()) {
+                width += main.getPreferredSize().width;
+            }
+            if (east != null && east.isVisible()) {
+                width += east.getPreferredSize().width + GAP;
+            }
+            return new Dimension(width, height);
+        }
+
+        @Override
+        public Dimension minimumLayoutSize(Container parent) {
+            Insets insets = parent.getInsets();
+            return new Dimension(insets.left + insets.right, height);
+        }
+
+        @Override
+        public void layoutContainer(Container parent) {
+            Insets insets = parent.getInsets();
+            int top = insets.top;
+            int room = Math.max(0, parent.getHeight() - insets.top - insets.bottom);
+            int right = parent.getWidth() - insets.right;
+            int left = insets.left;
+            if (east != null && east.isVisible()) {
+                Dimension wanted = east.getPreferredSize();
+                int width = Math.min(wanted.width, Math.max(0, right - left));
+                int own = Math.min(room, wanted.height);
+                east.setBounds(right - width, top + (room - own) / 2, width, own);
+                right -= width + GAP;
+            }
+            if (main != null && main.isVisible()) {
+                int own = Math.min(room, main.getPreferredSize().height);
+                main.setBounds(left, top + (room - own) / 2, Math.max(0, right - left), own);
+            }
+        }
+    }
+}

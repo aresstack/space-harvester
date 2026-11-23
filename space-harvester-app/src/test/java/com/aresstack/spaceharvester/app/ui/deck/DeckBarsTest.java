@@ -1,0 +1,76 @@
+package com.aresstack.spaceharvester.app.ui.deck;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.aresstack.spaceharvester.app.ui.controls.StatusLabel;
+import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Container;
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Leisten des Command Deck (Angelo, 23.11.2026): Kopf und Fuß so hoch wie im Space Harvester, die Fußleiste ist eine
+ * Werkzeugleiste und keine Statuszeile; der Stand eines Bereichs steht in der Statuszeile der App.
+ */
+class DeckBarsTest {
+
+    @Test
+    void headAndFootKeepTheirHeightAndCentreWhatTheyCarry() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JButton small = new JButton("a");
+            small.setPreferredSize(new java.awt.Dimension(40, 21));
+            JButton tall = new JButton("b");
+            tall.setPreferredSize(new java.awt.Dimension(60, 90));
+            JPanel head = DeckBars.head(small, tall);
+            assertThat(head.getPreferredSize().height).isEqualTo(DeckBars.HEAD_HEIGHT);
+            head.setSize(400, DeckBars.HEAD_HEIGHT);
+            head.doLayout();
+            int room = DeckBars.HEAD_HEIGHT - 1;
+            // Das kleine Element sitzt mittig in seiner eigenen Höhe, das zu hohe wird auf die Leiste begrenzt.
+            assertThat(small.getHeight()).isEqualTo(21);
+            assertThat(small.getY()).isEqualTo((room - 21) / 2);
+            assertThat(tall.getHeight()).isEqualTo(room);
+            assertThat(tall.getX() + tall.getWidth()).isEqualTo(400 - head.getInsets().right);
+            assertThat(small.getX() + small.getWidth()).isLessThanOrEqualTo(tall.getX());
+            assertThat(DeckBars.foot(null, small).getPreferredSize().height).isEqualTo(DeckBars.FOOT_HEIGHT);
+        });
+    }
+
+    @Test
+    void filesShowTheirStateInTheStatusLineOfTheAppNotInTheFootBar() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            CommandDeck deck = new CommandDeck();
+            try {
+                FilesWorkspace files = deck.files();
+                BorderLayout layout = (BorderLayout) files.getLayout();
+                Component head = layout.getLayoutComponent(BorderLayout.NORTH);
+                Component foot = layout.getLayoutComponent(BorderLayout.SOUTH);
+                assertThat(head.getPreferredSize().height).isEqualTo(DeckBars.HEAD_HEIGHT);
+                assertThat(foot.getPreferredSize().height).isEqualTo(DeckBars.FOOT_HEIGHT);
+                assertThat(labels((Container) foot)).as("kein Statustext in der Werkzeugleiste").isZero();
+                assertThat(files.statusText()).isNotBlank();
+                assertThat(((StatusLabel) files.statusInfo()).getAccessibleContext().getAccessibleName())
+                        .isEqualTo(files.statusText());
+            } finally {
+                deck.shutdown();
+            }
+        });
+    }
+
+    private static int labels(Container root) {
+        int count = 0;
+        for (Component child : root.getComponents()) {
+            if (child instanceof JLabel label && !(child instanceof javax.swing.table.TableCellRenderer)
+                    && label.getText() != null && !label.getText().isBlank() && label.isVisible()) {
+                count++;
+            } else if (child instanceof Container nested && !(child instanceof javax.swing.AbstractButton)) {
+                count += labels(nested);
+            }
+        }
+        return count;
+    }
+}
