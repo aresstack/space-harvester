@@ -67,7 +67,21 @@ public final class CommandDeck {
     private final JPanel tools = new JPanel(new BorderLayout());
     /** Links in der Statuszeile der App: der Stand des gewählten Bereichs, eine Karte je Bereich. */
     private final CardLayout statusCards = new CardLayout();
-    private final JPanel status = new JPanel(statusCards);
+    /**
+     * So breit wie der Stand des gewählten Bereichs: Ein Kartenstapel wäre so breit wie sein breitester, auch
+     * unsichtbarer Stand (etwa ein langer Pfad der Dateien) und nähme dem Stand der Aufträge daneben den Platz.
+     */
+    private final JPanel status = new JPanel(statusCards) {
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            for (java.awt.Component card : getComponents()) {
+                if (card.isVisible()) {
+                    return card.getPreferredSize();
+                }
+            }
+            return new java.awt.Dimension(0, 0);
+        }
+    };
     private final NdvWorkspace ndv;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
@@ -89,6 +103,13 @@ public final class CommandDeck {
      * @param betaViewAccess Netzweg (Proxy, Zertifikate) der App für BetaView; Zugangsdaten kommen aus {@code accounts}
      */
     public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess) {
+        // Das Terminal soll nicht tot bleiben: Trennt der Host, baut es sich neu auf (Einstellung „Neuaufbau“).
+        sessions.autoReconnect(com.aresstack.spaceharvester.deck.terminal.TerminalSessions.Reconnect.standard(
+                () -> TerminalSettings.shared().autoReconnect()), (delay, task) -> {
+                    javax.swing.Timer once = new javax.swing.Timer((int) delay.toMillis(), e -> task.run());
+                    once.setRepeats(false);
+                    once.start();
+                });
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), accounts);

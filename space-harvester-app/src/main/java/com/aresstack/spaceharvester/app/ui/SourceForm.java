@@ -1114,6 +1114,55 @@ final class SourceForm {
         }
     }
 
+    /**
+     * Wie {@link #open(Component, AppContext, Consumer)}, aber mit Art, Feldern und KeePass-Eintrag vorbelegt (etwa
+     * „Indexieren (Regel anlegen)“ im NDV-Bereich des Command Deck). Alles bleibt änderbar.
+     *
+     * @param keePassTitle Titel des KeePass-Eintrags oder leer
+     */
+    static void open(Component parent, AppContext context, String typeId, Map<String, String> options,
+                     String keePassTitle, Consumer<String> saved) {
+        SourceForm form = new SourceForm(context, null);
+        form.preset(typeId, options, keePassTitle);
+        String heading = "Wissensquelle hinzufügen";
+        JDialog dialog = Dialogs.dialog(parent, heading);
+        form.saved = saved;
+        form.close = dialog::dispose;
+        Dialogs.frame(dialog, heading, form.component(), dialog::dispose,
+                new HelpButton(Dialogs.CLOSE_SIZE, HELP_HEADING, HELP_TEXT));
+        dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowOpened(java.awt.event.WindowEvent e) {
+                form.firstField().requestFocusInWindow();
+            }
+
+            @Override
+            public void windowClosed(java.awt.event.WindowEvent e) {
+                form.clearSecret();
+            }
+        });
+        form.root.setPreferredSize(form.preferredSize());
+        Dialogs.present(dialog, new Dimension(560, 420));
+    }
+
+    /** Belegt eine neue Quelle vor: Art, Felder des Typs und (falls angegeben) Zugangsdaten aus diesem KeePass-Eintrag. */
+    void preset(String typeId, Map<String, String> options, String keePassTitle) {
+        types.entrySet().stream().filter(e -> e.getValue().id().equals(typeId)).map(Map.Entry::getKey).findFirst()
+                .ifPresent(kind::setSelectedItem);
+        if (fields.active() && options != null && !options.isEmpty()) {
+            fields.load(SourceFields.fields(selectedType()), options, false, addressOption());
+        }
+        if (keePassTitle != null && !keePassTitle.isBlank()) {
+            origin.setSelectedItem(AiSettingsPanel.KEEPASS);
+            keePassEntry.getEditor().setItem(keePassTitle);
+            keePassEntry.setSelectedItem(keePassTitle);
+        }
+        derive();
+        suggestVariable();
+        updateVisibility();
+        renderNotes();
+    }
+
     /** Der neue Dateitext mit der Quelle; der Proxy für alle Quellen bleibt, wie er ist. */
     private ConfigFileEditor.Draft write(SourceDraft source) throws IOException {
         return editing == null ? editor.draft(context.configFile(), source)

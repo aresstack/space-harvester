@@ -219,4 +219,39 @@ class StatusLineTest {
             }
         }
     }
+
+    /** Reicht die Breite nicht, rutscht kein Teil des Standes über ein anderes (Codex zu #1200). */
+    @Test
+    void partsNeverOverlapWhenTheWidthRunsOut() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JLabel lead = new JLabel("Stand des Bereichs mit einem langen erfundenen Text");
+            JLabel west = new JLabel("Stand der App mit einem ebenso langen erfundenen Text");
+            StatusLine line = new StatusLine(new JProgressBar(), lead, west, new JLabel(" "), new JLabel("©"));
+            for (int width : new int[] {1200, 400, 160, 90}) {
+                line.setSize(width, StatusLine.HEIGHT);
+                layoutAll(line);
+                java.awt.Container left = lead.getParent().getParent();
+                java.awt.Component[] parts = left.getComponents();
+                for (int a = 0; a < parts.length; a++) {
+                    for (int b = a + 1; b < parts.length; b++) {
+                        if (parts[a].isVisible() && parts[b].isVisible() && !parts[a].getBounds().isEmpty()
+                                && !parts[b].getBounds().isEmpty()) {
+                            assertThat(parts[a].getBounds().intersects(parts[b].getBounds()))
+                                    .as("Breite %d: %s über %s", width, parts[a].getBounds(), parts[b].getBounds())
+                                    .isFalse();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private static void layoutAll(java.awt.Container container) {
+        container.doLayout();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof java.awt.Container inner) {
+                layoutAll(inner);
+            }
+        }
+    }
 }

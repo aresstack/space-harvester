@@ -89,12 +89,24 @@ final class StatusLine extends JPanel {
         } else {
             // FlowLayout statt BoxLayout: Es fragt die (von der Breite abhängigen) Größen jedes Mal neu ab.
             JPanel left = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0)) {
-                /** FlowLayout setzt die Zeile oben an; hier sitzt jedes Teil senkrecht mittig in der Statuszeile. */
+                /**
+                 * FlowLayout setzt die Zeile oben an; hier sitzt jedes Teil der ersten Zeile senkrecht mittig in der
+                 * Statuszeile. Was bei zu wenig Breite in eine weitere Zeile umbricht, liegt unter dem sichtbaren
+                 * Rand, statt über die erste Zeile zu rutschen.
+                 */
                 @Override
                 public void doLayout() {
                     super.doLayout();
+                    int right = Integer.MIN_VALUE;
+                    boolean wrapped = false;
                     for (java.awt.Component part : getComponents()) {
-                        part.setLocation(part.getX(), Math.max(0, (getHeight() - part.getHeight()) / 2));
+                        if (!part.isVisible()) {
+                            continue;
+                        }
+                        wrapped |= part.getX() < right;
+                        right = part.getX() + part.getWidth();
+                        part.setLocation(part.getX(),
+                                wrapped ? getHeight() : Math.max(0, (getHeight() - part.getHeight()) / 2));
                     }
                 }
             };

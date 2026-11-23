@@ -122,6 +122,9 @@ class FtpWorkspaceTest {
             assertThat(profile.retry().replyCodes()).containsExactlyInAnyOrder(421, 426);
             assertThat(profile.spoolNaming().mode()).isEqualTo(SpoolNaming.Mode.PROBE);
             assertThat(profile.spoolNaming().connections()).isEqualTo(3);
+            assertThat(profile.useProxy()).as("Vorgabe: Proxy wie bisher").isTrue();
+            form.useProxy.setSelected(false);
+            assertThat(form.profile().useProxy()).isFalse();
             form.attempts.setText("viele");
             form.submit();
             assertThat(form.problemText()).contains("Versuche");
