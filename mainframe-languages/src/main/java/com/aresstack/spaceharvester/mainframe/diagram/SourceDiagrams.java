@@ -71,6 +71,15 @@ public final class SourceDiagrams {
      */
     public static Result generate(String content, String sourceName, Optional<SourceLanguage> language,
             DiagramType type, int mindmapDepth, boolean collapsed, SourceResolver resolver) {
+        return generate(content, sourceName, language, type, mindmapDepth, collapsed, true, resolver);
+    }
+
+    /**
+     * Wie oben; mit {@code autoCollapse = false} gilt {@code collapsed} genau so, wie verlangt, auch bei großen
+     * Quelltexten (ausdrücklich „Details einblenden“, Export des vollständigen Diagramms).
+     */
+    public static Result generate(String content, String sourceName, Optional<SourceLanguage> language,
+            DiagramType type, int mindmapDepth, boolean collapsed, boolean autoCollapse, SourceResolver resolver) {
         if (content == null || content.isEmpty()) {
             return new Result(Optional.empty(), type, collapsed);
         }
@@ -111,7 +120,7 @@ public final class SourceDiagrams {
             ddms = resolveDdms(model, resolver);
         }
 
-        boolean compact = collapsed || OutlineToMermaidConverter.shouldCollapse(model);
+        boolean compact = collapsed || autoCollapse && OutlineToMermaidConverter.shouldCollapse(model);
         String result = OutlineToMermaidConverter.convert(model, type, callTree, ddms, compact);
         DiagramType produced = type;
         if (result == null && type != DiagramType.STRUCTURE) {

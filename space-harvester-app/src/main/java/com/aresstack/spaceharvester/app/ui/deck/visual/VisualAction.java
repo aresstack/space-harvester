@@ -80,6 +80,9 @@ public final class VisualAction {
             button.marked(false);
             button.setToolTipText(SHOW);
             editor.showText();
+            if (view != null) {
+                view.dispose();
+            }
             refresh();
             return;
         }
@@ -87,7 +90,15 @@ public final class VisualAction {
         button.marked(true);
         button.setToolTipText(BACK);
         // Bei jedem Öffnen neu: Text und Sprache können sich seit dem letzten Mal geändert haben
+        if (view != null) {
+            view.dispose();
+        }
         view = new DiagramView(editor, editors);
+        view.onBack(() -> {
+            if (active) {
+                toggle();
+            }
+        });
         editor.showInCenter(view);
         view.generate();
     }

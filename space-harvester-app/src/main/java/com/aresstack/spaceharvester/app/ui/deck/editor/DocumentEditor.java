@@ -307,6 +307,11 @@ public final class DocumentEditor extends JPanel {
         return panel;
     }
 
+    /** Meldet eine Gliederung aus {@link #outlineView} wieder ab (die Diagramm-Ansicht ist weg). */
+    public void releaseOutlineView(JComponent view) {
+        extraOutlines.remove(view);
+    }
+
     /** Ob der Text gerade bearbeitet werden darf. */
     public boolean editable() {
         return area.isEditable();

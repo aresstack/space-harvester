@@ -151,6 +151,8 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
             showCollapse();
             collapseToggle.addActionListener(e -> {
                 collapsed = collapseToggle.isSelected();
+                // ausdrücklich gewählt: „Details einblenden“ gilt auch für große Quelltexte
+                autoCollapse = false;
                 AppState.shared().put(COLLAPSED_KEY, collapsed);
                 showCollapse();
                 generate();
@@ -229,6 +231,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
         JComponent center = Comic.scroll(body);
         if (!mermaid) {
             JComponent outline = editor.outlineView(this::showElement);
+            registeredOutline = outline;
             JSplitPane parts = new JSplitPane(JSplitPane.VERTICAL_SPLIT, center, outline);
             parts.setResizeWeight(0.5);
             parts.setBorder(BorderFactory.createEmptyBorder());
@@ -295,6 +298,37 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
         }
     }
 
+    private JComponent registeredOutline;
+    /** Nur die erste Erzeugung darf große Quelltexte von sich aus kompakt zeigen. */
+    private boolean autoCollapse = true;
+
+    private Runnable back;
+
+    /** Was „Zurück zum Text“ tut (VisualAction: Knopf zurücksetzen und diese Ansicht freigeben). */
+    void onBack(Runnable action) {
+        back = action;
+    }
+
+    private void goBack() {
+        if (back != null) {
+            back.run();
+        } else {
+            editor.showText();
+        }
+    }
+
+    /**
+     * Die Ansicht wird nicht mehr gebraucht (zurück zum Text oder ersetzt): Gliederung abmelden, damit der Editor weder
+     * sie noch dieses Diagramm (Bild, SVG, Kacheln) festhält; laufende Erzeugung verwerfen.
+     */
+    void dispose() {
+        if (registeredOutline != null) {
+            editor.releaseOutlineView(registeredOutline);
+            registeredOutline = null;
+        }
+        ticket++;
+    }
+
     // ---- Erzeugen --------------------------------------------------------------------------------------------------
 
     /** Erzeugt das Diagramm aus dem aktuellen Text neu (im Hintergrund) und zeichnet es. */
@@ -308,6 +342,9 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
         DiagramType wanted = type;
         int depth = mindmapDepth;
         boolean compact = collapsed;
+        boolean auto = autoCollapse;
+        // Große Quelltexte nur beim Öffnen automatisch kompakt (wie MainframeMate), danach entscheidet der Schalter
+        autoCollapse = false;
         new SwingWorker<SourceDiagrams.Result, Void>() {
             @Override
             protected SourceDiagrams.Result doInBackground() {
@@ -317,7 +354,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
                             wanted, false);
                 }
                 VisualAction.takeLabelProblem();
-                return SourceDiagrams.generate(text, name, language, wanted, depth, compact, targets);
+                return SourceDiagrams.generate(text, name, language, wanted, depth, compact, auto, targets);
             }
 
             @Override
@@ -331,13 +368,13 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
                 } catch (Exception e) {
                     Throwable cause = e.getCause() == null ? e : e.getCause();
                     diagram.setMermaidSource(null);
-                    plate.show("Diagramm nicht erzeugbar: " + cause.getMessage(), "Zurück zum Text", editor::showText);
+                    plate.show("Diagramm nicht erzeugbar: " + cause.getMessage(), "Zurück zum Text", DiagramView.this::goBack);
                     return;
                 }
                 if (result.mermaid().isEmpty()) {
                     diagram.setMermaidSource(null);
                     plate.show("Kein Diagramm erzeugbar – die Datei enthält keine erkennbare Struktur.",
-                            "Zurück zum Text", editor::showText);
+                            "Zurück zum Text", DiagramView.this::goBack);
                     return;
                 }
                 if (!mermaid && result.collapsed() != collapsed) {
@@ -440,7 +477,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
         Runnable fullRegenerator = mermaid ? null : () -> {
             // Vollständiges (nicht kompaktes) Diagramm für den Export, wie MainframeMate
             SourceDiagrams.Result full = SourceDiagrams.generate(editor.text(), editor.session().name(),
-                    editor.language(), type, mindmapDepth, false, targets);
+                    editor.language(), type, mindmapDepth, false, false, targets);
             full.mermaid().ifPresent(diagram::setMermaidSource);
         };
         Frame owner = (Frame) SwingUtilities.getAncestorOfClass(Frame.class, this);

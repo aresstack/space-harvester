@@ -49,14 +49,16 @@ final class CallTargets implements SourceResolver {
         if (targetName == null || targetName.isBlank()) {
             return false;
         }
-        if (openSession(targetName).isPresent()) {
+        Optional<EditorSession> open = openSession(targetName);
+        if (open.isPresent()) {
+            editors.reveal(open.get());
             return true;
         }
         for (String location : candidates(targetName)) {
             try {
                 String name = origin.store().load(location).name();
                 if (editors != null) {
-                    editors.open(origin.store(), location, name);
+                    editors.reveal(editors.open(origin.store(), location, name));
                     return true;
                 }
             } catch (DocumentException | RuntimeException e) {
@@ -84,11 +86,39 @@ final class CallTargets implements SourceResolver {
                 .findFirst();
     }
 
-    /** Diagramm-Labels tragen oft Zusätze („CALLNAT PROG1“, Anführungszeichen, Zeilenumbrüche): nur der Name zählt. */
+    /** Wörter, die in Knoten-Beschriftungen vor oder nach dem Namen stehen, aber selbst kein Ziel sind. */
+    private static final java.util.Set<String> KEYWORDS = java.util.Set.of("CALLNAT", "CALL", "FETCH", "RETURN",
+            "PERFORM", "EXEC", "LINK", "RUN", "USING", "INCLUDE", "COPY", "PROC", "PGM", "DDM", "VIEW", "OF", "STEP");
+    private static final java.util.regex.Pattern PGM = java.util.regex.Pattern.compile(
+            "PGM=([A-Za-z0-9$#@_-]+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Der Name des Ziels aus der Knoten-Beschriftung des Konverters: „CALLNAT PROG1“, „SUBPROG\n(CALLNAT)“,
+     * „STEP1\nPGM=IEFBR14“ (dann das Programm), Anführungszeichen, Symbole. Genommen wird das letzte Wort der ersten
+     * Zeile, die nach Abzug von Schlüsselwörtern und Klammerzusätzen noch eines hat.
+     */
     static String clean(String label) {
-        String text = label.replace("\\n", " ").replace('"', ' ').replace('\'', ' ').trim();
-        String[] words = text.split("\\s+");
-        return words.length == 0 ? "" : words[words.length - 1];
+        if (label == null) {
+            return "";
+        }
+        String text = label.replace("\\n", "\n").replace("<br/>", "\n").replace("<br>", "\n");
+        java.util.regex.Matcher pgm = PGM.matcher(text);
+        if (pgm.find()) {
+            return pgm.group(1);
+        }
+        for (String line : text.split("\\r?\\n")) {
+            String found = null;
+            for (String word : line.replaceAll("\\([^)]*\\)", " ").split("[\\s\"']+")) {
+                String name = word.replaceAll("[^A-Za-z0-9$#@_.-]", "");
+                if (!name.isEmpty() && !KEYWORDS.contains(name.toUpperCase(Locale.ROOT))) {
+                    found = name;
+                }
+            }
+            if (found != null) {
+                return found;
+            }
+        }
+        return "";
     }
 
     private static String base(String name) {

@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class DdmErDiagramTest {
 
-    private static final String EMPLOYEES_DDM =
+    static final String EMPLOYEES_DDM =
             "DB: 010 FILE: 001  - EMPLOYEES                   DEFAULT SEQUENCE: AA\n" +
             "\n" +
             "  T L  DB ---- NAME -------------------  F  LENG  S D REMARK\n" +

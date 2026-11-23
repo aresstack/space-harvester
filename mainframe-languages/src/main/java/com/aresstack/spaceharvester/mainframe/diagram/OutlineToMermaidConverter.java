@@ -525,11 +525,13 @@ public final class OutlineToMermaidConverter {
             if (target == null) target = call.getName();
             if (target == null) continue;
 
-            String callId = safeId("EXT_" + target, usedIds);
             String edgeLabel = call.getType().getDisplayName();
 
-            // Only create node if not already created
-            if (!usedIds.contains(normalizeId("EXT_" + target))) {
+            // Knoten nur beim ersten Verweis anlegen (vorher prüfen, dann die ID reservieren); weitere Verweise auf
+            // dasselbe Ziel nutzen dieselbe ID
+            String callId = normalizeId("EXT_" + target);
+            if (!usedIds.contains(callId)) {
+                callId = safeId("EXT_" + target, usedIds);
                 sb.append("    ").append(callId).append(">\"").append(esc(target)).append("\"]\n");
                 if (isSysFunc(target, sysFuncs)) {
                     styleSysFunc(sb, callId);
@@ -545,10 +547,11 @@ public final class OutlineToMermaidConverter {
             if (file == null) file = db.getName();
             if (file == null) continue;
 
-            String dbId = safeId("DB_" + file, usedIds);
             String op = db.getType().getDisplayName();
 
-            if (!usedIds.contains(normalizeId("DB_" + file))) {
+            String dbId = normalizeId("DB_" + file);
+            if (!usedIds.contains(dbId)) {
+                dbId = safeId("DB_" + file, usedIds);
                 sb.append("    ").append(dbId).append("[(\"").append(esc(file)).append("\")]\n");
             }
             sb.append("    ").append(rootId).append(" ==>|").append(op).append("| ")
@@ -679,16 +682,32 @@ public final class OutlineToMermaidConverter {
                 String falseBranch = null;
                 String mergeId = safeId("MERGE_" + (i + 1), usedIds);
 
+                // Grenzen dieses IF (verschachtelte IF/ENDIF mitgezählt): eigenes ELSE und passendes ENDIF
+                int elseAt = -1;
+                int endAt = all.size() - 1;
+                int depth = 0;
+                for (int j = i + 1; j < all.size(); j++) {
+                    JclElementType t = all.get(j).getType();
+                    if (t == JclElementType.IF) {
+                        depth++;
+                    } else if (t == JclElementType.ENDIF) {
+                        if (depth == 0) {
+                            endAt = j;
+                            break;
+                        }
+                        depth--;
+                    } else if (t == JclElementType.ELSE && depth == 0 && elseAt < 0) {
+                        elseAt = j;
+                    }
+                }
+                if (elseAt >= 0) {
+                    falseBranch = condId;
+                }
+
                 // Steps between IF and ELSE/ENDIF → true branch
                 String trueEnd = trueBranch;
-                for (int j = i + 1; j < all.size(); j++) {
+                for (int j = i + 1; j < (elseAt >= 0 ? elseAt : endAt); j++) {
                     JclElement next = all.get(j);
-                    if (next.getType() == JclElementType.ELSE || next.getType() == JclElementType.ENDIF) {
-                        if (next.getType() == JclElementType.ELSE) {
-                            falseBranch = condId;
-                        }
-                        break;
-                    }
                     if (next.getType() == JclElementType.EXEC && stepIdx < steps.size()) {
                         JclElement step = steps.get(stepIdx++);
                         String label = step.getName() != null ? step.getName() : "(Step)";
@@ -703,12 +722,9 @@ public final class OutlineToMermaidConverter {
                 // ELSE branch
                 if (falseBranch != null) {
                     String falseEnd = condId;
-                    boolean inElse = false;
-                    for (int j = i + 1; j < all.size(); j++) {
+                    for (int j = elseAt + 1; j < endAt; j++) {
                         JclElement next = all.get(j);
-                        if (next.getType() == JclElementType.ELSE) { inElse = true; continue; }
-                        if (next.getType() == JclElementType.ENDIF) break;
-                        if (inElse && next.getType() == JclElementType.EXEC && stepIdx < steps.size()) {
+                        if (next.getType() == JclElementType.EXEC && stepIdx < steps.size()) {
                             JclElement step = steps.get(stepIdx++);
                             String label = step.getName() != null ? step.getName() : "(Step)";
                             String stepId = safeId("STEP_" + label, usedIds);
@@ -724,6 +740,9 @@ public final class OutlineToMermaidConverter {
 
                 sb.append("    ").append(mergeId).append("(( ))\n"); // merge point (circle)
                 prevId = mergeId;
+                // Die Schritte im IF-Block sind verbraucht: hinter dem passenden ENDIF weiter, sonst zählten sie
+                // noch einmal als unbedingte Schritte
+                i = endAt;
 
             } else if (e.getType() == JclElementType.EXEC) {
                 // Regular step (not inside IF)
@@ -1347,6 +1366,62 @@ public final class OutlineToMermaidConverter {
     // ═══════════════════════════════════════════════════════════
 
     /**
+     * Ergänzt das ER-Diagramm der aufgelösten DDMs um Platzhalter für VIEW-OF-Verweise, deren DDM nicht aufzulösen war
+     * (sonst verschwänden sie, sobald irgendein anderes DDM gefunden wird), samt „gemeinsam genutzt“-Beziehung.
+     */
+    private static String withUnresolvedViews(String rendered,
+            List<com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition> ddmDefs,
+            JclOutlineModel model) {
+        if (rendered == null || model == null) {
+            return rendered;
+        }
+        Set<String> resolved = new LinkedHashSet<String>();
+        for (com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition d : ddmDefs) {
+            if (d.getName() != null) {
+                resolved.add(d.getName().toUpperCase());
+            }
+        }
+        Map<String, List<String>> missing = new LinkedHashMap<String, List<String>>();
+        for (JclElement elem : model.getElements()) {
+            if (elem.getType() != JclElementType.NAT_DATA_VIEW) {
+                continue;
+            }
+            String ddmRef = elem.getParameter("OF");
+            if (ddmRef == null || ddmRef.isEmpty() || resolved.contains(ddmRef.toUpperCase())) {
+                continue;
+            }
+            List<String> views = missing.get(ddmRef.toUpperCase());
+            if (views == null) {
+                views = new ArrayList<String>();
+                missing.put(ddmRef.toUpperCase(), views);
+            }
+            if (elem.getName() != null && !elem.getName().isEmpty()) {
+                views.add(elem.getName().toUpperCase());
+            }
+        }
+        if (missing.isEmpty()) {
+            return rendered;
+        }
+        StringBuilder sb = new StringBuilder(rendered);
+        if (sb.length() > 0 && sb.charAt(sb.length() - 1) != '\n') {
+            sb.append('\n');
+        }
+        for (Map.Entry<String, List<String>> entry : missing.entrySet()) {
+            String entity = sanitizeEntityName(entry.getKey());
+            sb.append("    ").append(entity).append(" {\n");
+            for (String view : entry.getValue()) {
+                sb.append("        string ").append(sanitizeAttrName(view)).append(" \"VIEW\"\n");
+            }
+            sb.append("    }\n\n");
+            for (String other : resolved) {
+                sb.append("    ").append(sanitizeEntityName(other)).append(" }o--o{ ").append(entity)
+                        .append(" : \"gemeinsam genutzt\"\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
      * Convert an outline model (Natural) to an ER diagram by extracting VIEW references
      * and rendering available DDM definitions as entities.
      * If ddmDefs are provided, render them. Otherwise extract VIEW OF references and
@@ -1356,7 +1431,7 @@ public final class OutlineToMermaidConverter {
                                             List<com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition> ddmDefs) {
         // If we have resolved DDM definitions, render them
         if (ddmDefs != null && !ddmDefs.isEmpty()) {
-            return convertDdmDefsToErDiagram(ddmDefs, model);
+            return withUnresolvedViews(convertDdmDefsToErDiagram(ddmDefs, model), ddmDefs, model);
         }
 
         // Fallback: extract VIEW OF references from the Natural program
