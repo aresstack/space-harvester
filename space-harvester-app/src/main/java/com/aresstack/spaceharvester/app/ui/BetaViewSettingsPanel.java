@@ -10,7 +10,7 @@ import javax.swing.JPanel;
 import javax.swing.JTextField;
 
 /**
- * Einstellungen › BetaView: Platte „Verbindung“ (Proxy der App ja/nein, Vorgabe nein wie MainframeMate) und Platte
+ * Einstellungen › BetaView: Platte „Verbindung“ (Proxy der App ja/nein, Vorgabe ja) und Platte
  * „Standard-Suchfilter“ wie in MainframeMate: Favorite ID, Locale, Extension, Form,
  * Tage zurück. Eine Änderung (Enter oder Verlassen des Felds) wird sofort gespeichert und gilt für die nächste
  * Suchmaske; „Vorgaben“ setzt die Werte von MainframeMate. Nur auf dem EDT.
@@ -21,7 +21,7 @@ public final class BetaViewSettingsPanel {
     public static final String CONNECTION_HEADING = "Verbindung";
     static final String USE_PROXY_TEXT = "Proxy der App verwenden";
 
-    /** Wie MainframeMate geht BetaView als Vorgabe direkt zum Server, ohne den Proxy der App. */
+    /** Vorgabe an: BetaView geht über den Proxy der App; aus = direkt wie MainframeMate. */
     final JCheckBox useProxy = Comic.checkBox(USE_PROXY_TEXT);
     private final JPanel connection = new JPanel(new BorderLayout(0, 6));
 
@@ -68,8 +68,8 @@ public final class BetaViewSettingsPanel {
         south.add(feedback, BorderLayout.CENTER);
         component.add(south, BorderLayout.SOUTH);
         useProxy.setOpaque(false);
-        useProxy.setToolTipText("<html>Aus (Vorgabe, wie MainframeMate): BetaView verbindet sich direkt mit dem Server."
-                + "<br>An: über den Proxy aus Einstellungen › Netzwerk. Gilt ab der nächsten Verbindung.</html>");
+        useProxy.setToolTipText("<html>An (Vorgabe): über den Proxy aus Einstellungen › Netzwerk."
+                + "<br>Aus: BetaView verbindet sich direkt mit dem Server. Gilt ab der nächsten Verbindung.</html>");
         useProxy.addActionListener(e -> {
             com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.useProxy(useProxy.isSelected());
             feedback.success(useProxy.isSelected() ? "BetaView verbindet sich ab der nächsten Verbindung über den "

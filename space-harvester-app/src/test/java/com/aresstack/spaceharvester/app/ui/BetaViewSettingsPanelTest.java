@@ -43,18 +43,18 @@ class BetaViewSettingsPanelTest {
     }
 
     @Test
-    void betaViewConnectsDirectlyUnlessTheAppProxyIsSwitchedOn() throws Exception {
+    void betaViewUsesTheAppProxyUnlessSwitchedOff() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             AppState.shared().put(BetaViewAccess.USE_PROXY, (String) null);
-            // Vorgabe wie MainframeMate: kein Proxy.
-            assertThat(BetaViewAccess.useProxy()).isFalse();
+            // Vorgabe: Proxy der App (so läuft BetaView beim Anwender).
+            assertThat(BetaViewAccess.useProxy()).isTrue();
             BetaViewSettingsPanel panel = new BetaViewSettingsPanel();
-            assertThat(panel.useProxy.isSelected()).isFalse();
+            assertThat(panel.useProxy.isSelected()).isTrue();
+            panel.useProxy.doClick();
+            assertThat(BetaViewAccess.useProxy()).isFalse();
+            assertThat(new BetaViewSettingsPanel().useProxy.isSelected()).isFalse();
             panel.useProxy.doClick();
             assertThat(BetaViewAccess.useProxy()).isTrue();
-            assertThat(new BetaViewSettingsPanel().useProxy.isSelected()).isTrue();
-            panel.useProxy.doClick();
-            assertThat(BetaViewAccess.useProxy()).isFalse();
         });
     }
 }
