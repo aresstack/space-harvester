@@ -219,9 +219,24 @@ class UpdatePodcastsTest {
 
         podcasts.start(caller, summary);
 
-        assertThat(podcasts.statements(summary, 0)).as("Einstieg").isEmpty();
+        // Einstieg und Abschluss erzählen den Überblick: markiert wird der Überblickstext (Angelo 23.11.2026)
+        assertThat(podcasts.statements(summary, 0)).as("Einstieg").containsExactly(UpdatePodcasts.OVERVIEW);
         assertThat(podcasts.statements(summary, 1)).containsExactly(1);
+        assertThat(podcasts.statements(summary, 2)).as("Abschluss").containsExactly(UpdatePodcasts.OVERVIEW);
         assertThat(podcasts.statements(summary, 7)).isEmpty();
+    }
+
+    @Test
+    void leavesTheIntroUnmarkedWhenTheSummaryHasNoOverviewText() throws Exception {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        UpdateSummary summary = new UpdateSummary("wiki", "u-1", "DEMO", " ",
+                List.of(new SummaryStatement("Das Projekt Nordlicht hat eine neue Startseite.", List.of())),
+                "test", Instant.parse("2026-11-21T17:00:00Z"), 0, false);
+
+        podcasts.start(caller, summary);
+
+        assertThat(podcasts.statements(summary, 0)).as("Einstieg ohne Überblick").isEmpty();
+        assertThat(podcasts.statements(summary, 1)).containsExactly(0);
     }
 
     @Test

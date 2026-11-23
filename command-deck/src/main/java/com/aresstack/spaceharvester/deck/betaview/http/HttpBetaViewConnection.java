@@ -251,6 +251,30 @@ final class HttpBetaViewConnection implements BetaViewConnection {
         http.getText("closeAllDocuments.action");
     }
 
+    @Override
+    public String notes() throws IOException {
+        return BetaViewHtml.notes(http.getText("document.notes.list.action"));
+    }
+
+    @Override
+    public String markedRanges() throws IOException {
+        return BetaViewHtml.markedRanges(http.getText("holdhide.list.action"));
+    }
+
+    @Override
+    public String searchText(String query) throws IOException {
+        Map<String, String> form = new LinkedHashMap<>();
+        form.put("searchString", query);
+        form.put("caseSensitive", "false");
+        form.put("searchType", "contains");
+        return BetaViewHtml.plainText(http.postText("document.search.action", form));
+    }
+
+    @Override
+    public String printInfo() throws IOException {
+        return BetaViewHtml.printInfo(http.getText("printDialog.action?&init=yes&source=docbrowser"));
+    }
+
     /** Ein Formular nur mit dem CSRF-Token, wie MainframeMate es für Listen schickt. */
     private Map<String, String> csrfForm() {
         Map<String, String> form = new LinkedHashMap<>();

@@ -1,0 +1,50 @@
+// Großrechner-Sprachen aus MainframeMate (#1142): Parser für JCL (ANTLR-Grammatik), COBOL, Natural und Natural-DDM,
+// die Gliederung (Outline) und die Sprachwahl in ...mainframe.parser/.model/.outline (ohne Swing), dazu die
+// RSyntaxTextArea-Hervorhebung in ...mainframe.syntax. Nutzt der gemeinsame Editor des Command Deck.
+plugins {
+    id 'java-library'
+    id 'antlr'
+}
+
+description = 'Parser und Hervorhebung für JCL, COBOL und Natural (aus MainframeMate).'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+// Das ANTLR-Werkzeug nur zum Erzeugen, nicht im Laufzeit-Klassenpfad (bekannte Eigenheit des antlr-Plugins)
+configurations {
+    api {
+        extendsFrom = extendsFrom.findAll { it != configurations.antlr }
+    }
+}
+
+dependencies {
+    antlr libs.antlr
+    implementation libs.antlr.runtime
+    // nur das Paket ...mainframe.syntax
+    api libs.rsyntaxtextarea
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation platform(libs.spring.boot.dependencies)
+    testImplementation 'org.assertj:assertj-core'
+    testImplementation libs.archunit.junit5
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('generateGrammarSource') {
+    arguments += ['-visitor', '-listener', '-package', 'com.aresstack.spaceharvester.mainframe.parser']
+    // Grammatiken flach in src/main/antlr (sonst findet JCLParser die Token-Datei des Lexers nicht), Ausgabe ins Paket
+    outputDirectory = layout.buildDirectory.dir('generated-src/antlr/main/com/aresstack/spaceharvester/mainframe/parser').get().asFile
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

@@ -39,7 +39,9 @@ public final class CommandDeck {
 
     private final ExecutorService connecting = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("command-deck-", 0).factory());
-    private final TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(), connecting);
+    /** Die Aktionsverzögerung (Anmeldung, Lesezeichen-Makro) kommt live aus Einstellungen › Terminal. */
+    private final TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(), connecting,
+            new com.aresstack.spaceharvester.deck.terminal.LoginScript(() -> TerminalSettings.shared().actionDelay()));
     private final CardLayout cards = new CardLayout();
     private final JPanel workspace = new JPanel(cards);
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
@@ -49,7 +51,13 @@ public final class CommandDeck {
     private final BetaViewWorkspace betaView;
     /** Gemeinsamer Editor aller Bereiche (Dateien, NDV, später FTP); die Dokumente überleben jeden Wechsel. */
     private final com.aresstack.spaceharvester.deck.editor.EditorSessions editors =
-            new com.aresstack.spaceharvester.deck.editor.EditorSessions(connecting);
+            new com.aresstack.spaceharvester.deck.editor.EditorSessions(connecting, new HistoryDelegate());
+    /** Lokaler Verlauf des Editors (Vergleich mit früheren Versionen); ohne Ort keiner (Tests). */
+    private volatile com.aresstack.spaceharvester.deck.editor.VersionHistory history =
+            com.aresstack.spaceharvester.deck.editor.VersionHistory.NONE;
+    /** SharePoint-Sites für „Orte“ im Bereich Dateien (aus den Quellen der Einstellungen). */
+    private volatile java.util.function.Supplier<java.util.List<
+            com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite>> sharePointSites = java.util.List::of;
     private final FilesWorkspace files;
     /** Freigegebene Ordner aus Einstellungen › Dateizugriff, als Orte im Bereich Dateien. */
     private volatile java.util.function.Supplier<java.util.List<java.nio.file.Path>> sharedFolders = java.util.List::of;
@@ -83,7 +91,11 @@ public final class CommandDeck {
                 connecting), accounts);
         files = new FilesWorkspace(new com.aresstack.spaceharvester.deck.files.FileBrowser(
                 new com.aresstack.spaceharvester.deck.files.local.LocalFileSource(() -> sharedFolders.get()),
-                connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore());
+                connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore(),
+                new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore(),
+                new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointAccess(
+                        new com.aresstack.spaceharvester.deck.files.sharepoint.windows.NetUseLogin(), connecting),
+                () -> sharePointSites.get(), accounts);
         ftp = new FtpWorkspace(ftpSessions, accounts, editors);
         tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts, editors);
@@ -184,6 +196,35 @@ public final class CommandDeck {
     /** Woher der Bereich Dateien die freigegebenen Ordner (Einstellungen › Dateizugriff) als Orte nimmt. */
     public void sharedFolders(java.util.function.Supplier<java.util.List<java.nio.file.Path>> folders) {
         sharedFolders = folders == null ? java.util.List::of : folders;
+    }
+
+    /** Wo der Editor frühere Versionen aufbewahrt (Vergleich); ohne Aufruf kein Verlauf. */
+    public void history(com.aresstack.spaceharvester.deck.editor.VersionHistory versions) {
+        history = versions == null ? com.aresstack.spaceharvester.deck.editor.VersionHistory.NONE : versions;
+    }
+
+    /** Woher der Bereich Dateien die SharePoint-Sites für „Orte“ nimmt. */
+    public void sharePointSites(java.util.function.Supplier<java.util.List<
+            com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite>> sites) {
+        sharePointSites = sites == null ? java.util.List::of : sites;
+    }
+
+    /** Reicht an den gerade gesetzten Verlauf weiter (er kommt erst nach dem Bau aus der App). */
+    private final class HistoryDelegate implements com.aresstack.spaceharvester.deck.editor.VersionHistory {
+        @Override
+        public void record(String store, String location, String text, String label) {
+            history.record(store, location, text, label);
+        }
+
+        @Override
+        public java.util.List<Version> versions(String store, String location) {
+            return history.versions(store, location);
+        }
+
+        @Override
+        public java.util.Optional<String> content(String store, String location, String id) {
+            return history.content(store, location, id);
+        }
     }
 
     FilesWorkspace files() {

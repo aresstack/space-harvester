@@ -178,7 +178,7 @@ final class ChatTools {
     static List<AiChat.Tool> definitions() {
         return List.of(
                 new AiChat.Tool(SEARCH, "Sucht im gewählten Bereich nach Stichworten und liefert die besten Treffer "
-                        + "mit Kennung, Titel und kurzem Auszug. Den ganzen Text danach mit " + READ + " holen.",
+                        + "mit Kennung und Titel, ohne Text. Den Text einer Seite danach mit " + READ + " holen.",
                         "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\","
                                 + "\"description\":\"Suchbegriffe\"}},\"required\":[\"text\"]}"),
                 new AiChat.Tool(LIST, "Listet die Seiten des gewählten Bereichs wie einen Baum: ohne knoten die "
@@ -680,6 +680,11 @@ final class ChatTools {
 
     // ------------------------------------------------------------------ Suche
 
+    /**
+     * Die Trefferliste: nur Kennung und Titel, nie ein Auszug aus dem Seitentext (Angelo 22.11.2026: „Die Suche zählt
+     * dafür ja nicht“). Eine Suche trägt darum nichts auf die Liste freigegebener Seiten ein; den Text einer Seite holt
+     * das Modell mit {@link #READ}, und erst dann kommt sie auf die Liste.
+     */
     String search(String text) {
         if (scope == null || scope.pages().isEmpty()) {
             return "Es ist kein Bereich gewählt.";
@@ -701,24 +706,6 @@ final class ChatTools {
             }
             b.append("- ").append(ref(key)).append(" | ").append(oneLine(hit.title() == null ? hit.pageId()
                     : hit.title()));
-            if (hit.snippet() != null && !hit.snippet().isBlank()) {
-                // Der Auszug geht nur hinaus, wenn die Seite vorher eingetragen ist; sonst nur der Titel.
-                String spaceKey = hit.spaceKey() != null ? hit.spaceKey() : spaceOf(key);
-                String reason = spaceKey == null ? "ohne Space" : null;
-                if (reason == null) {
-                    try {
-                        release(spaceKey, key);
-                    } catch (ReleaseFailed failed) {
-                        reason = failed.reason();
-                        diagnosis.accept("Chat-Werkzeug " + SEARCH + ": Freigabe gescheitert: " + reason);
-                    }
-                }
-                if (reason == null) {
-                    b.append(" | ").append(oneLine(ChatKnowledge.excerpt(hit.snippet(), 300)));
-                } else {
-                    b.append(" | (Auszug nicht freigegeben: ").append(reason).append(')');
-                }
-            }
             b.append('\n');
             if (seen.size() >= SEARCH_HITS) {
                 break;

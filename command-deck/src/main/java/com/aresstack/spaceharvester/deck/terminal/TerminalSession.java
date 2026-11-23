@@ -23,6 +23,12 @@ public final class TerminalSession {
     private String note;
     /** Der KI-Maskenassistent dieser Sitzung (#1151); er sieht nur den Port {@link TerminalMask}. */
     private final MaskAssistant assistant = new MaskAssistant(this, () -> view(TerminalMask.class));
+    /** Was der Mensch eingibt, als Makro für Lesezeichen (läuft immer, wie in MainframeMate). */
+    private final TerminalMacro macro = new TerminalMacro();
+    /** Woher die Anmeldung kam (liest erst beim Aufruf, hält kein Geheimnis) – für „Neu verbinden“. */
+    private volatile TerminalSessions.LoginSource loginSource;
+    /** Das Makro, das nach dem Verbinden abgespielt wurde (Lesezeichen) – für „Neu verbinden“. */
+    private volatile List<TerminalMacro.Step> replay = List.of();
 
     TerminalSession(String id, TerminalProfile profile) {
         this.id = Objects.requireNonNull(id, "id");
@@ -95,6 +101,26 @@ public final class TerminalSession {
      */
     public MaskAssistant assistant() {
         return assistant;
+    }
+
+    /** Die Aufzeichnung der Eingaben dieser Sitzung (Verlauf, Lesezeichen). */
+    public TerminalMacro macro() {
+        return macro;
+    }
+
+    /** Die Anmeldung, mit der die Sitzung geöffnet wurde; {@code null} ohne automatische Anmeldung. */
+    public TerminalSessions.LoginSource loginSource() {
+        return loginSource;
+    }
+
+    /** Das nach dem Verbinden abgespielte Makro (leer ohne Lesezeichen). */
+    public List<TerminalMacro.Step> replay() {
+        return replay;
+    }
+
+    void origin(TerminalSessions.LoginSource login, List<TerminalMacro.Step> steps) {
+        loginSource = login;
+        replay = steps == null ? List.of() : List.copyOf(steps);
     }
 
     /** Meldet künftige Zustandswechsel. */

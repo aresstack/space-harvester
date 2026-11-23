@@ -94,6 +94,8 @@ public final class ActivitiesView implements View {
     private final Map<JobType, java.time.Duration> averages = new java.util.EnumMap<>(JobType.class);
     /** Zuletzt gelesene Zahl paralleler Downloads; bei 0 keine Restzeit. */
     private int parallelNow = JobLimits.DEFAULT_PARALLEL_DOWNLOADS;
+    /** Plätze „Vorbereitung“ beim letzten Abruf, für den Grund eines wartenden Auftrags ({@link WaitReason}). */
+    private int preparationsNow = 1;
     /** Ein Knopf für alle Aufträge (Angelo 10.11.2026): löscht alles, laufende werden vorher abgebrochen. */
     final IconButton deleteFinished = new IconButton(Glyph.BROOM, DELETE_FINISHED);
     /**
@@ -221,10 +223,13 @@ public final class ActivitiesView implements View {
     static final String BACKGROUND_TIP = "Hintergrundaufträge: was die App von sich aus anstößt, etwa fehlende "
             + "Seiten nachladen oder Bilder beschreiben; nachrangig, nach einem Neustart fortgesetzt";
     /**
-     * Unter dieser Breite ist die Liste schmal (Seitenleiste): „Art“ zeigt nur ihr Symbol, die Spalte „Space“ weicht
-     * (Angelo 22.11.2026); Name und Space stehen dann im Tooltip.
+     * Unter dieser Breite ist die Liste schmal (Seitenleiste): „Art“ zeigt nur ihr Symbol (Angelo 22.11.2026), der Name
+     * steht dann im Tooltip; „Space“ bleibt schmaler stehen (Angelo 23.11.2026).
      */
     static final int NARROW_BELOW = 640;
+    /** Breite der Spalte „Space“ in der schmalen Liste: höchstens, mindestens. */
+    static final int NARROW_SPACE_MAX = 120;
+    static final int NARROW_SPACE_MIN = 48;
     /** Breite der Spalte „Art“ in der schmalen Liste: Aufklapp-Pfeil und Symbol. */
     static final int ART_ICON_WIDTH = 50;
     /** Alle zuletzt gelesenen Aufträge, beide Reiter. */
@@ -805,6 +810,7 @@ public final class ActivitiesView implements View {
                 averages.put(type, runtime.workspace().averageDownload(type));
             }
             parallelNow = runtime.workspace().parallelDownloads();
+            preparationsNow = runtime.workspace().parallelPreparations();
             // Gesamtstand aller Aufträge für die Statuszeile, Balken hinter laufenden Exporten (Angelo 11.11.2026).
             Instant now = Instant.now();
             overall.observe(jobs, now, averages::get);
@@ -1363,7 +1369,8 @@ public final class ActivitiesView implements View {
         JobStatus job = model.rows.get(index);
         List<RowActions.Action> actions = new ArrayList<>();
         actions.addAll(progressSlots(job, remaining(job, averages.get(job.type()), parallelNow),
-                waitingForSignIn(job.id()) ? SIGN_IN : stateText(job)));
+                waitingForSignIn(job.id()) ? SIGN_IN : stateText(job), groupRow(job) ? null
+                        : WaitReason.of(job, lastJobs, preparationsNow).orElse(null)));
         actions.add(RowActions.EMPTY);
         boolean failed = job.state() == JobState.FAILED;
         boolean group = groupRow(job);
@@ -1444,18 +1451,47 @@ public final class ActivitiesView implements View {
      * @param state der Zustand in Worten, etwa „Läuft“ oder „Fertig, fehlerfrei“
      */
     static List<RowActions.Action> progressSlots(JobStatus job, java.time.Duration remaining, String state) {
+        return progressSlots(job, remaining, state, null);
+    }
+
+    /**
+     * Wie {@link #progressSlots(JobStatus, java.time.Duration, String)}, bei einem wartenden Auftrag mit dem Grund im
+     * Tooltip ({@link WaitReason}, Angelo 23.11.2026: „man weiß nicht wirklich warum“).
+     *
+     * @param waiting worauf der Auftrag wartet, oder {@code null}
+     */
+    static List<RowActions.Action> progressSlots(JobStatus job, java.time.Duration remaining, String state,
+                                                 String waiting) {
         List<RowActions.Action> plain = progressSlots(job, remaining);
         JobProgress p = job.progress();
         boolean counted = p.discovered() > 0;
-        String label = counted ? done(job) + "/" + p.discovered() : state;
-        String tip = state + (counted ? " · " + plain.get(0).tooltip() : "") + " · angelegt "
-                + Texts.time(job.createdAt());
+        String label = barLabel(job, state);
+        String tip = state + (waiting == null || waiting.isBlank() ? "" : ": " + waiting)
+                + (counted ? " · " + plain.get(0).tooltip() : "") + " · angelegt " + Texts.time(job.createdAt());
         List<RowActions.Action> slots = new ArrayList<>(plain);
         slots.set(0, new RowActions.Action(new ProgressIcon(PROGRESS_SLOTS * RowActions.SLOT - 8, p.discovered(),
                 p.processed(), p.failed(), skipped(job), label, counted ? null : Comic.tone(Texts.tone(job))), tip,
                 true, () -> { }));
         return slots;
     }
+
+    /**
+     * Die Schrift in der Mitte des Balkens, für alle Arten gleich (Angelo 23.11.2026: „bei der Höchstzahl stehen
+     * bleiben, dann aber nicht fertig anzeigen … komplett uneinheitlich“): solange er offen ist „erledigt/gefunden“,
+     * beendet der Zustand davor, etwa „Fertig · 1034/1034“; ohne Gefundenes der Zustand allein, etwa „Fertig,
+     * fehlerfrei“. Passt beides nicht in den Balken, bleibt der Zustand ({@link ProgressIcon#fit}).
+     */
+    static String barLabel(JobStatus job, String state) {
+        JobProgress p = job.progress();
+        if (p.discovered() <= 0) {
+            return state;
+        }
+        String counts = done(job) + "/" + p.discovered();
+        return job.state().terminal() ? Texts.state(job.state()) + LABEL_SEPARATOR + counts : counts;
+    }
+
+    /** Trennt im Balken Zustand und Zahlen eines beendeten Auftrags. */
+    static final String LABEL_SEPARATOR = " · ";
 
     /** Der Zustand für den Tooltip des Balkens; ein Lauf ohne Fehlschlag heißt „Fertig, fehlerfrei“. */
     static String stateText(JobStatus job) {
@@ -1519,6 +1555,7 @@ public final class ActivitiesView implements View {
                 if (label != null) {
                     g.setFont(Comic.semiBold(10f));
                     java.awt.FontMetrics fm = g.getFontMetrics();
+                    String label = fit(this.label, fm::stringWidth, width - 6);
                     int tx = x + (width - fm.stringWidth(label)) / 2;
                     int ty = y + (h - fm.getHeight()) / 2 + fm.getAscent();
                     java.awt.Shape clip = g.getClip();
@@ -1543,6 +1580,18 @@ public final class ActivitiesView implements View {
         @Override
         public int getIconHeight() {
             return 14;
+        }
+
+        /**
+         * Was in den Balken passt: die ganze Schrift oder, bei „Zustand · Zahlen“, der Zustand allein (die Zahlen
+         * stehen im Tooltip); sonst die Zahlen.
+         */
+        static String fit(String label, java.util.function.ToIntFunction<String> measure, int room) {
+            if (label == null || measure.applyAsInt(label) <= room) {
+                return label;
+            }
+            int cut = label.indexOf(LABEL_SEPARATOR);
+            return cut < 0 ? label : label.substring(0, cut);
         }
     }
 
@@ -1736,7 +1785,7 @@ public final class ActivitiesView implements View {
             return;
         }
         boolean background = id.startsWith(GROUP_PREFIX) || lastJobs.stream()
-                .anyMatch(job -> job.id().equals(id) && job.type().background());
+                .anyMatch(job -> job.id().equals(id) && inBackground(job));
         boolean known = background || lastJobs.stream().anyMatch(job -> job.id().equals(id));
         if (known && background != backgroundTab()) {
             tabs.select(background ? BACKGROUND_TAB : JOBS_TAB);
@@ -1746,7 +1795,7 @@ public final class ActivitiesView implements View {
     /** Zahl der laufenden Hintergrundaufträge am Reiter; ohne Laufendes kein Chip. */
     private void updateBackgroundChip(List<JobStatus> jobs) {
         // Nach Lebenszyklus: was gerade anhält oder abbricht, läuft nicht mehr.
-        int running = (int) jobs.stream().filter(job -> job.type().background()
+        int running = (int) jobs.stream().filter(job -> inBackground(job)
                 && job.state() == JobState.RUNNING && !job.cancelRequested()).count();
         tabs.count(BACKGROUND_TAB, running, Comic.PETROL, Texts.count(running, "Hintergrundauftrag läuft",
                 "Hintergrundaufträge laufen"), BACKGROUND_TIP);
@@ -1759,7 +1808,12 @@ public final class ActivitiesView implements View {
 
     /** Die Aufträge eines Reiters ohne Gruppenzeilen. */
     static List<JobStatus> tabJobs(List<JobStatus> jobs, boolean background) {
-        return jobs.stream().filter(job -> job.type().background() == background).toList();
+        return jobs.stream().filter(job -> inBackground(job) == background).toList();
+    }
+
+    /** Ob ein Auftrag im Reiter „Hintergrund“ steht ({@link Workspace#inBackgroundTab}). */
+    static boolean inBackground(JobStatus job) {
+        return Workspace.inBackgroundTab(job);
     }
 
     /**
@@ -2957,7 +3011,7 @@ public final class ActivitiesView implements View {
             super(model);
         }
 
-        /** Beim Anordnen: In der schmalen Liste zeigt „Art“ nur ihr Symbol und „Space“ weicht. */
+        /** Beim Anordnen: In der schmalen Liste zeigt „Art“ nur ihr Symbol, „Space“ wird schmaler. */
         @Override
         public void doLayout() {
             if (getWidth() > 0) {
@@ -3019,7 +3073,7 @@ public final class ActivitiesView implements View {
         private void paintStripes(Graphics2D g) {
             g.setColor(Comic.PETROL);
             for (int row = 0; row < getRowCount() && row < model.rows.size(); row++) {
-                if (model.rows.get(row).type().background()) {
+                if (inBackground(model.rows.get(row))) {
                     Rectangle cell = getCellRect(row, 0, true);
                     g.fillRect(0, cell.y, BACKGROUND_STRIPE, cell.height);
                 }
@@ -3115,10 +3169,11 @@ public final class ActivitiesView implements View {
         type.setMinWidth(value ? ART_ICON_WIDTH : 15);
         type.setMaxWidth(value ? ART_ICON_WIDTH : Integer.MAX_VALUE);
         type.setPreferredWidth(value ? ART_ICON_WIDTH : 220);
+        // Angelo 23.11.2026: Auch schmal steht der Space in eigener Spalte; sonst hieße jede Zeile nur nach der Quelle.
         javax.swing.table.TableColumn space = table.getColumnModel().getColumn(JobsModel.SPACE);
-        space.setMinWidth(value ? 0 : 15);
-        space.setMaxWidth(value ? 0 : Integer.MAX_VALUE);
-        space.setPreferredWidth(value ? 0 : 170);
+        space.setMinWidth(value ? NARROW_SPACE_MIN : 15);
+        space.setMaxWidth(value ? NARROW_SPACE_MAX : Integer.MAX_VALUE);
+        space.setPreferredWidth(value ? NARROW_SPACE_MAX : 170);
         javax.swing.table.TableColumn actions = table.getColumnModel().getColumn(JobsModel.ACTIONS);
         int width = (value ? PROGRESS_SLOTS : SLOTS) * RowActions.SLOT + 8;
         actions.setMinWidth(0);

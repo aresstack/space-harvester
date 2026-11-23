@@ -15,12 +15,19 @@ import java.util.function.Consumer;
 public final class EditorSessions {
 
     private final Executor background;
+    private final VersionHistory history;
     private final List<EditorSession> sessions = new CopyOnWriteArrayList<>();
     private final List<Consumer<EditorSession>> openedObservers = new CopyOnWriteArrayList<>();
     private final List<Consumer<EditorSession>> closedObservers = new CopyOnWriteArrayList<>();
 
     public EditorSessions(Executor background) {
+        this(background, VersionHistory.NONE);
+    }
+
+    /** Mit lokalem Verlauf: Version beim Öffnen und vor jedem Speichern (wie MainframeMate). */
+    public EditorSessions(Executor background, VersionHistory history) {
         this.background = Objects.requireNonNull(background, "background");
+        this.history = Objects.requireNonNull(history, "history");
     }
 
     /** Öffnet ein Dokument und lädt es im Hintergrund; ist es schon offen, kommt das offene zurück. */
@@ -29,7 +36,7 @@ public final class EditorSessions {
         if (existing.isPresent()) {
             return existing.get();
         }
-        EditorSession session = new EditorSession(store, location, name, background);
+        EditorSession session = new EditorSession(store, location, name, background, history);
         sessions.add(session);
         openedObservers.forEach(observer -> observer.accept(session));
         session.load();

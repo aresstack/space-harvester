@@ -640,6 +640,12 @@ public final class Harvester implements AutoCloseable {
                     new com.aresstack.spaceharvester.application.presentation.VideoTranscriptTextProjector(
                             this::assets)));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
+            // Angelo 22.11.2026: Auch die KI-Anreicherung rechnet so breit, wie ai.parallel erlaubt, gelesen je Teil.
+            enrichments.parallel(() -> {
+                AiServiceSettings ai = currentAi.get();
+                return ai == null ? 1 : ai.parallel();
+            });
+            enrichments.network(network);
             if (background != null) {
                 // ADR 0025 Nachtrag, Punkt 10: die Warteschlange der Netz-Prozessoren als „KI-Anreicherung“ je Quelle;
                 // schließt nach den Komponenten, die einreihen, und vor der Ablage.

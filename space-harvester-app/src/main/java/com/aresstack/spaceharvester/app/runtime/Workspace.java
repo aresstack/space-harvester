@@ -2819,9 +2819,24 @@ public final class Workspace {
         }
     }
 
-    /** Die Aufträge eines Reiters: nur Hintergrundaufträge oder nur die übrigen. */
+    /** Die Aufträge eines Reiters: nur die des Reiters „Hintergrund“ ({@link #inBackgroundTab}) oder nur die übrigen. */
     private List<JobStatus> jobs(boolean background) {
-        return jobs().stream().filter(job -> job.type().background() == background).toList();
+        return jobs().stream().filter(job -> inBackgroundTab(job) == background).toList();
+    }
+
+    /**
+     * Ob ein Auftrag im Reiter „Hintergrund“ steht: die Hintergrundaufträge ({@link JobType#background()}) und die
+     * Anreicherung, die die App nach jedem Abgleich von sich aus anstößt
+     * ({@link com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync#TASK}). Deren Netzarbeit läuft
+     * ohnehin als „KI-Anreicherung“ im Hintergrund; Angelo 23.11.2026: „etwas läuft entweder im Vordergrund oder im
+     * Hintergrund, aber nicht beides“. Unter „Aufträge“ bleibt, was der Benutzer gestartet hat. „Alle anhalten“ und
+     * „Alle abbrechen“ eines Reiters treffen genau seine Zeilen.
+     */
+    public static boolean inBackgroundTab(JobStatus job) {
+        return job.type().background() || job.type() == JobType.ENRICHMENT
+                && com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync.TASK.equals(
+                job.parameter(com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync
+                        .TASK_PARAMETER));
     }
 
     /**
@@ -3090,19 +3105,6 @@ public final class Workspace {
     // --- KI-Freigabe je Seite (ADR 0028) ----------------------------------------------------------------------------
 
     /**
-     * Trägt die lokal gespeicherten Seiten der links gewählten Auswahl in die Liste freigegebener Seiten ein, mit der
-     * Wurzel der Auswahl als Knoten; so beim Senden im Chat. Was nicht lokal ist, kommt nicht auf die Liste. Die
-     * KI-Auswertungen der neuen Seiten laufen danach im gedrosselten Hintergrund. Schreibt in die Ablage: nie auf dem
-     * EDT aufrufen.
-     *
-     * @return die neu eingetragenen Seiten
-     */
-    public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePagesForChat(
-            com.aresstack.spaceharvester.application.holdings.Selection selection) {
-        return harvester.pageReleaseService().release(caller, selection);
-    }
-
-    /**
      * Trägt genau eine lokal gespeicherte Seite ein, ohne Unterseiten: so, wenn der Chat sie per Werkzeug an das Modell
      * liefert (ADR 0033). Schreibt in die Ablage: nie auf dem EDT aufrufen.
      *
@@ -3111,11 +3113,6 @@ public final class Workspace {
     public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePageForChat(
             String spaceKey, com.aresstack.spaceharvester.application.snapshot.PageKey key) {
         return harvester.pageReleaseService().releasePage(caller, spaceKey, key);
-    }
-
-    /** Wie viele Seiten der Auswahl neu auf die Liste freigegebener Seiten kämen, für den Hinweis vor dem Senden. */
-    public int newPageReleases(com.aresstack.spaceharvester.application.holdings.Selection selection) {
-        return harvester.pageReleaseService().newPages(caller, selection);
     }
 
     /**
@@ -3427,6 +3424,15 @@ public final class Workspace {
     /** Der gesprochene Text des Erklär-Podcasts einer Seite, soweit geschrieben. Liest Dateien, nie auf dem EDT. */
     public java.util.Optional<String> pagePodcastTranscript(String sourceId, String pageId) {
         return harvester.pagePodcasts().transcript(caller, sourceId, pageId);
+    }
+
+    /**
+     * Wovon ein Thema des Erklär-Podcasts erzählt, als Stellen im Lesetext der Seite (für Markierung und Bild). Liest
+     * Seite und Datei, nie auf dem EDT.
+     */
+    public java.util.List<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span> pagePodcastFocus(
+            String sourceId, String pageId, int topic) {
+        return harvester.pagePodcasts().focus(caller, sourceId, pageId, topic);
     }
 
     /** Startet den Erklär-Podcast einer Seite oder setzt ihn fort. */
