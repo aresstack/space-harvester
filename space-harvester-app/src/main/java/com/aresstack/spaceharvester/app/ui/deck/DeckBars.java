@@ -34,9 +34,65 @@ public final class DeckBars {
         return bar(main, tools, HEAD_HEIGHT, true);
     }
 
-    /** Fußleiste: {@code main} links, {@code actions} rechts; beide dürfen {@code null} sein. */
+    /**
+     * Fußleiste: {@code main} links, {@code actions} rechts; beide dürfen {@code null} sein. Die Fußleiste des Command
+     * Deck ist die Leiste mit der Lupe ({@link FootTools}); eine eigene braucht ein Bereich nur innerhalb einer Ansicht.
+     */
     public static JPanel foot(JComponent main, JComponent actions) {
         return bar(main, actions, FOOT_HEIGHT, false);
+    }
+
+    /**
+     * Was ein Bereich in die Fußleiste des Command Deck stellt, neben die Lupe, wie die Umschalter im Space Harvester
+     * (Angelo, 23.11.2026: überall dieselbe Leiste mit Lupe). Symbolknöpfe mit Tooltip, keine Textknöpfe; kein Stand,
+     * keine Zähler (die stehen in der Statuszeile), kein Trennen, Schließen oder Abmelden (das macht das Kreuz am
+     * Reiter, {@link #tab}).
+     */
+    public interface FootTools {
+
+        /** Die Bedienelemente der gezeigten Ansicht; {@code null} ohne. Derselbe Baustein über die ganze Laufzeit. */
+        JComponent footTools();
+    }
+
+    /** Symbolknopf einer Leiste: nur das Symbol, der Text steht im Tooltip und als zugänglicher Name. */
+    public static com.aresstack.spaceharvester.app.ui.IconButton action(javax.swing.Icon icon, String tooltip,
+                                                                         Runnable action) {
+        var button = new com.aresstack.spaceharvester.app.ui.IconButton(icon, tooltip);
+        button.addActionListener(e -> action.run());
+        return button;
+    }
+
+    /** Zeile aus Bedienelementen für {@link FootTools}, mittig wie die Umschalter im Space Harvester. */
+    public static JPanel tools(Component... parts) {
+        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 6, 0));
+        row.setOpaque(false);
+        for (Component part : parts) {
+            row.add(part);
+        }
+        return row;
+    }
+
+    /**
+     * Ein Reiter mit Kreuz direkt dahinter (Sitzung, Dokument). Das Kreuz und ein Mittelklick auf den Reiter rufen
+     * {@code close}: in EINEM Schritt trennen bzw. abmelden und schließen, ohne eigene Knöpfe dafür.
+     */
+    public static JPanel tab(javax.swing.AbstractButton pill, String closeTooltip, Runnable close) {
+        var cross = new com.aresstack.spaceharvester.app.ui.IconButton(
+                com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.close(), closeTooltip).compact();
+        cross.addActionListener(e -> close.run());
+        pill.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent event) {
+                if (javax.swing.SwingUtilities.isMiddleMouseButton(event)) {
+                    close.run();
+                }
+            }
+        });
+        JPanel tab = new JPanel(new java.awt.BorderLayout(0, 0));
+        tab.setOpaque(false);
+        tab.add(pill, java.awt.BorderLayout.CENTER);
+        tab.add(cross, java.awt.BorderLayout.EAST);
+        return tab;
     }
 
     private static JPanel bar(JComponent main, JComponent east, int height, boolean head) {
@@ -56,7 +112,8 @@ public final class DeckBars {
 
     /**
      * Feste Höhe; jedes Element behält seine eigene Höhe und sitzt senkrecht mittig. Rechts steht {@code east} in
-     * seiner Wunschbreite, {@code main} bekommt den Rest.
+     * seiner Wunschbreite, {@code main} bekommt den Rest. Ohne {@code main} beginnt {@code east} links: Nichts steht
+     * allein in der rechten Ecke.
      */
     private record Row(JComponent main, JComponent east, int height) implements LayoutManager {
 
@@ -98,7 +155,8 @@ public final class DeckBars {
                 Dimension wanted = east.getPreferredSize();
                 int width = Math.min(wanted.width, Math.max(0, right - left));
                 int own = Math.min(room, wanted.height);
-                east.setBounds(right - width, top + (room - own) / 2, width, own);
+                boolean alone = main == null || !main.isVisible();
+                east.setBounds(alone ? left : right - width, top + (room - own) / 2, width, own);
                 right -= width + GAP;
             }
             if (main != null && main.isVisible()) {

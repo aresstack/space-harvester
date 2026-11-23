@@ -144,9 +144,23 @@ public final class TerminalSessions {
         sessions.add(session);
         openedObservers.forEach(observer -> observer.accept(session));
         background.execute(() -> {
+            // Wie MainframeMate: Die Zugangsdaten liegen vor dem Verbinden bereit, damit die Anmeldung sofort nach dem
+            // ersten Bild läuft und nicht erst, wenn man schon selbst tippt.
+            TerminalLogin credentials = null;
+            String unreadable = null;
+            if (login != null) {
+                try {
+                    credentials = login.login();
+                } catch (Exception e) {
+                    unreadable = describe(e);
+                }
+            }
             try {
                 connection.connect();
             } catch (Exception e) {
+                if (credentials != null) {
+                    credentials.close();
+                }
                 connection.disconnect();
                 session.change(SessionState.FAILED, describe(e));
                 if (session.attempt() > 0) {
@@ -156,7 +170,9 @@ public final class TerminalSessions {
             }
             boolean loggedIn = true;
             if (login != null && session.state() == SessionState.CONNECTED) {
-                loggedIn = logIn(session, connection, login);
+                loggedIn = logIn(session, connection, credentials, unreadable);
+            } else if (credentials != null) {
+                credentials.close();
             }
             if (loggedIn && !session.replay().isEmpty() && session.state() == SessionState.CONNECTED) {
                 play(session, connection, login != null);
@@ -243,23 +259,23 @@ public final class TerminalSessions {
     }
 
     /** @return ob die Anmeldung durchlief (nur dann wird ein Makro abgespielt, wie in MainframeMate) */
-    private boolean logIn(TerminalSession session, TerminalConnection connection, LoginSource source) {
-        TerminalKeyboard keyboard = connection.view(TerminalKeyboard.class).orElse(null);
-        if (keyboard == null) {
-            session.note("Automatische Anmeldung nicht möglich: Terminal ohne Tastatursteuerung");
+    private boolean logIn(TerminalSession session, TerminalConnection connection, TerminalLogin login,
+                          String unreadable) {
+        if (login == null) {
+            session.note("Automatische Anmeldung: Zugangsdaten nicht lesbar – " + unreadable);
             return false;
         }
-        TerminalLogin login;
-        try {
-            login = source.login();
-        } catch (Exception e) {
-            session.note("Automatische Anmeldung: Zugangsdaten nicht lesbar – " + describe(e));
+        TerminalKeyboard keyboard = connection.view(TerminalKeyboard.class).orElse(null);
+        if (keyboard == null) {
+            login.close();
+            session.note("Automatische Anmeldung nicht möglich: Terminal ohne Tastatursteuerung");
             return false;
         }
         session.note("Melde automatisch an …");
         String user = login.user();
         try {
-            java.util.Optional<String> failed = loginScript.run(keyboard, login);
+            // Tippt der Mensch ab jetzt selbst, hört die Anmeldung auf (nie dazwischentippen).
+            java.util.Optional<String> failed = loginScript.run(keyboard, login, System.nanoTime());
             session.note(failed.map(reason -> "Automatische Anmeldung abgebrochen: " + reason)
                     .orElse("Automatisch angemeldet als " + user));
             return failed.isEmpty();

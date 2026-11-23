@@ -38,16 +38,31 @@ public final class LoginScript {
      * @return leer bei Erfolg, sonst der Grund, warum abgebrochen wurde
      */
     public Optional<String> run(TerminalKeyboard keyboard, TerminalLogin login) throws InterruptedException {
+        return run(keyboard, login, Long.MIN_VALUE);
+    }
+
+    /**
+     * Wie {@link #run(TerminalKeyboard, TerminalLogin)}; hat der Mensch nach {@code since} selbst getippt, bricht die
+     * Anmeldung vor dem nächsten Schritt ab und tippt nichts mehr.
+     */
+    public Optional<String> run(TerminalKeyboard keyboard, TerminalLogin login, long since)
+            throws InterruptedException {
         try (login) {
             if (!keyboard.awaitUnlocked(UNLOCK_TIMEOUT)) {
                 return Optional.of("Tastatur wurde nicht frei");
             }
             pause();
+            if (typedByHand(keyboard, since)) {
+                return Optional.of(BY_HAND);
+            }
             keyboard.clear();
             if (!keyboard.awaitUnlocked(UNLOCK_TIMEOUT)) {
                 return Optional.of("Tastatur nach CLEAR nicht frei");
             }
             pause();
+            if (typedByHand(keyboard, since)) {
+                return Optional.of(BY_HAND);
+            }
             if (!keyboard.firstInputField()) {
                 return Optional.of("kein Eingabefeld für den Benutzer");
             }
@@ -55,6 +70,9 @@ public final class LoginScript {
                 return Optional.of("Benutzerfeld ist geschützt");
             }
             pause();
+            if (typedByHand(keyboard, since)) {
+                return Optional.of(BY_HAND);
+            }
             if (!keyboard.nextInputField()) {
                 return Optional.of("kein zweites Eingabefeld für das Passwort");
             }
@@ -73,6 +91,9 @@ public final class LoginScript {
                     return Optional.of("Tastatur nach der Anmeldung nicht frei, Startkommando nicht gesendet");
                 }
                 pause();
+                if (typedByHand(keyboard, since)) {
+                    return Optional.of(BY_HAND);
+                }
                 if (!typed(keyboard, login.command().toCharArray())) {
                     return Optional.of("Startkommando: Feld an der Schreibmarke ist geschützt");
                 }
@@ -81,6 +102,14 @@ public final class LoginScript {
             }
             return Optional.empty();
         }
+    }
+
+    /** Grund, wenn der Mensch selbst tippt. */
+    public static final String BY_HAND = "du tippst selbst";
+
+    private static boolean typedByHand(TerminalKeyboard keyboard, long since) {
+        long last = keyboard.lastUserInput();
+        return last != Long.MIN_VALUE && last - since > 0;
     }
 
     /** Tippt; {@code false}, wenn das Terminal die Eingabe an dieser Stelle ablehnt (geschütztes Feld). */

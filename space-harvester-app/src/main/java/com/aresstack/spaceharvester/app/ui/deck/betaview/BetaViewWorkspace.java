@@ -52,6 +52,8 @@ public final class BetaViewWorkspace extends JPanel {
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<BetaViewSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
+    /** Reiter samt Kreuz je Sitzung. */
+    private final Map<BetaViewSession, JPanel> tabOf = new LinkedHashMap<>();
     private final Map<BetaViewSession, SessionPanel> panelOf = new LinkedHashMap<>();
     private final ComposerToggleButton newPill;
     private final CardLayout cards = new CardLayout();
@@ -77,7 +79,7 @@ public final class BetaViewWorkspace extends JPanel {
         newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neue Anmeldung",
                 "Bei einem BetaView-Server anmelden");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        newPill.addActionListener(e -> select(null));
+        newPill.addActionListener(e -> newLogin());
         pillGroup.add(newPill);
         pills.add(newPill);
         JPanel head = com.aresstack.spaceharvester.app.ui.deck.DeckBars.head(pills, null);
@@ -96,9 +98,38 @@ public final class BetaViewWorkspace extends JPanel {
         select(null);
     }
 
+    /**
+     * „Neue Anmeldung“: Hat die gemerkte Anmeldung schon einmal funktioniert, meldet sie direkt an; das Formular kommt
+     * nur ohne gemerkte Zugangsdaten und wenn es scheitert (Deck-Regel, Angelo 23.11.).
+     */
+    void newLogin() {
+        if (!BetaViewConnectForm.isConfigured()) {
+            select(null);
+            return;
+        }
+        BetaViewSession before = selected;
+        if (before != null && pillOf.containsKey(before)) {
+            pillOf.get(before).setSelected(true);
+        }
+        directPending = true;
+        form.connectDirectly(reason -> {
+            directPending = false;
+            select(null);
+        });
+    }
+
+    /** Die nächste geöffnete Sitzung stammt aus einer direkten Anmeldung. */
+    private boolean directPending;
+    /** Sitzungen aus einer direkten Anmeldung, bis sie angemeldet sind oder scheitern. */
+    private final java.util.Set<BetaViewSession> direct = new java.util.HashSet<>();
+
     private void added(BetaViewSession session) {
         if (pillOf.containsKey(session)) {
             return;
+        }
+        if (directPending) {
+            directPending = false;
+            direct.add(session);
         }
         ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.profile().label(),
                 session.state().label());
@@ -106,7 +137,10 @@ public final class BetaViewWorkspace extends JPanel {
         pill.getAccessibleContext().setAccessibleName(session.profile().label());
         pill.addActionListener(e -> select(session));
         pillGroup.add(pill);
-        pills.add(pill, pills.getComponentCount() - 1);
+        JPanel tab = com.aresstack.spaceharvester.app.ui.deck.DeckBars.tab(pill,
+                "Abmelden und schließen (auch Mittelklick auf den Reiter)", () -> close(session));
+        pills.add(tab, pills.getComponentCount() - 1);
+        tabOf.put(session, tab);
         pillOf.put(session, pill);
         SessionPanel panel = new SessionPanel(session, prompts, () -> close(session));
         panelOf.put(session, panel);
@@ -133,6 +167,20 @@ public final class BetaViewWorkspace extends JPanel {
         if (panel != null) {
             panel.stateChanged();
         }
+        if (session.state() == ConnectionState.CONNECTED) {
+            direct.remove(session);
+            if (BetaViewConnectForm.KEEPASS.equals(com.aresstack.spaceharvester.app.ui.AppState.shared()
+                    .get(BetaViewConnectForm.LOGIN_KEY))) {
+                // Erst nach dem ersten Erfolg gilt die gemerkte Anmeldung als eingerichtet.
+                BetaViewConnectForm.configured();
+            }
+        } else if (session.state() == ConnectionState.FAILED && direct.remove(session)) {
+            // Direkte Anmeldung gescheitert: keine tote Sitzung stehen lassen, sondern das Formular mit dem Grund.
+            String reason = session.failure().orElse("Anmeldung gescheitert");
+            close(session);
+            select(null);
+            form.failed(reason);
+        }
     }
 
     /** Zeigt die Sitzung (oder mit {@code null} das Formular „Neue Anmeldung“). */
@@ -152,13 +200,13 @@ public final class BetaViewWorkspace extends JPanel {
         }
     }
 
-    /** „Abmelden“: Sitzung schließen und aus der Liste nehmen. */
+    /** Das Kreuz am Reiter: abmelden, Sitzung schließen und aus der Liste nehmen, in einem Schritt. */
     void close(BetaViewSession session) {
         sessions.close(session);
         ComposerToggleButton pill = pillOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(pill);
+            pills.remove(tabOf.remove(session));
             pills.revalidate();
             pills.repaint();
         }
@@ -180,6 +228,11 @@ public final class BetaViewWorkspace extends JPanel {
 
     SessionPanel panel(BetaViewSession session) {
         return panelOf.get(session);
+    }
+
+    /** Anzahl der Sitzungs-Reiter (für Tests). */
+    int sessionCount() {
+        return pillOf.size();
     }
 
     BetaViewConnectForm form() {

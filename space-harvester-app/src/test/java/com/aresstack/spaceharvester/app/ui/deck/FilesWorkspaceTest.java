@@ -274,6 +274,42 @@ class FilesWorkspaceTest {
     }
 
     @Test
+    void sharePointUsesSavedLoginWithoutAsking() throws Exception {
+        java.util.concurrent.CountDownLatch tried = new java.util.concurrent.CountDownLatch(1);
+        AtomicReference<String> used = new AtomicReference<>();
+        com.aresstack.spaceharvester.deck.files.sharepoint.WebDavLogin login =
+                new com.aresstack.spaceharvester.deck.files.sharepoint.WebDavLogin() {
+                    @Override
+                    public Outcome connect(String uncPath) {
+                        return Outcome.credentialsNeeded("Anmeldung nötig");
+                    }
+
+                    @Override
+                    public Outcome connect(String uncPath, String user, char[] password) {
+                        used.set(user + ":" + new String(password));
+                        tried.countDown();
+                        return Outcome.ok();
+                    }
+                };
+        var saved = com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory();
+        saved.save("intranet.example.org", "BEISPIEL\\nutzer", "geheim".toCharArray());
+        SwingUtilities.invokeAndWait(() -> {
+            workspace = new FilesWorkspace(
+                    new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
+                    new LocalDocumentStore(), null,
+                    new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointAccess(login, NOW),
+                    List::of, com.aresstack.spaceharvester.deck.access.ServerAccounts.NONE);
+            workspace.savedLogins(saved);
+        });
+        start();
+
+        SwingUtilities.invokeAndWait(() -> workspace.go("\\\\intranet.example.org@SSL\\DavWWWRoot\\sites\\Raum"));
+
+        assertThat(tried.await(10, java.util.concurrent.TimeUnit.SECONDS)).as("gespeicherte Daten probiert").isTrue();
+        assertThat(used.get()).isEqualTo("BEISPIEL\\nutzer:geheim");
+    }
+
+    @Test
     void opensDocumentsAsReadOnlyPreview() throws Exception {
         Files.writeString(root.resolve("bericht.pdf"), "kein echtes PDF");
         com.aresstack.spaceharvester.deck.editor.DocumentStore preview =

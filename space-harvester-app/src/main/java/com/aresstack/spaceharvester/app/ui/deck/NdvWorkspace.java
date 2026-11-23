@@ -18,7 +18,6 @@ import java.awt.GridBagLayout;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
-import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.Icon;
 import javax.swing.JPanel;
@@ -63,6 +62,11 @@ public final class NdvWorkspace extends JPanel {
     private final NdvConnectForm form;
     private final EditorSessions editors;
     private NdvSession selected;
+    private final ServerAccounts accounts;
+    /** Reiter samt ✕ je Sitzung. */
+    private final Map<NdvSession, JPanel> tabOf = new LinkedHashMap<>();
+    /** Sitzungen, die noch nie verbunden waren: ihr erster Erfolg wird gemerkt, ihr Fehlschlag zeigt das Formular. */
+    private final java.util.Set<NdvSession> fresh = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** @param editors der gemeinsame Editor des Command Deck; NDV öffnet seine Quelltexte darin */
     public NdvWorkspace(NdvSessions sessions, ServerAccounts accounts, EditorSessions editors) {
@@ -76,24 +80,23 @@ public final class NdvWorkspace extends JPanel {
         this.background = background;
         setBackground(Comic.SURFACE);
         getAccessibleContext().setAccessibleName("NDV");
-        form = new NdvConnectForm(accounts, sessions::open);
+        this.accounts = accounts;
+        form = new NdvConnectForm(accounts, (profile, account, login) -> {
+            NdvSession opened = sessions.open(profile, account, login);
+            fresh.add(opened);
+        });
 
         pills.setOpaque(false);
         newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neue Verbindung", "Neue NDV-Verbindung öffnen");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        newPill.addActionListener(e -> select(null));
+        newPill.addActionListener(e -> newConnection());
         pillGroup.add(newPill);
         pills.add(newPill);
         tools.setOpaque(false);
         JPanel noTools = new JPanel();
         noTools.setOpaque(false);
         tools.add(noTools, NEW);
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        head.add(pills, BorderLayout.CENTER);
-        head.add(tools, BorderLayout.EAST);
+        JPanel head = DeckBars.head(pills, tools);
 
         JPanel formStage = new JPanel(new GridBagLayout());
         formStage.setBackground(Comic.SURFACE);
@@ -101,19 +104,16 @@ public final class NdvWorkspace extends JPanel {
         center.setOpaque(false);
         center.add(formStage, NEW);
 
+        // Fuß wie in den anderen Bereichen (DeckBars): nur die Aktionen der gewählten Sitzung, der Stand steht in der
+        // Statuszeile der App. Das Formular hat keine Aktionen unten.
         foot.setOpaque(false);
-        JPanel formFoot = new JPanel(new BorderLayout());
+        JPanel formFoot = new JPanel();
         formFoot.setOpaque(false);
-        formFoot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        // Gleiche Höhe wie der Fuß einer Sitzung mit Knöpfen.
-        formFoot.add(javax.swing.Box.createVerticalStrut(Comic.button("Öffnen", null).getPreferredSize().height),
-                BorderLayout.EAST);
         foot.add(formFoot, NEW);
 
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
+        add(DeckBars.foot(null, foot), BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.all().forEach(this::added);
@@ -137,9 +137,26 @@ public final class NdvWorkspace extends JPanel {
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         pill.getAccessibleContext().setAccessibleName(session.label());
         pill.addActionListener(e -> select(session));
+        pill.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent event) {
+                if (SwingUtilities.isMiddleMouseButton(event)) {
+                    closeSession(session);
+                }
+            }
+        });
+        // Das ✕ trennt und schließt in einem Schritt (Angelo 23.11.), wie im Terminal direkt hinter dem Reiter.
+        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
+                ComposerIcons.close(), "Trennen und schließen (auch Mittelklick auf den Reiter)").compact();
+        cross.addActionListener(e -> closeSession(session));
+        JPanel tab = new JPanel(new BorderLayout(0, 0));
+        tab.setOpaque(false);
+        tab.add(pill, BorderLayout.CENTER);
+        tab.add(cross, BorderLayout.EAST);
         pillGroup.add(pill);
-        pills.add(pill, pills.getComponentCount() - 1);
+        pills.add(tab, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
+        tabOf.put(session, tab);
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
         browser.onLibraryChanged(() -> changed(session));
         browser.onStatusChanged(() -> {
@@ -148,12 +165,29 @@ public final class NdvWorkspace extends JPanel {
             }
         });
         changed(session);
+        if (!pillOf.containsKey(session)) {
+            return; // erstes Verbinden misslungen, das Formular zeigt den Grund
+        }
         select(session);
         pills.revalidate();
         pills.repaint();
     }
 
     private void changed(NdvSession session) {
+        if (fresh.contains(session)) {
+            if (session.state() == NdvState.CONNECTED) {
+                fresh.remove(session);
+                NdvConnectForm.rememberWorking(session.profile(), session.account());
+            } else if (session.state() == NdvState.FAILED && pillOf.containsKey(session)) {
+                // Erstes Verbinden misslungen: zurück ins Formular, mit Grund.
+                fresh.remove(session);
+                String reason = NdvBrowser.oneLine(session.failure().orElse("Verbindung fehlgeschlagen"));
+                discard(session);
+                select(null);
+                form.problem(reason);
+                return;
+            }
+        }
         ComposerToggleButton pill = pillOf.get(session);
         if (pill != null) {
             pill.setIcon(dot(session.state()));
@@ -188,6 +222,34 @@ public final class NdvWorkspace extends JPanel {
                         .collect(java.util.stream.Collectors.joining(", ")) + " wirklich verwerfen?")) {
             return;
         }
+        discard(session);
+        select(pillOf.isEmpty() ? null : pillOf.keySet().iterator().next());
+    }
+
+    /**
+     * „Neue Verbindung“: Nach dem ersten erfolgreichen Verbinden geht es sofort mit den gemerkten Daten los (Angelo
+     * 23.11.); das Formular erscheint nur, wenn nichts gemerkt ist, diese Verbindung schon offen ist oder das
+     * Verbinden misslingt (dann mit Grund).
+     */
+    void newConnection() {
+        java.util.Optional<NdvConnectForm.Working> working = NdvConnectForm.working();
+        if (working.isEmpty() || pillOf.keySet().stream().anyMatch(open -> open.profile().host()
+                .equalsIgnoreCase(working.get().profile().host()) && open.profile().port() == working.get().profile()
+                .port())) {
+            select(null);
+            return;
+        }
+        String entry = working.get().account();
+        NdvSession opened = sessions.open(working.get().profile(), entry, () -> accounts.credentials(entry));
+        fresh.add(opened);
+        if (pillOf.containsKey(opened)) {
+            changed(opened);
+        }
+    }
+
+    /** Nimmt eine Sitzung ohne Rückfrage weg: trennen, Dokumente schließen, Reiter entfernen. */
+    private void discard(NdvSession session) {
+        fresh.remove(session);
         sessions.close(session);
         NdvBrowser browser = browsers.remove(session);
         if (browser != null) {
@@ -197,13 +259,13 @@ public final class NdvWorkspace extends JPanel {
             foot.remove(browser.foot());
         }
         ComposerToggleButton pill = pillOf.remove(session);
+        JPanel tab = tabOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(pill);
+            pills.remove(tab != null ? tab : pill);
             pills.revalidate();
             pills.repaint();
         }
-        select(pillOf.isEmpty() ? null : pillOf.keySet().iterator().next());
     }
 
     /** Der Stand der gewählten Sitzung, ohne Sitzung der Hinweis zum Formular, links in der Statuszeile der App. */

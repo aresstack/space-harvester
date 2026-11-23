@@ -106,6 +106,26 @@ public final class EditorIcons {
         });
     }
 
+    /** Beziehungen: drei verbundene Knoten. */
+    public static StrokeIcon relations() {
+        return icon(g -> {
+            g.drawOval(1, 6, 4, 4);
+            g.drawOval(11, 1, 4, 4);
+            g.drawOval(11, 11, 4, 4);
+            g.drawLine(5, 7, 11, 4);
+            g.drawLine(5, 9, 11, 12);
+        });
+    }
+
+    /** Nach Art gruppieren: Ordner. */
+    public static StrokeIcon group() {
+        return icon(g -> {
+            g.drawLine(1, 4, 6, 4);
+            g.drawLine(6, 4, 8, 6);
+            g.drawRect(1, 6, 14, 8);
+        });
+    }
+
     private interface Painter {
         void paint(Graphics2D g);
     }

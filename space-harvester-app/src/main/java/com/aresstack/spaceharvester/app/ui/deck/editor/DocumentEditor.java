@@ -75,6 +75,7 @@ public final class DocumentEditor extends JPanel {
 
     static final String WRAP_KEY = "deck.editor.wrap";
     static final String OUTLINE_KEY = "deck.editor.outline";
+    static final String RELATIONS_KEY = "deck.editor.relations";
     static final String FILTER_KEY = "deck.editor.find-filter";
     private static final String TEXT_CARD = "text";
     private static final String CUSTOM_CARD = "custom";
@@ -88,6 +89,8 @@ public final class DocumentEditor extends JPanel {
     private final RTextScrollPane scroll;
     private final MessagePlate plate = new MessagePlate();
     private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+    private final IconButton relationsToggle = new IconButton(EditorIcons.relations(),
+            "Beziehungen ein/aus (Ressourcen, Callees, Caller)");
     private final IconButton outlineToggle = new IconButton(EditorIcons.outline(), "Gliederung ein/aus");
     private final IconButton compareToggle = new IconButton(EditorIcons.compare(),
             "Mit einer früheren Version vergleichen");
@@ -97,6 +100,9 @@ public final class DocumentEditor extends JPanel {
     private final IconButton copy = new IconButton(EditorIcons.copy(), "Ganzen Inhalt kopieren");
     private final IconButton saveAs = new IconButton(EditorIcons.saveAs(), "Speichern unter …");
     private final OutlinePanel outlinePanel;
+    private final RelationsPanel relationsPanel;
+    private final JSplitPane relationsAndText;
+    private long relationsTicket;
     private final JSplitPane textAndCompare;
     private final JSplitPane textAndOutline;
     private final CardLayout centerCards = new CardLayout();
@@ -172,6 +178,7 @@ public final class DocumentEditor extends JPanel {
 
         // Werkzeuge oben rechts als Symbolknöpfe.
         tools.setOpaque(false);
+        relationsToggle.addActionListener(e -> showRelations(!relationsToggle.marked()));
         outlineToggle.addActionListener(e -> showOutline(!outlineToggle.marked()));
         compareToggle.addActionListener(e -> showCompare(!compareToggle.marked()));
         wrapToggle.addActionListener(e -> wrap(!wrapToggle.marked()));
@@ -188,6 +195,7 @@ public final class DocumentEditor extends JPanel {
         copy.addActionListener(e -> Toolkit.getDefaultToolkit().getSystemClipboard()
                 .setContents(new StringSelection(area.getText()), null));
         saveAs.addActionListener(e -> saveAsChosen());
+        tools.add(relationsToggle);
         tools.add(outlineToggle);
         tools.add(compareToggle);
         tools.add(wrapToggle);
@@ -200,14 +208,29 @@ public final class DocumentEditor extends JPanel {
         undo.setVisible(session.writable());
         redo.setVisible(session.writable());
 
-        // Mitte: Text, darunter der Vergleich, rechts die Gliederung.
+        // Mitte: links die Beziehungen, Text, darunter der Vergleich, rechts die Gliederung.
         outlinePanel = new OutlinePanel(this::goToLine);
+        relationsPanel = new RelationsPanel(new RelationsPanel.Actions() {
+            @Override
+            public void line(String sourceFile, int line) {
+                relationLine(sourceFile, line);
+            }
+
+            @Override
+            public void open(String target) {
+                openTarget(target);
+            }
+        });
         buildCompare();
         textAndCompare = new JSplitPane(JSplitPane.VERTICAL_SPLIT, scroll, comparePanel);
         textAndCompare.setResizeWeight(0.6);
         textAndCompare.setBorder(BorderFactory.createEmptyBorder());
         textAndCompare.setDividerSize(6);
-        textAndOutline = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, textAndCompare, outlinePanel);
+        relationsAndText = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, relationsPanel, textAndCompare);
+        relationsAndText.setResizeWeight(0.0);
+        relationsAndText.setBorder(BorderFactory.createEmptyBorder());
+        relationsAndText.setDividerSize(6);
+        textAndOutline = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, relationsAndText, outlinePanel);
         textAndOutline.setResizeWeight(1.0);
         textAndOutline.setBorder(BorderFactory.createEmptyBorder());
         textAndOutline.setDividerSize(6);
@@ -231,6 +254,7 @@ public final class DocumentEditor extends JPanel {
         filterToggle.marked(state.getBoolean(FILTER_KEY, true));
         showCompare(false);
         showOutline(state.getBoolean(OUTLINE_KEY, true));
+        showRelations(state.getBoolean(RELATIONS_KEY, true));
 
         addHierarchyListener(event -> {
             if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) != 0) {
@@ -621,9 +645,14 @@ public final class DocumentEditor extends JPanel {
         if (parser.isEmpty()) {
             outline = null;
             outlinePanel.show(Optional.empty());
+            relationsTicket++;
+            relationsPanel.show(com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis.NONE);
+            showRelations(relationsToggle.marked());
             extraOutlines.forEach(panel -> panel.show(Optional.empty()));
             return;
         }
+        showRelations(relationsToggle.marked());
+        analyzeRelations(parser);
         String text = area.getText();
         String name = session.name();
         Thread.ofVirtual().name("deck-outline").start(() -> {
@@ -745,6 +774,138 @@ public final class DocumentEditor extends JPanel {
     }
 
     // ---- Ansicht ---------------------------------------------------------------------------------------------------
+
+    /**
+     * Wertet die Beziehungen aus wie {@code TabbedPaneManager.updateLeftDrawerRelations} in MainframeMate; der Graph
+     * kommt bei NDV-Quellen vom Server, deshalb im Hintergrund.
+     */
+    private void analyzeRelations(Optional<SourceLanguage> parser) {
+        long ticket = ++relationsTicket;
+        String text = area.getText();
+        String name = session.location() == null || session.location().isBlank() ? session.name()
+                : session.location();
+        String library = library();
+        if (!relationsPanel.hasData()) {
+            relationsPanel.loading();
+        }
+        Thread.ofVirtual().name("deck-relations").start(() -> {
+            com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis analysis;
+            try {
+                analysis = DocumentEditors.relations().analyze(parser, text, name, library);
+            } catch (RuntimeException e) {
+                analysis = new com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis(
+                        new com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Resources("",
+                                java.util.Map.of(), 0, "Fehler bei der Abhängigkeitsanalyse ("
+                                + e.getClass().getSimpleName() + ")"),
+                        com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis.NONE.callees(),
+                        com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis.NONE.callers());
+            }
+            com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis result = analysis;
+            SwingUtilities.invokeLater(() -> {
+                if (ticket == relationsTicket) {
+                    relationsPanel.show(result);
+                }
+            });
+        });
+    }
+
+    /** Natural-Bibliothek einer NDV-Quelle ({@code LIB/NAME.NSP}), sonst {@code null}. */
+    private String library() {
+        String location = session.location();
+        if (location == null || !session.store().id().startsWith("ndv:")) {
+            return null;
+        }
+        int slash = location.indexOf('/');
+        return slash > 0 && slash < location.length() - 1 ? location.substring(0, slash) : null;
+    }
+
+    /** Einfachklick mit Zeile: im offenen Dokument springen, in einer anderen NDV-Quelle über NDV öffnen. */
+    private void relationLine(String sourceFile, int line) {
+        if (sourceFile == null || sourceFile.isBlank() || isThisDocument(sourceFile)) {
+            goToLine(line);
+            return;
+        }
+        openNdv(sourceFile, line);
+    }
+
+    private boolean isThisDocument(String target) {
+        String library = library();
+        if (library == null || !target.startsWith("ndv://")) {
+            return false;
+        }
+        String object = com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.objectName(
+                session.location());
+        return target.equalsIgnoreCase("ndv://" + library + "/" + object);
+    }
+
+    /** Doppelklick: Ziel öffnen wie {@code MainFrame} in MainframeMate. */
+    private void openTarget(String target) {
+        if (target == null || target.isBlank()) {
+            return;
+        }
+        if (target.startsWith("ndv://")) {
+            openNdv(target, 0);
+        } else if (target.startsWith("nat-jcl://")) {
+            String rest = target.substring("nat-jcl://".length());
+            int slash = rest.indexOf('/');
+            if (slash <= 0) {
+                return;
+            }
+            String stepLib = rest.substring(0, slash);
+            String program = rest.substring(slash + 1);
+            DocumentEditors.naturalFromJcl().ifPresentOrElse(open -> open.accept(stepLib, program),
+                    () -> relationsPanel.notice("Natural-Quelle öffnen geht nur mit NDV-Verbindung."));
+        } else if (target.startsWith("sysfunc://")) {
+            browse(DocumentEditors.wikipedia(target.substring("sysfunc://".length())));
+        } else if (target.startsWith("http://") || target.startsWith("https://")) {
+            try {
+                browse(java.net.URI.create(target));
+            } catch (IllegalArgumentException e) {
+                relationsPanel.notice("Keine gültige Adresse.");
+            }
+        }
+    }
+
+    private void openNdv(String target, int line) {
+        String rest = target.substring("ndv://".length());
+        int slash = rest.indexOf('/');
+        if (slash <= 0) {
+            return;
+        }
+        String library = rest.substring(0, slash);
+        String object = rest.substring(slash + 1);
+        DocumentEditors.naturalOpener().ifPresentOrElse(open -> open.open(library, object, line),
+                () -> relationsPanel.notice("Natural-Quelle öffnen geht nur mit NDV-Verbindung."));
+    }
+
+    private void browse(java.net.URI uri) {
+        Thread.ofVirtual().name("deck-browse").start(() -> {
+            try {
+                java.awt.Desktop.getDesktop().browse(uri);
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> relationsPanel.notice("Browser ließ sich nicht öffnen ("
+                        + e.getClass().getSimpleName() + ")."));
+            }
+        });
+    }
+
+    private void showRelations(boolean show) {
+        relationsToggle.marked(show);
+        boolean visible = show && effective.parser().isPresent();
+        relationsToggle.setVisible(effective.parser().isPresent());
+        boolean wasVisible = relationsPanel.isVisible();
+        relationsPanel.setVisible(visible);
+        AppState.shared().put(RELATIONS_KEY, show);
+        if (visible && !wasVisible) {
+            SwingUtilities.invokeLater(() -> {
+                int width = relationsAndText.getWidth();
+                if (width > 0) {
+                    relationsAndText.setDividerLocation(Math.min(width * 3 / 10, 380));
+                }
+            });
+        }
+        relationsAndText.revalidate();
+    }
 
     private void showOutline(boolean show) {
         outlineToggle.marked(show);
@@ -955,6 +1116,14 @@ public final class DocumentEditor extends JPanel {
 
     public EditorLanguage effectiveLanguage() {
         return effective;
+    }
+
+    RelationsPanel relationsPanel() {
+        return relationsPanel;
+    }
+
+    public boolean relationsShown() {
+        return relationsPanel.isVisible();
     }
 
     OutlinePanel outlinePanel() {

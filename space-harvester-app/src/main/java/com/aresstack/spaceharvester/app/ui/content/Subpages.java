@@ -15,8 +15,10 @@ import javax.swing.SwingUtilities;
 
 /**
  * Die Checkbox „mit Unterseiten“ der Analyse-Reiter einer Seite (Fahrplan P2/P3, Angelo 21.11.2026): Standard aus,
- * eine Stellung für alle Analyse-Reiter, gemerkt nur für die Sitzung. Sie steht immer in der Reiterzeile; ohne
- * Unterseiten und im Reiter „Absätze“ ist sie gesperrt, der Tooltip sagt warum (UX-Manager).
+ * eine Stellung für alle Analyse-Reiter, gemerkt nur für die Sitzung. Sie ist nie gesperrt (Angelo 23.11.2026: „Der
+ * Sinn der Sache war ja, dass ich das selber auswählen kann“): Hat die Seite keine Unterseiten, bleibt sie umschaltbar,
+ * die Reiter zeigen nur die Seite, Tooltip und Statuszeile sagen warum. Sie gilt in allen Analyse-Reitern, auch in
+ * „Absätze“.
  *
  * <p>Die Nachfahren der gezeigten Seite fragt sie beim Core ab ({@code Workspace.descendants}), nie kopiert; ändert sich
  * der Bestand des Space, fragt sie neu (Beobachter, ADR 0027, kein Zeitgeber). Die Analyse-Reiter melden sich mit
@@ -28,7 +30,6 @@ final class Subpages {
     static final String LABEL = "mit Unterseiten";
     static final String TIP_ON = "Zeigt unter den Einträgen dieser Seite abgetrennt die ihrer Unterseiten";
     static final String TIP_NO_CHILDREN = "Diese Seite hat keine Unterseiten";
-    static final String TIP_PASSAGES = "Absätze gibt es nur je Seite";
     static final String TIP_PENDING = "Die Unterseiten werden noch ermittelt";
 
     /** Führt Arbeit im Hintergrund aus; in Tests sofort. */
@@ -57,7 +58,6 @@ final class Subpages {
     private String spaceKey;
     private String pageId;
     private Below below;
-    private boolean pageTab = true;
     private int request;
     private boolean resolving;
     private boolean again;
@@ -120,38 +120,34 @@ final class Subpages {
         changed();
     }
 
-    /** Ob der gewählte Analyse-Reiter Unterseiten kennt („Absätze“ nicht). */
-    void tab(boolean allowsSubpages) {
-        if (pageTab != allowsSubpages) {
-            pageTab = allowsSubpages;
-            changed();
-        }
-    }
-
-    /** Die Nachfahren der gezeigten Seite, wenn angehakt und verfügbar; sonst {@code null}. */
+    /** Die Nachfahren der gezeigten Seite, wenn angehakt und es welche gibt; sonst {@code null}. */
     Below below() {
-        return box.isSelected() && box.isEnabled() ? below : null;
+        return box.isSelected() && below != null && below.size() > 0 ? below : null;
     }
 
-    /** Ob „mit Unterseiten“ angehakt und wählbar ist (für „Analysieren“ im Reiter Aussagen). */
+    /** Ob „mit Unterseiten“ angehakt ist und die Seite Unterseiten hat (für „Analysieren“ im Reiter Aussagen). */
     boolean active() {
-        return box.isSelected() && box.isEnabled();
+        return below() != null;
     }
 
-    /** Ob die Checkbox angehakt ist, auch wenn sie gerade gesperrt ist. */
+    /** Ob die Checkbox angehakt ist. */
     boolean checked() {
         return box.isSelected();
     }
 
-    /** Die ermittelten Nachfahren, unabhängig von der Checkbox und davon, ob sie gerade gesperrt ist. */
+    /** Ob angehakt ist, die Seite aber (fertig ermittelt) keine Unterseiten hat: für die Statuszeile. */
+    boolean checkedWithoutChildren() {
+        return box.isSelected() && below != null && below.size() == 0;
+    }
+
+    /** Die ermittelten Nachfahren, unabhängig von der Checkbox. */
     Below known() {
         return below;
     }
 
     /**
      * Zählt jedes neue Ergebnis der Abfrage der Nachfahren, auch bei gleicher Seitenmenge (dann hat sich der Bestand
-     * geändert). So unterscheidet ein Reiter eine solche Meldung von einer, die nur das Sperren der Checkbox durch
-     * „Absätze“ auslöst.
+     * geändert). So unterscheidet ein Reiter eine solche Meldung von einer, die nur das Umschalten der Checkbox auslöst.
      */
     int revision() {
         return revision;
@@ -223,8 +219,8 @@ final class Subpages {
     }
 
     private void changed() {
-        boolean children = below != null && below.size() > 0;
-        box.setEnabled(pageTab && children);
+        // Nie gesperrt: Der Benutzer stellt selbst ein, ob er die Unterseiten sehen will (Angelo 23.11.2026).
+        box.setEnabled(true);
         describe();
         Below now = below();
         if (!Objects.equals(now, announced)) {
@@ -235,9 +231,7 @@ final class Subpages {
 
     private void describe() {
         String tip;
-        if (!pageTab) {
-            tip = TIP_PASSAGES;
-        } else if (below == null && pageId != null && resolving) {
+        if (below == null && pageId != null && resolving) {
             tip = TIP_PENDING;
         } else if (below == null || below.size() == 0) {
             tip = TIP_NO_CHILDREN;

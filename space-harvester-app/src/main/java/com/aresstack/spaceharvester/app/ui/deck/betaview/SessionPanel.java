@@ -26,7 +26,7 @@ import javax.swing.SwingUtilities;
 
 /**
  * Eine angemeldete BetaView-Sitzung: links Suche und Treffer, rechts die Dokumente, geteilt durch den Trenner der App;
- * unten nur „Abmelden“; was die Sitzung tut (Fehler rot mit Grund), steht in der Statuszeile der App. Jeder Vorgang läuft
+ * abgemeldet wird über das Kreuz am Reiter der Sitzung; was die Sitzung tut (Fehler rot mit Grund), steht in der Statuszeile der App. Jeder Vorgang läuft
  * über {@link BetaViewSession} im Hintergrund; Ergebnisse kommen auf dem EDT an.
  */
 final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentPane.Actions {
@@ -68,11 +68,7 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
                 }
             }
         });
-        var signOff = Comic.button("Abmelden", "Von diesem BetaView-Server abmelden");
-        signOff.addActionListener(e -> logout.run());
-        JPanel foot = com.aresstack.spaceharvester.app.ui.deck.DeckBars.foot(null, Comic.row(signOff));
         add(split, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
         stateChanged();
     }
 

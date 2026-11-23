@@ -70,6 +70,18 @@ class TerminalConnectFlowTest {
     }
 
     @Test
+    void onceConfiguredTheEmptyTerminalShowsNoFormAndTheCrossClosesAtOnce() throws Exception {
+        configured();
+        SwingUtilities.invokeAndWait(() -> {
+            deck = new CommandDeck();
+            ConnectForm form = deck.terminal().form();
+            assertThat(form.getParent()).as("kein Formular bei jedem Start").isNull();
+            deck.terminal().showForm();
+            assertThat(form.getParent()).as("auf Wunsch doch").isNotNull();
+        });
+    }
+
+    @Test
     void aFailedFirstConnectionLeavesNoTabAndShowsTheFormWithTheReason() throws Exception {
         int port = closedPort();
         SwingUtilities.invokeAndWait(() -> {
@@ -112,6 +124,7 @@ class TerminalConnectFlowTest {
                 assertThat(deck.terminal().selected()).as("gleich das Terminal, kein Formular").isSameAs(session);
                 // Kopfzeile so hoch wie die übrigen; Trennen und Schließen stehen im ▾-Menü, der Stand unten links.
                 assertThat(TerminalWorkspace.HEAD_HEIGHT).isEqualTo(35);
+                assertThat(TerminalWorkspace.FOOT_HEIGHT).as("wie die Fußleiste mit der Lupe").isEqualTo(43);
                 javax.swing.JPopupMenu menu = deck.terminal().moreMenu();
                 List<String> items = new java.util.ArrayList<>();
                 for (java.awt.Component part : menu.getComponents()) {
