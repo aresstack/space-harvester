@@ -292,6 +292,10 @@ public final class PodcastPlayer {
         } catch (IOException | UnsupportedAudioFileException | LineUnavailableException | RuntimeException e) {
             long at;
             synchronized (lock) {
+                if (generation != mine) {
+                    // Eine überholte Wiedergabe (gestoppt, zurückgesetzt): ihr Fehler betrifft den neuen Stand nicht.
+                    return;
+                }
                 at = position;
                 playing = false;
             }
@@ -318,7 +322,13 @@ public final class PodcastPlayer {
         }
         int block = Math.max(frameSize, (int) (format.getFrameRate() * BLOCK_MILLIS / 1000) * frameSize);
         byte[] buffer = new byte[block];
-        long start = startOf(index);
+        long start;
+        synchronized (lock) {
+            if (generation != mine) {
+                return false;
+            }
+            start = startOf(index);
+        }
         long played = offset;
         while (true) {
             synchronized (lock) {
@@ -339,6 +349,10 @@ public final class PodcastPlayer {
             int read = stream.read(buffer, 0, buffer.length - buffer.length % frameSize);
             if (read <= 0) {
                 synchronized (lock) {
+                    // Während des Lesens zurückgesetzt: Abschnitte und Position gehören schon zum neuen Stand.
+                    if (generation != mine) {
+                        return false;
+                    }
                     position = start + Math.max(played, durationAt(index));
                 }
                 return true;
@@ -347,6 +361,10 @@ public final class PodcastPlayer {
             played += Math.round(read / (double) frameSize / format.getFrameRate() * 1000);
             long total;
             synchronized (lock) {
+                if (generation != mine) {
+                    line.flush();
+                    return false;
+                }
                 position = start + played;
                 total = total(durations);
             }
