@@ -52,8 +52,6 @@ public final class BetaViewWorkspace extends JPanel {
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<BetaViewSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
-    /** Reiter samt Kreuz je Sitzung. */
-    private final Map<BetaViewSession, JPanel> tabOf = new LinkedHashMap<>();
     private final Map<BetaViewSession, SessionPanel> panelOf = new LinkedHashMap<>();
     private final ComposerToggleButton newPill;
     private final CardLayout cards = new CardLayout();
@@ -131,16 +129,12 @@ public final class BetaViewWorkspace extends JPanel {
             directPending = false;
             direct.add(session);
         }
-        ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.profile().label(),
-                session.state().label());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        pill.getAccessibleContext().setAccessibleName(session.profile().label());
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.profile().label(),
+                session.state().label(), "Abmelden und schließen (auch Mittelklick auf den Reiter)",
+                () -> close(session));
         pill.addActionListener(e -> select(session));
         pillGroup.add(pill);
-        JPanel tab = com.aresstack.spaceharvester.app.ui.deck.DeckBars.tab(pill,
-                "Abmelden und schließen (auch Mittelklick auf den Reiter)", () -> close(session));
-        pills.add(tab, pills.getComponentCount() - 1);
-        tabOf.put(session, tab);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
         SessionPanel panel = new SessionPanel(session, prompts, () -> close(session));
         panelOf.put(session, panel);
@@ -206,7 +200,7 @@ public final class BetaViewWorkspace extends JPanel {
         ComposerToggleButton pill = pillOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tabOf.remove(session));
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }

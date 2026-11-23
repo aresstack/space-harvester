@@ -1,16 +1,17 @@
 package com.aresstack.spaceharvester.app.ui.controls;
 
 import java.awt.AlphaComposite;
-import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.Color;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridLayout;
 import java.awt.Insets;
+import java.awt.LayoutManager;
 import java.awt.RenderingHints;
 import java.util.HashMap;
 import java.util.Map;
@@ -95,27 +96,74 @@ public final class FunctionKeyBar extends JPanel {
     }
 
     private JPanel row(int first, Map<Integer, String> assigned) {
-        JPanel left = group(FlowLayout.LEFT);
-        JPanel center = group(FlowLayout.CENTER);
-        JPanel right = group(FlowLayout.RIGHT);
+        JPanel row = new JPanel(new KeyRow());
+        row.setOpaque(false);
         for (int number = first; number < first + 12; number++) {
             KeyCap key = new KeyCap(number, assigned.get(number));
             keys.put(number, key);
-            int position = number - first;
-            (position < 4 ? left : position < 8 ? center : right).add(key);
+            row.add(key);
         }
-        JPanel row = new JPanel(new BorderLayout(8, 0));
-        row.setOpaque(false);
-        row.add(left, BorderLayout.WEST);
-        row.add(center, BorderLayout.CENTER);
-        row.add(right, BorderLayout.EAST);
         return row;
     }
 
-    private static JPanel group(int align) {
-        JPanel panel = new JPanel(new FlowLayout(align, 2, 1));
-        panel.setOpaque(false);
-        return panel;
+    /** Die gemeinsame Breite aller Tasten: die der breitesten Beschriftung (Angelo: Tasten sind gleich groß). */
+    int keyWidth() {
+        int widest = 0;
+        for (KeyCap key : keys.values()) {
+            widest = Math.max(widest, key.naturalWidth());
+        }
+        return widest;
+    }
+
+    /**
+     * Eine Zeile aus drei Blöcken zu je vier gleich breiten Tasten wie in MainframeMate: der erste bündig links, der
+     * dritte bündig rechts, der mittlere mittig. So stehen F1 und F13, F10 und F22 genau untereinander.
+     */
+    private final class KeyRow implements LayoutManager {
+
+        private static final int GAP = 2;
+        private static final int VGAP = 1;
+
+        @Override
+        public void addLayoutComponent(String name, Component comp) {
+        }
+
+        @Override
+        public void removeLayoutComponent(Component comp) {
+        }
+
+        @Override
+        public Dimension preferredLayoutSize(Container parent) {
+            int height = 0;
+            for (Component key : parent.getComponents()) {
+                height = Math.max(height, key.getPreferredSize().height);
+            }
+            // Drei Blöcke zu vier Tasten, dazwischen etwas Luft.
+            return new Dimension(12 * keyWidth() + 9 * GAP + 2 * 16, height + 2 * VGAP);
+        }
+
+        @Override
+        public Dimension minimumLayoutSize(Container parent) {
+            return preferredLayoutSize(parent);
+        }
+
+        @Override
+        public void layoutContainer(Container parent) {
+            Component[] parts = parent.getComponents();
+            if (parts.length == 0) {
+                return;
+            }
+            int width = parent.getWidth();
+            int height = parent.getHeight() - 2 * VGAP;
+            // Zu schmal: gleichmäßig schmaler statt überlappen.
+            int key = Math.min(keyWidth(), Math.max(8, (width - 9 * GAP - 2 * 8) / 12));
+            int block = 4 * key + 3 * GAP;
+            int[] starts = {0, (width - block) / 2, width - block};
+            for (int i = 0; i < parts.length; i++) {
+                int x = starts[Math.min(2, i / 4)] + (i % 4) * (key + GAP);
+                parts[i].setBounds(x, VGAP, key, height);
+            }
+        }
     }
 
     @Override
@@ -184,10 +232,15 @@ public final class FunctionKeyBar extends JPanel {
             addActionListener(e -> press.accept(number));
         }
 
+        /** Breite für die eigene Beschriftung; gezeigt wird jede Taste so breit wie die breiteste. */
+        int naturalWidth() {
+            return getFontMetrics(getFont()).stringWidth(getText()) + 12;
+        }
+
         @Override
         public Dimension getPreferredSize() {
             FontMetrics metrics = getFontMetrics(getFont());
-            return new Dimension(metrics.stringWidth(getText()) + 12, metrics.getHeight() + 6);
+            return new Dimension(keyWidth(), metrics.getHeight() + 6);
         }
 
         @Override
