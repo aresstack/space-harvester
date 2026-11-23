@@ -220,6 +220,8 @@ public final class MainWindow implements AppContext.Navigator {
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());
+        // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
+        com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);

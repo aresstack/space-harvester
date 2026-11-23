@@ -33,6 +33,7 @@ public final class NdvAnalysisSettings {
     private static final NdvAccessRules RULES = new NdvAccessRules();
     private static final Map<String, NdvAnalysis> ANALYSES = new ConcurrentHashMap<>();
     private static final List<Runnable> LISTENERS = new CopyOnWriteArrayList<>();
+    private static volatile NdvSearchLink searchLink = NdvSearchLink.NONE;
 
     static {
         reload();
@@ -108,6 +109,18 @@ public final class NdvAnalysisSettings {
     /** Vergisst die Analysen (Tests). */
     static void forgetAnalyses() {
         ANALYSES.clear();
+    }
+
+    /** Der Anschluss an die globale Suche (Wissensquellen der App); ohne App {@link NdvSearchLink#NONE}. */
+    public static NdvSearchLink searchLink() {
+        return searchLink;
+    }
+
+    /** Setzt das Hauptfenster; geänderte Wissensquellen melden sich über {@link #observe(Runnable)}. */
+    public static void searchLink(NdvSearchLink link) {
+        searchLink = link == null ? NdvSearchLink.NONE : link;
+        searchLink.observe(NdvAnalysisSettings::changed);
+        changed();
     }
 
     public static void observe(Runnable listener) {

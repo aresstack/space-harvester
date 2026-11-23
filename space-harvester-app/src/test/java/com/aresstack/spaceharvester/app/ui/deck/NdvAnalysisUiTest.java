@@ -180,6 +180,77 @@ class NdvAnalysisUiTest {
         assertThat(browser.shown().displayName()).isEqualTo("KASSEN01");
     }
 
+    @Test
+    void indexingCreatesARuleForTheGlobalSearchAndStartsIt() throws Exception {
+        java.util.List<String> created = new java.util.ArrayList<>();
+        java.util.List<String> indexed = new java.util.ArrayList<>();
+        java.util.concurrent.atomic.AtomicReference<NdvSearchLink.Rule> rule =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.List<Runnable> observers = new java.util.ArrayList<>();
+        NdvAnalysisSettings.searchLink(new NdvSearchLink() {
+            @Override
+            public java.util.Optional<Rule> rule(com.aresstack.spaceharvester.deck.ndv.NdvProfile profile) {
+                assertThat(profile.host()).isEqualTo("10.0.0.7");
+                return java.util.Optional.ofNullable(rule.get());
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public void createRule(java.awt.Component parent, com.aresstack.spaceharvester.deck.ndv.NdvProfile profile,
+                                   String account, List<String> libraries, java.util.function.Consumer<String> saved) {
+                created.add(account + " " + libraries);
+                rule.set(new Rule("natural", "NDV Lager", libraries));
+                observers.forEach(Runnable::run);
+                saved.accept("natural");
+            }
+
+            @Override
+            public String indexNow(String sourceId) {
+                indexed.add(sourceId);
+                return "Indexieren gestartet: " + sourceId;
+            }
+
+            @Override
+            public void observe(Runnable changed) {
+                observers.add(changed);
+            }
+        });
+        NdvBrowser browser = connect();
+        flush();
+        assertThat(browser.indexPanel().searchRuleText()).isEqualTo("Nicht in der globalen Suche");
+        assertThat(browser.indexPanel().indexRule.isEnabled()).isTrue();
+        assertThat(browser.indexPanel().indexNow.isEnabled()).as("ohne Regel nichts zu indexieren").isFalse();
+        assertThat(findItem(browser.contextMenu(), "Indexieren (Regel anlegen)").isEnabled()).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> browser.indexPanel().indexRule.doClick());
+        flush();
+        assertThat(created).containsExactly("Testhost NDV [LAGER]");
+        assertThat(indexed).as("nach dem Speichern gleich indexiert").containsExactly("natural");
+        assertThat(browser.indexPanel().searchRuleText()).isEqualTo("In „NDV Lager“, global durchsuchbar");
+        assertThat(browser.indexPanel().indexNow.isEnabled()).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> browser.indexPanel().indexNow.doClick());
+        flush();
+        assertThat(indexed).containsExactly("natural", "natural");
+
+        // Eine Regel des Servers ohne diese Bibliothek: gelb, Anlegen ergänzt sie.
+        rule.set(new NdvSearchLink.Rule("natural", "NDV Lager", List.of("KASSE")));
+        observers.forEach(Runnable::run);
+        flush();
+        assertThat(browser.indexPanel().searchRuleText()).isEqualTo("„NDV Lager“ ohne LAGER");
+
+        // Gesperrte Bibliotheken kommen nicht in die globale Suche.
+        NdvAnalysisSettings.rules().blacklist(List.of(NdvAccessRules.path("LAGER", "")));
+        SwingUtilities.invokeAndWait(browser::createSearchRule);
+        flush();
+        assertThat(created).hasSize(1);
+        assertThat(server.writes()).isEmpty();
+    }
+
     private static JMenuItem findItem(javax.swing.JPopupMenu menu, String text) {
         for (java.awt.Component component : menu.getComponents()) {
             if (component instanceof JMenuItem item && item.getText().equals(text)) {
