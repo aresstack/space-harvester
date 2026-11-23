@@ -40,7 +40,7 @@ public final class SelectableHeading extends JPanel {
         add(title, BorderLayout.CENTER);
         tools.setOpaque(false);
         add(tools, BorderLayout.EAST);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         MouseAdapter click = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {

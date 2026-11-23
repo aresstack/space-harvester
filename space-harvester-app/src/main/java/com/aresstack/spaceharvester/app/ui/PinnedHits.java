@@ -72,7 +72,7 @@ final class PinnedHits extends JPanel {
             row.setOpaque(false);
             row.setBorder(BorderFactory.createEmptyBorder(3, 4, 3, 4));
             row.setAlignmentX(Component.LEFT_ALIGNMENT);
-            row.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            com.aresstack.spaceharvester.app.ui.controls.Cursors.set(row, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             row.setToolTipText("Klick zeigt die Seite im Baum, Doppelklick öffnet sie");
             int index = i;
             row.addMouseListener(new MouseAdapter() {
