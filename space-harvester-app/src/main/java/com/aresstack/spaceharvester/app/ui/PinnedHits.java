@@ -22,6 +22,7 @@ final class PinnedHits extends JPanel {
 
     static final String ADDRESS = "Seite zur Adresse";
     static final String TITLES = "Titeltreffer";
+    static final String TICKET = "Vorgang zum Schlüssel";
 
     private final JLabel caption = Comic.muted(" ");
     private final List<JLabel> rows = new ArrayList<>();

@@ -132,6 +132,14 @@ public final class AppContext {
         default void revealPage(String sourceId, String pageId) {
         }
 
+        /**
+         * Wie {@link #revealPage(String, String)}, mit dem Space des Treffers: Quellen ohne Seitenbaum (Jira) zeigen die
+         * Seite dann unter diesem Space, statt gar nicht.
+         */
+        default void revealPage(String sourceId, String spaceKey, String pageId) {
+            revealPage(sourceId, pageId);
+        }
+
         void showJob(String jobId);
 
         /**

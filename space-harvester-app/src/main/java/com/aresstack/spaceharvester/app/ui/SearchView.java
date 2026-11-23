@@ -334,7 +334,7 @@ public final class SearchView implements View {
         pinned.onSelect(hit -> {
             table.clearSelection();
             heading.selected(false);
-            context.navigator().revealPage(hit.sourceId(), hit.pageId());
+            context.navigator().revealPage(hit.sourceId(), hit.spaceKey(), hit.pageId());
         });
         pinned.onOpen(hit -> context.navigator().openPage(hit.sourceId(), hit.pageId()));
         query.setToolTipText("Wörter in Titel und Inhalt; die Quellen werden live durchsucht");
@@ -395,7 +395,7 @@ public final class SearchView implements View {
                 heading.selected(false);
                 pinned.clearSelection();
                 Hit hit = model.rows.get(table.convertRowIndexToModel(row));
-                context.navigator().revealPage(hit.sourceId(), hit.pageId());
+                context.navigator().revealPage(hit.sourceId(), hit.spaceKey(), hit.pageId());
             }
         });
         table.addMouseListener(new MouseAdapter() {
@@ -803,8 +803,9 @@ public final class SearchView implements View {
         if (area.isEmpty()) {
             return "Wissensquellen";
         }
-        return String.join(", ", area.stream().map(scope -> title(scope.sourceId())
-                + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList());
+        return String.join(", ", area.stream().map(scope -> scope.pageId() != null
+                ? (scope.pageTitle() == null ? scope.pageId() : scope.pageTitle())
+                : title(scope.sourceId()) + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList());
     }
 
     /**
@@ -820,11 +821,49 @@ public final class SearchView implements View {
         int id = ++titleRequest;
         Set<String> sources = chosenSources();
         Set<String> spaces = chosenSpaces();
-        Background.run(() -> titleHits(runtime, sources, spaces, text), hits -> {
+        List<String> issueAddresses = issueAddresses(text);
+        Background.run(() -> {
+            // Ein Vorgangsschlüssel (HAVDBAR-86012) ist bei Jira eine Adresse unter …/browse/KEY (Angelo, 23.11.2026).
+            List<Hit> tickets = new ArrayList<>();
+            for (String address : issueAddresses) {
+                try {
+                    runtime.workspace().resolveAddress(address).matches().stream().map(Hit::of)
+                            .filter(hit -> sources.contains(hit.sourceId()) && !tickets.contains(hit))
+                            .forEach(tickets::add);
+                } catch (RuntimeException e) {
+                    // Nicht erreichbar: dann eben ohne Ticket oben; die Suche selbst meldet Fehler.
+                }
+            }
+            return tickets.isEmpty() ? java.util.Map.entry(PinnedHits.TITLES, titleHits(runtime, sources, spaces, text))
+                    : java.util.Map.entry(PinnedHits.TICKET, (List<Hit>) tickets);
+        }, found -> {
             if (id == titleRequest) {
-                pinned.show(PinnedHits.TITLES, hits);
+                pinned.show(found.getKey(), found.getValue());
             }
         }, error -> { });
+    }
+
+    /** Ein Jira-Vorgangsschlüssel wie {@code HAVDBAR-86012}. */
+    static final java.util.regex.Pattern ISSUE_KEY = java.util.regex.Pattern.compile("(?i)[A-Z][A-Z0-9_]*-[0-9]{1,12}");
+
+    /**
+     * Zu einem Vorgangsschlüssel die Adressen {@code <Basis-URL>/browse/KEY} aller eingetragenen Quellen mit Basis-URL
+     * (bei Jira unter {@code options.baseUrl}); welche Quelle sie kennt, entscheidet die Adressauflösung des Core.
+     */
+    List<String> issueAddresses(String text) {
+        String key = text == null ? "" : text.trim();
+        if (!ISSUE_KEY.matcher(key).matches() || context.settings() == null) {
+            return List.of();
+        }
+        Set<String> addresses = new LinkedHashSet<>();
+        for (var entry : context.settings().sources()) {
+            var config = entry.config();
+            String base = config.baseUrl() != null ? config.baseUrl().toString() : config.options().get("baseUrl");
+            if (base != null && !base.isBlank()) {
+                addresses.add(base.replaceAll("/+$", "") + "/browse/" + key.toUpperCase(java.util.Locale.ROOT));
+            }
+        }
+        return List.copyOf(addresses);
     }
 
     /** Höchstens so viele Titeltreffer stehen oben. */
@@ -1417,6 +1456,46 @@ public final class SearchView implements View {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
         }
+        List<Explorer.Scope> pageScopes = scopes.stream().filter(scope -> scope.pageId() != null
+                && searchedSources().contains(scope.sourceId())).toList();
+        if (pageScopes.isEmpty()) {
+            run(runtime, q, text);
+            return;
+        }
+        // Eine Seite als Bereich (Angelo, 23.11.2026): dieselbe Suche, begrenzt auf die Seite samt Unterseiten.
+        KeywordSearch.Query spaceQuery = q;
+        int pending = ++pageScopeRequest;
+        starting("Unterseiten werden ermittelt …");
+        Background.run(() -> pagesOf(runtime, pageScopes), pages -> {
+            if (pending == pageScopeRequest) {
+                run(runtime, spaceQuery.within(pages), text);
+            }
+        }, error -> {
+            if (pending == pageScopeRequest) {
+                overlay.setBusy(false);
+                feedback.problem(error);
+            }
+        });
+    }
+
+    /** Zählt das Ermitteln der Unterseiten; ein überholtes verfällt. */
+    private int pageScopeRequest;
+
+    /** Die gewählten Seiten samt ihrer Nachfahren aus dem Bestand. */
+    private static com.aresstack.spaceharvester.application.snapshot.PageSet pagesOf(AppRuntime runtime,
+                                                                                     List<Explorer.Scope> pageScopes) {
+        Map<String, Set<String>> pages = new LinkedHashMap<>();
+        for (Explorer.Scope scope : pageScopes) {
+            Set<String> ids = pages.computeIfAbsent(scope.sourceId(), id -> new LinkedHashSet<>());
+            ids.add(scope.pageId());
+            ids.addAll(runtime.workspace().descendants(scope.sourceId(), scope.spaceKey(), scope.pageId()).pages()
+                    .pagesOf(scope.sourceId()));
+        }
+        return com.aresstack.spaceharvester.application.snapshot.PageSet.of(pages);
+    }
+
+    /** Startet die gebaute Anfrage: Schlagwortsuche oder semantisch. */
+    private void run(AppRuntime runtime, KeywordSearch.Query q, String text) {
         started(runtime, text);
         if (semantic.isSelected()) {
             progressive(runtime, q);

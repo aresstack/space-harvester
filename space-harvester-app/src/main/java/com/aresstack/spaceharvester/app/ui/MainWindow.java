@@ -1147,6 +1147,11 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
+    public void revealPage(String sourceId, String spaceKey, String pageId) {
+        explorer.revealPage(sourceId, spaceKey, pageId);
+    }
+
+    @Override
     public void openSpace(String sourceId, String spaceKey) {
         showSection(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);

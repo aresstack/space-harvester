@@ -133,6 +133,10 @@ class SearchViewTest {
         assertThat(view[0].heading.selected()).isTrue();
         assertThat(view[0].repeat.isEnabled()).isTrue();
         assertThat(located).containsExactly(List.of());
+        assertThat(view[0].areaTitle(List.of(new Explorer.Scope("alpha", "DEV", "7", "Betriebshandbuch"))))
+                .as("eine Seite als Bereich heißt wie die Seite").isEqualTo("Betriebshandbuch");
+        assertThat(SearchView.ISSUE_KEY.matcher("HAVDBAR-86012").matches()).isTrue();
+        assertThat(SearchView.ISSUE_KEY.matcher("Betrieb 2026").matches()).isFalse();
 
         // Ein Klick (Auswahl) zeigt die Seite des Treffers schon im Explorer, ohne sie zu öffnen.
         List<String> revealed = new ArrayList<>();
