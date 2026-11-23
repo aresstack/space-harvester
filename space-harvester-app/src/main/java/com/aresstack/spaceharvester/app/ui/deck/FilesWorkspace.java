@@ -918,11 +918,25 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     }
 
     /**
-     * Sperrschlüssel für gespeicherte SharePoint-Zugangsdaten: der Benutzer, denn gesperrt wird sein Konto, gleich auf
-     * welcher Site.
+     * Sperrschlüssel für gespeicherte SharePoint-Zugangsdaten: je Konto (Benutzer), denn gesperrt wird das Konto, gleich
+     * auf welcher Site. Der Wächter legt den Schlüssel im App-Zustand ab, darum nie der Name im Klartext, sondern ein
+     * kurzer SHA-256-Wert davon.
      */
     static String savedEntry(String user) {
-        return "SharePoint " + (user == null ? "" : user.strip());
+        String name = user == null ? "" : user.strip().toLowerCase(Locale.ROOT);
+        try {
+            byte[] hash = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return "SharePoint " + java.util.HexFormat.of().formatHex(hash, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Hinweis im Dialog bei gesperrtem Konto, mit lesbarem Namen (der Schlüssel ist nur ein Hash). */
+    private String lockedNotice(String user) {
+        return guard.failure(savedEntry(user)).map(failure -> "Letzte Anmeldung als „" + user + "“ fehlgeschlagen: "
+                + failure.reason() + ". Bitte Zugangsdaten prüfen.").orElse("");
     }
 
     /** Für Tests: ein eigener Wächter statt des gemeinsamen der App. */
@@ -954,7 +968,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             if (!guard.mayTry(entry)) {
                 // Letzter Versuch abgelehnt: nicht noch einmal automatisch, der Mensch prüft im Dialog.
                 java.util.Arrays.fill(login.password(), '\0');
-                SwingUtilities.invokeLater(() -> askLogin(tab, unc, DeckLogin.notice(entry), login.user()));
+                SwingUtilities.invokeLater(() -> askLogin(tab, unc, lockedNotice(login.user()), login.user()));
                 return;
             }
             sharePoint.connect(unc, login.user(), login.password(), result -> SwingUtilities.invokeLater(() -> {

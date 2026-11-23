@@ -376,8 +376,23 @@ class FilesWorkspaceTest {
                 };
         var saved = com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory();
         saved.save("intranet.example.org", "nutzer", "alt".toCharArray());
+        java.util.Map<String, String> stored = new java.util.concurrent.ConcurrentHashMap<>();
         var guard = new com.aresstack.spaceharvester.deck.access.LoginGuard(
-                com.aresstack.spaceharvester.deck.access.LoginGuard.Store.memory());
+                new com.aresstack.spaceharvester.deck.access.LoginGuard.Store() {
+                    @Override
+                    public String get(String key) {
+                        return stored.get(key);
+                    }
+
+                    @Override
+                    public void put(String key, String value) {
+                        if (value == null) {
+                            stored.remove(key);
+                        } else {
+                            stored.put(key, value);
+                        }
+                    }
+                });
         SwingUtilities.invokeAndWait(() -> {
             workspace = new FilesWorkspace(
                     new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
@@ -407,6 +422,9 @@ class FilesWorkspaceTest {
             Thread.sleep(25);
         }
         assertThat(attempts.get()).as("kein zweiter automatischer Versuch").isEqualTo(1);
+        assertThat(stored).isNotEmpty();
+        assertThat(String.join("\n", stored.keySet()) + String.join("\n", stored.values()))
+                .as("kein Benutzername im Zustand").doesNotContainIgnoringCase("nutzer");
     }
 
     @Test
