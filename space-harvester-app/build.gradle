@@ -49,6 +49,7 @@ dependencies {
     implementation project(':nlp-parser')
     // Command Deck (#1142): Terminal-Sitzungen (TN3270 über OpenTerm), nur in der App
     implementation project(':command-deck')
+    implementation project(':mainframe-languages')
     testImplementation testFixtures(project(':command-deck'))
     // Gemeinsamer Editor des Command Deck (app.ui.deck.editor)
     implementation libs.rsyntaxtextarea

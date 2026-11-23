@@ -756,7 +756,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         context.discovered(pageIds.size());
         java.util.Optional<FailedPageRetry.Result> result;
         try {
-            result = retry.run(sourceId, spaceKey, pageIds, header -> true, applier, listener(context));
+            result = retry.run(sourceId, spaceKey, pageIds, header -> true, applier, listener(context, pageIds));
         } catch (SyncConflictException e) {
             throw new JobFailedException(CONFLICT, "Ein anderer Abgleich hat inzwischen eine Generation bestätigt");
         }
@@ -1004,6 +1004,19 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     }
 
     private static SyncListener listener(JobContext context) {
+        return listener(context, Set.of());
+    }
+
+    /**
+     * Zählt je Seite einmal: gefunden ist, was die Inventur listet ({@code counted} schon vorher), erledigt jede Seite
+     * des Plans. Eine Seite, die der Plan bearbeitet, die Inventur aber nicht listet – gelöscht, gesperrt, verschoben
+     * ({@link PageChange.Kind#MISSING}) –, zählt beim Bearbeiten als gefunden. Vorher stand bei jedem Abgleich mit
+     * Löschungen mehr erledigt als gefunden da, etwa 265/264 (Angelo 22.11.2026).
+     */
+    static SyncListener listener(JobContext context, Set<String> counted) {
+        Set<String> found = ConcurrentHashMap.newKeySet();
+        found.addAll(counted);
+        Set<String> done = ConcurrentHashMap.newKeySet();
         return new SyncListener() {
 
             @Override
@@ -1013,7 +1026,25 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             }
 
             @Override
+            public void inventoried(Inventory inventory) {
+                context.phase(COMPONENT, "Seiten abrufen");
+                int fresh = 0;
+                for (PageMetadataListing.Entry entry : inventory.pages()) {
+                    if (found.add(entry.page().pageId())) {
+                        fresh++;
+                    }
+                }
+                context.discovered(fresh);
+            }
+
+            @Override
             public void pageDone(PageChange change, boolean written, boolean failed) {
+                if (!done.add(change.pageId())) {
+                    return;
+                }
+                if (found.add(change.pageId())) {
+                    context.discovered(1);
+                }
                 context.processed(1);
                 if (written) {
                     context.written(1);

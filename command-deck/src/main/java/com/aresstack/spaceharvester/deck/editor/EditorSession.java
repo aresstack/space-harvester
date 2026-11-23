@@ -36,9 +36,10 @@ public final class EditorSession {
     }
 
     private final DocumentStore store;
-    private final String location;
-    private final String name;
     private final Executor background;
+    private final VersionHistory history;
+    private String location;
+    private String name;
     private final List<Consumer<EditorSession>> observers = new CopyOnWriteArrayList<>();
     private final ReentrantLock lock = new ReentrantLock();
     private EditorDocument document;
@@ -48,19 +49,36 @@ public final class EditorSession {
     private String note;
     private long revision;
 
-    EditorSession(DocumentStore store, String location, String name, Executor background) {
+    EditorSession(DocumentStore store, String location, String name, Executor background, VersionHistory history) {
         this.store = Objects.requireNonNull(store, "store");
         this.location = Objects.requireNonNull(location, "location");
         this.name = Objects.requireNonNull(name, "name");
         this.background = Objects.requireNonNull(background, "background");
+        this.history = Objects.requireNonNull(history, "history");
     }
 
+    /** Die Adresse; ändert sich nur durch {@link #saveAs}. */
     public String location() {
-        return location;
+        return read(() -> location);
     }
 
     public String name() {
-        return name;
+        return read(() -> name);
+    }
+
+    /** {@code false} für reine Ansichten der Ablage. */
+    public boolean writable() {
+        return store.writable();
+    }
+
+    /** Die lokal aufbewahrten Versionen dieses Dokuments, neueste zuerst (wie der Verlauf von MainframeMate). */
+    public java.util.List<VersionHistory.Version> versions() {
+        return history.versions(store.id(), location());
+    }
+
+    /** Text einer Version aus {@link #versions()}. */
+    public Optional<String> version(String id) {
+        return history.content(store.id(), location(), id);
     }
 
     public DocumentStore store() {
@@ -135,7 +153,8 @@ public final class EditorSession {
         set(State.LOADING, null, null);
         background.execute(() -> {
             try {
-                EditorDocument loaded = store.load(location);
+                EditorDocument loaded = store.load(location());
+                remember(loaded.text(), "geöffnet");
                 lock.lock();
                 try {
                     document = loaded;
@@ -171,7 +190,7 @@ public final class EditorSession {
         String edited;
         lock.lock();
         try {
-            if (document == null || state == State.SAVING || state == State.LOADING) {
+            if (document == null || state == State.SAVING || state == State.LOADING || !store.writable()) {
                 return;
             }
             base = document;
@@ -184,6 +203,7 @@ public final class EditorSession {
         changed();
         background.execute(() -> {
             try {
+                remember(edited, "vor Speichern");
                 SaveResult result = store.save(base, edited, force);
                 if (result instanceof SaveResult.Saved saved) {
                     lock.lock();
@@ -206,6 +226,59 @@ public final class EditorSession {
                 set(State.READY, null, "Nicht gespeichert (" + e.getClass().getSimpleName() + ")");
             }
         });
+    }
+
+    /**
+     * Speichert den Text unter {@code target} (Ablage muss {@link DocumentStore#canSaveAs()} können); danach zeigt
+     * die Sitzung auf die neue Adresse, wie der Reiter in MainframeMate.
+     */
+    public void saveAs(String target) {
+        Objects.requireNonNull(target, "target");
+        EditorDocument base;
+        String edited;
+        lock.lock();
+        try {
+            if (document == null || state == State.SAVING || state == State.LOADING || !store.canSaveAs()) {
+                return;
+            }
+            base = document;
+            edited = text;
+            state = State.SAVING;
+            note = null;
+        } finally {
+            lock.unlock();
+        }
+        changed();
+        background.execute(() -> {
+            try {
+                EditorDocument saved = store.saveAs(base, edited, target);
+                lock.lock();
+                try {
+                    document = saved;
+                    location = saved.location();
+                    name = saved.name();
+                    state = State.READY;
+                    problem = null;
+                    note = "Gespeichert unter " + saved.name();
+                } finally {
+                    lock.unlock();
+                }
+                remember(edited, "gespeichert unter");
+                changed();
+            } catch (DocumentException e) {
+                set(State.READY, null, "Nicht gespeichert: " + e.getMessage());
+            } catch (RuntimeException e) {
+                set(State.READY, null, "Nicht gespeichert (" + e.getClass().getSimpleName() + ")");
+            }
+        });
+    }
+
+    private void remember(String content, String label) {
+        try {
+            history.record(store.id(), location(), content, label);
+        } catch (RuntimeException e) {
+            // Der Verlauf ist eine Hilfe; Laden und Speichern scheitern nie an ihm.
+        }
     }
 
     private void set(State next, String reason, String message) {

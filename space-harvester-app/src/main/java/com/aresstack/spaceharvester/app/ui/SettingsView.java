@@ -50,6 +50,8 @@ public final class SettingsView implements View {
     static final String CACHE = "Cache";
     /** Bereich „Video“: Marken, Standbilder und Player ({@code space-harvester-app.video.*}). */
     static final String VIDEO = "Video";
+    /** Bereich „Terminal“: Einstellungen des 3270-Terminals im Command Deck (aus MainframeMate). */
+    static final String TERMINAL = "Terminal";
     static final String NDV = "NDV";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
@@ -110,6 +112,9 @@ public final class SettingsView implements View {
     final StandingWordsEditor standingWords;
     /** Bereich „Video“: alle Werte für Videos. */
     final VideoSettingsPanel video;
+    /** Bereich „Terminal“: Aktionsverzögerung, F-Tasten, Sternenhimmel, Maus-Aktionen. */
+    final TerminalSettingsPanel terminal =
+            new TerminalSettingsPanel(com.aresstack.spaceharvester.app.ui.deck.TerminalSettings.shared());
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
     final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
@@ -309,6 +314,8 @@ public final class SettingsView implements View {
         page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache, viewChangeLog))));
         page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
+        page(TERMINAL, Comic.column(Comic.plate(TerminalSettingsPanel.HEADING, Comic.PETROL, terminal.component()),
+                Comic.plate(TerminalSettingsPanel.MOUSE_HEADING, Comic.PETROL, terminal.mouseComponent())));
         page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component()),
                 Comic.plate(NdvAnalysisSettingsPanel.ORDER_HEADING, Comic.PETROL, ndvAnalysis.orderComponent()),
                 Comic.plate(NdvAnalysisSettingsPanel.STEPLIB_HEADING, Comic.PETROL, ndvAnalysis.stepLibComponent()),

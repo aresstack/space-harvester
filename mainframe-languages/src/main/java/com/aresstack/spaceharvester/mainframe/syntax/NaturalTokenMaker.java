@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.app.ui.deck.editor;
+package com.aresstack.spaceharvester.mainframe.syntax;
 
 import org.fife.ui.rsyntaxtextarea.AbstractTokenMaker;
 import org.fife.ui.rsyntaxtextarea.Token;
@@ -18,7 +18,6 @@ import javax.swing.text.Segment;
  *   - System variables (*COUNTER, *ISN, *PF-KONFIGURATIONS_SCHLUESSEL, etc.)
  *   - Hash/at/dollar-prefixed variables (#VAR, @VAR, $VAR)
  */
-// Unverändert aus MainframeMate übernommen (de.bund.zrb.ui.syntax.NaturalTokenMaker), nur das Paket ist neu.
 public class NaturalTokenMaker extends AbstractTokenMaker {
 
     // Token types reused from RSyntaxTextArea
