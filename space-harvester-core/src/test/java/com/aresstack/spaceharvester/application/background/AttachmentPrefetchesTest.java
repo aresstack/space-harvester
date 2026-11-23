@@ -36,11 +36,16 @@ class AttachmentPrefetchesTest {
     private final Set<String> failing = ConcurrentHashMap.newKeySet();
     private final Map<String, CountDownLatch> gates = new ConcurrentHashMap<>();
     private final Set<String> entered = ConcurrentHashMap.newKeySet();
+    /** Anhänge, deren Abruf am Netz scheitert (keine Verbindung). */
+    private final Set<String> unreachable = ConcurrentHashMap.newKeySet();
     private final AttachmentPrefetches.Loader loader = (sourceId, pageId, attachmentId) -> {
         entered.add(attachmentId);
         CountDownLatch gate = gates.get(attachmentId);
         if (gate != null) {
             gate.await(10, TimeUnit.SECONDS);
+        }
+        if (unreachable.contains(attachmentId)) {
+            throw new java.io.UncheckedIOException("Abruf scheiterte", new java.net.ConnectException("Connection refused"));
         }
         if (failing.contains(attachmentId)) {
             throw new IllegalStateException("erfunden");
@@ -105,6 +110,65 @@ class AttachmentPrefetchesTest {
         assertThat(failed.progress().written()).isEqualTo(2);
         assertThat(failed.progress().failed()).isEqualTo(1);
         assertThat(jobs.events(failed.id())).anySatisfy(event -> assertThat(event.message()).contains("100"));
+    }
+
+    /**
+     * Angelo 22.11.2026: Ohne Netz zählt kein Anhang als gescheitert; der Teil wartet sichtbar und lädt denselben Anhang
+     * im selben Teil, sobald das Netz zurück ist. Fristen von Hand, gewartet wird nur auf Meldungen des Teils.
+     */
+    @Test
+    void withoutNetworkThePartWaitsAndLoadsTheSameAttachmentWhenItIsBack() throws Exception {
+        List<Runnable> checks = Collections.synchronizedList(new ArrayList<>());
+        com.aresstack.spaceharvester.application.network.NetworkState network =
+                new com.aresstack.spaceharvester.application.network.NetworkState(Clock.systemUTC(),
+                        (delay, task) -> checks.add(task));
+        prefetches.network(network);
+        unreachable.add("a2");
+        CountDownLatch waiting = new CountDownLatch(1);
+        CountDownLatch completed = new CountDownLatch(1);
+        try (var watch = background.subscribe(AttachmentPrefetches.KIND, status -> {
+            if (status.state() == JobState.RUNNING
+                    && status.stage() == com.aresstack.spaceharvester.application.jobs.JobStage.OFFLINE) {
+                waiting.countDown();
+            } else if (status.state() == JobState.COMPLETED) {
+                completed.countDown();
+            }
+        }, removed -> {
+        })) {
+            JobStatus started = prefetches.request("wiki", "DEV", "100", List.of("a1", "a2", "a3"), loader)
+                    .orElseThrow();
+
+            assertThat(waiting.await(30, TimeUnit.SECONDS)).as("Teil wartet auf das Netz").isTrue();
+            JobStatus offline = background.part(started.id()).orElseThrow();
+            assertThat(offline.progress().failed()).isZero();
+            assertThat(loaded).containsExactly("100/a1");
+            assertThat(jobs.events(started.id())).anySatisfy(event -> {
+                assertThat(event.code())
+                        .isEqualTo(com.aresstack.spaceharvester.application.network.NetworkWait.OFFLINE);
+                assertThat(event.message()).contains("ConnectException");
+            });
+
+            unreachable.clear();
+            List<Runnable> due;
+            synchronized (checks) {
+                due = new ArrayList<>(checks);
+                checks.clear();
+            }
+            due.forEach(Runnable::run);
+
+            assertThat(completed.await(30, TimeUnit.SECONDS)).as("Teil fertig").isTrue();
+            assertThat(network.online()).isTrue();
+            assertThat(loaded).containsExactly("100/a1", "100/a2", "100/a3");
+            assertThat(parts()).singleElement().satisfies(part -> {
+                assertThat(part.id()).isEqualTo(started.id());
+                assertThat(part.progress().written()).isEqualTo(3);
+                assertThat(part.progress().failed()).isZero();
+            });
+            assertThat(jobs.events(started.id())).anySatisfy(event -> assertThat(event.code())
+                    .isEqualTo(com.aresstack.spaceharvester.application.network.NetworkWait.ONLINE));
+        } finally {
+            network.close();
+        }
     }
 
     @Test

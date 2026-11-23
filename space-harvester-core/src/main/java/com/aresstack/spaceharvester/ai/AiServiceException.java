@@ -29,6 +29,15 @@ public class AiServiceException extends RuntimeException {
         this.reason = Objects.requireNonNull(reason, "reason");
     }
 
+    /**
+     * Mit der Ursache, damit die Diagnose den echten Grund findet (Angelo 22.11.2026), etwa {@code ConnectException}
+     * oder „HTTP 503“ in der Kette.
+     */
+    public AiServiceException(Reason reason, String message, Throwable cause) {
+        super(message, cause);
+        this.reason = Objects.requireNonNull(reason, "reason");
+    }
+
     public Reason reason() {
         return reason;
     }

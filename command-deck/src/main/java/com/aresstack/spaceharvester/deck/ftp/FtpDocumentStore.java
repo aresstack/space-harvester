@@ -22,6 +22,17 @@ public final class FtpDocumentStore implements DocumentStore {
         this.session = Objects.requireNonNull(session, "session");
     }
 
+    /**
+     * Kennung für den lokalen Verlauf: Host, Port und Benutzer, damit gleiche Pfade auf verschiedenen Servern oder
+     * Konten nicht im selben Verlauf landen.
+     */
+    @Override
+    public String id() {
+        String user = session.user();
+        return "ftp:" + session.profile().host().toLowerCase(java.util.Locale.ROOT) + ":" + session.profile().port()
+                + ":" + (user == null ? "" : user.toUpperCase(java.util.Locale.ROOT));
+    }
+
     public FtpSession session() {
         return session;
     }

@@ -19,7 +19,7 @@ import java.util.function.Supplier;
  * MainframeMate: gleicher System-Prompt, gleiches Anfrageformat (STIL/MAX_ZEICHEN/KONTEXT/TEXT), gleiche Bereinigung,
  * LRU-Cache mit 1000 Einträgen, Frist 30 s je Block (MainframeMate 15 s; das erste Laden eines Modells dauert länger). Anders als dort immer gestreamt (Proxy bricht lange Antworten
  * ohne Strom ab) und über den KI-Dienst der Einstellungen (Zeile „Zusammenfassung“: Modell und Nachdenken, sonst das
- * Chat-Modell). Eingeschaltet in Einstellungen › Command Deck › Diagramm-Ansicht; aus = keine Aufrufe.
+ * Chat-Modell). Eingeschaltet in Einstellungen › Diagramme › Diagramm-Ansicht; aus = keine Aufrufe.
  */
 public final class DiagramLabels implements BlockLabelSummarizer {
 

@@ -39,6 +39,31 @@ public interface TerminalView {
     default void highlight(java.util.List<Span> spans) {
     }
 
+    /**
+     * Meldet, was der Mensch an der Anzeige selbst eingibt (Tastatur, Einfügen, Klick auf einen Menüpunkt), für die
+     * Makro-Aufzeichnung. Eingaben in verdeckte Felder (Passwörter) meldet die Anzeige nie. Abläufe ohne Menschen
+     * (Anmeldung, Abspielen) laufen über {@link TerminalKeyboard} und werden nicht gemeldet.
+     */
+    default void addInputListener(InputListener listener) {
+    }
+
+    default void removeInputListener(InputListener listener) {
+    }
+
+    /** Empfänger der Eingaben des Menschen. */
+    interface InputListener {
+
+        /** Getippter oder eingefügter Text in ein sichtbares Feld. */
+        void typed(String text);
+
+        /** Eine AID-Taste, die an den Host ging. */
+        void aid(AidKey key);
+
+        /** Tab: die Schreibmarke ging ins nächste Eingabefeld. */
+        default void tab() {
+        }
+    }
+
     /** Ein Bereich ab Pufferposition {@code start}, {@code length} Zellen lang. */
     record Span(int start, int length) {
     }

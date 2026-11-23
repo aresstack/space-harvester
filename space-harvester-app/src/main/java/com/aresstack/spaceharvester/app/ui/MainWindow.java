@@ -144,6 +144,7 @@ public final class MainWindow implements AppContext.Navigator {
     private SignInNotice signInNotice;
     /** „Proxy-Skript seit … nicht erneuert“ daneben, solange das Erneuern des PAC-Skripts scheitert. */
     private ProxyNotice proxyNotice;
+    private NetworkNotice networkNotice;
     /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
     private final FindBar findBar;
     /** Platz der Zeitleiste über der Suchleiste ({@code TimelineEvent}). */
@@ -231,7 +232,7 @@ public final class MainWindow implements AppContext.Navigator {
                         entry.config().title(), entry.config().baseUrl().toString()))
                 .toList());
         // Diagramm-Ansicht „Visuell“: KI-Kurzbeschriftung über das Modell der Zeile „Zusammenfassung“ (sonst das
-        // Chat-Modell), gestreamt; Systemfunktionen aus Einstellungen › Command Deck.
+        // Chat-Modell), gestreamt; Systemfunktionen aus Einstellungen › Diagramme.
         com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.connect(() -> {
             var runtime = context.runtime();
             var settings = context.settings();
@@ -615,12 +616,14 @@ public final class MainWindow implements AppContext.Navigator {
         });
         // Scheitert das Erneuern des Proxy-Skripts, steht es daneben; der Klick zeigt den Grund (Angelo 16.11.2026).
         proxyNotice = new ProxyNotice(context);
+        // Ohne Netz steht es daneben, bis es zurück ist (Angelo 22.11.2026).
+        networkNotice = new NetworkNotice(context);
         JPanel statusBox = new JPanel(new BorderLayout(4, 0));
         statusBox.setOpaque(false);
         statusBox.add(status, BorderLayout.CENTER);
         statusBox.add(statusClose, BorderLayout.EAST);
         statusClose.setVisible(false);
-        statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, proxyNotice), viewStatus,
+        statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, networkNotice, proxyNotice), viewStatus,
                 statusBox, jobStatus, new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());

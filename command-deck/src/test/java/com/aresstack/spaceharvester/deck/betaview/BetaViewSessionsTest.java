@@ -98,6 +98,27 @@ class BetaViewSessionsTest {
         @Override
         public void closeAll() {
         }
+
+        @Override
+        public String notes() {
+            return "";
+        }
+
+        @Override
+        public String markedRanges() {
+            return "";
+        }
+
+        @Override
+        public String searchText(String query) {
+            calls.add("searchText " + query);
+            return "";
+        }
+
+        @Override
+        public String printInfo() {
+            return "";
+        }
     }
 
     @Test

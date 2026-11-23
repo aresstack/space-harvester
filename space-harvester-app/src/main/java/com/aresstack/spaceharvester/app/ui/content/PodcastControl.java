@@ -233,7 +233,7 @@ final class PodcastControl<S> {
     private void toggleSubtitles() {
         com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(SUBTITLES_KEY, subtitles() ? 0 : 1);
         applySubtitles();
-        subtitleAt(player.position());
+        subtitleAt(at());
     }
 
     /** Stellt Schalter und Zeile auf die gemerkte Einstellung (auch die eines anderen Podcasts). */
@@ -607,6 +607,7 @@ final class PodcastControl<S> {
         }
         generation++;
         stop();
+        forget();
         stages.close();
         jobs.close();
         stages = Subscription.NONE;
@@ -751,6 +752,7 @@ final class PodcastControl<S> {
             return;
         }
         stop();
+        forget();
         last = null;
         runningPicture = null;
         loaded.clear();
@@ -778,6 +780,22 @@ final class PodcastControl<S> {
         wanted = false;
         player.stop();
         showTimeline(false);
+    }
+
+    /**
+     * Ein anderer oder neu entstehender Podcast: Player und Zeitleiste vergessen den vorigen, sonst stünde die Zeitleiste
+     * bis zum ersten Ton auf dessen Ende (Angelo 23.11.2026: „er zeigt vorne die ganze Zeit die Endzeit an“).
+     */
+    private void forget() {
+        player.reset();
+        timeline.reset();
+        timeline.slides(List.of());
+        subtitleAt(0);
+    }
+
+    /** Wo die Wiedergabe steht; vor dem Start (oder nach dem Ende) dort, wo sie beginnen wird. */
+    private long at() {
+        return player.playing() ? player.position() : resumeAt;
     }
 
     private void failed(String message) {
@@ -845,14 +863,15 @@ final class PodcastControl<S> {
         last = podcast;
         // Text gibt es, sobald Abschnitte geplant sind; ob schon einer geschrieben ist, zeigt erst das Lesen.
         transcriptCopy.setVisible(podcast != null && podcast.parts().stream().anyMatch(part -> part.segment() >= 0));
-        subtitleAt(player.position());
+        long at = at();
+        subtitleAt(at);
         timeline.slides(player.topicStarts());
         // Ein Bild, das erst jetzt fertig wurde, erscheint zum laufenden Thema.
-        pictureAt(player.position());
-        followAt(player.position());
-        cueAt(player.position());
+        pictureAt(at);
+        followAt(at);
+        cueAt(at);
         if (!player.playing() || player.total() > 0 && !timeline.isDragging()) {
-            timeline.update(player.position(), player.total());
+            timeline.update(at, player.total());
         }
         if (!wanted || podcast == null) {
             return;
@@ -874,7 +893,7 @@ final class PodcastControl<S> {
         }
         timelineShown = show;
         subtitleToggle.setVisible(show);
-        subtitleAt(player.position());
+        subtitleAt(at());
         events.accept(show ? TimelineEvent.show(timelineRow) : TimelineEvent.hide(timelineRow));
         if (!show) {
             runningPicture = null;

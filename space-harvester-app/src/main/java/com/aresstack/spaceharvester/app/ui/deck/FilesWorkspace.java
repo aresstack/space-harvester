@@ -116,6 +116,9 @@ public final class FilesWorkspace extends JPanel {
     private final ComposerToggleButton browsePill;
     private final Map<EditorSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
     private final Map<EditorSession, DocumentEditor> editorOf = new LinkedHashMap<>();
+    /** Fester Kartenname je Dokument – der Ort kann sich durch „Speichern unter“ ändern. */
+    private final Map<EditorSession, String> cardOf = new LinkedHashMap<>();
+    private int cardCounter;
     private final CardLayout cards = new CardLayout();
     private final JPanel center = new JPanel(cards);
     private final JPanel browserTools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
@@ -539,7 +542,10 @@ public final class FilesWorkspace extends JPanel {
             cards.show(center, BROWSER);
             SwingUtilities.invokeLater(table::requestFocusInWindow);
         } else {
-            cards.show(center, session.location());
+            String card = cardOf.get(session);
+            if (card != null) {
+                cards.show(center, card);
+            }
             DocumentEditor editor = editorOf.get(session);
             if (editor != null) {
                 SwingUtilities.invokeLater(editor::focusText);
@@ -556,7 +562,9 @@ public final class FilesWorkspace extends JPanel {
         }
         DocumentEditor editor = new DocumentEditor(session);
         editorOf.put(session, editor);
-        center.add(editor, session.location());
+        String card = "doc-" + (++cardCounter);
+        cardOf.put(session, card);
+        center.add(editor, card);
         ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.forName(session.name()),
                 session.store() == preview ? session.name() + " (Vorschau)" : session.name(), session.location());
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
@@ -597,6 +605,12 @@ public final class FilesWorkspace extends JPanel {
         pill.setIcon(session.state() == EditorSession.State.FAILED
                 || session.state() == EditorSession.State.CONFLICT ? FilesIcons.dot(Comic.RED)
                 : session.dirty() ? FilesIcons.unsaved() : FilesIcons.forName(session.name()));
+        String title = session.store() == preview ? session.name() + " (Vorschau)" : session.name();
+        if (!title.equals(pill.getText())) {
+            pill.setText(title);
+            pill.getAccessibleContext().setAccessibleName(session.name());
+            pills.revalidate();
+        }
         pill.setToolTipText(session.location() + (session.dirty() ? " – ungespeicherte Änderungen" : ""));
         if (session == selected) {
             showStatus();
@@ -607,6 +621,7 @@ public final class FilesWorkspace extends JPanel {
     private void removed(EditorSession session) {
         ComposerToggleButton pill = pillOf.remove(session);
         DocumentEditor editor = editorOf.remove(session);
+        cardOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
             pills.remove(pill);

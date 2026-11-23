@@ -19,7 +19,7 @@ import java.util.stream.Stream;
 
 /**
  * Lokaler Verlauf als Dateien: je Ablage und Adresse ein Ordner (benannt nach dem SHA-256 der beiden, nie nach dem
- * Pfad), darin je Version {@code <Millisekunden>-<Kennzeichen>.txt} in UTF-8. Grenzen wie die Vorgaben von
+ * Pfad), darin je Version {@code <Millisekunden>-<Kennzeichen, URL-kodiert>.txt} in UTF-8 (Dateinamen nur ASCII). Grenzen wie die Vorgaben von
  * MainframeMate: höchstens {@code maxVersions} je Datei, nichts älter als {@code maxAge}.
  */
 public final class LocalVersionHistory implements VersionHistory {
@@ -83,7 +83,7 @@ public final class LocalVersionHistory implements VersionHistory {
                     continue;
                 }
                 versions.add(new Version(id, Instant.ofEpochMilli(millis(file)), length,
-                        dash < 0 ? "" : stem.substring(dash + 1).replace('_', ' ')));
+                        dash < 0 ? "" : java.net.URLDecoder.decode(stem.substring(dash + 1), StandardCharsets.UTF_8)));
             }
             return List.copyOf(versions);
         } finally {
@@ -147,6 +147,6 @@ public final class LocalVersionHistory implements VersionHistory {
     }
 
     private static String clean(String label) {
-        return label == null ? "" : label.replaceAll("[^\\p{L}\\p{N}]+", "_");
+        return label == null ? "" : java.net.URLEncoder.encode(label, StandardCharsets.UTF_8).replace("*", "%2A");
     }
 }

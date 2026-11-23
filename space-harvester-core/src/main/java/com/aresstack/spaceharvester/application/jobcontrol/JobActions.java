@@ -164,7 +164,8 @@ public class JobActions {
                     }
                     yield bound.retryFailed(jobId, caller);
                 }
-                if (state instanceof JobLifecycleState.Running || state instanceof JobLifecycleState.Preparing) {
+                if (state instanceof JobLifecycleState.Running || state instanceof JobLifecycleState.Preparing
+                        || state instanceof JobLifecycleState.AwaitingNetwork) {
                     // Während des Laufs: der Durchgang hält an und läuft sofort im selben Eintrag neu (Angelo
                     // 12.11.2026), Mehrfachdrücken löst nur einen Neustart aus.
                     yield jobs.requestRetryFailed(jobId, owner);

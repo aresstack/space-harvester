@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import java.util.Map;
 
 /** Fachliche Bezeichnungen und Formate der Oberfläche, auf Deutsch. */
 public final class Texts {
@@ -107,6 +108,8 @@ public final class Texts {
             case "PREPARING" -> "Vorbereitung";
             case "PREPARED" -> "Vorbereitet";
             case "AWAITING_EXPORT" -> "Wartet auf Text";
+            // Kein Fehler: Der Auftrag macht im selben Eintrag weiter, sobald das Netz zurück ist (Angelo 22.11.2026).
+            case "AWAITING_NETWORK" -> "Wartet auf Netzverbindung";
             default -> state(status.state());
         };
     }
@@ -119,7 +122,7 @@ public final class Texts {
                     Comic.Tone.WARNING;
             case "PREPARING" -> Comic.Tone.RUNNING;
             // Vorbereitet und wartend tun gerade nichts: ruhig wie „Angehalten“, bis ein Platz frei ist.
-            case "PREPARED", "AWAITING_EXPORT" -> Comic.Tone.NEUTRAL;
+            case "PREPARED", "AWAITING_EXPORT", "AWAITING_NETWORK" -> Comic.Tone.NEUTRAL;
             default -> tone(status.state());
         };
     }
@@ -197,7 +200,7 @@ public final class Texts {
                 && com.aresstack.spaceharvester.application.terms.SynonymDiscovery.TASK.equals(
                 status.parameters().get(com.aresstack.spaceharvester.application.terms.SynonymDiscovery
                         .TASK_PARAMETER))) {
-            return "Synonyme erkennen";
+            return backgroundTitle("Synonyme erkennen");
         }
         if (status.type() == JobType.SYNC && status.partitionKey() == null && status.parameters() != null
                 && status.parameters().get(com.aresstack.spaceharvester.application.sync.SpaceSyncJobs.GROUP) != null) {
@@ -205,10 +208,16 @@ public final class Texts {
             return "Abgleich der Quelle";
         }
         if (status.type() == JobType.BACKGROUND) {
-            // Hintergrundaufträge (ADR 0025 Nachtrag): der Titel ihrer Gruppe, etwa „Nachbarseiten laden“.
+            // Hintergrundaufträge (ADR 0025 Nachtrag): der Titel ihrer Gruppe, etwa „Nachbarseiten laden“; ein Teil
+            // einer gemischten Gruppe nennt seine Stufe, damit die Zeile unter der Klammer sagt, was sie tut.
+            String step = status.parameters().get(
+                    com.aresstack.spaceharvester.application.background.BackgroundJobs.STEP_TITLE);
+            if (step != null && !step.isBlank()) {
+                return backgroundTitle(step);
+            }
             String title = status.parameters().get(
                     com.aresstack.spaceharvester.application.background.BackgroundJobs.TITLE);
-            return title == null || title.isBlank() ? type(status.type()) : title;
+            return title == null || title.isBlank() ? type(status.type()) : backgroundTitle(title);
         }
         if (status.type() == JobType.PRESENTATION_EXPORT) {
             return com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.parse(
@@ -216,6 +225,27 @@ public final class Texts {
                             .FORMAT_PARAMETER)).label() + " erzeugen";
         }
         return type(status.type());
+    }
+
+    /**
+     * Was ein Hintergrundauftrag tut, in Worten (Angelo 22.11.2026: „Hintergrundfüllung“ sagt nicht, was passiert). Der
+     * Core legt den kurzen Titel ab; auch Einträge von früher heißen so verständlich. Unbekannte Titel bleiben.
+     */
+    static final Map<String, String> BACKGROUND_TITLES = Map.ofEntries(
+            Map.entry("Hintergrundfüllung", "Fehlende und veraltete Seiten laden"),
+            Map.entry("KI-Anreicherung", "Seiten für die KI-Suche aufbereiten"),
+            Map.entry("Anhänge analysieren", "Anhänge für die KI-Suche aufbereiten"),
+            Map.entry("Suchtreffer laden", "Seiten der Suchtreffer laden"),
+            Map.entry("Funde katalogisieren", "Gefundene Seiten in den Katalog aufnehmen"),
+            Map.entry("Verweise abgleichen", "Verweise zwischen Seiten abgleichen"),
+            Map.entry("Analysen nach Update nachrechnen", "Analysen geänderter Seiten neu berechnen"),
+            Map.entry("Verbindung prüfen", "Verbindung zur Quelle prüfen"),
+            Map.entry("Synonyme erkennen", "Synonyme der Fachbegriffe erkennen"),
+            Map.entry("Anhänge vorladen", "Weitere Anhänge vorladen"));
+
+    /** {@link #BACKGROUND_TITLES} für den abgelegten Titel eines Hintergrundauftrags. */
+    public static String backgroundTitle(String stored) {
+        return BACKGROUND_TITLES.getOrDefault(stored, stored);
     }
 
     public static String cacheState(CacheState state) {

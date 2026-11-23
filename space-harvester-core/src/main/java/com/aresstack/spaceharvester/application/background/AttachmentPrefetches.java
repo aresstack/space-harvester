@@ -84,6 +84,8 @@ public final class AttachmentPrefetches implements AutoCloseable {
     /** Gescheiterte Anhänge je Teil, über Anhalten und Fortsetzen hinweg; unter {@link #lock}. */
     private final Map<String, Long> failures = new HashMap<>();
     private final com.aresstack.spaceharvester.application.observe.Subscription states;
+    /** Der Netzzustand; ohne ihn zählt ein Netzfehler wie jeder andere. */
+    private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
 
     public AttachmentPrefetches(BackgroundJobs background) {
         this(background, MAX_WAITING);
@@ -125,6 +127,14 @@ public final class AttachmentPrefetches implements AutoCloseable {
                 }
             }));
         }
+    }
+
+    /**
+     * Hängt den Netzzustand an (Angelo 22.11.2026): Ein Netzfehler lässt keinen Anhang scheitern; der Teil wartet
+     * sichtbar, bis das Netz zurück ist, und lädt denselben Anhang im selben Teil erneut.
+     */
+    public void network(com.aresstack.spaceharvester.application.network.NetworkState network) {
+        this.network = network;
     }
 
     @Override
@@ -240,6 +250,9 @@ public final class AttachmentPrefetches implements AutoCloseable {
         Where where = new Where(part.sourceId(), part.partitionKey());
         return JobTask.blocking(context -> {
             String jobId = context.jobId();
+            com.aresstack.spaceharvester.application.network.NetworkState net = network;
+            com.aresstack.spaceharvester.application.network.NetworkWait wait = net == null ? null
+                    : new com.aresstack.spaceharvester.application.network.NetworkWait(net, context, COMPONENT);
             synchronized (lock) {
                 draining.put(where, jobId);
             }
@@ -269,7 +282,7 @@ public final class AttachmentPrefetches implements AutoCloseable {
                     if (count) {
                         context.discovered(page.attachments.size());
                     }
-                    load(page, where, context);
+                    load(page, where, context, wait);
                 }
             } finally {
                 synchronized (lock) {
@@ -304,29 +317,44 @@ public final class AttachmentPrefetches implements AutoCloseable {
      * Lädt die Anhänge einer Seite; endet der Teil vorzeitig, legt er den Rest vorn zurück: Fortsetzen lädt ihn,
      * Abbrechen oder Löschen verwirft ihn ({@link #discard}), außer die Seite gehört schon einem anderen Teil.
      */
-    private void load(Page page, Where where, com.aresstack.spaceharvester.application.jobs.JobContext context) {
+    private void load(Page page, Where where, com.aresstack.spaceharvester.application.jobs.JobContext context,
+                      com.aresstack.spaceharvester.application.network.NetworkWait wait) {
         String jobId = context.jobId();
         while (!page.attachments.isEmpty()) {
             try {
                 context.checkpoint();
-            } catch (RuntimeException stop) {
-                synchronized (lock) {
-                    page.takenBy = null;
-                    if (page.owner == null) {
-                        page.owner = jobId;
-                    }
-                    pending.computeIfAbsent(where, ignored -> new ArrayDeque<>()).addFirst(page);
-                    // Wer jetzt anfragt, schließt nicht mehr an diesen Teil an.
-                    draining.remove(where, jobId);
+                if (wait != null) {
+                    // Offline wartet der Teil hier, statt jeden übrigen Anhang am Netz scheitern zu lassen.
+                    wait.beforeFetch();
                 }
+            } catch (RuntimeException stop) {
+                putBack(page, where, jobId);
                 throw stop;
             }
             String attachmentId = page.attachments.pollFirst();
             try {
                 page.loader.load(where.sourceId(), page.pageId, attachmentId);
+                if (wait != null) {
+                    wait.answered();
+                }
                 context.processed(1);
                 context.written(1);
             } catch (Exception e) {
+                if (wait != null
+                        && com.aresstack.spaceharvester.application.network.NetworkState.networkFailure(e)) {
+                    // Kein Versuch verbraucht, nichts rot: derselbe Anhang, sobald das Netz zurück ist.
+                    page.attachments.addFirst(attachmentId);
+                    try {
+                        wait.failed(e);
+                    } catch (RuntimeException stop) {
+                        putBack(page, where, jobId);
+                        throw stop;
+                    }
+                    continue;
+                }
+                if (wait != null) {
+                    wait.answered();
+                }
                 synchronized (lock) {
                     failures.merge(jobId, 1L, Long::sum);
                 }
@@ -337,6 +365,19 @@ public final class AttachmentPrefetches implements AutoCloseable {
                         ATTACHMENTS_MISSING, "Ein Anhang der Seite " + page.pageId + " ließ sich nicht vorladen: "
                         + e.getClass().getSimpleName(), null, null, e));
             }
+        }
+    }
+
+    /** Legt den Rest der Seite vorn zurück: Fortsetzen lädt ihn, Abbrechen oder Löschen verwirft ihn. */
+    private void putBack(Page page, Where where, String jobId) {
+        synchronized (lock) {
+            page.takenBy = null;
+            if (page.owner == null) {
+                page.owner = jobId;
+            }
+            pending.computeIfAbsent(where, ignored -> new ArrayDeque<>()).addFirst(page);
+            // Wer jetzt anfragt, schließt nicht mehr an diesen Teil an.
+            draining.remove(where, jobId);
         }
     }
 

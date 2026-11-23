@@ -49,7 +49,7 @@ public final class VisualAction {
     /**
      * Schließt die Diagramm-Ansicht an die App an (beim Start des Hauptfensters): die KI-Kurzbeschriftung
      * zusammengefasster Blöcke über den streamenden Chat-Port und die einstellbare Liste der Systemfunktionen
-     * (Einstellungen › Command Deck), beide wie in MainframeMate.
+     * (Einstellungen › Diagramme), beide wie in MainframeMate.
      */
     public static void connect(java.util.function.Supplier<DiagramLabels.Target> target) {
         DiagramLabels next = new DiagramLabels(target);

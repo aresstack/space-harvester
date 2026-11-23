@@ -19,7 +19,7 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Die einstellbaren Systemprogramme (Einstellungen › Command Deck › Systemfunktionen) in einer eigenen JSON-Datei wie
+ * Die einstellbaren Systemprogramme (Einstellungen › Diagramme › Systemfunktionen) in einer eigenen JSON-Datei wie
  * {@code system_functions.json} in MainframeMate: {@code <Benutzerordner>/.space-harvester/system-functions.json}.
  * Fehlt die Datei, gilt die Standardliste aus MainframeMate (und wird beim ersten Speichern geschrieben). Die
  * Systemeigenschaft {@value #FILE_PROPERTY} setzt einen anderen Ort (Tests).

@@ -7,6 +7,9 @@ import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 /** Welche Syntaxhervorhebung zu welcher Dateiendung gehört; Unbekanntes bleibt einfacher Text. */
 public final class SyntaxStyles {
 
+    /** Natural (Software AG), wie in MainframeMate ({@code MainframeSyntaxSupport.SYNTAX_STYLE_NATURAL}). */
+    public static final String NATURAL = MainframeSyntax.NATURAL;
+
     private static final Map<String, String> BY_EXTENSION = Map.ofEntries(
             Map.entry("java", SyntaxConstants.SYNTAX_STYLE_JAVA),
             Map.entry("kt", SyntaxConstants.SYNTAX_STYLE_KOTLIN),

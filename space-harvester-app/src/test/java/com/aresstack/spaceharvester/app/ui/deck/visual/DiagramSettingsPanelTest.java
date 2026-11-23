@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Einstellungen › Command Deck › Systemfunktionen: Vorgabe, Bearbeiten in der Tabelle, sofort gespeichert. */
+/** Einstellungen › Diagramme › Systemfunktionen: Vorgabe, Bearbeiten in der Tabelle, sofort gespeichert. */
 class DiagramSettingsPanelTest {
 
     @TempDir

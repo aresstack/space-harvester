@@ -43,6 +43,8 @@ class FillJobsTest {
     /** Seiten, deren Abruf begann (auch die noch gesperrten). */
     private final List<String> started = Collections.synchronizedList(new ArrayList<>());
     private final Set<String> failing = ConcurrentHashMap.newKeySet();
+    /** Seiten, deren Abruf am Netz scheitert (keine Verbindung). */
+    private final Set<String> unreachable = ConcurrentHashMap.newKeySet();
     private final Map<String, CountDownLatch> gates = new ConcurrentHashMap<>();
     /** Lücken des Katalogs; was geladen ist, fällt heraus. */
     private final Set<String> gaps = Collections.synchronizedSet(new java.util.LinkedHashSet<>());
@@ -81,6 +83,10 @@ class FillJobsTest {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
+            }
+            if (unreachable.contains(key.pageId())) {
+                throw new java.io.UncheckedIOException("Abruf scheiterte",
+                        new java.net.ConnectException("Connection refused"));
             }
             if (failing.contains(key.pageId())) {
                 throw new com.aresstack.spaceharvester.application.sources.SourceAccessException("wiki",
@@ -213,6 +219,154 @@ class FillJobsTest {
         assertThat(ended.await(30, TimeUnit.SECONDS)).as("der Teil endet, statt ewig zu laufen").isTrue();
         assertThat(part(JobState.COMPLETED)).isPresent();
         assertThat(searched).as("„leer“ zählt erst nach der eigenen Suche, dann einmal neu").hasValue(2);
+    }
+
+    /**
+     * Angelo 22.11.2026: Nach einem Netzabbruch legte jeder Wiederholversuch der Füllung einen neuen Auftrag an. Der
+     * gescheiterte Teil läuft beim nächsten Versuch im selben Eintrag weiter, zählt den Versuch und behält in der
+     * Diagnose den Grund des früheren Fehlschlags.
+     */
+    @Test
+    void aRetryRunsInTheSameFailedPartCountsTheAttemptAndKeepsTheEarlierReason() throws Exception {
+        // Was die Suche der Füllung je Aufruf meldet: erst eine gescheiterte Seite, beim Versuch danach eine geladene.
+        java.util.concurrent.atomic.AtomicBoolean reachable = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicBoolean reported = new java.util.concurrent.atomic.AtomicBoolean();
+        FillJobs fillJobs = new FillJobs(background, jobs);
+        open.add(fillJobs);
+        fillJobs.attach(new FillJobs.Fill() {
+            @Override
+            public boolean enabled() {
+                return true;
+            }
+
+            @Override
+            public int waiting(BackgroundFill.Where where) {
+                return 0;
+            }
+
+            @Override
+            public void scanFor(BackgroundFill.Where where) {
+                // Die erste Suche je Versuch findet die Seite; jede weitere meldet nur noch „leer“.
+                if (reported.compareAndSet(false, true)) {
+                    fillJobs.completed(where, reachable.get(), reachable.get() ? null
+                            : new com.aresstack.spaceharvester.application.sources.SourceAccessException("wiki",
+                            com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNAVAILABLE,
+                            "erfunden", null));
+                }
+                fillJobs.idle(where);
+            }
+
+            @Override
+            public void wake() {
+            }
+
+            @Override
+            public void rest(BackgroundFill.Where where) {
+            }
+        });
+        CountDownLatch failed = new CountDownLatch(1);
+        CountDownLatch completed = new CountDownLatch(1);
+        open.add(background.subscribe(FillJobs.KIND, status -> {
+            if (status.state() == JobState.FAILED) {
+                failed.countDown();
+            } else if (status.state() == JobState.COMPLETED) {
+                completed.countDown();
+            }
+        }, removed -> {
+        })::close);
+
+        fillJobs.handed(DEV);
+        assertThat(failed.await(30, TimeUnit.SECONDS)).as("erster Versuch gescheitert").isTrue();
+        String first = part(JobState.FAILED).orElseThrow().id();
+        assertThat(part(JobState.FAILED).orElseThrow().error().message()).contains("in diesem Auftrag");
+
+        // Die Wartezeit ist um, das Netz wieder da: Die Füllung übergibt die Seite erneut.
+        reachable.set(true);
+        reported.set(false);
+        fillJobs.handed(DEV);
+
+        assertThat(completed.await(30, TimeUnit.SECONDS)).as("zweiter Versuch fertig").isTrue();
+        assertThat(background.parts(FillJobs.KIND)).as("kein neuer Auftrag je Versuch").singleElement()
+                .satisfies(part -> {
+                    assertThat(part.id()).isEqualTo(first);
+                    assertThat(part.state()).isEqualTo(JobState.COMPLETED);
+                    assertThat(part.parameter(FillJobs.ATTEMPTS)).isEqualTo("2");
+                    assertThat(part.progress().written()).isEqualTo(1);
+                    assertThat(part.progress().failed()).isZero();
+                });
+        assertThat(jobs.events(first)).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(FillJobs.PAGES_MISSING);
+            assertThat(event.message()).contains("UNAVAILABLE");
+        }).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(FillJobs.RETRY);
+            assertThat(event.message()).contains("Versuch 2");
+        });
+    }
+
+    /**
+     * Angelo 22.11.2026: Ohne Netz verbraucht die Füllung keinen Versuch und lässt nichts scheitern; der Teil steht als
+     * „wartet auf Netzverbindung“ mit dem Grund in der Diagnose und lädt im selben Teil weiter, sobald das Netz zurück
+     * ist. Fristen von Hand, gewartet wird nur auf Meldungen der Teile.
+     */
+    @Test
+    void withoutNetworkThePartWaitsVisiblyAndLoadsOnInTheSamePartWhenItIsBack() throws Exception {
+        List<Runnable> checks = Collections.synchronizedList(new ArrayList<>());
+        com.aresstack.spaceharvester.application.network.NetworkState network =
+                new com.aresstack.spaceharvester.application.network.NetworkState(Clock.systemUTC(),
+                        (delay, task) -> checks.add(task));
+        open.add(network);
+        gaps.add("1");
+        unreachable.add("1");
+        BackgroundFill fill = fill();
+        fill.network(network);
+        FillJobs fillJobs = new FillJobs(background, jobs);
+        open.add(fillJobs);
+        fillJobs.network(network);
+        fillJobs.attach(fill, key -> Optional.of("DEV"));
+        CountDownLatch waiting = new CountDownLatch(1);
+        CountDownLatch completed = new CountDownLatch(1);
+        open.add(background.subscribe(FillJobs.KIND, status -> {
+            if (status.state() == JobState.RUNNING
+                    && status.stage() == com.aresstack.spaceharvester.application.jobs.JobStage.OFFLINE) {
+                waiting.countDown();
+            } else if (status.state() == JobState.COMPLETED) {
+                completed.countDown();
+            }
+        }, removed -> {
+        })::close);
+        fill.start();
+
+        assertThat(waiting.await(30, TimeUnit.SECONDS)).as("Teil wartet auf das Netz").isTrue();
+        JobStatus offline = part(JobState.RUNNING).orElseThrow();
+        assertThat(offline.progress().failed()).isZero();
+        assertThat(network.online()).isFalse();
+        assertThat(network.status().reason()).isEqualTo("ConnectException");
+        assertThat(jobs.events(offline.id())).anySatisfy(event -> {
+            assertThat(event.code()).isEqualTo(com.aresstack.spaceharvester.application.network.NetworkWait.OFFLINE);
+            assertThat(event.message()).contains("ConnectException", "nichts zählt als gescheitert");
+        });
+        assertThat(fill.status().failed()).as("kein Versuch verbraucht").isZero();
+
+        // Das Netz ist zurück; die eine Prüfung nach der Frist lädt die Seite.
+        unreachable.clear();
+        List<Runnable> due;
+        synchronized (checks) {
+            due = new ArrayList<>(checks);
+            checks.clear();
+        }
+        due.forEach(Runnable::run);
+
+        assertThat(completed.await(30, TimeUnit.SECONDS)).as("Teil fertig").isTrue();
+        assertThat(network.online()).isTrue();
+        assertThat(background.parts(FillJobs.KIND)).as("derselbe Teil").singleElement().satisfies(part -> {
+            assertThat(part.id()).isEqualTo(offline.id());
+            assertThat(part.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(part.progress().written()).isEqualTo(1);
+            assertThat(part.progress().failed()).isZero();
+        });
+        assertThat(loaded).containsExactly("1");
+        assertThat(jobs.events(offline.id())).anySatisfy(event -> assertThat(event.code())
+                .isEqualTo(com.aresstack.spaceharvester.application.network.NetworkWait.ONLINE));
     }
 
     private void gate(String... ids) {

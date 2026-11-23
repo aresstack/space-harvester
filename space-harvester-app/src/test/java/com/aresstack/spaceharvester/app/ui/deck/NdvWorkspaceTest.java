@@ -18,7 +18,7 @@ import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
 
 /**
- * NDV-Reiter: Server aus KeePass, Port 2700 als Vorgabe, Bibliotheken und Objekte wie in MainframeMate, Quelltext im
+ * NDV-Reiter: Server aus KeePass, Port 8011 als Vorgabe (wie MainframeMate), Bibliotheken und Objekte wie in MainframeMate, Quelltext im
  * gemeinsamen Editor; geschrieben wird nur mit „Speichern“. Server ist ein erfundener Schein-Server im Speicher.
  */
 class NdvWorkspaceTest {
@@ -44,13 +44,31 @@ class NdvWorkspaceTest {
     private final NdvSessions sessions = new NdvSessions(server, Runnable::run);
     private final EditorSessions editors = new EditorSessions(Runnable::run);
 
+    /** Der Navigator merkt sich Ansicht, Filter und Lesezeichen; jeder Test beginnt mit der Vorgabe. */
+    @org.junit.jupiter.api.BeforeEach
+    void resetNavigator() {
+        NdvNavigatorState state = new NdvNavigatorState();
+        state.groupByType(false);
+        state.showDetails(false);
+        state.linkWithEditor(false);
+        state.sort("");
+        state.hiddenTypes(java.util.Set.of());
+        state.expandedTypes(null);
+        state.bookmarks("10.0.0.7", List.of());
+        for (String scope : List.of("LAGER", "KASSE", "SYSTEM", NdvNavigatorState.SCOPE_LIBRARIES)) {
+            state.saveFilter(new com.aresstack.spaceharvester.deck.ndv.NdvNameFilter(), "10.0.0.7", "PILOT", scope);
+        }
+        AppState.shared().put(NdvBrowser.LIBRARY_KEY, "");
+        AppState.shared().put(NdvConnectForm.LIBRARY_KEY, "");
+    }
+
     private static void flush() throws Exception {
         SwingUtilities.invokeAndWait(() -> { });
         SwingUtilities.invokeAndWait(() -> { });
     }
 
     @Test
-    void theFormNeedsAServerWithUserAndTakesPort2700() throws Exception {
+    void theFormNeedsAServerWithUserAndTakesPort8011() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             NdvWorkspace workspace = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
             NdvConnectForm form = workspace.form();
@@ -69,7 +87,7 @@ class NdvWorkspaceTest {
             form.host.setText("");
             form.port.setText("");
             assertThat(form.profile().host()).isEqualTo("10.0.0.7");
-            assertThat(form.profile().port()).as("Port des Eintrags gilt nur fürs Terminal").isEqualTo(2700);
+            assertThat(form.profile().port()).as("Port des Eintrags gilt nur fürs Terminal").isEqualTo(8011);
             form.port.setText("x");
             form.submit();
             assertThat(form.problemText()).contains("Port muss eine Zahl sein");
@@ -108,7 +126,7 @@ class NdvWorkspaceTest {
         NdvBrowser browser = workspace[0].browser(session);
         assertThat(workspace[0].selected()).isSameAs(session);
         assertThat(browser.visibleLibraries()).containsExactly("LAGER", "KASSE", "SYSTEM");
-        assertThat(browser.statusText()).contains("10.0.0.7:2700").contains("PILOT").contains("3 Bibliotheken");
+        assertThat(browser.statusText()).contains("10.0.0.7:8011").contains("PILOT").contains("3 Bibliotheken");
 
         SwingUtilities.invokeAndWait(() -> browser.libraryFilter().setText("ka"));
         assertThat(browser.visibleLibraries()).containsExactly("KASSE");
@@ -126,9 +144,15 @@ class NdvWorkspaceTest {
         assertThat(browser.visibleObjects()).containsExactly("LAGERN01");
         SwingUtilities.invokeAndWait(() -> {
             browser.objectFilter().setText("");
-            browser.typeFilter().setSelectedItem(FakeNdvServer.PROGRAM);
+            for (int typeId : com.aresstack.spaceharvester.deck.ndv.NdvTypeGroups.ORDER) {
+                browser.hideType(typeId, typeId != FakeNdvServer.PROGRAM.id());
+            }
         });
         assertThat(browser.visibleObjects()).containsExactly("LAGER001", "LAGER002");
+        assertThat(browser.typeFilterButton().marked()).as("aktiver Artenfilter ist markiert").isTrue();
+        SwingUtilities.invokeAndWait(() -> ((javax.swing.JMenuItem) browser.typeMenu().getComponent(0)).doClick());
+        assertThat(browser.visibleObjects()).hasSize(7);
+        assertThat(browser.typeFilterButton().marked()).isFalse();
 
         SwingUtilities.invokeAndWait(() -> {
             browser.selectObject("LAGER001");
@@ -215,6 +239,107 @@ class NdvWorkspaceTest {
         flush();
         assertThat(session.state()).isEqualTo(NdvState.FAILED);
         assertThat(browser.statusText()).contains("Fehler").contains("abgelehnt");
+    }
+
+    @Test
+    void theNavigatorWorksLikeMainframeMate() throws Exception {
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            NdvConnectForm form = workspace[0].form();
+            form.show(List.of(HOST));
+            form.server.setSelectedItem(HOST);
+            form.library.setText("lager");
+            form.submit();
+        });
+        flush();
+        flush();
+        NdvSession session = sessions.all().getFirst();
+        NdvBrowser browser = workspace[0].browser(session);
+        assertThat(session.profile().defaultLibrary()).isEqualTo("LAGER");
+        assertThat(AppState.shared().get(NdvConnectForm.LIBRARY_KEY)).isEqualTo("LAGER");
+        assertThat(browser.library()).as("Standard-Bibliothek wird nach dem Verbinden geöffnet").isEqualTo("LAGER");
+        assertThat(browser.visibleObjects()).hasSize(7);
+        assertThat(browser.pathField().getText()).isEqualTo("10.0.0.7:8011/LAGER");
+        assertThat(browser.tooltip()).isEqualTo("NDV: PILOT@10.0.0.7:8011 – LAGER");
+
+        // Nach Art gruppiert, in der Reihenfolge von MainframeMate; leere Gruppen fehlen.
+        SwingUtilities.invokeAndWait(() -> browser.viewToggle().select("Nach Art"));
+        assertThat(browser.tree().groups()).containsExactly("Programs (2)", "Subprograms (1)", "Copycodes (1)",
+                "Local Data Areas (1)", "Maps (1)", "DDMs (1)");
+        assertThat(new NdvNavigatorState().groupByType()).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+            browser.selectObject("LAGERN01");
+            browser.openSelected();
+        });
+        flush();
+        assertThat(browser.shown().displayName()).isEqualTo("LAGERN01");
+        assertThat(browser.editor().syntaxStyle()).as("Natural-Hervorhebung wie MainframeMate")
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.deck.editor.SyntaxStyles.NATURAL);
+        assertThat(browser.sourceDetailsText()).contains("Library: LAGER").contains("Subprogram (Structured)")
+                .contains("User: PILOT").contains("CP: IBM01141").contains("GP-User: PILOT")
+                .contains("Zugriff: 2026-11-21 08:00");
+        SwingUtilities.invokeAndWait(() -> browser.viewToggle().select("Liste"));
+
+        // Details zeigen Modus, DBID und FNR; Sortierung wird gemerkt.
+        assertThat(browser.visibleColumns()).isEqualTo(5);
+        SwingUtilities.invokeAndWait(() -> browser.detailsToggle().doClick());
+        assertThat(browser.visibleColumns()).isEqualTo(8);
+        assertThat(browser.detailsToggle().marked()).isTrue();
+        SwingUtilities.invokeAndWait(() -> browser.sortBy(0, javax.swing.SortOrder.DESCENDING));
+        assertThat(browser.visibleObjects().getFirst()).isEqualTo("LAGERN01");
+        assertThat(new NdvNavigatorState().sort()).isEqualTo("0:DESCENDING");
+
+        // Namens-Ausdruck je Bibliothek, mit Präfixen; bleibt beim Wechsel der Bibliothek gemerkt.
+        SwingUtilities.invokeAndWait(() -> browser.nameFilter("^lagern"));
+        assertThat(browser.visibleObjects()).containsExactly("LAGERN01");
+        SwingUtilities.invokeAndWait(() -> browser.openLibrary("KASSE"));
+        flush();
+        assertThat(browser.visibleObjects()).as("KASSE hat keinen Ausdruck").hasSize(2);
+        SwingUtilities.invokeAndWait(() -> browser.namePrefix("KAS", true));
+        assertThat(browser.visibleObjects()).hasSize(2);
+        SwingUtilities.invokeAndWait(() -> browser.namePrefix("KAS", false));
+
+        // Zurück und Vorwärts wie im Browser; die Pfadleiste führt zur Bibliotheksliste.
+        assertThat(browser.canBack()).isTrue();
+        SwingUtilities.invokeAndWait(browser::navigateBack);
+        flush();
+        assertThat(browser.library()).isEqualTo("LAGER");
+        assertThat(browser.visibleObjects()).containsExactly("LAGERN01");
+        assertThat(browser.canForward()).isTrue();
+        SwingUtilities.invokeAndWait(browser::navigateForward);
+        flush();
+        assertThat(browser.library()).isEqualTo("KASSE");
+        SwingUtilities.invokeAndWait(() -> {
+            browser.pathField().setText("10.0.0.7:8011");
+            browser.navigateToPath();
+        });
+        assertThat(browser.library()).isNull();
+        assertThat(browser.visibleLibraries()).containsExactly("LAGER", "KASSE", "SYSTEM");
+        SwingUtilities.invokeAndWait(() -> {
+            browser.pathField().setText("system");
+            browser.navigateToPath();
+        });
+        flush();
+        assertThat(browser.visibleObjects()).containsExactly("MENU");
+
+        // Lesezeichen: Stern merkt die Bibliothek, ein Objekt-Lesezeichen öffnet nach dem Laden.
+        SwingUtilities.invokeAndWait(() -> browser.bookmarkStar().doClick());
+        assertThat(new NdvNavigatorState().bookmarks("10.0.0.7"))
+                .containsExactly(new com.aresstack.spaceharvester.deck.ndv.NdvBookmark("SYSTEM", ""));
+        SwingUtilities.invokeAndWait(() -> browser.openBookmark(
+                new com.aresstack.spaceharvester.deck.ndv.NdvBookmark("KASSE", "KASSE001.NSP")));
+        flush();
+        flush();
+        assertThat(browser.shown().path()).isEqualTo("KASSE/KASSE001.NSP");
+
+        // Mehrfachauswahl mit Kontextmenü.
+        SwingUtilities.invokeAndWait(browser::selectAll);
+        assertThat(browser.selectedObjects()).hasSize(2);
+        SwingUtilities.invokeAndWait(browser::selectNone);
+        assertThat(browser.selectedObjects()).isEmpty();
+        assertThat(browser.contextMenu().getComponentCount()).isEqualTo(4);
+        assertThat(server.writes()).isEmpty();
     }
 
     @Test

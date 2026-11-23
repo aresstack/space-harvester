@@ -24,7 +24,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Einstellungen › Command Deck: die Diagramm-Ansicht (KI-Kurzbeschriftung, in MainframeMate „UML-Zusammenfassung“ des
+ * Einstellungen › Diagramme: die Diagramm-Ansicht (KI-Kurzbeschriftung, in MainframeMate „UML-Zusammenfassung“ des
  * Summarizers) und die Systemfunktionen (MainframeMate: Einstellungen › Systemfunktionen): z/OS-Programme, die im
  * Diagramm blau hervorgehoben und per Doppelklick im Wikipedia-Artikel geöffnet werden. Änderungen gelten sofort und
  * werden sofort gespeichert wie in MainframeMate.
