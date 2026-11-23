@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
+import com.aresstack.spaceharvester.application.text.TextSpan;
+import com.aresstack.spaceharvester.application.text.GroundedText;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
