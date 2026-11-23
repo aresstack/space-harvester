@@ -308,6 +308,45 @@ class ChatPanelTest {
     }
 
     @Test
+    void withWebSearchAndInternalSearchBothOnTheMessageAboveWarnsAndGoesAwayWhenOneIsOff() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        // Ein Firefox, den nichts startet: Die Weltkugel braucht nur seinen Pfad.
+        Path firefox = Files.writeString(home.resolve("firefox"), "");
+        String before = System.getProperty("enterpriseai.firefox");
+        System.setProperty("enterpriseai.firefox", firefox.toString());
+        try {
+            String[] texts = new String[3];
+            boolean[] visible = new boolean[3];
+            SwingUtilities.invokeAndWait(() -> {
+                ChatPanel panel = new ChatPanel(context);
+                panel.webSearch(true);
+                visible[0] = panel.feedback().isVisible();
+                panel.appSearch(true);
+                visible[1] = panel.feedback().isVisible();
+                texts[1] = panel.feedback().text();
+                panel.webSearch(false);
+                visible[2] = panel.feedback().isVisible();
+                // Ersetzt eine andere Meldung die Warnung, bleibt sie beim Ausschalten stehen.
+                panel.webSearch(true);
+                panel.feedback().warning("Download ließ sich nicht starten", null);
+                panel.appSearch(false);
+                texts[2] = panel.feedback().isVisible() ? panel.feedback().text() : "";
+            });
+            assertThat(visible).containsExactly(false, true, false);
+            assertThat(texts[1]).contains(ChatPanel.BOTH_ON_WARNING);
+            assertThat(texts[2]).contains("Download ließ sich nicht starten");
+        } finally {
+            if (before == null) {
+                System.clearProperty("enterpriseai.firefox");
+            } else {
+                System.setProperty("enterpriseai.firefox", before);
+            }
+        }
+    }
+
+    @Test
     void theInternalSearchSwitchTogglesAndIsOffAtFirst() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));

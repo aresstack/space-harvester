@@ -276,6 +276,8 @@ public final class ChatPanel extends JPanel {
             com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.openBook(), APP_SEARCH_OFF);
     /** Ob die interne Suche an ist; gilt für die nächsten Fragen, bis man sie ausschaltet. */
     private boolean appSearchOn;
+    /** Ob die Warnung „beide Suchen an“ gerade steht. */
+    private boolean bothWarned;
     /** Der Abstand hinter „Interne Suche“; weicht mit ihr in der schmalsten Stufe der Fußzeile. */
     private final java.awt.Component appSearchGap = Box.createHorizontalStrut(4);
     /** Der kleine Pfeil an der Weltkugel: öffnet Budget, Tabs, Verzögerung, Profil (wie im EAC). */
@@ -1487,6 +1489,27 @@ public final class ChatPanel extends JPanel {
         appSearchOn = on;
         appSearch.setEmphasized(on);
         appSearch.setToolTipText(on ? APP_SEARCH_ON : APP_SEARCH_OFF);
+        warnIfBothOn();
+    }
+
+    /**
+     * Sind Websuche und interne Suche zugleich an, warnt die Meldung oben (mit ✕), dass Inhalte aus Wissensquellen in
+     * Browseraufrufe einfließen können. Schaltet man eine aus, verschwindet die Warnung wieder.
+     */
+    private void warnIfBothOn() {
+        boolean both = webOn && appSearchOn;
+        if (both && !bothWarned) {
+            feedback.warning(BOTH_ON_WARNING, null);
+        } else if (!both && bothWarned && feedback.isVisible() && feedback.text().contains(BOTH_ON_WARNING)) {
+            // Nur die eigene Warnung weg; hat inzwischen eine andere Meldung sie ersetzt, bleibt diese stehen.
+            feedback.clear();
+        }
+        bothWarned = both;
+    }
+
+    /** Für Tests: die Meldung oben. */
+    Feedback feedback() {
+        return feedback;
     }
 
     boolean appSearchOn() {
@@ -1511,6 +1534,7 @@ public final class ChatPanel extends JPanel {
     void webSearch(boolean on) {
         webOn = on && webAvailable();
         showWebState();
+        warnIfBothOn();
     }
 
     boolean webSearchOn() {

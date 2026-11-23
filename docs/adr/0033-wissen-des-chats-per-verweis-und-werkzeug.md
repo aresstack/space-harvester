@@ -73,6 +73,18 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     mit `seite_lesen` gelesen werden und kommt wie jede gelieferte Seite auf die Freigabeliste. Quellen ohne
     KI-Freigabe werden nie durchsucht. Ist der Knopf aus, kennt das Modell das Werkzeug nicht.
 
+11. **Websuche als Schalter** (Nachtrag, Angelo 23.11.2026): Ein zweiter Knopf im Composer (Weltkugel) übernimmt die
+    Websuche des EAC vollständig: die Browser-Werkzeuge (`BrowserMcpTools`) mit einem sichtbaren Firefox und eigenem
+    Profil je Chat, gesteuert über WebDriver BiDi, damit auch Intranetseiten erreichbar sind. Das Modul
+    `enterprise-ai-browser` ist eine unveränderte Kopie des EAC (Prüfsummen, `sync-from-upstream.sh`). Am Pfeil der
+    Weltkugel stehen Browser-Budget (Werkzeugrunden je Antwort), parallele Tabs, Verzögerung, menschliche Eingabe und
+    das Profil Extern oder Intern; deren Regeln (Whitelist, Blacklist, Such-URLs) stehen in den Einstellungen unter
+    „Browser“. Unbekannte Websites und verändernde Aktionen fragt der Chat in seinem Verlauf nach (Einmal erlauben,
+    Immer erlauben, Immer verbieten, Abbrechen). Rückfragen gehören zu ihrem Chat; Stopp oder Chatwechsel beendet sie
+    als abgebrochen, ohne dass das Werkzeug läuft. Nach jeder Antwort schließt der Browser, das Profil bleibt. Ohne
+    Firefox ist der Knopf gesperrt und sagt warum. Websuche und interne Suche sind unabhängig voneinander; sind beide
+    an, warnt die Meldung oben, dass Inhalte aus Wissensquellen in Browseraufrufe einfließen können.
+
 ## Folgen
 
 - Große Bereiche kosten keinen Kontext mehr, solange das Modell nicht liest; die Qualität hängt davon ab, dass das
