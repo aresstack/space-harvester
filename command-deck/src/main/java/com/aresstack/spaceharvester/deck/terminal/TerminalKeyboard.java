@@ -16,6 +16,14 @@ public interface TerminalKeyboard {
      */
     boolean awaitUnlocked(Duration timeout) throws InterruptedException;
 
+    /**
+     * Zeitpunkt ({@link System#nanoTime()}) der letzten Taste, die der Mensch selbst am Terminal gedrückt hat, oder
+     * {@link Long#MIN_VALUE}. Tippt er selbst, bricht die automatische Anmeldung ab, statt ihm dazwischenzutippen.
+     */
+    default long lastUserInput() {
+        return Long.MIN_VALUE;
+    }
+
     /** Drückt eine Taste, die eine Eingabe an den Host schickt (ENTER, CLEAR, PA, SysReq, PF). */
     void press(AidKey key);
 
