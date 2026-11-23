@@ -304,6 +304,16 @@ public final class FilesWorkspace extends JPanel {
         select(null);
     }
 
+    /** Liest Textdateien wie der Editor (für den Chat). */
+    DocumentStore textStore() {
+        return store;
+    }
+
+    /** Liest Dokumente als Text wie die Vorschau (für den Chat); {@code null} ohne. */
+    DocumentStore previewStore() {
+        return preview;
+    }
+
     /** Öffnet beim ersten Mal den zuletzt benutzten Ordner bzw. den Benutzerordner. */
     void start() {
         if (started) {

@@ -523,6 +523,10 @@ public final class MainWindow implements AppContext.Navigator {
         sideDeck.add(chatSidebar, SIDE_CHAT);
         sideDeck.add(activities.component(), SIDE_JOBS);
         chatSidebar.chat().onAnswer(this::chatAnswered);
+        // Command Deck: anderer Reiter, anderer Hinweis und andere Vorschläge im Chat.
+        if (commandDeck != null) {
+            commandDeck.onAreaChanged(chatSidebar.chat()::toolScopeChanged);
+        }
         // Ein Quellen-Link soll die Seite zeigen: die große Ansicht wird wieder zur Leiste.
         chatSidebar.chat().onSourceOpened(() -> {
             if (chatLarge) {
@@ -911,7 +915,10 @@ public final class MainWindow implements AppContext.Navigator {
         // Die Suchleiste gehört zum Space Harvester; für die anderen Perspektiven ist keine Suche festgelegt.
         searchSlot.setVisible(harvester);
         // Ein Chat für alle Perspektiven; die Werkzeuge kommen je Frage aus der aktiven Perspektive (#1151).
-        if (chatSidebar != null) chatSidebar.chat().toolScope(Perspectives.COMMAND_DECK.equals(next.id()) ? commandDeck::chatScope : null);
+        if (chatSidebar != null) {
+            boolean deck = Perspectives.COMMAND_DECK.equals(next.id());
+            chatSidebar.chat().toolScope(deck ? commandDeck::chatScope : null, deck ? commandDeck::chatHints : null);
+        }
         stageCards.show(stage, next.id());
         if (!harvester) {
             // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.

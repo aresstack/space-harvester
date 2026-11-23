@@ -167,19 +167,118 @@ public final class CommandDeck {
     }
 
     /**
-     * Was der globale Chat in dieser Perspektive bekommt (#1151): die Werkzeuge des Maskenassistenten für die gerade
-     * gewählte Terminal-Sitzung – Maske lesen, Felder lokal ausfüllen, Schreibmarke bewegen, nie abschicken. Beim
-     * Senden ausgewertet; ohne Sitzung sagen die Werkzeuge das dem Modell.
+     * Was der globale Chat in dieser Perspektive bekommt (#1151, ADR 0033): die Werkzeuge des gerade gewählten
+     * Bereichs. Terminal: der Maskenassistent (Maske lesen, Felder lokal ausfüllen, nie abschicken). FTP, NDV,
+     * BetaView, Dateien: die aktuelle Ansicht geht mit, dazu Ansicht und Texte lesen, im Bereich Dateien auch Ordner
+     * auflisten und Dateien lesen (PDF, Word … über die Dokumentvorschau). Beim Senden ausgewertet, auf dem EDT.
      */
     public com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope chatScope() {
-        com.aresstack.spaceharvester.deck.terminal.TerminalSession session = terminal.selected();
-        String area = "Command Deck › Terminal" + (session == null ? " (keine Sitzung gewählt)"
-                : " " + session.profile().label());
-        String key = "command-deck/terminal" + (session == null ? "" : "/" + session.profile().label());
-        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(area, key,
-                new com.aresstack.spaceharvester.app.chat.TerminalChatTools(session, terminal::selected),
-                com.aresstack.spaceharvester.app.chat.TerminalChatTools.systemMessage(area));
+        DeckArea sent = area;
+        if (sent == DeckArea.TERMINAL) {
+            com.aresstack.spaceharvester.deck.terminal.TerminalSession session = terminal.selected();
+            String where = "Command Deck › Terminal" + (session == null ? " (keine Sitzung gewählt)"
+                    : " " + session.profile().label());
+            String key = "command-deck/terminal" + (session == null ? "" : "/" + session.profile().label());
+            return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(where, key,
+                    new com.aresstack.spaceharvester.app.chat.TerminalChatTools(session, terminal::selected),
+                    com.aresstack.spaceharvester.app.chat.TerminalChatTools.systemMessage(where));
+        }
+        JComponent shown = areaView(sent);
+        com.aresstack.spaceharvester.app.chat.ChatToolset extra = null;
+        String listing = "";
+        java.util.List<String> rules = java.util.List.of();
+        String where = "Command Deck › " + sent.title();
+        String key = "command-deck/" + sent.name().toLowerCase(java.util.Locale.ROOT);
+        if (sent == DeckArea.FILES) {
+            String folder = files.browser().location().orElse(null);
+            extra = new com.aresstack.spaceharvester.app.chat.FilesChatTools(files.browser().source(), folder,
+                    files.textStore(), files.previewStore(),
+                    com.aresstack.spaceharvester.app.deck.DocumentPreviewStore::isDocument);
+            var filesTools = (com.aresstack.spaceharvester.app.chat.FilesChatTools) extra;
+            rules = com.aresstack.spaceharvester.app.chat.FilesChatTools.rules();
+            // Die Tabelle zeigt Ordner nur am Symbol; die Liste sagt es dem Modell ausdrücklich.
+            listing = filesTools.overview();
+            if (folder != null) {
+                where += " (Ordner " + folder + ")";
+                key += "/" + folder;
+            }
+        }
+        com.aresstack.spaceharvester.app.chat.DeckChatTools tools =
+                new com.aresstack.spaceharvester.app.chat.DeckChatTools(() -> shown, () -> area == sent, extra);
+        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(where, key, tools,
+                com.aresstack.spaceharvester.app.chat.DeckChatTools.systemMessage(where, about(sent), rules,
+                        tools.snapshot() + (listing.isEmpty() ? ""
+                                : "\n\nInhalt des offenen Ordners:\n" + listing)));
     }
+
+    /** Hinweis über dem Eingabefeld und Vorschläge (Chips) für den gewählten Bereich. */
+    public com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints chatHints() {
+        return chatHints(area);
+    }
+
+    static com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints chatHints(DeckArea shown) {
+        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints(switch (shown) {
+            case TERMINAL -> "Command Deck: Der Chat liest die Terminal-Maske und füllt Felder aus – abschicken kannst "
+                    + "nur du.";
+            case FTP -> "Command Deck › FTP: Der Chat sieht die Liste, das offene Member oder den Spool und erklärt "
+                    + "sie – ändern kannst nur du.";
+            case NDV -> "Command Deck › NDV: Der Chat sieht Objektliste und offenen Quelltext und erklärt sie – ändern "
+                    + "kannst nur du.";
+            case BETAVIEW -> "Command Deck › BetaView: Der Chat sieht Trefferliste und offenes Dokument und erklärt "
+                    + "sie.";
+            case FILES -> "Command Deck › Dateien: Der Chat sieht den offenen Ordner und liest Dateien darin, auch "
+                    + "PDF, Word und Excel – ändern kannst nur du.";
+        }, switch (shown) {
+            case TERMINAL -> java.util.List.of(action("Maske erklären", "Erkläre mir die aktuelle Maske."));
+            case FTP -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
+                    action("Offenes zusammenfassen", "Fasse das offene Member bzw. den offenen Spool zusammen."));
+            case NDV -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
+                    action("Quelltext erklären", "Erkläre mir den offenen Quelltext: Zweck, Ablauf, Aufrufe."));
+            case BETAVIEW -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
+                    action("Dokument zusammenfassen", "Fasse das offene Dokument zusammen."));
+            case FILES -> java.util.List.of(action("Ordner zusammenfassen",
+                            "Fasse zusammen, was in diesem Ordner liegt und worum es in den Dateien geht."),
+                    action("Auswahl zusammenfassen", "Fasse die ausgewählte Datei zusammen."));
+        });
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.content.ChatPanel.QuickAction action(String label,
+                                                                                         String question) {
+        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.QuickAction(label, question, question);
+    }
+
+    /** Ein, zwei Sätze für die Systemnachricht: was man im Bereich tut. */
+    private static String about(DeckArea shown) {
+        return switch (shown) {
+            case FTP -> "Dort sieht er MVS-Datasets und Members eines z/OS-Hosts per FTP oder JES-Jobs mit Spool; "
+                    + "offene Members und Spools stehen als Text im Editor.";
+            case NDV -> "Dort sieht er Bibliotheken und Objekte eines Natural Development Servers; offene Objekte "
+                    + "stehen als Natural-Quelltext im Editor.";
+            case BETAVIEW -> "Dort sucht er Belege und Listen auf einem BetaView-Dokumentserver; Trefferliste und "
+                    + "geöffnete Dokumente stehen in der Ansicht.";
+            case FILES -> "Dort sieht er einen Ordner seiner Festplatte oder eines Netzlaufwerks; offene Dateien stehen "
+                    + "als Text im Editor.";
+            case TERMINAL -> "Dort arbeitet er in einer TN3270-Sitzung.";
+        };
+    }
+
+    /** Die Oberfläche eines Bereichs, wie sie in der Mitte steht. */
+    private JComponent areaView(DeckArea shown) {
+        return switch (shown) {
+            case TERMINAL -> terminal;
+            case FTP -> ftp;
+            case NDV -> ndv;
+            case BETAVIEW -> betaView;
+            case FILES -> files;
+        };
+    }
+
+    /** Meldet jeden Wechsel des Bereichs (der Chat passt Hinweis und Vorschläge an). */
+    public void onAreaChanged(Runnable observer) {
+        areaObservers.add(observer);
+    }
+
+    private final java.util.List<Runnable> areaObservers = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public TerminalSessions sessions() {
         return sessions;
@@ -202,6 +301,9 @@ public final class CommandDeck {
         }
         tools.revalidate();
         tools.repaint();
+        if (areaObservers != null) {
+            areaObservers.forEach(Runnable::run);
+        }
     }
 
     public DeckArea area() {
