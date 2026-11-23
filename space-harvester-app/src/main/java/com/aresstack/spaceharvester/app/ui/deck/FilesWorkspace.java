@@ -87,6 +87,18 @@ import javax.swing.table.DefaultTableCellRenderer;
  */
 public final class FilesWorkspace extends JPanel {
 
+    /**
+     * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
+     * ({@code StatusNote.Tone.ERROR}). Lange Texte kürzt das Label selbst, der volle Text steht im Tooltip.
+     */
+    private final com.aresstack.spaceharvester.app.ui.controls.StatusLabel statusInfo =
+            new com.aresstack.spaceharvester.app.ui.controls.StatusLabel();
+
+    /** Die Karte dieses Bereichs in der Statuszeile der App. */
+    public javax.swing.JComponent statusInfo() {
+        return statusInfo;
+    }
+
     static final String LOCATION_KEY = "deck.files.location";
     static final String SORT_KEY = "deck.files.sort";
     static final String BOOKMARKS_KEY = "deck.files.bookmarks";
