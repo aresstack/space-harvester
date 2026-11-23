@@ -615,12 +615,24 @@ public final class GlossaryTab {
             Entry entry = row.entry();
             List<String> line = new ArrayList<>(List.of(entry.term(), categoryWord(row.category()),
                     importance(row.importance()), Relation.statusText(entry.status().name()),
-                    Relation.originText(entry.origin().name()),
-                    entry.explanation() == null ? "" : entry.explanation(), ""));
+                    originWord(entry), entry.explanation() == null ? "" : entry.explanation(), ""));
             line.add(entry.id());
             cells.add(List.copyOf(line));
         }
         return cells;
+    }
+
+    /** Herkunft in der Tabelle; Begriffe aus einem geprüften Glossar heißen „Geprüftes Glossar“. */
+    static final String APPROVED = "Geprüftes Glossar";
+
+    static String originWord(Entry entry) {
+        return entry.reference() != null ? APPROVED : Relation.originText(entry.origin().name());
+    }
+
+    /** „Quelle: Anlage 1 Glossar …, Seite 2 („Annahmebeauftragte (pl.)“)“ und die Fundstelle in der Zeile darunter. */
+    static String referenceText(GlossaryAccess.Reference reference) {
+        return "Quelle: " + reference.title() + ", Seite " + reference.page()
+                + (reference.wording() == null ? "" : " („" + reference.wording() + "“)") + "\n" + reference.url();
     }
 
     /** „12 Seiten“ (die Seitenstreuung zählt zuerst); „–“ ohne Wichtigkeit in der Auswahl. Alles im Tooltip. */
@@ -1168,6 +1180,9 @@ public final class GlossaryTab {
             text.append(" (").append(entry.generation()).append(')');
         }
         text.append('\n');
+        if (entry.reference() != null) {
+            text.append(referenceText(entry.reference())).append('\n');
+        }
         text.append("Status: ").append(statusWord(entry.status()));
         if (entry.reviewedAt() != null) {
             text.append(" am ").append(minute(entry.reviewedAt()));

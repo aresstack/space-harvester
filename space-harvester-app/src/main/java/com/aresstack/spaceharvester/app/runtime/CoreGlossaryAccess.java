@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.glossary.GlossaryConflictException;
+import com.aresstack.spaceharvester.application.glossary.ApprovedGlossary;
 import com.aresstack.spaceharvester.application.glossary.GlossaryEntry;
 import com.aresstack.spaceharvester.application.glossary.GlossaryOverview;
 import com.aresstack.spaceharvester.application.holdings.Selection;
@@ -88,7 +89,8 @@ final class CoreGlossaryAccess implements GlossaryAccess {
     static Entry entry(GlossaryEntry e) {
         return new Entry(e.id(), e.term(), e.normalized(), e.scope().sourceId(), e.scope().spaceKey(), e.origin(),
                 e.status(), e.evidence(), e.evidenceStale(), e.explanation(), e.generation(), e.createdAt(),
-                e.updatedAt(), e.reviewedAt(), e.revision());
+                e.updatedAt(), e.reviewedAt(), e.revision(), ApprovedGlossary.reference(ApprovedGlossary.bundled(), e)
+                .map(r -> new GlossaryAccess.Reference(r.title(), r.url(), r.wording(), r.page())).orElse(null));
     }
 
     @Override
