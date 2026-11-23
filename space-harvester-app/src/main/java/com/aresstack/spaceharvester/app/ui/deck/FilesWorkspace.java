@@ -127,6 +127,9 @@ public final class FilesWorkspace extends JPanel {
     private final SharePointAccess sharePoint;
     private final Supplier<List<SharePointSite>> sites;
     private final ServerAccounts accounts;
+    /** Nach der ersten erfolgreichen Anmeldung gespeicherte SharePoint-Zugangsdaten (die App setzt den Tresor). */
+    private volatile com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins savedLogins =
+            com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory();
     private final IconButton groupToggle = new IconButton(FilesIcons.group(), "Nach Dateiendung gruppieren");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Gruppen zuklappen");
     private final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Gruppen aufklappen");
@@ -786,9 +789,51 @@ public final class FilesWorkspace extends JPanel {
             status(result.outcome().reason(), true);
             return;
         }
-        String host = SharePointPaths.host(result.uncPath()).orElse("").replaceAll("(?i)@SSL", "")
-                .replaceAll("@\\d+$", "");
-        // Wie MainframeMate: erst gespeicherte Zugangsdaten (hier KeePass, Eintrag mit diesem Rechner), dann fragen.
+        trySaved(result.uncPath(), result.outcome().reason());
+    }
+
+    /** Woher gespeicherte SharePoint-Zugangsdaten kommen und wohin neue gehen; {@code null} = nur im Speicher. */
+    public void savedLogins(com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins) {
+        savedLogins = logins == null ? com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory()
+                : logins;
+    }
+
+    private static String loginHost(String unc) {
+        return SharePointPaths.host(unc).orElse("").replaceAll("(?i)@SSL", "").replaceAll("@\\d+$", "");
+    }
+
+    /** Erst die gespeicherten Zugangsdaten; passen sie nicht oder gibt es keine, weiter mit KeePass bzw. dem Dialog. */
+    private void trySaved(String unc, String reason) {
+        busy().setBusy(true);
+        com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins = savedLogins;
+        Thread.ofVirtual().name("deck-sharepoint-saved").start(() -> {
+            Optional<com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.Login> saved = Optional.empty();
+            try {
+                saved = logins.load(loginHost(unc));
+            } catch (Exception e) {
+                // Tresor nicht lesbar: weiter wie ohne Gespeichertes
+            }
+            if (saved.isEmpty()) {
+                SwingUtilities.invokeLater(() -> tryKeePass(unc, reason, ""));
+                return;
+            }
+            var login = saved.get();
+            sharePoint.connect(unc, login.user(), login.password(), result -> SwingUtilities.invokeLater(() -> {
+                busy().setBusy(browser.loading());
+                if (result.connected()) {
+                    browser.open(unc);
+                } else {
+                    tryKeePass(unc, "Gespeicherte Zugangsdaten passen nicht: " + result.outcome().reason(),
+                            login.user());
+                }
+            }));
+            java.util.Arrays.fill(login.password(), '\0');
+        });
+    }
+
+    private void tryKeePass(String unc, String reason, String user) {
+        String host = loginHost(unc);
+        // Wie MainframeMate: dann KeePass (Eintrag mit diesem Rechner), zuletzt fragen.
         Thread.ofVirtual().name("deck-sharepoint-keepass").start(() -> {
             Optional<ServerAccount> account = Optional.empty();
             try {
@@ -798,10 +843,10 @@ public final class FilesWorkspace extends JPanel {
             }
             Optional<ServerAccount> found = account;
             SwingUtilities.invokeLater(() -> {
-                if (found.isPresent() && !result.outcome().reason().startsWith("KeePass")) {
-                    loginWithKeePass(result.uncPath(), found.get());
+                if (found.isPresent() && !reason.startsWith("KeePass")) {
+                    loginWithKeePass(unc, found.get());
                 } else {
-                    askLogin(result.uncPath(), result.outcome().reason(), found.map(ServerAccount::user).orElse(""));
+                    askLogin(unc, reason, found.map(ServerAccount::user).orElse(user));
                 }
             });
         });
@@ -850,15 +895,28 @@ public final class FilesWorkspace extends JPanel {
         }
         char[] password = passwordField.getPassword();
         busy().setBusy(true);
-        sharePoint.connect(unc, userField.getText(), password, result -> SwingUtilities.invokeLater(() -> {
+        String entered = userField.getText();
+        com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins = savedLogins;
+        sharePoint.connect(unc, entered, password, result -> SwingUtilities.invokeLater(() -> {
             busy().setBusy(browser.loading());
             if (result.connected()) {
+                // Nach dem ersten Erfolg merken: beim nächsten Mal kein Dialog (Angelo, 23.11.).
+                Thread.ofVirtual().name("deck-sharepoint-save").start(() -> {
+                    try {
+                        logins.save(loginHost(unc), entered, password);
+                    } catch (Exception e) {
+                        SwingUtilities.invokeLater(() -> status("Zugangsdaten nicht gespeichert ("
+                                + e.getClass().getSimpleName() + ")", true));
+                    } finally {
+                        java.util.Arrays.fill(password, '\0');
+                    }
+                });
                 browser.open(unc);
             } else {
-                askLogin(unc, result.outcome().reason(), userField.getText());
+                java.util.Arrays.fill(password, '\0');
+                askLogin(unc, result.outcome().reason(), entered);
             }
         }));
-        java.util.Arrays.fill(password, '\0');
     }
 
     List<String> bookmarks() {
