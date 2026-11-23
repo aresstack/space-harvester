@@ -16,7 +16,7 @@ import java.util.List;
 
 /**
  * Quelltyp „Natural (NDV)“ ({@code source.<n>.type=ndv}, Ressourcenschema {@code ndv}): Natural-Quellen aus
- * Bibliotheken eines Natural Development Servers. Schlüssel: {@code host}, {@code port} (Standard 2700),
+ * Bibliotheken eines Natural Development Servers. Schlüssel: {@code host}, {@code port} (Standard 8011 wie MainframeMate),
  * {@code credentialRef} (KeePass-Eintrag mit Benutzer und Passwort, Pflicht), {@code startPoints} (Bibliotheken,
  * optional mit Filter {@code LIB/PREFIX*}), {@code maxResources}.
  */
@@ -32,8 +32,8 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
             .summaryKey("host")
             .field(SourceSettingField.text("host", "Host", "Name oder Adresse des NDV-Servers").required()
                     .fromVault(SourceSettingField.VaultValue.HOST))
-            .field(SourceSettingField.of("port", SourceSettingField.Kind.NUMBER, "Port", "Standard 2700")
-                    .withDefault("2700").advanced())
+            .field(SourceSettingField.of("port", SourceSettingField.Kind.NUMBER, "Port", "Standard 8011")
+                    .withDefault("8011").advanced())
             .field(SourceSettingField.of("credentialRef", SourceSettingField.Kind.SECRET_REF,
                     "KeePass-Eintrag", "Eintrag mit Benutzer, Passwort und Adresse des NDV-Servers").required())
             .field(SourceSettingField.text("startPoints", "Bibliotheken",
@@ -42,7 +42,7 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
                     "Höchstzahl Objekte (optional)", "Obergrenze je Lauf; leer = 5000").advanced())
             .build();
 
-    private static final int DEFAULT_PORT = 2700;
+    private static final int DEFAULT_PORT = 8011;
     private static final int DEFAULT_MAX_RESOURCES = 5000;
 
     private final SecretProvider secrets;
@@ -100,7 +100,7 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
         });
     }
 
-    /** {@code host:port} des NDV-Servers, klein ({@code ndv:host:2700/LIB/OBJ.NSP}). */
+    /** {@code host:port} des NDV-Servers, klein ({@code ndv:host:8011/LIB/OBJ.NSP}). */
     @Override
     public String locator(SourceSettings settings) {
         SourceSettingsReader reader = new SourceSettingsReader(TYPE, settings);

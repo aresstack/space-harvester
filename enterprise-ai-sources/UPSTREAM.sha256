@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git c530c5ca815530fa2bfbb12a4bf124abaafb4691
+# upstream https://github.com/aresstack/enterprise-ai-client.git 68fd5dc80951d883416bf365698e068f56bf86e0
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 09426dae09fca081ecbd3ce1d43ae3f1697bdffd6b615599c3e294aebac58b94  src/main/java/com/aresstack/enterpriseai/adyton/SecretEntry.java
 56bd1f03e6f1c152ec55b70cac06a5cf77164dd32772445fcc938a00692bb865  src/main/java/com/aresstack/enterpriseai/adyton/SecretFunction.java
@@ -18,6 +18,7 @@ ba3ea4a716914861a835fc6b45359772972e4b729ea11ab0268d73fa7628bbd4  src/main/java/
 14206d5bd24f598bda910519a0e1d01e94b4ee24049fb604993bb559379fc476  src/main/java/com/aresstack/enterpriseai/astu/acropolis/navigation/SectionLabeler.java
 522d6827eec2d8871db929aec8bd313f8615f8b2c41e652e9169262f1f1b7d16  src/main/java/com/aresstack/enterpriseai/astu/acropolis/passage/SentenceSegmenter.java
 9ebd0df099a4aaf3feaa522b444d9650daa3da63c6f46e1cffa6a8bbf0c2d91e  src/main/java/com/aresstack/enterpriseai/astu/acropolis/speech/AudioPlayback.java
+c18daa23d0d3f14ab333e467a98cfeff8c381e10fd02a013f93b9c2d60717b47  src/main/java/com/aresstack/enterpriseai/astu/acropolis/speech/PcmTimeStretch.java
 679512da1a8977e6e665a671d3bc10aa0a1f141429d0b007799f14b9d6349282  src/main/java/com/aresstack/enterpriseai/astu/acropolis/speech/ReadAloudService.java
 a720248df3e9289f9aedd34f74dafdc8bcfa4776a53d6204da5255ed011a9751  src/main/java/com/aresstack/enterpriseai/astu/acropolis/speech/SpeechChunking.java
 01ee4be92619cd34b5d5d90083e44daf366fedf9742f648eb9bc03f1e3840cbd  src/main/java/com/aresstack/enterpriseai/astu/acropolis/speech/SpeechRate.java
@@ -240,11 +241,11 @@ c7763bc29759843a485e5e963c6490d3c7fb2a28beb98cff4cb17b1e34c54dd7  src/main/java/
 3e47046350eb9a22fe50b7d1016e867f367eae69b20e8eb509524b305ec18ca2  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/WikiResourceIds.java
 37f6993dc61b5202773f90cf1a32a30218744a50f2839efe5f8422425d368a15  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/WikiSearchHit.java
 75aee3c3df111ccd302e470f46d0250f71cc93840777d3612dafe86f41d527d6  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/package-info.java
-987a1b7dcb8146487a8bfdea675a32325cc5517d6183e4b0575be125fc23921e  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvClient.java
+df102108b192257e147c127d28488a9f0884e49eeeed45887b502e57007d3fed  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvClient.java
 619ef9fc11dc33851078d487be98d30182a896b860b2c912a7178210980a0c31  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvException.java
 877bf061e8ad9c0432311c82d2393e4c2c394eab430665111086acc540b91568  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvKnowledgeSource.java
 21eaaac40923792b5ea66d3b580dd2bf94d48c3b808a8f319e894243520a2e45  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvObjectInfo.java
-4b712c1dadb0acb48f6aec62351533f6f3e92e6f6f2db44556cd363709c50e8c  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvSourceProvider.java
+5a15b0ea4f531ca87d79594afae3e6a7a1e62b1299ad84868c0cda7f5ca1878b  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvSourceProvider.java
 879606029e36f5c7cfcd1e7d38ec2b1f5acf9b654e3567b74b750238a9db4971  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/package-info.java
 ef5c7c3c7a15aafbdaa987b4502f53b3390c924d020c59139631051ea7138ada  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/config/ResourceProperties.java
 3bed4c71e2b667ef46f67f593da56ec5cd1419cc29cc296bff68fc3913cb697a  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/config/TransactionId.java
@@ -482,6 +483,7 @@ f7f2d729aac2f8b38f7fca6c815a585205ac5d209d5dd3893e29262cfaf7cccc  src/main/java/
 2700919ac5d6f729c086520796bc70539a846bb5320cc18c2860054ed9dcb436  src/test/java/com/aresstack/enterpriseai/adyton/SecretMaterialTest.java
 143fd61294fe2c61270a46c82457ab72817922e0db35c6c5d6f2b3ae6bb5a0c1  src/test/java/com/aresstack/enterpriseai/adyton/SecretProviderTest.java
 81289f1c2ed8d3d0f4e905d9a546cd7219361e62df0949d92ebec9d7a71b86c6  src/test/java/com/aresstack/enterpriseai/astu/acropolis/navigation/ChatSectionLabelerTest.java
+07276320552f442f6b33e032fe4fd92b45a6cb2f7a9ca378cf9a7e1d6bf1e0a5  src/test/java/com/aresstack/enterpriseai/astu/acropolis/speech/PcmTimeStretchTest.java
 40a2e99007b8bfbac0466c71991cd0979e1a62197d48f1776f8135ff97aa5200  src/test/java/com/aresstack/enterpriseai/astu/acropolis/speech/ReadAloudServiceTest.java
 c400a68896511fa02455bea382e536e3024c62eecf4e4a38df44b4d303742669  src/test/java/com/aresstack/enterpriseai/astu/acropolis/speech/SpeechTextTest.java
 748543c38b1358161fa759c9c8cac308cd561fd7c07ad598b88f783d7f85e136  src/test/java/com/aresstack/enterpriseai/astu/acropolis/textmining/AcronymExtractorTest.java

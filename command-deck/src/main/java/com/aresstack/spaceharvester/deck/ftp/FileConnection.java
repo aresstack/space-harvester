@@ -21,6 +21,14 @@ public interface FileConnection extends AutoCloseable {
 
     List<RemoteEntry> list(String path) throws IOException;
 
+    /**
+     * Listet mit Details (auf MVS RECFM, LRECL, Dsorg, Datum, Zeilen aus {@code LIST}), wie die Detailansicht von
+     * MainframeMate. Ohne Details gleich {@link #list(String)}.
+     */
+    default List<RemoteEntry> list(String path, boolean details) throws IOException {
+        return list(path);
+    }
+
     /** Liest Text; auf MVS mit Satzstruktur werden die Satzenden zu Zeilenumbrüchen. */
     RemoteFile read(String path) throws IOException;
 
@@ -37,6 +45,14 @@ public interface FileConnection extends AutoCloseable {
 
     /** Legt auf MVS ein Dataset an, sonst einen Ordner. */
     void createDirectory(String path) throws IOException;
+
+    /**
+     * Legt auf MVS ein Dataset mit Anlageparametern an (PO über {@code MKD}, PS über leeres {@code STOR}); ohne MVS
+     * einen Ordner.
+     */
+    default void createDataset(String path, DatasetAttributes attributes) throws IOException {
+        createDirectory(path);
+    }
 
     /**
      * Schreibt nur, wenn der Stand auf dem Host noch {@code expectedHash} hat; ohne erwartete Prüfsumme immer.

@@ -39,6 +39,7 @@ final class TerminalSettingsPanel {
     final JCheckBox sky = Comic.checkBox("Sternenhimmel hinter dem Terminal (aus = klassisch schwarz)");
     final JTextField skyFactor = Comic.field(6);
     final JCheckBox skyGerman = Comic.checkBox("Sternbild-Namen auf Deutsch");
+    final JCheckBox reconnect = Comic.checkBox("Abgerissene Verbindung automatisch neu aufbauen und anmelden");
     final BindingModel bindings = new BindingModel();
     final JTable table = Comic.table(new JTable(bindings));
     private final Feedback feedback = new Feedback();
@@ -54,6 +55,9 @@ final class TerminalSettingsPanel {
                 + TerminalSettings.DEFAULT_DELAY_MS + " ms, von 0 bis 10000.");
         rows.add("Deckkraft", unit(opacity, "%"), "Wie deckend die F-Tasten-Leiste über dem Terminal liegt: "
                 + "0 unsichtbar, 100 deckend. Vorgabe 50.");
+        rows.add("Neuaufbau", reconnect, "Trennt der Host die Sitzung oder reißt die Leitung ab, verbindet das Terminal "
+                + "sich neu, meldet sich wieder an und spielt Startkommando bzw. Lesezeichen ab: nach 2, 10 und 30 Sekunden, "
+                + "dann nicht mehr. Ein Ereignis löst das aus, es wird nichts abgefragt.");
         rows.add("Hintergrund", sky, "Animierter Sternenhimmel (kosmische Uhr) hinter dem 3270-Bild.");
         rows.add("Zeitfaktor", unit(skyFactor, "×"), "1 = Echtzeit, 120 = 2 Minuten ≈ 4 Stunden. Vorgabe "
                 + TerminalSettings.DEFAULT_SKY_FACTOR + ", von 1 bis 10000.");
@@ -73,6 +77,12 @@ final class TerminalSettingsPanel {
             save();
         });
         skyGerman.addActionListener(e -> save());
+        reconnect.addActionListener(e -> {
+            if (!showing) {
+                settings.autoReconnect(reconnect.isSelected());
+                feedback.success(HEADING + " gespeichert");
+            }
+        });
         component.setOpaque(false);
         component.add(rows, BorderLayout.CENTER);
         component.add(feedback, BorderLayout.SOUTH);
@@ -80,9 +90,9 @@ final class TerminalSettingsPanel {
         // Maus-Aktionen: Tabelle mit Häkchenspalte, Auswahl je Spalte wie in MainframeMate.
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.getColumnModel().getColumn(0).setMaxWidth(60);
-        table.getColumnModel().getColumn(1).setCellEditor(new DefaultCellEditor(new JComboBox<>(MouseAction.values())));
-        table.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(new JComboBox<>(Modifier.values())));
-        JComboBox<String> keys = new JComboBox<>();
+        table.getColumnModel().getColumn(1).setCellEditor(new DefaultCellEditor(combo(MouseAction.values())));
+        table.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(combo(Modifier.values())));
+        JComboBox<String> keys = Comic.combo();
         for (int i = 1; i <= 24; i++) {
             keys.addItem("F" + i);
         }
@@ -126,6 +136,16 @@ final class TerminalSettingsPanel {
         render();
     }
 
+    /** Auswahl in der Tabelle im Comic-Stil wie überall in der App. */
+    @SafeVarargs
+    private static <T> JComboBox<T> combo(T... values) {
+        JComboBox<T> box = Comic.combo();
+        for (T value : values) {
+            box.addItem(value);
+        }
+        return box;
+    }
+
     private static JComponent unit(JTextField field, String unit) {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         panel.setOpaque(false);
@@ -152,6 +172,7 @@ final class TerminalSettingsPanel {
             sky.setSelected(settings.sky());
             skyFactor.setText(String.valueOf(settings.skyFactor()));
             skyGerman.setSelected(settings.skyGerman());
+            reconnect.setSelected(settings.autoReconnect());
             skyFactor.setEnabled(sky.isSelected());
             skyGerman.setEnabled(sky.isSelected());
             bindings.reset(settings.mouse());

@@ -92,6 +92,9 @@ module_classes=(
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/SpeechChunking
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/SpeechTextPreparation
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/TextAnalysisService
+  # Vorlesen in der Leseansicht: die Wiedergabe der App (JavaSoundAudioPlayback wie im Upstream) dehnt die Sprache
+  # über PcmTimeStretch, damit die Geschwindigkeit die Tonhöhe nicht verändert
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/speech/PcmTimeStretch
   speech-api:com/aresstack/enterpriseai/speech/api/TextAnalysisEngine
   speech-api:com/aresstack/enterpriseai/speech/api/TextAnalysisEngineLoader
   speech-api:com/aresstack/enterpriseai/speech/api/TaggedToken
