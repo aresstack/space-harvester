@@ -219,6 +219,32 @@ final class BetaViewHttp {
     }
 
     private static String where(Response response) {
-        return response.location() == null ? "" : " (weitergeleitet nach " + action(response.location()) + ")";
+        String where = response.location() == null ? "" : " (weitergeleitet nach " + action(response.location()) + ")";
+        return serverMessage(response.text()).map(message -> where + ": " + message).orElse(where);
+    }
+
+    private static final java.util.regex.Pattern ERRORS =
+            java.util.regex.Pattern.compile("\"errors\"\\s*:\\s*\\[\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+    private static final java.util.regex.Pattern MESSAGE_TEXT =
+            java.util.regex.Pattern.compile("\"text\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+
+    /**
+     * Die Fehlermeldung des Servers aus einer abgelehnten Antwort, etwa {@code {"errors":["Das Layout existiert
+     * nicht …"]}} (Struts-JSON-Prüfung) oder {@code {"messages":[{"text":"…"}]}}; HTML-Entities aufgelöst.
+     */
+    static Optional<String> serverMessage(String body) {
+        if (body == null || body.isBlank()) {
+            return Optional.empty();
+        }
+        java.util.regex.Matcher matcher = ERRORS.matcher(body);
+        if (!matcher.find()) {
+            matcher = MESSAGE_TEXT.matcher(body);
+            if (!matcher.find()) {
+                return Optional.empty();
+            }
+        }
+        String text = matcher.group(1).replace("\\\"", "\"").replace("\\/", "/").replace("\\n", " ");
+        text = org.jsoup.parser.Parser.unescapeEntities(text, false).strip();
+        return text.isEmpty() ? Optional.empty() : Optional.of(text);
     }
 }

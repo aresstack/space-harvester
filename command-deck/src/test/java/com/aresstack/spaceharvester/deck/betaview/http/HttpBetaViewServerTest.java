@@ -174,6 +174,18 @@ class HttpBetaViewServerTest {
     }
 
     @Test
+    void aRejectedSavedSearchReportsTheReasonOfTheServer() throws IOException {
+        BetaViewConnection connection = login();
+        connection.search(filter(null));
+        connection.saveSearch(new NameAndDescription(FakeBetaViewServer.BROKEN_LAYOUT, ""));
+        SavedSearch broken = connection.savedSearches().get(0);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> connection.run(broken))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Server antwortet HTTP 400 auf executeSavedSelection.action: Das Layout existiert nicht "
+                        + "(in Ihrer Sprache). Bitte löschen Sie die gespeicherte Suche.");
+    }
+
+    @Test
     void decodesDoublyEncodedNamesOfSavedSearchesAndSendsTheWholeForm() {
         String html = "<div class=\"el_wall_btn\"><div name=\"we_id_selection_name\">R&amp;uuml;cknachrichten</div>"
                 + "<div name=\"selection_desc\">Gr&uuml;n</div><form action=\"/betaview/executeSavedSelection.action?ssID=7\">"

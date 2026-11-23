@@ -192,6 +192,12 @@ public final class FakeBetaViewServer implements AutoCloseable {
                 }
                 int id = Integer.parseInt(query.getOrDefault("ssID", "0"));
                 String[] saved = session.savedSearches.get(id - 1);
+                if (BROKEN_LAYOUT.equals(saved[0])) {
+                    // So antwortet der echte Server, wenn das Layout der Suche fehlt (auch im Browser).
+                    send(exchange, 400, "application/json; charset=UTF-8", "{ \"errors\":[\"Das Layout existiert "
+                            + "nicht (in Ihrer Sprache). Bitte l&ouml;schen Sie die gespeicherte Suche. \"]}");
+                    return;
+                }
                 session.lastResult = filter(parse(saved[2]));
                 html(exchange, resultPage(session.lastResult));
             }
@@ -414,6 +420,9 @@ public final class FakeBetaViewServer implements AutoCloseable {
         session.listTokens.add("T" + counter.get());
         return fields;
     }
+
+    /** Name einer gespeicherten Suche, deren Layout auf dem Server fehlt. */
+    public static final String BROKEN_LAYOUT = "Altes Layout";
 
     /** Ein Struts-Token gilt genau einmal. */
     private static boolean strutsOk(Session session, Map<String, String> form) {
