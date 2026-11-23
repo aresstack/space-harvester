@@ -536,6 +536,18 @@ public final class CommandDeck {
         }
     }
 
+    /**
+     * Schließt die Dokumentanalyse der Fristen-Fachlogik an (ADR 0035): die E-Akte als Ablage, aus der sie liest, und
+     * ihre Ergebnisse in der Extraktion jedes E-Akte-Browsers. {@code null} trennt beides (etwa beim Neustart des
+     * Core). Auf dem EDT.
+     */
+    public void documentAnalyses(com.aresstack.spaceharvester.application.deadlines.DeadlineAnalysisService service) {
+        if (service != null) {
+            service.content(eakte.content());
+        }
+        eakte.analyses(service);
+    }
+
     public FtpSessions ftpSessions() {
         return ftpSessions;
     }
