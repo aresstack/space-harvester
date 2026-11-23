@@ -76,6 +76,28 @@ public final class TerminalSessions {
         default boolean byHand() {
             return false;
         }
+
+        /**
+         * Dieselbe Anmeldung ohne die Ausnahme „von Hand“: Die gilt nur für genau den einen Versuch, den der Mensch im
+         * Formular ausgelöst hat. Jeder spätere Neuaufbau fragt wieder den Wächter, sonst ginge ein abgelehntes
+         * Passwort erneut an den Host.
+         */
+        static LoginSource automatic(LoginSource source) {
+            if (source == null || !source.byHand()) {
+                return source;
+            }
+            return new LoginSource() {
+                @Override
+                public TerminalLogin login() throws Exception {
+                    return source.login();
+                }
+
+                @Override
+                public String entry() {
+                    return source.entry();
+                }
+            };
+        }
     }
 
     /** Schutz vor der Kontosperre: je KeePass-Eintrag kein automatischer Versuch nach einem Fehlschlag. */
