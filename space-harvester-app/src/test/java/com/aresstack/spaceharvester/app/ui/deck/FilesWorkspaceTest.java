@@ -357,6 +357,77 @@ class FilesWorkspaceTest {
     }
 
     @Test
+    void rejectedSavedLoginIsNotTriedAgainUntilItWorks() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CountDownLatch rejected = new java.util.concurrent.CountDownLatch(1);
+        com.aresstack.spaceharvester.deck.files.sharepoint.WebDavLogin login =
+                new com.aresstack.spaceharvester.deck.files.sharepoint.WebDavLogin() {
+                    @Override
+                    public Outcome connect(String uncPath) {
+                        return Outcome.credentialsNeeded("Anmeldung nötig");
+                    }
+
+                    @Override
+                    public Outcome connect(String uncPath, String user, char[] password) {
+                        attempts.incrementAndGet();
+                        rejected.countDown();
+                        return Outcome.credentialsNeeded("Kennwort abgelaufen");
+                    }
+                };
+        var saved = com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory();
+        saved.save("intranet.example.org", "nutzer", "alt".toCharArray());
+        java.util.Map<String, String> stored = new java.util.concurrent.ConcurrentHashMap<>();
+        var guard = new com.aresstack.spaceharvester.deck.access.LoginGuard(
+                new com.aresstack.spaceharvester.deck.access.LoginGuard.Store() {
+                    @Override
+                    public String get(String key) {
+                        return stored.get(key);
+                    }
+
+                    @Override
+                    public void put(String key, String value) {
+                        if (value == null) {
+                            stored.remove(key);
+                        } else {
+                            stored.put(key, value);
+                        }
+                    }
+                });
+        SwingUtilities.invokeAndWait(() -> {
+            workspace = new FilesWorkspace(
+                    new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
+                    new LocalDocumentStore(), null,
+                    new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointAccess(login, NOW),
+                    List::of, com.aresstack.spaceharvester.deck.access.ServerAccounts.NONE);
+            workspace.savedLogins(saved);
+            workspace.loginGuard(guard);
+        });
+        start();
+        String unc = "\\\\intranet.example.org@SSL\\DavWWWRoot\\sites\\Raum";
+
+        SwingUtilities.invokeAndWait(() -> workspace.go(unc));
+        assertThat(rejected.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        long until = System.currentTimeMillis() + 5000;
+        while (guard.mayTry(FilesWorkspace.savedEntry("nutzer")) && System.currentTimeMillis() < until) {
+            flush();
+        }
+        assertThat(guard.failure(FilesWorkspace.savedEntry("nutzer"))).get()
+                .extracting(com.aresstack.spaceharvester.deck.access.LoginGuard.Failure::reason)
+                .isEqualTo("Kennwort abgelaufen");
+
+        // Ein weiterer Versuch (Reiterwechsel, neuer Reiter) meldet sich nicht noch einmal mit den alten Daten an.
+        SwingUtilities.invokeAndWait(() -> workspace.go(unc));
+        for (int i = 0; i < 20; i++) {
+            flush();
+            Thread.sleep(25);
+        }
+        assertThat(attempts.get()).as("kein zweiter automatischer Versuch").isEqualTo(1);
+        assertThat(stored).isNotEmpty();
+        assertThat(String.join("\n", stored.keySet()) + String.join("\n", stored.values()))
+                .as("kein Benutzername im Zustand").doesNotContainIgnoringCase("nutzer");
+    }
+
+    @Test
     void opensDocumentsAsReadOnlyPreview() throws Exception {
         Files.writeString(root.resolve("bericht.pdf"), "kein echtes PDF");
         com.aresstack.spaceharvester.deck.editor.DocumentStore preview =

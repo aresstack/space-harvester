@@ -138,6 +138,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private final SharePointAccess sharePoint;
     private final Supplier<List<SharePointSite>> sites;
     private final ServerAccounts accounts;
+    /**
+     * Schutz vor der Kontosperre (Deck-Regel): Ein abgelehnter Login sperrt den Zugang für jeden automatischen Versuch,
+     * bis eine Anmeldung klappt. KeePass-Zugänge über ihren Eintrag, gespeicherte über {@link #savedEntry}.
+     */
+    private com.aresstack.spaceharvester.deck.access.LoginGuard guard = DeckLogin.guard();
     /** Nach der ersten erfolgreichen Anmeldung gespeicherte SharePoint-Zugangsdaten (die App setzt den Tresor). */
     private volatile com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins savedLogins =
             com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory();
@@ -912,6 +917,33 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 : logins;
     }
 
+    /**
+     * Sperrschlüssel für gespeicherte SharePoint-Zugangsdaten: je Konto (Benutzer), denn gesperrt wird das Konto, gleich
+     * auf welcher Site. Der Wächter legt den Schlüssel im App-Zustand ab, darum nie der Name im Klartext, sondern ein
+     * kurzer SHA-256-Wert davon.
+     */
+    static String savedEntry(String user) {
+        String name = user == null ? "" : user.strip().toLowerCase(Locale.ROOT);
+        try {
+            byte[] hash = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return "SharePoint " + java.util.HexFormat.of().formatHex(hash, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Hinweis im Dialog bei gesperrtem Konto, mit lesbarem Namen (der Schlüssel ist nur ein Hash). */
+    private String lockedNotice(String user) {
+        return guard.failure(savedEntry(user)).map(failure -> "Letzte Anmeldung als „" + user + "“ fehlgeschlagen: "
+                + failure.reason() + ". Bitte Zugangsdaten prüfen.").orElse("");
+    }
+
+    /** Für Tests: ein eigener Wächter statt des gemeinsamen der App. */
+    void loginGuard(com.aresstack.spaceharvester.deck.access.LoginGuard guard) {
+        this.guard = guard;
+    }
+
     private static String loginHost(String unc) {
         return SharePointPaths.host(unc).orElse("").replaceAll("(?i)@SSL", "").replaceAll("@\\d+$", "");
     }
@@ -932,11 +964,22 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 return;
             }
             var login = saved.get();
+            String entry = savedEntry(login.user());
+            if (!guard.mayTry(entry)) {
+                // Letzter Versuch abgelehnt: nicht noch einmal automatisch, der Mensch prüft im Dialog.
+                java.util.Arrays.fill(login.password(), '\0');
+                SwingUtilities.invokeLater(() -> askLogin(tab, unc, lockedNotice(login.user()), login.user()));
+                return;
+            }
             sharePoint.connect(unc, login.user(), login.password(), result -> SwingUtilities.invokeLater(() -> {
                 busy().setBusy(browser.loading());
                 if (result.connected()) {
+                    guard.succeeded(entry);
                     tab.open(unc);
                 } else {
+                    if (result.outcome().needsCredentials()) {
+                        guard.failed(entry, result.outcome().reason());
+                    }
                     tryKeePass(tab, unc, "Gespeicherte Zugangsdaten passen nicht: " + result.outcome().reason(),
                             login.user());
                 }
@@ -957,10 +1000,14 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             }
             Optional<ServerAccount> found = account;
             SwingUtilities.invokeLater(() -> {
-                if (found.isPresent() && !reason.startsWith("KeePass")) {
+                if (found.isPresent() && !guard.mayTry(found.get().entry())) {
+                    askLogin(tab, unc, DeckLogin.notice(found.get().entry()), found.get().user(),
+                            found.get().entry());
+                } else if (found.isPresent() && !reason.startsWith("KeePass")) {
                     loginWithKeePass(tab, unc, found.get());
                 } else {
-                    askLogin(tab, unc, reason, found.map(ServerAccount::user).orElse(user));
+                    askLogin(tab, unc, reason, found.map(ServerAccount::user).orElse(user),
+                            found.map(ServerAccount::entry).orElse(null));
                 }
             });
         });
@@ -974,10 +1021,14 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 sharePoint.connect(unc, credentials.user(), password, result -> SwingUtilities.invokeLater(() -> {
                     busy().setBusy(browser.loading());
                     if (result.connected()) {
+                        guard.succeeded(account.entry());
                         tab.open(unc);
                     } else {
+                        if (result.outcome().needsCredentials()) {
+                            guard.failed(account.entry(), result.outcome().reason());
+                        }
                         askLogin(tab, unc, "KeePass-Eintrag „" + account.entry() + "“ passt nicht: "
-                                + result.outcome().reason(), credentials.user());
+                                + result.outcome().reason(), credentials.user(), account.entry());
                     }
                 }));
                 java.util.Arrays.fill(password, '\0');
@@ -988,8 +1039,18 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         });
     }
 
-    /** Anmeldedialog wie {@code SharePointAuthenticator.showLoginDialog} in MainframeMate. */
     private void askLogin(FileBrowser tab, String unc, String reason, String user) {
+        askLogin(tab, unc, reason, user, null);
+    }
+
+    /**
+     * Anmeldedialog wie {@code SharePointAuthenticator.showLoginDialog} in MainframeMate.
+     *
+     * @param keePassEntry der KeePass-Eintrag, dessen Ablehnung zum Dialog führte; klappt die Anmeldung mit seinem
+     *                     Benutzer, ist das Konto wieder frei und die Sperre des Eintrags fällt (sonst bliebe er für
+     *                     immer gesperrt, denn automatisch wird er nicht mehr versucht)
+     */
+    private void askLogin(FileBrowser tab, String unc, String reason, String user, String keePassEntry) {
         busy().setBusy(browser.loading());
         JTextField userField = Comic.field(24);
         userField.setText(user == null ? "" : user);
@@ -1014,6 +1075,10 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         sharePoint.connect(unc, entered, password, result -> SwingUtilities.invokeLater(() -> {
             busy().setBusy(browser.loading());
             if (result.connected()) {
+                guard.succeeded(savedEntry(entered));
+                if (keePassEntry != null && user != null && entered.strip().equalsIgnoreCase(user.strip())) {
+                    guard.succeeded(keePassEntry);
+                }
                 // Nach dem ersten Erfolg merken: beim nächsten Mal kein Dialog (Angelo, 23.11.).
                 Thread.ofVirtual().name("deck-sharepoint-save").start(() -> {
                     try {
@@ -1028,7 +1093,10 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 tab.open(unc);
             } else {
                 java.util.Arrays.fill(password, '\0');
-                askLogin(tab, unc, result.outcome().reason(), entered);
+                if (result.outcome().needsCredentials()) {
+                    guard.failed(savedEntry(entered), result.outcome().reason());
+                }
+                askLogin(tab, unc, result.outcome().reason(), entered, keePassEntry);
             }
         }));
     }
