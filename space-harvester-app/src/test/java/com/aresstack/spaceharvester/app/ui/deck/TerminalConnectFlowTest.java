@@ -124,6 +124,7 @@ class TerminalConnectFlowTest {
                 assertThat(deck.terminal().selected()).as("gleich das Terminal, kein Formular").isSameAs(session);
                 // Kopfzeile so hoch wie die übrigen; Trennen und Schließen stehen im ▾-Menü, der Stand unten links.
                 assertThat(TerminalWorkspace.HEAD_HEIGHT).isEqualTo(35);
+                assertThat(TerminalWorkspace.FOOT_HEIGHT).as("wie die Fußleiste mit der Lupe").isEqualTo(43);
                 javax.swing.JPopupMenu menu = deck.terminal().moreMenu();
                 List<String> items = new java.util.ArrayList<>();
                 for (java.awt.Component part : menu.getComponents()) {
