@@ -122,6 +122,9 @@ class FtpWorkspaceTest {
             assertThat(profile.retry().replyCodes()).containsExactlyInAnyOrder(421, 426);
             assertThat(profile.spoolNaming().mode()).isEqualTo(SpoolNaming.Mode.PROBE);
             assertThat(profile.spoolNaming().connections()).isEqualTo(3);
+            assertThat(profile.useProxy()).as("Vorgabe: Proxy wie bisher").isTrue();
+            form.useProxy.setSelected(false);
+            assertThat(form.profile().useProxy()).isFalse();
             form.attempts.setText("viele");
             form.submit();
             assertThat(form.problemText()).contains("Versuche");
@@ -253,6 +256,10 @@ class FtpWorkspaceTest {
             SwingUtilities.invokeAndWait(() -> datasets.uploadFile(euro));
             waitFor(() -> onEdt(view::statusText).contains("€"), until);
             assertThat(onEdt(view::statusText)).contains("ISO-8859-1");
+            // Der Stand steht in der Statuszeile der App (nicht in der Aktionszeile), Fehler rot.
+            assertThat(onEdt(() -> deck.ftp().statusNote().text())).contains("€");
+            assertThat(onEdt(() -> deck.ftp().statusNote().tone()))
+                    .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR);
             assertThat(host.text("KKR.JCL(PREIS)")).isNull();
 
             // Mehrere auf einmal löschen.

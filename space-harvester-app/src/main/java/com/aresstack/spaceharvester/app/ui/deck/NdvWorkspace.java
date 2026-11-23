@@ -21,7 +21,6 @@ import java.util.concurrent.Executor;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.Icon;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 
@@ -33,7 +32,20 @@ import javax.swing.SwingUtilities;
  */
 public final class NdvWorkspace extends JPanel {
 
+    /**
+     * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
+     * ({@code StatusNote.Tone.ERROR}). Lange Texte kürzt das Label selbst, der volle Text steht im Tooltip.
+     */
+    private final com.aresstack.spaceharvester.app.ui.controls.StatusLabel statusInfo =
+            new com.aresstack.spaceharvester.app.ui.controls.StatusLabel();
+
+    /** Die Karte dieses Bereichs in der Statuszeile der App. */
+    public javax.swing.JComponent statusInfo() {
+        return statusInfo;
+    }
+
     private static final String NEW = "new";
+    static final String NO_SESSION = "Keine Sitzung gewählt – Server wählen und verbinden";
 
     private final NdvSessions sessions;
     private final Executor background;
@@ -94,8 +106,6 @@ public final class NdvWorkspace extends JPanel {
         formFoot.setOpaque(false);
         formFoot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        JLabel hint = Comic.muted("Keine Sitzung gewählt – Server wählen und verbinden");
-        formFoot.add(hint, BorderLayout.CENTER);
         // Gleiche Höhe wie der Fuß einer Sitzung mit Knöpfen.
         formFoot.add(javax.swing.Box.createVerticalStrut(Comic.button("Öffnen", null).getPreferredSize().height),
                 BorderLayout.EAST);
@@ -132,6 +142,11 @@ public final class NdvWorkspace extends JPanel {
         pillOf.put(session, pill);
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
         browser.onLibraryChanged(() -> changed(session));
+        browser.onStatusChanged(() -> {
+            if (selected == session) {
+                showStatus();
+            }
+        });
         changed(session);
         select(session);
         pills.revalidate();
@@ -160,6 +175,7 @@ public final class NdvWorkspace extends JPanel {
         centerCards.show(center, key);
         toolCards.show(tools, key);
         footCards.show(foot, key);
+        showStatus();
         if (session == null) {
             SwingUtilities.invokeLater(form::focusServer);
         }
@@ -188,6 +204,18 @@ public final class NdvWorkspace extends JPanel {
             pills.repaint();
         }
         select(pillOf.isEmpty() ? null : pillOf.keySet().iterator().next());
+    }
+
+    /** Der Stand der gewählten Sitzung, ohne Sitzung der Hinweis zum Formular, links in der Statuszeile der App. */
+    private void showStatus() {
+        NdvBrowser browser = selected == null ? null : browsers.get(selected);
+        statusInfo.show(browser == null ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(NO_SESSION)
+                : browser.statusNote());
+    }
+
+    /** Für Tests: der Text in der Statuszeile. */
+    String statusLine() {
+        return statusInfo.getText();
     }
 
     NdvSession selected() {

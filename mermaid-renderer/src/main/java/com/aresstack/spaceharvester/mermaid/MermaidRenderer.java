@@ -192,21 +192,16 @@ public final class MermaidRenderer {
      * Only the short render script is evaluated — preamble is already loaded.
      */
     private String renderWarm(String diagramCode, String preamble) {
-        // Ensure the warm context is available
-        if (!executor.isWarm() || executor.needsRecycle()) {
-            String warmPreamble = buildWarmPreamble(preamble);
-            System.err.println("[MermaidRenderer] " +
-                    (executor.isWarm() ? "Recycling" : "Warming up") + " GraalJS context...");
-            if (!executor.warmUp(warmPreamble)) {
-                return null; // warm-up failed — caller should fall back to cold
-            }
-        }
-
+        // Warm-up (only if needed) and render under one lock: the background pre-warm and this render must not
+        // both warm up, or one disposes the other's context mid-render
         String diagramId = "mmd-" + diagramCounter.incrementAndGet();
         String renderScript = buildRenderScript(diagramCode, diagramId);
         String resultExpr = "__svgResult || (__renderError ? 'ERROR:' + __renderError : '')";
 
-        JsExecutionResult result = executor.executeWarm(renderScript, resultExpr);
+        JsExecutionResult result = executor.executeWarm(() -> {
+            System.err.println("[MermaidRenderer] Warming up GraalJS context...");
+            return buildWarmPreamble(preamble);
+        }, renderScript, resultExpr);
 
         if (result.isSuccessful() && result.getOutput() != null && !result.getOutput().isEmpty()) {
             String output = result.getOutput();
@@ -1441,14 +1436,11 @@ public final class MermaidRenderer {
         String preamble = getPreamble();
         if (preamble == null) return false;
 
-        if (executor.isWarm() && !executor.needsRecycle()) {
-            return true; // already warm — nothing to do
-        }
-
-        String warmPreamble = buildWarmPreamble(preamble);
-        System.err.println("[MermaidRenderer] " +
-                (executor.isWarm() ? "Recycling" : "Warming up") + " GraalJS context (explicit)...");
-        return executor.warmUp(warmPreamble);
+        // Returns at once if already warm; a concurrent warm-up is waited for, never repeated
+        return executor.ensureWarm(() -> {
+            System.err.println("[MermaidRenderer] Warming up GraalJS context (explicit)...");
+            return buildWarmPreamble(preamble);
+        });
     }
 
     private String getPreamble() {

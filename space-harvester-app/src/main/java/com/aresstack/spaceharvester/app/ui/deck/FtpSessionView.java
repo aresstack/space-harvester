@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui.deck;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.deck.ftp.ConnectionState;
 import com.aresstack.spaceharvester.deck.ftp.FtpSession;
 import java.awt.BorderLayout;
@@ -10,7 +11,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 
@@ -30,7 +30,10 @@ final class FtpSessionView extends JPanel {
     private final JPanel center = new JPanel(centerCards);
     private final CardLayout actionCards = new CardLayout();
     private final JPanel actions = new JPanel(actionCards);
-    private final JLabel status = Comic.muted(" ");
+    /** Der letzte Stand dieser Sitzung; die Statuszeile der App zeigt ihn, solange die Sitzung gewählt ist. */
+    private StatusNote status = StatusNote.plain(" ");
+    /** Wohin der Stand geht (die Statuszeile des FTP-Bereichs); bekommt ihn nur, solange die Sitzung gewählt ist. */
+    private Consumer<StatusNote> statusSink = note -> { };
     private final FtpDatasetsView datasets;
     private final FtpJobsView jobs;
     private final ComposerButton reconnect;
@@ -67,16 +70,13 @@ final class FtpSessionView extends JPanel {
         east.setOpaque(false);
         east.add(actions, BorderLayout.CENTER);
         east.add(Comic.row(reconnect, disconnect, close), BorderLayout.EAST);
-        // Zwei Zeilen: der Stand über die ganze Breite, darunter die Aktionen; so bleibt er auch bei 960 px lesbar.
-        JPanel buttons = new JPanel(new BorderLayout());
-        buttons.setOpaque(false);
-        buttons.add(east, BorderLayout.EAST);
-        JPanel foot = new JPanel(new BorderLayout(0, 4));
+        // Die Aktionszeile enthält nur Knöpfe, eine Zeile wie die Aktionszeilen im Space Harvester; der Stand steht in
+        // der Statuszeile der App.
+        JPanel foot = new JPanel(new BorderLayout());
         foot.setOpaque(false);
         foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(status, BorderLayout.NORTH);
-        foot.add(buttons, BorderLayout.CENTER);
+        foot.add(east, BorderLayout.EAST);
         add(center, BorderLayout.CENTER);
         add(foot, BorderLayout.SOUTH);
 
@@ -134,15 +134,24 @@ final class FtpSessionView extends JPanel {
         }
     }
 
-    /** Der Stand unten links; rot nur für Fehler. */
+    /** Der Stand für die Statuszeile; rot nur für Fehler. */
     void status(String text, boolean error) {
-        status.setText(text);
-        status.setForeground(error ? Comic.RED : Comic.MUTED);
-        status.setToolTipText(text);
+        status = new StatusNote(text, error ? StatusNote.Tone.ERROR : StatusNote.Tone.PLAIN, null, null);
+        statusSink.accept(status);
+    }
+
+    /** Schließt die Statuszeile an (gewählt) oder ab ({@code null}); angeschlossen zeigt sie sofort den letzten Stand. */
+    void statusTo(Consumer<StatusNote> sink) {
+        statusSink = sink == null ? note -> { } : sink;
+        statusSink.accept(status);
     }
 
     String statusText() {
-        return status.getText();
+        return status.text();
+    }
+
+    boolean statusError() {
+        return status.tone() == StatusNote.Tone.ERROR;
     }
 
     /** Bringt das Ergebnis eines Auftrags auf den EDT. */

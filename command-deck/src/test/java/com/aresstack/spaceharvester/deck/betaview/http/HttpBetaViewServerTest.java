@@ -166,6 +166,49 @@ class HttpBetaViewServerTest {
         connection.search(filter(null));
         ResultTable rerun = connection.run(saved.get(0));
         assertThat(rerun.rows()).extracting(row -> row.cell(1)).containsExactly("Statistik Monatslauf");
+        // Dieselbe Suche noch einmal und nach einer neu gezeichneten Liste: das Token der alten Liste gilt nicht mehr,
+        // der Server antwortet darauf mit HTTP 400. Vor dem Absenden wird das Formular frisch gelesen.
+        connection.savedSearches();
+        assertThat(connection.run(saved.get(0)).rows()).hasSize(1);
+        assertThat(connection.run(saved.get(0)).rows()).hasSize(1);
+    }
+
+    @Test
+    void aRejectedSavedSearchReportsTheReasonOfTheServer() throws IOException {
+        BetaViewConnection connection = login();
+        connection.search(filter(null));
+        connection.saveSearch(new NameAndDescription(FakeBetaViewServer.BROKEN_LAYOUT, ""));
+        SavedSearch broken = connection.savedSearches().get(0);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> connection.run(broken))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Server antwortet HTTP 400 auf executeSavedSelection.action: Das Layout existiert nicht "
+                        + "(in Ihrer Sprache). Bitte löschen Sie die gespeicherte Suche.");
+    }
+
+    @Test
+    void anOfflineDocumentReportsTheReasonFromTheSessionStatus() throws IOException {
+        BetaViewConnection connection = login();
+        String link = "opendocumentlink.action?docid=" + FakeBetaViewServer.OFFLINE_DOC + "&favid="
+                + FakeBetaViewServer.FAVORITE;
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> connection.open(link))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Server antwortet HTTP 400 auf opendocumentlink.action: Das Dokument ist offline.");
+    }
+
+    @Test
+    void decodesDoublyEncodedNamesOfSavedSearchesAndSendsTheWholeForm() {
+        String html = "<div class=\"el_wall_btn\"><div name=\"we_id_selection_name\">R&amp;uuml;cknachrichten</div>"
+                + "<div name=\"selection_desc\">Gr&uuml;n</div><form action=\"/betaview/executeSavedSelection.action?ssID=7\">"
+                + "<input type=\"hidden\" name=\"struts.token.name\" value=\"token\">"
+                + "<input type=\"hidden\" name=\"token\" value=\"T1\"><input type=\"hidden\" name=\"ssIDForm\" value=\"7\">"
+                + "<input type=\"text\" name=\"days\" value=\"60\"><input type=\"checkbox\" name=\"off\" value=\"1\">"
+                + "<input type=\"submit\" name=\"go\" value=\"Los\"></form></div>";
+        List<SavedSearch> saved = BetaViewHtml.savedSearches(html);
+        assertThat(saved).extracting(SavedSearch::name).containsExactly("Rücknachrichten");
+        assertThat(saved).extracting(SavedSearch::description).containsExactly("Grün");
+        assertThat(BetaViewHtml.savedSearchForm(html, saved.get(0))).containsExactly(
+                java.util.Map.entry("struts.token.name", "token"), java.util.Map.entry("token", "T1"),
+                java.util.Map.entry("ssIDForm", "7"), java.util.Map.entry("days", "60"));
     }
 
     @Test

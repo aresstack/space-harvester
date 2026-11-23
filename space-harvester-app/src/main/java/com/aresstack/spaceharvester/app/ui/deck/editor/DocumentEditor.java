@@ -235,8 +235,7 @@ public final class DocumentEditor extends JPanel {
         addHierarchyListener(event -> {
             if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) != 0) {
                 if (isDisplayable()) {
-                    session.observe(observer);
-                    NaturalBlockHighlighter.observe(recolor);
+                    watch();
                     render();
                 } else {
                     session.unobserve(observer);
@@ -246,12 +245,22 @@ public final class DocumentEditor extends JPanel {
                 }
             }
         });
-        session.observe(observer);
-        NaturalBlockHighlighter.observe(recolor);
+        watch();
         render();
         for (Consumer<DocumentEditor> created : CREATED) {
             created.accept(this);
         }
+    }
+
+    /**
+     * Meldet sich bei Sitzung und Blockfarben an, höchstens einmal: Konstruktor und „sichtbar geworden“ rufen das
+     * beide; ein doppelt angemeldeter Beobachter würde beim Schließen nur einmal abgemeldet und hielte den Editor fest.
+     */
+    void watch() {
+        session.unobserve(observer);
+        NaturalBlockHighlighter.unobserve(recolor);
+        session.observe(observer);
+        NaturalBlockHighlighter.observe(recolor);
     }
 
     // ---- Schnittstelle für die Arbeitsbereiche ----------------------------------------------------------------------

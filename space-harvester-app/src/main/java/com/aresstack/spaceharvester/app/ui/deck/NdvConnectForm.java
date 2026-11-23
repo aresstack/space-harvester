@@ -36,6 +36,9 @@ final class NdvConnectForm extends JPanel {
     static final String ENTRY_KEY = "deck.ndv.entry";
     /** Standard-Bibliothek, die nach dem Verbinden geöffnet wird (wie {@code ndvDefaultLibrary} in MainframeMate). */
     static final String LIBRARY_KEY = "deck.ndv.defaultLibrary";
+    /** Ob über den Proxy der App verbunden wird; Vorgabe nein (direkt wie MainframeMate, Angelo 23.11.). */
+    static final String PROXY_KEY = "deck.ndv.useProxy";
+    static final String PROXY_TEXT = "Proxy der App verwenden";
 
     /** Verbinden mit Profil, Eintragstitel für die Anzeige und der Quelle der Anmeldung. */
     @FunctionalInterface
@@ -43,10 +46,11 @@ final class NdvConnectForm extends JPanel {
         void open(NdvProfile profile, String account, NdvSessions.LoginSource login);
     }
 
-    final JComboBox<ServerAccount> server = new JComboBox<>();
+    final JComboBox<ServerAccount> server = Comic.combo(ConnectForm::accountText);
     final PlaceholderField port = new PlaceholderField(6, String.valueOf(NdvProfile.DEFAULT_PORT));
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
     final PlaceholderField library = new PlaceholderField(12, "leer = Bibliotheksliste");
+    final javax.swing.JCheckBox useProxy = new javax.swing.JCheckBox(PROXY_TEXT);
     private final JLabel problem = new JLabel(" ");
     private final JLabel serverState = Comic.muted(" ");
     private final JPanel advanced = new JPanel(new GridBagLayout());
@@ -61,19 +65,6 @@ final class NdvConnectForm extends JPanel {
         this.accounts = accounts;
         this.connect = connect;
         setOpaque(false);
-        server.setRenderer(new javax.swing.DefaultListCellRenderer() {
-            @Override
-            public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value,
-                                                                   int index, boolean selected, boolean focus) {
-                super.getListCellRendererComponent(list, value, index, selected, focus);
-                if (value instanceof ServerAccount account) {
-                    setText(account.toString() + (account.user().isEmpty() ? "" : " · " + account.user()));
-                } else {
-                    setText("KeePass-Eintrag wählen …");
-                }
-                return this;
-            }
-        });
         server.addActionListener(e -> serverChanged());
         IconButton reload = new IconButton(Glyph.REFRESH, "Einträge neu aus KeePass laden");
         reload.addActionListener(e -> load());
@@ -91,6 +82,12 @@ final class NdvConnectForm extends JPanel {
         String rememberedLibrary = AppState.shared().get(LIBRARY_KEY);
         library.setText(rememberedLibrary == null ? "" : rememberedLibrary);
         library.setToolTipText("Wird nach dem Verbinden geöffnet; leer zeigt die Bibliotheksliste");
+        useProxy.setOpaque(false);
+        useProxy.setFont(Comic.regular(12.5f));
+        useProxy.setSelected(Boolean.parseBoolean(AppState.shared().get(PROXY_KEY)));
+        useProxy.setToolTipText("Aus: direkt zum NDV-Server wie in MainframeMate. An: über den Proxy aus Einstellungen › "
+                + "Netzwerk (HTTP-Tunnel), etwa wenn der Server nur über den Proxy erreichbar ist");
+        row(advanced, 2, "", useProxy);
         advanced.setVisible(false);
         advancedToggle.setFont(Comic.regular(12.5f));
         advancedToggle.setForeground(Comic.BLUE);
@@ -216,7 +213,8 @@ final class NdvConnectForm extends JPanel {
         if (account.user().isEmpty()) {
             throw new IllegalArgumentException("Der KeePass-Eintrag „" + account.entry() + "“ hat keinen Benutzer");
         }
-        return new NdvProfile(target, number(port.getText(), NdvProfile.DEFAULT_PORT), library.getText());
+        return new NdvProfile(target, number(port.getText(), NdvProfile.DEFAULT_PORT), library.getText(),
+                useProxy.isSelected());
     }
 
     private static int number(String text, int fallback) {
@@ -244,6 +242,7 @@ final class NdvConnectForm extends JPanel {
         // Nur der Server wird gemerkt; ein abweichender Host oder Port gilt nur für diese Wahl.
         AppState.shared().put(ENTRY_KEY, account.entry());
         AppState.shared().put(LIBRARY_KEY, profile.defaultLibrary());
+        AppState.shared().put(PROXY_KEY, String.valueOf(profile.useProxy()));
         String entry = account.entry();
         connect.open(profile, entry, () -> accounts.credentials(entry));
     }

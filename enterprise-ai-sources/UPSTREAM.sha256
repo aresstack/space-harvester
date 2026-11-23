@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git c530c5ca815530fa2bfbb12a4bf124abaafb4691
+# upstream https://github.com/aresstack/enterprise-ai-client.git 9b66718a4a646c901be219a61825a07191bb06c6
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 09426dae09fca081ecbd3ce1d43ae3f1697bdffd6b615599c3e294aebac58b94  src/main/java/com/aresstack/enterpriseai/adyton/SecretEntry.java
 56bd1f03e6f1c152ec55b70cac06a5cf77164dd32772445fcc938a00692bb865  src/main/java/com/aresstack/enterpriseai/adyton/SecretFunction.java
@@ -241,11 +241,11 @@ c7763bc29759843a485e5e963c6490d3c7fb2a28beb98cff4cb17b1e34c54dd7  src/main/java/
 3e47046350eb9a22fe50b7d1016e867f367eae69b20e8eb509524b305ec18ca2  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/WikiResourceIds.java
 37f6993dc61b5202773f90cf1a32a30218744a50f2839efe5f8422425d368a15  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/WikiSearchHit.java
 75aee3c3df111ccd302e470f46d0250f71cc93840777d3612dafe86f41d527d6  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/package-info.java
-987a1b7dcb8146487a8bfdea675a32325cc5517d6183e4b0575be125fc23921e  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvClient.java
+df102108b192257e147c127d28488a9f0884e49eeeed45887b502e57007d3fed  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvClient.java
 619ef9fc11dc33851078d487be98d30182a896b860b2c912a7178210980a0c31  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvException.java
 877bf061e8ad9c0432311c82d2393e4c2c394eab430665111086acc540b91568  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvKnowledgeSource.java
 21eaaac40923792b5ea66d3b580dd2bf94d48c3b808a8f319e894243520a2e45  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvObjectInfo.java
-4b712c1dadb0acb48f6aec62351533f6f3e92e6f6f2db44556cd363709c50e8c  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvSourceProvider.java
+5a15b0ea4f531ca87d79594afae3e6a7a1e62b1299ad84868c0cda7f5ca1878b  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/NdvSourceProvider.java
 879606029e36f5c7cfcd1e7d38ec2b1f5acf9b654e3567b74b750238a9db4971  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/package-info.java
 ef5c7c3c7a15aafbdaa987b4502f53b3390c924d020c59139631051ea7138ada  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/config/ResourceProperties.java
 3bed4c71e2b667ef46f67f593da56ec5cd1419cc29cc296bff68fc3913cb697a  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/config/TransactionId.java
@@ -313,7 +313,7 @@ cf2bb873f8f38fe52284e419a797bfdf065ed9399a104ddad1c6d04ebf2bafa9  src/main/java/
 bf09e79e0ba70c9bff2f4f25ec131bebe70860a23758d9e180519c9dc815c9b0  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/core/api/PalTypeLibIdFactory.java
 246380935d1af2a0b03bc9f5819ca8b29540666542483367df064e4794704faa  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/core/api/PalTypeSystemFileFactory.java
 930d87c88ae8ad81ea8195330a4a9b745a7a3a23227613439692f09354a93151  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/core/impl/ConversionResult.java
-ff80bfb93b99ff5ad473f58dc93c5bc08e76e35dc0fbb9aecf0a5d09eb230c2f  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/core/impl/Ndv.java
+3f8483bfbf1c21e74bce8d09a7c10a037e5c29c8263dbf8cb02251cbfddaead6  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/core/impl/Ndv.java
 75f83c383df1c8d9a0ef33386e7dbf32e4cfa8dbca7db1f070327ddabd91ab9d  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/core/impl/NdvIndex.java
 28aa9fb148c6812c1c1b4905d6cd742bd9953713228b5138de79b7ab7f94241c  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/core/impl/type/IPalType.java
 7b2e81a025456fc02450d01142cb957d5d885689219126730841a32d291abc94  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/core/impl/type/PalType.java
@@ -396,16 +396,16 @@ ace6b9a6ed0302bba1236d64e089094322b2a3496453b480bc625825f07ffb55  src/main/java/
 54aa7ee74fe3405d23a7c8917bf1064f18c2993dd67c5960cdb5c6cbaafdda3a  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/NaturalParameter.java
 a3804913ec076e9f06ad422e1828fca628f386e542cfcdeb42f4c35df0308e6f  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/NdvProperties.java
 68b02e21e8276c739e8af0e9c00e1c5a7602fa09ee7e603cbf17ea5135998867  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/NdvTimeStamp.java
-e48298eafc0a1c7d0600bcfd66a5301f348e551a1d1b96c09e77d566b4305aab  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/NdvTransaction.java
+4ed79a853ff9d402c146d90463fe5cd9cda02640c19208c099bcca3dd658ed4e  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/NdvTransaction.java
 9540b30b890fe19dfdd1f1389036ecce315bba711c559b4d7e6fadd9294ecc2b  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/Password.java
 3b539229441be2f594a92050c252bf1e5127de2cec99e9199afe9b0ef30a8dd7  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/SourceLookupResult.java
 dcfb000d7e2edb60c776a1729bb37bf9e3bbe1609cce4bf7f5986ca3ae314219  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/SuspendResult.java
 222d3a7dbf056fbf5ac228a6d7196474d2aacb6b0b074b061fbbea84fca4c520  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/ConfigurationService.java
-59ca6517885154f20afe073e6e55c05d583c8341a8443549a44cf5d408edd3da  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/ConnectionService.java
+8b8862c058596a99481bdb958d35cdfb09e35aa9a6211d72250515b232e422f3  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/ConnectionService.java
 35617fd267a29574effba2448e3e7d566350bc4137257a75215b1f3e0b9989a4  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/DebugService.java
 98bcde4a78d0044b6be46a10768642b74d115f8cd44e66d502a4bde15bbeaa4f  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/DownloadService.java
 63bbbe55b81020192f13d9f982844be33cac74aa9d288cb031f2945b04ec9679  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/LibraryBrowseService.java
-e08b00d27ed0219cb14eba2f6141e092b12ba1ed635d6826ddeeaf553f2a15c2  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/NdvSessionContext.java
+b6e9d575b74abe7682272c84ed7677fd3d845d7e3433e50d7d50a48e5af4b705  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/NdvSessionContext.java
 2868aba8790fd938b452d8fe3c33fb99905e8c07304a238fb1320b4e60e827d3  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/ObjectBrowseService.java
 6d00acdcf8ca7b7c43e005f0e0351bf9f616eaaf88f59c852d186d4ebc21d2a7  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/ObjectManagementService.java
 92894a02011dadd36246178d38b5d871cb65c085da8b6c18a81299ad577bfb8a  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/transaction/impl/services/UploadService.java
@@ -572,6 +572,7 @@ dae271cb142e500f8461b1c1b3fd55b8e4da745e42637a491476042acc32e03f  src/test/java/
 3c81068010e4588a1131eae354b7260a0f6d851b19bb6acfbd94f61cec6cbbb4  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/WikiCrawlerTest.java
 34491de15506ea884bed5fa66ffb72c8f0703f479f1a1e19ed2fe8cc5c0d3cba  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/WikiHtmlTextTest.java
 e933653dc95a6e15fb14e2aa74d3a66121c5ef9479f9060b2aaa1217df2ae441  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/WikiResourceIdsTest.java
+4e55d0e8ef443f91b9e9271a0d58d155ec4415d0cdea8826d75e3ce2df81782c  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ndv/pal/core/impl/NdvProxyTest.java
 8dbcda7f3e4481f9b16147e2a3a272af242a05b8ea5bc76a8fe25c79d1af909d  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/outlook/OutlookKnowledgeSourceTest.java
 c63ba280b2378390fa04cf7d61d109d88a108ae042b6042ddad523e8549a8135  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/outlook/PstTestMailboxTest.java
 fae70911dd5984ee177eaa3d9a154aea97df76cbe47352b2eadce6e047fe4e54  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/sharepoint/SharePointKnowledgeSourceTest.java

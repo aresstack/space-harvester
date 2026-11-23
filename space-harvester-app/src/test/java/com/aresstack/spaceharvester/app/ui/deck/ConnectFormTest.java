@@ -33,6 +33,35 @@ class ConnectFormTest {
         }
     };
 
+    /**
+     * Auswahllisten und Kontrollkästchen des Formulars sind die der App, nicht die von Swing (Angelo, 23.11.2026):
+     * Comic-Auswahlliste mit ihrem Renderer, Kästchen mit dem Comic-Haken.
+     */
+    @Test
+    void dropdownsAndCheckBoxesAreTheControlsOfTheApp() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            ConnectForm form = new ConnectForm(accounts, (profile, source) -> { });
+            form.show(List.of(HOST_A, HOST_B));
+            for (javax.swing.JComboBox<?> combo : List.of(form.server, form.model)) {
+                assertThat(combo.getUI())
+                        .isInstanceOf(com.aresstack.enterpriseai.ui.comic.control.ComicComboBoxUI.class);
+                assertThat(combo.getRenderer().getClass().getName()).doesNotContain("DefaultListCellRenderer");
+            }
+            for (javax.swing.JCheckBox box : List.of(form.autoLogin, form.tls)) {
+                assertThat(box.getIcon())
+                        .isInstanceOf(com.aresstack.enterpriseai.ui.comic.paint.ResearchCheckIcon.class);
+            }
+            assertThat(form.model.getItemCount())
+                    .isEqualTo(com.aresstack.spaceharvester.deck.terminal.TerminalModel.values().length);
+            // Der Eintrag zeigt Namen und Benutzer, „nichts gewählt“ die Aufforderung.
+            assertThat(ConnectForm.accountText(HOST_A)).isEqualTo(HOST_A + " · TESTUSR");
+            assertThat(ConnectForm.accountText(null)).isEqualTo("KeePass-Eintrag wählen …");
+            javax.swing.JLabel cell = (javax.swing.JLabel) form.server.getRenderer().getListCellRendererComponent(
+                    new javax.swing.JList<>(), HOST_A, 0, false, false);
+            assertThat(cell.getText()).isEqualTo(HOST_A + " · TESTUSR");
+        });
+    }
+
     @Test
     void addressPortAndLoginComeFromTheEntry() throws Exception {
         AtomicReference<TerminalProfile> opened = new AtomicReference<>();
@@ -104,6 +133,11 @@ class ConnectFormTest {
             form.port.setText("");
             assertThat(form.profile().port()).isEqualTo(992);
             assertThat(form.profile().tls()).isTrue();
+            // Abweichung mit Absicht: Keep-Alive an (60 s), damit die Leitung bei Leerlauf nicht gekappt wird.
+            form.keepAlive.setText("");
+            assertThat(form.profile().keepAliveSeconds()).isEqualTo(60);
+            form.keepAlive.setText("0");
+            assertThat(form.profile().keepAliveSeconds()).isZero();
         });
     }
 }

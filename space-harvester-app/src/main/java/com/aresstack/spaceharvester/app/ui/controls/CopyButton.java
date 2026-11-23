@@ -206,6 +206,11 @@ public final class CopyButton extends JButton {
         return copied;
     }
 
+    /** Das Kopieren-Symbol allein, für andere Knöpfe mit derselben Bedeutung (etwa Kopieren im Terminal). */
+    public static Icon glyph() {
+        return new Glyph();
+    }
+
     /** Zwei überlappende Rechtecke; nach dem Kopieren ein grüner Haken. */
     private static final class Glyph implements Icon {
 
