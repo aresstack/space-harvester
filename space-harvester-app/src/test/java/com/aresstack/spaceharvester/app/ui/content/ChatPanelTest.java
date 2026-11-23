@@ -328,9 +328,15 @@ class ChatPanelTest {
                 texts[1] = panel.feedback().text();
                 panel.webSearch(false);
                 visible[2] = panel.feedback().isVisible();
+                // Ersetzt eine andere Meldung die Warnung, bleibt sie beim Ausschalten stehen.
+                panel.webSearch(true);
+                panel.feedback().warning("Download ließ sich nicht starten", null);
+                panel.appSearch(false);
+                texts[2] = panel.feedback().isVisible() ? panel.feedback().text() : "";
             });
             assertThat(visible).containsExactly(false, true, false);
             assertThat(texts[1]).contains(ChatPanel.BOTH_ON_WARNING);
+            assertThat(texts[2]).contains("Download ließ sich nicht starten");
         } finally {
             if (before == null) {
                 System.clearProperty("enterpriseai.firefox");

@@ -1500,7 +1500,8 @@ public final class ChatPanel extends JPanel {
         boolean both = webOn && appSearchOn;
         if (both && !bothWarned) {
             feedback.warning(BOTH_ON_WARNING, null);
-        } else if (!both && bothWarned) {
+        } else if (!both && bothWarned && feedback.isVisible() && feedback.text().contains(BOTH_ON_WARNING)) {
+            // Nur die eigene Warnung weg; hat inzwischen eine andere Meldung sie ersetzt, bleibt diese stehen.
             feedback.clear();
         }
         bothWarned = both;
