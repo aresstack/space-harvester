@@ -57,6 +57,8 @@ dependencies {
     implementation project(':mermaid-renderer')
     // KeePass koppeln und Einträge lesen/anlegen wie im Enterprise AI Client; nur die App, nie der Core
     implementation project(':enterprise-ai-keepass')
+    // Websuche im Chat: Browser (Firefox über WebDriver BiDi) und seine Werkzeuge aus dem Enterprise AI Client
+    implementation project(':enterprise-ai-browser')
     implementation libs.snakeyaml
     // Chat-Antworten als Markdown wie im Enterprise AI Client (app.ui.markdown, Kopie von exedra.ui.markdown): flexmark
     // und mermaid-java in derselben Fassung wie document-export, keine neue Bibliothek
