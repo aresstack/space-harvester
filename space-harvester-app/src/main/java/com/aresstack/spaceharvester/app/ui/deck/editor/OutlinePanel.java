@@ -38,12 +38,19 @@ final class OutlinePanel extends JPanel {
     private final JTree tree = new JTree(model);
     private final JLabel status = Comic.muted(" ");
     private final IntConsumer navigator;
+    /** Für die Diagramm-Ansicht: gewähltes Element (Klick oder Enter); {@code null} im Text. */
+    private final java.util.function.Consumer<JclElement> chooser;
     private Outline outline;
     private boolean filling;
 
     OutlinePanel(IntConsumer navigator) {
+        this(navigator, null);
+    }
+
+    OutlinePanel(IntConsumer navigator, java.util.function.Consumer<JclElement> chooser) {
         super(new BorderLayout(0, 6));
         this.navigator = navigator;
+        this.chooser = chooser;
         setOpaque(true);
         setBackground(Comic.SURFACE);
         setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Comic.LINE),
@@ -74,6 +81,10 @@ final class OutlinePanel extends JPanel {
                 }
             }
         });
+        if (chooser != null) {
+            // Wie MainframeMate: Auswahl in der Gliederung zeigt das Element im Diagramm
+            tree.addTreeSelectionListener(event -> chosen());
+        }
         tree.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "outline-jump");
         tree.getActionMap().put("outline-jump", new javax.swing.AbstractAction() {
             @Override
@@ -137,7 +148,19 @@ final class OutlinePanel extends JPanel {
         }
     }
 
+    private void chosen() {
+        TreePath path = tree.getSelectionPath();
+        if (chooser != null && path != null
+                && ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject() instanceof JclElement element) {
+            chooser.accept(element);
+        }
+    }
+
     private void jump() {
+        if (chooser != null) {
+            chosen();
+            return;
+        }
         TreePath path = tree.getSelectionPath();
         if (path != null && ((DefaultMutableTreeNode) path.getLastPathComponent()).getUserObject()
                 instanceof JclElement element && element.getLineNumber() > 0) {

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
+import com.aresstack.spaceharvester.app.ui.deck.visual.SpoolDiagram;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
@@ -85,6 +86,8 @@ final class FtpJobsView extends JPanel {
     private final JComboBox<SpoolText.Language> language = Comic.combo();
     private final PlaceholderField find = new PlaceholderField(12, "Suche im Spool (z.B. IEF, ABEND)");
     private final JLabel findCount = Comic.muted("");
+    /** „Visuell“ wie MainframeMate JobDetailTab: Spool-Text als schreibgeschütztes Diagramm. */
+    private SpoolDiagram diagram;
     private final JLabel info = Comic.text(" ");
     private final ComposerButton whole;
     private int findFrom;
@@ -240,6 +243,10 @@ final class FtpJobsView extends JPanel {
         spoolText.getAccessibleContext().setAccessibleName("Spool-Text");
         RTextScrollPane textScroll = new RTextScrollPane(spoolText);
         textScroll.setBorder(BorderFactory.createLineBorder(Comic.LINE));
+        diagram = new SpoolDiagram(spoolText::getText,
+                () -> selectedJob() == null ? "SPOOL" : selectedJob().jobName(), textScroll);
+        diagram.onNoStructure(() -> owner.status(
+                "Kein Diagramm erzeugbar – der Spool enthält keine erkennbare Struktur.", false));
 
         for (SpoolText.Language candidate : SpoolText.Language.values()) {
             language.addItem(candidate);
@@ -308,6 +315,7 @@ final class FtpJobsView extends JPanel {
         left.add(whole);
         left.add(copy);
         left.add(language);
+        left.add(diagram.controls());
         JPanel right = new JPanel(new BorderLayout(4, 0));
         right.setOpaque(false);
         right.add(findFrame, BorderLayout.CENTER);
@@ -320,7 +328,7 @@ final class FtpJobsView extends JPanel {
         var spoolScroll = Comic.scroll(spoolTable);
         spoolScroll.setPreferredSize(new Dimension(380, 130));
         spoolScroll.setMinimumSize(new Dimension(220, 80));
-        JSplitPane spoolSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, spoolScroll, textScroll);
+        JSplitPane spoolSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, spoolScroll, diagram.view());
         ComicDivider.install(spoolSplit, Comic.PALETTE);
         spoolSplit.setResizeWeight(0.0);
         spoolSplit.setBorder(BorderFactory.createEmptyBorder());
@@ -703,6 +711,7 @@ final class FtpJobsView extends JPanel {
         findFrom = 0;
         findCount.setText("");
         highlight();
+        diagram.contentChanged();
     }
 
     private void highlight() {
@@ -731,6 +740,11 @@ final class FtpJobsView extends JPanel {
 
     /** Nächster Treffer, am Ende wieder von vorn; zählt alle Treffer. */
     void findNext() {
+        if (diagram.active()) {
+            diagramFound(findFrom > 0 ? diagram.step(1) : diagram.search(find.getText()));
+            findFrom = 1;
+            return;
+        }
         String query = find.getText();
         String text = spoolText.getText();
         if (query.isEmpty() || text.isEmpty()) {
@@ -749,6 +763,11 @@ final class FtpJobsView extends JPanel {
 
     /** Vorheriger Treffer, am Anfang wieder vom Ende. */
     void findPrevious() {
+        if (diagram.active()) {
+            diagramFound(findFrom > 0 ? diagram.step(-1) : diagram.search(find.getText()));
+            findFrom = 1;
+            return;
+        }
         String query = find.getText();
         String text = spoolText.getText();
         if (query.isEmpty() || text.isEmpty()) {
@@ -778,6 +797,21 @@ final class FtpJobsView extends JPanel {
         }
     }
 
+    /** Treffer im Diagramm (Knoten) wie im Text als „x / y Treffer“. */
+    private void diagramFound(int count) {
+        if (count > 0) {
+            findCount.setText(diagram.searchIndex() + " / " + count + " Treffer");
+            findCount.setForeground(Comic.MUTED);
+        } else {
+            findCount.setText("Nicht gefunden");
+            findCount.setForeground(Comic.RED);
+        }
+    }
+
+    SpoolDiagram diagram() {
+        return diagram;
+    }
+
     void find(String query) {
         find.setText(query);
     }
@@ -796,6 +830,7 @@ final class FtpJobsView extends JPanel {
         loadedSpool = null;
         wholeShown = false;
         spoolModel.show(List.of());
+        diagram.showText();
         spoolText.setText("");
         spoolTitle.setText("Spool");
         info.setText(" ");

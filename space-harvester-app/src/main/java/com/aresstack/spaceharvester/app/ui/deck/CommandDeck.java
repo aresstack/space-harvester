@@ -109,6 +109,8 @@ public final class CommandDeck {
                     once.setRepeats(false);
                     once.start();
                 });
+        // Diagramm-Ansicht „Visuell“ (MainframeMate) an jedem Editor, gleich in welchem Bereich
+        com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.install(editors);
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), accounts);

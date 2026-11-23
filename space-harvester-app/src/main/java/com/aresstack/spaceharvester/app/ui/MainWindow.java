@@ -244,6 +244,19 @@ public final class MainWindow implements AppContext.Navigator {
                 .toList());
         // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
         com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
+        // Diagramm-Ansicht „Visuell“: KI-Kurzbeschriftung über das Modell der Zeile „Zusammenfassung“ (sonst das
+        // Chat-Modell), gestreamt; Systemfunktionen aus Einstellungen › Diagramme.
+        com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.connect(() -> {
+            var runtime = context.runtime();
+            var settings = context.settings();
+            if (runtime == null || settings == null || settings.ai() == null) {
+                return null;
+            }
+            var use = settings.ai().summary();
+            String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
+            return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
+                    runtime.workspace().aiChat(), model, use == null ? null : use.thinking());
+        });
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);

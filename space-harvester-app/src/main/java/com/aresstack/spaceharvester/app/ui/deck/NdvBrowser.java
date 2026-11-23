@@ -208,6 +208,12 @@ final class NdvBrowser extends JPanel {
         this.store = new NdvDocumentStore(session);
         this.sessions = sessions;
         this.background = background;
+        // Aufrufziel aus der Diagramm-Ansicht: unten im Editor zeigen (auch frisch geöffnete Quelltexte)
+        editors.onReveal(revealed -> SwingUtilities.invokeLater(() -> {
+            if (revealed.store() == store) {
+                show(revealed);
+            }
+        }));
         setBackground(Comic.SURFACE);
         groupByType = state.groupByType();
         showDetails = state.showDetails();

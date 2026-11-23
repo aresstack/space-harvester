@@ -293,6 +293,11 @@ public final class FilesWorkspace extends JPanel {
         }
         browser.observe(changed -> SwingUtilities.invokeLater(this::render));
         editors.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        editors.onReveal(session -> SwingUtilities.invokeLater(() -> {
+            if (pillOf.containsKey(session)) {
+                select(session);
+            }
+        }));
         editors.onClosed(session -> SwingUtilities.invokeLater(() -> removed(session)));
         editors.all().forEach(this::added);
         // Erst lesen, wenn man den Bereich sieht: das Öffnen der Perspektive fasst keine Dateien an.

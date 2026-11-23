@@ -58,6 +58,8 @@ public final class SettingsView implements View {
     static final String CONNECTION_HEADING = "Verbindung";
     static final String NDV = "NDV";
     static final String BETAVIEW = "BetaView";
+    /** Bereich „Diagramme“: Diagramm-Ansicht „Visuell“ und Systemfunktionen (MainframeMate: Einstellungen › Systemfunktionen). */
+    static final String DIAGRAMS = "Diagramme";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -333,6 +335,12 @@ public final class SettingsView implements View {
         page(BETAVIEW, Comic.column(
                 Comic.plate(BetaViewSettingsPanel.CONNECTION_HEADING, Comic.BLUE, betaView.connection()),
                 Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
+        var deck = new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel();
+        page(DIAGRAMS, Comic.column(
+                Comic.plate(com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel.DIAGRAM_HEADING,
+                        Comic.BLUE, deck.diagramComponent()),
+                Comic.plate(com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel.FUNCTIONS_HEADING,
+                        Comic.PETROL, deck.functionsComponent())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "

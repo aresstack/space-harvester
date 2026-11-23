@@ -301,6 +301,14 @@ class FtpWorkspaceTest {
             assertThat(onEdt(jobs::languageShown)).isEqualTo(SpoolText.Language.PLAIN);
             SwingUtilities.invokeAndWait(() -> jobs.languageBox().setSelectedItem(SpoolText.Language.AUTO));
 
+            // „Diagramm“ wie MainframeMate JobDetailTab: ohne erkennbare Struktur (hier JESJCL ohne JES-Spaltenpräfix)
+            // bleibt der Text stehen, und die Statuszeile sagt, warum.
+            SwingUtilities.invokeAndWait(() -> jobs.spoolTable().getSelectionModel().setSelectionInterval(1, 1));
+            waitFor(() -> onEdt(() -> jobs.spoolTextValue().contains("STEP1")), until);
+            SwingUtilities.invokeAndWait(() -> jobs.diagram().toggle());
+            waitFor(() -> onEdt(view::statusText).contains("Kein Diagramm erzeugbar"), until);
+            assertThat(onEdt(() -> jobs.diagram().active())).isFalse();
+
             // „Gesamter Output“ zeigt alle Spool-Dateien zusammen.
             SwingUtilities.invokeAndWait(jobs::showWholeOutput);
             waitFor(() -> onEdt(() -> jobs.spoolTextValue().contains("$HASP373")

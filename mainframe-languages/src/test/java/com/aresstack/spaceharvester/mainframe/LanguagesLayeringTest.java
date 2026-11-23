@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
-/** Parser, Modell und Gliederung kommen ohne Swing und RSyntaxTextArea aus; nur ...syntax hängt daran. */
+/** Parser, Modell, Gliederung, Aufrufbaum und Diagramm-Erzeugung kommen ohne Swing und RSyntaxTextArea aus; nur ...syntax hängt daran. */
 class LanguagesLayeringTest {
 
     private final JavaClasses classes = new ClassFileImporter()
@@ -16,7 +16,8 @@ class LanguagesLayeringTest {
 
     @Test
     void parsersHaveNoUi() {
-        noClasses().that().resideInAnyPackage("..mainframe.parser..", "..mainframe.model..", "..mainframe.outline..")
+        noClasses().that().resideInAnyPackage("..mainframe.parser..", "..mainframe.model..", "..mainframe.outline..",
+                        "..mainframe.calltree..", "..mainframe.diagram..")
                 .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "java.awt..", "org.fife..",
                         "..mainframe.syntax..")
                 .check(classes);

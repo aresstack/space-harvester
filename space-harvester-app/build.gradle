@@ -148,6 +148,10 @@ tasks.named('test') {
     def appState = layout.buildDirectory.file('tmp/test-app-state.json').get().asFile
     systemProperty 'space-harvester.app-state', appState.absolutePath
     doFirst { appState.delete() }
+    // Die Systemfunktionen der Diagramm-Ansicht (system-functions.json) ebenso: nie die des Benutzers.
+    def systemFunctions = layout.buildDirectory.file('tmp/test-system-functions.json').get().asFile
+    systemProperty 'space-harvester.system-functions', systemFunctions.absolutePath
+    doFirst { systemFunctions.delete() }
     // Die App-Tests rendern PDFs mit Systemschriften und bauen viele Swing-Oberflächen; 512 MB (Vorgabe) reichen nicht mehr.
     maxHeapSize = '1g'
     // Echttest des Chats mit Werkzeugen (ADR 0033) gegen einen Ollama-Server, nur auf Anfrage:

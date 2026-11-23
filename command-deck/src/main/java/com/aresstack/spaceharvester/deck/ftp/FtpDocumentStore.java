@@ -43,6 +43,31 @@ public final class FtpDocumentStore implements DocumentStore {
         return document(file);
     }
 
+    /** Auf MVS dasselbe PDS mit anderem Member, sonst dieselbe Datei im selben Ordner. */
+    @Override
+    public java.util.List<String> siblings(String location, String name) {
+        return siblingPaths(location, name);
+    }
+
+    static java.util.List<String> siblingPaths(String location, String name) {
+        if (location == null || name == null || name.isBlank()) {
+            return java.util.List.of();
+        }
+        String member = name.trim();
+        String unquoted = MvsPath.unquote(location);
+        int open = unquoted.indexOf('(');
+        if (open > 0 && unquoted.endsWith(")")) {
+            String dataset = unquoted.substring(0, open);
+            String sibling = dataset + "(" + member.toUpperCase(java.util.Locale.ROOT) + ")";
+            return java.util.List.of(location.startsWith("'") ? "'" + sibling + "'" : sibling);
+        }
+        int slash = unquoted.lastIndexOf('/');
+        if (slash >= 0) {
+            return java.util.List.of(unquoted.substring(0, slash + 1) + member);
+        }
+        return java.util.List.of();
+    }
+
     @Override
     public SaveResult save(EditorDocument loaded, String text, boolean overwrite) throws DocumentException {
         String path = loaded.location();
