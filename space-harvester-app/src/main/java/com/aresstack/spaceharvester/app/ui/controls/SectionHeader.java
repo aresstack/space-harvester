@@ -39,7 +39,7 @@ public class SectionHeader extends JPanel {
         super(new BorderLayout(6, 0));
         this.onToggle = onToggle;
         setOpaque(false);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setFocusable(true);
         chevron.setForeground(Comic.MUTED);
         title.setText(text);

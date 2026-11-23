@@ -43,7 +43,7 @@ public final class PerspectiveSwitcher extends JPanel {
         this.perspectives = perspectives;
         setOpaque(false);
         setFocusable(true);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setToolTipText(TOOLTIP);
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);

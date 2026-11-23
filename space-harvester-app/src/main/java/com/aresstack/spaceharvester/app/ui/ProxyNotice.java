@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
@@ -76,7 +77,7 @@ final class ProxyNotice extends JPanel {
         setVisible(false);
         label.setFont(plain);
         label.setForeground(Comic.ORANGE);
-        label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(label, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         label.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {

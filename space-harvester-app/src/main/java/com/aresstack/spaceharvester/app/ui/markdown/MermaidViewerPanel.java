@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.controls.ViewerWheel;
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
@@ -243,13 +244,13 @@ public final class MermaidViewerPanel extends JPanel {
             public void mousePressed(MouseEvent e) {
                 canvas.requestFocusInWindow();
                 canvas.dragStart = e.getPoint();
-                canvas.setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+                Cursors.set(canvas, Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
             }
 
             @Override
             public void mouseReleased(MouseEvent e) {
                 canvas.dragStart = null;
-                canvas.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
+                Cursors.set(canvas, Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
             }
 
             @Override
@@ -518,7 +519,7 @@ public final class MermaidViewerPanel extends JPanel {
 
         SwatchButton() {
             setOpaque(false);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setPreferredSize(new Dimension(18, 18));
             addMouseListener(new MouseAdapter() {
                 @Override
@@ -555,7 +556,7 @@ public final class MermaidViewerPanel extends JPanel {
         ViewerButton(javax.swing.Icon symbol, int size, String tooltip) {
             super(new BorderLayout());
             setOpaque(false);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(tooltip);
             JLabel label = new JLabel(symbol, SwingConstants.CENTER);
             label.setForeground(new Color(255, 255, 255, 210));

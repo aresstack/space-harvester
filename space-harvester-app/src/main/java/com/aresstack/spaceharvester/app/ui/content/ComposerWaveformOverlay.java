@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 
 import javax.swing.JComponent;
@@ -61,7 +62,7 @@ final class ComposerWaveformOverlay extends JComponent {
 
             @Override
             public void mouseMoved(MouseEvent event) {
-                setCursor(Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR));
+                Cursors.set(ComposerWaveformOverlay.this, Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR));
             }
         };
         addMouseListener(mouse);

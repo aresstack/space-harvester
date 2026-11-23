@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPainter;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
@@ -39,7 +40,7 @@ final class SettingsNavRow extends JComponent {
         setOpaque(false);
         setFocusable(true);
         setToolTipText(title);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         MouseAdapter mouse = new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent event) {

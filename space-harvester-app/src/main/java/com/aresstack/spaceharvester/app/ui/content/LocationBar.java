@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.Comic;
 
 import javax.swing.JLabel;
@@ -231,7 +232,7 @@ final class LocationBar extends JPanel {
         label.setFont(Comic.regular(13f));
         label.setForeground(link ? Comic.BLUE : Comic.MUTED);
         if (link) {
-            label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(label, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         }
         return label;
     }

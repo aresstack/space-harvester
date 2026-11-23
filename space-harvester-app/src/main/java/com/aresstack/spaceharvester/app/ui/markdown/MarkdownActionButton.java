@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 
 import javax.swing.Icon;
@@ -42,7 +43,7 @@ final class MarkdownActionButton extends JButton {
         setRolloverEnabled(true);
         setOpaque(false);
         setMargin(new Insets(0, 0, 0, 0));
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setPreferredSize(new Dimension(SIZE, SIZE));
         addActionListener(event -> action.run());
     }
