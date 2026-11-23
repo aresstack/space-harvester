@@ -50,6 +50,7 @@ public final class SettingsView implements View {
     static final String CACHE = "Cache";
     /** Bereich „Video“: Marken, Standbilder und Player ({@code space-harvester-app.video.*}). */
     static final String VIDEO = "Video";
+    static final String BETAVIEW = "BetaView";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -98,6 +99,8 @@ public final class SettingsView implements View {
     /** Unten im Drawer, über „Zurück“: Zeilen, die nicht mitscrollen (Bibliotheken). */
     private final JPanel bottomRows = new JPanel();
     private final java.util.Map<String, SettingsNavRow> rows = new java.util.LinkedHashMap<>();
+    /** Bereich „BetaView“: Standard-Suchfilter wie in MainframeMate. */
+    final BetaViewSettingsPanel betaView = new BetaViewSettingsPanel();
     private String selected;
     /** „Zurück“ im Drawer: verlässt die Einstellungen (setzt das Hauptfenster). */
     private Runnable leave = () -> { };
@@ -305,6 +308,7 @@ public final class SettingsView implements View {
         page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache, viewChangeLog))));
         page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
+        page(BETAVIEW, Comic.column(Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
