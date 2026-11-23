@@ -12,6 +12,14 @@ public final class DeadlineFieldKeys {
     private DeadlineFieldKeys() {
     }
 
+    // Abschnittstitel; FieldMerge führt Abschnitte über (Sachverhalt, Titel) zusammen, darum nutzen alle Stufen dieselben
+    /** Abschnitt der Angaben zum Dokument selbst (ohne Sachverhalt). */
+    public static final String SECTION_DOCUMENT = "Dokument";
+    /** Konten- und Haushaltsmerkmale eines Sachverhalts. */
+    public static final String SECTION_ACCOUNT = "Konto";
+    /** Fristaussagen und Regelungen eines Sachverhalts. */
+    public static final String SECTION_DEADLINES = "Fristen";
+
     // Dokument
     public static final String DOCUMENT_KIND = "dokument.art";
     public static final String DOCUMENT_DATE = "dokument.datum";
