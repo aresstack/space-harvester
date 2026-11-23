@@ -11,6 +11,8 @@ openterm = "1.7.2"
 # Gemeinsamer Editor des Command Deck (Dateien, später FTP/NDV): Syntaxhervorhebung wie in MainframeMate, dort 3.3.3
 # wegen Java 8; hier die aktuelle Fassung (BSD-3, reines Java, ohne weitere Abhängigkeiten)
 rsyntaxtextarea = "4.0.1"
+# Parser für JCL (Grammatik aus MainframeMate) im Modul mainframe-languages; dort 4.9.3 wegen Java 8, hier die aktuelle
+antlr = "4.13.2"
 # Spring Cloud Azure 7.4.x baut gegen Spring Boot 4.1 (spring-cloud-azure-autoconfigure 7.4.0 → Boot 4.1.0)
 springCloudAzure = "7.4.0"
 # Spring Cloud 2025.1 (Boot 4.0): für Boot 4.1 gibt es nur Meilensteine; nur der Config-Client, geprüft in ConfigServerImportTest
@@ -71,6 +73,8 @@ zxing = "3.5.3"
 [libraries]
 openterm = { module = "com.ascert.open:openterm", version.ref = "openterm" }
 rsyntaxtextarea = { module = "com.fifesoft:rsyntaxtextarea", version.ref = "rsyntaxtextarea" }
+antlr = { module = "org.antlr:antlr4", version.ref = "antlr" }
+antlr-runtime = { module = "org.antlr:antlr4-runtime", version.ref = "antlr" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
 jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
