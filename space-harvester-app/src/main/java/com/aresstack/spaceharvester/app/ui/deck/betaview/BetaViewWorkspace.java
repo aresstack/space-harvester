@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.deck.DeckLogin;
 import com.aresstack.spaceharvester.deck.access.ServerAccounts;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSession;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
@@ -120,6 +121,14 @@ public final class BetaViewWorkspace extends JPanel {
             select(null);
             return;
         }
+        // Schutz vor der Kontosperre (Angelo, 23.11.): Ist die letzte Anmeldung mit diesem KeePass-Eintrag
+        // gescheitert, egal in welchem Bereich, kein automatischer Versuch, sondern das Formular mit dem Grund.
+        String entry = BetaViewConnectForm.savedEntry();
+        if (!DeckLogin.guard().mayTry(entry)) {
+            select(null);
+            form.notice(DeckLogin.notice(entry));
+            return;
+        }
         BetaViewSession before = selected;
         if (before != null && pillOf.containsKey(before)) {
             pillOf.get(before).setSelected(true);
@@ -144,6 +153,10 @@ public final class BetaViewWorkspace extends JPanel {
             directPending = false;
             direct.add(session);
         }
+        String entry = form.takeAttemptEntry();
+        if (!entry.isEmpty() && session.state() != ConnectionState.DISCONNECTED) {
+            loggingIn.put(session, entry);
+        }
         ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.profile().label(),
                 session.state().label());
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
@@ -167,6 +180,10 @@ public final class BetaViewWorkspace extends JPanel {
         select(session);
         pills.revalidate();
         pills.repaint();
+        if (session.state() != ConnectionState.CONNECTING) {
+            // Die Anmeldung war schneller als der Reiter: Ergebnis jetzt auswerten.
+            changed(session);
+        }
     }
 
     private void changed(BetaViewSession session) {
@@ -180,20 +197,40 @@ public final class BetaViewWorkspace extends JPanel {
         if (panel != null) {
             panel.stateChanged();
         }
+        String entry = loggingIn.get(session);
         if (session.state() == ConnectionState.CONNECTED) {
             direct.remove(session);
+            if (loggingIn.remove(session) != null) {
+                DeckLogin.guard().succeeded(entry);
+            }
             if (BetaViewConnectForm.KEEPASS.equals(com.aresstack.spaceharvester.app.ui.AppState.shared()
                     .get(BetaViewConnectForm.LOGIN_KEY))) {
                 // Erst nach dem ersten Erfolg gilt die gemerkte Anmeldung als eingerichtet.
                 BetaViewConnectForm.configured();
             }
-        } else if (session.state() == ConnectionState.FAILED && direct.remove(session)) {
+        } else if (session.state() == ConnectionState.FAILED && loggingIn.remove(session) != null
+                && rejected(session.failure().orElse(""))) {
+            // Der Server hat die Anmeldung abgelehnt: Eintrag sperren, überall, bis eine Anmeldung klappt.
+            DeckLogin.guard().failed(entry, session.failure().orElse("Anmeldung abgelehnt"));
+        }
+        if (session.state() == ConnectionState.FAILED && direct.remove(session)) {
             // Direkte Anmeldung gescheitert: keine tote Sitzung stehen lassen, sondern das Formular mit dem Grund.
             String reason = session.failure().orElse("Anmeldung gescheitert");
             close(session);
             select(null);
             form.failed(reason);
         }
+    }
+
+    /** Sitzungen in der Anmeldung mit einem KeePass-Eintrag, bis sie angemeldet sind oder scheitern. */
+    private final java.util.Map<BetaViewSession, String> loggingIn = new java.util.HashMap<>();
+
+    /**
+     * Ob der Grund eine Ablehnung der Anmeldung durch den Server ist (falsches oder abgelaufenes Kennwort, HTTP
+     * 401/403) und nicht ein Netz- oder Proxyfehler; nur eine Ablehnung sperrt den Eintrag.
+     */
+    static boolean rejected(String reason) {
+        return reason.startsWith("Anmeldung abgelehnt") && !reason.matches("Anmeldung abgelehnt: HTTP (?!40[13]).*");
     }
 
     /** Zeigt die Sitzung (oder mit {@code null} das Formular „Neue Anmeldung“). */

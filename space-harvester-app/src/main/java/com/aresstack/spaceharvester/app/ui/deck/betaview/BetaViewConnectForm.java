@@ -304,7 +304,26 @@ final class BetaViewConnectForm extends JPanel {
         AppState.shared().putAll(state);
         // Ab hier meldet die Sitzung selbst, ob die Anmeldung gelingt.
         direct = null;
+        attemptEntry = nonNull(remember.get(ENTRY_KEY)).strip();
         connect.accept(profile, secret);
+    }
+
+    /** Der KeePass-Eintrag der zuletzt gestarteten Anmeldung, leer bei einer Anmeldung von Hand. */
+    private String attemptEntry = "";
+
+    /**
+     * Der KeePass-Eintrag der zuletzt gestarteten Anmeldung (für den Schutz vor der Kontosperre); gilt nur für die
+     * nächste geöffnete Sitzung.
+     */
+    String takeAttemptEntry() {
+        String taken = attemptEntry;
+        attemptEntry = "";
+        return taken;
+    }
+
+    /** Zeigt im Formular, warum nicht automatisch angemeldet wurde (gesperrter Eintrag). */
+    void notice(String text) {
+        problem.setText(text);
     }
 
     String problemText() {
