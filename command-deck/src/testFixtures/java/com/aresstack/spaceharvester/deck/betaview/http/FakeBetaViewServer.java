@@ -62,6 +62,8 @@ public final class FakeBetaViewServer implements AutoCloseable {
         boolean loggedIn;
         String csrf;
         final Set<String> strutsTokens = ConcurrentHashMap.newKeySet();
+        /** Die Tokens der zuletzt gezeichneten Liste gespeicherter Suchen; jede neue Liste ersetzt sie. */
+        final Set<String> listTokens = ConcurrentHashMap.newKeySet();
         List<Doc> lastResult = List.of();
         Map<String, String> lastFilter = Map.of();
         final List<Doc> openDocs = new ArrayList<>();
@@ -183,8 +185,9 @@ public final class FakeBetaViewServer implements AutoCloseable {
             }
             case "showResult.action" -> html(exchange, resultPage(session.lastResult));
             case "executeSavedSelection.action" -> {
-                if (!strutsOk(session, form)) {
-                    html(exchange, "<html><body>Ungültiges Token</body></html>");
+                // Wie der echte Server: veraltetes Token oder unvollständiges Formular → HTTP 400.
+                if (!strutsOk(session, form) || !"ja".equals(form.get("ssParaMode"))) {
+                    send(exchange, 400, "text/html;charset=UTF-8", "<html><body>Bad Request</body></html>");
                     return;
                 }
                 int id = Integer.parseInt(query.getOrDefault("ssID", "0"));
@@ -274,14 +277,17 @@ public final class FakeBetaViewServer implements AutoCloseable {
                 html(exchange, "<html><body>ok</body></html>");
             }
             case "savedSelection.list.action" -> {
+                session.strutsTokens.removeAll(session.listTokens);
+                session.listTokens.clear();
                 StringBuilder html = new StringBuilder("<html><body>");
                 for (int i = 0; i < session.savedSearches.size(); i++) {
                     String[] s = session.savedSearches.get(i);
                     html.append("<div class=\"el_wall_btn we-saved-selection\"><div name=\"we_id_selection_name\">")
                             .append(s[0]).append("</div><div name=\"selection_desc\">").append(s[1])
                             .append("</div><form action=\"/betaview/executeSavedSelection.action?ssID=").append(i + 1)
-                            .append("\">").append(tokenFields(session)).append(hidden("ssIDForm",
-                                    String.valueOf(i + 1))).append("</form></div>");
+                            .append("\">").append(listTokenFields(session)).append(hidden("ssIDForm",
+                                    String.valueOf(i + 1))).append(hidden("ssParaMode", "ja"))
+                            .append("<input type=\"submit\" name=\"go\" value=\"Ausführen\"></form></div>");
                 }
                 html(exchange, html.append("</body></html>").toString());
             }
@@ -401,6 +407,12 @@ public final class FakeBetaViewServer implements AutoCloseable {
         String token = "T" + counter.incrementAndGet();
         session.strutsTokens.add(token);
         return hidden("struts.token.name", "token") + hidden("token", token);
+    }
+
+    private String listTokenFields(Session session) {
+        String fields = tokenFields(session);
+        session.listTokens.add("T" + counter.get());
+        return fields;
     }
 
     /** Ein Struts-Token gilt genau einmal. */
