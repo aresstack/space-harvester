@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
+import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -137,7 +138,12 @@ final class NdvBrowser extends JPanel {
     private final JLabel sourceDetails = Comic.muted(" ");
     private final BusyOverlay libraryBusy;
     private final BusyOverlay objectBusy;
-    private final JLabel status = Comic.muted(" ");
+    /**
+     * Stand der Sitzung (Angelo 23.11.): steht links in der Statuszeile der App, nicht im Fuß; der Fuß trägt nur noch
+     * Aktionen. {@link NdvWorkspace} zeigt den Stand der gewählten Sitzung.
+     */
+    private StatusNote statusNote = StatusNote.plain(" ");
+    private Runnable statusChanged = () -> { };
     private final ComposerButton open = Comic.button("Öffnen", "Quelltext des gewählten Objekts laden (Eingabe)");
     private final ComposerButton save = Comic.button("Speichern",
             "Quelltext auf den Server schreiben (Strg+S); nur, wenn ihn seit dem Laden niemand geändert hat");
@@ -494,7 +500,6 @@ final class NdvBrowser extends JPanel {
         foot.setOpaque(false);
         foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(status, BorderLayout.CENTER);
         foot.add(Comic.row(open, save, reconnect, disconnect, close), BorderLayout.EAST);
 
         state.restoreFilter(nameFilter, session.profile().host(), session.user(), scope());
@@ -2041,12 +2046,19 @@ final class NdvBrowser extends JPanel {
             case CONNECTED -> note.isEmpty() ? head : head + " · " + note + filtered;
             default -> head;
         };
-        status.setText(text);
-        status.setToolTipText(current == NdvState.FAILED
-                ? session.failure().map(reason -> "<html>" + escape(head) + "<br>"
-                        + escape(reason).replace("\n", "<br>") + "</html>").orElse(text)
-                : text);
-        status.setForeground(current == NdvState.FAILED || connected && noteIsError ? Comic.RED : Comic.MUTED);
+        boolean error = current == NdvState.FAILED || connected && noteIsError;
+        statusNote = new StatusNote(text, error ? StatusNote.Tone.ERROR : StatusNote.Tone.PLAIN, null, null);
+        statusChanged.run();
+    }
+
+    /** Der Stand der Sitzung für die Statuszeile der App. */
+    StatusNote statusNote() {
+        return statusNote;
+    }
+
+    /** Meldet jede Änderung des Stands (auf dem EDT); ein Beobachter je Sitzung, der Bereich NDV. */
+    void onStatusChanged(Runnable listener) {
+        statusChanged = listener == null ? () -> { } : listener;
     }
 
     private <T> void work(java.util.concurrent.Callable<T> task, java.util.function.Consumer<T> done,
@@ -2114,7 +2126,7 @@ final class NdvBrowser extends JPanel {
 
     // Für Tests
     String statusText() {
-        return status.getText();
+        return statusNote.text();
     }
 
     List<String> visibleLibraries() {
