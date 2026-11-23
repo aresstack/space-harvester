@@ -112,10 +112,23 @@ class MainWindowPerspectiveTest {
             assertThat(window.split().isLeftCollapsed()).isTrue();
             perspectives.select(Perspectives.COMMAND_DECK);
             assertThat(window.commandDeck().sessions().all()).as("Wechsel verbindet nicht").isEmpty();
+            // Der Stand des Deck-Bereichs steht links in der Statuszeile der App, je Bereich eine Karte.
+            assertThat(window.viewStatus().isVisible()).isTrue();
+            assertThat(visible(window.viewStatus())).isSameAs(window.commandDeck().perspective().status());
+            JComponent deckStatus = window.commandDeck().perspective().status();
+            assertThat(deckStatus.getComponentCount())
+                    .isEqualTo(com.aresstack.spaceharvester.app.ui.deck.DeckArea.values().length);
+            Component terminalStatus = visible(deckStatus);
+            assertThat(terminalStatus).isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.StatusLabel.class);
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.FTP);
+            assertThat(visible(deckStatus)).isNotSameAs(terminalStatus)
+                    .isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.StatusLabel.class);
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.TERMINAL);
             assertThat(SwingUtilities.isDescendingFrom(window.commandDeck().perspective().navigation(),
                     window.windowBar())).isTrue();
             perspectives.select(Perspectives.MISSION_CONTROL);
             assertThat(window.commandDeck().perspective().navigation().isShowing()).isFalse();
+            assertThat(window.viewStatus().isVisible()).as("ohne eigenen Stand").isFalse();
             perspectives.select(Perspectives.PROVING_GROUND);
             assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Proving Ground");
             assertThat(visible(window.stage())).isInstanceOf(Starfield.class);
