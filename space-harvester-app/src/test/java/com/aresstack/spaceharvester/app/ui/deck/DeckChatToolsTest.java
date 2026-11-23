@@ -177,7 +177,7 @@ class DeckChatToolsTest {
 
         assertThat(changes).containsExactly("FILES");
         assertThat(scope.get().area()).isEqualTo("Command Deck › Dateien (Ordner " + root + ")");
-        assertThat(scope.get().system()).contains("notiz.txt", FilesChatTools.READ);
+        assertThat(scope.get().system()).contains("notiz.txt", FilesChatTools.READ, "Inhalt des offenen Ordners");
         assertThat(scope.get().tools().definitions()).extracting(AiChat.Tool::name).containsExactly(
                 DeckChatTools.VIEW, DeckChatTools.TEXT, FilesChatTools.LIST, FilesChatTools.READ);
         assertThat(scope.get().tools().run(new AiChat.ToolCall("1", FilesChatTools.READ,

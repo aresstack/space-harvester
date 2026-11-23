@@ -66,6 +66,18 @@ public final class FilesChatTools implements ChatToolset {
                         + "sag, welche du gelesen hast.");
     }
 
+    /** Der offene Ordner als Liste (mit [Ordner]-Marke) für die Systemnachricht; leer, wenn keiner offen ist. */
+    public String overview() {
+        if (root == null) {
+            return "";
+        }
+        try {
+            return list("");
+        } catch (FileAccessException e) {
+            return "";
+        }
+    }
+
     @Override
     public List<AiChat.Tool> definitions() {
         return List.of(

@@ -177,6 +177,7 @@ public final class CommandDeck {
         }
         JComponent shown = areaView(sent);
         com.aresstack.spaceharvester.app.chat.ChatToolset extra = null;
+        String listing = "";
         java.util.List<String> rules = java.util.List.of();
         String where = "Command Deck › " + sent.title();
         String key = "command-deck/" + sent.name().toLowerCase(java.util.Locale.ROOT);
@@ -185,7 +186,10 @@ public final class CommandDeck {
             extra = new com.aresstack.spaceharvester.app.chat.FilesChatTools(files.browser().source(), folder,
                     files.textStore(), files.previewStore(),
                     com.aresstack.spaceharvester.app.deck.DocumentPreviewStore::isDocument);
+            var filesTools = (com.aresstack.spaceharvester.app.chat.FilesChatTools) extra;
             rules = com.aresstack.spaceharvester.app.chat.FilesChatTools.rules();
+            // Die Tabelle zeigt Ordner nur am Symbol; die Liste sagt es dem Modell ausdrücklich.
+            listing = filesTools.overview();
             if (folder != null) {
                 where += " (Ordner " + folder + ")";
                 key += "/" + folder;
@@ -195,7 +199,8 @@ public final class CommandDeck {
                 new com.aresstack.spaceharvester.app.chat.DeckChatTools(() -> shown, () -> area == sent, extra);
         return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(where, key, tools,
                 com.aresstack.spaceharvester.app.chat.DeckChatTools.systemMessage(where, about(sent), rules,
-                        tools.snapshot()));
+                        tools.snapshot() + (listing.isEmpty() ? ""
+                                : "\n\nInhalt des offenen Ordners:\n" + listing)));
     }
 
     /** Hinweis über dem Eingabefeld und Vorschläge (Chips) für den gewählten Bereich. */
