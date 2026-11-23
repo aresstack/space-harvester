@@ -53,6 +53,8 @@ public final class FakeMvsFtpHost implements AutoCloseable {
     private final AtomicInteger logins = new AtomicInteger();
     private final AtomicInteger nextJob = new AtomicInteger(4711);
     private volatile boolean jesInterfaceLevel2 = true;
+    private volatile java.util.concurrent.CountDownLatch jesRetrieveGate;
+    private final java.util.concurrent.CountDownLatch jesRetrieveStalled = new java.util.concurrent.CountDownLatch(1);
 
     public FakeMvsFtpHost(String user, String password) throws IOException {
         this.user = user.toUpperCase(Locale.ROOT);
@@ -92,6 +94,15 @@ public final class FakeMvsFtpHost implements AutoCloseable {
     }
 
     /** Wie ein Host ohne JESINTERFACELEVEL=2: keine Spool-Liste, nur die Gesamtausgabe. */
+    /** JES-RETR antwortet erst, wenn {@code gate} aufgeht (hängender Host); {@link #awaitStalledRetrieve} meldet es. */
+    public void stallJesRetrieve(java.util.concurrent.CountDownLatch gate) {
+        jesRetrieveGate = gate;
+    }
+
+    public boolean awaitStalledRetrieve(long seconds) throws InterruptedException {
+        return jesRetrieveStalled.await(seconds, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
     public void jesInterfaceLevel1() {
         jesInterfaceLevel2 = false;
     }
@@ -350,6 +361,10 @@ public final class FakeMvsFtpHost implements AutoCloseable {
 
     /** {@code LIST 'X.*'} wie z/OS: eine Zeile je Dataset mit Dsorg PO (partitioniert) oder PS (sequenziell). */
     private void listDatasets(Client client, String name, PrintWriter out) throws IOException {
+        if (partitioned.containsKey(name)) {
+            listMembers(client, partitioned.get(name), out);
+            return;
+        }
         if (!name.endsWith(".*")) {
             reply(out, "550 No data sets found.");
             return;
@@ -373,6 +388,21 @@ public final class FakeMvsFtpHost implements AutoCloseable {
         send(client, out, text.toString());
     }
 
+    /** {@code LIST 'PDS'} wie z/OS mit ISPF-Statistik: Größe = Zeilen, Id = Benutzer. */
+    private void listMembers(Client client, Map<String, String> members, PrintWriter out) throws IOException {
+        if (members.isEmpty()) {
+            reply(out, "550 No members found.");
+            return;
+        }
+        StringBuilder text = new StringBuilder(" Name     VV.MM   Created       Changed      Size  Init   Mod   Id\r\n");
+        for (Map.Entry<String, String> member : new TreeMap<>(members).entrySet()) {
+            int lines = member.getValue().isEmpty() ? 0 : member.getValue().split("\n", -1).length;
+            text.append(String.format(Locale.ROOT, "%-8s  01.00 2026/11/01 2026/11/20 10:15 %5d %5d     0 %s\r\n",
+                    member.getKey(), lines, lines, user));
+        }
+        send(client, out, text.toString());
+    }
+
     private static String jobLine(Job job) {
         String tail = job.status().equals("OUTPUT")
                 ? (job.returnCode() == null ? "" : "RC=" + job.returnCode()) + " " + job.spool().size() + " spool files"
@@ -382,6 +412,16 @@ public final class FakeMvsFtpHost implements AutoCloseable {
     }
 
     private void retr(Client client, String arg, PrintWriter out) throws IOException {
+        java.util.concurrent.CountDownLatch gate = jesRetrieveGate;
+        if (client.jes && gate != null) {
+            jesRetrieveStalled.countDown();
+            try {
+                gate.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
         if (client.jes) {
             int dot = arg.lastIndexOf('.');
             Job job = find(dot > 0 ? arg.substring(0, dot) : arg);

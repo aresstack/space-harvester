@@ -45,6 +45,30 @@ final class NdvNavigatorState {
         state.put(PREFIX + "linkWithEditor", value);
     }
 
+    boolean hideBlacklisted() {
+        return state.getBoolean(PREFIX + "hideBlacklisted", false);
+    }
+
+    void hideBlacklisted(boolean value) {
+        state.put(PREFIX + "hideBlacklisted", value);
+    }
+
+    boolean indexVisible() {
+        return state.getBoolean(PREFIX + "sidebarVisible", false);
+    }
+
+    void indexVisible(boolean value) {
+        state.put(PREFIX + "sidebarVisible", value);
+    }
+
+    boolean relationsVisible() {
+        return state.getBoolean(PREFIX + "relationsVisible", true);
+    }
+
+    void relationsVisible(boolean value) {
+        state.put(PREFIX + "relationsVisible", value);
+    }
+
     /** Sortierung als {@code Spalte:ASCENDING}, leer = Name aufsteigend. */
     String sort() {
         String value = state.get(PREFIX + "sort");

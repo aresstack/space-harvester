@@ -21,7 +21,19 @@ class NdvLayeringTest {
 
     @Test
     void theNdvModelKnowsNoUiAndNoProtocol() {
-        noClasses().that().resideInAPackage("com.aresstack.spaceharvester.deck.ndv")
+        noClasses().that().resideInAnyPackage("com.aresstack.spaceharvester.deck.ndv",
+                        "com.aresstack.spaceharvester.deck.ndv.analysis..")
+                .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "java.awt..", PAL)
+                .check(classes);
+    }
+
+    @Test
+    void theAnalysisKnowsNoFilesAndTheFileAdapterNoUi() {
+        noClasses().that().resideInAPackage("com.aresstack.spaceharvester.deck.ndv.analysis..")
+                .should().dependOnClassesThat().resideInAnyPackage("java.nio.file..",
+                        "com.aresstack.spaceharvester.deck.ndv.cache..", "com.aresstack.spaceharvester.deck.ndv.pal..")
+                .check(classes);
+        noClasses().that().resideInAPackage("com.aresstack.spaceharvester.deck.ndv.cache..")
                 .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "java.awt..", PAL)
                 .check(classes);
     }

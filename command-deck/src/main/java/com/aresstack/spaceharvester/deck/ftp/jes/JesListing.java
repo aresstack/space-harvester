@@ -249,6 +249,17 @@ public final class JesListing {
         return "SPOOL#" + spoolId;
     }
 
+    /** Eine einzeln abgerufene Spool-Datei: Name aus der Antwort, sonst aus dem Inhalt; Größe und Zeilen gezählt. */
+    public static SpoolFile probed(int spoolId, String reply, String text) {
+        String ddName = ddNameFromReply(reply, spoolId);
+        if (ddName.startsWith("SPOOL#")) {
+            ddName = ddNameFromContent(text, spoolId);
+        }
+        String content = text == null ? "" : text;
+        int lines = content.isEmpty() ? 0 : content.split("\r?\n").length;
+        return new SpoolFile(spoolId, ddName, "", "", "", content.length(), lines);
+    }
+
     /** Der DD-Name aus der Antwort auf {@code RETR jobId.n}. */
     public static String ddNameFromReply(String reply, int spoolId) {
         if (reply == null || reply.isEmpty()) {

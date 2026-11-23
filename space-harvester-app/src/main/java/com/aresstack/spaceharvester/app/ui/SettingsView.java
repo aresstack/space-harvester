@@ -120,6 +120,7 @@ public final class SettingsView implements View {
             new TerminalSettingsPanel(com.aresstack.spaceharvester.app.ui.deck.TerminalSettings.shared());
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
+    final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
     final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
@@ -318,7 +319,10 @@ public final class SettingsView implements View {
         page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
         page(TERMINAL, Comic.column(Comic.plate(TerminalSettingsPanel.HEADING, Comic.PETROL, terminal.component()),
                 Comic.plate(TerminalSettingsPanel.MOUSE_HEADING, Comic.PETROL, terminal.mouseComponent())));
-        page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component())));
+        page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component()),
+                Comic.plate(NdvAnalysisSettingsPanel.ORDER_HEADING, Comic.PETROL, ndvAnalysis.orderComponent()),
+                Comic.plate(NdvAnalysisSettingsPanel.STEPLIB_HEADING, Comic.PETROL, ndvAnalysis.stepLibComponent()),
+                Comic.plate(NdvAnalysisSettingsPanel.RULES_HEADING, Comic.ORANGE, ndvAnalysis.rulesComponent())));
         page(BETAVIEW, Comic.column(
                 Comic.plate(BetaViewSettingsPanel.CONNECTION_HEADING, Comic.BLUE, betaView.connection()),
                 Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
