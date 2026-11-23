@@ -131,6 +131,8 @@ public final class NdvWorkspace extends JPanel {
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
+        browser.onLibraryChanged(() -> changed(session));
+        changed(session);
         select(session);
         pills.revalidate();
         pills.repaint();
@@ -140,7 +142,9 @@ public final class NdvWorkspace extends JPanel {
         ComposerToggleButton pill = pillOf.get(session);
         if (pill != null) {
             pill.setIcon(dot(session.state()));
-            pill.setToolTipText(session.profile().label() + " · " + session.failure()
+            NdvBrowser browser = browsers.get(session);
+            pill.setToolTipText((browser != null ? browser.tooltip() : session.profile().label()) + " · "
+                    + session.failure()
                     .map(reason -> session.state().label() + ": " + reason).orElse(session.state().label()));
         }
     }
