@@ -58,7 +58,7 @@ class FilesWorkspaceTest {
         assertThat(names()).containsExactly("Berichte", "daten.json", "job.jcl", "notiz.txt");
         assertThat(workspace.pathField().getText()).isEqualTo(root.toString());
         assertThat(workspace.statusText()).isEqualTo("4 Einträge");
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString());
     }
 
     @Test
@@ -126,7 +126,7 @@ class FilesWorkspaceTest {
         flush();
 
         assertThat(session.location()).isEqualTo(root.resolve("kopie.jcl").toString());
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "kopie.jcl");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString(), "kopie.jcl");
         boolean[] shown = new boolean[1];
         SwingUtilities.invokeAndWait(() -> shown[0] = workspace.editor(session).isVisible());
         assertThat(shown[0]).isTrue();
@@ -143,7 +143,7 @@ class FilesWorkspaceTest {
         EditorSession session = workspace.selected();
         assertThat(session).isNotNull();
         assertThat(editors.all()).containsExactly(session);
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "job.jcl");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString(), "job.jcl");
         assertThat(workspace.editor(session).text()).isEqualTo("//JOB1 JOB\n");
 
         SwingUtilities.invokeAndWait(() -> workspace.editor(session).type("//* Kommentar\n"));
@@ -160,7 +160,7 @@ class FilesWorkspaceTest {
         SwingUtilities.invokeAndWait(() -> workspace.select(null));
         SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
         flush();
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "job.jcl");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString(), "job.jcl");
         assertThat(workspace.selected()).isSameAs(session);
     }
 
@@ -274,6 +274,40 @@ class FilesWorkspaceTest {
     }
 
     @Test
+    void opensMoreFolderTabsEachWithItsOwnFolderAndRemembersThem() throws Exception {
+        AppState.shared().put(FilesWorkspace.TABS_KEY, "");
+        start();
+        String top = root.getFileName().toString();
+
+        SwingUtilities.invokeAndWait(() -> workspace.newTab(root.resolve("Berichte").toString()));
+        flush();
+        assertThat(workspace.pillTitles()).containsExactly(top, "Berichte");
+        assertThat(workspace.browser().location()).contains(root.resolve("Berichte").toString());
+        assertThat(names()).isEmpty();
+        assertThat(AppState.shared().get(FilesWorkspace.TABS_KEY)).isEqualTo(root.resolve("Berichte") + "\n");
+        assertThat(AppState.shared().get(FilesWorkspace.LOCATION_KEY)).as("erster Reiter bleibt")
+                .isEqualTo(root.toString());
+
+        // Zurück zum ersten Reiter: dessen Ordner, Verlauf und Liste.
+        SwingUtilities.invokeAndWait(() -> workspace.showBrowseTab(0));
+        flush();
+        assertThat(workspace.browser().location()).contains(root.toString());
+        assertThat(names()).contains("Berichte", "job.jcl");
+
+        // Nach Neustart sind beide Reiter wieder da; das Kreuz schließt den zweiten.
+        SwingUtilities.invokeAndWait(() -> workspace = new FilesWorkspace(
+                new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
+                new LocalDocumentStore()));
+        start();
+        assertThat(workspace.pillTitles()).containsExactly(top, "Berichte");
+        SwingUtilities.invokeAndWait(() -> workspace.closeBrowseTab(1));
+        flush();
+        assertThat(workspace.pillTitles()).containsExactly(top);
+        assertThat(AppState.shared().get(FilesWorkspace.TABS_KEY)).isEmpty();
+        assertThat(FilesWorkspace.folderName("C:\\Daten\\Berichte\\")).isEqualTo("Berichte");
+    }
+
+    @Test
     void sharePointUsesSavedLoginWithoutAsking() throws Exception {
         java.util.concurrent.CountDownLatch tried = new java.util.concurrent.CountDownLatch(1);
         AtomicReference<String> used = new AtomicReference<>();
@@ -344,7 +378,7 @@ class FilesWorkspaceTest {
         SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
         flush();
 
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "bericht.pdf (Vorschau)");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString(), "bericht.pdf (Vorschau)");
         assertThat(workspace.editor(workspace.selected()).text()).isEqualTo("Text aus dem PDF\n");
         assertThat(workspace.selected().writable()).isFalse();
     }

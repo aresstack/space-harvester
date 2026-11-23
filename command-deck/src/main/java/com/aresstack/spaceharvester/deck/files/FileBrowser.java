@@ -61,6 +61,13 @@ public final class FileBrowser {
         return source;
     }
 
+    /** Ein weiterer Browser auf derselben Quelle mit derselben Sortierung (neuer Reiter), noch ohne Ordner. */
+    public FileBrowser sibling() {
+        FileBrowser twin = new FileBrowser(source, background);
+        twin.sort = sort();
+        return twin;
+    }
+
     /** Meldet künftige Änderungen. */
     public void observe(Consumer<FileBrowser> observer) {
         observers.add(Objects.requireNonNull(observer, "observer"));

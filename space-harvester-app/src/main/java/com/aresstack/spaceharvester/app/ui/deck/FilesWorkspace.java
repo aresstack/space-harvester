@@ -124,7 +124,13 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private static final String BROWSER = "browser";
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY);
 
-    private final FileBrowser browser;
+    /** Der Browser des gezeigten Ordner-Reiters; jeder Ordner-Reiter hat seinen eigenen (Verlauf, Filter). */
+    private FileBrowser browser;
+    /** Die Ordner-Reiter, der erste immer da; weitere über „Neuer Reiter“ (wie Neue Verbindung in den anderen Bereichen). */
+    private final List<BrowseTab> browseTabs = new ArrayList<>();
+    private BrowseTab browseTab;
+    private final ComposerToggleButton newPill;
+    static final String TABS_KEY = "deck.files.tabs";
     private final EditorSessions editors;
     private final DocumentStore store;
     /** Vorschau von Dokumenten als Text (nur lesen); {@code null} ohne Vorschau. */
@@ -145,7 +151,6 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private TableColumn dateColumn;
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();
-    private final ComposerToggleButton browsePill;
     private final Map<EditorSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
     private final Map<EditorSession, DocumentEditor> editorOf = new LinkedHashMap<>();
     /** Fester Kartenname je Dokument – der Ort kann sich durch „Speichern unter“ ändern. */
@@ -198,6 +203,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                           SharePointAccess sharePoint, Supplier<List<SharePointSite>> sites, ServerAccounts accounts) {
         super(new BorderLayout());
         this.browser = browser;
+        FileBrowser first = browser;
         this.editors = editors;
         this.store = store;
         this.preview = preview;
@@ -208,22 +214,27 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
 
         // Kopfzeile: links die Reiter, rechts Filter und Sortierung der Liste (wie die Seitenansicht).
         pills.setOpaque(false);
-        browsePill = new ComposerToggleButton(FilesIcons.folder(), "Durchsuchen", browser.source().name());
-        browsePill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        browsePill.addActionListener(e -> select(null));
-        pillGroup.add(browsePill);
-        pills.add(browsePill);
+        // „Neuer Reiter“ als letzte Pille wie „Neue Verbindung“ in Terminal, FTP und NDV (Angelo, 23.11.).
+        newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neuer Reiter",
+                "Weiteren Ordner in einem neuen Reiter öffnen (Strg+T)");
+        newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        newPill.addActionListener(e -> newTab(null));
+        pillGroup.add(newPill);
+        pills.add(newPill);
+        browseTab = addBrowseTab(first, false);
         filter.getAccessibleContext().setAccessibleName("Filter");
         filter.setToolTipText("<html>Regulärer Ausdruck auf den Namen, ohne Groß/klein<br>Beispiel: \\.jcl$</html>");
         filterFrame = InputFrame.search(filter);
         filter.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
             public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                browseTab.filter = filter.getText();
                 browser.filter(filter.getText());
             }
 
             @Override
             public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                browseTab.filter = filter.getText();
                 browser.filter(filter.getText());
             }
 
@@ -276,6 +287,8 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         footTools.add(browserActions, BROWSER);
         footTools.add(documentActions, "document");
 
+        bind(this, KeyStroke.getKeyStroke(KeyEvent.VK_T, InputEvent.CTRL_DOWN_MASK), "deck-new-tab",
+                () -> newTab(null));
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
 
@@ -286,12 +299,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         String savedSort = AppState.shared().get(SORT_KEY);
         if (savedSort != null) {
             try {
-                browser.sort(SortMode.valueOf(savedSort));
+                first.sort(SortMode.valueOf(savedSort));
             } catch (IllegalArgumentException ignored) {
                 // Alter Wert: Standard bleibt.
             }
         }
-        browser.observe(changed -> SwingUtilities.invokeLater(this::render));
         editors.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         editors.onReveal(session -> SwingUtilities.invokeLater(() -> {
             if (pillOf.containsKey(session)) {
@@ -326,7 +338,123 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         }
         started = true;
         String last = AppState.shared().get(LOCATION_KEY);
-        browser.open(last == null || last.isBlank() ? browser.source().home() : last);
+        FileBrowser first = browseTabs.get(0).browser;
+        first.open(last == null || last.isBlank() ? first.source().home() : last);
+        String saved = AppState.shared().get(TABS_KEY);
+        if (saved != null) {
+            saved.lines().filter(line -> !line.isBlank()).forEach(location -> {
+                BrowseTab tab = addBrowseTab(first.sibling(), true);
+                tab.browser.open(location);
+            });
+        }
+    }
+
+    // ---- Ordner-Reiter ---------------------------------------------------------------------------------------------
+
+    /** Ein Ordner-Reiter: eigener Browser (Ordner, Verlauf, Filter), Beschriftung = Ordnername. */
+    private static final class BrowseTab {
+        final FileBrowser browser;
+        final ComposerToggleButton pill;
+        JPanel tab;
+        String filter = "";
+
+        BrowseTab(FileBrowser browser, ComposerToggleButton pill) {
+            this.browser = browser;
+            this.pill = pill;
+        }
+    }
+
+    /** Legt einen Ordner-Reiter an; der erste hat kein Kreuz, er bleibt immer. */
+    private BrowseTab addBrowseTab(FileBrowser tabBrowser, boolean closable) {
+        ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.folder(), "Durchsuchen",
+                tabBrowser.source().name());
+        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        BrowseTab tab = new BrowseTab(tabBrowser, pill);
+        pill.addActionListener(e -> showBrowseTab(tab));
+        pillGroup.add(pill);
+        tab.tab = closable ? DeckBars.tab(pill, "Reiter schließen (auch Mittelklick auf den Reiter)",
+                () -> closeBrowseTab(tab)) : null;
+        pills.add(closable ? tab.tab : pill, browseTabs.size());
+        browseTabs.add(tab);
+        tabBrowser.observe(changed -> SwingUtilities.invokeLater(() -> {
+            titleBrowseTab(tab);
+            if (changed == browser) {
+                render();
+            }
+        }));
+        pills.revalidate();
+        pills.repaint();
+        return tab;
+    }
+
+    /** Neuer Ordner-Reiter im gezeigten (oder angegebenen) Ordner. */
+    void newTab(String location) {
+        String where = location != null ? location : browser.location().orElse(browser.source().home());
+        BrowseTab tab = addBrowseTab(browser.sibling(), true);
+        showBrowseTab(tab);
+        tab.browser.open(where);
+        saveTabs();
+    }
+
+    private void showBrowseTab(BrowseTab tab) {
+        browseTab = tab;
+        browser = tab.browser;
+        if (!filter.getText().equals(tab.filter)) {
+            filter.setText(tab.filter);
+        }
+        collapsed.clear();
+        select(null);
+        render();
+    }
+
+    private void closeBrowseTab(BrowseTab tab) {
+        int index = browseTabs.indexOf(tab);
+        if (index <= 0) {
+            return;
+        }
+        browseTabs.remove(index);
+        pillGroup.remove(tab.pill);
+        pills.remove(tab.tab);
+        pills.revalidate();
+        pills.repaint();
+        if (tab == browseTab) {
+            showBrowseTab(browseTabs.get(Math.min(index, browseTabs.size() - 1)));
+        }
+        saveTabs();
+    }
+
+    private void titleBrowseTab(BrowseTab tab) {
+        String location = tab.browser.location().orElse("");
+        String title = location.isEmpty() ? "Durchsuchen" : folderName(location);
+        if (!title.equals(tab.pill.getText())) {
+            tab.pill.setText(title);
+            tab.pill.getAccessibleContext().setAccessibleName(title);
+            pills.revalidate();
+        }
+        tab.pill.setToolTipText(location.isEmpty() ? tab.browser.source().name() : location);
+        if (tab != browseTabs.get(0)) {
+            saveTabs();
+        }
+    }
+
+    /** Letzter Teil eines Pfads (Laufwerk wie „C:\“ bleibt ganz). */
+    static String folderName(String location) {
+        String trimmed = location.replaceAll("[\\\\/]+$", "");
+        int cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+        String name = cut >= 0 ? trimmed.substring(cut + 1) : trimmed;
+        return name.isEmpty() ? location : name;
+    }
+
+    /** Merkt die weiteren Ordner-Reiter (der erste steht unter {@link #LOCATION_KEY}). */
+    private void saveTabs() {
+        if (!started) {
+            return;
+        }
+        StringBuilder lines = new StringBuilder();
+        for (BrowseTab tab : browseTabs.subList(1, browseTabs.size())) {
+            tab.browser.location().ifPresent(location -> lines.append(location).append('\n'));
+        }
+        AppState.shared().put(TABS_KEY, lines.toString());
     }
 
     private JComponent browserCard() {
@@ -434,7 +562,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         });
         bind(table, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "deck-open", this::openSelected);
         bind(table, KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "deck-delete", this::deleteSelected);
-        bind(table, KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "deck-up", browser::up);
+        bind(table, KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "deck-up", () -> browser.up());
         JComponent scroll = Comic.scroll(table);
         BusyOverlay overlay = new BusyOverlay(scroll);
         overlay.setText("Lade …");
@@ -444,10 +572,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         card.add(rows, BorderLayout.NORTH);
         card.add(overlay, BorderLayout.CENTER);
         card.putClientProperty(BusyOverlay.class, overlay);
-        bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0), "deck-refresh", browser::refresh);
-        bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK), "deck-back", browser::back);
+        bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0), "deck-refresh", () -> browser.refresh());
+        bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK), "deck-back",
+                () -> browser.back());
         bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, InputEvent.ALT_DOWN_MASK), "deck-forward",
-                browser::forward);
+                () -> browser.forward());
         return card;
     }
 
@@ -461,7 +590,8 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         if (!path.isFocusOwner() && !path.getText().equals(location)) {
             path.setText(location);
         }
-        if (!location.isEmpty() && !browser.loading() && browser.failure().isEmpty()) {
+        if (!location.isEmpty() && !browser.loading() && browser.failure().isEmpty()
+                && browser == browseTabs.get(0).browser) {
             AppState.shared().put(LOCATION_KEY, location);
         }
         filter.setBackground(browser.filterValid() ? Color.WHITE : Comic.CHANGE_REMOVED);
@@ -554,7 +684,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     /** Zeigt die Liste ({@code null}) oder ein offenes Dokument. */
     void select(EditorSession session) {
         selected = session;
-        ComposerToggleButton pill = session == null ? browsePill : pillOf.get(session);
+        ComposerToggleButton pill = session == null ? browseTab.pill : pillOf.get(session);
         if (pill != null) {
             pill.setSelected(true);
         }
@@ -605,7 +735,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         pillGroup.add(pill);
         JPanel tab = DeckBars.tab(pill, "Dokument schließen (auch Mittelklick auf den Reiter)",
                 () -> closeDocument(session));
-        pills.add(tab);
+        pills.add(tab, pills.getComponentCount() - 1);
         tabOf.put(session, tab);
         pillOf.put(session, pill);
         session.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
@@ -1024,6 +1154,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         if (chosen.size() == 1) {
             menu.add(item("Öffnen", this::openSelected));
             FileEntry entry = chosen.get(0);
+            if (entry.directory()) {
+                menu.add(item("In neuem Reiter öffnen", () -> newTab(entry.location())));
+            }
             if (!entry.directory() && preview != null
                     && com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(entry.name())) {
                 menu.add(item("Vorschau (Strg+Doppelklick)", this::previewSelected));
@@ -1196,9 +1329,19 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         return editorOf.get(session);
     }
 
+    /** Für Tests: zeigt den Ordner-Reiter an dieser Stelle. */
+    void showBrowseTab(int index) {
+        showBrowseTab(browseTabs.get(index));
+    }
+
+    /** Für Tests: schließt den Ordner-Reiter an dieser Stelle wie sein Kreuz. */
+    void closeBrowseTab(int index) {
+        closeBrowseTab(browseTabs.get(index));
+    }
+
     List<String> pillTitles() {
         List<String> titles = new ArrayList<>();
-        titles.add(browsePill.getText());
+        browseTabs.forEach(tab -> titles.add(tab.pill.getText()));
         pillOf.values().forEach(pill -> titles.add(pill.getText()));
         return titles;
     }
