@@ -204,7 +204,14 @@ class FtpSessionsTest {
         };
         FtpSessions guarded = new FtpSessions(refusingJes, background);
         List<String> refusals = new CopyOnWriteArrayList<>();
-        guarded.onOpened(opened -> opened.onLoginRefused(refusals::add));
+        List<String> events = new CopyOnWriteArrayList<>();
+        guarded.onOpened(opened -> {
+            opened.onLoginRefused(reason -> {
+                refusals.add(reason);
+                events.add("abgelehnt");
+            });
+            opened.onLoginAccepted(() -> events.add("angemeldet"));
+        });
         FtpSession session = guarded.open(host.profile(), "Raumhafen", login("geheim"));
         session.connect().get(10, TimeUnit.SECONDS);
         assertThatThrownBy(() -> session.jobs(jes -> jes.jobs(JobFilter.mine())).get(10, TimeUnit.SECONDS))
@@ -212,6 +219,8 @@ class FtpSessionsTest {
         assertThat(jesLogins).as("abgelehnte JES-Anmeldung nicht wiederholt").hasValue(1);
         assertThat(refusals).singleElement().asString().contains("530");
         assertThat(session.state()).as("die Dataset-Verbindung steht weiter").isEqualTo(ConnectionState.CONNECTED);
+        assertThat(events).as("Reihenfolge wie geschehen: der ältere Erfolg vor der neueren Ablehnung")
+                .containsExactly("angemeldet", "abgelehnt");
 
         assertThatThrownBy(() -> session.probeSpoolNames("JOB04700", 1).get(10, TimeUnit.SECONDS))
                 .hasRootCauseInstanceOf(LoginRefusedException.class);

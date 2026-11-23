@@ -95,6 +95,7 @@ public final class FtpSession {
     private volatile boolean loginRefused;
     /** Wer hören will, dass der Host eine Anmeldung abgelehnt hat, auf welcher Verbindung auch immer. */
     private final List<Consumer<String>> refusalObservers = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final List<Runnable> acceptObservers = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public ConnectionState state() {
         stateLock.lock();
@@ -116,6 +117,19 @@ public final class FtpSession {
      */
     public void onLoginRefused(Consumer<String> observer) {
         refusalObservers.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    /**
+     * Meldet jede gelungene Anmeldung dieser Sitzung, auf dem Faden der Anmeldung und damit in der echten Reihenfolge
+     * zu den Ablehnungen ({@link #onLoginRefused}): Ein älterer Erfolg kann eine neuere Ablehnung nicht überholen.
+     */
+    public void onLoginAccepted(Runnable observer) {
+        acceptObservers.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    private <T> T accepted(T connection) {
+        acceptObservers.forEach(Runnable::run);
+        return connection;
     }
 
     /** Meldet eine Anmelde-Ablehnung weiter und wirft den Fehler unverändert. */
@@ -237,7 +251,7 @@ public final class FtpSession {
         try (ServerCredentials login = credentials.open()) {
             char[] password = login.copyPassword();
             try {
-                return connector.jes(profile, login.user(), password);
+                return accepted(connector.jes(profile, login.user(), password));
             } catch (Exception e) {
                 throw refused(e);
             } finally {
@@ -401,7 +415,7 @@ public final class FtpSession {
                 try {
                     C opened;
                     try {
-                        opened = opener.open(profile, login.user(), password);
+                        opened = accepted(opener.open(profile, login.user(), password));
                     } catch (Exception e) {
                         throw refused(e);
                     }
