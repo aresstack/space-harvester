@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.changelog;
 
 import com.aresstack.spaceharvester.ai.AiOutputTruncatedException;
 import com.aresstack.spaceharvester.ai.AiServiceException;
+import com.aresstack.spaceharvester.ai.ModelRetry;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
@@ -727,7 +728,7 @@ final class ThematicSummarizer {
 
     /** Vorübergehend: keine Verbindung, überlastet oder 5xx (UNREACHABLE) und Fristen; nie Anmeldung oder Format. */
     static boolean transientFailure(AiServiceException e) {
-        return e.reason() == AiServiceException.Reason.UNREACHABLE || e.reason() == AiServiceException.Reason.TIMEOUT;
+        return ModelRetry.transientFailure(e);
     }
 
     /**
@@ -749,24 +750,21 @@ final class ThematicSummarizer {
 
     private static String completeRetrying(SummaryModel model, String instructions, String input,
                                            JobContext context) {
-        int retries = Math.max(0, model.retries());
-        for (int attempt = 0; ; attempt++) {
-            try {
-                return model.complete(instructions, input);
-            } catch (AiServiceException e) {
-                if (!transientFailure(e) || attempt >= retries || context.cancelRequested()) {
-                    throw e;
+        return ModelRetry.call(model.retries(), backoffMillis, new ModelRetry.Listener() {
+            @Override
+            public void retrying(int nextAttempt, AiServiceException cause) {
+                if (context.cancelRequested()) {
+                    throw cause;
                 }
-                failure(context, "Anfrage gescheitert, Versuch " + (attempt + 2) + " folgt", e);
-                try {
-                    Thread.sleep(Math.min(30_000, backoffMillis << attempt));
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new JobCancelledException(context.jobId());
-                }
+                failure(context, "Anfrage gescheitert, Versuch " + nextAttempt + " folgt", cause);
                 context.checkpoint();
             }
-        }
+
+            @Override
+            public RuntimeException interrupted() {
+                return new JobCancelledException(context.jobId());
+            }
+        }, () -> model.complete(instructions, input));
     }
 
     /** Das Zusammenführen; eine abgeschnittene Antwort wird mit dem Grund erneut erfragt, bis {@link #ATTEMPTS}. */

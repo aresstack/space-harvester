@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
 import com.aresstack.spaceharvester.ai.AiServiceException;
+import com.aresstack.spaceharvester.ai.StrictJsonAnswer;
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementCandidates.Context;
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementCandidates.EventCandidate;
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementCandidates.MentionCandidate;
@@ -12,9 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
-import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * {@link StatementExtractor} über das Chat-Modell (#108, Prompt und Antwortformat unverändert aus dem Enterprise AI
@@ -71,10 +70,8 @@ public final class ChatStatementExtractor implements StatementExtractor {
             + "(predicate 3, particle 7, ACTOR m1, AFFECTED_OBJECT m2); e2 prüfen (predicate 10, ACTOR m3, "
             + "AFFECTED_OBJECT m4); r1 STATE m2 \"ausgefüllte\" (ausgefüllt); order e1 vor e2, cue 9.";
 
-    static final String REPAIR = "Deine Antwort war kein lesbares JSON-Objekt. Antworte jetzt ausschließlich mit dem "
-            + "JSON-Objekt in der beschriebenen Form, ohne weiteren Text.";
+    static final String REPAIR = StrictJsonAnswer.REPAIR;
 
-    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final Supplier<StatementChat> chat;
 
@@ -114,19 +111,20 @@ public final class ChatStatementExtractor implements StatementExtractor {
         }
         List<StatementChat.Message> messages = new ArrayList<>(List.of(StatementChat.Message.system(INSTRUCTION),
                 StatementChat.Message.user(paragraph.numbered())));
-        String answer = ask(model, messages);
-        try {
-            return parse(answer);
-        } catch (StatementExtractionException unreadable) {
-            messages.add(StatementChat.Message.assistant(answer == null ? "" : answer));
-            messages.add(StatementChat.Message.user(REPAIR));
-            try {
-                return parse(ask(model, messages));
-            } catch (StatementExtractionException again) {
-                throw new StatementExtractionException(unreadable.getMessage() + "; after repair: "
-                        + again.getMessage());
+        return StrictJsonAnswer.read(new StrictJsonAnswer.Asker() {
+            @Override
+            public String ask() {
+                return ChatStatementExtractor.ask(model, messages);
             }
-        }
+
+            @Override
+            public String repair(String previous, String instruction) {
+                messages.add(StatementChat.Message.assistant(previous));
+                messages.add(StatementChat.Message.user(instruction));
+                return ChatStatementExtractor.ask(model, messages);
+            }
+        }, ChatStatementExtractor::parse, (unreadable, again) -> new StatementExtractionException(
+                unreadable.getMessage() + "; after repair: " + again.getMessage()));
     }
 
     private static String ask(StatementChat model, List<StatementChat.Message> messages) {
@@ -141,23 +139,11 @@ public final class ChatStatementExtractor implements StatementExtractor {
 
     /** Liest die Antwort; eine unlesbare scheitert mit ihrer Form, nie mit ihrem Text. */
     static StatementCandidates parse(String answer) {
-        if (answer == null || answer.trim().isEmpty()) {
-            throw new StatementExtractionException("empty answer");
-        }
-        int start = answer.indexOf('{');
-        int end = answer.lastIndexOf('}');
-        if (start < 0 || end <= start) {
-            throw new StatementExtractionException("no JSON object in " + answer.length() + " characters");
-        }
         JsonNode root;
         try {
-            root = JSON.readTree(answer.substring(start, end + 1));
-        } catch (JacksonException e) {
-            // Nur die Art: die Meldung von Jackson zitiert die Antwort.
-            throw new StatementExtractionException("unreadable JSON: " + e.getClass().getSimpleName());
-        }
-        if (root == null || !root.isObject()) {
-            throw new StatementExtractionException("unreadable JSON: JSON value is no object");
+            root = StrictJsonAnswer.object(answer);
+        } catch (StrictJsonAnswer.Unreadable e) {
+            throw new StatementExtractionException(e.getMessage());
         }
         if (!root.has("mentions") && !root.has("events") && !root.has("relations")) {
             throw new StatementExtractionException("JSON without mentions, events or relations");
