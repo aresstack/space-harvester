@@ -173,36 +173,47 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
         return true;
     }
 
+    /** Beschriftungen wie TextContextMenu der App (gleichlautend, command-deck kennt die App nicht). */
+    static final String COPY = "Kopieren";
+    static final String PASTE = "Einfügen";
+    static final String SELECT_ALL = "Alles markieren";
+
     private void popup(MouseEvent event) {
         if (!event.isPopupTrigger()) {
             return;
         }
+        buildMenu().show(this, event.getX(), event.getY());
+    }
+
+    /** Das Rechtsklick-Menü des Bildes (paketweit für Tests). */
+    JPopupMenu buildMenu() {
         JPopupMenu menu = new JPopupMenu();
-        // Reihenfolge und Tastenkürzel wie im Kontextmenü von MainframeMate.
-        JMenuItem paste = new JMenuItem("Einfügen");
+        // Wie das Rechtsklick-Menü aller Textfelder der App (TextContextMenu): Kopieren, Einfügen, Trennlinie, Alles
+        // markieren; Kopieren ohne Markierung kopiert das ganze Bild wie in MainframeMate und wie das Icon.
+        JMenuItem copy = new JMenuItem(COPY);
+        copy.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_C, java.awt.event.InputEvent.CTRL_DOWN_MASK));
+        copy.addActionListener(e -> {
+            copy();
+            requestFocusInWindow();
+        });
+        JMenuItem paste = new JMenuItem(PASTE);
         paste.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_V, java.awt.event.InputEvent.CTRL_DOWN_MASK));
         paste.setEnabled(!terminal.isKeyboardLocked());
         paste.addActionListener(e -> {
             paste();
             requestFocusInWindow();
         });
-        JMenuItem copy = new JMenuItem("Kopieren");
-        copy.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_C, java.awt.event.InputEvent.CTRL_DOWN_MASK));
-        copy.addActionListener(e -> {
-            copy();
-            requestFocusInWindow();
-        });
-        JMenuItem all = new JMenuItem("Alles auswählen");
+        JMenuItem all = new JMenuItem(SELECT_ALL);
         all.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_A, java.awt.event.InputEvent.CTRL_DOWN_MASK));
         all.addActionListener(e -> {
             selectAll();
             requestFocusInWindow();
         });
-        menu.add(paste);
         menu.add(copy);
+        menu.add(paste);
         menu.addSeparator();
         menu.add(all);
-        menu.show(this, event.getX(), event.getY());
+        return menu;
     }
 
     @Override
