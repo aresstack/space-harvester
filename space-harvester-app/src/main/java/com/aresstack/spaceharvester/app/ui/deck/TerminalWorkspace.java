@@ -73,6 +73,13 @@ public final class TerminalWorkspace extends JPanel {
     private final ComposerToggleButton newPill;
     private final CosmicClockPanel sky = new CosmicClockPanel(120);
     private final ConnectForm form;
+    /**
+     * Ruhebild, wenn die Verbindung eingerichtet ist und keine Sitzung offen: nur ein Knopf „Verbinden“, nicht jedes
+     * Mal das Formular (Angelo, 23.11.2026). Das Formular kommt beim ersten Mal, wenn es scheitert oder auf Wunsch.
+     */
+    private final JPanel idle = new JPanel(new GridBagLayout());
+    /** Das Formular statt des Ruhebilds zeigen (gewünscht oder nach einem Fehler). */
+    private boolean formWanted;
     /** Kopieren und Einfügen als Symbolknöpfe rechts in der Kopfzeile (Angelo, 23.11.2026). */
     private final com.aresstack.spaceharvester.app.ui.IconButton copy;
     private final com.aresstack.spaceharvester.app.ui.IconButton paste;
@@ -124,6 +131,16 @@ public final class TerminalWorkspace extends JPanel {
         this.bookmarks = bookmarks;
         setBackground(Comic.SURFACE);
         form = new ConnectForm(accounts, bookmarks, this::open);
+        idle.setOpaque(false);
+        JPanel idleRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
+        idleRow.setOpaque(false);
+        var connectNow = Comic.button("Verbinden", "Mit der gemerkten Verbindung verbinden (wie „Neue Verbindung“)");
+        connectNow.addActionListener(e -> newConnection());
+        var other = Comic.button("Andere Verbindung …", "Formular: anderer Server oder ein Lesezeichen");
+        other.addActionListener(e -> showForm());
+        idleRow.add(connectNow);
+        idleRow.add(other);
+        idle.add(idleRow);
 
         // Kopfzeile: Sitzungen links, „Neue Verbindung“ als letzte Pille.
         pills.setOpaque(false);
@@ -289,7 +306,7 @@ public final class TerminalWorkspace extends JPanel {
         if (before != null) {
             pillOf.get(before).setSelected(true);
         }
-        form.connectDirectly(reason -> select(null));
+        form.connectDirectly(reason -> showForm());
     }
 
     private void formMenu(java.awt.event.MouseEvent event) {
@@ -306,6 +323,7 @@ public final class TerminalWorkspace extends JPanel {
 
     /** Das Formular „Neue Verbindung“ auch, wenn die Verbindung eingerichtet ist (Lesezeichen, anderer Server). */
     void showForm() {
+        formWanted = true;
         select(null);
     }
 
@@ -321,6 +339,7 @@ public final class TerminalWorkspace extends JPanel {
             origins.remove(session);
         }
         form.problem(session.profile().label() + ": " + reason);
+        formWanted = true;
         select(null);
     }
 
@@ -356,8 +375,23 @@ public final class TerminalWorkspace extends JPanel {
         if (pillOf.containsKey(session)) {
             return;
         }
+        // Gezeichnetes Kreuz (nicht das Zeichen „✕“, das nicht jede Schrift hat), im Reiter selbst wie im Browser.
+        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
+                ComposerIcons.close(), "Sitzung schließen (auch Mittelklick auf den Reiter)").compact();
+        cross.addActionListener(e -> askClose(session));
         ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.profile().label(),
-                session.state().label());
+                session.state().label()) {
+            @Override
+            public void doLayout() {
+                java.awt.Dimension own = cross.getPreferredSize();
+                cross.setBounds(getWidth() - own.width - 4, (getHeight() - own.height) / 2, own.width, own.height);
+            }
+        };
+        // Der Text rückt um das Kreuz nach links; das Kreuz liegt rechts innen auf dem Reiter.
+        pill.setBorder(BorderFactory.createCompoundBorder(pill.getBorder(),
+                BorderFactory.createEmptyBorder(0, 0, 0, cross.getPreferredSize().width)));
+        pill.setLayout(null);
+        pill.add(cross);
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         pill.getAccessibleContext().setAccessibleName(session.profile().label());
         pill.addActionListener(e -> select(session));
@@ -369,14 +403,9 @@ public final class TerminalWorkspace extends JPanel {
                 }
             }
         });
-        // Gezeichnetes Kreuz (nicht das Zeichen „✕“, das nicht jede Schrift hat), direkt hinter dem Reiter.
-        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
-                ComposerIcons.close(), "Sitzung schließen (auch Mittelklick auf den Reiter)").compact();
-        cross.addActionListener(e -> askClose(session));
         JPanel tab = new JPanel(new BorderLayout(0, 0));
         tab.setOpaque(false);
         tab.add(pill, BorderLayout.CENTER);
-        tab.add(cross, BorderLayout.EAST);
         pillGroup.add(pill);
         pills.add(tab, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
@@ -447,7 +476,11 @@ public final class TerminalWorkspace extends JPanel {
             pill.setSelected(true);
         }
         sky.removeAll();
-        Component center = session == null ? form : session.view(JComponent.class).orElse(null);
+        boolean quiet = session == null && !formWanted && ConnectForm.isConfigured();
+        if (session != null) {
+            formWanted = false;
+        }
+        Component center = session == null ? (quiet ? idle : form) : session.view(JComponent.class).orElse(null);
         if (center != null) {
             sky.add(center);
         }
@@ -456,7 +489,7 @@ public final class TerminalWorkspace extends JPanel {
         sky.repaint();
         fitScreen();
         showState();
-        if (session == null) {
+        if (session == null && !quiet) {
             SwingUtilities.invokeLater(form::focusServer);
         } else {
             SwingUtilities.invokeLater(() -> view(TerminalView.class).ifPresent(TerminalView::focus));
@@ -736,11 +769,8 @@ public final class TerminalWorkspace extends JPanel {
     }
 
     /** ✕ oder Mittelklick: Eine laufende Sitzung wird erst nach „wirklich“ getrennt, eine beendete sofort entfernt. */
+    /** ✕ am Reiter, Mittelklick, „Schließen“: trennt und schließt in einem Schritt (Angelo, 23.11.2026). */
     void askClose(TerminalSession session) {
-        if (!session.state().ended() && !com.aresstack.spaceharvester.app.ui.Dialogs.confirm(this,
-                "Sitzung schließen", "Sitzung " + session.profile().label() + " wirklich trennen und schließen?")) {
-            return;
-        }
         closeSession(session);
     }
 

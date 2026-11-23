@@ -41,6 +41,8 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     private final transient java.util.concurrent.locks.Condition readyChanged = readyLock.newCondition();
     private boolean ready;
     private volatile boolean hostWrote;
+    /** Letzte Taste des Menschen (nanoTime); die automatische Anmeldung tippt danach nicht weiter. */
+    private volatile long lastUserInput = Long.MIN_VALUE;
     private volatile long lastRefresh = System.nanoTime();
     /** So lange ohne neues Zeichnen gilt ein Bild als fertig gelesen. */
     private static final long SETTLE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(150);
@@ -77,6 +79,12 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
         addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent event) {
+                int code = event.getKeyCode();
+                if (code != KeyEvent.VK_SHIFT && code != KeyEvent.VK_CONTROL && code != KeyEvent.VK_ALT
+                        && code != KeyEvent.VK_ALT_GRAPH && code != KeyEvent.VK_META
+                        && !(event.isControlDown() && code == KeyEvent.VK_C)) {
+                    lastUserInput = System.nanoTime();
+                }
                 if (event.isControlDown() && !event.isAltDown() && event.getKeyCode() == KeyEvent.VK_V) {
                     paste();
                     event.consume();
@@ -452,6 +460,11 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     @Override
     public void focus() {
         requestFocusInWindow();
+    }
+
+    @Override
+    public long lastUserInput() {
+        return lastUserInput;
     }
 
     @Override

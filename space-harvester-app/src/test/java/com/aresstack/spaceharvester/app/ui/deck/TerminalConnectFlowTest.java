@@ -70,6 +70,18 @@ class TerminalConnectFlowTest {
     }
 
     @Test
+    void onceConfiguredTheEmptyTerminalShowsNoFormAndTheCrossClosesAtOnce() throws Exception {
+        configured();
+        SwingUtilities.invokeAndWait(() -> {
+            deck = new CommandDeck();
+            ConnectForm form = deck.terminal().form();
+            assertThat(form.getParent()).as("kein Formular bei jedem Start").isNull();
+            deck.terminal().showForm();
+            assertThat(form.getParent()).as("auf Wunsch doch").isNotNull();
+        });
+    }
+
+    @Test
     void aFailedFirstConnectionLeavesNoTabAndShowsTheFormWithTheReason() throws Exception {
         int port = closedPort();
         SwingUtilities.invokeAndWait(() -> {
