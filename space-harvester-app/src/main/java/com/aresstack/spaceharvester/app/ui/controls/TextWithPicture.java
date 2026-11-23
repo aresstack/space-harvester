@@ -72,6 +72,11 @@ public final class TextWithPicture extends JPanel {
         ruler.setEditable(false);
         ruler.setBorder(BorderFactory.createEmptyBorder());
         ruler.setVisible(false);
+        // Neuer Text setzt die Schreibmarke ans Ende und rollt sie in Sicht, auch unsichtbar: jedes Messen auf dem EDT
+        // zog den Bericht sonst zum zuletzt gemessenen Absatz, weg von der Stelle, die der Podcast gerade markiert
+        if (ruler.getCaret() instanceof javax.swing.text.DefaultCaret caret) {
+            caret.setUpdatePolicy(javax.swing.text.DefaultCaret.NEVER_UPDATE);
+        }
         setOpaque(false);
         picture.setBorder(BorderFactory.createLineBorder(Comic.INK, 1));
         Cursors.set(picture, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));

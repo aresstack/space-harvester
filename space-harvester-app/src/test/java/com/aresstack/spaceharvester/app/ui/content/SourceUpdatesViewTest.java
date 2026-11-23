@@ -755,6 +755,39 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void theReportStaysOnTheMarkedTopicWhenItIsLaidOutAgain() throws Exception {
+        // Angelo 23.11.2026: „er hat das Gelbe markiert und dann scrollt er aber aus dem Bereich weg, nach unten“
+        List<SummaryStatement> statements = new ArrayList<>();
+        for (int i = 0; i < 14; i++) {
+            statements.add(new SummaryStatement(("Meldung " + i + " erzählt etwas über das Beispielarchiv und "
+                    + "seine Umstellung. ").repeat(3), List.of(new SummaryPage(String.valueOf(100 + i), "Seite " + i,
+                    "BAU")), "Thema " + i, null));
+        }
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, null, "Viele Neuerungen im Beispielarchiv.",
+                statements, "update-summary-v2:gpt-test", SECOND, 0, false, Map.of("BAU", "Bauwesen Beispiel"));
+        javax.swing.JRootPane root = new javax.swing.JRootPane();
+        root.getContentPane().setLayout(new java.awt.BorderLayout());
+        root.getContentPane().add(summary, java.awt.BorderLayout.CENTER);
+        root.setSize(960, 500);
+        root.getLayeredPane().setSize(960, 500);
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("Seit dem letzten Update");
+        for (int k = 0; k < 3; k++) {
+            javax.swing.SwingUtilities.invokeAndWait(() -> layOut(root));
+        }
+
+        summary.followPodcast(List.of(9));
+        java.awt.Rectangle followed = summary.markedInView().get(0);
+        assertThat(followed.y).as("das Thema steht im Blick").isBetween(0, summary.viewHeight() - followed.height);
+
+        // jedes Auslegen (neue Untertitel, Zeitleiste, ein Bild) misst die Absätze neu: die Ansicht bleibt stehen
+        for (int k = 0; k < 3; k++) {
+            javax.swing.SwingUtilities.invokeAndWait(() -> layOut(root));
+        }
+        assertThat(summary.markedInView().get(0)).isEqualTo(followed);
+    }
+
+    @Test
     void eachPodcastPictureStandsOnceBesideTheFirstMessageOfItsTopicNeverCollectedAtTheEnd() {
         List<SummaryStatement> statements = List.of(
                 new SummaryStatement("Text A.", List.of(new SummaryPage("1", "A", "BAU")), "Archiv", null),
@@ -817,6 +850,16 @@ class SourceUpdatesViewTest {
         actions.listener.changed("wiki");
         javax.swing.SwingUtilities.invokeAndWait(() -> { });
         assertThat(summary.reportPictures()).containsExactly("Altes und neues Format", "Suchmaske mit Anhang");
+    }
+
+    /** Legt ohne Bildschirm aus wie validate() mit Fenster (kopflos hat der Baum keinen Peer). */
+    static void layOut(java.awt.Component component) {
+        if (component instanceof java.awt.Container container) {
+            container.doLayout();
+            for (java.awt.Component child : container.getComponents()) {
+                layOut(child);
+            }
+        }
     }
 
     private static com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture topicPicture(
