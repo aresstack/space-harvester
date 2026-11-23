@@ -139,7 +139,7 @@ class TerminalFeaturesTest {
                 .awaitUnlocked(java.time.Duration.ofSeconds(10))).isTrue();
         // OpenTerm gibt die Tastatur schon beim Lesen des Kopfs frei; wie in MainframeMate die Aktionsverzögerung
         // abwarten, bis die Felder stehen (ein Mensch klickt nie schneller).
-        Thread.sleep(300);
+        Thread.sleep(1000);
     }
 
     private static void wheel(JComponent screen, int rotation, int modifiers) {

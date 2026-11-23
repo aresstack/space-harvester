@@ -88,7 +88,7 @@ class MacroRecordingTest {
                 new FakeTn3270Host.Line(1, 2, "MENUE", false),
                 FakeTn3270Host.Line.input(3, 2, 8, false, false)), "Cp273")) {
             TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(),
-                    runnable -> Thread.ofVirtual().start(runnable), new LoginScript(Duration.ofMillis(300) /* Aktionsverzögerung wie in MainframeMate, kürzer */));
+                    runnable -> Thread.ofVirtual().start(runnable), new LoginScript(LoginScript.DEFAULT_DELAY /* Aktionsverzögerung wie in MainframeMate (1000 ms) */));
             TerminalSession session = sessions.open(TerminalProfile.of("127.0.0.1", host.port()), null,
                     List.of(TerminalMacro.Step.aid(AidKey.PF8), TerminalMacro.Step.aid(AidKey.PF3)));
             long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
