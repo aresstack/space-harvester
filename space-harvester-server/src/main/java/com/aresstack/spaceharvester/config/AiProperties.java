@@ -46,6 +46,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param imagePlanModel      Modell für den Plan eines Schaubilds; leer: das Chat-Modell
  * @param imagePlanMaxTokens  Tokenlänge des Schaubild-Plans; leer: 16384
  * @param imagePlanThinking   Nachdenken des Schaubild-Plans; leer: none
+ * @param deadlineModel       Modell der Fristenextraktion (ADR 0035); leer: das Chat-Modell
+ * @param deadlineMaxTokens   Tokenlänge der Fristenextraktion; leer: 8192
+ * @param deadlineThinking    Nachdenken der Fristenextraktion; leer: none
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -62,7 +65,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            Integer summaryMaxTokens, String summaryThinking, String podcastModel,
                            Integer podcastMaxTokens, String podcastThinking, String summaryPlanModel,
                            Integer summaryPlanMaxTokens, String summaryPlanThinking, String imagePlanModel,
-                           Integer imagePlanMaxTokens, String imagePlanThinking) {
+                           Integer imagePlanMaxTokens, String imagePlanThinking, String deadlineModel,
+                           Integer deadlineMaxTokens, String deadlineThinking) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
@@ -72,7 +76,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                 visionThinking, imageThinking, new AiServiceSettings.ModelUse(summaryModel, summaryMaxTokens,
                 summaryThinking), new AiServiceSettings.ModelUse(podcastModel, podcastMaxTokens, podcastThinking),
                 new AiServiceSettings.ModelUse(summaryPlanModel, summaryPlanMaxTokens, summaryPlanThinking),
-                new AiServiceSettings.ModelUse(imagePlanModel, imagePlanMaxTokens, imagePlanThinking));
+                new AiServiceSettings.ModelUse(imagePlanModel, imagePlanMaxTokens, imagePlanThinking),
+                new AiServiceSettings.ModelUse(deadlineModel, deadlineMaxTokens, deadlineThinking));
     }
 
     /** Ohne API-Key. */
