@@ -79,7 +79,8 @@ class DeckFilesLiveTest {
         String area = "Command Deck › Dateien (Ordner " + folder + ")";
         AtomicReference<String> system = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> system.set(DeckChatTools.systemMessage(area,
-                "Dort sieht er einen Ordner seiner Festplatte.", FilesChatTools.rules(), tools.snapshot())));
+                "Dort sieht er einen Ordner seiner Festplatte.", FilesChatTools.rules(),
+                tools.snapshot() + "\n\nInhalt des offenen Ordners:\n" + files.overview())));
 
         TerminalMaskFixture.Recording port = new TerminalMaskFixture.Recording(workspace.aiChat());
         TerminalMaskFixture.Events events = new TerminalMaskFixture.Events();
