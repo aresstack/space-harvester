@@ -3742,7 +3742,11 @@ public final class PageDetailPanel extends JPanel {
         if (source == null || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
             return false;
         }
-        // Über der Suche gelten ihr eigenes Zurück und Vor (Angelo, 23.11.2026).
+        // Über der Suche gelten ihr eigenes Zurück und Vor (Angelo, 23.11.2026): im ganzen Fenster, solange sie zu sehen ist.
+        if (javax.swing.SwingUtilities.getRootPane(source) instanceof javax.swing.JRootPane root
+                && Boolean.TRUE.equals(root.getClientProperty(OWN_MOUSE_NAVIGATION))) {
+            return false;
+        }
         for (java.awt.Component c = source; c != null; c = c.getParent()) {
             if (c instanceof javax.swing.JComponent jc && jc.getClientProperty(OWN_MOUSE_NAVIGATION) != null) {
                 return false;

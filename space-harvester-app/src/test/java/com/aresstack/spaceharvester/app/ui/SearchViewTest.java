@@ -445,7 +445,7 @@ class SearchViewTest {
         loadAll(view[0], table, more, 2 * PAGES_PER_SOURCE);
     }
 
-    /** Angelo 21.11.2026: ein anderer Bereich links sucht den stehenden Suchbegriff im neuen Bereich erneut. */
+    /** Ein anderer Bereich links (Angelo 21./23.11.2026): die fehlende Quelle wird nachgesucht, die Liste gefiltert. */
     @Test
     void choosingAnotherAreaSearchesTheSameTextThere() throws Exception {
         start(false);
@@ -467,18 +467,18 @@ class SearchViewTest {
         Set<String> sourcesSeen = new HashSet<>();
         SwingUtilities.invokeAndWait(() -> {
             for (int row = 0; row < table.getRowCount(); row++) {
-                sourcesSeen.add((String) table.getModel().getValueAt(row, 1));
+                sourcesSeen.add((String) table.getValueAt(row, 1));
             }
         });
         assertThat(sourcesSeen).containsExactly("alpha");
     }
 
     /**
-     * Angelo 23.11.2026: unterhalb der Quellen (Space, Seite) sucht die Auswahl links nicht von selbst; erst „Im
-     * markierten Bereich erneut suchen“. Zurück und Vor wechseln zwischen den Suchen.
+     * Angelo 23.11.2026: eine Trefferliste, der Baum filtert. Ein Space einer schon durchsuchten Quelle filtert nur,
+     * eine neue Quelle wird allein nachgesucht; Zurück und Vor gehen durch die Filter.
      */
     @Test
-    void belowSourcesOnlyTheButtonSearchesTheMarkedAreaAndBackReturns() throws Exception {
+    void theTreeFiltersOneListAndOnlyMissingSourcesAreSearched() throws Exception {
         start(false);
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
@@ -488,26 +488,31 @@ class SearchViewTest {
             view[0].search("betrieb");
         });
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta");
+        assertThat(view[0].covered).containsExactly("beta");
         SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("beta", "DEV"))));
-        assertThat(view[0].heading.titleText()).as("keine Suche von selbst").isEqualTo("Suche in Beta");
-        assertThat(view[0].visits).hasSize(1);
-        SwingUtilities.invokeAndWait(() -> view[0].searchMarked.doClick());
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta › DEV");
-        assertThat(view[0].backVisit.isEnabled()).isTrue();
+        assertThat(view[0].covered).as("nur gefiltert, nicht neu gesucht").containsExactly("beta");
+        assertThat(view[0].visits).hasSize(2);
         SwingUtilities.invokeAndWait(() -> view[0].backVisit.doClick());
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta");
         assertThat(view[0].forwardVisit.isEnabled()).isTrue();
         SwingUtilities.invokeAndWait(() -> view[0].forwardVisit.doClick());
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta › DEV");
-        assertThat(view[0].visits).hasSize(2);
-        // Wechsel in eine andere Quelle unterhalb ihres Knotens: die Suche schaltet auf die ganze Quelle um.
-        SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("alpha", "DEV"))));
+        // Eine noch nicht durchsuchte Quelle: nur sie wird nachgesucht.
+        SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("alpha", null))));
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Alpha");
-        // Mehrfachauswahl: alle Bereiche, ab vier nur die Zahl.
+        assertThat(view[0].covered).containsExactly("beta", "alpha");
         assertThat(view[0].areaTitle(List.of(new Explorer.Scope("alpha", null), new Explorer.Scope("beta", "DEV"))))
                 .isEqualTo("Alpha, Beta › DEV");
         assertThat(view[0].areaTitle(List.of(new Explorer.Scope("alpha", "A"), new Explorer.Scope("alpha", "B"),
                 new Explorer.Scope("beta", "C"), new Explorer.Scope("beta", "D")))).isEqualTo("4 Bereichen");
+    }
+
+    @Test
+    void interleaveMergesByPosition() {
+        List<SearchView.Hit> merged = SearchView.interleave(List.of(hit("a1"), hit("a2"), hit("a3")),
+                List.of(hit("b1"), hit("a2")));
+        assertThat(merged).extracting(SearchView.Hit::pageId).containsExactly("a1", "b1", "a2", "a3");
     }
 
     /**

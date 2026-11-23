@@ -1046,6 +1046,10 @@ public final class MainWindow implements AppContext.Navigator {
             searchSelection = explorer.remember();
         }
         current = section;
+        // Zurück und Vor unten blättern in der Suche zwischen ihren Suchen und Filtern, sonst in den Seiten.
+        if (jobStatus != null) {
+            jobStatus.navigation(section == AppContext.Section.SEARCH ? searchView.navigation() : content.navigation());
+        }
         placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
             if (searchSelection == null) {
@@ -1149,6 +1153,11 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void revealPage(String sourceId, String spaceKey, String pageId) {
         explorer.revealPage(sourceId, spaceKey, pageId);
+    }
+
+    @Override
+    public void hintPage(String sourceId, String spaceKey, String pageId) {
+        explorer.hintPage(sourceId, spaceKey, pageId);
     }
 
     @Override
