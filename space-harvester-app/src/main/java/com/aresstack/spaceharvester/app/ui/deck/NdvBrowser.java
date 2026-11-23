@@ -1187,16 +1187,16 @@ final class NdvBrowser extends JPanel {
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
         list.setBackground(javax.swing.UIManager.getColor("MenuItem.background"));
         for (String prefix : candidates) {
-            JCheckBox box = new JCheckBox(prefix, nameFilter.prefixes().contains(prefix));
-            box.setOpaque(false);
+            JCheckBox box = Comic.checkBox(prefix);
+            box.setSelected(nameFilter.prefixes().contains(prefix));
             box.setFocusable(false);
             box.setBorder(BorderFactory.createEmptyBorder(1, 6, 1, 6));
             box.addActionListener(e -> nameFilter.toggle(prefix, box.isSelected()));
             list.add(box);
         }
-        JScrollPane scroll = new JScrollPane(list, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
-                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-        scroll.setBorder(BorderFactory.createEmptyBorder());
+        JScrollPane scroll = Comic.scroll(list);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.getViewport().setBackground(list.getBackground());
         Dimension natural = list.getPreferredSize();
         scroll.setPreferredSize(new Dimension(Math.max(natural.width + 24, 140), Math.min(natural.height + 4, 360)));
         scroll.getVerticalScrollBar().setUnitIncrement(16);

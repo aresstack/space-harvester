@@ -48,12 +48,12 @@ final class ConnectForm extends JPanel {
     static final String AUTO_LOGIN_KEY = "deck.terminal.auto-login";
     static final String COMMAND_KEY = "deck.terminal.command";
 
-    final JComboBox<ServerAccount> server = new JComboBox<>();
+    final JComboBox<ServerAccount> server = Comic.combo(ConnectForm::accountText);
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
     final PlaceholderField port = new PlaceholderField(6, String.valueOf(TerminalProfile.DEFAULT_PORT));
-    final JCheckBox autoLogin = new JCheckBox("Automatisch anmelden (Benutzer und Passwort aus KeePass)");
-    final JComboBox<TerminalModel> model = new JComboBox<>(TerminalModel.values());
-    final JCheckBox tls = new JCheckBox("Verschlüsselt (TLS)");
+    final JCheckBox autoLogin = Comic.checkBox("Automatisch anmelden (Benutzer und Passwort aus KeePass)");
+    final JComboBox<TerminalModel> model = Comic.combo();
+    final JCheckBox tls = Comic.checkBox("Verschlüsselt (TLS)");
     final PlaceholderField codePage = new PlaceholderField(8, TerminalProfile.DEFAULT_CODE_PAGE);
     final PlaceholderField keepAlive = new PlaceholderField(6, "aus");
     final PlaceholderField command = new PlaceholderField(22, "nach der Anmeldung eingeben, z. B. ein Menü");
@@ -66,24 +66,18 @@ final class ConnectForm extends JPanel {
     private final BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect;
     private boolean loaded;
 
+    /** Beschriftung eines KeePass-Zugangs in den Auswahllisten des Command Deck: Eintrag und Benutzer. */
+    static String accountText(Object value) {
+        return value instanceof ServerAccount account
+                ? account.toString() + (account.user().isEmpty() ? "" : " · " + account.user())
+                : "KeePass-Eintrag wählen …";
+    }
+
     ConnectForm(ServerAccounts accounts, BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect) {
         super(new BorderLayout());
         this.accounts = accounts;
         this.connect = connect;
         setOpaque(false);
-        server.setRenderer(new javax.swing.DefaultListCellRenderer() {
-            @Override
-            public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value,
-                                                                   int index, boolean selected, boolean focus) {
-                super.getListCellRendererComponent(list, value, index, selected, focus);
-                if (value instanceof ServerAccount account) {
-                    setText(account.toString() + (account.user().isEmpty() ? "" : " · " + account.user()));
-                } else {
-                    setText("KeePass-Eintrag wählen …");
-                }
-                return this;
-            }
-        });
         server.addActionListener(e -> serverChanged());
         IconButton reload = new IconButton(Glyph.REFRESH, "Einträge neu aus KeePass laden");
         reload.addActionListener(e -> load());
@@ -99,7 +93,7 @@ final class ConnectForm extends JPanel {
         advanced.setOpaque(false);
         row(advanced, 0, "Host", host);
         row(advanced, 1, "Startkommando", command);
-        row(advanced, 2, "Modell", model);
+        row(advanced, 2, "Modell", new InputFrame(model));
         row(advanced, 3, "", tls);
         row(advanced, 4, "Codepage", codePage);
         row(advanced, 5, "Keep-Alive (s)", keepAlive);
@@ -114,13 +108,9 @@ final class ConnectForm extends JPanel {
             }
         });
         advanced(false);
-        for (JCheckBox box : new JCheckBox[] {tls, autoLogin}) {
-            box.setOpaque(false);
-            box.setFont(Comic.regular(13f));
-        }
         // Mit TLS ist 992 der übliche Port; ein eingetragener Port bleibt, wie er ist.
         tls.addActionListener(e -> serverChanged());
-        model.setFont(Comic.regular(13f));
+        model.setModel(new DefaultComboBoxModel<>(TerminalModel.values()));
         problem.setFont(Comic.regular(12.5f));
         problem.setForeground(Comic.RED);
         var button = Comic.primary("Verbinden", "TN3270-Sitzung zu diesem Server öffnen (Eingabe)");
