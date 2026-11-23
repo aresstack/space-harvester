@@ -18,11 +18,11 @@ import java.util.regex.Pattern;
  */
 public final class FakeNdvServer implements NdvConnector {
 
-    public static final NdvObjectType PROGRAM = new NdvObjectType(1, "Program", "NSP");
-    public static final NdvObjectType SUBPROGRAM = new NdvObjectType(4, "Subprogram", "NSN");
-    public static final NdvObjectType MAP = new NdvObjectType(2, "Map", "NSM");
-    public static final NdvObjectType LDA = new NdvObjectType(32, "Local Data Area", "NSL");
-    public static final NdvObjectType COPYCODE = new NdvObjectType(16, "Copycode", "NSC");
+    public static final NdvObjectType PROGRAM = new NdvObjectType(16, "Program", "NSP");
+    public static final NdvObjectType SUBPROGRAM = new NdvObjectType(32, "Subprogram", "NSN");
+    public static final NdvObjectType MAP = new NdvObjectType(64, "Map", "NSM");
+    public static final NdvObjectType LDA = new NdvObjectType(2, "Local Data Area", "NSL");
+    public static final NdvObjectType COPYCODE = new NdvObjectType(128, "Copycode", "NSC");
     public static final NdvObjectType DDM = new NdvObjectType(8, "DDM", "NSD");
 
     private final String user;
@@ -69,7 +69,9 @@ public final class FakeNdvServer implements NdvConnector {
         String lib = library.toUpperCase(Locale.ROOT);
         boolean ddm = type.equals(DDM);
         NdvObject object = new NdvObject(lib, ddm ? "" : name, type, true, source.length(), "PILOT", "2026-11-20 09:15",
-                new NdvObject.Location(10, ddm ? 3 : 120, ddm ? name : "", 1, ddm));
+                new NdvObject.Location(10, ddm ? 3 : 120, ddm ? name : "", 1, ddm),
+                new NdvObject.Details(ddm ? "" : "Structured", "Source", "IBM01141", "PILOT", "2026-11-20 09:16",
+                        "2026-11-21 08:00"));
         libraries.computeIfAbsent(lib, key -> new ArrayList<>()).add(object);
         sources.put(key(object), source);
         return this;
