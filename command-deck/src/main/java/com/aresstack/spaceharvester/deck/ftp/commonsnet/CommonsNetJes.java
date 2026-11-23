@@ -68,6 +68,18 @@ final class CommonsNetJes implements JesConnection {
         if (jobs.isEmpty() && FTPReply.isNegativePermanent(ftp.getReplyCode()) && ftp.getReplyCode() != 550) {
             throw new FtpReplyException("Jobliste abgelehnt: " + Clients.reply(ftp), ftp.getReplyCode());
         }
+        if (jobs.isEmpty()) {
+            // Wie MainframeMate: liefert LIST nichts Lesbares, die Namensliste (NLST) versuchen.
+            String[] names = ftp.listNames();
+            if (names != null) {
+                for (String name : names) {
+                    JesJob job = name == null ? null : JesListing.parseJob(name.trim());
+                    if (job != null) {
+                        jobs.add(job);
+                    }
+                }
+            }
+        }
         return jobs;
     }
 
@@ -97,6 +109,15 @@ final class CommonsNetJes implements JesConnection {
     @Override
     public String spool(String jobId, int spoolId) throws IOException {
         return retrieve(jobId + "." + spoolId);
+    }
+
+    @Override
+    public java.util.Optional<SpoolFile> probe(String jobId, int spoolId) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream(4096);
+        if (!ftp.retrieveFile(jobId + "." + spoolId, out)) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(JesListing.probed(spoolId, ftp.getReplyString(), out.toString(charset)));
     }
 
     @Override

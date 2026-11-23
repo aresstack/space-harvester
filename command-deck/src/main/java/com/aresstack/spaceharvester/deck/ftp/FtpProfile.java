@@ -1,18 +1,29 @@
 package com.aresstack.spaceharvester.deck.ftp;
 
+import com.aresstack.spaceharvester.deck.ftp.jes.SpoolNaming;
 import java.nio.charset.Charset;
+import java.util.Objects;
 
 /**
- * Wohin eine FTP-Verbindung geht. Benutzer und Passwort stehen nicht darin: Sie kommen aus dem KeePass-Eintrag und
- * werden erst beim Aufbau gelesen (gemeinsam mit Terminal und NDV, #1142).
+ * Wohin eine FTP-Verbindung geht und wie sie arbeitet. Benutzer und Passwort stehen nicht darin: Sie kommen aus dem
+ * KeePass-Eintrag und werden erst beim Aufbau gelesen (gemeinsam mit Terminal und NDV, #1142). Alle Einstellungen der
+ * Bereiche „FTP“ und „JES-Spool“ von MainframeMate gehören hierher, je Verbindung.
  *
- * @param host           Rechnername oder Adresse
- * @param port           TCP-Port, meist 21
- * @param encoding       Zeichensatz der Steuerverbindung und der Textübertragung; wie in MainframeMate
- *                       {@code ISO-8859-1}, der Host wandelt EBCDIC selbst
- * @param timeoutSeconds Zeitlimit für Aufbau, Antworten und Daten, 0 für keines
+ * @param host                  Rechnername oder Adresse
+ * @param port                  TCP-Port, meist 21
+ * @param encoding              Zeichensatz der Steuerverbindung und der Textübertragung; wie in MainframeMate
+ *                              {@code ISO-8859-1}, der Host wandelt EBCDIC selbst
+ * @param connectTimeoutSeconds Zeitlimit für den Aufbau (Connect Timeout), 0 für keines
+ * @param controlTimeoutSeconds Zeitlimit für Antworten der Steuerverbindung (Control Timeout), 0 für keines
+ * @param dataTimeoutSeconds    Zeitlimit für Datenübertragungen (Data Timeout), 0 für keines
+ * @param transfer              TYPE, Textformat, STRU, MODE
+ * @param retry                 Wiederholung lesender Aufträge
+ * @param startHlq              Start-HLQ auf MVS; leer = Anmeldename (MainframeMate „Login-Namen als HLQ verwenden“)
+ * @param spoolNaming           DD-Namen der Spool-Dateien
  */
-public record FtpProfile(String host, int port, String encoding, int timeoutSeconds) {
+public record FtpProfile(String host, int port, String encoding, int connectTimeoutSeconds, int controlTimeoutSeconds,
+                         int dataTimeoutSeconds, TransferOptions transfer, RetryPolicy retry, String startHlq,
+                         SpoolNaming spoolNaming) {
 
     public static final int DEFAULT_PORT = 21;
     public static final String DEFAULT_ENCODING = "ISO-8859-1";
@@ -30,14 +41,44 @@ public record FtpProfile(String host, int port, String encoding, int timeoutSeco
         if (!Charset.isSupported(encoding)) {
             throw new IllegalArgumentException("Unbekannter Zeichensatz: " + encoding);
         }
-        if (timeoutSeconds < 0) {
+        if (connectTimeoutSeconds < 0 || controlTimeoutSeconds < 0 || dataTimeoutSeconds < 0) {
             throw new IllegalArgumentException("Zeitlimit darf nicht negativ sein");
         }
+        transfer = Objects.requireNonNullElse(transfer, TransferOptions.DEFAULT);
+        retry = Objects.requireNonNullElse(retry, RetryPolicy.DEFAULT);
+        startHlq = startHlq == null ? "" : startHlq.trim().toUpperCase(java.util.Locale.ROOT);
+        spoolNaming = Objects.requireNonNullElse(spoolNaming, SpoolNaming.DEFAULT);
+    }
+
+    /** Ein Zeitlimit für alles, sonst die Vorgaben. */
+    public FtpProfile(String host, int port, String encoding, int timeoutSeconds) {
+        this(host, port, encoding, timeoutSeconds, timeoutSeconds, timeoutSeconds, TransferOptions.DEFAULT,
+                RetryPolicy.DEFAULT, "", SpoolNaming.DEFAULT);
     }
 
     /** Ein Profil mit den üblichen Vorgaben: ISO-8859-1, 60 Sekunden Zeitlimit. */
     public static FtpProfile of(String host, int port) {
         return new FtpProfile(host, port, DEFAULT_ENCODING, DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    public FtpProfile withTransfer(TransferOptions value) {
+        return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
+                value, retry, startHlq, spoolNaming);
+    }
+
+    public FtpProfile withRetry(RetryPolicy value) {
+        return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
+                transfer, value, startHlq, spoolNaming);
+    }
+
+    public FtpProfile withStartHlq(String value) {
+        return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
+                transfer, retry, value, spoolNaming);
+    }
+
+    public FtpProfile withSpoolNaming(SpoolNaming value) {
+        return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
+                transfer, retry, startHlq, value);
     }
 
     public Charset charset() {

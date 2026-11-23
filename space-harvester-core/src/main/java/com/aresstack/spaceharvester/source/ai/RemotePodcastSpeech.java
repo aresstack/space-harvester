@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.podcast.PodcastSpeech;
+import com.aresstack.spaceharvester.application.podcast.ReadAloud;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.TrustBundles;
 
@@ -95,6 +96,123 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
             throw new IOException("Sprachausgabe nicht eingerichtet (" + e.getClass().getSimpleName() + ")");
         }
         return speak(port, analysis, model, voice, text, sentences);
+    }
+
+    /**
+     * Vorlesen in der Leseansicht (Angelo 23.11.2026): der Vorlese-Ablauf des Enterprise AI Client mit den Vorgaben
+     * seiner Sprachausgabe (Absätze, Stimmstabilitäts-Fix, Worker und Versuche wie {@code ReadAloudService}), gespielt
+     * über die Wiedergabe der App.
+     */
+    @Override
+    public ReadAloud readAloud(String model, String voice, ReadAloud.Playback playback) {
+        Objects.requireNonNull(model, "model");
+        Objects.requireNonNull(playback, "playback");
+        SpeechSynthesisPort port;
+        try {
+            port = remote.apply(settings.get()).speech();
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Sprachausgabe nicht eingerichtet (" + e.getClass().getSimpleName() + ")");
+        }
+        return readAloud(port, analysis, model, voice, playback);
+    }
+
+    static ReadAloud readAloud(SpeechSynthesisPort port, TextAnalysisService analysis, String model, String voice,
+                               ReadAloud.Playback playback) {
+        ReadAloudService service = new ReadAloudService(port, model, voice, new Played(playback),
+                SpeechChunking.PARAGRAPHS, ReadAloudService.DEFAULT_SYNTHESIS_WORKERS,
+                ReadAloudService.DEFAULT_SYNTHESIS_ATTEMPTS, analysis, null, true);
+        return new ReadAloud() {
+            @Override
+            public boolean speak(String text, ReadAloud.Listener listener) {
+                return service.speak(text, new ReadAloudService.Listener() {
+                    @Override
+                    public void failed(String message) {
+                        if (listener != null) {
+                            listener.failed(message);
+                        }
+                    }
+                });
+            }
+
+            @Override
+            public void stop() {
+                service.stop();
+            }
+
+            @Override
+            public void pause() {
+                service.pause();
+            }
+
+            @Override
+            public void resume() {
+                service.resume();
+            }
+
+            @Override
+            public boolean isPaused() {
+                return service.isPaused();
+            }
+
+            @Override
+            public void setRate(double rate) {
+                service.setRate(rate);
+            }
+
+            @Override
+            public double rate() {
+                return service.rate();
+            }
+
+            @Override
+            public String model() {
+                return service.modelId();
+            }
+
+            @Override
+            public String voice() {
+                return service.voice();
+            }
+        };
+    }
+
+    /** Die Wiedergabe der App als {@link AudioPlayback} des Vorlese-Ablaufs. */
+    private record Played(ReadAloud.Playback playback) implements AudioPlayback {
+
+        @Override
+        public void begin() {
+            playback.begin();
+        }
+
+        @Override
+        public void play(byte[] wav) throws IOException {
+            playback.play(wav);
+        }
+
+        @Override
+        public void finish() {
+            playback.finish();
+        }
+
+        @Override
+        public void stop() {
+            playback.stop();
+        }
+
+        @Override
+        public void pause() {
+            playback.pause();
+        }
+
+        @Override
+        public void resume() {
+            playback.resume();
+        }
+
+        @Override
+        public void setRate(double rate) {
+            playback.setRate(rate);
+        }
     }
 
     /** Ein Beitrag durch den Vorlese-Ablauf, mit gesammelten statt gespielten Stücken. */

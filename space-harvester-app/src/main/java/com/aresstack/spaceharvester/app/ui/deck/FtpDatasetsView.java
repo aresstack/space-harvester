@@ -15,10 +15,14 @@ import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.app.ui.controls.SaveChooser;
+import com.aresstack.spaceharvester.app.ui.AppState;
+import com.aresstack.spaceharvester.deck.ftp.DatasetAttributes;
+import com.aresstack.spaceharvester.deck.ftp.EntryList;
 import com.aresstack.spaceharvester.deck.ftp.FtpSession;
 import com.aresstack.spaceharvester.deck.ftp.MvsPath;
 import com.aresstack.spaceharvester.deck.ftp.RemoteEntry;
 import com.aresstack.spaceharvester.deck.ftp.RemoteFile;
+import com.aresstack.spaceharvester.mainframe.outline.SourceLanguage;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.FlowLayout;
@@ -46,10 +50,12 @@ import javax.swing.KeyStroke;
 import javax.swing.table.AbstractTableModel;
 
 /**
- * Unteransicht „Datasets“ des FTP-Bereichs (MVS-Dateibrowser wie in MainframeMate): oben der Pfad mit Zurück, Hoch und
- * Neu laden im Feld und rechts ein Filter, links die Liste (Datasets wie Ordner, Members wie Dateien), rechts der
- * gemeinsame Editor des Command Deck mit einem Reiter je geöffnetem Member (Doppelklick oder Enter öffnet). Die
- * Aktionen stehen unten in der Werkzeugleiste; ist ein Member offen, kommen Speichern, Neu laden und Schließen dazu.
+ * Unteransicht „Datasets“ des FTP-Bereichs (MVS-Navigator und FTP-Dateibrowser wie in MainframeMate): oben der Pfad
+ * mit Zurück, Vor, Hoch und Neu laden im Feld, rechts die Werkzeuge (Sortieren, Details, nach Endung gruppieren) und der
+ * Filter (Regex; auf MVS „enthält“, mit führendem {@code /} ein Regex), links die Liste mit Mehrfachauswahl und
+ * Kontextmenü (Datasets wie Ordner, Members wie Dateien), rechts der gemeinsame Editor des Command Deck mit einem
+ * Reiter je geöffnetem Member (Doppelklick oder Enter öffnet). Die Aktionen stehen unten in der Werkzeugleiste; ist ein
+ * Member offen, kommen Speichern, Neu laden und Schließen dazu. Sortierung, Details und Gruppierung merkt sich die App.
  */
 final class FtpDatasetsView extends JPanel {
 
@@ -87,8 +93,39 @@ final class FtpDatasetsView extends JPanel {
     private final ComposerButton newDataset;
     private final ComposerButton delete;
     private final ComposerButton submit;
-    private final IconButton back = new IconButton(Glyph.BACK, "Zurück (zum vorher gezeigten Pfad)");
+    private final IconButton back = new IconButton(Glyph.BACK, "Zurück (zum vorher gezeigten Pfad, Pfeil links)");
+    private final IconButton forward = new IconButton(new Mirrored(Glyph.BACK), "Vor (Pfeil rechts)");
     private final Deque<String> history = new ArrayDeque<>();
+    private final Deque<String> future = new ArrayDeque<>();
+    static final String SORT_KEY = "deck.ftp.sort";
+    static final String DETAILS_KEY = "deck.ftp.details";
+    static final String GROUP_KEY = "deck.ftp.group";
+    private static final String LIST = "list";
+    private static final String TREE = "tree";
+    private static final String MESSAGE = "message";
+    private final CardLayout listCards = new CardLayout();
+    private final JPanel listArea = new JPanel(listCards);
+    private final JLabel listMessage = new JLabel(" ", JLabel.CENTER);
+    private final javax.swing.tree.DefaultMutableTreeNode treeRoot = new javax.swing.tree.DefaultMutableTreeNode();
+    private final javax.swing.JTree tree = new javax.swing.JTree(treeRoot);
+    private final IconButton sortButton = new IconButton(new DrawnIcon(true), "Sortieren …");
+    private final IconButton detailsButton = new IconButton(Glyph.TABLE, "Details zeigen (Größe, Datum, RECFM/LRECL)");
+    private final IconButton groupButton = new IconButton(new DrawnIcon(false), "Nach Endung gruppieren");
+    private final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Gruppen aufklappen");
+    private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Gruppen zuklappen");
+    private EntryList.Sort sort = EntryList.Sort.NAME_ASC;
+    private boolean details;
+    private boolean grouped;
+    /** Rückfragen „… wirklich …?“ (Titel, Frage); Tests ersetzen sie. */
+    java.util.function.BiPredicate<String, String> confirm = (title, question) -> Dialogs.confirm(this, title, question);
+    /** Der Dialog „Neues Dataset anlegen“: Kontext → Name und Parameter, {@code null} bei Abbruch; Tests ersetzen ihn. */
+    java.util.function.Function<String, NewDataset> datasetDialog = context -> NewDatasetForm.ask(this, context);
+    /** Meldet Teilfehler nach dem Löschen mehrerer Einträge; Tests ersetzen es. */
+    java.util.function.Consumer<String> report = text -> Dialogs.view(this, "Löschen", Comic.note(text));
+
+    /** Name und Anlageparameter aus dem Dialog. */
+    record NewDataset(String name, DatasetAttributes attributes) {
+    }
     private String current = "";
     private boolean creatingDataset;
     private boolean connected;
@@ -108,32 +145,69 @@ final class FtpDatasetsView extends JPanel {
         up.addActionListener(e -> up());
         IconButton reload = new IconButton(Glyph.REFRESH, "Neu laden");
         reload.addActionListener(e -> navigate(path.getText(), false));
+        forward.addActionListener(e -> forward());
         pathFrame.addButton(back);
+        pathFrame.addButton(forward);
         pathFrame.addButton(up);
         pathFrame.addButton(reload);
         path.addActionListener(e -> navigate(path.getText(), true));
+        path.setToolTipText("HLQ, Dataset oder Pfad; Pfeil runter springt in die Liste");
         InputFrame filterFrame = InputFrame.search(filter);
+        filterFrame.addClearButton();
+        filter.setToolTipText("<html>Filter auf den Namen, Groß-/Kleinschreibung egal.<br>"
+                + "Auf MVS: enthält; mit / am Anfang ein Regex (etwa <b>/^J.*L$</b>).<br>"
+                + "Sonst ein Regex. Rot: ungültig oder nichts gefunden.</html>");
         filter.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
             public void insertUpdate(javax.swing.event.DocumentEvent e) {
-                model.filter(filter.getText());
+                refilter();
             }
 
             @Override
             public void removeUpdate(javax.swing.event.DocumentEvent e) {
-                model.filter(filter.getText());
+                refilter();
             }
 
             @Override
             public void changedUpdate(javax.swing.event.DocumentEvent e) {
-                model.filter(filter.getText());
+                refilter();
             }
         });
+        AppState state = AppState.shared();
+        try {
+            sort = EntryList.Sort.valueOf(java.util.Objects.requireNonNullElse(state.get(SORT_KEY), "NAME_ASC"));
+        } catch (IllegalArgumentException unknown) {
+            sort = EntryList.Sort.NAME_ASC;
+        }
+        details = state.getBoolean(DETAILS_KEY, false);
+        grouped = state.getBoolean(GROUP_KEY, false);
+        sortButton.addActionListener(e -> sortMenu().show(sortButton, 0, sortButton.getHeight()));
+        detailsButton.addActionListener(e -> {
+            details = !details;
+            AppState.shared().put(DETAILS_KEY, details);
+            navigate(current, false);
+        });
+        groupButton.addActionListener(e -> {
+            grouped = !grouped;
+            AppState.shared().put(GROUP_KEY, grouped);
+            showList();
+        });
+        expandAll.addActionListener(e -> expandTree(true));
+        collapseAll.addActionListener(e -> expandTree(false));
+        JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+        tools.setOpaque(false);
+        for (IconButton tool : new IconButton[] {sortButton, detailsButton, groupButton, expandAll, collapseAll}) {
+            tools.add(tool);
+        }
+        JPanel east = new JPanel(new BorderLayout(6, 0));
+        east.setOpaque(false);
+        east.add(tools, BorderLayout.WEST);
+        east.add(filterFrame, BorderLayout.CENTER);
         JPanel head = new JPanel(new BorderLayout(10, 0));
         head.setOpaque(false);
         head.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
         head.add(pathFrame, BorderLayout.CENTER);
-        head.add(filterFrame, BorderLayout.EAST);
+        head.add(east, BorderLayout.EAST);
 
         // „Neu …“ als Zeile über der Liste, mit ✕ (Meldungskästen oben mit ✕).
         newBar.setOpaque(false);
@@ -162,17 +236,27 @@ final class FtpDatasetsView extends JPanel {
         north.add(newBar, BorderLayout.SOUTH);
 
         // Mitte: Liste | Vorschau.
-        table.getColumnModel().getColumn(0).setPreferredWidth(220);
-        table.getColumnModel().getColumn(1).setPreferredWidth(80);
-        table.getColumnModel().getColumn(2).setPreferredWidth(70);
+        table.setSelectionMode(javax.swing.ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        widths();
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
-                if (event.getClickCount() == 2) {
+                if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event)) {
                     open(selected());
                 }
             }
+
+            @Override
+            public void mousePressed(MouseEvent event) {
+                popup(event);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent event) {
+                popup(event);
+            }
         });
+        installKeys();
         table.getInputMap().put(KeyStroke.getKeyStroke("ENTER"), "open-entry");
         table.getActionMap().put("open-entry", new javax.swing.AbstractAction() {
             @Override
@@ -200,7 +284,48 @@ final class FtpDatasetsView extends JPanel {
         documentPanel.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
         documentPanel.add(documentsHead, BorderLayout.NORTH);
         documentPanel.add(documents, BorderLayout.CENTER);
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, Comic.scroll(table), documentPanel);
+        tree.setRootVisible(false);
+        tree.setShowsRootHandles(true);
+        tree.setFont(Comic.regular(13f));
+        tree.setCellRenderer(new javax.swing.tree.DefaultTreeCellRenderer() {
+            @Override
+            public java.awt.Component getTreeCellRendererComponent(javax.swing.JTree t, Object value, boolean selected,
+                                                                   boolean expanded, boolean leaf, int row,
+                                                                   boolean focus) {
+                super.getTreeCellRendererComponent(t, value, selected, expanded, leaf, row, focus);
+                Object item = ((javax.swing.tree.DefaultMutableTreeNode) value).getUserObject();
+                if (item instanceof RemoteEntry entry) {
+                    setText(entry.name() + (entry.size() >= 0 && !entry.directory() ? "  (" + Entries.size(entry.size())
+                            + ")" : ""));
+                    setIcon(entry.directory() ? FilesIcons.folder() : FilesIcons.file());
+                } else {
+                    setIcon(null);
+                }
+                return this;
+            }
+        });
+        // Im gruppierten Baum hängt die Auswahl nicht an der Tabelle: Knöpfe auch hier nachführen.
+        tree.addTreeSelectionListener(e -> enableActions());
+        tree.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (event.getClickCount() == 2 && treeEntry() != null) {
+                    open(treeEntry());
+                }
+            }
+        });
+        tree.getAccessibleContext().setAccessibleName("Nach Endung gruppiert");
+        listMessage.setFont(Comic.regular(14f));
+        listMessage.setForeground(Comic.MUTED);
+        listArea.setOpaque(false);
+        listArea.add(Comic.scroll(table), LIST);
+        listArea.add(Comic.scroll(tree), TREE);
+        JPanel messagePanel = new JPanel(new BorderLayout());
+        messagePanel.setBackground(Comic.SURFACE);
+        messagePanel.add(listMessage, BorderLayout.CENTER);
+        listArea.add(messagePanel, MESSAGE);
+        message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listArea, documentPanel);
         ComicDivider.install(split, Comic.PALETTE);
         split.setResizeWeight(0.42);
         split.setBorder(BorderFactory.createEmptyBorder(0, 12, 8, 12));
@@ -215,9 +340,9 @@ final class FtpDatasetsView extends JPanel {
         upload.addActionListener(e -> upload());
         newMember = Comic.button("Neues Member …", "Leeres Member in diesem Dataset anlegen");
         newMember.addActionListener(e -> askNew(false));
-        newDataset = Comic.button("Neues Dataset …", "Dataset unter diesem Pfad anlegen");
+        newDataset = Comic.button("Neues Dataset …", "Dataset unter diesem Pfad anlegen (mit DSORG, RECFM, LRECL …)");
         newDataset.addActionListener(e -> askNew(true));
-        delete = Comic.danger("Löschen", "Gewählten Eintrag löschen (mit Rückfrage)");
+        delete = Comic.danger("Löschen", "Gewählte Einträge löschen (mit Rückfrage; Mehrfachauswahl mit Strg/Umschalt)");
         delete.addActionListener(e -> delete());
         submit = Comic.button("Als Job einreichen", "Gewähltes Member als JCL an JES übergeben");
         submit.addActionListener(e -> submit());
@@ -262,27 +387,262 @@ final class FtpDatasetsView extends JPanel {
 
     /** Listet einen Pfad. */
     void navigate(String target, boolean remember) {
+        navigate(target, remember ? Move.NEW : Move.STAY);
+    }
+
+    /** Wie der Pfad in den Verlauf kommt: neu (Vor wird verworfen), zurück, vor oder gar nicht (Neu laden). */
+    private enum Move {
+        NEW, BACK, FORWARD, STAY
+    }
+
+    private void navigate(String target, Move move) {
         FtpSession session = owner.session();
+        if (session.mvs() && (target == null || target.isBlank() || MvsPath.ROOT.equals(MvsPath.absolute(target)))) {
+            message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
+            path.requestFocusInWindow();
+            return;
+        }
         String resolved = session.mvs() ? MvsPath.absolute(target) : (target == null || target.isBlank() ? "/" : target);
+        boolean withDetails = details;
         owner.status("Liste " + resolved + " …", false);
-        owner.run(session.files(files -> files.list(resolved)), "Liste von " + resolved + " nicht geladen", list -> {
-            if (remember && !current.isEmpty() && !current.equals(resolved)) {
-                history.push(current);
-            }
-            current = resolved;
-            path.setText(resolved);
-            model.sizes(!session.mvs());
-            model.show(list);
-            newBar.setVisible(false);
-            owner.status(resolved + " · " + list.size() + (list.size() == 1 ? " Eintrag" : " Einträge"), false);
-            enableActions();
-        });
+        if (model.all.isEmpty() || !resolved.equals(current)) {
+            message("Lade Einträge …", false);
+        }
+        String from = current;
+        owner.session().files(files -> files.list(resolved, withDetails)).whenComplete((list, error) ->
+                SwingUtilities.invokeLater(() -> {
+                    if (error != null) {
+                        Throwable cause = error instanceof java.util.concurrent.CompletionException
+                                && error.getCause() != null ? error.getCause() : error;
+                        owner.status("Liste von " + resolved + " nicht geladen – " + FtpWorkspace.describe(cause), true);
+                        message("Fehler: " + FtpWorkspace.describe(cause), true);
+                        return;
+                    }
+                    if (!from.isEmpty() && !from.equals(resolved)) {
+                        switch (move) {
+                            case NEW -> {
+                                history.push(from);
+                                future.clear();
+                            }
+                            case BACK -> future.push(from);
+                            case FORWARD -> history.push(from);
+                            case STAY -> { }
+                        }
+                    }
+                    current = resolved;
+                    path.setText(resolved);
+                    model.columns(session.mvs(), withDetails);
+                    widths();
+                    model.show(list);
+                    newBar.setVisible(false);
+                    showList();
+                    enableActions();
+                }));
     }
 
     private void back() {
         if (!history.isEmpty()) {
-            navigate(history.pop(), false);
+            navigate(history.pop(), Move.BACK);
         }
+    }
+
+    private void forward() {
+        if (!future.isEmpty()) {
+            navigate(future.pop(), Move.FORWARD);
+        }
+    }
+
+    /** Liste, Baum oder Hinweis zeigen und den Stand „n Einträge“ bzw. „x / y Einträge“ setzen. */
+    private void showList() {
+        int total = model.all.size();
+        int shown = model.shown.size();
+        boolean groupable = !owner.session().mvs();
+        if (total == 0) {
+            message("Keine Einträge gefunden", false);
+        } else if (grouped && groupable) {
+            rebuildTree();
+            listCards.show(listArea, TREE);
+        } else {
+            listCards.show(listArea, LIST);
+        }
+        if (!current.isEmpty()) {
+            owner.status(current + " · " + (shown == total ? total + (total == 1 ? " Eintrag" : " Einträge")
+                    : shown + " / " + total + " Einträge"), false);
+        }
+        groupButton.setVisible(groupable);
+        groupButton.marked(grouped);
+        enableActions();
+        expandAll.setVisible(groupable && grouped);
+        collapseAll.setVisible(groupable && grouped);
+        detailsButton.marked(details);
+        sortButton.marked(sort != EntryList.Sort.NAME_ASC);
+    }
+
+    /** Hinweis statt Liste (MainframeMate: Overlay über der Liste); rot nur für Fehler. */
+    private void message(String text, boolean error) {
+        listMessage.setText(text);
+        listMessage.setForeground(error ? Comic.RED : Comic.MUTED);
+        listCards.show(listArea, MESSAGE);
+    }
+
+    String listMessage() {
+        return listMessage.getText();
+    }
+
+    private void refilter() {
+        model.apply();
+        EntryList.Filtered result = model.lastFilter;
+        boolean alarm = result != null && result.alarming(model.all.size());
+        filter.setBackground(alarm ? Comic.CHANGE_REMOVED : javax.swing.UIManager.getColor("TextField.background"));
+        if (model.all.isEmpty()) {
+            return;
+        }
+        showList();
+    }
+
+    private javax.swing.JPopupMenu sortMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
+        for (EntryList.Sort candidate : EntryList.Sort.values()) {
+            javax.swing.JRadioButtonMenuItem item = new javax.swing.JRadioButtonMenuItem(candidate.label(),
+                    candidate == sort);
+            item.addActionListener(e -> sort(candidate));
+            group.add(item);
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    /** Sortiert neu (Ordner bzw. Datasets bleiben vorn) und merkt sich die Wahl. */
+    void sort(EntryList.Sort value) {
+        sort = value;
+        AppState.shared().put(SORT_KEY, value.name());
+        refilter();
+    }
+
+    private void rebuildTree() {
+        treeRoot.removeAllChildren();
+        EntryList.grouped(model.shown).forEach((name, entries) -> {
+            javax.swing.tree.DefaultMutableTreeNode group = new javax.swing.tree.DefaultMutableTreeNode(
+                    name + " (" + entries.size() + ")");
+            entries.forEach(entry -> group.add(new javax.swing.tree.DefaultMutableTreeNode(entry, false)));
+            treeRoot.add(group);
+        });
+        ((javax.swing.tree.DefaultTreeModel) tree.getModel()).reload();
+        expandTree(true);
+    }
+
+    private void expandTree(boolean open) {
+        for (int row = tree.getRowCount() - 1; row >= 0; row--) {
+            if (open) {
+                tree.expandRow(row);
+            } else {
+                tree.collapseRow(row);
+            }
+        }
+    }
+
+    private RemoteEntry treeEntry() {
+        javax.swing.tree.TreePath selection = tree.getSelectionPath();
+        if (selection == null) {
+            return null;
+        }
+        Object item = ((javax.swing.tree.DefaultMutableTreeNode) selection.getLastPathComponent()).getUserObject();
+        return item instanceof RemoteEntry entry ? entry : null;
+    }
+
+    private void widths() {
+        javax.swing.table.TableColumnModel columns = table.getColumnModel();
+        int[] preferred = model.widths();
+        for (int i = 0; i < Math.min(preferred.length, columns.getColumnCount()); i++) {
+            columns.getColumn(i).setPreferredWidth(preferred[i]);
+        }
+    }
+
+    /**
+     * Tastaturführung wie MainframeMate ({@code ListKeyboardNavigation}): Enter öffnet, Pfeil links/rechts gehen zurück
+     * und vor, Pfeil hoch/runter laufen am Ende im Kreis, aus Pfad- und Filterfeld springt Pfeil runter in die Liste.
+     */
+    private void installKeys() {
+        bind(table, "LEFT", "ftp-back", this::back);
+        bind(table, "RIGHT", "ftp-forward", this::forward);
+        bind(table, "UP", "ftp-up-circular", () -> step(-1));
+        bind(table, "DOWN", "ftp-down-circular", () -> step(1));
+        bind(table, "ctrl A", "ftp-select-all", table::selectAll);
+        bind(table, "DELETE", "ftp-delete", this::delete);
+        for (javax.swing.JTextField field : new javax.swing.JTextField[] {path, filter}) {
+            bind(field, "DOWN", "ftp-into-list", this::intoList);
+        }
+    }
+
+    private static void bind(javax.swing.JComponent component, String key, String name, Runnable action) {
+        component.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(key), name);
+        component.getActionMap().put(name, new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                action.run();
+            }
+        });
+    }
+
+    private void step(int delta) {
+        int rows = table.getRowCount();
+        if (rows == 0) {
+            return;
+        }
+        int row = table.getSelectionModel().getLeadSelectionIndex();
+        int next = row < 0 ? (delta > 0 ? 0 : rows - 1) : Math.floorMod(row + delta, rows);
+        table.getSelectionModel().setSelectionInterval(next, next);
+        table.scrollRectToVisible(table.getCellRect(next, 0, true));
+    }
+
+    private void intoList() {
+        if (table.getRowCount() > 0) {
+            if (table.getSelectedRow() < 0) {
+                table.getSelectionModel().setSelectionInterval(0, 0);
+            }
+            table.requestFocusInWindow();
+        }
+    }
+
+    private void popup(MouseEvent event) {
+        if (!event.isPopupTrigger()) {
+            return;
+        }
+        int row = table.rowAtPoint(event.getPoint());
+        if (row >= 0 && !table.isRowSelected(row)) {
+            table.getSelectionModel().setSelectionInterval(row, row);
+        }
+        contextMenu().show(table, event.getX(), event.getY());
+    }
+
+    /** Kontextmenü der Liste wie MainframeMate. */
+    javax.swing.JPopupMenu contextMenu() {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        List<RemoteEntry> chosen = selectedAll();
+        boolean mvs = owner.session().mvs();
+        RemoteEntry single = chosen.size() == 1 ? chosen.get(0) : null;
+        menu.add(item("Öffnen", single != null, () -> open(single)));
+        menu.addSeparator();
+        menu.add(item("Herunterladen …", single != null && !single.directory(), this::download));
+        menu.add(item("Als Job einreichen", single != null && !single.directory(), this::submit));
+        menu.addSeparator();
+        menu.add(item(mvs ? "Neues Dataset …" : "Neuer Ordner …", connected && !current.isEmpty(),
+                () -> askNew(true)));
+        menu.add(item(mvs ? "Neues Member …" : "Neue Datei …", newMember.isEnabled(), () -> askNew(false)));
+        menu.addSeparator();
+        menu.add(item("Alles auswählen", table.getRowCount() > 0, table::selectAll));
+        menu.add(item("Nichts auswählen", !chosen.isEmpty(), table::clearSelection));
+        menu.addSeparator();
+        menu.add(item("Löschen (" + chosen.size() + ") …", connected && !chosen.isEmpty(), this::delete));
+        return menu;
+    }
+
+    private static javax.swing.JMenuItem item(String text, boolean enabled, Runnable action) {
+        javax.swing.JMenuItem item = new javax.swing.JMenuItem(text);
+        item.setEnabled(enabled);
+        item.addActionListener(e -> action.run());
+        return item;
     }
 
     private void up() {
@@ -320,6 +680,11 @@ final class FtpDatasetsView extends JPanel {
             return;
         }
         DocumentEditor editor = new DocumentEditor(session);
+        if (owner.session().mvs()) {
+            // Wie MainframeMate (FileTabImpl „▶ Ausführen“, nur FTP + MVS + JCL): den Editor-Inhalt einreichen,
+            // auch ungespeichert.
+            editor.addAction("JCL als Job einreichen (▶ Ausführen)", new PlayIcon(), this::runJcl);
+        }
         editorOf.put(session, editor);
         documents.add(editor, session.location());
         ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.file(), session.name(), session.location());
@@ -451,9 +816,29 @@ final class FtpDatasetsView extends JPanel {
         return true;
     }
 
+    /** Der eine gewählte Eintrag; bei Mehrfachauswahl der zuletzt angeklickte. */
     private RemoteEntry selected() {
-        int row = table.getSelectedRow();
-        return row < 0 ? null : model.at(table.convertRowIndexToModel(row));
+        if (grouped && !owner.session().mvs() && treeEntry() != null) {
+            return treeEntry();
+        }
+        int row = table.getSelectionModel().getLeadSelectionIndex();
+        if (row < 0 || !table.isRowSelected(row)) {
+            row = table.getSelectedRow();
+        }
+        return row < 0 || row >= table.getRowCount() ? null : model.at(table.convertRowIndexToModel(row));
+    }
+
+    /** Alle gewählten Einträge (Mehrfachauswahl). */
+    List<RemoteEntry> selectedAll() {
+        if (grouped && !owner.session().mvs()) {
+            RemoteEntry entry = treeEntry();
+            return entry == null ? List.of() : List.of(entry);
+        }
+        List<RemoteEntry> chosen = new ArrayList<>();
+        for (int row : table.getSelectedRows()) {
+            chosen.add(model.at(table.convertRowIndexToModel(row)));
+        }
+        return chosen;
     }
 
     private void enableActions() {
@@ -462,13 +847,16 @@ final class FtpDatasetsView extends JPanel {
         boolean mvs = owner.session().mvs();
         download.setEnabled(connected && file);
         submit.setEnabled(connected && file);
-        delete.setEnabled(connected && entry != null);
+        int count = selectedAll().size();
+        delete.setEnabled(connected && count > 0);
+        delete.setText(count > 1 ? "Löschen (" + count + ")" : "Löschen");
         upload.setEnabled(connected && !current.isEmpty());
         newMember.setEnabled(connected && !current.isEmpty() && (!mvs || MvsPath.unquote(current).contains(".")));
         newDataset.setEnabled(connected && !current.isEmpty());
         newMember.setText(mvs ? "Neues Member …" : "Neue Datei …");
         newDataset.setText(mvs ? "Neues Dataset …" : "Neuer Ordner …");
         back.setEnabled(!history.isEmpty());
+        forward.setEnabled(!future.isEmpty());
         boolean showing = document != null;
         save.setVisible(showing);
         reloadDocument.setVisible(showing);
@@ -482,12 +870,23 @@ final class FtpDatasetsView extends JPanel {
     }
 
     private void askNew(boolean dataset) {
-        creatingDataset = dataset;
         boolean mvs = owner.session().mvs();
+        if (mvs && dataset) {
+            createDataset();
+            return;
+        }
+        if (mvs && EntryList.onlyDatasets(model.all)) {
+            // Wie MainframeMate: hier gibt es nur Datasets darunter, also kein PDS für ein Member.
+            if (confirm.test("Kein PDS", "Der Pfad " + current + " enthält nur Datasets und ist kein PDS; Members gibt "
+                    + "es nur in einem PDS. Wirklich zuerst ein neues PDS als Dataset anlegen?")) {
+                createDataset();
+            }
+            return;
+        }
+        creatingDataset = dataset;
         String where = current;
-        newLabel.setText(dataset ? (mvs ? "Neues Dataset unter " + MvsPath.unquote(where) + ".  " : "Neuer Ordner:  ")
-                : (mvs ? "Neues Member in " + where + ":  " : "Neue Datei:  "));
-        newName.setPlaceholder(dataset ? (mvs ? "nur der neue Teil, etwa NEU" : "Name") : (mvs ? "max. 8 Zeichen" : "Name"));
+        newLabel.setText(dataset ? "Neuer Ordner:  " : (mvs ? "Erstellt Member in PDS " + where + ":  " : "Neue Datei:  "));
+        newName.setPlaceholder(dataset ? "Name" : (mvs ? "max. 8 Zeichen, etwa NEWMEMBR" : "Name"));
         newName.setText("");
         newBar.setVisible(true);
         revalidate();
@@ -504,6 +903,10 @@ final class FtpDatasetsView extends JPanel {
         String target;
         if (mvs) {
             name = name.toUpperCase(Locale.ROOT);
+            if (!creatingDataset && name.length() > 8) {
+                // Wie MainframeMate: auf die erlaubten 8 Zeichen gekürzt.
+                name = name.substring(0, 8);
+            }
             if (!creatingDataset && !MvsPath.isMemberName(name)) {
                 owner.status("„" + name + "“ ist kein gültiger Member-Name (1–8 Zeichen, Buchstaben, Ziffern, @ # $)",
                         true);
@@ -533,18 +936,88 @@ final class FtpDatasetsView extends JPanel {
         });
     }
 
+    /**
+     * Löscht die gewählten Einträge nach einer Rückfrage mit ihren Namen (bis acht, dann „… und n weitere“), einen nach
+     * dem anderen; danach „x gelöscht, y fehlgeschlagen“ mit den Gründen (MainframeMate).
+     */
     private void delete() {
-        RemoteEntry entry = selected();
-        if (entry == null || !Dialogs.confirm(this, "Löschen", "„" + entry.path() + "“ wirklich löschen?")) {
+        List<RemoteEntry> chosen = selectedAll();
+        if (chosen.isEmpty() || !connected) {
             return;
         }
+        if (!confirm.test("Löschen bestätigen", deleteQuestion(chosen))) {
+            return;
+        }
+        deleteEntries(chosen);
+    }
+
+    static String deleteQuestion(List<RemoteEntry> chosen) {
+        if (chosen.size() == 1) {
+            RemoteEntry entry = chosen.get(0);
+            return "„" + entry.name() + "“ " + (entry.directory() ? "(Dataset bzw. Ordner) " : "") + "wirklich löschen?";
+        }
+        StringBuilder question = new StringBuilder(chosen.size() + " Einträge wirklich löschen?\n");
+        chosen.stream().limit(8).forEach(entry -> question.append("\n  • ").append(entry.name()));
+        if (chosen.size() > 8) {
+            question.append("\n  … und ").append(chosen.size() - 8).append(" weitere");
+        }
+        return question.toString();
+    }
+
+    /** Löscht ohne Rückfrage (für Tests direkt). */
+    void deleteEntries(List<RemoteEntry> chosen) {
+        owner.status("Lösche " + chosen.size() + (chosen.size() == 1 ? " Eintrag" : " Einträge") + " …", false);
         owner.run(owner.session().filesOnce(files -> {
-            files.delete(entry.path());
-            return entry.path();
-        }), "Löschen von " + entry.path() + " fehlgeschlagen", done -> {
+            List<String> failures = new ArrayList<>();
+            int done = 0;
+            for (RemoteEntry entry : chosen) {
+                try {
+                    files.delete(entry.path());
+                    done++;
+                } catch (com.aresstack.spaceharvester.deck.ftp.FtpReplyException refused) {
+                    failures.add("• " + entry.name() + " – " + refused.getMessage());
+                }
+            }
+            return new DeleteResult(done, failures);
+        }), "Löschen fehlgeschlagen", result -> {
             navigate(current, false);
-            owner.status("Gelöscht: " + done, false);
+            if (result.failures().isEmpty()) {
+                owner.status(result.done() == 1 ? "Gelöscht: " + chosen.get(0).name() : result.done() + " gelöscht",
+                        false);
+            } else {
+                String text = result.done() + " gelöscht, " + result.failures().size() + " fehlgeschlagen:\n\n"
+                        + String.join("\n", result.failures());
+                owner.status(result.done() + " gelöscht, " + result.failures().size() + " fehlgeschlagen", true);
+                report.accept(text);
+            }
         });
+    }
+
+    private record DeleteResult(int done, List<String> failures) {
+    }
+
+    /** „Neues Dataset anlegen“ mit Anlageparametern (Dialog wie MainframeMate). */
+    private void createDataset() {
+        String context = MvsPath.unquote(current).replaceAll("(\\.\\*|\\*|\\.)+$", "");
+        NewDataset request = datasetDialog.apply(context);
+        if (request == null) {
+            return;
+        }
+        createDataset(request);
+    }
+
+    /** Legt an, wie der Dialog es verlangt (für Tests direkt). */
+    void createDataset(NewDataset request) {
+        String target = MvsPath.absolute(NewDatasetForm.fullName(MvsPath.unquote(current), request.name()));
+        owner.status("Lege " + target + " an …", false);
+        owner.run(owner.session().filesOnce(files -> {
+            files.createDataset(target, request.attributes());
+            return target;
+        }), "Anlegen von " + target + " fehlgeschlagen – bitte DCB-Parameter (RECFM, LRECL, BLKSIZE) und Platz prüfen",
+                done -> {
+                    navigate(current, false);
+                    owner.status("Angelegt: " + done + " · " + request.attributes().summary(), false);
+                });
     }
 
     private void download() {
@@ -653,6 +1126,23 @@ final class FtpDatasetsView extends JPanel {
                 });
     }
 
+    /** „▶ Ausführen“: den Text im Editor an JES übergeben, sofern er als JCL gelesen wird. */
+    void runJcl(DocumentEditor editor) {
+        if (editor.language().filter(language -> language == SourceLanguage.JCL).isEmpty()) {
+            owner.status("Ausführen geht nur mit JCL – im Editor die Sprache JCL wählen", true);
+            return;
+        }
+        String jcl = editor.text();
+        String name = editor.session().name();
+        FtpSession session = owner.session();
+        owner.status("Reiche " + name + " ein …", false);
+        owner.run(session.jobsOnce(jes -> jes.submit(jcl)), "Einreichen von " + name + " fehlgeschlagen", job -> {
+            owner.status(FtpJobsView.submitted(job), false);
+            owner.jobs().refreshLater(FtpJobsView.submitted(job));
+            showJobs.run();
+        });
+    }
+
     private static String fileName(RemoteEntry entry) {
         String name = MvsPath.isMember(entry.path()) ? MvsPath.splitMember(entry.path())[1] : entry.name();
         return name.replaceAll("[\\\\/:*?\"<>|']", "_");
@@ -671,6 +1161,34 @@ final class FtpDatasetsView extends JPanel {
     String documentText() {
         DocumentEditor editor = document == null ? null : editorOf.get(document);
         return editor == null ? "" : editor.text();
+    }
+
+    /** Schaltet die Detail-Spalten um wie der Knopf (für Tests). */
+    void toggleDetails() {
+        detailsButton.doClick();
+    }
+
+    /** Die Spaltenköpfe der Liste (für Tests). */
+    List<String> columns() {
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < model.getColumnCount(); i++) {
+            names.add(model.getColumnName(i));
+        }
+        return names;
+    }
+
+    /** „Neues Member …“ wie aus dem Kontextmenü (für Tests). */
+    void askNewMember() {
+        askNew(false);
+    }
+
+    /** Filtert die Liste wie das Filterfeld (für Tests). */
+    void filterFor(String text) {
+        filter.setText(text);
+    }
+
+    boolean filterAlarming() {
+        return Comic.CHANGE_REMOVED.equals(filter.getBackground());
     }
 
     /** Legt wie über „Neues Member …“ an (für Tests). */
@@ -697,20 +1215,27 @@ final class FtpDatasetsView extends JPanel {
         open(selected());
     }
 
-    /** Die Einträge mit Filter. */
+    /** Die Einträge mit Sortierung und Filter; Spalten je nach MVS und Details. */
     private final class Entries extends AbstractTableModel {
 
         private final List<RemoteEntry> all = new ArrayList<>();
         private final List<RemoteEntry> shown = new ArrayList<>();
-        private String needle = "";
-        /** MVS nennt über NLST keine Größen; dann entfällt die Spalte. */
-        private boolean sizes = true;
+        private EntryList.Filtered lastFilter;
+        private String[] columns = {"Name", "Art"};
 
-        void sizes(boolean shown) {
-            if (sizes != shown) {
-                sizes = shown;
+        /** MVS ohne Details: Name, Art; MVS mit Details: dazu Format, Zeilen, Geändert, Benutzer; sonst Größe (und Datum). */
+        void columns(boolean mvs, boolean withDetails) {
+            String[] next = mvs ? (withDetails ? new String[] {"Name", "Art", "Format", "Zeilen", "Geändert", "Benutzer"}
+                    : new String[] {"Name", "Art"})
+                    : (withDetails ? new String[] {"Name", "Art", "Größe", "Geändert"} : new String[] {"Name", "Art", "Größe"});
+            if (!java.util.Arrays.equals(columns, next)) {
+                columns = next;
                 fireTableStructureChanged();
             }
+        }
+
+        int[] widths() {
+            return columns.length <= 3 ? new int[] {220, 110, 70} : new int[] {120, 90, 60, 55, 140, 70};
         }
 
         void show(List<RemoteEntry> entries) {
@@ -719,17 +1244,10 @@ final class FtpDatasetsView extends JPanel {
             apply();
         }
 
-        void filter(String text) {
-            needle = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
-            apply();
-        }
-
-        private void apply() {
+        void apply() {
+            lastFilter = EntryList.filtered(EntryList.sorted(all, sort), filter.getText(), owner.session().mvs());
             shown.clear();
-            all.stream().filter(entry -> needle.isEmpty() || entry.name().toLowerCase(Locale.ROOT).contains(needle))
-                    .sorted((a, b) -> a.directory() == b.directory() ? a.name().compareToIgnoreCase(b.name())
-                            : a.directory() ? -1 : 1)
-                    .forEach(shown::add);
+            shown.addAll(lastFilter.entries());
             fireTableDataChanged();
         }
 
@@ -744,31 +1262,33 @@ final class FtpDatasetsView extends JPanel {
 
         @Override
         public int getColumnCount() {
-            return sizes ? 3 : 2;
+            return columns.length;
         }
 
         @Override
         public String getColumnName(int column) {
-            return switch (column) {
-                case 0 -> "Name";
-                case 1 -> "Art";
-                default -> "Größe";
-            };
+            return columns[column];
         }
 
         @Override
         public Object getValueAt(int row, int column) {
             RemoteEntry entry = shown.get(row);
             boolean mvs = owner.session().mvs();
-            return switch (column) {
-                case 0 -> entry.name();
-                case 1 -> entry.directory() ? (mvs ? "Dataset" : "Ordner")
+            return switch (columns[column]) {
+                case "Name" -> entry.name();
+                case "Art" -> entry.directory() ? (mvs ? (entry.details().organization().isEmpty() ? "Dataset"
+                        : "Dataset (" + entry.details().organization() + ")") : "Ordner")
                         : (mvs ? (entry.path().contains("(") ? "Member" : "Dataset (sequenziell)") : "Datei");
+                case "Format" -> entry.details().format();
+                case "Zeilen" -> entry.details().lines() > 0 ? String.valueOf(entry.details().lines()) : "";
+                case "Benutzer" -> entry.details().changedBy();
+                case "Geändert" -> entry.modified().map(time -> DATE.format(time.atZone(java.time.ZoneId.systemDefault())))
+                        .orElse("");
                 default -> entry.size() < 0 ? "" : size(entry.size());
             };
         }
 
-        private static String size(long bytes) {
+        static String size(long bytes) {
             if (bytes < 1024) {
                 return bytes + " B";
             }
@@ -776,6 +1296,101 @@ final class FtpDatasetsView extends JPanel {
                 return String.format(Locale.GERMANY, "%.1f KB", bytes / 1024.0);
             }
             return String.format(Locale.GERMANY, "%.1f MB", bytes / (1024.0 * 1024));
+        }
+    }
+
+    private static final java.time.format.DateTimeFormatter DATE =
+            java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY);
+
+    /** Ein Symbol gespiegelt (Vor = gespiegeltes Zurück). */
+    private record Mirrored(javax.swing.Icon icon) implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            try {
+                g2.translate(x + icon.getIconWidth(), y);
+                g2.scale(-1, 1);
+                icon.paintIcon(c, g2, 0, 0);
+            } finally {
+                g2.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return icon.getIconWidth();
+        }
+
+        @Override
+        public int getIconHeight() {
+            return icon.getIconHeight();
+        }
+    }
+
+    /** Dreieck „Ausführen“ als 16-px-Symbol. */
+    private record PlayIcon() implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(c == null || !c.isEnabled() ? Comic.MUTED : Comic.GREEN);
+                g2.fillPolygon(new int[] {x + 4, x + 13, x + 4}, new int[] {y + 2, y + 8, y + 14}, 3);
+            } finally {
+                g2.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 16;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
+        }
+    }
+
+    /** Gezeichnetes 16-px-Symbol: Sortieren (Pfeil hoch und runter) oder Gruppieren (Liste mit Einzug). */
+    private record DrawnIcon(boolean sort) implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(c == null || !c.isEnabled() ? Comic.MUTED : Comic.INK);
+                g2.setStroke(new java.awt.BasicStroke(1.6f, java.awt.BasicStroke.CAP_ROUND,
+                        java.awt.BasicStroke.JOIN_ROUND));
+                g2.translate(x, y);
+                if (sort) {
+                    g2.drawLine(5, 2, 5, 14);
+                    g2.drawLine(2, 5, 5, 2);
+                    g2.drawLine(8, 5, 5, 2);
+                    g2.drawLine(11, 2, 11, 14);
+                    g2.drawLine(8, 11, 11, 14);
+                    g2.drawLine(14, 11, 11, 14);
+                } else {
+                    g2.drawLine(2, 3, 14, 3);
+                    g2.drawLine(5, 7, 14, 7);
+                    g2.drawLine(5, 11, 14, 11);
+                    g2.drawLine(2, 15, 14, 15);
+                }
+            } finally {
+                g2.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 16;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
         }
     }
 }

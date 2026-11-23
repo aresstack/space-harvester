@@ -741,6 +741,47 @@ class DocumentEnrichmentsTest {
     }
 
     @Test
+    void aSectionThatFailedWhileOfflineIsComputedAgainOnceTheNetworkIsBack() throws Exception {
+        // Codex #1185: Das offline gespeicherte FAILED galt beim Wiederholen als aktuell; der Abschnitt bekam nie sein
+        // Ergebnis.
+        Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil."));
+        inventory.add(asset);
+        DocumentEnrichments documents = documents(true);
+        try (com.aresstack.spaceharvester.application.network.NetworkState network =
+                     new com.aresstack.spaceharvester.application.network.NetworkState()) {
+            documents.network(network);
+            java.util.concurrent.atomic.AtomicBoolean once = new java.util.concurrent.atomic.AtomicBoolean();
+            recording.onInput = () -> {
+                if (once.compareAndSet(false, true)) {
+                    java.net.ConnectException cause = new java.net.ConnectException("Verbindung abgelehnt");
+                    network.failed(cause);
+                    throw new IllegalStateException("Dienst nicht erreichbar", cause);
+                }
+            };
+            Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)),
+                    Clock.fixed(NOW, ZoneOffset.UTC));
+            Thread runner = Thread.ofPlatform().start(() -> jobs.submit(JobType.ENRICHMENT, "wiki", "DEV", null,
+                    JobTask.blocking(context -> documents.catchUp("wiki", "DEV", List.of("101"), context))));
+            // Erst freigeben, wenn der Auftrag sichtbar auf das Netz wartet: sonst sähe er beim Prüfen schon wieder Netz.
+            long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (jobs.list(null, JobType.ENRICHMENT).stream().noneMatch(job ->
+                    job.stage() == com.aresstack.spaceharvester.application.jobs.JobStage.OFFLINE)
+                    && System.nanoTime() < end) {
+                Thread.onSpinWait();
+            }
+            assertThat(network.online()).isFalse();
+            network.succeeded();
+            runner.join(TimeUnit.SECONDS.toMillis(20));
+            assertThat(runner.isAlive()).isFalse();
+        }
+
+        assertThat(recording.inputs).as("derselbe Abschnitt noch einmal").containsExactly("Erster Teil.",
+                "Erster Teil.");
+        assertThat(results.findDocuments(PAGE)).filteredOn(result -> result.processorId().equals("recording"))
+                .singleElement().satisfies(result -> assertThat(result.status()).isEqualTo(Enrichment.Status.OK));
+    }
+
+    @Test
     void aNewExtractionWithTheSameBlocksComputesNothingAndOnlyRecordsItself() {
         Asset asset = stored("teile.zip", Map.of("eins.txt", "Erster Teil."));
         inventory.add(asset);

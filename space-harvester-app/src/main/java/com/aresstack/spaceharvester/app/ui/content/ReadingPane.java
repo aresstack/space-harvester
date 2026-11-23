@@ -94,6 +94,8 @@ final class ReadingPane extends JPanel {
     /** Die Ansicht mit den Inhaltswolken der Dokumentnavigation darüber, wie unter „Text“. */
     private final javax.swing.JScrollPane scroll = Comic.scroll(pane);
     private final NavigableDocumentPage page = new NavigableDocumentPage(scroll, pane, PADDING_TOP);
+    /** Vorlesen der Seite mit dem runden Knopf oben rechts und Doppelklick-Weiterlesen wie im EAC. */
+    private final PageReadAloud readAloud = new PageReadAloud(pane);
     /** Drehender Ring über dem Text, solange die Leseansicht lädt; statt eines Hinweistexts oben. */
     private final BusyOverlay overlay = new BusyOverlay(page);
     private String details = "";
@@ -161,7 +163,13 @@ final class ReadingPane extends JPanel {
         top.add(hint);
         add(top, BorderLayout.NORTH);
         add(overlay, BorderLayout.CENTER);
+        page.setOrb(readAloud.orb());
         clear(" ");
+    }
+
+    /** Das Vorlesen dieser Ansicht. */
+    PageReadAloud readAloud() {
+        return readAloud;
     }
 
     /**
@@ -257,6 +265,7 @@ final class ReadingPane extends JPanel {
 
     /** Leert die Ansicht und zeigt {@code text} als Hinweis. */
     void clear(String text) {
+        readAloud.speechText(null);
         hideUpdate();
         overlay.setBusy(false);
         generation++;
