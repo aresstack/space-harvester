@@ -355,7 +355,7 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
         }
         try {
             searchers.close();
-            writer.rollback();
+            TragicWriters.rollbackOnClose(writer, "Suchlauf-Protokoll");
         } catch (IOException e) {
             throw new PageCacheException("Suchlauf-Protokoll " + path + " kann nicht geschlossen werden", e);
         } finally {

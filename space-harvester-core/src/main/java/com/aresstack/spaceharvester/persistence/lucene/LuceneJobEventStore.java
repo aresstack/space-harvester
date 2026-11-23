@@ -262,7 +262,7 @@ public final class LuceneJobEventStore implements JobEventStore, AutoCloseable {
         }
         try {
             searchers.close();
-            writer.rollback();
+            TragicWriters.rollbackOnClose(writer, "Diagnoseablage");
         } catch (IOException e) {
             throw new PageCacheException("Diagnoseablage " + path + " kann nicht geschlossen werden", e);
         } finally {

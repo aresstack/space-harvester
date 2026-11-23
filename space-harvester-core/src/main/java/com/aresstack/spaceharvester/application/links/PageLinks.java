@@ -545,7 +545,13 @@ public final class PageLinks implements HoldingsChanges, AutoCloseable {
         synchronized (work) {
             pending.close();
         }
-        index.flush();
+        try {
+            index.flush();
+        } catch (RuntimeException e) {
+            // Etwa ein Writer, den ein unterbrochener Thread geschlossen hat: Das Verzeichnis ist abgeleitet und wird
+            // beim nächsten Start abgeglichen; das Beenden der übrigen Bausteine darf daran nicht scheitern.
+            LOG.log(System.Logger.Level.WARNING, "Verweise beim Beenden nicht abgelegt ({0})", e.getClass().getName());
+        }
     }
 
     // --- Typen ----------------------------------------------------------------------------------------------------
