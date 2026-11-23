@@ -246,6 +246,12 @@ public final class PageDetailPanel extends JPanel {
     private final NavigableDocumentPage readerPage;
     /** Der Erklär-Podcast der Seite (Angelo 21.11.2026): Play-Knopf oben rechts im Himmel des Lesetexts. */
     private final PodcastControl<PodcastPage> pagePodcast;
+    /** Die Bilder und die Markierung des Seiten-Podcasts im Lesetext. */
+    private final PagePodcastPictures pagePictures;
+    /** Zähler der Bilder-Leseläufe: ein Ergebnis zu einer früheren Seite verfällt. */
+    private int pagePictureLoads;
+    /** Die Stellen, von denen der Seiten-Podcast gerade erzählt; nach einem Neuaufbau des Lesetexts wieder gelb. */
+    private List<int[]> pageSpans = List.of();
 
     /** Wofür der Erklär-Podcast entsteht: eine Seite samt Unterseiten. */
     record PodcastPage(String sourceId, String pageId) {
@@ -556,6 +562,25 @@ public final class PageDetailPanel extends JPanel {
             }
         }, PodcastControl.Labels.PAGE);
         pagePodcast.events(context.events()::publish);
+        // Bilder neben dem Text, laufende Stelle gelb, das Bild des Kapitels geht aus seiner Stelle auf (23.11.2026).
+        pagePictures = new PagePodcastPictures(reader);
+        pagePodcast.follow(spans -> {
+            pageSpans = spans(spans);
+            pagePictures.mark(pageSpans);
+        });
+        pagePodcast.cue(new PodcastControl.Cue() {
+            @Override
+            public boolean open(int topic) {
+                return pagePictures.open(topic);
+            }
+
+            @Override
+            public void close() {
+                pagePictures.close();
+            }
+        });
+        pagePictures.onClosedByUser(pagePodcast::pictureClosed);
+        pagePodcast.stored(this::loadPagePictures);
         // Links neben der Lupe das Kopieren, rechtsbündig der Schalter „Untertitel“ (Angelo 22.11.2026).
         pageFoot.add(Comic.row(pagePodcast.transcriptCopy()), BorderLayout.WEST);
         pageFoot.add(Comic.row(pagePodcast.subtitleToggle()), BorderLayout.EAST);
@@ -2949,6 +2974,8 @@ public final class PageDetailPanel extends JPanel {
         terms.showRelations(document == null ? null : document.relations());
         loadVerbs();
         acronymDetail.setText(" ");
+        pagePictures.mark(List.of());
+        pagePictures.show(List.of());
         if (document == null) {
             reader.setText("");
             recomputeReader.setVisible(false);
@@ -2956,6 +2983,12 @@ public final class PageDetailPanel extends JPanel {
         }
         reader.setStyledDocument(document.document());
         reader.setCaretPosition(0);
+        // Neu berechnet bei gleichem Text, während der Podcast läuft: die laufende Stelle bleibt gelb.
+        if (!sameText) {
+            pageSpans = List.of();
+        }
+        pagePictures.mark(pageSpans);
+        loadPagePictures();
         readerPage.contentChanged();
         // Die Wolken der Leseansicht zählen wiederholte Überschriften im jetzt gezeigten Klartext.
         readingPane.setNavigation(readerPage.sky().navigation(), reader.getText());
@@ -5621,7 +5654,77 @@ public final class PageDetailPanel extends JPanel {
             public Optional<String> transcript(PodcastPage page) {
                 return workspace.pagePodcastTranscript(page.sourceId(), page.pageId());
             }
+
+            @Override
+            public List<Integer> focus(PodcastPage page, int topic) {
+                List<Integer> pairs = new ArrayList<>();
+                for (var span : workspace.pagePodcastFocus(page.sourceId(), page.pageId(), topic)) {
+                    pairs.add(span.start());
+                    pairs.add(span.end());
+                }
+                return pairs;
+            }
         };
+    }
+
+    /** Die Stellen aus {@link PodcastControl.Source#focus} der Seite: je zwei Zahlen Anfang und Ende. */
+    static List<int[]> spans(List<Integer> pairs) {
+        List<int[]> spans = new ArrayList<>();
+        for (int i = 0; i + 1 < pairs.size(); i += 2) {
+            spans.add(new int[]{pairs.get(i), pairs.get(i + 1)});
+        }
+        return spans;
+    }
+
+    /**
+     * Liest im Hintergrund die fertigen Bilder des Seiten-Podcasts mit der Stelle ihres Themas und stellt sie neben
+     * den Lesetext (Angelo 23.11.2026); ohne Podcast oder ohne Bilder bleibt die Spalte weg.
+     */
+    private void loadPagePictures() {
+        AppRuntime runtime = context.runtime();
+        String source = sourceId;
+        String shownPage = pageId;
+        if (runtime == null || source == null || shownPage == null || shown == null || shown.text() == null) {
+            return;
+        }
+        com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
+        int mine = ++pagePictureLoads;
+        Background.run(() -> readPagePictures(workspace, source, shownPage), pictures -> {
+            if (mine == pagePictureLoads && source.equals(sourceId) && shownPage.equals(pageId)) {
+                pagePictures.show(pictures);
+            }
+        }, failure -> LOG.log(System.Logger.Level.INFO, "Bilder des Seiten-Podcasts nicht gelesen ({0})",
+                failure.getClass().getName()));
+    }
+
+    private static List<PagePodcastPictures.Placed> readPagePictures(
+            com.aresstack.spaceharvester.app.runtime.Workspace workspace, String source, String page) {
+        List<PagePodcastPictures.Placed> placed = new ArrayList<>();
+        var podcast = workspace.pagePodcast(source, page);
+        if (podcast.isEmpty()) {
+            return placed;
+        }
+        java.util.Set<Integer> topics = new java.util.HashSet<>();
+        for (var part : podcast.get().parts()) {
+            if (part.picture() == null || !topics.add(part.topic())) {
+                continue;
+            }
+            var spans = workspace.pagePodcastFocus(source, page, part.topic());
+            try {
+                com.aresstack.spaceharvester.app.ui.controls.PictureStage.Picture read =
+                        PodcastControl.read(part.picture());
+                java.awt.image.BufferedImage image = read.image() != null ? read.image()
+                        : read.vector().raster(2 * PagePodcastPictures.COLUMN);
+                // ein Thema über Unterseiten hat keine Stelle im Text: sein Bild steht am Ende
+                placed.add(new PagePodcastPictures.Placed(part.topic(),
+                        spans.isEmpty() ? Integer.MAX_VALUE : spans.get(0).start(), image, read.caption(),
+                        new com.aresstack.spaceharvester.app.ui.controls.ImageViewer.Picture(image, read.caption(),
+                                read.vector())));
+            } catch (java.io.IOException | RuntimeException e) {
+                // ein unlesbares Bild fehlt neben dem Text; die übrigen stehen da
+            }
+        }
+        return placed;
     }
 
     /** Der Erklär-Podcast der Seite (für Tests). */
