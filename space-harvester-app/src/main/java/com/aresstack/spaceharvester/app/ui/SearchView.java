@@ -817,7 +817,17 @@ public final class SearchView implements View {
         KeywordSearch.Query q = new KeywordSearch.Query(searchedText, missing.size() == 1 ? missing.iterator().next()
                 : null, missing.size() > 1 ? missing : Set.of(), Set.of(), Set.of()).ofKinds(chosenKinds())
                 .withGlossarySynonyms(synonymsOn());
-        int id = request;
+        // Eigene Anfragenummer: Antworten der vorigen Suche (Neusortieren, Nachbarn, Ladestand) dürfen die
+        // nachgesuchte Quelle nicht mehr überschreiben. Bis 23.11.2026 kam ein spätes Neusortieren der alten Quelle
+        // nach dem ersten Stapel an, setzte deren (leeren) Cursor und „Weitere laden“ blieb aus (CI 45213208517).
+        int before = request;
+        int id = ++request;
+        if (neighborsFor == before) {
+            neighborsFor = id;
+        }
+        if (termPagesFor == before) {
+            termPagesFor = id;
+        }
         cover(missing, false);
         starting("Suche in " + String.join(", ", missing.stream().map(this::title).toList()) + " …");
         String core = java.util.UUID.randomUUID().toString();

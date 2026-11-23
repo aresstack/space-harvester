@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Eine angemeldete E-Akte-Verbindung über WebDAV. Leitet die E-Akte eine Anfrage zur Anmeldung um, wird die
+ * Eine angemeldete E-Akte-Verbindung über WebDAV, nur lesend ({@code PROPFIND Depth: 0/1} und {@code GET}). Leitet die E-Akte eine Anfrage zur Anmeldung um, wird die
  * SAML-Anforderung mit der bestehenden OpenAM-Sitzung abgeschlossen und die Anfrage einmal wiederholt (so auch das
  * Testprogramm v2.0); ein Kennwort wird dabei nie gesendet.
  */
@@ -57,12 +57,33 @@ final class HttpEakteConnection implements EakteConnection {
     }
 
     @Override
-    public byte[] read(String href) throws IOException {
-        SsoHttp.Response response = request(navigator, "GET", resolve(href), null);
-        if (response.status() / 100 != 2) {
-            throw rejected(response, "Dokument");
+    public long download(String href, java.io.OutputStream target) throws IOException {
+        URI uri = resolve(href);
+        SsoHttp.Stream stream = http.stream(uri);
+        for (int round = 0; round < 2 && navigator.leadsToLogin(stream.head()); round++) {
+            stream.body().close();
+            http.trace("Die E-Akte leitet GET zur Anmeldung um; schließe die SAML-Anforderung mit der bestehenden "
+                    + "Sitzung ab und wiederhole");
+            navigator.settle(stream.head());
+            stream = http.stream(uri);
         }
-        return response.body();
+        for (int hop = 0; hop < MAX_LOCAL_REDIRECTS && stream.redirect()
+                && http.profile().isEakte(stream.next()); hop++) {
+            stream.body().close();
+            stream = http.stream(stream.next());
+        }
+        try (java.io.InputStream body = stream.body()) {
+            if (navigator.leadsToLogin(stream.head())) {
+                throw new com.aresstack.spaceharvester.deck.eakte.SessionExpiredException(
+                        "Anmeldung nötig: Die E-Akte leitet das Dokument zur Anmeldung um");
+            }
+            if (stream.status() / 100 != 2) {
+                throw rejected(stream.head(), "Dokument");
+            }
+            long copied = body.transferTo(target);
+            http.trace("Dokument geladen: " + copied + " Byte (" + stream.contentType() + ")");
+            return copied;
+        }
     }
 
     @Override
@@ -81,8 +102,9 @@ final class HttpEakteConnection implements EakteConnection {
             response = send(method, target, depth);
         }
         if (sso.leadsToLogin(response)) {
-            throw new IOException("Die E-Akte leitet " + method + " trotz abgeschlossener Anmeldung zur Anmeldung um "
-                    + "(gesendete Cookies: " + http.cookies().describe(target) + ")");
+            throw new com.aresstack.spaceharvester.deck.eakte.SessionExpiredException("Anmeldung nötig: Die E-Akte "
+                    + "leitet " + method + " trotz abgeschlossener Anmeldung zur Anmeldung um (gesendete Cookies: "
+                    + http.cookies().describe(target) + ")");
         }
         return response;
     }
@@ -109,11 +131,22 @@ final class HttpEakteConnection implements EakteConnection {
         return root.resolve(WebDavXml.path(href));
     }
 
-    private static IOException rejected(SsoHttp.Response response, String what) {
-        return switch (response.status()) {
-            case 401, 403 -> new IOException(what + ": Zugriff verweigert (HTTP " + response.status() + ")");
-            case 404 -> new IOException(what + " nicht gefunden (HTTP 404)");
-            default -> new IOException(what + ": Die E-Akte antwortet HTTP " + response.status());
-        };
+    /** Verständliche Fehler: 401 Anmeldung nötig, 403 keine Berechtigung, 404 verschwunden, 5xx Serverfehler. */
+    static IOException rejected(SsoHttp.Response response, String what) {
+        int status = response.status();
+        if (status == 401) {
+            return new com.aresstack.spaceharvester.deck.eakte.SessionExpiredException(
+                    "Anmeldung nötig: Die E-Akte verlangt eine neue Anmeldung (HTTP 401)");
+        }
+        if (status == 403) {
+            return new IOException(what + ": keine Berechtigung (HTTP 403)");
+        }
+        if (status == 404 || status == 410) {
+            return new IOException(what + " gibt es nicht mehr (HTTP " + status + ")");
+        }
+        if (status >= 500) {
+            return new IOException(what + ": Serverfehler der E-Akte (HTTP " + status + ")");
+        }
+        return new IOException(what + ": Die E-Akte antwortet HTTP " + status);
     }
 }

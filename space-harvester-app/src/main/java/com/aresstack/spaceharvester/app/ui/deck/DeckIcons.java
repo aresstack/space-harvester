@@ -96,4 +96,17 @@ final class DeckIcons {
             }
         };
     }
+
+    /** E-Akte: ein Aktenordner mit Rückenschild und Griffloch. */
+    static StrokeIcon eakte() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawRoundRect(3, 1, 10, 14, 2, 2);
+                g2.drawLine(6, 1, 6, 15);
+                g2.drawRect(8, 4, 3, 4);
+                g2.drawOval(8, 10, 3, 3);
+            }
+        };
+    }
 }

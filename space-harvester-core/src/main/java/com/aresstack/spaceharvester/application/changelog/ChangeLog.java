@@ -461,7 +461,7 @@ public final class ChangeLog implements AutoCloseable {
         requireReadable(caller, sourceId);
         Span span = span(sourceId, update);
         Visibility visible = new Visibility(caller);
-        Optional<StoredSummary> stored = store.summary(sourceId, update, spaceKey)
+        Optional<StoredSummary> stored = store.summary(SummaryScope.update(sourceId, update, spaceKey))
                 .filter(found -> sameSpan(found, span) && valid(found, visible));
         if (stored.isEmpty()) {
             return Optional.empty();
@@ -540,7 +540,8 @@ public final class ChangeLog implements AutoCloseable {
         Objects.requireNonNull(update, "update");
         requireReadable(caller, sourceId);
         Visibility visible = new Visibility(caller);
-        return store.summary(sourceId, update, spaceKey).filter(found -> valid(found, visible)).isPresent();
+        return store.summary(SummaryScope.update(sourceId, update, spaceKey)).filter(found -> valid(found, visible))
+                .isPresent();
     }
 
     /**
@@ -690,7 +691,7 @@ public final class ChangeLog implements AutoCloseable {
             for (StoredSummary stored : store.summaries(sourceId)) {
                 if (stored.inputPages().stream().anyMatch(page -> sourceId.equals(page.sourceIdOr(sourceId))
                         && withdrawnPages.contains(page.pageId()))) {
-                    store.deleteSummary(sourceId, stored.updateId(), stored.spaceKey());
+                    store.deleteSummary(stored.scope());
                     removed = true;
                 }
             }
