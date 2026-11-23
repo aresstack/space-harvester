@@ -46,6 +46,16 @@ public final class FakeEakteServer implements AutoCloseable {
     private static final String ACS = "/fsc/saml2/post";
     private static final String START = "/fsc/fscasp/content/bin/fscvext.dll";
 
+    /** Erfundene Outlook-Nachricht (264 KiB, OLE-Kopf und danach deterministische Bytes), wie die echte .msg. */
+    public static final String MESSAGE_PATH = "/Arbeitsvorrat/Vorgang 4711/Anfrage Frachtraum #7 (Kopie).msg";
+    public static final String MESSAGE_TYPE = "application/vnd.ms-outlook";
+    public static final String MESSAGE_ADDRESS = "COO.7169.100.8.4711";
+    public static final byte[] MESSAGE = message();
+    /** Mappe ohne Berechtigung (PROPFIND → 403). */
+    public static final String FORBIDDEN_FOLDER = "/Gesperrt/";
+    /** Datei, deren Abruf mit einem Serverfehler endet (GET → 500). */
+    public static final String BROKEN_FILE = "/Ablage/Defekt.txt";
+
     /** Erfundener Akteninhalt: Pfad unter /fsc/webdav → Inhalt; Mappen enden auf „/“. */
     private static final Map<String, String> FILES = new LinkedHashMap<>();
 
@@ -57,6 +67,23 @@ public final class FakeEakteServer implements AutoCloseable {
         FILES.put("/Ablage/", "");
         FILES.put("/Ablage/Logbuch 2026.txt", "Logbuch der Avenger, Eintrag 1.\n");
         FILES.put("/Übersicht Akten.txt", "Übersicht über alle erfundenen Akten.\n");
+        FILES.put("/Arbeitsvorrat/Vorgang 4711/", "");
+        FILES.put(MESSAGE_PATH, ""); // Inhalt: MESSAGE (binär)
+        FILES.put("/Pinnwand/", ""); // leer
+        FILES.put(FORBIDDEN_FOLDER, "");
+        FILES.put(BROKEN_FILE, "");
+    }
+
+    private static byte[] message() {
+        byte[] bytes = new byte[264 * 1024];
+        byte[] ole = {(byte) 0xD0, (byte) 0xCF, 0x11, (byte) 0xE0, (byte) 0xA1, (byte) 0xB1, 0x1A, (byte) 0xE1};
+        System.arraycopy(ole, 0, bytes, 0, ole.length);
+        long seed = 4711;
+        for (int i = ole.length; i < bytes.length; i++) {
+            seed = seed * 6364136223846793005L + 1442695040888963407L;
+            bytes[i] = (byte) (seed >>> 56);
+        }
+        return bytes;
     }
 
     private final HttpServer eakte;
@@ -196,11 +223,25 @@ public final class FakeEakteServer implements AutoCloseable {
             send(exchange, 404, "text/plain", "nicht gefunden");
             return;
         }
+        if (key.equals(FORBIDDEN_FOLDER) || key.equals(BROKEN_FILE) && exchange.getRequestMethod().equals("GET")) {
+            exchange.getRequestBody().readAllBytes();
+            boolean forbidden = key.equals(FORBIDDEN_FOLDER);
+            send(exchange, forbidden ? 403 : 500, "text/plain", forbidden ? "verboten" : "kaputt");
+            return;
+        }
         if (exchange.getRequestMethod().equals("PROPFIND")) {
             exchange.getRequestBody().readAllBytes();
             boolean deep = !"0".equals(exchange.getRequestHeaders().getFirst("Depth"));
             exchange.getResponseHeaders().add("Set-Cookie", "FSCDAVSEEN=1; Path=" + WEBDAV);
             send(exchange, 207, "application/xml; charset=utf-8", multistatus(key, deep));
+            return;
+        }
+        if (exchange.getRequestMethod().equals("GET") && key.equals(MESSAGE_PATH)) {
+            exchange.getResponseHeaders().add("Content-Type", MESSAGE_TYPE);
+            exchange.sendResponseHeaders(200, MESSAGE.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(MESSAGE);
+            }
             return;
         }
         if (exchange.getRequestMethod().equals("GET") && !key.endsWith("/")) {
@@ -250,9 +291,23 @@ public final class FakeEakteServer implements AutoCloseable {
         if (folder) {
             href.append('/');
         }
+        if (key.equals(MESSAGE_PATH)) {
+            // Wie Fabasoft laut Herstellerdoku: objaddress im eigenen Namensraum, nicht gelieferte Eigenschaft als 404
+            return "<d:response><d:href>" + href + "</d:href><d:propstat><d:prop><d:resourcetype/>"
+                    + "<d:iscollection>0</d:iscollection><d:getcontentlength>" + MESSAGE.length
+                    + "</d:getcontentlength><d:getcontenttype>" + MESSAGE_TYPE + "</d:getcontenttype>"
+                    + "<d:creationdate>2026-11-20T08:15:00Z</d:creationdate><d:getetag>\"4711-1\"</d:getetag>"
+                    + "<f:COOSYSTEM_1_1_objaddress xmlns:f=\"urn:fabasoft:erfunden\">" + MESSAGE_ADDRESS
+                    + "</f:COOSYSTEM_1_1_objaddress><d:getlastmodified>Mon, 23 Nov 2026 15:00:00 GMT</d:getlastmodified>"
+                    + "</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat><d:propstat><d:prop>"
+                    + "<d:displayname>falsch</d:displayname></d:prop><d:status>HTTP/1.1 404 Not Found</d:status>"
+                    + "</d:propstat></d:response>";
+        }
         String content = FILES.get(key);
         return "<d:response><d:href>" + href + "</d:href><d:propstat><d:prop>"
-                + (folder ? "<d:resourcetype><d:collection/></d:resourcetype>"
+                + (folder ? key.equals("/Arbeitsvorrat/Vorgang 4711/")
+                ? "<d:resourcetype/><d:iscollection>1</d:iscollection>" // nur iscollection, wie manche Fabasoft-Objekte
+                : "<d:resourcetype><d:collection/></d:resourcetype>"
                 : "<d:resourcetype/><d:getcontentlength>" + content.getBytes(StandardCharsets.UTF_8).length
                 + "</d:getcontentlength><d:getcontenttype>text/plain</d:getcontenttype>")
                 + "<d:getlastmodified>Mon, 23 Nov 2026 15:00:00 GMT</d:getlastmodified>"
