@@ -312,7 +312,9 @@ public final class SettingsView implements View {
                 withButtons(cache, editCache, viewChangeLog))));
         page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
         page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component())));
-        page(BETAVIEW, Comic.column(Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
+        page(BETAVIEW, Comic.column(
+                Comic.plate(BetaViewSettingsPanel.CONNECTION_HEADING, Comic.BLUE, betaView.connection()),
+                Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "

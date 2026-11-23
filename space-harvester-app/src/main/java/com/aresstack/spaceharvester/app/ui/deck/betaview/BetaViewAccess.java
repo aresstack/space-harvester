@@ -5,16 +5,31 @@ import com.aresstack.spaceharvester.deck.betaview.http.HttpClientFactory;
 import java.util.Objects;
 
 /**
- * Der Netzweg des BetaView-Bereichs: Proxy und TLS wie die Quellen. Benutzer und Kennwort kommen nicht von hier,
+ * Der Netzweg des BetaView-Bereichs: TLS wie die Quellen, der Proxy der App nur auf Wunsch. Wie MainframeMate
+ * ({@code BetaViewHttpClient} öffnet {@code url.openConnection()} ohne eigenen Proxy) geht BetaView als Vorgabe direkt
+ * zum Server; der Schalter liegt unter Einstellungen › BetaView › Verbindung. Benutzer und Kennwort kommen nicht von hier,
  * sondern aus den gemeinsamen Host-Zugängen des Command Deck ({@link
  * com.aresstack.spaceharvester.deck.access.ServerAccounts}, dieselbe KeePass-Kopplung wie Terminal, FTP und NDV).
  */
 public interface BetaViewAccess {
 
+    /** Schlüssel im App-Zustand: true = Proxy der App verwenden. Vorgabe false (direkt, wie MainframeMate). */
+    String USE_PROXY = "deck.betaview.use-proxy";
+
+    /** Ob BetaView den Proxy der App verwendet. */
+    static boolean useProxy() {
+        return com.aresstack.spaceharvester.app.ui.AppState.shared().getBoolean(USE_PROXY, false);
+    }
+
+    /** Merkt, ob BetaView den Proxy der App verwendet; gilt ab der nächsten Verbindung. */
+    static void useProxy(boolean use) {
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(USE_PROXY, use);
+    }
+
     /** Der Netzweg zum BetaView-Server. */
     HttpClientFactory http();
 
-    /** Proxy und TLS aus den Einstellungen der App. */
+    /** TLS aus den Einstellungen der App; den Proxy der App nur, wenn {@link #useProxy()} gilt. */
     static BetaViewAccess of(AppContext context) {
         Objects.requireNonNull(context, "context");
         return new BetaViewAccess() {
@@ -24,6 +39,9 @@ public interface BetaViewAccess {
                     var settings = context.settings();
                     if (settings == null) {
                         return java.net.http.HttpClient.newBuilder();
+                    }
+                    if (!useProxy()) {
+                        return com.aresstack.spaceharvester.app.nlp.HttpModelDownload.routed(null, settings.tls());
                     }
                     return com.aresstack.spaceharvester.app.nlp.HttpModelDownload.routed(
                             com.aresstack.spaceharvester.app.runtime.AppRuntime.proxy(settings.proxy(),
