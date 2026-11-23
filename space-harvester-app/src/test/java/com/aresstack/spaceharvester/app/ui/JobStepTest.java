@@ -165,7 +165,7 @@ class JobStepTest {
                 java.util.Map.of(com.aresstack.spaceharvester.application.terms.SynonymDiscovery.TASK_PARAMETER,
                         com.aresstack.spaceharvester.application.terms.SynonymDiscovery.TASK), false, false, null);
 
-        assertThat(Texts.type(synonyms)).isEqualTo("Synonyme erkennen");
+        assertThat(Texts.type(synonyms)).isEqualTo("Synonyme der Fachbegriffe erkennen");
     }
 
     @Test

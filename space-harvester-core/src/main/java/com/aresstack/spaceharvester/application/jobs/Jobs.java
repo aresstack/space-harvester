@@ -2863,6 +2863,22 @@ public class Jobs implements AutoCloseable {
         }
 
         @Override
+        public void awaitingNetwork(boolean waiting) {
+            lock.lock();
+            try {
+                if (state != JobState.RUNNING || detached
+                        || (waiting ? stage != null : stage != JobStage.OFFLINE)) {
+                    return;
+                }
+                stage = waiting ? JobStage.OFFLINE : null;
+                store.save(snapshot());
+            } finally {
+                lock.unlock();
+            }
+            changed(id, owner);
+        }
+
+        @Override
         public void awaitDownloadSlot() {
             CompletableFuture<Void> granted;
             lock.lock();

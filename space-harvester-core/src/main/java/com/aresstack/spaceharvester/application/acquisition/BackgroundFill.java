@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.acquisition;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.network.NetworkState;
 import com.aresstack.spaceharvester.application.observe.Coalescer;
 import com.aresstack.spaceharvester.application.observe.Listeners;
 import com.aresstack.spaceharvester.application.observe.Subscription;
@@ -130,6 +131,13 @@ public final class BackgroundFill implements AutoCloseable {
 
         /** Im Space wartet und lädt nichts mehr, oder die Füllung ist aus. */
         default void idle(Where where) {
+        }
+
+        /**
+         * Ein Abruf des Space scheiterte am Netz ({@link NetworkState#networkFailure}): Die Seite bleibt in der Schlange,
+         * zählt nicht als gescheitert, und die Füllung wartet, bis das Netz zurück ist (Angelo 22.11.2026).
+         */
+        default void offline(Where where, Throwable cause) {
         }
     }
 
@@ -263,6 +271,10 @@ public final class BackgroundFill implements AutoCloseable {
     /** Anmeldung beim Planer, ab dem ersten Empfänger; unter {@link #monitor}. */
     private Subscription planner;
     private final Map<String, long[]> bySource = new TreeMap<>();
+    /** Der Netzzustand, oder {@code null}: dann zählt ein Netzfehler wie jeder andere. */
+    private volatile NetworkState network;
+    /** Anmeldung beim Netzzustand; unter {@link #monitor}. */
+    private Subscription networkWatch;
     private Instant lastScan;
     private Thread worker;
     /** Space je Seite, soweit bekannt (Kopfdaten im Cache); ohne Zuschauer ungenutzt. */
@@ -356,6 +368,28 @@ public final class BackgroundFill implements AutoCloseable {
      *
      * @param spaceOf der Space einer Seite, soweit bekannt; sonst zählt sie zum Space {@code null}
      */
+    /**
+     * Hängt den Netzzustand an (Angelo 22.11.2026: „nicht alle testen, wenn keine Verbindung besteht“): Ein Netzfehler
+     * lässt die Seite in der Schlange, ohne Wartezeit und ohne Fehlschlag; solange das Netz weg ist, übergibt die
+     * Füllung nur die eine Seite, mit der {@link NetworkState} prüft, und jede Änderung des Netzzustands weckt sie.
+     */
+    public void network(NetworkState network) {
+        Subscription previous;
+        synchronized (monitor) {
+            previous = networkWatch;
+            this.network = network;
+            networkWatch = network == null ? null : network.subscribe(status -> {
+                synchronized (monitor) {
+                    signalled = true;
+                    monitor.notifyAll();
+                }
+            });
+        }
+        if (previous != null) {
+            previous.close();
+        }
+    }
+
     public void observe(java.util.function.Function<PageKey, java.util.Optional<String>> spaceOf, Observer observer,
                         Predicate<Where> resting) {
         this.spaceOf = Objects.requireNonNull(spaceOf, "spaceOf");
@@ -1189,6 +1223,12 @@ public final class BackgroundFill implements AutoCloseable {
                 dropped = true;
                 continue;
             }
+            NetworkState net = network;
+            if (net != null && !net.tryPermit()) {
+                // Offline: keine weitere Seite, bis das Netz zurück ist oder die nächste Prüfung frei wird; beides
+                // weckt die Füllung (network).
+                break;
+            }
             AcquisitionScheduler.Ticket ticket;
             try {
                 ticket = scheduler.request(caller, gap.key(), AcquisitionScheduler.Priority.BACKGROUND);
@@ -1251,8 +1291,18 @@ public final class BackgroundFill implements AutoCloseable {
     }
 
     private void completed(PageKey key, AcquisitionScheduler.Ticket ticket, Boolean stored, Throwable failure) {
-        boolean withdrawn = failure instanceof CancellationException
+        boolean cancelled = failure instanceof CancellationException
                 || failure instanceof CompletionException && failure.getCause() instanceof CancellationException;
+        // Der Planer schließt einen gescheiterten Abruf mit false und merkt den Grund am Ticket.
+        Throwable reason = ticket.failure().map(Throwable.class::cast).orElse(failure);
+        NetworkState net = network;
+        // Am Netz gescheitert: wie zurückgezogen, die Seite bleibt in der Schlange und zählt nicht (Angelo 22.11.2026).
+        boolean offline = !cancelled && !Boolean.TRUE.equals(stored) && net != null && net.failed(reason);
+        if (!cancelled && !offline && net != null) {
+            // Geladen oder mit Antwort der Quelle gescheitert: Das Netz ist da.
+            net.succeeded();
+        }
+        boolean withdrawn = cancelled || offline;
         Where at;
         synchronized (monitor) {
             at = whereOf.get(key);
@@ -1276,10 +1326,8 @@ public final class BackgroundFill implements AutoCloseable {
             if (at != null) {
                 // Erst austragen, dann zählen, dann „leer“: Der Teil des Space endet nie vor seiner letzten Seite, und
                 // „wartend“ zählt eine erledigte Seite nie mit.
-                // Der Planer schließt einen gescheiterten Abruf mit false und merkt den Grund am Ticket.
-                Throwable cause = ticket.failure().map(Throwable.class::cast).orElse(failure);
                 try {
-                    observer.completed(at, Boolean.TRUE.equals(stored), cause);
+                    observer.completed(at, Boolean.TRUE.equals(stored), reason);
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.DEBUG, "Zuschauer der Hintergrundfüllung scheiterte ({0})",
                             e.getClass().getName());
@@ -1300,6 +1348,14 @@ public final class BackgroundFill implements AutoCloseable {
                 }
             }
             settle(emptied);
+        }
+        if (offline && !closed && at != null) {
+            try {
+                observer.offline(at, reason);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.DEBUG, "Zuschauer der Hintergrundfüllung scheiterte ({0})",
+                        e.getClass().getName());
+            }
         }
         synchronized (monitor) {
             inFlight.remove(key, ticket);
@@ -1415,6 +1471,14 @@ public final class BackgroundFill implements AutoCloseable {
         withdraw();
         if (subscribed != null) {
             subscribed.close();
+        }
+        Subscription watched;
+        synchronized (monitor) {
+            watched = networkWatch;
+            networkWatch = null;
+        }
+        if (watched != null) {
+            watched.close();
         }
         notifier.close();
     }

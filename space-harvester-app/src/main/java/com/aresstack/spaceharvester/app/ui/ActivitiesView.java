@@ -1817,16 +1817,27 @@ public final class ActivitiesView implements View {
     }
 
     /**
-     * Was ein Reiter zeigt: „Aufträge“ alle übrigen, „Hintergrund“ je Gruppe eine Zeile ({@link #groupRows}) mit ihren
-     * Unteraufträgen darunter.
+     * Was ein Reiter zeigt: „Aufträge“ alle übrigen, „Hintergrund“ je Gruppe mit mehreren Teilen eine Zeile
+     * ({@link #groupRows}) mit ihren Unteraufträgen darunter. Ein Teil allein steht ohne Klammer (Angelo 22.11.2026:
+     * „Hintergrundfüllung“ aufgeklappt wieder nur „Hintergrundfüllung“). Neueste zuerst, die Unteraufträge folgen.
      */
     static List<JobStatus> visible(List<JobStatus> jobs, boolean background) {
         List<JobStatus> own = tabJobs(jobs, background);
         if (!background) {
             return withSyncGroups(own);
         }
-        List<JobStatus> result = new ArrayList<>(groupRows(own));
-        result.addAll(own);
+        List<JobStatus> rows = groupRows(own);
+        Set<String> grouped = new java.util.HashSet<>();
+        rows.forEach(row -> grouped.add(row.parameter(BackgroundJobs.GROUP)));
+        List<JobStatus> top = new ArrayList<>(rows);
+        List<JobStatus> members = new ArrayList<>();
+        for (JobStatus job : own) {
+            String group = job.parameter(BackgroundJobs.GROUP);
+            (group != null && grouped.contains(group) ? members : top).add(job);
+        }
+        top.sort(Comparator.comparing(JobStatus::createdAt).reversed());
+        List<JobStatus> result = new ArrayList<>(top);
+        result.addAll(members);
         return result;
     }
 
@@ -1910,9 +1921,10 @@ public final class ActivitiesView implements View {
     }
 
     /**
-     * Je Hintergrundgruppe eine Zeile (ADR 0025 Nachtrag): die Gruppe ist kein Auftrag, ihr Zustand folgt aus den
-     * Unteraufträgen (läuft, wenn einer läuft; wartet, wenn einer wartet; sonst angehalten, gescheitert, abgebrochen,
-     * fertig), die Zähler sind ihre Summe. Neueste Gruppe zuerst.
+     * Je Hintergrundgruppe mit mehr als einem Teil eine Zeile (ADR 0025 Nachtrag): die Gruppe ist kein Auftrag, ihr
+     * Zustand folgt aus den Unteraufträgen (läuft, wenn einer läuft; wartet, wenn einer wartet; sonst angehalten,
+     * gescheitert, abgebrochen, fertig), die Zähler sind ihre Summe. Neueste Gruppe zuerst. Eine Gruppe aus nur einem
+     * Teil bekommt keine Zeile: Die Klammer wiederholte nur ihn (Angelo 22.11.2026).
      */
     static List<JobStatus> groupRows(List<JobStatus> background) {
         Map<String, List<JobStatus>> byGroup = new java.util.LinkedHashMap<>();
@@ -1923,8 +1935,12 @@ public final class ActivitiesView implements View {
             }
         }
         List<JobStatus> rows = new ArrayList<>();
-        byGroup.forEach((group, parts) -> rows.add(groupStatus(GROUP_PREFIX + group, JobType.BACKGROUND,
-                new String[] {BackgroundJobs.GROUP, BackgroundJobs.TITLE, BackgroundJobs.KIND}, parts)));
+        byGroup.forEach((group, parts) -> {
+            if (parts.size() > 1) {
+                rows.add(groupStatus(GROUP_PREFIX + group, JobType.BACKGROUND,
+                        new String[] {BackgroundJobs.GROUP, BackgroundJobs.TITLE, BackgroundJobs.KIND}, parts));
+            }
+        });
         rows.sort(Comparator.comparing(JobStatus::createdAt).reversed());
         return rows;
     }

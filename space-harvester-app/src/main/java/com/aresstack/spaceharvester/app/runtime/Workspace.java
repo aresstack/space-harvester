@@ -1954,6 +1954,14 @@ public final class Workspace {
         return harvester.signIns();
     }
 
+    /**
+     * Der Netzzustand des Core, für den Hinweis „Keine Netzverbindung“ in der Statuszeile (Angelo 22.11.2026); Änderungen
+     * über {@code network().subscribe(...)}, ohne Abfragen.
+     */
+    public com.aresstack.spaceharvester.application.network.NetworkState network() {
+        return harvester.network();
+    }
+
     /** Die Proxy-Route aller Quellen, für den Hinweis „Proxy-Skript seit … nicht erneuert“ in der Statuszeile. */
     public com.aresstack.spaceharvester.source.network.ProxyRoutes proxyRoutes() {
         return harvester.proxyRoutes();
