@@ -16,7 +16,8 @@ public final class TerminalMacro {
     /** Ein Schritt: Text oder eine Taste. */
     public record Step(Kind kind, String value) {
 
-        public enum Kind { TEXT, AID }
+        /** Text, eine AID-Taste oder Tab (Schreibmarke ins nächste Eingabefeld). */
+        public enum Kind { TEXT, AID, TAB }
 
         public Step {
             Objects.requireNonNull(kind, "kind");
@@ -29,6 +30,10 @@ public final class TerminalMacro {
 
         public static Step aid(AidKey key) {
             return new Step(Kind.AID, key.name());
+        }
+
+        public static Step tab() {
+            return new Step(Kind.TAB, "TAB");
         }
 
         /** Die Taste eines AID-Schritts; leer bei Text oder unbekanntem Namen. */
@@ -47,6 +52,9 @@ public final class TerminalMacro {
         public String display() {
             if (kind == Kind.TEXT) {
                 return "\"" + value + "\"";
+            }
+            if (kind == Kind.TAB) {
+                return "⇥ Tab";
             }
             return key().map(aid -> switch (aid) {
                 case ENTER -> "⏎ Enter";
@@ -82,6 +90,17 @@ public final class TerminalMacro {
         try {
             flush();
             steps.add(Step.aid(key));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Tab: ins nächste Eingabefeld; schließt den Text davor ab, damit mehrere Felder richtig abgespielt werden. */
+    public void tab() {
+        lock.lock();
+        try {
+            flush();
+            steps.add(Step.tab());
         } finally {
             lock.unlock();
         }

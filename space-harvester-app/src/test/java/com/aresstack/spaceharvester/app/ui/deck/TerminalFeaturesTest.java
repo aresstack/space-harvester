@@ -106,6 +106,20 @@ class TerminalFeaturesTest {
             assertThat(saved.profile().port()).isEqualTo(host.port());
             assertThat(saved.steps()).hasSize(3);
 
+            // Aus einem Lesezeichen geöffnet und neu gemerkt: dessen Makro steht davor.
+            String second = bookmarkName + " B";
+            TerminalSession replayed = deck.sessions().open(session.profile(), null,
+                    List.of(TerminalMacro.Step.aid(AidKey.PF7)));
+            SwingUtilities.invokeAndWait(() -> deck.terminal().bookmark(replayed, second));
+            TerminalBookmarks store = new TerminalBookmarks(AppState.shared());
+            assertThat(store.all().stream().filter(b -> b.name().equals(second)).findFirst().orElseThrow().steps())
+                    .startsWith(TerminalMacro.Step.aid(AidKey.PF7));
+            store.remove(second);
+            replayed.disconnect();
+            waitFor(() -> replayed.note().map(note -> note.startsWith("Makro ")).orElse(false)
+                    || replayed.state().ended(), until);
+            SwingUtilities.invokeAndWait(() -> deck.terminal().closeSessionForTest(replayed));
+
             // Getrennt: „Verbinden“ öffnet dieselbe Verbindung neu.
             session.disconnect();
             SwingUtilities.invokeAndWait(() -> deck.terminal().reconnect(session));

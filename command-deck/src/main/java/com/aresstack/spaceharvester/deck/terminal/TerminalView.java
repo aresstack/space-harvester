@@ -58,6 +58,10 @@ public interface TerminalView {
 
         /** Eine AID-Taste, die an den Host ging. */
         void aid(AidKey key);
+
+        /** Tab: die Schreibmarke ging ins nächste Eingabefeld. */
+        default void tab() {
+        }
     }
 
     /** Ein Bereich ab Pufferposition {@code start}, {@code length} Zellen lang. */

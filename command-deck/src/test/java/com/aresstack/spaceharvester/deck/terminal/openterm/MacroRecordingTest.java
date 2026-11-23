@@ -51,6 +51,11 @@ class MacroRecordingTest {
                 public void aid(AidKey key) {
                     macro.aid(key);
                 }
+
+                @Override
+                public void tab() {
+                    macro.tab();
+                }
             });
             long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
             while (session.state() != SessionState.CONNECTED && System.nanoTime() < until) {
@@ -60,11 +65,14 @@ class MacroRecordingTest {
 
             assertThat(keyboard.firstInputField()).isTrue();
             type(screen, 'a');
+            key(screen, KeyEvent.VK_TAB);
+            // Ob OpenTerm selbst schon weitergesprungen ist, ist hier gleich: Schreibmarke gezielt ins verdeckte Feld.
+            assertThat(keyboard.firstInputField()).isTrue();
             assertThat(keyboard.nextInputField()).isTrue();
             type(screen, 'g'); // verdecktes Feld: nie aufzeichnen
             key(screen, KeyEvent.VK_F3);
 
-            assertThat(macro.steps()).containsExactly(TerminalMacro.Step.text("a"),
+            assertThat(macro.steps()).containsExactly(TerminalMacro.Step.text("a"), TerminalMacro.Step.tab(),
                     TerminalMacro.Step.aid(AidKey.PF3));
             session.disconnect();
         }

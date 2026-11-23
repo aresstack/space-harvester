@@ -303,6 +303,11 @@ public final class TerminalWorkspace extends JPanel {
             public void aid(AidKey key) {
                 session.macro().aid(key);
             }
+
+            @Override
+            public void tab() {
+                session.macro().tab();
+            }
         }));
         select(session);
         pills.revalidate();
@@ -583,7 +588,7 @@ public final class TerminalWorkspace extends JPanel {
         body.setOpaque(false);
         body.add(Comic.text("Name für das Terminal-Lesezeichen"), BorderLayout.NORTH);
         body.add(name, BorderLayout.CENTER);
-        body.add(Comic.muted(session.macro().steps().size() + " aufgezeichnete Schritte werden nach dem Anmelden "
+        body.add(Comic.muted(session.replay().size() + session.macro().steps().size() + " aufgezeichnete Schritte werden nach dem Anmelden "
                 + "abgespielt"), BorderLayout.SOUTH);
         if (!com.aresstack.spaceharvester.app.ui.Dialogs.formOverlay(this, "Lesezeichen merken", body, "Merken")
                 || name.getText().isBlank()) {
@@ -595,8 +600,12 @@ public final class TerminalWorkspace extends JPanel {
     /** Speichert das Lesezeichen (ohne Rückfrage; für Tests). */
     void bookmark(TerminalSession session, String name) {
         ConnectForm.Request origin = origins.get(session);
+        // Kam die Sitzung selbst aus einem Lesezeichen, gehört dessen Makro davor: sonst fehlte der Weg zum Startbild.
+        java.util.List<com.aresstack.spaceharvester.deck.terminal.TerminalMacro.Step> steps =
+                new java.util.ArrayList<>(session.replay());
+        steps.addAll(session.macro().steps());
         bookmarks.add(new TerminalBookmarks.Bookmark(name, session.profile(), origin == null ? "" : origin.entry(),
-                origin == null ? "" : origin.command(), session.macro().steps()));
+                origin == null ? "" : origin.command(), steps));
         status.setText("Lesezeichen „" + name + "“ gemerkt");
     }
 
@@ -612,8 +621,14 @@ public final class TerminalWorkspace extends JPanel {
         return 0;
     }
 
+    /** Schließt eine Sitzung wie der Knopf „Schließen“ (für Tests). */
+    void closeSessionForTest(TerminalSession session) {
+        closeSession(session);
+    }
+
     private void closeSession(TerminalSession session) {
         sessions.close(session);
+        origins.remove(session);
         ComposerToggleButton pill = pillOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);

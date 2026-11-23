@@ -28,6 +28,13 @@ class TerminalMacroTest {
         assertThat(macro.steps()).isEmpty();
         macro.aid(AidKey.CLEAR);
         assertThat(macro.steps()).extracting(TerminalMacro.Step::display).containsExactly("⌧ Clear");
+        macro.clear();
+        macro.typed("A");
+        macro.tab();
+        macro.typed("B");
+        macro.aid(AidKey.ENTER);
+        assertThat(macro.steps()).containsExactly(TerminalMacro.Step.text("A"), TerminalMacro.Step.tab(),
+                TerminalMacro.Step.text("B"), TerminalMacro.Step.aid(AidKey.ENTER));
     }
 
     @Test
@@ -51,6 +58,7 @@ class TerminalMacroTest {
 
             @Override
             public boolean nextInputField() {
+                done.add("TAB");
                 return true;
             }
 
@@ -60,8 +68,9 @@ class TerminalMacroTest {
             }
         };
         assertThat(new MacroPlayer(() -> Duration.ZERO).play(keyboard, List.of(TerminalMacro.Step.text("abc"),
+                TerminalMacro.Step.tab(),
                 new TerminalMacro.Step(TerminalMacro.Step.Kind.AID, "UNBEKANNT"), TerminalMacro.Step.aid(AidKey.PF8))))
                 .isEmpty();
-        assertThat(done).containsExactly("abc", "PF8");
+        assertThat(done).containsExactly("abc", "TAB", "PF8");
     }
 }

@@ -28,7 +28,14 @@ public final class MacroPlayer {
         int number = 0;
         for (TerminalMacro.Step step : steps) {
             number++;
-            if (step.kind() == TerminalMacro.Step.Kind.TEXT) {
+            if (step.kind() == TerminalMacro.Step.Kind.TAB) {
+                if (!keyboard.awaitUnlocked(TEXT_TIMEOUT)) {
+                    return Optional.of("Schritt " + number + ": Tastatur nicht frei");
+                }
+                if (!keyboard.nextInputField()) {
+                    return Optional.of("Schritt " + number + ": kein weiteres Eingabefeld");
+                }
+            } else if (step.kind() == TerminalMacro.Step.Kind.TEXT) {
                 if (!keyboard.awaitUnlocked(TEXT_TIMEOUT)) {
                     return Optional.of("Schritt " + number + ": Tastatur nicht frei");
                 }

@@ -95,6 +95,10 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
                             fireAid(AidKey.pf(number));
                         } else if (event.getKeyCode() == KeyEvent.VK_ENTER) {
                             fireAid(AidKey.ENTER);
+                        } else if (event.getKeyCode() == KeyEvent.VK_TAB && !event.isShiftDown()) {
+                            for (InputListener listener : inputListeners) {
+                                listener.tab();
+                            }
                         }
                     }
                 }
