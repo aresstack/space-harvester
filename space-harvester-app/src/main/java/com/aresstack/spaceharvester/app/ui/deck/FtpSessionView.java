@@ -9,7 +9,6 @@ import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
-import javax.swing.BorderFactory;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
@@ -72,11 +71,7 @@ final class FtpSessionView extends JPanel {
         east.add(Comic.row(reconnect, disconnect, close), BorderLayout.EAST);
         // Die Aktionszeile enthält nur Knöpfe, eine Zeile wie die Aktionszeilen im Space Harvester; der Stand steht in
         // der Statuszeile der App.
-        JPanel foot = new JPanel(new BorderLayout());
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(east, BorderLayout.EAST);
+        JPanel foot = DeckBars.foot(null, east);
         add(center, BorderLayout.CENTER);
         add(foot, BorderLayout.SOUTH);
 

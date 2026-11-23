@@ -20,7 +20,6 @@ import java.awt.FlowLayout;
 import java.awt.GridBagLayout;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -75,11 +74,7 @@ public final class FtpWorkspace extends JPanel {
         newPill.addActionListener(e -> select(null));
         pillGroup.add(newPill);
         pills.add(newPill);
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        head.add(pills, BorderLayout.CENTER);
+        JPanel head = DeckBars.head(pills, null);
 
         JPanel formHolder = new JPanel(new GridBagLayout());
         formHolder.setBackground(Comic.SURFACE);
