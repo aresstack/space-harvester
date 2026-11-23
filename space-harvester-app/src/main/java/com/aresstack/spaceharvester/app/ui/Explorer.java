@@ -290,8 +290,8 @@ public final class Explorer {
     /** Unten rechts (Angelo, 13.11.2026): Umriss = alle Knoten, gefüllt = nur die Favoriten als Liste mit Pfad. */
     private final IconButton favoritesOnly = new IconButton(Glyph.STAR, ONLY_FAVORITES);
     private boolean onlyFavorites;
-    private final DefaultListModel<Favorites.Favorite> favoriteModel = new DefaultListModel<>();
-    private final JList<Favorites.Favorite> favorites = new JList<>(favoriteModel);
+    /** Die Favoritenansicht an Stelle des Baums (ADR 0034, 2a); im Konstruktor angelegt, sie fragt den Baum. */
+    private final FavoritesView favorites;
     /** Die zuletzt in der Leseansicht gezeigte Seite; Ziel von „Aktuelles Dokument im Baum zeigen“. */
     private PageNavigation.Position current;
     private final Timer debounce = new Timer(300, e -> runFilter());
@@ -443,6 +443,7 @@ public final class Explorer {
 
     public Explorer(AppContext context) {
         this.context = context;
+        this.favorites = new FavoritesView(context, this::selectedItem, sourceId -> reveal(sourceId, null));
         this.states = new TreeStates(context, this::statesChanged);
         states.onSpaceChanged(this::spaceStructureChanged);
         tree.setRootVisible(false);
@@ -473,7 +474,7 @@ public final class Explorer {
                 selectionChanged();
             }
             // Die Favoritenliste zeigt, welcher Favorit gerade geöffnet bzw. im Baum gewählt ist.
-            selectCurrentFavorite();
+            favorites.markCurrent();
         });
         MouseAdapter mouse = new MouseAdapter() {
             /** Die Zeile unter dem Drücken der linken Taste, bis zum Loslassen. */
@@ -645,40 +646,7 @@ public final class Explorer {
         deck.setOpaque(false);
         deck.add(treeScroll, TREE);
         deck.add(matchScroll, MATCHES);
-        favorites.setFont(Comic.regular(13f));
-        favorites.setOpaque(false);
-        favorites.setSelectionBackground(Comic.YELLOW);
-        favorites.setSelectionForeground(Comic.INK);
-        favorites.setCellRenderer(new javax.swing.DefaultListCellRenderer() {
-            @Override
-            public java.awt.Component getListCellRendererComponent(JList<?> list, Object value, int index,
-                                                                   boolean selected, boolean focus) {
-                super.getListCellRendererComponent(list, value, index, selected, focus);
-                if (value instanceof Favorites.Favorite favorite) {
-                    // Der Favorit selbst in Tinte, seine Eltern als Pfad gedämpft darunter.
-                    setText("<html>" + escape(favorite.title()) + "<br><font color='#7a7a7a'>"
-                            + escape(favorite.where()) + "</font></html>");
-                    setIcon(favorite.isSource() ? MainWindow.database()
-                            : favorite.pageId() == null ? SidebarIcons.folder() : SidebarIcons.page());
-                }
-                setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 2));
-                setOpaque(selected);
-                return this;
-            }
-        });
-        favorites.getAccessibleContext().setAccessibleName("Favoriten");
-        favorites.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent event) {
-                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
-                    openFavorite();
-                }
-            }
-        });
-        bindEnter(favorites, this::openFavorite);
-        javax.swing.JScrollPane favoriteScroll = Comic.scroll(favorites);
-        favoriteScroll.setBorder(BorderFactory.createEmptyBorder());
-        deck.add(favoriteScroll, FAVORITES);
+        deck.add(favorites.component(), FAVORITES);
         context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::favoritesChanged));
         root.setOpaque(false);
         // Kopf wie in der Quellenverwaltung: Comic-Überschrift, darunter das Filterfeld.
@@ -1936,7 +1904,7 @@ public final class Explorer {
         }
     }
 
-    private static String escape(String text) {
+    static String escape(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
@@ -2245,7 +2213,7 @@ public final class Explorer {
         favoritesChanged();
         if (filter.getText().trim().isEmpty()) {
             cards.show(deck, only ? FAVORITES : TREE);
-            note.setText(only && favoriteModel.isEmpty() ? "Noch keine Favoriten: Stern an Space oder Seite" : " ");
+            note.setText(only && favorites.isEmpty() ? "Noch keine Favoriten: Stern an Space oder Seite" : " ");
         }
     }
 
@@ -2254,64 +2222,22 @@ public final class Explorer {
     }
 
     private void favoritesChanged() {
-        List<Favorites.Favorite> all = context.favorites().all();
-        favoriteModel.clear();
-        all.forEach(favoriteModel::addElement);
+        boolean empty = favorites.reload();
         if (onlyFavorites && filter.getText().trim().isEmpty()) {
-            note.setText(all.isEmpty() ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
+            note.setText(empty ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
-        selectCurrentFavorite();
         tree.repaint();
     }
 
-    /**
-     * Markiert in der Favoritenliste den Favoriten des im Baum gewählten Knotens, also der geöffneten Seite. Ohne
-     * diese Markierung sah ein Klick auf den Favoriten der schon offenen Seite so aus, als passiere nichts.
-     */
-    private void selectCurrentFavorite() {
+    /** Der im Baum gewählte Knoten, null ohne Auswahl. */
+    private Item selectedItem() {
         TreePath path = tree.getSelectionPath();
-        Item item = path != null && path.getLastPathComponent() instanceof Node node ? node.item() : null;
-        for (int index = 0; item != null && index < favoriteModel.size(); index++) {
-            if (matches(favoriteModel.get(index), item)) {
-                favorites.setSelectedIndex(index);
-                favorites.ensureIndexIsVisible(index);
-                return;
-            }
-        }
-        favorites.clearSelection();
-    }
-
-    private static boolean matches(Favorites.Favorite favorite, Item item) {
-        return switch (item) {
-            case SourceItem source -> favorite.isSource() && favorite.sourceId().equals(source.sourceId());
-            case SpaceItem space -> !favorite.isSource() && favorite.pageId() == null
-                    && favorite.sourceId().equals(space.sourceId())
-                    && java.util.Objects.equals(favorite.spaceKey(), space.spaceKey());
-            case PageItem page -> favorite.sourceId().equals(page.sourceId())
-                    && page.pageId().equals(favorite.pageId());
-            default -> false;
-        };
-    }
-
-    /** Ein Favorit in der Liste: die Seite öffnen bzw. den Space zeigen; der Baum folgt der geöffneten Seite. */
-    private void openFavorite() {
-        Favorites.Favorite favorite = favorites.getSelectedValue();
-        if (favorite == null) {
-            return;
-        }
-        if (favorite.isSource()) {
-            // Die ganze Quelle: im Baum wählen, Mitte und rechts folgen der Auswahl.
-            reveal(favorite.sourceId(), null);
-        } else if (favorite.pageId() == null) {
-            context.navigator().openSpace(favorite.sourceId(), favorite.spaceKey());
-        } else {
-            context.navigator().openPage(favorite.sourceId(), favorite.pageId());
-        }
+        return path != null && path.getLastPathComponent() instanceof Node node ? node.item() : null;
     }
 
     /** Für Tests: die Favoritenliste und ihr Umschalter. */
     JList<Favorites.Favorite> favoriteList() {
-        return favorites;
+        return favorites.list();
     }
 
     IconButton favoritesButton() {
