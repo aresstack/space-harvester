@@ -10,14 +10,14 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 /** Die Extraktion liefert nur Dokumentfakten: Sie kennt weder Fristprüfung noch Regeln, noch Oberfläche. */
 class ExtractionLayeringTest {
 
-    private static final JavaClasses CORE = new ClassFileImporter()
-            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-            .importPackages("com.aresstack.spaceharvester");
-
     @Test
     void extractionNeverDependsOnDeadlines() {
+        // Nur das eigene Paket einlesen: Abhängigkeiten sieht ArchUnit trotzdem, und der Test-Heap des Core ist klein
+        JavaClasses extraction = new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("com.aresstack.spaceharvester.application.extraction");
         noClasses().that().resideInAPackage("..application.extraction..")
                 .should().dependOnClassesThat().resideInAnyPackage("..application.deadlines..", "javax.swing..")
-                .check(CORE);
+                .check(extraction);
     }
 }
