@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.extraction.DocumentAnalysis;
 import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider;
 import com.aresstack.spaceharvester.application.extraction.DocumentRef;
 import com.aresstack.spaceharvester.application.extraction.ExtractedField;
+import com.aresstack.spaceharvester.application.extraction.Qualifier;
 import com.aresstack.spaceharvester.application.extraction.SourceReference;
 
 import java.util.List;
@@ -32,17 +33,19 @@ final class DemoDocumentAnalysisProvider implements DocumentAnalysisProvider {
                         field("Geschäftszeichen", "GZD-H 0000-BEISPIEL", REGEX,
                                 new SourceReference("Kopf", 1, 2, 120, 139, "GZD-H 0000-BEISPIEL")),
                         ExtractedField.of("Aussteller", "", NOT_FOUND, AI))),
-                new AnalysisSection("Konto 1", "Haushalts- und Kontoinformationen", List.of(
+                new AnalysisSection("bwn-0000", "Konto 1", "Haushalts- und Kontoinformationen", List.of(
                         field("Bewirtschafternummer", "0000", REGEX, SourceReference.NONE),
                         ExtractedField.of("Kontotyp", "Einzelvorschuss", com.aresstack.spaceharvester.application
                                 .extraction.FieldStatus.DERIVED, DERIVED))),
                 new AnalysisSection("Fristeninformationen", List.of(
-                        ExtractedField.of("Fristende", "31.12.2026", CONFLICT, AI)
+                        ExtractedField.of("Fristformulierung", "„bis zum 31.12.2026 abzurechnen“", CONFLICT, AI)
                                 .withSource(new SourceReference("Abschnitt 3", 2, 4, "bis zum 31.12.2026")),
-                        ExtractedField.of("Fristende", "30.06.2027", CONFLICT, AI)
-                                .withSource(new SourceReference("Abschnitt 5", 3, 1, "spätestens 30.06.2027")),
-                        field("Fristverlängerung", "bis 31.03.2027", REGEX, SourceReference.NONE).withNote("beantragt"),
-                        field("Fristverlängerung", "bis 31.01.2027", REGEX, SourceReference.NONE).withNote("genehmigt")))),
+                        ExtractedField.of("Fristformulierung", "„spätestens zum 30.06.2027“", CONFLICT, AI)
+                                .withSource(new SourceReference("Abschnitt 5", 3, 1, "spätestens zum 30.06.2027")),
+                        field("Fristverlängerung", "bis 31.03.2027", REGEX, SourceReference.NONE)
+                                .qualified(Qualifier.REQUESTED),
+                        field("Fristverlängerung", "bis 31.01.2027", REGEX, SourceReference.NONE)
+                                .qualified(Qualifier.GRANTED)))),
                 "", true);
     }
 

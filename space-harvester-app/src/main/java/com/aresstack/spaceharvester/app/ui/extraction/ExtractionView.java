@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvi
 import com.aresstack.spaceharvester.application.extraction.DocumentRef;
 import com.aresstack.spaceharvester.application.extraction.ExtractedField;
 import com.aresstack.spaceharvester.application.extraction.SourceReference;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
@@ -22,6 +23,7 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTable;
 import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 import javax.swing.SwingConstants;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -47,8 +49,10 @@ import java.util.function.Consumer;
  * bleibt deaktiviert. Eigene Leiste und Knöpfe hat sie nicht (UX): {@link #actions()} gehört in die Fußleiste des Deck
  * bzw. die Tab-Zeile der Seitenansicht, {@link #statusInfo()} in die Statuszeile der App.
  *
- * <p>Gelesen und analysiert wird im Hintergrund ({@link Runner}); ein spätes Ergebnis eines inzwischen gewechselten
- * Dokuments wird verworfen. Beim Wechsel ist die Tabelle sofort leer. Ändert nie ein Dokument. Nur auf dem EDT.
+ * <p>Gelesen und angestoßen wird im Hintergrund ({@link Runner}); ein spätes Ergebnis eines inzwischen gewechselten
+ * Dokuments wird verworfen. Beim Wechsel ist die Tabelle sofort leer. Neue Ergebnisse meldet der Anbieter über
+ * {@link DocumentAnalysisProvider#observe} (ADR 0027, kein Polling); dann liest die Ansicht neu. {@link #close()} meldet
+ * ab. Ändert nie ein Dokument. Nur auf dem EDT.
  */
 public final class ExtractionView extends JPanel {
 
@@ -80,7 +84,10 @@ public final class ExtractionView extends JPanel {
     private final StatusLabel status = new StatusLabel();
     private Consumer<SourceReference> onSource = source -> { };
     private Consumer<String> clipboard = ExtractionView::systemClipboard;
+    private Consumer<StatusNote> statusObserver = note -> { };
+    private StatusNote currentStatus = StatusNote.plain(" ");
 
+    private Subscription subscription = Subscription.NONE;
     private DocumentRef shown;
     private DocumentAnalysis analysis;
     /** Zählt jeden Wechsel und jeden Auftrag; nur das Ergebnis des letzten zählt. */
@@ -155,7 +162,23 @@ public final class ExtractionView extends JPanel {
         start.addActionListener(e -> startAnalysis());
         actions.setOpaque(false);
         actions.add(start);
+        subscribe();
         refresh();
+    }
+
+    /** Meldet sich beim Anbieter ab; danach liest die Ansicht nur noch auf {@link #show}. */
+    public void close() {
+        subscription.close();
+        subscription = Subscription.NONE;
+    }
+
+    private void subscribe() {
+        subscription.close();
+        subscription = provider.observe(changed -> SwingUtilities.invokeLater(() -> {
+            if (changed != null && changed.equals(shown)) {
+                reload();
+            }
+        }));
     }
 
     /** Die Aktionen für Fußleiste bzw. Tab-Zeile; derselbe Baustein über die ganze Laufzeit. */
@@ -168,6 +191,16 @@ public final class ExtractionView extends JPanel {
         return status;
     }
 
+    /** Meldet jeden neuen Stand für eine Statuszeile, die der Bereich selbst führt. */
+    public void onStatus(Consumer<StatusNote> observer) {
+        statusObserver = Objects.requireNonNull(observer, "observer");
+    }
+
+    /** Der zuletzt gemeldete Stand. */
+    public StatusNote currentStatus() {
+        return currentStatus;
+    }
+
     /** Wird mit der Fundstelle gerufen, wenn der Nutzer auf sie klickt (Sprung in die Vorschau). */
     public void onSource(Consumer<SourceReference> action) {
         onSource = Objects.requireNonNull(action, "action");
@@ -176,6 +209,7 @@ public final class ExtractionView extends JPanel {
     /** Tauscht die Analyse aus, etwa wenn der Analysedienst angeschlossen wird; liest das gezeigte Dokument neu. */
     public void provider(DocumentAnalysisProvider other) {
         provider = Objects.requireNonNull(other, "other");
+        subscribe();
         show(shown);
     }
 
@@ -191,6 +225,17 @@ public final class ExtractionView extends JPanel {
         }
         message.setText(LOADING);
         refresh();
+        load(mine, document);
+    }
+
+    /** Liest das Ergebnis des gezeigten Dokuments neu, ohne die Tabelle vorher zu leeren (Meldung des Anbieters). */
+    void reload() {
+        if (shown != null) {
+            load(++generation, shown);
+        }
+    }
+
+    private void load(long mine, DocumentRef document) {
         DocumentAnalysisProvider asked = provider;
         runner.run(() -> new Loaded(asked.result(document), asked.canAnalyze(document)),
                 loaded -> {
@@ -251,10 +296,13 @@ public final class ExtractionView extends JPanel {
         }
         long mine = ++generation;
         apply(DocumentAnalysis.inProgress(document), false);
-        runner.run(() -> asked.analyze(document),
-                result -> {
+        runner.run(() -> {
+                    asked.startAnalysis(document);
+                    return new Loaded(asked.result(document), asked.canAnalyze(document));
+                },
+                loaded -> {
                     if (mine == generation) {
-                        apply(result, asked.canAnalyze(document));
+                        apply(loaded.analysis(), loaded.canAnalyze());
                     }
                 },
                 failure -> {
@@ -288,7 +336,9 @@ public final class ExtractionView extends JPanel {
         StatusNote.Tone tone = analysis != null && analysis.state() == AnalysisState.FAILED
                 ? StatusNote.Tone.ERROR : StatusNote.Tone.PLAIN;
         String text = shown != null && analysis == null ? LOADING : ExtractionRows.status(analysis);
-        status.show(new StatusNote("Extraktion: " + text, tone, null, null));
+        currentStatus = new StatusNote("Extraktion: " + text, tone, null, null);
+        status.show(currentStatus);
+        statusObserver.accept(currentStatus);
     }
 
     private void popup(MouseEvent event) {

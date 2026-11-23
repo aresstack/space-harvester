@@ -5,6 +5,8 @@ import com.aresstack.spaceharvester.application.extraction.DocumentAnalysis;
 import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider;
 import com.aresstack.spaceharvester.application.extraction.DocumentRef;
 import com.aresstack.spaceharvester.application.extraction.FieldStatus;
+import com.aresstack.spaceharvester.application.extraction.InMemoryDocumentAnalyses;
+import com.aresstack.spaceharvester.application.observe.Subscription;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.SwingUtilities;
@@ -83,7 +85,7 @@ class ExtractionViewTest {
             assertThat(table.getValueAt(5, 0)).isEqualTo("Konto 1 – Haushalts- und Kontoinformationen");
             assertThat(column(table, 2)).contains("abgeleitet", "Widerspruch");
             assertThat(column(table, 0)).contains("Fristverlängerung (beantragt)", "Fristverlängerung (genehmigt)");
-            assertThat(column(table, 1)).contains("31.12.2026", "30.06.2027");
+            assertThat(column(table, 1)).contains("„bis zum 31.12.2026 abzurechnen“", "„spätestens zum 30.06.2027“");
             assertThat(table.getValueAt(3, 3)).isEqualTo("Kopf · S. 1 · Abs. 2");
             assertThat(table.getValueAt(2, 3)).isEqualTo("");
             assertThat(view.experimentalText()).isEqualTo(ExtractionView.EXPERIMENTAL + ExtractionView.SAMPLE);
@@ -153,11 +155,17 @@ class ExtractionViewTest {
     }
 
     @Test
-    void connectedAnalysisEnablesStartAndShowsResult() throws Exception {
+    void connectedAnalysisEnablesStartAndShowsResultWhenObserved() throws Exception {
+        InMemoryDocumentAnalyses store = new InMemoryDocumentAnalyses();
         DocumentAnalysisProvider service = new DocumentAnalysisProvider() {
             @Override
             public DocumentAnalysis result(DocumentRef document) {
-                return DocumentAnalysis.notAnalyzed(document);
+                return store.result(document);
+            }
+
+            @Override
+            public Subscription observe(Consumer<DocumentRef> changed) {
+                return store.observe(changed);
             }
 
             @Override
@@ -166,25 +174,34 @@ class ExtractionViewTest {
             }
 
             @Override
-            public DocumentAnalysis analyze(DocumentRef document) {
-                return new DemoDocumentAnalysisProvider().result(document);
+            public void startAnalysis(DocumentRef document) {
+                store.record(DocumentAnalysis.inProgress(document));
             }
         };
-        HeldRunner held = new HeldRunner();
+        ExtractionView[] view = new ExtractionView[1];
         SwingUtilities.invokeAndWait(() -> {
-            ExtractionView view = new ExtractionView(service, held);
-            view.show(FIRST);
-            held.release(0);
-            assertThat(view.startButton().isEnabled()).isTrue();
+            view[0] = new ExtractionView(service, NOW);
+            view[0].show(FIRST);
+            assertThat(view[0].startButton().isEnabled()).isTrue();
 
-            view.startButton().doClick();
-            assertThat(view.analysis().state()).isEqualTo(AnalysisState.IN_PROGRESS);
-            assertThat(view.startButton().isEnabled()).isFalse();
-
-            held.release(1);
-            assertThat(view.analysis().state()).isEqualTo(AnalysisState.COMPLETED);
-            assertThat(view.startButton().isEnabled()).isTrue();
+            view[0].startButton().doClick();
+            assertThat(view[0].analysis().state()).isEqualTo(AnalysisState.IN_PROGRESS);
+            assertThat(view[0].startButton().isEnabled()).isFalse();
         });
+
+        // Der Dienst meldet das fertige Ergebnis über den Beobachter, auf einem beliebigen Thread
+        store.record(new DemoDocumentAnalysisProvider().result(FIRST));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].analysis().state()).isEqualTo(AnalysisState.COMPLETED);
+            assertThat(view[0].table().getRowCount()).isPositive();
+            assertThat(view[0].startButton().isEnabled()).isTrue();
+        });
+
+        // Nach close() kommt keine Meldung mehr an
+        SwingUtilities.invokeAndWait(() -> view[0].close());
+        store.forget(FIRST);
+        SwingUtilities.invokeAndWait(() ->
+                assertThat(view[0].analysis().state()).isEqualTo(AnalysisState.COMPLETED));
     }
 
     @Test
