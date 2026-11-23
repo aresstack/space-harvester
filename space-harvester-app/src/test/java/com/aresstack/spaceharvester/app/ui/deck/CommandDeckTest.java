@@ -153,12 +153,29 @@ class CommandDeckTest {
             }
             assertThat(deck.area()).isEqualTo(DeckArea.FTP);
 
-            // Zurück in die Perspektive: wieder Home, keine Verbindung.
+            // Schon beim Verlassen zurück auf Home: Beim Wiederkommen wird nichts anderes sichtbar.
+            deck.show(DeckArea.TERMINAL);
+            deck.perspective().onHidden().run();
+            assertThat(deck.area()).isEqualTo(DeckArea.HOME);
             deck.show(DeckArea.TERMINAL);
             deck.perspective().onShown().run();
             assertThat(deck.area()).isEqualTo(DeckArea.HOME);
             assertThat(deck.sessions().all()).isEmpty();
             assertThat(CommandDeck.chatHints(DeckArea.HOME).hint()).contains("verbunden wird erst");
+
+            // Schmal (Chat breit, Fenster klein): eine Spalte, alle Kacheln erreichbar.
+            int tile = home.tileOf(DeckArea.FTP).getPreferredSize().width;
+            assertThat(DeckHome.columnsFor(320, tile)).isEqualTo(1);
+            assertThat(DeckHome.columnsFor(3 * tile + 100, tile)).isEqualTo(3);
+            home.setSize(320, 600);
+            home.doLayout();
+            javax.swing.JViewport viewport = ((javax.swing.JScrollPane) home.getComponent(0)).getViewport();
+            viewport.setSize(320, 600);
+            for (java.awt.event.ComponentListener listener : viewport.getComponentListeners()) {
+                listener.componentResized(new java.awt.event.ComponentEvent(viewport,
+                        java.awt.event.ComponentEvent.COMPONENT_RESIZED));
+            }
+            assertThat(home.columns()).isEqualTo(1);
         });
     }
 }

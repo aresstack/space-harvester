@@ -53,7 +53,7 @@ final class DeckHome extends JPanel {
     private final List<JComponent> cards = new ArrayList<>();
 
     DeckHome(List<Tile> tiles, Consumer<DeckArea> open) {
-        super(new GridBagLayout());
+        super(new BorderLayout());
         this.tiles = List.copyOf(tiles);
         Objects.requireNonNull(open, "open");
         setBackground(Comic.SURFACE);
@@ -73,7 +73,8 @@ final class DeckHome extends JPanel {
         head.add(hint, BorderLayout.CENTER);
         column.add(head, BorderLayout.NORTH);
 
-        JPanel grid = new JPanel(new GridLayout(0, 3, 12, 12));
+        GridLayout flow = new GridLayout(0, MAX_COLUMNS, 12, 12);
+        JPanel grid = new JPanel(flow);
         grid.setOpaque(false);
         for (Tile tile : this.tiles) {
             JComponent card = tile(tile, open);
@@ -82,9 +83,30 @@ final class DeckHome extends JPanel {
         }
         column.add(grid, BorderLayout.CENTER);
 
+        // Schmales Fenster oder breiter Chat: weniger Spalten, und notfalls rollen statt abschneiden.
+        JPanel centred = new JPanel(new GridBagLayout());
+        centred.setBackground(Comic.SURFACE);
         GridBagConstraints at = new GridBagConstraints();
         at.insets = new Insets(24, 24, 24, 24);
-        add(column, at);
+        centred.add(column, at);
+        javax.swing.JScrollPane scroll = new javax.swing.JScrollPane(centred,
+                javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.getViewport().setBackground(Comic.SURFACE);
+        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        scroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                int columns = columnsFor(scroll.getViewport().getWidth(), cards.isEmpty() ? 0
+                        : cards.get(0).getPreferredSize().width);
+                if (columns != flow.getColumns()) {
+                    flow.setColumns(columns);
+                    grid.revalidate();
+                }
+            }
+        });
+        add(scroll, BorderLayout.CENTER);
 
         addHierarchyListener(e -> {
             if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
@@ -92,6 +114,22 @@ final class DeckHome extends JPanel {
             }
         });
         refresh();
+    }
+
+    static final int MAX_COLUMNS = 3;
+
+    /** Wie viele Kacheln nebeneinander passen (1 … 3), bei {@code width} Platz und Kacheln von {@code tileWidth}. */
+    static int columnsFor(int width, int tileWidth) {
+        if (tileWidth <= 0) {
+            return MAX_COLUMNS;
+        }
+        int room = width - 48 + 12; // Rand links und rechts, ein Abstand weniger als Kacheln
+        return Math.max(1, Math.min(MAX_COLUMNS, room / (tileWidth + 12)));
+    }
+
+    /** Spalten des Kachelrasters (für Tests). */
+    int columns() {
+        return ((GridLayout) cards.get(0).getParent().getLayout()).getColumns();
     }
 
     /** Liest den Stand jeder Kachel neu. */

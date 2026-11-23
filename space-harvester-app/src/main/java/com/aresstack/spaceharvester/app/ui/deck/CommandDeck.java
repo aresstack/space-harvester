@@ -214,10 +214,11 @@ public final class CommandDeck {
         });
         show(DeckArea.HOME);
         // Angelo, 23.11.2026: Wer ins Deck wechselt, landet auf Home. Die Bereiche verbinden beim Öffnen sofort; das
-        // soll erst passieren, wenn man einen davon anklickt.
+        // soll erst passieren, wenn man einen davon anklickt. Schon beim Verlassen auf Home zurück: Beim Wiederkommen
+        // wird die Arbeitsfläche sichtbar, bevor onShown läuft, und der zuletzt gewählte Bereich würde sonst verbinden.
         perspective = new Perspective(Perspectives.COMMAND_DECK, "Command Deck",
                 "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", true, navigation,
-                stage, null, tools, () -> show(DeckArea.HOME), null, status);
+                stage, null, tools, () -> show(DeckArea.HOME), () -> show(DeckArea.HOME), status);
     }
 
     /**
