@@ -29,7 +29,7 @@ import javax.swing.SwingUtilities;
  * Bibliotheken, Objekte und Quelltext ({@link NdvBrowser}), unten Zustand und Aktionen. Die Sitzungen gehören dem
  * Anwendungsfall {@link NdvSessions}; Wechsel des Bereichs oder der Perspektive trennen nichts und laden nichts.
  */
-public final class NdvWorkspace extends JPanel {
+public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
 
     /**
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
@@ -104,8 +104,8 @@ public final class NdvWorkspace extends JPanel {
         center.setOpaque(false);
         center.add(formStage, NEW);
 
-        // Fuß wie in den anderen Bereichen (DeckBars): nur die Aktionen der gewählten Sitzung, der Stand steht in der
-        // Statuszeile der App. Das Formular hat keine Aktionen unten.
+        // Kein eigener Fuß: die Aktionen der gewählten Sitzung stehen neben der Lupe der gemeinsamen Fußleiste
+        // (footTools), der Stand in der Statuszeile der App. Das Formular hat keine Aktionen unten.
         foot.setOpaque(false);
         JPanel formFoot = new JPanel();
         formFoot.setOpaque(false);
@@ -113,7 +113,6 @@ public final class NdvWorkspace extends JPanel {
 
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
-        add(DeckBars.foot(null, foot), BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.all().forEach(this::added);
@@ -137,22 +136,9 @@ public final class NdvWorkspace extends JPanel {
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         pill.getAccessibleContext().setAccessibleName(session.label());
         pill.addActionListener(e -> select(session));
-        pill.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent event) {
-                if (SwingUtilities.isMiddleMouseButton(event)) {
-                    closeSession(session);
-                }
-            }
-        });
-        // Das ✕ trennt und schließt in einem Schritt (Angelo 23.11.), wie im Terminal direkt hinter dem Reiter.
-        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
-                ComposerIcons.close(), "Trennen und schließen (auch Mittelklick auf den Reiter)").compact();
-        cross.addActionListener(e -> closeSession(session));
-        JPanel tab = new JPanel(new BorderLayout(0, 0));
-        tab.setOpaque(false);
-        tab.add(pill, BorderLayout.CENTER);
-        tab.add(cross, BorderLayout.EAST);
+        // Das ✕ trennt und schließt in einem Schritt (Angelo 23.11.).
+        JPanel tab = DeckBars.tab(pill, "Trennen und schließen (auch Mittelklick auf den Reiter)",
+                () -> closeSession(session));
         pillGroup.add(pill);
         pills.add(tab, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
@@ -273,6 +259,15 @@ public final class NdvWorkspace extends JPanel {
         NdvBrowser browser = selected == null ? null : browsers.get(selected);
         statusInfo.show(browser == null ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(NO_SESSION)
                 : browser.statusNote());
+    }
+
+    /**
+     * Die Aktionen der gewählten Sitzung, mittig neben der Lupe in der gemeinsamen Fußleiste des Command Deck; das
+     * Formular „Neue Verbindung“ hat keine.
+     */
+    @Override
+    public javax.swing.JComponent footTools() {
+        return foot;
     }
 
     /** Für Tests: der Text in der Statuszeile. */
