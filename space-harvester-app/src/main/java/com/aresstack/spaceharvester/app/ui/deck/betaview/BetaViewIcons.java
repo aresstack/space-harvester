@@ -99,4 +99,44 @@ final class BetaViewIcons {
             }
         };
     }
+
+    /** Drucker: Gehäuse, Papier oben und unten. */
+    static StrokeIcon print() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawRect(5, 2, 6, 4);
+                g2.drawRoundRect(2, 6, 12, 6, 2, 2);
+                g2.drawRect(5, 10, 6, 4);
+            }
+        };
+    }
+
+    /** Fahne: markierte Bereiche (wie ⚑ in MainframeMate). */
+    static StrokeIcon flag() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawLine(4, 2, 4, 14);
+                g2.drawLine(4, 3, 12, 3);
+                g2.drawLine(12, 3, 10, 6);
+                g2.drawLine(10, 6, 12, 9);
+                g2.drawLine(12, 9, 4, 9);
+            }
+        };
+    }
+
+    /** Zwei gestapelte Blätter mit Kreuz: alle Dokumente schließen. */
+    static StrokeIcon closeAll() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawLine(5, 2, 14, 2);
+                g2.drawLine(14, 2, 14, 11);
+                g2.drawRect(2, 5, 9, 9);
+                g2.drawLine(4, 7, 9, 12);
+                g2.drawLine(9, 7, 4, 12);
+            }
+        };
+    }
 }
