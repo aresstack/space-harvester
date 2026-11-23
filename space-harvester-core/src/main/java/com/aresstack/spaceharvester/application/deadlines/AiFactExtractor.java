@@ -266,8 +266,9 @@ public final class AiFactExtractor implements ExtractionStage {
             case FILE_REFERENCE, DOK_ID, DIVISION -> Optional.of(IdentifierNormalizer.fileReference(raw));
             case DOCUMENT_DATE, VALID_FROM, VALID_UNTIL, DEADLINE_END ->
                     IdentifierNormalizer.germanDate(raw).map(Object::toString);
+            // Wie die Regex-Stufe („durchlaufende-gelder“): Live-Test 23.11.2026, gemma4 schrieb „durchlaufende Gelder“.
             case BOOK, ACCOUNT_SCOPE, DEADLINE_REFERENCE, ACCOUNT_CATEGORY ->
-                    Optional.of(raw.strip().toLowerCase(Locale.ROOT));
+                    Optional.of(raw.strip().toLowerCase(Locale.ROOT).replaceAll("\\s+", "-"));
             default -> Optional.empty();
         };
         return value.filter(v -> !v.isEmpty()).orElse(raw.strip());

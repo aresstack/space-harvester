@@ -200,6 +200,12 @@ class AiFactExtractorTest {
     }
 
     /** Antwortet der Reihe nach; eine Ausnahme in der Liste wird geworfen. */
+    @Test
+    void enumeratedValuesAreWrittenLikeTheRegexStage() {
+        assertThat(AiFactExtractor.normalize(ACCOUNT_CATEGORY, " Durchlaufende  Gelder ")).isEqualTo(CATEGORY_PASS_THROUGH);
+        assertThat(AiFactExtractor.normalize(BOOK, "Vorschuss")).isEqualTo("vorschuss");
+    }
+
     private static final class FakeModel implements StepModel {
 
         final Deque<Object> answers;
