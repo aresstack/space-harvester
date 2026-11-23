@@ -46,10 +46,10 @@ class HttpEakteServerTest {
         try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
             List<EakteEntry> root = connection.list(connection.rootHref());
             assertThat(root).extracting(EakteEntry::name)
-                    .containsExactly("Ablage", "Arbeitsvorrat", "Übersicht Akten.txt");
+                    .containsExactly("Ablage", "Arbeitsvorrat", "Gesperrt", "Pinnwand", "Übersicht Akten.txt");
             assertThat(root.get(0).folder()).isTrue();
-            assertThat(root.get(2).size()).isPositive();
-            assertThat(root.get(2).modified()).isNotNull();
+            assertThat(root.get(4).size()).isPositive();
+            assertThat(root.get(4).modified()).isNotNull();
         }
         assertThat(fake.passwordPosts()).isEqualTo(1);
         assertThat(String.join("\n", trace)).doesNotContain(FakeEakteServer.PASSWORD).doesNotContain("AQIC");
@@ -61,8 +61,9 @@ class HttpEakteServerTest {
             EakteEntry inbox = connection.list(connection.rootHref()).get(1);
             List<EakteEntry> files = connection.list(inbox.href());
             assertThat(files).extracting(EakteEntry::name)
-                    .containsExactly("Antrag Frachtraum 7.txt", "Vermerk Bergung.txt");
-            assertThat(new String(connection.read(files.get(0).href()), StandardCharsets.UTF_8))
+                    .containsExactly("Vorgang 4711", "Antrag Frachtraum 7.txt", "Vermerk Bergung.txt");
+            assertThat(files.get(0).folder()).as("nur DAV:iscollection").isTrue();
+            assertThat(new String(connection.read(files.get(1).href()), StandardCharsets.UTF_8))
                     .startsWith("Antrag auf Zuweisung");
         }
     }
@@ -70,7 +71,7 @@ class HttpEakteServerTest {
     @Test
     void canStartWithWebDavItselfWithoutStartPage() throws Exception {
         try (EakteConnection connection = server.connect(profile(false), FakeEakteServer.PASSWORD.toCharArray())) {
-            assertThat(connection.list(connection.rootHref())).hasSize(3);
+            assertThat(connection.list(connection.rootHref())).hasSize(5);
         }
         assertThat(fake.passwordPosts()).isEqualTo(1);
     }
@@ -79,7 +80,7 @@ class HttpEakteServerTest {
     void completesASecondSamlRoundForWebDavWithoutSendingThePasswordAgain() throws Exception {
         fake.separateWebDavSession(true);
         try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
-            assertThat(connection.list(connection.rootHref())).hasSize(3);
+            assertThat(connection.list(connection.rootHref())).hasSize(5);
         }
         assertThat(fake.passwordPosts()).isEqualTo(1);
         assertThat(trace).anyMatch(line -> line.contains("zur Anmeldung um"));
@@ -89,7 +90,7 @@ class HttpEakteServerTest {
     void renewsAnExpiredEakteSessionThroughTheOpenAmSession() throws Exception {
         try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
             fake.expireEakteSessions();
-            assertThat(connection.list(connection.rootHref())).hasSize(3);
+            assertThat(connection.list(connection.rootHref())).hasSize(5);
         }
         assertThat(fake.passwordPosts()).isEqualTo(1);
     }
@@ -115,7 +116,7 @@ class HttpEakteServerTest {
     void answersOpenAmNameAndPasswordCallbacksOnce() throws Exception {
         fake.nameCallbacks(true);
         try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
-            assertThat(connection.list(connection.rootHref())).hasSize(3);
+            assertThat(connection.list(connection.rootHref())).hasSize(5);
         }
         assertThat(fake.restPasswordAnswers()).isEqualTo(1);
         assertThat(fake.passwordPosts()).isZero();
@@ -147,5 +148,56 @@ class HttpEakteServerTest {
         // Der Nachbau lehnt wie die echte E-Akte mehrere Cookie-Zeilen ab; ohne Umweg über die Anmeldung beim
         // zweiten PROPFIND war die Zeile also eine einzige.
         assertThat(trace).noneMatch(line -> line.contains("PROPFIND") && line.contains("zur Anmeldung um"));
+    }
+
+    /** Abnahmekriterium 3 von GPT, hier nur gegen den Nachbau: GET der .msg, byte-identisch, nichts im Protokoll. */
+    @Test
+    void downloadsTheOutlookMessageByteIdenticalWithTheSameSession() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            EakteEntry inbox = connection.list(connection.rootHref()).get(1);
+            EakteEntry vorgang = connection.list(inbox.href()).get(0);
+            EakteEntry message = connection.list(vorgang.href()).get(0);
+            assertThat(message.name()).isEqualTo("Anfrage Frachtraum #7 (Kopie).msg");
+            assertThat(message.contentType()).isEqualTo(FakeEakteServer.MESSAGE_TYPE);
+            assertThat(message.size()).isEqualTo(FakeEakteServer.MESSAGE.length);
+            assertThat(message.objectAddress()).isEqualTo(FakeEakteServer.MESSAGE_ADDRESS);
+            assertThat(message.etag()).isEqualTo("\"4711-1\"");
+            assertThat(message.created()).isNotNull();
+
+            java.io.ByteArrayOutputStream target = new java.io.ByteArrayOutputStream();
+            long copied = connection.download(message.href(), target);
+            assertThat(copied).isEqualTo(FakeEakteServer.MESSAGE.length);
+            assertThat(target.toByteArray()).isEqualTo(FakeEakteServer.MESSAGE);
+        }
+        assertThat(fake.passwordPosts()).isEqualTo(1);
+        assertThat(trace).anyMatch(line -> line.startsWith("GET ") && line.contains("HTTP 200")
+                && line.contains(FakeEakteServer.MESSAGE_TYPE));
+    }
+
+    @Test
+    void separatesNoPermissionServerErrorGoneAndEmptyFolder() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            List<EakteEntry> root = connection.list(connection.rootHref());
+            assertThat(connection.list(root.get(3).href())).as("Pinnwand ist leer, kein Fehler").isEmpty();
+            assertThatThrownBy(() -> connection.list(root.get(2).href()))
+                    .hasMessageContaining("keine Berechtigung").hasMessageContaining("403");
+            String broken = connection.list(root.get(0).href()).stream()
+                    .filter(entry -> entry.name().equals("Defekt.txt")).findFirst().orElseThrow().href();
+            assertThatThrownBy(() -> connection.download(broken, java.io.OutputStream.nullOutputStream()))
+                    .hasMessageContaining("Serverfehler");
+            assertThatThrownBy(() -> connection.read(connection.rootHref() + "Weg.txt"))
+                    .hasMessageContaining("gibt es nicht mehr");
+        }
+    }
+
+    @Test
+    void expiredSessionOnDownloadAsksForLoginInsteadOfSendingThePassword() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            EakteEntry file = connection.list(connection.rootHref()).get(4);
+            fake.expireAllSessions();
+            assertThatThrownBy(() -> connection.download(file.href(), java.io.OutputStream.nullOutputStream()))
+                    .isInstanceOf(SessionExpiredException.class);
+        }
+        assertThat(fake.passwordPosts()).isEqualTo(1);
     }
 }

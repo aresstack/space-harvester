@@ -16,7 +16,9 @@ public enum DeckArea {
     FTP("FTP", "MVS-Datasets und Members, Transfers, JES-Jobs und Spool", true),
     NDV("NDV", "Natural Development Server: Bibliotheken, Objekte, Quelltext", true),
     BETAVIEW("BetaView", "Beleg- und Dokumentserver", true),
-    FILES("Dateien", "Lokale Dateien, SharePoint und weitere Dateisysteme", true);
+    FILES("Dateien", "Lokale Dateien, SharePoint und weitere Dateisysteme", true),
+    /** E-Akte (Fabasoft) über WebDAV, Anmeldung über die Einmalanmeldung (Angelo, 23.11.2026). */
+    EAKTE("E-Akte", "Akten der E-Akte (Fabasoft) über WebDAV", true);
 
     private final String title;
     private final String hint;
@@ -49,6 +51,7 @@ public enum DeckArea {
             case NDV -> DeckIcons.ndv();
             case BETAVIEW -> DeckIcons.betaView();
             case FILES -> DeckIcons.files();
+            case EAKTE -> DeckIcons.eakte();
         };
     }
 }

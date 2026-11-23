@@ -131,6 +131,57 @@ final class SsoHttp {
         return result;
     }
 
+    /** Eine gestreamte Antwort ({@code GET} eines Dokuments); der Aufrufer schließt {@code body}. */
+    record Stream(URI uri, int status, String location, String contentType, long length, java.io.InputStream body) {
+
+        boolean redirect() {
+            return (status == 301 || status == 302 || status == 303 || status == 307 || status == 308)
+                    && location != null;
+        }
+
+        URI next() {
+            return uri.resolve(location.trim().replace(" ", "%20"));
+        }
+
+        /** Als gewöhnliche Antwort ohne Inhalt (für Weiterleitungen zur Anmeldung). */
+        Response head() {
+            return new Response(uri, status, location, contentType, new byte[0]);
+        }
+    }
+
+    /** {@code GET} mit gestreamtem Inhalt; sonst wie {@link #send}. */
+    Stream stream(URI target) throws IOException {
+        if (!profile.allows(target)) {
+            throw new IOException("Weiterleitung zu einem fremden Server abgelehnt: " + host(target));
+        }
+        HttpRequest.Builder request = HttpRequest.newBuilder(target).timeout(timeout)
+                .header("User-Agent", USER_AGENT).header("Accept", "*/*").GET();
+        String cookieLine = cookies.header(target);
+        if (!cookieLine.isEmpty()) {
+            request.header("Cookie", cookieLine);
+        }
+        HttpResponse<java.io.InputStream> response;
+        try {
+            response = client.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Unterbrochen", e);
+        } catch (java.io.UncheckedIOException e) {
+            throw e.getCause();
+        }
+        List<String> setCookies = response.headers().allValues("Set-Cookie");
+        cookies.store(target, setCookies);
+        Stream result = new Stream(target, response.statusCode(),
+                response.headers().firstValue("Location").orElse(null),
+                response.headers().firstValue("Content-Type").orElse(""),
+                response.headers().firstValueAsLong("Content-Length").orElse(-1L), response.body());
+        trace.accept("GET " + safe(target) + " → HTTP " + result.status() + " | " + result.contentType()
+                + (result.length() >= 0 ? " | " + result.length() + " Byte" : "")
+                + (setCookies.isEmpty() ? "" : " | setzt " + cookieNames(setCookies))
+                + (result.redirect() ? " | weiter zu " + safe(result.next()) : ""));
+        return result;
+    }
+
     /** Host, Pfad und nur die Namen der Parameter, nie ihre Werte (dort stehen SAML-Daten und Codes). */
     static String safe(URI uri) {
         if (uri == null) {

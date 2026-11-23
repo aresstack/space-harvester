@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
+import static com.aresstack.spaceharvester.app.ui.deck.DeckForms.row;
+
 import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.Background;
@@ -128,24 +130,6 @@ final class NdvConnectForm extends JPanel {
                 load();
             }
         });
-    }
-
-    private static void row(JPanel panel, int y, String label, JComponent field) {
-        GridBagConstraints c = new GridBagConstraints();
-        c.gridy = y;
-        c.insets = new Insets(3, 0, 3, 10);
-        c.anchor = GridBagConstraints.WEST;
-        JLabel text = Comic.text(label);
-        text.setPreferredSize(new Dimension(110, text.getPreferredSize().height));
-        panel.add(text, c);
-        c.gridx = 1;
-        c.insets = new Insets(3, 0, 3, 0);
-        c.fill = GridBagConstraints.HORIZONTAL;
-        c.weightx = 1;
-        if (!(field instanceof JLabel)) {
-            field.setFont(Comic.regular(13f));
-        }
-        panel.add(field, c);
     }
 
     /** Lädt die KeePass-Einträge im Hintergrund; die gemerkte Wahl bleibt gewählt. */
