@@ -137,6 +137,9 @@ class TerminalFeaturesTest {
     private static void ready(TerminalSession session) throws InterruptedException {
         assertThat(session.view(com.aresstack.spaceharvester.deck.terminal.TerminalKeyboard.class).orElseThrow()
                 .awaitUnlocked(java.time.Duration.ofSeconds(10))).isTrue();
+        // OpenTerm gibt die Tastatur schon beim Lesen des Kopfs frei; wie in MainframeMate die Aktionsverzögerung
+        // abwarten, bis die Felder stehen (ein Mensch klickt nie schneller).
+        Thread.sleep(1000);
     }
 
     private static void wheel(JComponent screen, int rotation, int modifiers) {

@@ -43,6 +43,8 @@ class FunctionKeysTest {
             assertThat(keyboard.awaitUnlocked(java.time.Duration.ofSeconds(10))).isTrue();
             // Die Tastatur wird schon beim Lesen des Kopfs frei, gemeldet wird das Bild an seinem Ende.
             waitFor(() -> screens.get() > 0, until);
+            // Wie in MainframeMate (Aktionsverzögerung): erst das fertige Bild lesen.
+            waitFor(() -> FunctionKeyLegend.ofScreen(view.text()).containsKey(8), until);
             assertThat(screens.get()).as("das erste Bild wurde gemeldet").isPositive();
             assertThat(FunctionKeyLegend.ofScreen(view.text()))
                     .containsEntry(3, "Ende").containsEntry(7, "Back").containsEntry(8, "Vor");
