@@ -870,8 +870,48 @@ public final class ChatPanel extends JPanel {
     static final String TOOL_SCOPE_HINT = "Command Deck: Der Chat sieht den gewählten Bereich – ändern kannst nur "
             + "du.";
 
-    /** Die Auswahl links; {@code null} ohne Auswahl. Erst anmelden, dann lesen (ADR 0027). */
+    /** Die Auswahl links im Baum (in der Suche der Filter); {@code null} ohne Auswahl. */
+    private Selection treeSelection;
+    /** Die Seite, die die Leseansicht gerade zeigt; {@code null}, wenn keine offen ist. */
+    private Selection reading;
+    /** Ob die Leseansicht (Inhalte) vorne ist; sonst etwa die Suche. */
+    private boolean readingFront;
+
+    /**
+     * Die Auswahl links; {@code null} ohne Auswahl. Sie ist der Bereich, solange nicht die Leseansicht mit einer
+     * offenen Seite vorne ist (siehe {@link #reading}). Erst anmelden, dann lesen (ADR 0027).
+     */
     public void selection(Selection selection) {
+        treeSelection = selection;
+        apply(scope());
+        if (!Objects.equals(scope(), treeSelection)) {
+            resolveTree();
+        }
+    }
+
+    /**
+     * Die Seite, die die Leseansicht gerade zeigt; {@code null}, wenn keine offen ist. ADR 0033 „Was ich sehe, sieht der
+     * Bot“, Regel von Angelo 23.11.2026: Es zählt die Ansicht, die vorne ist. In der Leseansicht ist das geöffnete
+     * Dokument der Bereich (samt Unterseiten wie eine gewählte Seite), auch wenn es aus der Suche kam und der Baum
+     * woanders steht; in der Suche ist es die Auswahl im Baum, also der Filter. Der Baum wird dafür nie verändert.
+     */
+    public void reading(Selection page) {
+        reading = page == null || page.global() || page.pageId() == null ? null : page;
+        apply(scope());
+    }
+
+    /** Ob die Leseansicht vorne ist (Hauptfenster beim Wechsel der Ansicht). */
+    public void readingFront(boolean front) {
+        readingFront = front;
+        apply(scope());
+    }
+
+    /** Was der Chat als Bereich nimmt: vorne die Leseansicht mit offener Seite, sonst die Auswahl im Baum. */
+    Selection scope() {
+        return readingFront && reading != null ? reading : treeSelection;
+    }
+
+    private void apply(Selection selection) {
         if (Objects.equals(this.selection, selection)) {
             return;
         }
@@ -1031,9 +1071,35 @@ public final class ChatPanel extends JPanel {
         // Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird.
         updateSend();
         updateQuickActions();
-        if (onResolved != null) {
+        // Analysen wie der Graph grenzen sich auf die Auswahl im Baum ein, nie auf die gelesene Seite des Chats.
+        if (onResolved != null && Objects.equals(current, treeSelection)) {
             onResolved.accept(resolved);
         }
+    }
+
+    private int treeRequest;
+
+    /** Löst die Auswahl im Baum allein für {@link #onResolved} auf, solange der Chat einen anderen Bereich nimmt. */
+    private void resolveTree() {
+        AppRuntime runtime = context.runtime();
+        Selection tree = treeSelection;
+        int ticket = ++treeRequest;
+        if (onResolved == null) {
+            return;
+        }
+        if (runtime == null || tree == null) {
+            onResolved.accept(null);
+            return;
+        }
+        Background.run(() -> runtime.workspace().resolveSelection(tree.toCore(runtime)), resolved -> {
+            if (ticket == treeRequest && onResolved != null) {
+                onResolved.accept(resolved);
+            }
+        }, error -> {
+            if (ticket == treeRequest && onResolved != null) {
+                onResolved.accept(null);
+            }
+        });
     }
 
     /**
@@ -1094,6 +1160,17 @@ public final class ChatPanel extends JPanel {
         quickActions.setVisible(quickActions.getComponentCount() > 0);
         quickActions.revalidate();
         quickActions.repaint();
+    }
+
+    /** Die Beschriftungen der Vorschläge über der Eingabe, für Tests. */
+    List<String> quickActionLabels() {
+        List<String> labels = new ArrayList<>();
+        for (java.awt.Component component : quickActions.getComponents()) {
+            if (component instanceof javax.swing.AbstractButton button) {
+                labels.add(button.getText());
+            }
+        }
+        return labels;
     }
 
     private static ActionChip chip(String text, String tip, boolean enabled, Runnable action) {

@@ -262,6 +262,52 @@ class ChatPanelTest {
     }
 
     @Test
+    void theViewInFrontDecidesTheScopeAndTheTreeIsNeverTouched() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        Selection source = new Selection("tickets", null, null, "Tickets");
+        Selection ticket = new Selection("tickets", "PRJ", "PRJ-7", "PRJ-7 Nachtlauf bricht ab");
+        Selection space = new Selection("tickets", "PRJ", null, "PRJ");
+        Selection[] seen = new Selection[7];
+        String[] quick = new String[1];
+        int[] graphUpdates = new int[3];
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            panel.onResolved(resolved -> graphUpdates[0]++);
+            // In der Suche: der Filter im Baum.
+            panel.selection(source);
+            seen[0] = panel.scope();
+            graphUpdates[1] = graphUpdates[0];
+            // Aus der Suche geöffnet, der Baum bleibt auf der Quelle; vorne ist jetzt die Leseansicht.
+            panel.reading(ticket);
+            seen[1] = panel.scope();
+            panel.readingFront(true);
+            seen[2] = panel.scope();
+            // Der Graph bleibt auf der Auswahl im Baum: die gelesene Seite meldet ihm nichts.
+            graphUpdates[2] = graphUpdates[0];
+            quick[0] = String.join(" | ", panel.quickActionLabels());
+            // Zurück in die Suche: wieder der Filter, auch wenn die Suche ihn neu setzt.
+            panel.readingFront(false);
+            panel.selection(space);
+            seen[3] = panel.scope();
+            // Wieder in der Leseansicht: das offene Dokument.
+            panel.readingFront(true);
+            seen[4] = panel.scope();
+            // Die Leseansicht zeigt eine Quelle statt einer Seite: der Baum.
+            panel.reading(null);
+            seen[5] = panel.scope();
+            panel.reading(Selection.ALL);
+            seen[6] = panel.scope();
+        });
+        assertThat(seen).containsExactly(source, source, ticket, space, ticket, space, space);
+        assertThat(graphUpdates[1]).isPositive();
+        assertThat(graphUpdates[2]).isEqualTo(graphUpdates[1]);
+        assertThat(quick[0]).as("Vorschläge folgen dem Bereich").contains(ChatPanel.SUMMARIZE_PAGE)
+                .doesNotContain(ChatPanel.SUMMARIZE_AREA);
+    }
+
+    @Test
     void theKnowledgeLineNamesTheSelectionItsPagesAndWhatIsMissing() {
         assertThat(ChatPanel.knowledgeText(null, null, true, true)).isEqualTo(ChatPanel.NO_SELECTION);
         Selection page = new Selection("wiki", "DEV", "42", "Handbuch");

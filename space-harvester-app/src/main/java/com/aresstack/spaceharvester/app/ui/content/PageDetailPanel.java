@@ -945,6 +945,7 @@ public final class PageDetailPanel extends JPanel {
         closeOriginalFile();
         breadcrumbs.clear();
         positionShown.accept(null);
+        chat.reading(null);
         references.message(" ");
         views = List.of();
         showReader(null, false);
@@ -1552,6 +1553,9 @@ public final class PageDetailPanel extends JPanel {
         readingPane.loading();
         breadcrumbs.clear();
         positionShown.accept(null);
+        // Die vorige Seite ist nicht mehr zu sehen: bis die neue geladen ist (oder nie, wenn das scheitert), gilt für
+        // den Chat wieder die Auswahl im Baum.
+        chat.reading(null);
         references.message(" ");
         // Die Unterseiten der vorigen Seite gelten ab jetzt nicht mehr, auch wenn das Laden scheitert. Der Graph
         // verlässt die Seite zuerst, damit deren Abmeldung für die alte Seite nichts mehr lädt.
@@ -2355,6 +2359,9 @@ public final class PageDetailPanel extends JPanel {
         statementsView.page(snapshot, loaded.reader() == null ? null : loaded.reader().text());
         pagePodcast.summary(new PodcastPage(sourceId, metadata.pageId()));
         pageShown.accept(sourceId, metadata.partitionKey());
+        // ADR 0033 „Was ich sehe, sieht der Bot“: die gelesene Seite bestimmt den Bereich des Chats, auch wenn sie aus
+        // der Suche kommt und der Baum woanders steht; die Auswahl im Baum bleibt dabei unberührt.
+        chat.reading(new ExportPanel.Selection(sourceId, metadata.partitionKey(), metadata.pageId(), metadata.title()));
         title.setText(metadata.title());
         path.setText(sourceId + " · Space " + metadata.partitionKey() + " · Seite " + metadata.pageId()
                 + (metadata.version() == null ? "" : " · Version " + metadata.version()));

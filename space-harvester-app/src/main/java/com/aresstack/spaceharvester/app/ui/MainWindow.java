@@ -1090,6 +1090,8 @@ public final class MainWindow implements AppContext.Navigator {
         }
         // Die Reiter in der Leiste zeigen ihre Auswahl nur, solange die Mitte die Seitenansicht zeigt.
         content.tabsActive(section == AppContext.Section.CONTENT);
+        // ADR 0033: Der Chat bezieht sich auf die Ansicht, die vorne ist (Leseansicht: offene Seite; Suche: Filter).
+        content.chatSidebar().chat().readingFront(section == AppContext.Section.CONTENT);
         jobStatus.navigationVisible(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
         view.shown();
