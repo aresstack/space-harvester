@@ -144,6 +144,12 @@ public final class ChatPanel extends JPanel {
     private static final String NORMAL_EDITOR_HEIGHT = "composer.normalHeight";
     private static final java.util.prefs.Preferences PREFERENCES =
             java.util.prefs.Preferences.userNodeForPackage(ChatPanel.class);
+    /** Schalter „Interne Suche“ (Angelo 23.11.2026): das Modell darf die globale Suche der App nutzen. */
+    static final String APP_SEARCH_LABEL = "Interne Suche";
+    static final String APP_SEARCH_OFF = "Interne Suche einschalten: Der Assistent darf alle für die KI "
+            + "freigegebenen Wissensquellen durchsuchen, wie die Suchleiste";
+    static final String APP_SEARCH_ON = "Interne Suche ist an: Der Assistent durchsucht alle für die KI freigegebenen "
+            + "Wissensquellen (Klick: aus)";
     static final String WEB_LABEL = "Websuche";
     static final String WEB = "Websuche für diesen Chat einschalten: Der Assistent sucht mit einem eigenen Firefox im "
             + "Web und im Intranet";
@@ -266,6 +272,12 @@ public final class ChatPanel extends JPanel {
     private JPanel footerWest;
     private JPanel footerEast;
     private final ComposerButton web = ComposerButton.iconButton(ChatIcons.globe(), WEB);
+    private final ComposerButton appSearch = ComposerButton.iconButton(
+            com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.openBook(), APP_SEARCH_OFF);
+    /** Ob die interne Suche an ist; gilt für die nächsten Fragen, bis man sie ausschaltet. */
+    private boolean appSearchOn;
+    /** Der Abstand hinter „Interne Suche“; weicht mit ihr in der schmalsten Stufe der Fußzeile. */
+    private final java.awt.Component appSearchGap = Box.createHorizontalStrut(4);
     /** Der kleine Pfeil an der Weltkugel: öffnet Budget, Tabs, Verzögerung, Profil (wie im EAC). */
     private final ComposerButton webBudget = new ComposerButton(ComposerIcons.chevronDown(), null, false, "");
     private boolean webOn;
@@ -515,6 +527,8 @@ public final class ChatPanel extends JPanel {
 
         model.addActionListener(e -> showModelMenu());
         effort.addActionListener(e -> showEffortMenu());
+        appSearch.getAccessibleContext().setAccessibleName(APP_SEARCH_LABEL);
+        appSearch.addActionListener(e -> appSearch(!appSearchOn));
         web.getAccessibleContext().setAccessibleName(WEB_LABEL);
         web.addActionListener(e -> webSearch(!webOn));
         webBudget.setPreferredSize(new Dimension(14, 28));
@@ -548,6 +562,8 @@ public final class ChatPanel extends JPanel {
         east.add(Box.createHorizontalGlue());
         east.add(levelBar);
         east.add(Box.createHorizontalStrut(4));
+        east.add(appSearch);
+        east.add(appSearchGap);
         east.add(web);
         east.add(webBudget);
         east.add(Box.createHorizontalStrut(4));
@@ -1462,6 +1478,33 @@ public final class ChatPanel extends JPanel {
         // Letzte Stufe für sehr schmale Leisten oder breite Schriften: die Websuche weicht.
         web.setVisible(stage < 3);
         webBudget.setVisible(stage < 3);
+        appSearch.setVisible(stage < 3);
+        appSearchGap.setVisible(stage < 3);
+    }
+
+    /** Schaltet die interne Suche: an ist der Knopf eingerastet. */
+    void appSearch(boolean on) {
+        appSearchOn = on;
+        appSearch.setEmphasized(on);
+        appSearch.setToolTipText(on ? APP_SEARCH_ON : APP_SEARCH_OFF);
+    }
+
+    boolean appSearchOn() {
+        return appSearchOn;
+    }
+
+    /** Die Wissensquellen, die die interne Suche durchsuchen darf: alle für die KI freigegebenen (ADR 0028). */
+    static Set<String> appSearchSources(AppSettings settings, AppRuntime runtime) {
+        if (runtime == null) {
+            return Set.of();
+        }
+        Set<String> ids = new java.util.TreeSet<>();
+        for (HarvestSource source : runtime.workspace().sources()) {
+            if (allowed(settings, source.id())) {
+                ids.add(source.id());
+            }
+        }
+        return ids;
     }
 
     /** Schaltet die Websuche dieses Chats (Composer-Knopf wie „Browser“ im Enterprise AI Client). */
@@ -1821,6 +1864,10 @@ public final class ChatPanel extends JPanel {
             turn.releasing(releases(runtime, open));
             // R2/C1: Der Chat folgt der Suchmethode „Nachbarseiten“ der Suchoptionen, wie sie beim Senden steht.
             turn.searchingNeighbors(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
+            // Interne Suche: die globale Suche über die freigegebenen Wissensquellen, gelesen beim Aufruf.
+            if (appSearchOn) {
+                turn.appSearch(() -> appSearchSources(context.settings(), context.runtime()));
+            }
             // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
             turn.searchingGlossarySynonyms(
                     com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
