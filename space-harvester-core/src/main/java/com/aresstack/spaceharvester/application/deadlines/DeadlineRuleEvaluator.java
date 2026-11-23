@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.deadlines.DeadlineAssessment.Pro
 import com.aresstack.spaceharvester.application.deadlines.DeadlineAssessment.StandardConfirmed;
 import com.aresstack.spaceharvester.application.deadlines.DeadlineAssessment.StandardProvisional;
 import com.aresstack.spaceharvester.application.extraction.AnalysisSection;
+import com.aresstack.spaceharvester.application.extraction.DocumentAnalysis;
 import com.aresstack.spaceharvester.application.extraction.DocumentRef;
 import com.aresstack.spaceharvester.application.extraction.ExtractedField;
 import com.aresstack.spaceharvester.application.extraction.FieldStatus;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Prüft einen Sachverhalt nach Grundsatz und Ausnahme (ADR 0035, Abschnitt 6): deterministisch und ohne Seiteneffekte.
@@ -28,8 +30,20 @@ import java.util.Set;
  * nichts. Eine Ausnahme verdrängt den Grundsatz nur, wenn Sachverhaltsbezug, Wirksamkeit und Rechtswirkung nachgewiesen
  * sind; ein Antrag ist nie eine Genehmigung. Die Standardfrist ist nur nach ausdrücklichem Abschluss der
  * Ausnahmenprüfung bestätigt. Das Entstehungsjahr kommt nie aus dem Erlassdatum, sondern nur als belegte Angabe.
+ *
+ * <p>Eine Einzelgenehmigung (§ 60 Abs. 1 Satz 2 BHO, Nr. 8 Satz 5 VO/VW-RiB) wirkt nur, wenn das Dokument vom
+ * Bundesministerium der Finanzen stammt (Angelo, 23.11.2026). Spricht ein anderer Aussteller die Verlängerung aus oder
+ * beruft er sich nur auf eine Genehmigung des BMF, bleibt die Rechtswirkung offen: „Genehmigungsbefugnis ungeklärt“
+ * bzw. „Genehmigung behauptet, Nachweis prüfen“.
  */
 public final class DeadlineRuleEvaluator {
+
+    /** Wer Einzelgenehmigungen erteilen darf: das BMF (§ 60 Abs. 1 Satz 2 BHO, Nr. 8 Satz 5 VO/VW-RiB). */
+    private static final Pattern GRANTING_AUTHORITY = Pattern.compile(
+            "(?i)\\bBMF\\b|Bundesministerium\\s+der\\s+Finanzen|Bundesfinanzministerium");
+    static final String ISSUER_UNPROVEN = "Aussteller nicht belegt; Genehmigungsbefugnis ungeklärt";
+    static final String ISSUER_NOT_COMPETENT = "Genehmigungsbefugnis ungeklärt: Aussteller ist nicht das BMF";
+    static final String GRANT_CLAIMED = "Genehmigung des BMF behauptet, Nachweis prüfen";
 
     private final DeadlineRuleCatalog catalog;
 
@@ -46,10 +60,18 @@ public final class DeadlineRuleEvaluator {
      * @param knowledge           Zustand des Rechtswissens
      * @param knowledgeGeneration Stand des Rechtswissens
      * @param closure             Abschluss der Ausnahmenprüfung durch den Benutzer, sonst leer
+     * @param issuer              belegter Aussteller des Dokuments ({@link #issuer(DocumentAnalysis)}), sonst leer
      */
     public record Request(DocumentRef document, AnalysisSection matter, Optional<Integer> originYear,
                           LegalKnowledgeRepository.State knowledge, String knowledgeGeneration,
-                          Optional<ExceptionCheckClosure> closure) {
+                          Optional<ExceptionCheckClosure> closure, Optional<String> issuer) {
+
+        /** Ohne belegten Aussteller: Eine Einzelgenehmigung bleibt dann offen. */
+        public Request(DocumentRef document, AnalysisSection matter, Optional<Integer> originYear,
+                       LegalKnowledgeRepository.State knowledge, String knowledgeGeneration,
+                       Optional<ExceptionCheckClosure> closure) {
+            this(document, matter, originYear, knowledge, knowledgeGeneration, closure, Optional.empty());
+        }
 
         public Request {
             Objects.requireNonNull(document, "document");
@@ -58,6 +80,7 @@ public final class DeadlineRuleEvaluator {
             Objects.requireNonNull(knowledge, "knowledge");
             knowledgeGeneration = knowledgeGeneration == null ? "" : knowledgeGeneration;
             closure = closure == null ? Optional.empty() : closure;
+            issuer = issuer == null ? Optional.empty() : issuer.filter(i -> !i.isBlank());
         }
     }
 
@@ -113,7 +136,8 @@ public final class DeadlineRuleEvaluator {
                     || !rule.displaces().equals(Optional.of(standard.get().id()))) {
                 continue;
             }
-            ExceptionEvidence evidence = evidence(rule, categories, granted, requested, request.originYear());
+            ExceptionEvidence evidence = evidence(rule, categories, granted, requested, request.originYear(),
+                    request.issuer());
             if (evidence == null) {
                 continue;
             }
@@ -161,10 +185,16 @@ public final class DeadlineRuleEvaluator {
 
     /** Beleg einer Ausnahme oder {@code null}, wenn das Dokument nichts auf sie hindeutet. */
     private static ExceptionEvidence evidence(DeadlineRule rule, Set<String> categories, List<ExtractedField> granted,
-                                              List<ExtractedField> requested, Optional<Integer> originYear) {
+                                              List<ExtractedField> requested, Optional<Integer> originYear,
+                                              Optional<String> issuer) {
         if (rule.individual()) {
             if (!granted.isEmpty()) {
-                return new ExceptionEvidence(rule.ref(), Proof.PROVEN, Proof.PROVEN, Proof.PROVEN, quotes(granted));
+                // Der Sachverhaltsbezug folgt aus dem Abschnitt; die Rechtswirkung aus der Befugnis des Ausstellers.
+                Optional<String> doubt = competence(issuer, granted);
+                List<String> evidence = new ArrayList<>(quotes(granted));
+                doubt.ifPresent(evidence::add);
+                return new ExceptionEvidence(rule.ref(), Proof.PROVEN, Proof.PROVEN,
+                        doubt.isEmpty() ? Proof.PROVEN : Proof.OPEN, evidence);
             }
             if (!requested.isEmpty()) {
                 // Antrag ist keine Genehmigung: die Rechtswirkung ist nicht nachgewiesen.
@@ -178,6 +208,27 @@ public final class DeadlineRuleEvaluator {
         }
         return new ExceptionEvidence(rule.ref(), Proof.PROVEN, effectiveness(rule, originYear), Proof.PROVEN,
                 List.of(rule.legalBasis() + ": " + rule.wording()));
+    }
+
+    /** Leer, wenn das BMF selbst genehmigt; sonst der Grund, warum die Rechtswirkung offen bleibt. */
+    private static Optional<String> competence(Optional<String> issuer, List<ExtractedField> granted) {
+        if (issuer.filter(i -> GRANTING_AUTHORITY.matcher(i).find()).isPresent()) {
+            return Optional.empty();
+        }
+        if (quotes(granted).stream().anyMatch(q -> GRANTING_AUTHORITY.matcher(q).find())) {
+            return Optional.of(GRANT_CLAIMED);
+        }
+        return Optional.of(issuer.isEmpty() ? ISSUER_UNPROVEN : ISSUER_NOT_COMPETENT + " („" + issuer.get() + "“)");
+    }
+
+    /**
+     * Der belegte Aussteller eines Dokuments aus allen Abschnitten; leer, wenn keiner belegt ist oder belegte
+     * Angaben voneinander abweichen.
+     */
+    public static Optional<String> issuer(DocumentAnalysis analysis) {
+        Set<String> issuers = new LinkedHashSet<>();
+        analysis.sections().forEach(section -> issuers.addAll(values(section, DeadlineFieldKeys.ISSUER)));
+        return issuers.size() == 1 ? Optional.of(issuers.iterator().next()) : Optional.empty();
     }
 
     /** In Kraft zum Entstehungsjahr? Ohne belegtes Jahr oder Datum der Fassung offen, im Jahr der Fassung auch. */

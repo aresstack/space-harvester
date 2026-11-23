@@ -145,6 +145,24 @@ class IdentifierExtractorTest {
     }
 
     @Test
+    void aBindingExtensionCountsAsGrantedAPossibilityDoesNot() {
+        DocumentAnalysis result = extract("""
+                1. Vorschussbuch
+                Objektkonto: 3333
+                Die Frist wird bis zum 30.06.2028 verlängert.
+
+                2. Verwahrungsbuch
+                Objektkonto: 4444
+                Eine Verlängerung der Frist ist möglich.
+                """);
+
+        assertThat(field(section(result, "sachverhalt-1", SECTION_DEADLINES), DEADLINE_EXTENSION).orElseThrow()
+                .qualifier()).as("verbindlich ausgesprochen").isEqualTo(Qualifier.GRANTED);
+        assertThat(field(section(result, "sachverhalt-2", SECTION_DEADLINES), DEADLINE_EXTENSION).orElseThrow()
+                .qualifier()).as("nur möglich").isEqualTo(Qualifier.NONE);
+    }
+
+    @Test
     void secondAccountStartsANewMatterWithoutHeading() {
         DocumentAnalysis result = extract("""
                 Betreff: Konten im Vorschussbuch
