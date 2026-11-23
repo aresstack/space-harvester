@@ -143,4 +143,118 @@ class TerminalSessionsTest {
         assertThat(second.replay()).isEqualTo(steps);
         assertThat(created).hasSize(2);
     }
+
+    /** Zeitgeber, den der Test von Hand auslöst. */
+    private final List<Runnable> scheduled = new ArrayList<>();
+    private final List<java.time.Duration> delays = new ArrayList<>();
+
+    private TerminalSessions reconnecting(java.util.concurrent.atomic.AtomicBoolean enabled) {
+        TerminalSessions sessions = sessions(false);
+        sessions.autoReconnect(TerminalSessions.Reconnect.standard(enabled::get), (delay, task) -> {
+            delays.add(delay);
+            scheduled.add(task);
+        });
+        return sessions;
+    }
+
+    @Test
+    void aSessionDroppedByTheHostReconnectsWithTheSameLoginAndMacro() {
+        TerminalSessions sessions = reconnecting(new java.util.concurrent.atomic.AtomicBoolean(true));
+        List<String> reopened = new ArrayList<>();
+        sessions.onReopened((lost, fresh) -> reopened.add(lost.id() + "->" + fresh.id()));
+        TerminalSessions.LoginSource login = () -> null;
+        List<TerminalMacro.Step> steps = List.of(TerminalMacro.Step.aid(AidKey.PF3));
+        TerminalSession first = sessions.open(TerminalProfile.of("host.example", 992), login, steps);
+
+        created.get(0).listener.closed(null);
+
+        assertThat(first.state()).isEqualTo(SessionState.DISCONNECTED);
+        assertThat(first.note()).contains("Verbindung verloren · neuer Versuch in 2 s (1/3)");
+        assertThat(delays).containsExactly(java.time.Duration.ofSeconds(2));
+        scheduled.remove(0).run();
+        assertThat(reopened).containsExactly("terminal-1->terminal-2");
+        TerminalSession second = sessions.all().get(0);
+        assertThat(sessions.all()).hasSize(1).doesNotContain(first);
+        assertThat(second.state()).isEqualTo(SessionState.CONNECTED);
+        assertThat(second.loginSource()).isSameAs(login);
+        assertThat(second.replay()).isEqualTo(steps);
+        assertThat(second.attempt()).isEqualTo(1);
+    }
+
+    @Test
+    void failedAttemptsWaitLongerAndStopAfterThree() {
+        TerminalSessions sessions = reconnecting(new java.util.concurrent.atomic.AtomicBoolean(true));
+        sessions.open(TerminalProfile.of("host.example", 992));
+        nextFailure = new IOException("Connection refused");
+        created.get(0).listener.closed("Verbindungsfehler");
+        scheduled.remove(0).run();
+        scheduled.remove(0).run();
+        scheduled.remove(0).run();
+
+        assertThat(delays).containsExactly(java.time.Duration.ofSeconds(2), java.time.Duration.ofSeconds(10),
+                java.time.Duration.ofSeconds(30));
+        assertThat(scheduled).isEmpty();
+        TerminalSession last = sessions.all().get(0);
+        assertThat(last.state()).isEqualTo(SessionState.FAILED);
+        assertThat(last.note()).contains("Kein automatischer Neuaufbau mehr: 3 Versuche gescheitert");
+    }
+
+    @Test
+    void noReconnectWhenSwitchedOffClosedByHandOrNeverConnected() {
+        java.util.concurrent.atomic.AtomicBoolean enabled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        TerminalSessions sessions = reconnecting(enabled);
+        sessions.open(TerminalProfile.of("host.example", 992));
+        created.get(0).listener.closed(null);
+        assertThat(scheduled).as("ausgeschaltet").isEmpty();
+
+        enabled.set(true);
+        TerminalSession byHand = sessions.open(TerminalProfile.of("host.example", 992));
+        byHand.disconnect();
+        assertThat(scheduled).as("von Hand getrennt").isEmpty();
+
+        nextFailure = new IOException("Connection refused");
+        sessions.open(TerminalProfile.of("host.example", 23));
+        assertThat(scheduled).as("nie verbunden: der Dialog ist dran, nicht der Neuaufbau").isEmpty();
+
+        nextFailure = null;
+        // Von Hand getrennt, während ein Neuaufbau-Versuch noch verband: kein weiterer Versuch.
+        TerminalSession lostOne = sessions.open(TerminalProfile.of("host.example", 992));
+        created.get(created.size() - 1).listener.closed(null);
+        lostOne.disconnect();
+        int pending = scheduled.size();
+        scheduled.remove(pending - 1).run();
+        assertThat(sessions.all()).as("abgesagt").contains(lostOne);
+
+        TerminalSession closedWhileWaiting = sessions.open(TerminalProfile.of("host.example", 992));
+        created.get(created.size() - 1).listener.closed(null);
+        sessions.close(closedWhileWaiting);
+        int before = created.size();
+        scheduled.remove(0).run();
+        assertThat(created).as("geschlossen, während der Versuch wartete").hasSize(before);
+    }
+
+    @Test
+    void aFailedCreationDuringReconnectStillUsesTheRemainingAttempts() {
+        boolean[] failCreate = {false};
+        TerminalSessions sessions = new TerminalSessions((profile, listener) -> {
+            if (failCreate[0]) {
+                throw new IllegalStateException("Codepage belegt");
+            }
+            FakeConnection connection = new FakeConnection(listener);
+            created.add(connection);
+            return connection;
+        }, Runnable::run);
+        sessions.autoReconnect(TerminalSessions.Reconnect.standard(() -> true), (delay, task) -> {
+            delays.add(delay);
+            scheduled.add(task);
+        });
+        sessions.open(TerminalProfile.of("host.example", 992));
+        created.get(0).listener.closed(null);
+        failCreate[0] = true;
+        scheduled.remove(0).run();
+        assertThat(delays).containsExactly(java.time.Duration.ofSeconds(2), java.time.Duration.ofSeconds(10));
+        failCreate[0] = false;
+        scheduled.remove(0).run();
+        assertThat(sessions.all().get(0).state()).isEqualTo(SessionState.CONNECTED);
+    }
 }

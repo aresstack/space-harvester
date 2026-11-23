@@ -139,6 +139,11 @@ class ConnectFormTest {
             assertThat(form.profile().viaProxy()).isFalse();
             form.proxy.setSelected(true);
             assertThat(form.profile().viaProxy()).isTrue();
+            // Abweichung mit Absicht: Keep-Alive an (60 s), damit die Leitung bei Leerlauf nicht gekappt wird.
+            form.keepAlive.setText("");
+            assertThat(form.profile().keepAliveSeconds()).isEqualTo(60);
+            form.keepAlive.setText("0");
+            assertThat(form.profile().keepAliveSeconds()).isZero();
         });
     }
 }

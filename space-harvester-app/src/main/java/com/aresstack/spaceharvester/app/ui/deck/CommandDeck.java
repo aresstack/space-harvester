@@ -96,6 +96,13 @@ public final class CommandDeck {
         sessions = new TerminalSessions(new OpenTermConnector(terminalTunnel), connecting,
                 new com.aresstack.spaceharvester.deck.terminal.LoginScript(
                         () -> TerminalSettings.shared().actionDelay()));
+        // Das Terminal soll nicht tot bleiben: Trennt der Host, baut es sich neu auf (Einstellung „Neuaufbau“).
+        sessions.autoReconnect(com.aresstack.spaceharvester.deck.terminal.TerminalSessions.Reconnect.standard(
+                () -> TerminalSettings.shared().autoReconnect()), (delay, task) -> {
+                    javax.swing.Timer once = new javax.swing.Timer((int) delay.toMillis(), e -> task.run());
+                    once.setRepeats(false);
+                    once.start();
+                });
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), accounts);

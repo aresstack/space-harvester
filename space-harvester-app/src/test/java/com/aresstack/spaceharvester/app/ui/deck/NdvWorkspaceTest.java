@@ -251,6 +251,25 @@ class NdvWorkspaceTest {
         assertThat(browser.statusText()).contains("Fehler").contains("abgelehnt");
     }
 
+    /** Angelo 23.11.: Die Meldung lief in der Statuszeile ohne Trenner zusammen („…:2700Mögliche Ursachen:•“). */
+    @Test
+    void aMultiLineFailureReadsAsOneLineInTheStatusBar() {
+        String message = "Verbindung abgelehnt: 10.0.0.7:8011\n\nMögliche Ursachen:"
+                + "\n• NDV-Server läuft nicht oder ist nicht erreichbar\n• Port 8011 ist falsch (Standard: 8011)";
+        assertThat(NdvBrowser.oneLine(message)).isEqualTo("Verbindung abgelehnt: 10.0.0.7:8011 · Mögliche Ursachen: "
+                + "NDV-Server läuft nicht oder ist nicht erreichbar · Port 8011 ist falsch (Standard: 8011)");
+    }
+
+    /** Ohne Portangabe gilt 8011 wie in MainframeMate (Angelo 23.11.: damit klappt die Verbindung). */
+    @Test
+    void withoutAPortTheFormUsesTheMainframeMateDefault() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            NdvConnectForm form = new NdvWorkspace(sessions, accounts, editors, Runnable::run).form();
+            form.show(List.of(HOST));
+            assertThat(form.profile().port()).isEqualTo(8011);
+        });
+    }
+
     @Test
     void theNavigatorWorksLikeMainframeMate() throws Exception {
         NdvWorkspace[] workspace = new NdvWorkspace[1];
