@@ -749,9 +749,7 @@ final class ChatTools {
         if (query.isEmpty()) {
             return "Bitte Suchbegriffe angeben.";
         }
-        if (query.length() > ChatTurn.MAX_QUERY_CHARS) {
-            query = query.substring(0, ChatTurn.MAX_QUERY_CHARS);
-        }
+        query = clampQuery(query);
         List<KeywordSearch.Hit> hits = hits(query);
         StringBuilder b = new StringBuilder();
         Set<PageKey> seen = new LinkedHashSet<>();
@@ -780,6 +778,19 @@ final class ChatTools {
     // ------------------------------------------------------------------ Interne Suche
 
     /**
+     * Kürzt einen Suchtext auf das, was die Suche annimmt ({@value KeywordSearch#MAX_TEXT_LENGTH} Zeichen), an einer
+     * Wortgrenze; sonst lehnte sie die ganze Frage ab (Codex-Befund zu #1260).
+     */
+    static String clampQuery(String query) {
+        if (query.length() <= KeywordSearch.MAX_TEXT_LENGTH) {
+            return query;
+        }
+        String cut = query.substring(0, KeywordSearch.MAX_TEXT_LENGTH);
+        int space = cut.lastIndexOf(' ');
+        return (space > KeywordSearch.MAX_TEXT_LENGTH / 2 ? cut.substring(0, space) : cut).strip();
+    }
+
+    /**
      * {@value #APP_SEARCH}: dieselbe globale Suche wie die Suchleiste, über die freigegebenen Wissensquellen, ohne
      * Vorab-Entscheidung, ob gesucht wird. Treffer werden lesbar ({@link #granted}); Text geht erst mit {@value #READ}
      * an das Modell und wird dort freigegeben.
@@ -792,9 +803,7 @@ final class ChatTools {
         if (query.isEmpty()) {
             return "Bitte Suchbegriffe angeben.";
         }
-        if (query.length() > ChatTurn.MAX_QUERY_CHARS) {
-            query = query.substring(0, ChatTurn.MAX_QUERY_CHARS);
-        }
+        query = clampQuery(query);
         Set<String> allowed = appSources.get();
         Set<String> wanted = strings(arguments.path("quellen"));
         Set<String> searched = new java.util.TreeSet<>(allowed);

@@ -110,6 +110,11 @@ class ChatToolsTurnTest {
                 .contains(ChatTools.ref(other)) ? true : null);
         assertThat(probe.run(new AiChat.ToolCall("q", ChatTools.APP_SEARCH, "{\"text\":\"Spool\","
                 + "\"quellen\":[\"fremd\"]}"))).startsWith("Keine der genannten Wissensquellen");
+        // Eine lange Frage wird gekürzt statt abgelehnt (Codex-Befund zu #1260).
+        assertThat(probe.run(new AiChat.ToolCall("l", ChatTools.APP_SEARCH, "{\"text\":\"Spool "
+                + "Nachtlauf ".repeat(40) + "\"}"))).contains(ChatTools.ref(other));
+        assertThat(ChatTools.clampQuery("a ".repeat(300)).length())
+                .isLessThanOrEqualTo(com.aresstack.spaceharvester.application.query.KeywordSearch.MAX_TEXT_LENGTH);
         // Markdown-Dateien sind Text, keine Wiki-Seiten: Der Filter nach Arten greift.
         assertThat(probe.run(new AiChat.ToolCall("r", ChatTools.APP_SEARCH, "{\"text\":\"Spool\","
                 + "\"arten\":[\"PAGE\"]}"))).startsWith("Keine Treffer");
