@@ -81,4 +81,10 @@ class MarkdownSpeechTest {
         assertEquals("", MarkdownSpeech.spokenText(null));
         assertEquals("", MarkdownSpeech.spokenText(" \n "));
     }
+
+    @Test
+    void consecutiveHeadingsAreAllSpoken() {
+        assertEquals("Betrieb.\n\nNachtlauf.\nDer Dienst läuft.",
+                MarkdownSpeech.spokenText("# Betrieb\n\n## Nachtlauf\n\nDer Dienst läuft."));
+    }
 }

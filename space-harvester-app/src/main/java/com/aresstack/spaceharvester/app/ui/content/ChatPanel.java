@@ -2420,6 +2420,24 @@ public final class ChatPanel extends JPanel {
             return new java.awt.Insets(0, 0, 0, orb.isVisible() ? inset(getWidth()) : 0);
         }
 
+        /**
+         * Die Zeile misst ihre Höhe an der Breite ihres Elternteils, hier also an dieser Hülle: Bevor der Verlauf die
+         * Höhen verteilt, bekommt die Hülle schon seine neue Breite, sonst bräche die Blase nach dem Verkleinern
+         * schmaler um, als ihre Höhe gemessen wurde, und würde abgeschnitten.
+         */
+        @Override
+        public Dimension getPreferredSize() {
+            java.awt.Container parent = getParent();
+            if (parent != null && parent.getWidth() > 0) {
+                java.awt.Insets insets = parent.getInsets();
+                int inner = parent.getWidth() - insets.left - insets.right;
+                if (inner > 0 && inner != getWidth()) {
+                    setSize(inner, getHeight());
+                }
+            }
+            return super.getPreferredSize();
+        }
+
         @Override
         public Dimension getMaximumSize() {
             return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);

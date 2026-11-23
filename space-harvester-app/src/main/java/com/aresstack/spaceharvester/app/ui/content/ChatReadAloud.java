@@ -86,6 +86,8 @@ final class ChatReadAloud {
     private Object run;
     /** Die vorgelesene Antwort, ihr gesprochener Text und ab wo vorgelesen wird. */
     private AssistantMarkdownBubble reading;
+    /** Fertig geworden, während angehalten war: wird nach der laufenden Antwort vorgelesen. */
+    private AssistantMarkdownBubble deferred;
     private String spoken = "";
     private int base;
     /** Länge des vorgelesenen Ausschnitts vor und nach der Bereinigung (die Stände rechnen anteilig zurück). */
@@ -120,6 +122,9 @@ final class ChatReadAloud {
             // Seitenleiste zu oder anderes Fenster: der Chat liest nicht weiter (wie die Leseansicht).
             if ((flags & HierarchyEvent.SHOWING_CHANGED) != 0 && !transcript.isShowing()) {
                 stop();
+                active = false; // eine später fertige Antwort spricht nicht ungesehen los
+                deferred = null;
+                style();
             }
         });
         style();
@@ -149,15 +154,21 @@ final class ChatReadAloud {
     /** Eine live beantwortete Frage ist fertig: bei aktivem Vorlesen wird sie gleich vorgelesen (wie im EAC). */
     void answered(AssistantMarkdownBubble bubble) {
         answer(bubble);
-        if (binding != null && active && !(speaking && paused)) {
-            speak(bubble, MarkdownSpeech.spokenText(bubble.view().getMarkdown()), 0);
+        if (binding == null || !active) {
+            return;
         }
+        if (speaking && paused) {
+            deferred = bubble; // angehalten: nach dem Fortsetzen und dem Ende der laufenden Antwort
+            return;
+        }
+        speak(bubble, MarkdownSpeech.spokenText(bubble.view().getMarkdown()), 0);
     }
 
     /** Ein anderer Chat wird gezeigt: Vorlesen beenden, die Antworten vergessen. */
     void clear() {
         stop();
         active = false;
+        deferred = null;
         answers.clear();
         style();
     }
@@ -184,6 +195,7 @@ final class ChatReadAloud {
         }
         if (active) {
             active = false;
+            deferred = null;
             style();
             return;
         }
@@ -278,6 +290,9 @@ final class ChatReadAloud {
         speaking = true;
         paused = false;
         reading = bubble;
+        if (deferred == bubble) {
+            deferred = null;
+        }
         spoken = speech;
         base = speech.length() - source.length();
         sourceLength = source.length();
@@ -291,6 +306,11 @@ final class ChatReadAloud {
                 paused = false;
                 reset();
                 style();
+                AssistantMarkdownBubble next = deferred;
+                deferred = null;
+                if (next != null && active && binding != null && answers.contains(next)) {
+                    speak(next, MarkdownSpeech.spokenText(next.view().getMarkdown()), 0);
+                }
             }
         }, (from, to, millis) -> {
             if (run == mine) {

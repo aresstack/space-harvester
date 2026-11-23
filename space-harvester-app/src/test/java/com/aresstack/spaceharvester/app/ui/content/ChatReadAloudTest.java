@@ -95,6 +95,58 @@ class ChatReadAloudTest {
     }
 
     @Test
+    void anAnswerFinishedWhilePausedIsReadAfterTheCurrentOne() throws Exception {
+        FakeReadAloud fake = new FakeReadAloud();
+        ReadAloudBinding binding = new ReadAloudBinding(() -> fake, message -> { });
+        ChatReadAloud reading = onEdt(() -> new ChatReadAloud(new JPanel()));
+        try {
+            AssistantMarkdownBubble first = onEdt(() -> bubble(FIRST));
+            AssistantMarkdownBubble second = onEdt(() -> bubble(SECOND));
+            SwingUtilities.invokeAndWait(() -> {
+                reading.bind(binding);
+                reading.answer(first);
+                reading.toggle();
+            });
+            assertThat(fake.await(1)).isTrue();
+            SwingUtilities.invokeAndWait(reading::toggle); // anhalten
+            SwingUtilities.invokeAndWait(() -> reading.answered(second));
+            assertThat(fake.spoken).hasSize(1);
+            SwingUtilities.invokeAndWait(reading::toggle); // fortsetzen
+            fake.stop(); // die laufende Antwort ist zu Ende gesprochen
+            assertThat(fake.await(2)).isTrue();
+            assertThat(fake.spoken.get(1)).isEqualTo(SECOND);
+        } finally {
+            binding.close();
+        }
+    }
+
+    @Test
+    void anAnswerRowMeasuresItsHeightAtTheNewWidthAfterShrinking() throws Exception {
+        AtomicReference<int[]> heights = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            int shrunk = measured(1000, 320);
+            int fresh = measured(320, 320);
+            heights.set(new int[] {shrunk, fresh});
+        });
+        // die Hülle misst schon an der neuen Breite des Verlaufs, bevor er ihr diese Breite gibt
+        assertThat(heights.get()[0]).isEqualTo(heights.get()[1]);
+    }
+
+    /** Vorzugshöhe einer Antwortzeile, gelegt bei {@code before} und gefragt, nachdem der Verlauf {@code after} breit ist. */
+    private static int measured(int before, int after) {
+        JPanel transcript = new JPanel();
+        transcript.setLayout(new javax.swing.BoxLayout(transcript, javax.swing.BoxLayout.Y_AXIS));
+        ChatPanel.OrbClearance clearance = new ChatPanel.OrbClearance(new BubbleMessageRow(
+                bubble(FIRST + "\n\n" + FIRST), BubbleSide.LEFT), new JPanel());
+        transcript.add(clearance);
+        transcript.setSize(before, 2000);
+        layout(transcript);
+        layout(transcript);
+        transcript.setSize(after, 2000);
+        return clearance.getPreferredSize().height;
+    }
+
+    @Test
     void withoutSpeechTheButtonStaysAway() throws Exception {
         ChatReadAloud reading = onEdt(() -> new ChatReadAloud(new JPanel()));
         SwingUtilities.invokeAndWait(() -> reading.bind(null));

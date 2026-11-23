@@ -269,6 +269,10 @@ public final class MarkdownSpeech {
         }
 
         void heading(String line) {
+            if (heading != null) {
+                lines.add(heading); // zwei Überschriften hintereinander: die erste bleibt gesprochen (#1258)
+                heading = null;
+            }
             endBlock();
             if (!line.isEmpty()) {
                 heading = sentence(line);
