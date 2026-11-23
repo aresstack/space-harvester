@@ -47,6 +47,11 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
      * Grund wieder. Klappt es, verbindet „Neue Verbindung“ künftig ohne Formular.
      */
     private final java.util.Set<FtpSession> firstConnect = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * Sitzungen, die schon einmal verbunden waren – auf dem Faden des Zustandswechsels vermerkt, nicht verspätet über
+     * die Oberfläche: Ein späterer Abriss (FAILED) ist dann kein „erster Verbindungsversuch gescheitert“ mehr.
+     */
+    private final java.util.Set<FtpSession> connectedOnce = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Ein Verbinden mit der gemerkten Verbindung läuft (KeePass wird gelesen), noch ohne Reiter. */
     private boolean directPending;
     private final ComposerToggleButton newPill;
@@ -132,6 +137,11 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
             // Erfolge auf demselben Faden wie die Ablehnungen, in echter Reihenfolge (nicht verspätet über die
             // Oberfläche): Ein älterer Erfolg löscht keine neuere Sperre.
             session.onLoginAccepted(() -> DeckLogin.guard().succeeded(session.label()));
+            session.observe(changed -> {
+                if (changed.state() == ConnectionState.CONNECTED) {
+                    connectedOnce.add(changed);
+                }
+            });
             SwingUtilities.invokeLater(() -> added(session));
         });
         sessions.all().forEach(this::added);
@@ -277,7 +287,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
 
     private void changed(FtpSession session) {
         if (firstConnect.contains(session)) {
-            if (session.state() == ConnectionState.CONNECTED) {
+            if (connectedOnce.contains(session) || session.state() == ConnectionState.CONNECTED) {
                 firstConnect.remove(session);
                 FtpConnectForm.configured();
             } else if (session.state() == ConnectionState.FAILED) {
@@ -324,7 +334,9 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
 
     /** Eine nie verbundene Sitzung ist gescheitert: Reiter weg, Formular mit dem Grund. */
     private void failedFirst(FtpSession session) {
-        if (!firstConnect.remove(session) && session.state() != ConnectionState.FAILED) {
+        if (connectedOnce.contains(session)
+                || (!firstConnect.remove(session) && session.state() != ConnectionState.FAILED)) {
+            firstConnect.remove(session);
             return;
         }
         String reason = session.failure().orElse("Anmeldung gescheitert");
@@ -343,6 +355,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
 
     private void closeSession(FtpSession session) {
         firstConnect.remove(session);
+        connectedOnce.remove(session);
         sessions.close(session);
         ComposerToggleButton pill = pillOf.remove(session);
         FtpSessionView view = viewOf.remove(session);

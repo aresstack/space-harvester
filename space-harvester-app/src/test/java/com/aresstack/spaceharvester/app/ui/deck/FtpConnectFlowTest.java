@@ -169,8 +169,18 @@ class FtpConnectFlowTest {
             state.put(FtpConnectForm.ENTRY_KEY, "Raumhafen");
             state.put(FtpConnectForm.PORT_KEY, String.valueOf(host.port()));
             state.put(FtpConnectForm.CONFIGURED_KEY, "true");
+            // Die Oberfläche hinkt hinterher (CI-Wettlauf aus #1291): Sie sieht den Zustand erst, nachdem die Sitzung
+            // verbunden war und am Wächter gescheitert ist. Das darf nicht als gescheiterte Erstverbindung gelten.
+            java.util.concurrent.CountDownLatch slowUi = new java.util.concurrent.CountDownLatch(1);
             SwingUtilities.invokeAndWait(() -> {
                 deck = new CommandDeck(accounts(host.host()));
+                deck.ftpSessions().onOpened(opened -> SwingUtilities.invokeLater(() -> {
+                    try {
+                        slowUi.await(30, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }));
                 deck.ftp().newConnection();
             });
             long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
@@ -184,6 +194,10 @@ class FtpConnectFlowTest {
             org.assertj.core.api.Assertions.assertThatThrownBy(
                     () -> session.files(files -> files.list("'KKR.JCL'")).get(10, TimeUnit.SECONDS))
                     .hasMessageContaining("Letzte Anmeldung mit „Raumhafen“ fehlgeschlagen");
+            slowUi.countDown();
+            SwingUtilities.invokeAndWait(() -> { });
+            assertThat(deck.ftpSessions().all()).as("der Reiter bleibt, die Sitzung war schon verbunden")
+                    .containsExactly(session);
             org.assertj.core.api.Assertions.assertThatThrownBy(
                     () -> session.jobs(jes -> jes.jobs(com.aresstack.spaceharvester.deck.ftp.jes.JobFilter.mine()))
                             .get(10, TimeUnit.SECONDS))
