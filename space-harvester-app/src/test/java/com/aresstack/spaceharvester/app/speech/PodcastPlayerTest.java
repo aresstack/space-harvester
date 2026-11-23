@@ -49,6 +49,22 @@ class PodcastPlayerTest {
     }
 
     @Test
+    void resetForgetsTheSegmentsAndStartsAtZero() throws Exception {
+        PodcastPlayer player = new PodcastPlayer(new Recorder());
+        player.tracks(List.of(new PodcastPlayer.Track(wav("a", 1000), true, "Einstieg"),
+                new PodcastPlayer.Track(wav("b", 2000), true, "Nordlicht")), false);
+        player.seek(3000);
+
+        player.reset();
+
+        assertEquals(0, player.position());
+        assertEquals(0, player.total());
+        assertEquals(List.of(), player.topicStarts());
+        assertEquals(-1, player.trackAt(0));
+        assertTrue(!player.playing() && !player.paused());
+    }
+
+    @Test
     void skipsSegmentsThatWillNotComeAndReportsWhereToResume() throws Exception {
         Recorder recorder = new Recorder();
         PodcastPlayer player = new PodcastPlayer(recorder);
