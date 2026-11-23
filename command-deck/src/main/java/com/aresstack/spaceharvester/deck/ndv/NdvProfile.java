@@ -8,14 +8,21 @@ package com.aresstack.spaceharvester.deck.ndv;
  * @param port TCP-Port des NDV-Servers, Vorgabe {@value #DEFAULT_PORT} (der Port des Eintrags gilt nur fürs Terminal)
  * @param defaultLibrary Standard-Bibliothek wie in MainframeMate: nach dem Verbinden angemeldet und geöffnet; leer
  *                       für keine
+ * @param useProxy       über den Proxy der App verbinden; Vorgabe {@code false}, direkt wie MainframeMate (Angelo
+ *                       23.11.: wählbar, Vorgabe ist das funktionierende Verhalten)
  */
-public record NdvProfile(String host, int port, String defaultLibrary) {
+public record NdvProfile(String host, int port, String defaultLibrary, boolean useProxy) {
 
     /** Standardport des NDV-Servers, wie in MainframeMate voreingestellt ({@code Settings.ndvPort}). */
     public static final int DEFAULT_PORT = 8011;
 
     public NdvProfile(String host, int port) {
         this(host, port, "");
+    }
+
+    /** Direkt, ohne Proxy. */
+    public NdvProfile(String host, int port, String defaultLibrary) {
+        this(host, port, defaultLibrary, false);
     }
 
     public NdvProfile {
