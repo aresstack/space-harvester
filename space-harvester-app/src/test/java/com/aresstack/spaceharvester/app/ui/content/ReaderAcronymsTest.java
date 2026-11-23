@@ -275,7 +275,8 @@ class ReaderAcronymsTest {
     /**
      * Fahrplan P2 über die echte Laufzeit: „mit Unterseiten“ ist an einer Seite mit Unterseite frei, Standard aus;
      * angehakt zeigt „Begriffe“ unter den eigenen die der Unterseite, dynamisch aus dem Core, und ein Begriff beider
-     * Seiten steht einmal oben mit „+1“. An der Unterseite selbst (ohne Unterseiten) ist die Checkbox gesperrt.
+     * Seiten steht einmal oben mit „+1“. An der Unterseite selbst (ohne Unterseiten) bleibt die Checkbox umschaltbar
+     * (Angelo 23.11.2026: nie ausgegraut), der Tooltip sagt, dass es keine Unterseiten gibt.
      */
     @Test
     void withSubpagesTheTermsTabShowsTheTermsOfTheSubpagesBelowItsOwn() throws Exception {
@@ -292,11 +293,24 @@ class ReaderAcronymsTest {
         PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
         open(panel, "wiki", "210", false);
         awaitTrue(() -> onEdt(() -> panel.subpages().known() != null));
-        assertThat(onEdt(() -> panel.subpages().box().isEnabled())).as("Blatt ohne Unterseiten").isFalse();
+        assertThat(onEdt(() -> panel.subpages().box().isEnabled())).as("Blatt ohne Unterseiten").isTrue();
         assertThat(onEdt(() -> panel.subpages().box().getToolTipText())).isEqualTo(Subpages.TIP_NO_CHILDREN);
+        // An- und wieder abhaken geht auch am Blatt; es gibt nur nichts darunter.
+        onEdt(() -> {
+            panel.subpages().box().setSelected(true);
+            return null;
+        });
+        assertThat(onEdt(() -> panel.subpages().checkedWithoutChildren())).isTrue();
+        assertThat(onEdt(() -> panel.subpages().below())).isNull();
+        assertThat(onEdt(() -> panel.subpages().box().isEnabled())).isTrue();
+        onEdt(() -> {
+            panel.subpages().box().setSelected(false);
+            return null;
+        });
 
         open(panel, "wiki", "200", false);
-        awaitTrue(() -> onEdt(() -> panel.subpages().box().isEnabled()));
+        awaitTrue(() -> onEdt(() -> panel.subpages().known() != null && panel.subpages().known().size() == 1));
+        assertThat(onEdt(() -> panel.subpages().box().isEnabled())).isTrue();
         assertThat(onEdt(() -> panel.subpages().checked())).as("Standard aus").isFalse();
         assertThat(onEdt(() -> panel.terms().showsBelow())).isFalse();
 
@@ -331,16 +345,22 @@ class ReaderAcronymsTest {
         });
         awaitTrue(() -> onEdt(() -> panel.analysisView().below().count() > 0));
         assertThat(onEdt(() -> panel.analysisView().below().table().getColumnName(4))).isEqualTo("Unterseite");
-        // UX-Manager: Bei 960 px stehen alle sieben Unterreiter in einer Zeile, auch mit Checkbox und den beiden
-        // Aktionen als Icon-Knöpfe; 900 px lässt Luft für die breitere Schrift der CI.
+        // Angelo 23.11.2026: Die sieben Unterreiter stehen mittig in der unteren Leiste, „mit Unterseiten“ rechts in
+        // derselben Leiste; über dem Inhalt gibt es keine Reiterzeile mehr. Bei 900 px in einer Zeile.
         assertThat(onEdt(() -> {
-            panel.setSize(900, 700);
-            layoutAll(panel);
+            TabFoot foot = panel.analysisFoot();
+            foot.setSize(900, 40);
+            layoutAll(foot);
             java.util.Set<Integer> rows = new java.util.HashSet<>();
             for (String name : panel.analysisTabs().names()) {
                 javax.swing.AbstractButton tab = panel.analysisTabs().button(name);
-                rows.add(javax.swing.SwingUtilities.convertPoint(tab.getParent(), tab.getLocation(), panel).y);
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(tab, foot)).isTrue();
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(tab, panel)).isFalse();
+                rows.add(javax.swing.SwingUtilities.convertPoint(tab.getParent(), tab.getLocation(), foot).y);
             }
+            javax.swing.JCheckBox box = panel.subpages().box();
+            assertThat(box.getParent()).isSameAs(foot);
+            assertThat(box.getX() + box.getWidth()).isEqualTo(foot.getWidth());
             return rows.size() + "/" + panel.analysisTabs().names().size();
         })).isEqualTo("1/7");
         assertThat(onEdt(() -> panel.analysisView().createIcon().getAccessibleContext().getAccessibleName()))
@@ -368,6 +388,14 @@ class ReaderAcronymsTest {
         assertThat(statementRows.missing()).isEqualTo(1);
         assertThat(PageDetailPanel.belowRows("Bilder", workspace, subpagesBelow, () -> true, partial -> { }).rows())
                 .isEmpty();
+        // Angelo 23.11.2026: „mit Unterseiten“ gilt auch unter „Absätze“; gezeigt wird nur ein vorliegendes Ergebnis.
+        PageDetailPanel.BelowRows passageRows = PageDetailPanel.belowRows("Absätze", workspace, subpagesBelow,
+                () -> true, partial -> { });
+        assertThat(passageRows.missing()).isZero();
+        assertThat(passageRows.rows()).singleElement().satisfies(row -> {
+            assertThat(row.cells().get(0)).startsWith("Der ZV (Zahlungsverkehr)");
+            assertThat(row.originText()).isEqualTo("Zahlungen");
+        });
         onEdt(() -> {
             panel.selectTab("Graph");
             return null;
@@ -384,7 +412,7 @@ class ReaderAcronymsTest {
         com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood.Stack graphStack =
                 onEdt(() -> panel.graph().subpageStack());
         assertThat(graphStack.considered()).isEqualTo(1);
-        // „Absätze“ sperrt die Checkbox nur: Ansicht, Historie und Ergebnis des Graphen bleiben, nichts lädt neu.
+        // Der Wechsel über „Absätze“ und zurück: Ansicht, Historie und Ergebnis des Graphen bleiben, nichts lädt neu.
         onEdt(() -> {
             panel.selectTab("Absätze");
             panel.selectTab("Graph");

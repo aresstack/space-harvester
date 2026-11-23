@@ -49,6 +49,34 @@ class TermsTabTest {
         assertThat(jumped).containsExactly(List.of(new TermsTab.Span(4, 7), new TermsTab.Span(20, 23)));
     }
 
+    /**
+     * Angelo 23.11.2026: Akronyme, Bezeichner, Verben und Beziehungen als Unterreiter für die untere Leiste; die Zähler
+     * oben bleiben, darunter steht nur der gewählte Abschnitt. Ohne Unterreiter (Stand der Auswahl) alles untereinander.
+     */
+    @Test
+    void theKindTabsShowOneSectionAndKeepTheCounters() throws Exception {
+        PageAcronyms.Acronym rsl = new PageAcronyms.Acronym("RSL", 1, "Rückmeldeschlüssel", null,
+                List.of(new PageAcronyms.Occurrence(0, 3)));
+        SwingUtilities.invokeAndWait(() -> {
+            TermsTab plain = new TermsTab();
+            assertThat(plain.kind()).isNull();
+
+            TermsTab terms = new TermsTab();
+            javax.swing.JComponent bar = terms.kindBar();
+            assertThat(bar.getComponentCount()).isEqualTo(4);
+            assertThat(terms.kind()).isEqualTo(TermsTab.ACRONYMS);
+            terms.show(new PageAcronyms(PageAcronyms.State.CURRENT, RESULT, List.of(rsl), List.of()));
+            assertThat(terms.counts().get(0)).isEqualTo("1");
+            assertThat(terms.chips().get(0).isShowing() || terms.chips().get(0).getParent().isVisible()).isTrue();
+            ((javax.swing.AbstractButton) bar.getComponent(1)).doClick();
+            assertThat(terms.kind()).isEqualTo(TermsTab.IDENTIFIERS);
+            assertThat(terms.chips().get(0).getParent().getParent().isVisible()).as("Akronyme ausgeblendet").isFalse();
+            assertThat(terms.counts().get(0)).as("Zähler bleiben").isEqualTo("1");
+            terms.kind(TermsTab.ACRONYMS);
+            assertThat(terms.chips().get(0).getParent().getParent().isVisible()).isTrue();
+        });
+    }
+
     @Test
     void aSelectionShowsTheSameViewSummedUpOverItsPagesAndAsksTheCoreWhenFiltering() throws Exception {
         List<String> queries = new ArrayList<>();
