@@ -1547,7 +1547,7 @@ final class KnowledgeGraphTab extends JPanel {
         }
         if (node.page().key().equals(page) && node.start() >= 0) {
             text.append("Beleg: Zeichen ").append(node.start()).append('–').append(node.end())
-                    .append(" im Reiter „Text“.\n");
+                    .append(" im Reiter „Podcast-Ansicht“.\n");
         } else if (node.start() >= 0) {
             text.append("Beleg auf einer anderen Seite (Zeichen ").append(node.start()).append('–')
                     .append(node.end()).append(").\n");

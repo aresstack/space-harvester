@@ -189,7 +189,7 @@ class ReaderAcronymsTest {
         assertThat(context.runtime().workspace().images(context.runtime().workspace().page("wiki", "200", false))
                 .reason()).isEqualTo(PageImages.VISION_MODEL_MISSING);
         onEdt(() -> {
-            panel.tabs().select("Text");
+            panel.tabs().select("Podcast-Ansicht");
             return null;
         });
 
