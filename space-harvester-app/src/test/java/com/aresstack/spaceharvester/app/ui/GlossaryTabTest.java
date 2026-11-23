@@ -500,6 +500,22 @@ class GlossaryTabTest {
         return cells;
     }
 
+    @Test
+    void entriesFromAnApprovedGlossaryShowTheirSource() {
+        Entry plain = entry("g1", "Zahlstelle", null, null, RelationOrigin.MANUAL, ReviewStatus.CONFIRMED, 0, false);
+        GlossaryAccess.Reference reference = new GlossaryAccess.Reference("Erfundenes Glossar",
+                "https://example.org/glossar.pdf", "Zahlstelle (pl.)", 7);
+        Entry approved = new Entry(plain.id(), plain.term(), plain.normalized(), null, null, plain.origin(),
+                plain.status(), List.of(), false, "Erfundene Erläuterung.", null, T, T, T, 1, reference);
+
+        assertThat(GlossaryTab.originWord(plain)).isEqualTo("Manuell");
+        assertThat(GlossaryTab.originWord(approved)).isEqualTo(GlossaryTab.APPROVED);
+        assertThat(GlossaryTab.overlayText(approved, null, null, List.of(), List.of()))
+                .contains("Herkunft: Manuell\nQuelle: Erfundenes Glossar, Seite 7 („Zahlstelle (pl.)“)\n"
+                        + "https://example.org/glossar.pdf\nStatus: bestätigt");
+        assertThat(GlossaryTab.overlayText(plain, null, null, List.of(), List.of())).doesNotContain("Quelle:");
+    }
+
     private static Entry entry(String id, String term, String sourceId, String spaceKey, RelationOrigin origin,
                                ReviewStatus status, int evidence, boolean stale) {
         List<RelationEvidence> proofs = new ArrayList<>();
