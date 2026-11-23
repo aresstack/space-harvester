@@ -197,7 +197,8 @@ public final class FtpWorkspace extends JPanel {
     }
 
     private void added(FtpSession session) {
-        if (pillOf.containsKey(session)) {
+        // Schon wieder geschlossen (etwa eine sofort gescheiterte erste Verbindung)? Dann kein Reiter.
+        if (pillOf.containsKey(session) || !sessions.all().contains(session)) {
             return;
         }
         ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.label(),
@@ -231,11 +232,12 @@ public final class FtpWorkspace extends JPanel {
         viewOf.put(session, view);
         center.add(view, session.id());
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
-        // Ein Wechsel vor dem Anmelden des Beobachters ginge sonst verloren.
-        changed(session);
         select(session);
         pills.revalidate();
         pills.repaint();
+        // Ein Wechsel vor dem Anmelden des Beobachters ginge sonst verloren. Zuletzt, denn eine schon gescheiterte
+        // erste Verbindung schließt den Reiter wieder und zeigt das Formular.
+        changed(session);
     }
 
     private void changed(FtpSession session) {
