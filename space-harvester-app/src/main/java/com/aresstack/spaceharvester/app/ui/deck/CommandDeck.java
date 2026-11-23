@@ -201,7 +201,13 @@ public final class CommandDeck {
         java.util.List<String> rules = java.util.List.of();
         String where = "Command Deck › " + sent.title();
         String key = "command-deck/" + sent.name().toLowerCase(java.util.Locale.ROOT);
-        if (sent == DeckArea.FILES) {
+        if (sent == DeckArea.FTP) {
+            extra = new com.aresstack.spaceharvester.app.chat.FtpChatTools(ftp.selected(), ftp::selected);
+            rules = com.aresstack.spaceharvester.app.chat.FtpChatTools.rules();
+        } else if (sent == DeckArea.NDV) {
+            extra = new com.aresstack.spaceharvester.app.chat.NdvChatTools(ndv.selected(), ndv::selected);
+            rules = com.aresstack.spaceharvester.app.chat.NdvChatTools.rules();
+        } else if (sent == DeckArea.FILES) {
             String folder = files.browser().location().orElse(null);
             extra = new com.aresstack.spaceharvester.app.chat.FilesChatTools(files.browser().source(), folder,
                     files.textStore(), files.previewStore(),
@@ -232,9 +238,9 @@ public final class CommandDeck {
         return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints(switch (shown) {
             case TERMINAL -> "Command Deck: Der Chat liest die Terminal-Maske und füllt Felder aus – abschicken kannst "
                     + "nur du.";
-            case FTP -> "Command Deck › FTP: Der Chat sieht die Liste, das offene Member oder den Spool und erklärt "
-                    + "sie – ändern kannst nur du.";
-            case NDV -> "Command Deck › NDV: Der Chat sieht Objektliste und offenen Quelltext und erklärt sie – ändern "
+            case FTP -> "Command Deck › FTP: Der Chat sieht die Ansicht, liest Datasets, Members und Spools – ändern "
+                    + "kannst nur du.";
+            case NDV -> "Command Deck › NDV: Der Chat sieht die Ansicht, sucht Objekte und liest Quelltexte – ändern "
                     + "kannst nur du.";
             case BETAVIEW -> "Command Deck › BetaView: Der Chat sieht Trefferliste und offenes Dokument und erklärt "
                     + "sie.";
