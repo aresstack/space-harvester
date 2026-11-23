@@ -42,8 +42,6 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<FtpSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
     private final Map<FtpSession, FtpSessionView> viewOf = new LinkedHashMap<>();
-    /** Reiter samt ✕ je Sitzung: das ✕ trennt und schließt in einem Schritt (Angelo, 23.11.2026). */
-    private final Map<FtpSession, JComponent> tabOf = new java.util.HashMap<>();
     /**
      * Sitzungen, die noch nie verbunden waren. Scheitern sie, bleibt kein toter Reiter: Das Formular kommt mit dem
      * Grund wieder. Klappt es, verbindet „Neue Verbindung“ künftig ohne Formular.
@@ -213,17 +211,12 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         if (pillOf.containsKey(session) || !sessions.all().contains(session)) {
             return;
         }
-        ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.label(),
-                session.state().label());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        pill.getAccessibleContext().setAccessibleName(session.label());
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.label(), session.state().label(),
+                "Trennen und schließen (auch Mittelklick auf den Reiter)", () -> closeTab(session));
         pill.addActionListener(e -> select(session));
-        JPanel tab = DeckBars.tab(pill, "Trennen und schließen (auch Mittelklick auf den Reiter)",
-                () -> closeTab(session));
         pillGroup.add(pill);
-        pills.add(tab, pills.getComponentCount() - 1);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
-        tabOf.put(session, tab);
         FtpSessionView view = new FtpSessionView(session,
                 () -> toggle.select(FtpSessionView.JOBS), editors);
         view.show(toggle.selected());
@@ -310,10 +303,9 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         sessions.close(session);
         ComposerToggleButton pill = pillOf.remove(session);
         FtpSessionView view = viewOf.remove(session);
-        JComponent tab = tabOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tab == null ? pill : tab);
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }
