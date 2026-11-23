@@ -454,6 +454,10 @@ public final class SettingsView implements View {
         if (DIAGNOSIS.equals(name) && diagnosis != null) {
             diagnosis.shown();
         }
+        if (BROWSER.equals(name)) {
+            // Der Chat kann inzwischen Hosts gemerkt haben („Immer erlauben“/„Immer verbieten“).
+            browser.load();
+        }
         if ((AI.equals(name) || MODELS.equals(name)) && !ai.changed()) {
             ai.render();
         }
@@ -594,6 +598,9 @@ public final class SettingsView implements View {
     public void shown() {
         render();
         ai.render();
+        if (BROWSER.equals(selected)) {
+            browser.load();
+        }
         // Die Diagnose hält ihre Abfrage an, solange sie nicht sichtbar ist; steht ihre Seite noch an, läuft sie weiter.
         if (DIAGNOSIS.equals(selected) && diagnosis != null) {
             diagnosis.shown();

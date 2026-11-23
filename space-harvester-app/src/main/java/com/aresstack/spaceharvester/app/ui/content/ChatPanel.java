@@ -1538,7 +1538,7 @@ public final class ChatPanel extends JPanel {
      * Die Websuche eines Turns: Browser-Werkzeuge des Chats, Regeln, Budget und das Ende (schließt den Browser und
      * lässt die Karte platzen); {@code null}, wenn sie aus ist oder Firefox fehlt.
      */
-    private ChatTurn.WebSearch webSearchFor(String chatId, WebSearchCard card) {
+    private ChatTurn.WebSearch webSearchFor(String chatId, WebSearchCard card, TurnListener listener) {
         com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser browser = webOn ? context.webBrowser() : null;
         if (browser == null) {
             return null;
@@ -1546,16 +1546,24 @@ public final class ChatPanel extends JPanel {
         browser.profile(chatId, webFlag("internal"));
         browser.load(chatId, webInt("tabs", WEB_TABS_DEFAULT), webInt("delay", 0));
         browser.humanEmulation(chatId, webFlag("human"), webFlag("mouse"));
-        browser.prompt(new com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt(this::showApproval,
-                SwingUtilities::invokeLater));
-        browser.beginTurn(chatId, progress -> SwingUtilities.invokeLater(() -> card.update(progress)));
+        // Rückfragen gehören zu diesem Chat und dieser Antwort, nie zum gerade sichtbaren Verlauf.
+        com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt prompt =
+                new com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt(listener::askApproval,
+                        SwingUtilities::invokeLater);
         String rules = com.aresstack.spaceharvester.app.chat.browser.BrowserRules.BROWSER + "\n"
                 + browser.profileRule(chatId);
+        java.util.concurrent.atomic.AtomicLong begun = new java.util.concurrent.atomic.AtomicLong(-1);
         return new ChatTurn.WebSearch(new com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools(
-                browser.tools(chatId)), rules, Math.max(WEB_BUDGET_MIN, Math.min(WEB_BUDGET_MAX,
-                webInt("budget", WEB_BUDGET_DEFAULT))), () -> {
-                    var last = browser.endTurn(chatId);
-                    SwingUtilities.invokeLater(() -> card.update(last));
+                browser.tools(chatId), call -> browser.asking(prompt, call)), rules,
+                Math.max(WEB_BUDGET_MIN, Math.min(WEB_BUDGET_MAX, webInt("budget", WEB_BUDGET_DEFAULT))),
+                () -> begun.set(browser.beginTurn(chatId,
+                        progress -> SwingUtilities.invokeLater(() -> card.update(progress)))),
+                () -> {
+                    long turn = begun.get();
+                    var last = turn < 0 ? null : browser.endTurn(chatId, turn);
+                    if (last != null) {
+                        SwingUtilities.invokeLater(() -> card.update(last));
+                    }
                 });
     }
 
@@ -1729,6 +1737,9 @@ public final class ChatPanel extends JPanel {
      */
     void send() {
         if (turn != null) {
+            if (listening != null) {
+                listening.endApprovals();
+            }
             turn.cancel();
             return;
         }
@@ -1816,7 +1827,7 @@ public final class ChatPanel extends JPanel {
         }
         // Websuche (Composer-Knopf): die Browser-Werkzeuge des Chats dazu, mit Karte „Browserrecherche“.
         WebSearchCard card = new WebSearchCard(body -> addActivity(WebSearchCard.TITLE, body));
-        ChatTurn.WebSearch web = webSearchFor(chat.id(), card);
+        ChatTurn.WebSearch web = webSearchFor(chat.id(), card, listener);
         if (web != null) {
             turn.webSearch(web);
             listener.webCard = card;
@@ -1876,6 +1887,35 @@ public final class ChatPanel extends JPanel {
         boolean detached;
         /** Die Karte „Browserrecherche“ dieser Antwort, {@code null} ohne Websuche. */
         WebSearchCard webCard;
+        /** Offene Rückfragen der Websuche dieser Antwort (nur EDT). */
+        private final List<java.util.function.Consumer<
+                com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome>> approvals = new ArrayList<>();
+        /** Nach Stopp oder Verlassen des Chats: keine neuen Rückfragen mehr. */
+        private boolean approvalsEnded;
+
+        /**
+         * Die Rückfrage-Fläche dieser Antwort: Fragen erscheinen nur im Verlauf ihres Chats. Nach Stopp oder Wechsel
+         * des Chats gibt es keine Fläche mehr (das Werkzeug läuft dann nicht), offene Fragen enden als abgebrochen.
+         */
+        com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt.Handle askApproval(String title,
+                String description, boolean offersAlways,
+                java.util.function.Consumer<com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome> answer) {
+            if (approvalsEnded || detached) {
+                throw new IllegalStateException("Der Chat der Rückfrage ist nicht mehr offen.");
+            }
+            approvals.add(answer);
+            return showApproval(title, description, offersAlways, answer);
+        }
+
+        /** Beendet alle offenen Rückfragen als abgebrochen; neue gibt es nicht mehr. Nur auf dem EDT. */
+        void endApprovals() {
+            approvalsEnded = true;
+            List<java.util.function.Consumer<com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome>>
+                    open = new ArrayList<>(approvals);
+            approvals.clear();
+            open.forEach(answer -> answer.accept(
+                    com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.CANCELLED));
+        }
 
         TurnListener(ChatRecord started, Path startedNode, AssistantMarkdownBubble bubble, SourceLinks links) {
             this.started = started;
@@ -2059,6 +2099,7 @@ public final class ChatPanel extends JPanel {
     /** Löst die Ansicht vom laufenden Turn: er schreibt seinen Chat zu Ende, zeigt hier aber nichts mehr. */
     private void detachTurn() {
         if (listening != null) {
+            listening.endApprovals();
             listening.detached = true;
             listening = null;
         }

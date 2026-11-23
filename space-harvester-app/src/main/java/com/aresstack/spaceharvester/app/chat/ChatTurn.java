@@ -249,10 +249,12 @@ public final class ChatTurn {
      * @param tools  die an den Chat gebundenen Browser-Werkzeuge
      * @param rules  zusätzlicher Systemhinweis (Lesen mehrerer Seiten, Browserprofil mit Such-URLs)
      * @param rounds Werkzeugrunden dieses Turns (Browser-Budget)
+     * @param begin  wird zu Beginn des Turns auf seinem Thread gerufen (meldet den Turn beim Browser an), oder
+     *               {@code null}
      * @param ended  wird nach dem Ende des Turns gerufen, auf eigenem Thread (schließt den Browser)
      */
     public record WebSearch(com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools tools, String rules,
-                            int rounds, Runnable ended) {
+                            int rounds, Runnable begin, Runnable ended) {
     }
 
     /**
@@ -346,6 +348,10 @@ public final class ChatTurn {
     }
 
     private void run() {
+        WebSearch web = webSearch;
+        if (web != null && web.begin() != null) {
+            web.begin().run();
+        }
         if (custom != null) {
             toolset = withWebSearch(custom);
             onUi(() -> listener.context(ChatKnowledge.Context.EMPTY));
@@ -1064,12 +1070,22 @@ public final class ChatTurn {
                 return all;
             }
 
+            /** Der Thread, der gerade ein Browser-Werkzeug ausführt (wartet er auf eine Rückfrage, weckt Stopp ihn). */
+            private volatile Thread browsing;
+
             @Override
             public String run(AiChat.ToolCall call) {
                 if (!web.tools().handles(call.name())) {
                     return base.run(call);
                 }
+                if (cancelRequested) {
+                    return "Abgebrochen.";
+                }
+                browsing = Thread.currentThread();
                 try {
+                    if (cancelRequested) {
+                        return "Abgebrochen.";
+                    }
                     return web.tools().run(call.name(), BROWSER_JSON.readTree(call.argumentsJson() == null
                             || call.argumentsJson().isBlank() ? "{}" : call.argumentsJson()));
                 } catch (JacksonException e) {
@@ -1078,6 +1094,10 @@ public final class ChatTurn {
                     ChatTools.diagnosis.accept("Browser-Werkzeug " + call.name() + " gescheitert: "
                             + e.getClass().getSimpleName());
                     return "Fehler: Das Browser-Werkzeug ist gescheitert (" + e.getClass().getSimpleName() + ").";
+                } finally {
+                    browsing = null;
+                    // Stopp zählt über cancelRequested; die Unterbrechung galt nur der offenen Rückfrage.
+                    Thread.interrupted();
                 }
             }
 
@@ -1091,6 +1111,11 @@ public final class ChatTurn {
             @Override
             public void cancel() {
                 base.cancel();
+                // Eine offene Rückfrage endet sofort als „abgebrochen, nicht ausgeführt“ (ChatApprovalPrompt).
+                Thread worker = browsing;
+                if (worker != null) {
+                    worker.interrupt();
+                }
             }
         };
     }

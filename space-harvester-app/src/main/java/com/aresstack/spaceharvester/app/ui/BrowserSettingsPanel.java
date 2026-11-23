@@ -47,6 +47,8 @@ public final class BrowserSettingsPanel {
         final JTextArea blacklist = area();
         final JTextArea searchUrls = area();
         final JPanel panel = new JPanel(new BorderLayout(0, 6));
+        /** Was zuletzt geladen oder gespeichert wurde. */
+        BrowserAccessConfig loaded;
 
         Profile(BrowserProfile profile) {
             this.profile = profile;
@@ -96,6 +98,7 @@ public final class BrowserSettingsPanel {
             } finally {
                 loading = false;
             }
+            loaded = config();
         }
 
         BrowserAccessConfig config() {
@@ -128,10 +131,25 @@ public final class BrowserSettingsPanel {
         internal.load(config.profile(BrowserProfile.INTERNAL));
     }
 
+    /**
+     * Speichert ein Profil, aber nur, wenn der Benutzer hier etwas geändert hat: Ein bloßes Verlassen eines Feldes
+     * überschreibt so nie Regeln, die der Chat inzwischen gemerkt hat („Immer erlauben“/„Immer verbieten“).
+     */
     private void save(Profile profile) {
-        if (!loading) {
-            settings.save(profile.profile, profile.config());
+        if (loading) {
+            return;
         }
+        BrowserAccessConfig edited = profile.config();
+        if (same(edited, profile.loaded)) {
+            return;
+        }
+        settings.save(profile.profile, edited);
+        profile.loaded = edited;
+    }
+
+    private static boolean same(BrowserAccessConfig a, BrowserAccessConfig b) {
+        return b != null && a.allowByDefault() == b.allowByDefault() && a.allow().equals(b.allow())
+                && a.block().equals(b.block()) && a.searchUrls().equals(b.searchUrls());
     }
 
     /** Der Hinweis über beiden Profilen. */

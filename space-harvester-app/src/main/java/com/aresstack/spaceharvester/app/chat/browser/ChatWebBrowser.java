@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Der Browser der Chats für die Websuche, zusammengesetzt wie {@code AdapterAssembly.browsers} und die
@@ -47,12 +48,19 @@ public final class ChatWebBrowser {
     private final BrowserMcpTools tools;
     private final BrowserSettings settings;
     private final Map<ChatConversationId, BrowserProfile> profiles = new ConcurrentHashMap<>();
-    private volatile ApprovalPromptPort prompt = ApprovalPromptPort.unavailable();
+    /** Die Rückfrage-Fläche des Turns, der gerade auf diesem Thread ein Browser-Werkzeug ausführt. */
+    private final ThreadLocal<ApprovalPromptPort> asking = new ThreadLocal<>();
+    /** Der jüngste Turn je Chat; ein älterer räumt nicht mehr auf. */
+    private final Map<ChatConversationId, Long> turns = new ConcurrentHashMap<>();
+    private long nextTurn;
 
     ChatWebBrowser(ChatBrowserPort browsers, DelegatingBrowserAccessGuard guard, BrowserSettings settings) {
         this.browsers = browsers;
         this.settings = settings;
-        ApprovalPromptPort current = (request, timeoutMillis) -> prompt.ask(request, timeoutMillis);
+        ApprovalPromptPort current = (request, timeoutMillis) -> {
+            ApprovalPromptPort prompt = asking.get();
+            return (prompt == null ? ApprovalPromptPort.unavailable() : prompt).ask(request, timeoutMillis);
+        };
         guard.delegateTo(new BrowserAccessService(this::profile,
                 profile -> BrowserAccessService.policyOf(settings.load().profile(profile)), () -> current, settings,
                 ToolApprovalGate.DEFAULT_TIMEOUT_MILLIS));
@@ -90,9 +98,23 @@ public final class ChatWebBrowser {
         };
     }
 
-    /** Wohin Rückfragen gehen (unbekannte Website, verändernde Aktion); ohne Fläche gilt „nicht freigegeben“. */
-    public void prompt(ApprovalPromptPort prompt) {
-        this.prompt = prompt == null ? ApprovalPromptPort.unavailable() : prompt;
+    /**
+     * Führt {@code call} (ein Browser-Werkzeug) so aus, dass seine Rückfragen (unbekannte Website, verändernde Aktion)
+     * an {@code prompt} gehen, die Fläche des Chats, aus dem der Aufruf kommt. Die Werkzeuge fragen auf dem
+     * aufrufenden Thread; ohne Fläche gilt „nicht freigegeben“.
+     */
+    public String asking(ApprovalPromptPort prompt, Supplier<String> call) {
+        ApprovalPromptPort before = asking.get();
+        asking.set(prompt == null ? ApprovalPromptPort.unavailable() : prompt);
+        try {
+            return call.get();
+        } finally {
+            if (before == null) {
+                asking.remove();
+            } else {
+                asking.set(before);
+            }
+        }
     }
 
     /** Die Browser-Werkzeuge des Chats {@code chatId}; der Chat wird hier gebunden, nie vom Modell. */
@@ -132,17 +154,29 @@ public final class ChatWebBrowser {
         tools.setHumanEmulation(new ChatConversationId(chatId), keys, mouse);
     }
 
-    /** Beginnt die Aufzeichnung einer Antwort; {@code listener} bekommt jede Änderung auf dem Werkzeug-Thread. */
-    public WebExplorationProgress beginTurn(String chatId, Consumer<WebExplorationProgress> listener) {
-        return tools.beginTurn(new ChatConversationId(chatId), listener);
+    /**
+     * Beginnt die Aufzeichnung einer Antwort; {@code listener} bekommt jede Änderung auf dem Werkzeug-Thread. Liefert
+     * die Nummer des Turns für {@link #endTurn}. Wartet, bis ein älterer Turn des Chats seinen Browser geschlossen hat.
+     */
+    public synchronized long beginTurn(String chatId, Consumer<WebExplorationProgress> listener) {
+        ChatConversationId chat = new ChatConversationId(chatId);
+        long turn = ++nextTurn;
+        turns.put(chat, turn);
+        tools.beginTurn(chat, listener);
+        return turn;
     }
 
     /**
      * Beendet die Aufzeichnung und schließt den Browser des Chats wie im Enterprise AI Client nach jeder Antwort,
-     * außer ein Werkzeug hält ihn offen (Anmeldung, Captcha). Das Profil bleibt.
+     * außer ein Werkzeug hält ihn offen (Anmeldung, Captcha). Das Profil bleibt. Hat im Chat inzwischen ein neuer
+     * Turn begonnen ({@code turn} ist nicht mehr der jüngste), bleibt alles, wie es ist, und es kommt {@code null}.
      */
-    public WebExplorationProgress endTurn(String chatId) {
+    public synchronized WebExplorationProgress endTurn(String chatId, long turn) {
         ChatConversationId chat = new ChatConversationId(chatId);
+        if (!Long.valueOf(turn).equals(turns.get(chat))) {
+            return null;
+        }
+        turns.remove(chat);
         WebExplorationProgress last = tools.endTurn(chat);
         if (!tools.keepsBrowserOpen(chat)) {
             try {

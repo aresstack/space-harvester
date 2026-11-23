@@ -1,10 +1,14 @@
 package com.aresstack.spaceharvester.app.chat;
 
+import com.aresstack.enterpriseai.astu.approval.ApprovalDecision;
+import com.aresstack.enterpriseai.astu.approval.ApprovalRequest;
+import com.aresstack.enterpriseai.astu.approval.ApprovalTarget;
 import com.aresstack.enterpriseai.proasteion.katagogion.McpToolContribution;
 import com.aresstack.enterpriseai.proasteion.katagogion.McpToolParameter;
 import com.aresstack.enterpriseai.proasteion.katagogion.McpToolResult;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools;
+import com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -44,6 +48,7 @@ class ChatTurnWebSearchTest {
                     return McpToolResult.ok("Seite „Wetter“ geöffnet: Sonne");
                 }, McpToolParameter.string("url", true, "Adresse"))));
         CountDownLatch ended = new CountDownLatch(1);
+        List<String> order = new CopyOnWriteArrayList<>();
         ChatToolset base = new ChatToolset() {
             @Override
             public List<AiChat.Tool> definitions() {
@@ -68,7 +73,7 @@ class ChatTurnWebSearchTest {
 
         ChatTurn turn = new ChatTurn(workspace(), port, "modell", null, List.of(), "Wie ist das Wetter?", null, "Test",
                 events, Runnable::run).withToolset(base, "System").webSearch(new ChatTurn.WebSearch(browser,
-                "[Browserprofil] Extern", 30, ended::countDown));
+                "[Browserprofil] Extern", 30, () -> order.add("begin"), ended::countDown));
         assertThat(turn.maxToolRounds()).isEqualTo(30);
         turn.start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
@@ -76,6 +81,7 @@ class ChatTurnWebSearchTest {
 
         assertThat(events.failed).isNull();
         assertThat(navigated).containsExactly("https://wetter.example");
+        assertThat(order).containsExactly("begin");
         assertThat(TerminalMaskFixture.toolNames(port.requests.get(0))).containsExactly("maske_lesen",
                 "browser_navigate");
         assertThat(port.requests.get(0).messages().get(0).text()).startsWith("System")
@@ -90,8 +96,61 @@ class ChatTurnWebSearchTest {
         ChatTurn plain = new ChatTurn(workspace(), new ScriptedChat(List.of()), "modell", null, List.of(), "Hallo", null,
                 "Test", new TerminalMaskFixture.Events(), Runnable::run);
         assertThat(plain.maxToolRounds()).isEqualTo(ChatTurn.MAX_TOOL_ROUNDS);
-        plain.webSearch(new ChatTurn.WebSearch(new BrowserChatTools(List.of()), null, 1, null));
+        plain.webSearch(new ChatTurn.WebSearch(new BrowserChatTools(List.of()), null, 1, null, null));
         assertThat(plain.maxToolRounds()).isEqualTo(ChatTurn.MAX_TOOL_ROUNDS);
+    }
+
+    @Test
+    void stopEndsAnOpenApprovalAsCancelledAndTheToolDoesNotRun() throws Exception {
+        CountDownLatch asked = new CountDownLatch(1);
+        List<ApprovalDecision.Outcome> outcomes = new CopyOnWriteArrayList<>();
+        List<String> executed = new CopyOnWriteArrayList<>();
+        // Die Fläche zeigt die Frage, aber niemand antwortet.
+        ChatApprovalPrompt prompt = new ChatApprovalPrompt((title, description, always, answer) -> {
+            asked.countDown();
+            return (approved, outcome) -> { };
+        }, Runnable::run);
+        BrowserChatTools browser = new BrowserChatTools(List.of(McpToolContribution.of("browser_act",
+                "Klickt", call -> {
+                    ApprovalDecision decision = prompt.ask(new ApprovalRequest("browser_act",
+                            ApprovalTarget.invoke()), 60_000L);
+                    outcomes.add(decision.outcome());
+                    if (decision.outcome() == ApprovalDecision.Outcome.APPROVED) {
+                        executed.add("Speichern");
+                    }
+                    return McpToolResult.ok("nicht ausgeführt");
+                }, McpToolParameter.string("control", true, "Steuerelement"))));
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c1", "browser_act",
+                        "{\"control\":\"Speichern\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        TerminalMaskFixture.Events events = new TerminalMaskFixture.Events();
+        ChatTurn turn = new ChatTurn(workspace(), port, "modell", null, List.of(), "Speichere das", null, "Test",
+                events, Runnable::run).withToolset(new ChatToolset() {
+                    @Override
+                    public List<AiChat.Tool> definitions() {
+                        return List.of();
+                    }
+
+                    @Override
+                    public String run(AiChat.ToolCall call) {
+                        return "";
+                    }
+
+                    @Override
+                    public String describe(AiChat.ToolCall call) {
+                        return "";
+                    }
+                }, "System").webSearch(new ChatTurn.WebSearch(browser, null, 8, null, null));
+
+        turn.start();
+        assertThat(asked.await(30, TimeUnit.SECONDS)).isTrue();
+        turn.cancel();
+
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(outcomes).containsExactly(ApprovalDecision.Outcome.CANCELLED);
+        assertThat(executed).isEmpty();
+        assertThat(events.cancelled).isNotNull();
     }
 
     private static final class ScriptedChat implements AiChat {

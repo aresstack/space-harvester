@@ -21,9 +21,21 @@ import java.util.Map;
  */
 public final class BrowserChatTools {
 
+    /** Rahmen eines Aufrufs, etwa die Rückfrage-Fläche des Chats ({@link ChatWebBrowser#asking}). */
+    @FunctionalInterface
+    public interface Scope {
+        String within(java.util.function.Supplier<String> call);
+    }
+
     private final Map<String, McpToolContribution> tools = new LinkedHashMap<>();
+    private final Scope scope;
 
     public BrowserChatTools(List<McpToolContribution> tools) {
+        this(tools, java.util.function.Supplier::get);
+    }
+
+    public BrowserChatTools(List<McpToolContribution> tools, Scope scope) {
+        this.scope = scope == null ? java.util.function.Supplier::get : scope;
         for (McpToolContribution tool : tools) {
             this.tools.put(tool.getName(), tool);
         }
@@ -71,8 +83,10 @@ public final class BrowserChatTools {
                 values.put(parameter.getName(), value.isValueNode() ? value.asString("") : value.toString());
             }
         }
-        McpToolResult result = tool.getHandler().invoke(new McpToolCall(name, values));
-        return result.isError() ? "Fehler: " + result.getText() : result.getText();
+        return scope.within(() -> {
+            McpToolResult result = tool.getHandler().invoke(new McpToolCall(name, values));
+            return result.isError() ? "Fehler: " + result.getText() : result.getText();
+        });
     }
 
     /** Was die Oberfläche während des Aufrufs zeigt. */
