@@ -140,6 +140,11 @@ public final class AppContext {
             revealPage(sourceId, pageId);
         }
 
+        /** Zeigt einen Suchtreffer im Baum hervorgehoben, ohne die Auswahl zu ändern; ohne eigene Umsetzung wie reveal. */
+        default void hintPage(String sourceId, String spaceKey, String pageId) {
+            revealPage(sourceId, spaceKey, pageId);
+        }
+
         void showJob(String jobId);
 
         /**

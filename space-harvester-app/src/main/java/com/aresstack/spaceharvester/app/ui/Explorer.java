@@ -793,19 +793,33 @@ public final class Explorer {
 
     /** Wie das Fadenkreuz in IntelliJ: nur den Pfad zur gezeigten Seite aufklappen und sie wählen, ohne zu öffnen. */
     void showCurrent() {
-        if (current == null) {
+        PageNavigation.Position target = current;
+        if (target == null) {
             return;
         }
         cards.show(deck, TREE);
-        // Beim Zuklappen wandert die Auswahl kurz zur Quelle; das darf den Suchumfang nicht verbreitern.
+        // Fehler bis 23.11.2026: Beim Zuklappen wanderte die Auswahl auf den zugeklappten Vorfahren; der
+        // Auswahl-Listener (nur der Umfang war stumm) zeigte dessen Ansicht in der Mitte, die meldete keine Seite mehr,
+        // current wurde null, das Fadenkreuz grau und revealPage(current) tat nichts. Jetzt schweigen beim Zuklappen
+        // beide Listener, und das Ziel ist vorher gemerkt.
+        quiet = true;
         revealing = true;
         try {
+            tree.clearSelection();
             collapseAll();
         } finally {
             revealing = false;
+            quiet = false;
         }
-        revealPage(current);
+        // Wie ein Klick des Benutzers: normale Auswahl, die Hervorhebung eines Suchtreffers verschwindet.
+        reveal(target, ++revealRequest);
+        userRequest = revealRequest;
     }
+
+    /** Während {@link #showCurrent} zuklappt, meldet die Auswahl nichts. */
+    private boolean quiet;
+    /** Die Anfrage, deren Ziel wie ein Klick gewählt wird (Fadenkreuz). */
+    private int userRequest = -1;
 
     /** Hebt die Auswahl auf, auch die globale; der Umfang ist dann wieder alles. */
     public void clearSelection() {
@@ -1078,7 +1092,7 @@ public final class Explorer {
                 // Vorfahren, die der Baum nicht als Wurzel zeigt: die Seite direkt unter dem Space suchen.
                 child = child(node, steps.get(steps.size() - 1));
                 if (child != null) {
-                    select(child);
+                    finish(child, ticket);
                     return;
                 }
             }
@@ -1086,11 +1100,67 @@ public final class Explorer {
                 // Seite nicht gefunden: aufgeklappt zeigen, wie weit der Pfad reicht, aber nichts anderes wählen.
                 tree.scrollPathToVisible(new TreePath(node.getPath()));
             } else if (index == steps.size() - 1) {
-                select(child);
+                finish(child, ticket);
             } else {
                 descend(child, steps, index + 1, ticket);
             }
         }
+    }
+
+    /** Der hervorgehobene Suchtreffer; kein gewählter Knoten, die Auswahl (der Filter der Suche) bleibt. */
+    private Node hint;
+    /** Die Anfrage, deren Ziel nur hervorgehoben statt gewählt wird. */
+    private int hintRequest = -1;
+
+    /** Ende des Abstiegs: wählen, oder bei {@link #hintPage} nur hervorheben und hinscrollen. */
+    private void finish(Node node, int ticket) {
+        if (ticket == userRequest) {
+            TreePath path = new TreePath(node.getPath());
+            tree.setSelectionPath(path);
+            tree.scrollPathToVisible(path);
+            return;
+        }
+        if (ticket != hintRequest) {
+            select(node);
+            return;
+        }
+        Node before = hint;
+        hint = node;
+        TreePath path = new TreePath(node.getPath());
+        if (before != null) {
+            ((javax.swing.tree.DefaultTreeModel) tree.getModel()).nodeChanged(before);
+        }
+        ((javax.swing.tree.DefaultTreeModel) tree.getModel()).nodeChanged(node);
+        tree.scrollPathToVisible(path);
+    }
+
+    /**
+     * Zeigt einen Suchtreffer im Baum (Angelo, 23.11.2026): Pfad aufklappen, hinscrollen und die Seite mit einem
+     * Rahmen hervorheben, ohne die Auswahl zu ändern, denn die Auswahl ist der Filter der Suche.
+     */
+    /** Wie {@link #hintPage(String, String, String)} für einen bekannten Pfad (aus der Suche geöffnete Seite). */
+    public void hintPage(PageNavigation.Position position) {
+        reveal(position, ++revealRequest);
+        hintRequest = revealRequest;
+    }
+
+    /** Nimmt die Hervorhebung eines Suchtreffers weg. */
+    void clearHint() {
+        Node before = hint;
+        hint = null;
+        if (before != null) {
+            ((javax.swing.tree.DefaultTreeModel) tree.getModel()).nodeChanged(before);
+        }
+    }
+
+    public void hintPage(String sourceId, String spaceKey, String pageId) {
+        revealPage(sourceId, spaceKey, pageId);
+        hintRequest = revealRequest;
+    }
+
+    /** Für Tests: die Seiten-ID des hervorgehobenen Treffers. */
+    String hintedPageId() {
+        return hint != null && hint.item() instanceof PageItem page ? page.pageId() : null;
     }
 
     private void select(Node node) {
@@ -1248,6 +1318,13 @@ public final class Explorer {
     private boolean merging;
 
     private void selectionChanged() {
+        if (quiet) {
+            return;
+        }
+        if (!revealing) {
+            // Der Benutzer wählt selbst: die Hervorhebung eines Suchtreffers verschwindet.
+            clearHint();
+        }
         // Ein gewählter Knoten löst die globale Auswahl ab.
         if (global && tree.getSelectionCount() > 0) {
             global = false;
@@ -1870,6 +1947,16 @@ public final class Explorer {
      */
     private final class Renderer extends javax.swing.tree.DefaultTreeCellRenderer {
 
+        /** Ob die Zeile der hervorgehobene Suchtreffer ist ({@link #hint}). */
+        private boolean hinted;
+
+        /** Breite von Symbol und Titel, ohne die Spalten rechts. */
+        private int getPreferredSizeOfText() {
+            java.awt.FontMetrics metrics = getFontMetrics(getFont());
+            int icon = getIcon() == null ? 0 : getIcon().getIconWidth() + getIconTextGap();
+            return icon + metrics.stringWidth(getText() == null ? "" : getText()) + 8;
+        }
+
         /** Ob die Zeile einen Stern trägt (Space oder Seite): gefüllt als Favorit, sonst nur beim Darüberfahren. */
         private boolean starred;
         private TreeStates.Badge badge = TreeStates.Badge.NONE;
@@ -1913,6 +2000,7 @@ public final class Explorer {
             favorite = starred && isFavorite(item);
             badge = badge(item);
             this.row = row;
+            hinted = value != null && value == hint;
             int depth = value instanceof Node node ? node.getLevel() : 1;
             // Die Spalten rechts liegen im rechten Rand des Labels: der Titel endet davor und wird nötigenfalls
             // mit „…“ gekürzt, statt die Symbole aus dem sichtbaren Bereich zu schieben.
@@ -1932,6 +2020,16 @@ public final class Explorer {
         @Override
         public void paint(java.awt.Graphics graphics) {
             super.paint(graphics);
+            if (hinted) {
+                // Treffer der Suche: blauer Rahmen um den Titel, keine Auswahl (der Filter bleibt, Angelo 23.11.2026).
+                java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setColor(Comic.BLUE);
+                g.setStroke(new java.awt.BasicStroke(2f));
+                int textEnd = Math.min(getWidth() - 1, getPreferredSizeOfText());
+                g.drawRoundRect(1, 1, textEnd - 2, getHeight() - 3, 8, 8);
+                g.dispose();
+            }
             if (!starred) {
                 return;
             }

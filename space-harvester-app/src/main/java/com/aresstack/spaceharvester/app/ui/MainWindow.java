@@ -79,6 +79,8 @@ public final class MainWindow implements AppContext.Navigator {
     private static final String EXPLORER = "explorer";
     /** Die nächste geladene Seite im Explorer zeigen (gesetzt von {@link #openPage} und {@link #openPassage}). */
     private boolean revealOpened;
+    /** Die nächste geöffnete Seite kam aus der Suche: im Baum nur hervorheben, nicht wählen. */
+    private boolean hintOpened;
     /** Aktions- und Fortschrittszeilen der Bereiche, direkt über der Statusleiste. */
     private final CardLayout actionCards = new CardLayout();
     private final JPanel actionDeck = new JPanel(actionCards);
@@ -294,7 +296,14 @@ public final class MainWindow implements AppContext.Navigator {
             explorer.currentPage(position);
             if (position != null && revealOpened) {
                 revealOpened = false;
-                explorer.revealPage(position);
+                // Aus der Suche geöffnet: nur aufklappen und hervorheben, die Auswahl (der Suchfilter) bleibt
+                // (Angelo, 23.11.2026); sonst wie bisher wählen.
+                if (hintOpened) {
+                    hintOpened = false;
+                    explorer.hintPage(position);
+                } else {
+                    explorer.revealPage(position);
+                }
             }
         });
         // Quelle oder Space in der Bereichsanzeige angeklickt: im Baum wählen; die Auswahl bestimmt wie immer die Mitte.
@@ -1046,6 +1055,10 @@ public final class MainWindow implements AppContext.Navigator {
             searchSelection = explorer.remember();
         }
         current = section;
+        // Zurück und Vor unten blättern in der Suche zwischen ihren Suchen und Filtern, sonst in den Seiten.
+        if (jobStatus != null) {
+            jobStatus.navigation(section == AppContext.Section.SEARCH ? searchView.navigation() : content.navigation());
+        }
         placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
             if (searchSelection == null) {
@@ -1129,6 +1142,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openPage(String sourceId, String pageId) {
+        hintOpened = current == AppContext.Section.SEARCH;
         showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPage(sourceId, pageId);
@@ -1136,6 +1150,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openPassage(String sourceId, String passageId) {
+        hintOpened = current == AppContext.Section.SEARCH;
         showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPassage(sourceId, passageId);
@@ -1149,6 +1164,11 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void revealPage(String sourceId, String spaceKey, String pageId) {
         explorer.revealPage(sourceId, spaceKey, pageId);
+    }
+
+    @Override
+    public void hintPage(String sourceId, String spaceKey, String pageId) {
+        explorer.hintPage(sourceId, spaceKey, pageId);
     }
 
     @Override
