@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.application.enrichment.statements;
+package com.aresstack.spaceharvester.application.text;
 
 /**
  * Ein Zeichenbereich {@code [start, end)} im Text der Projektion (wie {@code TextSpan} im Enterprise AI Client).

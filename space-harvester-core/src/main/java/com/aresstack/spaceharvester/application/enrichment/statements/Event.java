@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
+import com.aresstack.spaceharvester.application.text.TextSpan;
+import com.aresstack.spaceharvester.application.text.GroundedText;
 import java.util.ArrayList;
 import java.util.List;
 
