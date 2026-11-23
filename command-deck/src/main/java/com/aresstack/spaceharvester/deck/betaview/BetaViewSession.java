@@ -138,6 +138,30 @@ public final class BetaViewSession {
         return onDocument(document, BetaViewConnection::properties);
     }
 
+    /** Die Notizen zum Dokument (wie MainframeMate: Text der Notizen oder „Keine Notizen vorhanden.“). */
+    public CompletableFuture<String> notes(DocumentTab document) {
+        return onDocument(document, BetaViewConnection::notes);
+    }
+
+    /** Die markierten Bereiche (Hold/Hide) des Dokuments. */
+    public CompletableFuture<String> markedRanges(DocumentTab document) {
+        return onDocument(document, BetaViewConnection::markedRanges);
+    }
+
+    /** Volltextsuche im Dokument. */
+    public CompletableFuture<String> searchText(DocumentTab document, String query) {
+        String text = query == null ? "" : query.strip();
+        if (text.isEmpty()) {
+            throw new IllegalArgumentException("Suchbegriff fehlt");
+        }
+        return onDocument(document, connection -> connection.searchText(text));
+    }
+
+    /** Die Druckinformationen des Dokuments. */
+    public CompletableFuture<String> printInfo(DocumentTab document) {
+        return onDocument(document, BetaViewConnection::printInfo);
+    }
+
     public CompletableFuture<NameAndDescription> bookmarkProposal(DocumentTab document) {
         return onDocument(document, BetaViewConnection::bookmarkProposal);
     }
