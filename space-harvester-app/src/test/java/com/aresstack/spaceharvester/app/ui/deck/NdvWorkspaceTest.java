@@ -396,12 +396,7 @@ class NdvWorkspaceTest {
             workspace[0].shown();
             assertThat(sessions.all()).hasSize(1);
             assertThat(sessions.all().getFirst().state()).isEqualTo(NdvState.CONNECTED);
-            // ... während FTP mit demselben Eintrag danach abgelehnt wird.
-            try {
-                Thread.sleep(5);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            // ... während FTP mit demselben Eintrag danach abgelehnt wird, auch in derselben Millisekunde.
             DeckLogin.guard().failed("Testhost NDV", "Passwort abgelaufen");
         });
         flush();

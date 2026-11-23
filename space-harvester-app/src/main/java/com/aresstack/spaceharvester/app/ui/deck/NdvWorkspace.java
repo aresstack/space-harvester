@@ -96,7 +96,8 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
             if (!manual.getAndSet(false) && !DeckLogin.guard().mayTry(entry)) {
                 throw new java.io.IOException(DeckLogin.notice(entry));
             }
-            attemptAt = java.time.Instant.now();
+            // Der Guard speichert Millisekunden; abgeschnitten zählt eine Ablehnung in derselben ms als neuer.
+            attemptAt = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
             com.aresstack.spaceharvester.deck.access.ServerCredentials credentials = source.read();
             sent.set(true);
             return credentials;
@@ -337,7 +338,7 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
             // Anmeldeversuch kam (etwa von FTP), ist neuer als der Erfolg und bleibt stehen.
             java.time.Instant attempt = login == null ? null : login.attemptAt;
             boolean newerRejection = attempt != null && DeckLogin.guard().failure(session.account())
-                    .map(failure -> failure.at().isAfter(attempt)).orElse(false);
+                    .map(failure -> !failure.at().isBefore(attempt)).orElse(false);
             if (!newerRejection) {
                 DeckLogin.guard().succeeded(session.account());
             }
