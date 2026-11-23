@@ -186,6 +186,8 @@ public class Enrichments {
     private volatile RetryFailed retryFailed;
     /** Wie viele Berechnungen ein Teil zugleich rechnet: ai.parallel, bei jedem Teil neu gelesen. */
     private volatile IntSupplier parallel = () -> 1;
+    /** Der Netzzustand: ohne Netz wartet eine Berechnung, statt Versuche zu verbrauchen; ohne ihn wie bisher. */
+    private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
 
     /**
      * Die Arbeit eines gescheiterten Teils von vor dem Neustart.
@@ -1742,6 +1744,14 @@ public class Enrichments {
         this.parallel = Objects.requireNonNull(value, "value");
     }
 
+    /**
+     * Angelo 22.11.2026: Ohne Netz wartet die KI-Anreicherung, bis es zurück ist, und rechnet dieselbe Seite dann im
+     * selben Teil weiter; ein Netzfehler zählt nicht als Fehlversuch und nicht als gescheitert.
+     */
+    public void network(com.aresstack.spaceharvester.application.network.NetworkState value) {
+        this.network = value;
+    }
+
     /** Höchstens so viele Berechnungen eines Teils zugleich, gleich was ai.parallel sagt. */
     static final int MAX_PARALLEL = 16;
     /**
@@ -1776,9 +1786,15 @@ public class Enrichments {
         Work attempt = next;
         Queued queued;
         int tries = 0;
+        com.aresstack.spaceharvester.application.network.NetworkState net = network;
+        com.aresstack.spaceharvester.application.network.NetworkWait wait = net == null ? null
+                : new com.aresstack.spaceharvester.application.network.NetworkWait(net, context, COMPONENT);
         while (true) {
             tries++;
             try {
+                if (wait != null) {
+                    wait.beforeFetch();
+                }
                 queued = computeWork(attempt);
             } catch (JobCancelledException e) {
                 // Angehalten, abgebrochen oder beim Beenden unterbrochen: Die Berechnung kommt wieder vorn an.
@@ -1790,6 +1806,24 @@ public class Enrichments {
                 LOG.log(System.Logger.Level.WARNING, "KI-Anreicherung {0} in Quelle {1} gescheitert ({2})",
                         next.processorId(), mine.sourceId, e.getClass().getName());
                 queued = new Queued(Outcome.FAILED, e);
+            }
+            if (wait != null && !closed) {
+                boolean offline;
+                try {
+                    // Wartet ohne Netz, bis es zurück ist (Beobachter, kein Abfragen); dann dieselbe Seite erneut.
+                    offline = queued.outcome() == Outcome.FAILED && wait.failed(queued.cause());
+                } catch (RuntimeException e) {
+                    backToFront(groupId, mine, next);
+                    throw e;
+                }
+                if (offline) {
+                    tries--;
+                    attempt = new Work(next.processorId(), next.key(), true);
+                    continue;
+                }
+                if (queued.outcome() == Outcome.WRITTEN) {
+                    wait.answered();
+                }
             }
             if (queued.outcome() != Outcome.FAILED || closed || tries >= ATTEMPTS || !retryable(queued.cause())) {
                 break;

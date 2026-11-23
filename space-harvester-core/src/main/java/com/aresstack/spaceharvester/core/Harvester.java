@@ -645,6 +645,7 @@ public final class Harvester implements AutoCloseable {
                 AiServiceSettings ai = currentAi.get();
                 return ai == null ? 1 : ai.parallel();
             });
+            enrichments.network(network);
             if (background != null) {
                 // ADR 0025 Nachtrag, Punkt 10: die Warteschlange der Netz-Prozessoren als „KI-Anreicherung“ je Quelle;
                 // schließt nach den Komponenten, die einreihen, und vor der Ablage.

@@ -538,6 +538,41 @@ class EnrichmentsBackgroundJobsTest {
     }
 
     @Test
+    void withoutNetworkThePartWaitsForItAndComputesTheSamePageAgainWithoutCountingAnAttempt() throws Exception {
+        // Angelo 22.11.2026: auf das Netz warten, statt Versuche zu verbrauchen; dann von selbst weiter.
+        Remote remote = new Remote();
+        remote.unreachable.put("wiki/1", new AtomicInteger(1));
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try (com.aresstack.spaceharvester.application.network.NetworkState network =
+                     new com.aresstack.spaceharvester.application.network.NetworkState()) {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.network(network);
+            PageSnapshot first = page("wiki", "1", "Eins");
+            enrichments.refresh(first);
+            Thread runner = Thread.ofPlatform().start(() -> runAll(held));
+            awaitUntil(() -> !network.online());
+            assertThat(network.online()).as("der Netzfehler schaltet auf offline").isFalse();
+            network.succeeded();
+            runner.join(TimeUnit.SECONDS.toMillis(20));
+            assertThat(runner.isAlive()).isFalse();
+
+            JobStatus wiki = part(background, "wiki");
+            assertThat(remote.calls.get("wiki/1").get()).isEqualTo(2);
+            assertThat(wiki.progress().failed()).isZero();
+            assertThat(wiki.progress().written()).isEqualTo(1);
+            List<JobEvent> events = jobs.events(wiki.id());
+            assertThat(events).noneMatch(event -> Enrichments.WORK_FAILED.equals(event.code()));
+            assertThat(events).anySatisfy(event -> assertThat(event.code())
+                    .isEqualTo(com.aresstack.spaceharvester.application.network.NetworkWait.OFFLINE));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void afterTheLastAttemptThePageCountsAsFailedAndWaitsForTheRetryButton() throws Exception {
         Remote remote = new Remote();
         remote.unreachable.put("wiki/1", new AtomicInteger(Enrichments.ATTEMPTS));
