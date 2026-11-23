@@ -108,6 +108,9 @@ final class ReaderFind {
                 hit.pill.setMark(null);
             }
         }
+        for (FindableSurface surface : surfaces()) {
+            surface.showFound(List.of(), -1);
+        }
         for (Map.Entry<JLabel, LabelLook> entry : markedLabels.entrySet()) {
             entry.getValue().restore(entry.getKey());
         }
@@ -141,7 +144,8 @@ final class ReaderFind {
     /** Die Komponente des Treffers {@code index} (für Tests). */
     Component hitComponent(int index) {
         Hit hit = hits.get(index);
-        return hit.text != null ? hit.text : hit.label != null ? hit.label : hit.pill != null ? hit.pill : hit.table;
+        return hit.text != null ? hit.text : hit.label != null ? hit.label : hit.pill != null ? hit.pill
+                : hit.surfaceComponent != null ? hit.surfaceComponent : hit.table;
     }
 
     // ------------------------------------------------------------------ intern
@@ -157,6 +161,12 @@ final class ReaderFind {
 
     private void collect(Component component, String needle) {
         if (!component.isVisible()) {
+            return;
+        }
+        if (component instanceof JComponent own
+                && own.getClientProperty(FindableSurface.KEY) instanceof FindableSurface surface) {
+            // Selbst gezeichnet (Terminalbild): eigener Text, eigene Markierung.
+            collectSurface(own, surface, needle);
             return;
         }
         if (component instanceof JTextComponent) {
@@ -217,6 +227,9 @@ final class ReaderFind {
             Hit hit = hits.get(i);
             if (hit.text != null && (hit.text.getDocument() != hit.document
                     || hit.text.getDocument().getLength() != hit.length)) {
+                return true;
+            }
+            if (hit.surface != null && !hit.snapshot.equals(hit.surface.findText())) {
                 return true;
             }
             if (!SwingUtilities.isDescendingFrom(hitComponent(i), root)) {
@@ -301,6 +314,35 @@ final class ReaderFind {
         }
     }
 
+    private void collectSurface(JComponent component, FindableSurface surface, String needle) {
+        String content = surface.findText();
+        if (content == null) {
+            return;
+        }
+        int length = needle.length();
+        int position = 0;
+        while (position + length <= content.length()) {
+            if (content.regionMatches(true, position, needle, 0, length)) {
+                hits.add(Hit.surface(component, surface, position, position + length,
+                        content.substring(position, position + length), content));
+                position += length;
+            } else {
+                position++;
+            }
+        }
+    }
+
+    /** Die selbst gezeichneten Flächen unter den Treffern, je einmal. */
+    private java.util.Set<FindableSurface> surfaces() {
+        java.util.Set<FindableSurface> surfaces = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Hit hit : hits) {
+            if (hit.surface != null) {
+                surfaces.add(hit.surface);
+            }
+        }
+        return surfaces;
+    }
+
     private void collectPill(FindablePill pill, String needle) {
         String text = pill.getText();
         if (text != null && text.toLowerCase(Locale.ROOT).contains(needle)) {
@@ -324,6 +366,20 @@ final class ReaderFind {
             } else if (hit.pill != null) {
                 hit.pill.setMark(color);
             }
+        }
+        for (FindableSurface surface : surfaces()) {
+            List<int[]> found = new ArrayList<int[]>();
+            int own = -1;
+            for (int i = 0; i < hits.size(); i++) {
+                Hit hit = hits.get(i);
+                if (hit.surface == surface) {
+                    if (i == current) {
+                        own = found.size();
+                    }
+                    found.add(new int[] {hit.start, hit.end});
+                }
+            }
+            surface.showFound(found, own);
         }
         for (JTable table : markedTables) {
             Map<Cell, Color> colors = new java.util.HashMap<Cell, Color>();
@@ -408,6 +464,9 @@ final class ReaderFind {
         } else if (hit.pill != null) {
             component = hit.pill;
             area = new Rectangle(0, 0, hit.pill.getWidth(), hit.pill.getHeight());
+        } else if (hit.surfaceComponent != null) {
+            component = hit.surfaceComponent;
+            area = new Rectangle(0, 0, component.getWidth(), component.getHeight());
         } else {
             component = hit.label;
             area = new Rectangle(0, 0, hit.label.getWidth(), hit.label.getHeight());
@@ -457,6 +516,10 @@ final class ReaderFind {
         Document document;
         int length;
         Object tag;
+        /** Selbst gezeichnete Fläche samt ihrem Text zur Zeit der Suche. */
+        JComponent surfaceComponent;
+        FindableSurface surface;
+        String snapshot;
 
         private Hit(JTextComponent text, int start, int end, JTable table, Cell cell, JLabel label,
                     FindablePill pill, String found) {
@@ -487,6 +550,15 @@ final class ReaderFind {
 
         static Hit pill(FindablePill pill, String found) {
             return new Hit(null, 0, 0, null, null, null, pill, found);
+        }
+
+        static Hit surface(JComponent component, FindableSurface surface, int start, int end, String found,
+                           String snapshot) {
+            Hit hit = new Hit(null, start, end, null, null, null, null, found);
+            hit.surfaceComponent = component;
+            hit.surface = surface;
+            hit.snapshot = snapshot;
+            return hit;
         }
     }
 
