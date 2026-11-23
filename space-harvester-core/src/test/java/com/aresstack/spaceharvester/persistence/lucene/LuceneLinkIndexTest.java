@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.persistence.lucene;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.links.LinkIndex;
 import com.aresstack.spaceharvester.application.links.LinkTarget;
@@ -39,6 +41,27 @@ class LuceneLinkIndexTest {
                     .extracting(LinkIndex.Entry::page).containsExactly(start);
             assertThat(index.titled("wiki", LinkTarget.titleKey("DEV", "Start"))).hasSize(1);
             assertThat(index.count("wiki")).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void closingAfterAnInterruptedWriteReleasesTheIndexWithoutThrowing() {
+        // Roter develop-Build 22.11.2026: Ein Interrupt mitten in der Datei-Ein-/Ausgabe schließt den Writer; das
+        // commit beim Schließen warf danach AlreadyClosedException.
+        LuceneLinkIndex index = LuceneLinkIndex.open(directory);
+        index.put(new LinkIndex.Entry(new PageKey("wiki", "1"), "DEV", "Start", "sha256:a", List.of()));
+        Thread.currentThread().interrupt();
+        try {
+            assertThatThrownBy(index::flush).isInstanceOf(RuntimeException.class);
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertThatCode(index::close).doesNotThrowAnyException();
+        try (LuceneLinkIndex reopened = LuceneLinkIndex.open(directory)) {
+            reopened.put(new LinkIndex.Entry(new PageKey("wiki", "2"), "DEV", "Plan", "sha256:b", List.of()));
+            reopened.flush();
+            assertThat(reopened.pageIds("wiki")).contains("2");
         }
     }
 }

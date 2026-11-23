@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons;
 import com.aresstack.spaceharvester.app.ui.content.AnalyzerNames;
 import com.aresstack.spaceharvester.app.event.Severity;
@@ -688,7 +689,7 @@ public final class Explorer {
         allBadge.setHorizontalAlignment(JLabel.CENTER);
         allBadge.setPreferredSize(new java.awt.Dimension(BADGE_WIDTH, RoundHover.SIZE));
         // Beim Darüberfahren Kreispfeile; der Klick aktualisiert nach Rückfrage alle Quellen (Angelo, 16.11.2026).
-        allBadge.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        Cursors.set(allBadge, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         allBadge.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseEntered(MouseEvent event) {
@@ -716,7 +717,7 @@ public final class Explorer {
         head.add(title, BorderLayout.NORTH);
         head.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter), BorderLayout.CENTER);
         heading.setToolTipText(ALL_TIP);
-        heading.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        Cursors.set(heading, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         MouseAdapter chooseAll = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {

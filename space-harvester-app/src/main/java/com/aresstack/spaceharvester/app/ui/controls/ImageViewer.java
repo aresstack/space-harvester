@@ -499,13 +499,13 @@ public final class ImageViewer extends JPanel {
             public void mousePressed(MouseEvent e) {
                 canvas.requestFocusInWindow();
                 canvas.dragStart = e.getPoint();
-                canvas.setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+                Cursors.set(canvas, Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
             }
 
             @Override
             public void mouseReleased(MouseEvent e) {
                 canvas.dragStart = null;
-                canvas.setCursor(Cursor.getDefaultCursor());
+                Cursors.set(canvas, Cursor.getDefaultCursor());
             }
 
             @Override
@@ -684,7 +684,7 @@ public final class ImageViewer extends JPanel {
             super(new BorderLayout());
             this.look = look;
             setOpaque(false);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(tooltip);
             JLabel label = new JLabel(icon, SwingConstants.CENTER);
             label.setForeground(look.glyph());

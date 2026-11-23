@@ -188,7 +188,7 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
         closed = true;
         try {
             searchers.close();
-            writer.rollback();
+            TragicWriters.rollbackOnClose(writer, "Auftragsablage");
         } catch (IOException e) {
             throw new PageCacheException("Auftragsablage " + path + " kann nicht geschlossen werden", e);
         } finally {

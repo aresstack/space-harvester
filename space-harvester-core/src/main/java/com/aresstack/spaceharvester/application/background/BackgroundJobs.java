@@ -538,6 +538,67 @@ public final class BackgroundJobs {
     }
 
     /**
+     * Wie {@link #startUnlessRunning(String, String, BackgroundPart.Draft)}, nur legt eine Wiederholung keinen neuen
+     * Auftrag an (Angelo 22.11.2026: „er startet dafür jedes Mal einen neuen Task“): Ist der jüngste beendete Teil
+     * derselben Art für Quelle und Space gescheitert, läuft er im selben Eintrag erneut ({@link Jobs#rerun}), mit seiner
+     * Diagnose und um einen Versuch weitergezählt in der Angabe {@code attempts}. Nur wenn das nicht geht (etwa weil er
+     * noch nachläuft), entsteht ein neuer Teil, damit die Arbeit nie liegen bleibt.
+     *
+     * @param attempts eigene Angabe der Art, die die Versuche zählt; beim ersten Lauf fehlt sie (Versuch 1)
+     * @return der neue oder erneut gestartete Teil, oder leer, wenn schon ein Teil wartet, angehalten ist oder läuft
+     */
+    public Optional<JobStatus> startOrRetryUnlessRunning(String kind, String title, BackgroundPart.Draft part,
+                                                         String attempts) {
+        Objects.requireNonNull(part, "part");
+        Objects.requireNonNull(attempts, "attempts");
+        if (attempts.startsWith(PREFIX)) {
+            throw new IllegalArgumentException("Angaben der Art dürfen nicht mit " + PREFIX + " beginnen");
+        }
+        startLock(kind).lock();
+        try {
+            if (open(kind, part.sourceId(), part.partitionKey()).isPresent()) {
+                return Optional.empty();
+            }
+            Optional<JobStatus> failed = all().stream()
+                    .filter(status -> status.state().terminal() && kind.equals(status.parameter(KIND))
+                            && Objects.equals(part.sourceId(), status.sourceId())
+                            && Objects.equals(part.partitionKey(), status.partitionKey()))
+                    .max(Comparator.comparing(BackgroundJobs::endedAt))
+                    .filter(latest -> latest.state() == JobState.FAILED);
+            if (failed.isPresent()) {
+                JobStatus previous = failed.get();
+                Map<String, String> parameters = new HashMap<>(previous.parameters());
+                parameters.put(attempts, Integer.toString(attempt(previous.parameter(attempts)) + 1));
+                try {
+                    return Optional.of(rerun(previous.id(), parameters, task(false, false)));
+                } catch (JobNotResumableException | UnknownJobException e) {
+                    LOG.log(System.Logger.Level.INFO, "Gescheiterter Teil der Art {0} läuft nicht erneut ({1}); "
+                            + "ein neuer Teil übernimmt", kind, e.getClass().getSimpleName());
+                }
+            }
+            return Optional.of(start(kind, title, List.of(part)).parts().getFirst());
+        } finally {
+            startLock(kind).unlock();
+        }
+    }
+
+    /** Der Versuch laut Angabe; ohne oder mit unlesbarer Angabe der erste. */
+    public static int attempt(String value) {
+        if (value == null) {
+            return 1;
+        }
+        try {
+            return Math.max(1, Integer.parseInt(value.trim()));
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
+
+    private static java.time.Instant endedAt(JobStatus status) {
+        return status.finishedAt() != null ? status.finishedAt() : status.createdAt();
+    }
+
+    /**
      * Wie {@link #startUnlessRunning(String, String, BackgroundPart.Draft)} für alle Teile eines Anlasses in einer
      * Gruppe, etwa die Abgleiche beim Start nach {@link #resumeInterrupted}: Teile, für deren Quelle und Space schon
      * einer wartet, angehalten ist oder läuft, fallen heraus.

@@ -82,13 +82,13 @@ public final class StatusLabel extends JLabel {
 
             @Override
             public void mouseMoved(MouseEvent event) {
-                setCursor(overLink(event.getX()) || overIcon(event.getX())
+                Cursors.set(StatusLabel.this, overLink(event.getX()) || overIcon(event.getX())
                         ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : null);
             }
 
             @Override
             public void mouseExited(MouseEvent event) {
-                setCursor(null);
+                Cursors.set(StatusLabel.this, null);
             }
         };
         addMouseListener(mouse);
@@ -152,7 +152,7 @@ public final class StatusLabel extends JLabel {
             prepare(text);
             render(getWidth());
         }
-        setCursor(null);
+        Cursors.set(this, null);
         setFocusable(note.hasLink() || note.hasIcon());
         getAccessibleContext().setAccessibleName(text.isBlank() ? null : text);
         String description = note.hasLink() ? "Link „" + note.link() + "“, öffnen mit Enter" : null;
