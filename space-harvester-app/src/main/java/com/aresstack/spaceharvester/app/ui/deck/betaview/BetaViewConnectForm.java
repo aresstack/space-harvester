@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.deck.betaview;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -77,7 +78,7 @@ final class BetaViewConnectForm extends JPanel {
         hintRow.add(keePassHint, BorderLayout.CENTER);
         loadEntries.setFont(Comic.regular(12.5f));
         loadEntries.setForeground(Comic.BLUE);
-        loadEntries.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(loadEntries, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         loadEntries.setToolTipText("Einträge neu aus KeePass lesen");
         loadEntries.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override

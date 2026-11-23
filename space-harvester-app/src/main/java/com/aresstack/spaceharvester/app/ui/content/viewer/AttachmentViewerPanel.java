@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
@@ -680,13 +681,13 @@ public final class AttachmentViewerPanel extends JPanel {
             public void mousePressed(MouseEvent e) {
                 canvas.requestFocusInWindow();
                 canvas.dragStart = e.getPoint();
-                canvas.setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+                Cursors.set(canvas, Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
             }
 
             @Override
             public void mouseReleased(MouseEvent e) {
                 canvas.dragStart = null;
-                canvas.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
+                Cursors.set(canvas, Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
             }
 
             @Override
@@ -1576,7 +1577,7 @@ public final class AttachmentViewerPanel extends JPanel {
         ViewerButton(Icon icon, String tooltip) {
             super(new BorderLayout());
             setOpaque(false);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(tooltip);
             JLabel label = new JLabel(icon, SwingConstants.CENTER);
             label.setForeground(new Color(255, 255, 255, 220));
