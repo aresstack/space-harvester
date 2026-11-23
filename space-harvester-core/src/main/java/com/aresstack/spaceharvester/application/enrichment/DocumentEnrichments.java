@@ -925,7 +925,10 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                         stored.getOrDefault(document, List.of()), null, new DocumentPosition(offset,
                                 embeddingMaxChars));
                 if (wait != null && run.failed() > 0 && !net.online()) {
-                    // Am Netz gescheitert: nichts rot, kein Versuch verbraucht.
+                    // Am Netz gescheitert: nichts rot, kein Versuch verbraucht. Das gespeicherte FAILED gälte beim
+                    // Wiederholen als aktuell (gleiche Eingabe und Version) und der Abschnitt bekäme nie sein
+                    // Embedding (Codex #1185): fort damit, die gelungenen Ergebnisse des Abschnitts bleiben.
+                    forgetFailed(document, index);
                     if (context != null) {
                         context.processed(1);
                     }
@@ -962,6 +965,18 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                     .forEach(section -> enrichments.store().removeSection(document, section));
         }
         enrichments.flush();
+    }
+
+    /** Entfernt die gescheiterten Ergebnisse eines Abschnitts und behält die gelungenen. */
+    private void forgetFailed(DocumentKey document, int section) {
+        List<Enrichment> results = enrichments.store().find(document).stream()
+                .filter(result -> result.section() == section).toList();
+        if (results.stream().noneMatch(result -> result.status() == Enrichment.Status.FAILED)) {
+            return;
+        }
+        enrichments.store().removeSection(document, section);
+        results.stream().filter(result -> result.status() != Enrichment.Status.FAILED)
+                .forEach(enrichments.store()::save);
     }
 
     /**
