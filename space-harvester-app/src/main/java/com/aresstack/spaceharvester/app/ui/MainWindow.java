@@ -869,6 +869,10 @@ public final class MainWindow implements AppContext.Navigator {
             // Gewechselt, während die Einstellungen über einer Perspektive standen: Sie gehen mit zu.
             settingsOver = null;
             current = beforeSettings;
+            if (next.drawer() == null) {
+                // Ihre Leiste geht zu, ohne den gemerkten Zustand des Space Harvesters zu überschreiben.
+                split.collapseLeft();
+            }
         }
         navigationSlot.removeAll();
         if (next.navigation() != null) {

@@ -143,9 +143,18 @@ class MainWindowPerspectiveTest {
             ((javax.swing.AbstractButton) window.commandDeck().perspective().navigation().getComponent(1)).doClick();
             assertThat(window.settingsOverPerspective()).isFalse();
             assertThat(visible(window.stage())).isSameAs(window.commandDeck().perspective().workspace());
+            // Direkt in eine andere Perspektive gewechselt: Ein zugeklappter Explorer bleibt zu.
+            perspectives.select(Perspectives.HARVESTER);
+            window.toggleDrawer();
+            assertThat(window.split().isLeftCollapsed()).isTrue();
+            perspectives.select(Perspectives.COMMAND_DECK);
+            window.show(AppContext.Section.SETTINGS);
+            perspectives.select(Perspectives.MISSION_CONTROL);
+            assertThat(window.settingsOverPerspective()).isFalse();
             // Zurück im Space Harvester steht der Bereich von vorher, nicht die Einstellungen.
             perspectives.select(Perspectives.HARVESTER);
             assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
+            assertThat(window.split().isLeftCollapsed()).as("Explorer bleibt zu").isTrue();
         });
     }
 
