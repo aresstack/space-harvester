@@ -149,6 +149,35 @@ class TerminalConnectFlowTest {
     }
 
     @Test
+    void arrivingInTheDeckConnectsAtOnceButOnlyOnce() throws Exception {
+        try (FakeTn3270Host host = new FakeTn3270Host(List.of(
+                new FakeTn3270Host.Line(1, 2, "WILLKOMMEN", false)), "Cp273")) {
+            configured();
+            SwingUtilities.invokeAndWait(() -> {
+                deck = new CommandDeck(accounts(host.port()));
+                deck.terminal().connectOnArrival();
+            });
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            waitFor(() -> deck.sessions().all().size() == 1
+                    && deck.sessions().all().get(0).state() == SessionState.CONNECTED, until);
+            SwingUtilities.invokeAndWait(() -> {
+                assertThat(deck.sessions().all()).hasSize(1);
+                deck.terminal().connectOnArrival();
+                assertThat(deck.sessions().all()).as("läuft schon: keine zweite Verbindung").hasSize(1);
+            });
+        }
+    }
+
+    @Test
+    void arrivingWithoutAConfiguredConnectionDoesNothing() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            deck = new CommandDeck();
+            deck.terminal().connectOnArrival();
+            assertThat(deck.sessions().all()).isEmpty();
+        });
+    }
+
+    @Test
     void aConfiguredConnectionThatFailsOpensTheFormAgain() throws Exception {
         int port = closedPort();
         configured();

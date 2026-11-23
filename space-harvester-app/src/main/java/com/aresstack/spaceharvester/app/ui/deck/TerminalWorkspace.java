@@ -209,6 +209,7 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
             if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0) {
                 if (sky.isShowing()) {
                     sky.start();
+                    connectOnArrival();
                 } else {
                     sky.stop();
                 }
@@ -286,6 +287,25 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
      * „Neue Verbindung“: Ist die Verbindung eingerichtet, verbindet sie direkt; das Formular kommt nur beim ersten Mal
      * und wenn es scheitert (Angelo, 23.11.2026).
      */
+    /** Wann zuletzt beim Einblenden verbunden wurde; schnelles Hin- und Herschalten verbindet nicht doppelt. */
+    private long arrivedAt = Long.MIN_VALUE;
+
+    /**
+     * Beim Wechsel ins Command Deck gleich verbinden (Angelo, 23.11.2026): Das Terminal ist das Erste, was man sieht.
+     * Nur wenn die Verbindung eingerichtet ist und keine Sitzung läuft oder gerade aufgebaut wird.
+     */
+    void connectOnArrival() {
+        if (!ConnectForm.isConfigured() || sessions.all().stream().anyMatch(session -> !session.state().ended())) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (arrivedAt != Long.MIN_VALUE && now - arrivedAt < java.util.concurrent.TimeUnit.SECONDS.toNanos(10)) {
+            return;
+        }
+        arrivedAt = now;
+        newConnection();
+    }
+
     void newConnection() {
         if (!ConnectForm.isConfigured()) {
             select(null);
