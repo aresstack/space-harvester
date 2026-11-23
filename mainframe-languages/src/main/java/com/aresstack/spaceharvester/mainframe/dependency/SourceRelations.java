@@ -9,6 +9,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -72,12 +73,16 @@ public final class SourceRelations {
     private final NaturalDependencyService natural = new NaturalDependencyService();
     private final NaturalRelations naturalRelations;
     private final CobolCalls cobolCalls;
-    private final SystemFunctions systemFunctions;
+    private final Predicate<String> systemFunction;
 
-    public SourceRelations(NaturalRelations naturalRelations, CobolCalls cobolCalls, SystemFunctions systemFunctions) {
+    /**
+     * @param systemFunction ob ein PGM-Name eine bekannte Systemfunktion ist (Einstellungen › Diagramme ›
+     *                       Systemfunktionen); dann verweist die Hierarchie auf Wikipedia
+     */
+    public SourceRelations(NaturalRelations naturalRelations, CobolCalls cobolCalls, Predicate<String> systemFunction) {
         this.naturalRelations = Objects.requireNonNull(naturalRelations, "naturalRelations");
         this.cobolCalls = Objects.requireNonNull(cobolCalls, "cobolCalls");
-        this.systemFunctions = Objects.requireNonNull(systemFunctions, "systemFunctions");
+        this.systemFunction = Objects.requireNonNull(systemFunction, "systemFunction");
     }
 
     /**
@@ -156,7 +161,7 @@ public final class SourceRelations {
             Matcher pgm = PGM.matcher(node.getDisplayText());
             if (pgm.find()) {
                 String program = pgm.group(1).toUpperCase(Locale.ROOT);
-                if (systemFunctions.find(program).isPresent()) {
+                if (systemFunction.test(program)) {
                     target = "sysfunc://" + program;
                 }
             }

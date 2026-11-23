@@ -44,6 +44,8 @@ final class ConnectForm extends JPanel {
     static final String MODEL_KEY = "deck.terminal.model";
     /** Neuer Schlüssel: die alte Vorgabe „ohne TLS“ war falsch (MainframeMate: Port 992 mit TLS) und bleibt nicht hängen. */
     static final String TLS_KEY = "deck.terminal.use-tls";
+    /** Proxy der App verwenden; Vorgabe aus: Das Terminal verband sich bisher immer direkt, und so läuft es (Angelo). */
+    static final String PROXY_KEY = "deck.terminal.use-proxy";
     static final String CODE_PAGE_KEY = "deck.terminal.code-page";
     static final String KEEP_ALIVE_KEY = "deck.terminal.keep-alive";
     static final String AUTO_LOGIN_KEY = "deck.terminal.auto-login";
@@ -52,8 +54,10 @@ final class ConnectForm extends JPanel {
     /** Startkommando nach der Anmeldung, wie in MainframeMate voreingestellt. */
     static final String DEFAULT_COMMAND = "a";
     /** Abweichende Adresse und abweichender Port des gemerkten Eintrags (leer: aus KeePass bzw. Vorgabe). */
-    static final String HOST_KEY = "deck.terminal.host";
-    static final String PORT_KEY = "deck.terminal.port";
+    // Neue Schlüssel: Ältere Fassungen merkten unter „deck.terminal.host/port“ etwa Port 23 ohne TLS. Diese alten Werte
+    // dürfen nicht wieder aufleben, sonst verbindet das Terminal trotz der Vorgabe 992 mit TLS falsch (Angelo, 23.11.).
+    static final String HOST_KEY = "deck.terminal.target-host";
+    static final String PORT_KEY = "deck.terminal.target-port";
     /**
      * Die gemerkte Verbindung ist eingerichtet: Sie hat schon einmal verbunden oder wurde unter Einstellungen › Mainframe
      * gespeichert. Dann verbindet „Neue Verbindung“ direkt, das Formular kommt nur noch, wenn es scheitert (Angelo, 23.11.).
@@ -72,6 +76,7 @@ final class ConnectForm extends JPanel {
     final JCheckBox autoLogin = Comic.checkBox("Automatisch anmelden (Benutzer und Passwort aus KeePass)");
     final JComboBox<TerminalModel> model = Comic.combo();
     final JCheckBox tls = Comic.checkBox("Verschlüsselt (TLS)");
+    final JCheckBox proxy = Comic.checkBox("Proxy verwenden (Einstellungen › Netzwerk)");
     final PlaceholderField codePage = new PlaceholderField(8, TerminalProfile.DEFAULT_CODE_PAGE);
     final PlaceholderField keepAlive = new PlaceholderField(6, String.valueOf(DEFAULT_KEEP_ALIVE));
     final PlaceholderField command = new PlaceholderField(22, "nach der Anmeldung eingeben, z. B. ein Menü");
@@ -156,6 +161,8 @@ final class ConnectForm extends JPanel {
         row(advanced, 2, "Modell", new InputFrame(model));
         row(advanced, 3, "Codepage", codePage);
         row(advanced, 4, "Keep-Alive (s)", keepAlive);
+        // Aus = direkt wie bisher; an = Tunnel (HTTP CONNECT) durch den Proxy der App, etwa ohne direkten Netzweg.
+        row(advanced, 5, "Netzweg", proxy);
         advanced.setVisible(false);
         advancedToggle.setFont(Comic.regular(12.5f));
         advancedToggle.setForeground(Comic.BLUE);
@@ -328,7 +335,7 @@ final class ConnectForm extends JPanel {
         int portNumber = number(port.getText(), fallback, "Port");
         int keepAliveSeconds = number(keepAlive.getText(), DEFAULT_KEEP_ALIVE, "Keep-Alive");
         return new TerminalProfile(target, portNumber, (TerminalModel) model.getSelectedItem(), tls.isSelected(),
-                keepAliveSeconds, codePage.getText());
+                keepAliveSeconds, codePage.getText(), proxy.isSelected());
     }
 
     /** Die Anmeldung aus dem gewählten Eintrag, gelesen erst im Hintergrund nach dem Verbinden; sonst keine. */
@@ -502,11 +509,15 @@ final class ConnectForm extends JPanel {
 
     private void remember() {
         ServerAccount account = selected();
-        AppState.shared().putAll(Map.of(ENTRY_KEY, account == null ? "" : account.entry(),
-                MODEL_KEY, ((TerminalModel) model.getSelectedItem()).name(), TLS_KEY, String.valueOf(tls.isSelected()),
-                CODE_PAGE_KEY, codePage.getText().trim(), KEEP_ALIVE_KEY, keepAlive.getText().trim(),
-                AUTO_LOGIN_KEY, String.valueOf(autoLogin.isSelected()), COMMAND_KEY, command.getText().trim(),
-                HOST_KEY, host.getText().trim(), PORT_KEY, port.getText().trim()));
+        AppState.shared().putAll(Map.ofEntries(Map.entry(ENTRY_KEY, account == null ? "" : account.entry()),
+                Map.entry(MODEL_KEY, ((TerminalModel) model.getSelectedItem()).name()),
+                Map.entry(TLS_KEY, String.valueOf(tls.isSelected())),
+                Map.entry(CODE_PAGE_KEY, codePage.getText().trim()),
+                Map.entry(KEEP_ALIVE_KEY, keepAlive.getText().trim()),
+                Map.entry(AUTO_LOGIN_KEY, String.valueOf(autoLogin.isSelected())),
+                Map.entry(COMMAND_KEY, command.getText().trim()),
+                Map.entry(HOST_KEY, host.getText().trim()), Map.entry(PORT_KEY, port.getText().trim()),
+                Map.entry(PROXY_KEY, String.valueOf(proxy.isSelected()))));
     }
 
     private void recall() {
@@ -518,6 +529,7 @@ final class ConnectForm extends JPanel {
             }
         }
         tls.setSelected(state.getBoolean(TLS_KEY, true));
+        proxy.setSelected(state.getBoolean(PROXY_KEY, false));
         codePage.setText(nonNull(state.get(CODE_PAGE_KEY)));
         keepAlive.setText(nonNull(state.get(KEEP_ALIVE_KEY)));
         autoLogin.setSelected(state.getBoolean(AUTO_LOGIN_KEY, true));

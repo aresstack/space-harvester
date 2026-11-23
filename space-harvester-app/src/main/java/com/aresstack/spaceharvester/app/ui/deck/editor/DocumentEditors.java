@@ -3,7 +3,13 @@ package com.aresstack.spaceharvester.app.ui.deck.editor;
 import com.aresstack.spaceharvester.mainframe.dependency.CobolCalls;
 import com.aresstack.spaceharvester.mainframe.dependency.NaturalRelations;
 import com.aresstack.spaceharvester.mainframe.dependency.SourceRelations;
-import com.aresstack.spaceharvester.mainframe.dependency.SystemFunctions;
+import com.aresstack.spaceharvester.mainframe.calltree.CodeAnalyticsService;
+import com.aresstack.spaceharvester.mainframe.diagram.SystemFunction;
+import com.aresstack.spaceharvester.mainframe.diagram.SystemFunctions;
+import java.net.URI;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.Supplier;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -26,12 +32,16 @@ public final class DocumentEditors {
     private static volatile BiConsumer<String, String> naturalFromJcl;
     private static volatile NaturalOpener naturalOpener;
     private static volatile NaturalRelations naturalRelations = NaturalRelations.NONE;
-    private static volatile CobolCalls cobolCalls = (content, name) -> List.of();
-    /** Ablage der Systemfunktionen im App-Zustand (Einstellungen › Systemfunktionen). */
-    public static final String SYSTEM_FUNCTIONS_KEY = "deck.system-functions";
-
-    private static volatile SystemFunctions systemFunctions = SystemFunctions.parse(
-            com.aresstack.spaceharvester.app.ui.AppState.shared().get(SYSTEM_FUNCTIONS_KEY));
+    /** Externe COBOL-Aufrufe wie MainframeMate ({@code CodeAnalyticsService.extractExternalCalls}). */
+    private static final CobolCalls CODE_ANALYTICS = (content, name) -> CodeAnalyticsService.getInstance()
+            .extractExternalCalls(content, name,
+                    com.aresstack.spaceharvester.mainframe.calltree.SourceLanguage.COBOL)
+            .stream().map(call -> new CobolCalls.Call(call.getCallType(), call.getTargetName(), call.getLineNumber()))
+            .toList();
+    private static volatile CobolCalls cobolCalls = CODE_ANALYTICS;
+    /** Die Systemfunktionen (Einstellungen › Diagramme › Systemfunktionen); ohne Einhängen die Vorgaben aus MM. */
+    private static volatile Supplier<Map<String, SystemFunction>> systemFunctions =
+            () -> SystemFunctions.lookup(SystemFunctions.DEFAULTS);
 
     private DocumentEditors() {
     }
@@ -59,22 +69,27 @@ public final class DocumentEditors {
         naturalRelations = relations == null ? NaturalRelations.NONE : relations;
     }
 
-    /** Externe COBOL-Aufrufe (CodeAnalytics); {@code null} = keine. */
+    /** Externe COBOL-Aufrufe; {@code null} = wieder CodeAnalytics wie MainframeMate. */
     public static void cobolCalls(CobolCalls calls) {
-        cobolCalls = calls == null ? (content, name) -> List.of() : calls;
+        cobolCalls = calls == null ? CODE_ANALYTICS : calls;
     }
 
-    /** Bekannte Systemfunktionen (Einstellungen › Systemfunktionen). */
-    public static void systemFunctions(SystemFunctions functions) {
+    /** Woher die Systemfunktionen kommen (der Command Deck hängt den {@code SystemFunctionsStore} ein). */
+    public static void systemFunctions(Supplier<Map<String, SystemFunction>> functions) {
         systemFunctions = Objects.requireNonNull(functions, "functions");
     }
 
-    public static SystemFunctions systemFunctions() {
-        return systemFunctions;
+    /** Wikipedia-Artikel eines Programms wie MainframeMate: deutsch, sonst englisch, sonst Suche. */
+    static URI wikipedia(String program) {
+        String name = program.trim().toUpperCase(Locale.ROOT);
+        SystemFunction function = systemFunctions.get().get(name);
+        return URI.create((function == null ? new SystemFunction(name, "", "", "") : function).wikipediaUrl());
     }
 
     /** Die Auswertung mit dem, was gerade eingehängt ist. */
     static SourceRelations relations() {
-        return new SourceRelations(naturalRelations, cobolCalls, systemFunctions);
+        Map<String, SystemFunction> known = systemFunctions.get();
+        return new SourceRelations(naturalRelations, cobolCalls,
+                program -> known.containsKey(program.toUpperCase(Locale.ROOT)));
     }
 }

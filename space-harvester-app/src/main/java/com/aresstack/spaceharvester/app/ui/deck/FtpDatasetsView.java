@@ -365,6 +365,11 @@ final class FtpDatasetsView extends JPanel {
         // Die Knöpfe des Dokuments stehen rechts über dem Editor, damit die Leiste unten auch bei 960 px passt.
         documentsHead.add(Comic.row(reloadDocument, save, closeDocument), BorderLayout.EAST);
         editors.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        editors.onReveal(session -> SwingUtilities.invokeLater(() -> {
+            if (pillOf.containsKey(session)) {
+                showDocument(session);
+            }
+        }));
         editors.onClosed(session -> SwingUtilities.invokeLater(() -> removed(session)));
         editors.all().forEach(this::added);
         enableActions();

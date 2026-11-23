@@ -37,4 +37,13 @@ public interface DocumentStore {
     default EditorDocument saveAs(EditorDocument loaded, String text, String target) throws DocumentException {
         throw new DocumentException("„Speichern unter“ geht hier nicht.");
     }
+
+    /**
+     * Adressen in dieser Ablage, unter denen ein Objekt namens {@code name} neben {@code location} liegen kann (gleicher
+     * Ordner, gleiche Bibliothek, gleiches PDS), für die Diagramm-Ansicht: Aufrufziele der Mindmap auflösen und per
+     * Doppelklick öffnen (MainframeMate: Suchreihenfolge der Bibliotheken). Darf blockieren; ohne Treffer leer.
+     */
+    default java.util.List<String> siblings(String location, String name) throws DocumentException {
+        return java.util.List.of();
+    }
 }

@@ -334,8 +334,18 @@ public final class SearchHitLoads implements AutoCloseable {
         }
 
         void attach(PageKey key, AcquisitionScheduler.Ticket ticket) {
+            boolean stopped;
             synchronized (this) {
-                own.add(ticket);
+                stopped = stopping;
+                if (!stopped) {
+                    own.add(ticket);
+                }
+            }
+            if (stopped) {
+                // Schon angehalten oder abgebrochen (stop() lief vor dem Übernehmen): sonst lüde der Abruf weiter,
+                // obwohl der Benutzer ihn zurückgezogen hat (sporadisch roter SearchHitLoadsTest, 23.11.2026).
+                ticket.cancel();
+                return;
             }
             ticket.done().whenComplete((stored, failure) -> finished(ticket, stored, failure));
         }
@@ -502,12 +512,16 @@ public final class SearchHitLoads implements AutoCloseable {
                 run.remaining = keys.size();
                 keys.stream().filter(key -> !mine.containsKey(key)).forEach(run.toRequest::add);
             }
-            context.whenStopRequested(run::stop);
             if (keys.isEmpty()) {
+                context.whenStopRequested(run::stop);
                 run.complete();
                 return run.done;
             }
+            // Erst die übernommenen Abrufe an den Lauf hängen, dann auf Anhalten hören: Kam das Abbrechen schon an,
+            // läuft stop() sofort und zieht sie zurück. Umgekehrt fand stop() eine leere Liste, und die Abrufe luden
+            // weiter (Wettlauf zwischen Abbrechen in der Trefferliste und dem Start des Teils).
             mine.forEach(run::attach);
+            context.whenStopRequested(run::stop);
             run.requestMore();
             return run.done;
         };

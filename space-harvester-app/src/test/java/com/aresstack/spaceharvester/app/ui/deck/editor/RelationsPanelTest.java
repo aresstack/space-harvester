@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.mainframe.dependency.CallNode;
 import com.aresstack.spaceharvester.mainframe.dependency.NaturalRelations;
 import com.aresstack.spaceharvester.mainframe.dependency.SourceRelations;
-import com.aresstack.spaceharvester.mainframe.dependency.SystemFunctions;
+import com.aresstack.spaceharvester.mainframe.diagram.SystemFunctions;
 import com.aresstack.spaceharvester.mainframe.outline.SourceLanguage;
 import java.util.List;
 import java.util.Optional;
@@ -45,7 +45,7 @@ class RelationsPanelTest {
                         12, "ndv://TESTLIB/HAUPT", "CALLNAT", List.of()))));
             }
         };
-        SourceRelations.Analysis analysis = new SourceRelations(graph, (c, n) -> List.of(), SystemFunctions.defaults())
+        SourceRelations.Analysis analysis = new SourceRelations(graph, (c, n) -> List.of(), SystemFunctions.DEFAULT_NAMES::contains)
                 .analyze(Optional.of(SourceLanguage.NATURAL), SOURCE, "TESTLIB/UMSATZ.NSP", "TESTLIB");
         List<String> lines = new CopyOnWriteArrayList<>();
         List<String> opens = new CopyOnWriteArrayList<>();
@@ -94,6 +94,27 @@ class RelationsPanelTest {
         SwingUtilities.invokeAndWait(() -> p.clickFirst(RelationsPanel.CALLEES, 2));
         assertThat(lines).containsExactly("ndv://TESTLIB/UMSATZ:4");
         assertThat(opens).containsExactly("ndv://TESTLIB/UNTERPRG");
+    }
+
+    @Test
+    void systemFunctionsLinkToWikipediaAndCobolUsesCodeAnalytics() {
+        assertThat(DocumentEditors.wikipedia("idcams").toString())
+                .isEqualTo("https://de.wikipedia.org/wiki/Access_Method_Services");
+        assertThat(DocumentEditors.wikipedia("UNBEKANNT").toString())
+                .isEqualTo("https://de.wikipedia.org/w/index.php?search=UNBEKANNT");
+
+        String cobol = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. BEISPIEL.
+                       PROCEDURE DIVISION.
+                           CALL 'UNTERPRG' USING WS-DATEN.
+                           STOP RUN.
+                """;
+        SourceRelations.Analysis analysis = DocumentEditors.relations()
+                .analyze(Optional.of(SourceLanguage.COBOL), cobol, "BEISPIEL.cbl", null);
+        assertThat(analysis.callees().root()).isPresent();
+        assertThat(analysis.callees().root().get().children()).extracting(CallNode::label)
+                .anyMatch(label -> label.contains("UNTERPRG"));
     }
 
     private static <T> T on(java.util.function.Supplier<T> read) throws Exception {

@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.mainframe.dependency;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.mainframe.diagram.SystemFunctions;
 import com.aresstack.spaceharvester.mainframe.outline.SourceLanguage;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +31,7 @@ class SourceRelationsTest {
             """;
 
     private final SourceRelations relations = new SourceRelations(NaturalRelations.NONE, (c, n) -> List.of(),
-            SystemFunctions.defaults());
+            SystemFunctions.DEFAULT_NAMES::contains);
 
     @Test
     void jclShowsDataAndTheExecutionHierarchyWithNaturalAndSystemFunctions() {
@@ -62,7 +63,7 @@ class SourceRelationsTest {
                 return Optional.empty();
             }
         };
-        SourceRelations withGraph = new SourceRelations(graph, (c, n) -> List.of(), SystemFunctions.defaults());
+        SourceRelations withGraph = new SourceRelations(graph, (c, n) -> List.of(), SystemFunctions.DEFAULT_NAMES::contains);
 
         SourceRelations.Analysis analysis = withGraph.analyze(Optional.of(SourceLanguage.NATURAL), NATURAL,
                 "TESTLIB/UMSATZ.NSP", "TESTLIB");
@@ -86,25 +87,13 @@ class SourceRelationsTest {
     @Test
     void cobolListsExternalCalls() {
         SourceRelations cobol = new SourceRelations(NaturalRelations.NONE,
-                (c, n) -> List.of(new CobolCalls.Call("CALL", "UNTERPRG", 9)), SystemFunctions.defaults());
+                (c, n) -> List.of(new CobolCalls.Call("CALL", "UNTERPRG", 9)), SystemFunctions.DEFAULT_NAMES::contains);
 
         SourceRelations.Analysis analysis = cobol.analyze(Optional.of(SourceLanguage.COBOL), "x", "BEISPIEL.cbl",
                 null);
 
         assertThat(analysis.callees().root().orElseThrow().children()).extracting(CallNode::label)
                 .containsExactly("CALL UNTERPRG");
-    }
-
-    @Test
-    void systemFunctionsLinkToWikipediaAndRoundTrip() {
-        SystemFunctions functions = SystemFunctions.defaults();
-
-        assertThat(functions.wikipedia("idcams").toString())
-                .isEqualTo("https://de.wikipedia.org/wiki/Access_Method_Services");
-        assertThat(functions.wikipedia("UNBEKANNT").toString()).isEqualTo("https://de.wikipedia.org/wiki/UNBEKANNT");
-        assertThat(SystemFunctions.parse(functions.serialize()).entries()).isEqualTo(functions.entries());
-        assertThat(SystemFunctions.parse(null).entries()).hasSize(functions.entries().size());
-        assertThat(SystemFunctions.parse("").entries()).as("alle entfernt bleibt leer").isEmpty();
     }
 
     private static void collectTargets(CallNode node, List<String> out) {

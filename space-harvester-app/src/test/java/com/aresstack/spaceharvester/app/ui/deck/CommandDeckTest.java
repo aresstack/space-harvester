@@ -102,4 +102,20 @@ class CommandDeckTest {
             Thread.sleep(50);
         }
     }
+
+    /** Der Stand eines nicht gezeigten Bereichs nimmt in der Statuszeile keinen Platz (Codex zu #1200). */
+    @Test
+    void theStatusIsOnlyAsWideAsThatOfTheShownArea() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            deck = new CommandDeck();
+            ((com.aresstack.spaceharvester.app.ui.controls.StatusLabel) deck.files().statusInfo())
+                    .show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(
+                            "ein sehr langer erfundener Stand der Dateien, der viel Platz braucht"));
+            deck.show(DeckArea.FILES);
+            int files = deck.statusPanel().getPreferredSize().width;
+            deck.show(DeckArea.TERMINAL);
+            assertThat(deck.statusPanel().getPreferredSize().width)
+                    .isEqualTo(deck.terminal().statusInfo().getPreferredSize().width).isLessThan(files);
+        });
+    }
 }

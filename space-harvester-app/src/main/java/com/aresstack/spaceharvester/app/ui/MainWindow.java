@@ -224,7 +224,8 @@ public final class MainWindow implements AppContext.Navigator {
         // über den Netzweg der App (Proxy, Zertifikate).
         commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
-                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
+                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context),
+                new com.aresstack.spaceharvester.app.ui.deck.AppTerminalTunnel(context));
         // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
         commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
@@ -243,6 +244,19 @@ public final class MainWindow implements AppContext.Navigator {
                 .toList());
         // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
         com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
+        // Diagramm-Ansicht „Visuell“: KI-Kurzbeschriftung über das Modell der Zeile „Zusammenfassung“ (sonst das
+        // Chat-Modell), gestreamt; Systemfunktionen aus Einstellungen › Diagramme.
+        com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.connect(() -> {
+            var runtime = context.runtime();
+            var settings = context.settings();
+            if (runtime == null || settings == null || settings.ai() == null) {
+                return null;
+            }
+            var use = settings.ai().summary();
+            String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
+            return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
+                    runtime.workspace().aiChat(), model, use == null ? null : use.thinking());
+        });
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
@@ -523,6 +537,10 @@ public final class MainWindow implements AppContext.Navigator {
         sideDeck.add(chatSidebar, SIDE_CHAT);
         sideDeck.add(activities.component(), SIDE_JOBS);
         chatSidebar.chat().onAnswer(this::chatAnswered);
+        // Command Deck: anderer Reiter, anderer Hinweis und andere Vorschläge im Chat.
+        if (commandDeck != null) {
+            commandDeck.onAreaChanged(chatSidebar.chat()::toolScopeChanged);
+        }
         // Ein Quellen-Link soll die Seite zeigen: die große Ansicht wird wieder zur Leiste.
         chatSidebar.chat().onSourceOpened(() -> {
             if (chatLarge) {
@@ -911,7 +929,10 @@ public final class MainWindow implements AppContext.Navigator {
         // Die Suchleiste gehört zum Space Harvester; für die anderen Perspektiven ist keine Suche festgelegt.
         searchSlot.setVisible(harvester);
         // Ein Chat für alle Perspektiven; die Werkzeuge kommen je Frage aus der aktiven Perspektive (#1151).
-        if (chatSidebar != null) chatSidebar.chat().toolScope(Perspectives.COMMAND_DECK.equals(next.id()) ? commandDeck::chatScope : null);
+        if (chatSidebar != null) {
+            boolean deck = Perspectives.COMMAND_DECK.equals(next.id());
+            chatSidebar.chat().toolScope(deck ? commandDeck::chatScope : null, deck ? commandDeck::chatHints : null);
+        }
         stageCards.show(stage, next.id());
         if (!harvester) {
             // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.

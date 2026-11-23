@@ -758,8 +758,7 @@ class MainWindowTest {
             assertThat(window.explorer().component().isVisible()).isFalse();
             assertThat(settings.navRows()).extracting(SettingsNavRow::title).containsExactly(SettingsView.GENERAL,
                     SettingsView.AI, SettingsView.MODELS, SettingsView.WORDS, SettingsView.NETWORK, SettingsView.CACHE,
-                    SettingsView.VIDEO, SettingsView.TERMINAL, SettingsView.NDV, SettingsView.BETAVIEW,
-                    SettingsView.SYSTEM_FUNCTIONS,
+                    SettingsView.VIDEO, SettingsView.TERMINAL, SettingsView.NDV, SettingsView.BETAVIEW, SettingsView.DIAGRAMS,
                     SettingsView.SECURITY, SettingsView.DIAGNOSIS, SettingsView.LIBRARIES);
             layoutAll(surface);
             List<Integer> ys = new ArrayList<>();

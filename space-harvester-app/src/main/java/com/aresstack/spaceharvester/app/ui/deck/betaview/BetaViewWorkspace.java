@@ -80,11 +80,7 @@ public final class BetaViewWorkspace extends JPanel {
         newPill.addActionListener(e -> select(null));
         pillGroup.add(newPill);
         pills.add(newPill);
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        head.add(pills, BorderLayout.CENTER);
+        JPanel head = com.aresstack.spaceharvester.app.ui.deck.DeckBars.head(pills, null);
 
         JPanel formHolder = new JPanel(new GridBagLayout());
         formHolder.setOpaque(false);
@@ -114,6 +110,11 @@ public final class BetaViewWorkspace extends JPanel {
         pillOf.put(session, pill);
         SessionPanel panel = new SessionPanel(session, prompts, () -> close(session));
         panelOf.put(session, panel);
+        panel.onStatus(note -> {
+            if (selected == session) {
+                statusInfo.show(note);
+            }
+        });
         center.add(panel, session.id());
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
         select(session);
@@ -142,6 +143,10 @@ public final class BetaViewWorkspace extends JPanel {
             pill.setSelected(true);
         }
         cards.show(center, session == null ? FORM : session.id());
+        // Die Statuszeile der App zeigt den Stand der gewählten Sitzung; ohne Sitzung nichts.
+        SessionPanel shown = session == null ? null : panelOf.get(session);
+        statusInfo.show(shown == null ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(" ")
+                : shown.status());
         if (session == null) {
             SwingUtilities.invokeLater(form::focusFirst);
         }

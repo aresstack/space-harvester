@@ -256,6 +256,10 @@ class FtpWorkspaceTest {
             SwingUtilities.invokeAndWait(() -> datasets.uploadFile(euro));
             waitFor(() -> onEdt(view::statusText).contains("€"), until);
             assertThat(onEdt(view::statusText)).contains("ISO-8859-1");
+            // Der Stand steht in der Statuszeile der App (nicht in der Aktionszeile), Fehler rot.
+            assertThat(onEdt(() -> deck.ftp().statusNote().text())).contains("€");
+            assertThat(onEdt(() -> deck.ftp().statusNote().tone()))
+                    .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR);
             assertThat(host.text("KKR.JCL(PREIS)")).isNull();
 
             // Mehrere auf einmal löschen.
@@ -296,6 +300,14 @@ class FtpWorkspaceTest {
             SwingUtilities.invokeAndWait(() -> jobs.languageBox().setSelectedItem(SpoolText.Language.PLAIN));
             assertThat(onEdt(jobs::languageShown)).isEqualTo(SpoolText.Language.PLAIN);
             SwingUtilities.invokeAndWait(() -> jobs.languageBox().setSelectedItem(SpoolText.Language.AUTO));
+
+            // „Diagramm“ wie MainframeMate JobDetailTab: ohne erkennbare Struktur (hier JESJCL ohne JES-Spaltenpräfix)
+            // bleibt der Text stehen, und die Statuszeile sagt, warum.
+            SwingUtilities.invokeAndWait(() -> jobs.spoolTable().getSelectionModel().setSelectionInterval(1, 1));
+            waitFor(() -> onEdt(() -> jobs.spoolTextValue().contains("STEP1")), until);
+            SwingUtilities.invokeAndWait(() -> jobs.diagram().toggle());
+            waitFor(() -> onEdt(view::statusText).contains("Kein Diagramm erzeugbar"), until);
+            assertThat(onEdt(() -> jobs.diagram().active())).isFalse();
 
             // „Gesamter Output“ zeigt alle Spool-Dateien zusammen.
             SwingUtilities.invokeAndWait(jobs::showWholeOutput);

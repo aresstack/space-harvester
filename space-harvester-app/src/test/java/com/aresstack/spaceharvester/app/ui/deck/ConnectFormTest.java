@@ -120,9 +120,33 @@ class ConnectFormTest {
     }
 
     @Test
+    void anOldRememberedPortDoesNotComeBack() throws Exception {
+        var state = com.aresstack.spaceharvester.app.ui.AppState.shared();
+        state.put(ConnectForm.PORT_KEY, (String) null);
+        state.put(ConnectForm.TLS_KEY, (String) null);
+        // So merkte es eine ältere Fassung: Port 23 ohne TLS.
+        state.put("deck.terminal.port", "23");
+        state.put("deck.terminal.tls", "false");
+        state.put(ConnectForm.ENTRY_KEY, HOST_B.entry());
+        SwingUtilities.invokeAndWait(() -> {
+            ConnectForm form = new ConnectForm(accounts, (profile, source) -> { });
+            form.show(List.of(HOST_A, HOST_B));
+            assertThat(form.selectedEntryForTest()).isEqualTo(HOST_B.entry());
+            assertThat(form.port.getText()).isEmpty();
+            assertThat(form.tls.isSelected()).isTrue();
+            form.host.setText("10.0.0.9");
+            assertThat(form.profile().port()).isEqualTo(992);
+        });
+        state.put(ConnectForm.ENTRY_KEY, (String) null);
+        state.put("deck.terminal.port", (String) null);
+        state.put("deck.terminal.tls", (String) null);
+    }
+
+    @Test
     void defaultsAreThoseOfMainframeMate() throws Exception {
         com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.TLS_KEY, (String) null);
         com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.COMMAND_KEY, (String) null);
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.PROXY_KEY, (String) null);
         SwingUtilities.invokeAndWait(() -> {
             ConnectForm form = new ConnectForm(accounts, (profile, source) -> { });
             // MainframeMate: tn3270Port 992, tn3270Tls true, tn3270AutoCommandText „a“.
@@ -133,6 +157,11 @@ class ConnectFormTest {
             form.port.setText("");
             assertThat(form.profile().port()).isEqualTo(992);
             assertThat(form.profile().tls()).isTrue();
+            // Wie bisher direkt; „Proxy verwenden“ wählt man selbst (Angelo, 23.11.).
+            assertThat(form.proxy.isSelected()).isFalse();
+            assertThat(form.profile().viaProxy()).isFalse();
+            form.proxy.setSelected(true);
+            assertThat(form.profile().viaProxy()).isTrue();
             // Abweichung mit Absicht: Keep-Alive an (60 s), damit die Leitung bei Leerlauf nicht gekappt wird.
             form.keepAlive.setText("");
             assertThat(form.profile().keepAliveSeconds()).isEqualTo(60);

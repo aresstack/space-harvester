@@ -19,6 +19,7 @@ public final class EditorSessions {
     private final List<EditorSession> sessions = new CopyOnWriteArrayList<>();
     private final List<Consumer<EditorSession>> openedObservers = new CopyOnWriteArrayList<>();
     private final List<Consumer<EditorSession>> closedObservers = new CopyOnWriteArrayList<>();
+    private final List<Consumer<EditorSession>> revealObservers = new CopyOnWriteArrayList<>();
 
     public EditorSessions(Executor background) {
         this(background, VersionHistory.NONE);
@@ -64,5 +65,19 @@ public final class EditorSessions {
 
     public void onClosed(Consumer<EditorSession> observer) {
         closedObservers.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    /**
+     * Bittet die Oberfläche, ein offenes Dokument nach vorn zu holen (etwa nach einem Doppelklick auf ein Aufrufziel im
+     * Diagramm); die Bereiche, die das Dokument zeigen, wählen es aus.
+     */
+    public void reveal(EditorSession session) {
+        if (session != null && sessions.contains(session)) {
+            revealObservers.forEach(observer -> observer.accept(session));
+        }
+    }
+
+    public void onReveal(Consumer<EditorSession> observer) {
+        revealObservers.add(Objects.requireNonNull(observer, "observer"));
     }
 }
