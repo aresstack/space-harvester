@@ -38,6 +38,7 @@ class FtpWorkspaceTest {
         if (deck != null) {
             deck.shutdown();
         }
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(FtpConnectForm.CONFIGURED_KEY, (String) null);
     }
 
     /** KeePass mit einem Eintrag für den Schein-Host. */

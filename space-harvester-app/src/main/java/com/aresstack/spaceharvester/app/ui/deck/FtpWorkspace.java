@@ -20,7 +20,6 @@ import java.awt.FlowLayout;
 import java.awt.GridBagLayout;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -43,6 +42,15 @@ public final class FtpWorkspace extends JPanel {
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<FtpSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
     private final Map<FtpSession, FtpSessionView> viewOf = new LinkedHashMap<>();
+    /** Reiter samt ✕ je Sitzung: das ✕ trennt und schließt in einem Schritt (Angelo, 23.11.2026). */
+    private final Map<FtpSession, JComponent> tabOf = new java.util.HashMap<>();
+    /**
+     * Sitzungen, die noch nie verbunden waren. Scheitern sie, bleibt kein toter Reiter: Das Formular kommt mit dem
+     * Grund wieder. Klappt es, verbindet „Neue Verbindung“ künftig ohne Formular.
+     */
+    private final java.util.Set<FtpSession> firstConnect = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Beim ersten Zeigen des Bereichs ohne Sitzung wird die gemerkte Verbindung aufgebaut. */
+    private boolean autoTried;
     private final ComposerToggleButton newPill;
     private final CardLayout cards = new CardLayout();
     private final JPanel center = new JPanel(cards);
@@ -72,14 +80,22 @@ public final class FtpWorkspace extends JPanel {
         pills.setOpaque(false);
         newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neue Verbindung", "Neue FTP-Verbindung öffnen");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        newPill.addActionListener(e -> select(null));
+        newPill.addActionListener(e -> newConnection());
+        // Rechtsklick: das Formular trotzdem zeigen, für einen anderen Server oder andere Einstellungen.
+        newPill.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent event) {
+                formMenu(event);
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent event) {
+                formMenu(event);
+            }
+        });
         pillGroup.add(newPill);
         pills.add(newPill);
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        head.add(pills, BorderLayout.CENTER);
+        JPanel head = DeckBars.head(pills, null);
 
         JPanel formHolder = new JPanel(new GridBagLayout());
         formHolder.setBackground(Comic.SURFACE);
@@ -107,6 +123,49 @@ public final class FtpWorkspace extends JPanel {
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.all().forEach(this::added);
         select(null);
+        // Wer einmal erfolgreich verbunden war, bekommt beim Öffnen des Bereichs direkt seine Verbindung.
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()
+                    && !autoTried) {
+                autoTried = true;
+                if (pillOf.isEmpty() && FtpConnectForm.isConfigured()) {
+                    newConnection();
+                }
+            }
+        });
+    }
+
+    /**
+     * „Neue Verbindung“: Hat die gemerkte Verbindung schon einmal geklappt, verbindet sie direkt; das Formular kommt nur
+     * beim ersten Mal und wenn es scheitert (Angelo, 23.11.2026).
+     */
+    void newConnection() {
+        if (!FtpConnectForm.isConfigured()) {
+            select(null);
+            return;
+        }
+        status.show(StatusNote.plain("Verbinde mit der gemerkten Verbindung …"));
+        if (selected != null) {
+            pillOf.get(selected).setSelected(true);
+        }
+        form.connectDirectly(reason -> select(null));
+    }
+
+    /** Das Formular auch, wenn die Verbindung eingerichtet ist (anderer Server, andere Einstellungen). */
+    void showForm() {
+        select(null);
+    }
+
+    private void formMenu(java.awt.event.MouseEvent event) {
+        if (!event.isPopupTrigger()) {
+            return;
+        }
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem item = new javax.swing.JMenuItem("Verbindung wählen … (anderer Server, Einstellungen)");
+        item.setFont(Comic.regular(13f));
+        item.addActionListener(e -> showForm());
+        menu.add(item);
+        menu.show(event.getComponent(), event.getX(), event.getY());
     }
 
     /** Der Stand des FTP-Bereichs für die Statuszeile der App: Meldungen der gewählten Sitzung, Fehler rot. */
@@ -125,11 +184,21 @@ public final class FtpWorkspace extends JPanel {
     }
 
     private void connect(FtpProfile profile, String entry) {
-        sessions.open(profile, entry, () -> accounts.credentials(entry));
+        FtpSession session = sessions.open(profile, entry, () -> accounts.credentials(entry));
+        if (session.state() == ConnectionState.CONNECTED) {
+            FtpConnectForm.configured();
+        } else if (session.state() == ConnectionState.FAILED) {
+            SwingUtilities.invokeLater(() -> failedFirst(session));
+        } else {
+            firstConnect.add(session);
+            // Schon entschieden, bevor der Eintrag stand? Dann holt changed es nach.
+            SwingUtilities.invokeLater(() -> changed(session));
+        }
     }
 
     private void added(FtpSession session) {
-        if (pillOf.containsKey(session)) {
+        // Schon wieder geschlossen (etwa eine sofort gescheiterte erste Verbindung)? Dann kein Reiter.
+        if (pillOf.containsKey(session) || !sessions.all().contains(session)) {
             return;
         }
         ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.label(),
@@ -137,23 +206,50 @@ public final class FtpWorkspace extends JPanel {
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         pill.getAccessibleContext().setAccessibleName(session.label());
         pill.addActionListener(e -> select(session));
+        pill.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent event) {
+                if (SwingUtilities.isMiddleMouseButton(event)) {
+                    closeTab(session);
+                }
+            }
+        });
+        // Gezeichnetes Kreuz (nicht das Zeichen „✕“, das nicht jede Schrift hat), direkt hinter dem Reiter.
+        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
+                ComposerIcons.close(), "Trennen und schließen (auch Mittelklick auf den Reiter)").compact();
+        cross.addActionListener(e -> closeTab(session));
+        JPanel tab = new JPanel(new BorderLayout(0, 0));
+        tab.setOpaque(false);
+        tab.add(pill, BorderLayout.CENTER);
+        tab.add(cross, BorderLayout.EAST);
         pillGroup.add(pill);
-        pills.add(pill, pills.getComponentCount() - 1);
+        pills.add(tab, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
-        FtpSessionView view = new FtpSessionView(session, this::closeSession,
+        tabOf.put(session, tab);
+        FtpSessionView view = new FtpSessionView(session,
                 () -> toggle.select(FtpSessionView.JOBS), editors);
         view.show(toggle.selected());
         viewOf.put(session, view);
         center.add(view, session.id());
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
-        // Ein Wechsel vor dem Anmelden des Beobachters ginge sonst verloren.
-        changed(session);
         select(session);
         pills.revalidate();
         pills.repaint();
+        // Ein Wechsel vor dem Anmelden des Beobachters ginge sonst verloren. Zuletzt, denn eine schon gescheiterte
+        // erste Verbindung schließt den Reiter wieder und zeigt das Formular.
+        changed(session);
     }
 
     private void changed(FtpSession session) {
+        if (firstConnect.contains(session)) {
+            if (session.state() == ConnectionState.CONNECTED) {
+                firstConnect.remove(session);
+                FtpConnectForm.configured();
+            } else if (session.state() == ConnectionState.FAILED) {
+                failedFirst(session);
+                return;
+            }
+        }
         ComposerToggleButton pill = pillOf.get(session);
         if (pill != null) {
             pill.setIcon(dot(session.state()));
@@ -189,13 +285,34 @@ public final class FtpWorkspace extends JPanel {
         }
     }
 
+    /** Eine nie verbundene Sitzung ist gescheitert: Reiter weg, Formular mit dem Grund. */
+    private void failedFirst(FtpSession session) {
+        if (!firstConnect.remove(session) && session.state() != ConnectionState.FAILED) {
+            return;
+        }
+        String reason = session.failure().orElse("Anmeldung gescheitert");
+        closeSession(session);
+        form.problem(session.label() + ": " + reason);
+        select(null);
+    }
+
+    /** ✕ oder Mittelklick: trennt und schließt in einem Schritt; nur ungesicherte Änderungen fragen nach. */
+    void closeTab(FtpSession session) {
+        FtpSessionView view = viewOf.get(session);
+        if (view == null || view.datasets().closeDocuments()) {
+            closeSession(session);
+        }
+    }
+
     private void closeSession(FtpSession session) {
+        firstConnect.remove(session);
         sessions.close(session);
         ComposerToggleButton pill = pillOf.remove(session);
         FtpSessionView view = viewOf.remove(session);
+        JComponent tab = tabOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(pill);
+            pills.remove(tab == null ? pill : tab);
             pills.revalidate();
             pills.repaint();
         }

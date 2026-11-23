@@ -97,10 +97,10 @@ final class FtpJobsView extends JPanel {
     private boolean wholeShown;
     private final JLabel spoolTitle = Comic.caption("Spool");
     private final JPanel actions;
-    private final ComposerButton submit;
-    private final ComposerButton refresh;
-    private final ComposerButton save;
-    private final ComposerButton delete;
+    private final IconButton submit;
+    private final IconButton refresh;
+    private final IconButton save;
+    private final IconButton delete;
     private final List<JesJob> allJobs = new ArrayList<>();
     private JobOutput output;
     private String outputJob;
@@ -349,13 +349,13 @@ final class FtpJobsView extends JPanel {
         add(head, BorderLayout.NORTH);
         add(split, BorderLayout.CENTER);
 
-        submit = Comic.button("Job einreichen …", "Lokale JCL-Datei an JES übergeben");
+        submit = new IconButton(new FtpDatasetsView.PlayIcon(), "Job einreichen … – lokale JCL-Datei an JES übergeben");
         submit.addActionListener(e -> submitFile());
-        refresh = Comic.button("Aktualisieren", "Jobliste neu abfragen");
+        refresh = new IconButton(Glyph.REFRESH, "Aktualisieren – Jobliste neu abfragen");
         refresh.addActionListener(e -> refresh());
-        save = Comic.button("Spool speichern …", "Angezeigten Spool-Text speichern");
+        save = new IconButton(FilesIcons.save(), "Spool speichern … – angezeigten Spool-Text speichern");
         save.addActionListener(e -> saveSpool());
-        delete = Comic.danger("Job löschen", "Ausgabe des gewählten Jobs aus dem Spool löschen (mit Rückfrage)");
+        delete = new IconButton(Glyph.TRASH, "Job löschen – Ausgabe des gewählten Jobs aus dem Spool löschen (mit Rückfrage)");
         delete.addActionListener(e -> deleteJob());
         actions = Comic.row(submit, refresh, save, delete);
         updateActions();
