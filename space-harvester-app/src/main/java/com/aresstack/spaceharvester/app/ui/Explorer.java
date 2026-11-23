@@ -793,19 +793,33 @@ public final class Explorer {
 
     /** Wie das Fadenkreuz in IntelliJ: nur den Pfad zur gezeigten Seite aufklappen und sie wählen, ohne zu öffnen. */
     void showCurrent() {
-        if (current == null) {
+        PageNavigation.Position target = current;
+        if (target == null) {
             return;
         }
         cards.show(deck, TREE);
-        // Beim Zuklappen wandert die Auswahl kurz zur Quelle; das darf den Suchumfang nicht verbreitern.
+        // Fehler bis 23.11.2026: Beim Zuklappen wanderte die Auswahl auf den zugeklappten Vorfahren; der
+        // Auswahl-Listener (nur der Umfang war stumm) zeigte dessen Ansicht in der Mitte, die meldete keine Seite mehr,
+        // current wurde null, das Fadenkreuz grau und revealPage(current) tat nichts. Jetzt schweigen beim Zuklappen
+        // beide Listener, und das Ziel ist vorher gemerkt.
+        quiet = true;
         revealing = true;
         try {
+            tree.clearSelection();
             collapseAll();
         } finally {
             revealing = false;
+            quiet = false;
         }
-        revealPage(current);
+        // Wie ein Klick des Benutzers: normale Auswahl, die Hervorhebung eines Suchtreffers verschwindet.
+        reveal(target, ++revealRequest);
+        userRequest = revealRequest;
     }
+
+    /** Während {@link #showCurrent} zuklappt, meldet die Auswahl nichts. */
+    private boolean quiet;
+    /** Die Anfrage, deren Ziel wie ein Klick gewählt wird (Fadenkreuz). */
+    private int userRequest = -1;
 
     /** Hebt die Auswahl auf, auch die globale; der Umfang ist dann wieder alles. */
     public void clearSelection() {
@@ -1100,6 +1114,12 @@ public final class Explorer {
 
     /** Ende des Abstiegs: wählen, oder bei {@link #hintPage} nur hervorheben und hinscrollen. */
     private void finish(Node node, int ticket) {
+        if (ticket == userRequest) {
+            TreePath path = new TreePath(node.getPath());
+            tree.setSelectionPath(path);
+            tree.scrollPathToVisible(path);
+            return;
+        }
         if (ticket != hintRequest) {
             select(node);
             return;
@@ -1118,6 +1138,21 @@ public final class Explorer {
      * Zeigt einen Suchtreffer im Baum (Angelo, 23.11.2026): Pfad aufklappen, hinscrollen und die Seite mit einem
      * Rahmen hervorheben, ohne die Auswahl zu ändern, denn die Auswahl ist der Filter der Suche.
      */
+    /** Wie {@link #hintPage(String, String, String)} für einen bekannten Pfad (aus der Suche geöffnete Seite). */
+    public void hintPage(PageNavigation.Position position) {
+        reveal(position, ++revealRequest);
+        hintRequest = revealRequest;
+    }
+
+    /** Nimmt die Hervorhebung eines Suchtreffers weg. */
+    void clearHint() {
+        Node before = hint;
+        hint = null;
+        if (before != null) {
+            ((javax.swing.tree.DefaultTreeModel) tree.getModel()).nodeChanged(before);
+        }
+    }
+
     public void hintPage(String sourceId, String spaceKey, String pageId) {
         revealPage(sourceId, spaceKey, pageId);
         hintRequest = revealRequest;
@@ -1283,6 +1318,13 @@ public final class Explorer {
     private boolean merging;
 
     private void selectionChanged() {
+        if (quiet) {
+            return;
+        }
+        if (!revealing) {
+            // Der Benutzer wählt selbst: die Hervorhebung eines Suchtreffers verschwindet.
+            clearHint();
+        }
         // Ein gewählter Knoten löst die globale Auswahl ab.
         if (global && tree.getSelectionCount() > 0) {
             global = false;
