@@ -453,6 +453,8 @@ public final class PageDetailPanel extends JPanel {
             new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Leseansicht", READING_HELP);
     /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */
     static final int MOUSE_BACK_BUTTON = 4;
+    /** Client-Eigenschaft einer Ansicht mit eigenem Zurück/Vor (etwa die Suche): dort blättert die Seite nicht. */
+    public static final String OWN_MOUSE_NAVIGATION = "spaceharvester.ownMouseNavigation";
     /** Maustaste Vor (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_FORWARD_BUTTON}). */
     static final int MOUSE_FORWARD_BUTTON = 5;
     /**
@@ -943,6 +945,7 @@ public final class PageDetailPanel extends JPanel {
         closeOriginalFile();
         breadcrumbs.clear();
         positionShown.accept(null);
+        chat.reading(null);
         references.message(" ");
         views = List.of();
         showReader(null, false);
@@ -1550,6 +1553,9 @@ public final class PageDetailPanel extends JPanel {
         readingPane.loading();
         breadcrumbs.clear();
         positionShown.accept(null);
+        // Die vorige Seite ist nicht mehr zu sehen: bis die neue geladen ist (oder nie, wenn das scheitert), gilt für
+        // den Chat wieder die Auswahl im Baum.
+        chat.reading(null);
         references.message(" ");
         // Die Unterseiten der vorigen Seite gelten ab jetzt nicht mehr, auch wenn das Laden scheitert. Der Graph
         // verlässt die Seite zuerst, damit deren Abmeldung für die alte Seite nichts mehr lädt.
@@ -2353,6 +2359,9 @@ public final class PageDetailPanel extends JPanel {
         statementsView.page(snapshot, loaded.reader() == null ? null : loaded.reader().text());
         pagePodcast.summary(new PodcastPage(sourceId, metadata.pageId()));
         pageShown.accept(sourceId, metadata.partitionKey());
+        // ADR 0033 „Was ich sehe, sieht der Bot“: die gelesene Seite bestimmt den Bereich des Chats, auch wenn sie aus
+        // der Suche kommt und der Baum woanders steht; die Auswahl im Baum bleibt dabei unberührt.
+        chat.reading(ExportPanel.Selection.of(sourceId, metadata.partitionKey(), metadata.pageId(), metadata.title()));
         title.setText(metadata.title());
         path.setText(sourceId + " · Space " + metadata.partitionKey() + " · Seite " + metadata.pageId()
                 + (metadata.version() == null ? "" : " · Version " + metadata.version()));
@@ -3739,6 +3748,16 @@ public final class PageDetailPanel extends JPanel {
     boolean mouseButton(int button, java.awt.Component source) {
         if (source == null || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
             return false;
+        }
+        // Über der Suche gelten ihr eigenes Zurück und Vor (Angelo, 23.11.2026): im ganzen Fenster, solange sie zu sehen ist.
+        if (javax.swing.SwingUtilities.getRootPane(source) instanceof javax.swing.JRootPane root
+                && Boolean.TRUE.equals(root.getClientProperty(OWN_MOUSE_NAVIGATION))) {
+            return false;
+        }
+        for (java.awt.Component c = source; c != null; c = c.getParent()) {
+            if (c instanceof javax.swing.JComponent jc && jc.getClientProperty(OWN_MOUSE_NAVIGATION) != null) {
+                return false;
+            }
         }
         java.awt.Window window = javax.swing.SwingUtilities.getWindowAncestor(this);
         if (!javax.swing.SwingUtilities.isDescendingFrom(source, this)

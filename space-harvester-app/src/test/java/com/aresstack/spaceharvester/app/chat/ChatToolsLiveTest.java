@@ -89,6 +89,35 @@ class ChatToolsLiveTest {
     }
 
     /**
+     * Interne Suche (ADR 0033 Pkt. 10): Der Bereich ist nur das Datenhaus, die Antwort steht auf einer anderen Seite.
+     * Mit eingeschaltetem Schalter findet das Modell sie über die globale Suche, liest sie und antwortet.
+     */
+    @Test
+    void withTheInternalSearchTheModelFindsAPageOutsideTheArea() throws Exception {
+        Workspace workspace = start(System.getProperty("chat.live.model", "gemma4:12b"));
+        PageSelection space = space(workspace);
+        PageKey open = page(workspace, space, "datenhaus");
+        PageSelection onlyOpen = new PageSelection(
+                com.aresstack.spaceharvester.application.snapshot.PageSet.of(
+                        Map.of(open.sourceId(), List.of(open.pageId()))),
+                space.counts(), space.spaces(), space.complete());
+        Recording port = new Recording(workspace.aiChat());
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, model(), null, List.of(),
+                "Warum bricht der Nachtlauf ab? Antworte mit Quellenangabe.", onlyOpen, "Datenhaus", events,
+                Runnable::run).knowledgeByTools(open).appSearch(() -> java.util.Set.of("handbuch")).start();
+        assertThat(events.done.await(10, TimeUnit.MINUTES)).isTrue();
+
+        System.out.println("[live] Interne Suche: Anfragen " + port.requests.size() + ", Werkzeuge: " + events.using
+                + ", Antwort: " + events.completed);
+        assertThat(events.failed).isNull();
+        assertThat(port.requests.get(0).tools()).extracting(AiChat.Tool::name).contains(ChatTools.APP_SEARCH);
+        assertThat(events.using).anyMatch(what -> what.contains("Wissensquellen"));
+        assertThat(events.completed.toLowerCase(Locale.ROOT)).contains("spool");
+    }
+
+    /**
      * W7: Das Modell schlägt einen Fachbegriff mit {@value ChatTools#TERM} nach und antwortet aus dem Ergebnis. Das
      * Begriffswissen ist erfunden (im Handbuch ist nichts als Fachbegriff bestätigt); geprüft wird der echte Weg über
      * die Werkzeugdefinition, den Aufruf durch das Modell, den Bereich je Aufruf und die Antwort.

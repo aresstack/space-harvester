@@ -27,6 +27,7 @@ Einträge, Einordnung, Wichtigkeit, Belege und Zahlen kommen fertig aus dem Core
 | `definitionProposal` | Beleg einer Begriffsbestimmung („X ist ein Y“, Art `BESTIMMUNG`) als Position oder `null`: nur mit dem Begriff selbst als Träger, aus dem Original; bei mehreren die mit den meisten Seiten. Der Eintrag sagt nicht, ob es weitere gab; die Einzelheiten (`isA`) zeigen alle |
 | `evidenceStale` | „Beleg veraltet“: ein bestätigter Eintrag, den kein Lauf mehr stützt |
 | `explanation` | Erläuterung, schreibt nur der Mensch |
+| `ApprovedGlossary.reference(…)` | nicht am Eintrag gespeichert: Quelle (Titel, URL, Wortlaut, Seite), wenn ein mitgeliefertes geprüftes Glossar den globalen Begriff nennt (ADR 0019, Nachtrag 23.11.2026); REST `reference` |
 | `revision` | für optimistisches Sperren: bei jeder Änderung mitgeben |
 
 Regel `ROLE_OF_PERSON`: Ein Begriff ist `ROLLE`, wenn er Rollennomen einer Ist-Beziehung der Art `ROLLE` ist, also

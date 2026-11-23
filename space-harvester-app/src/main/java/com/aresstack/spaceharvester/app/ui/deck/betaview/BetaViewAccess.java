@@ -1,7 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.deck.betaview;
 
 import com.aresstack.spaceharvester.app.ui.AppContext;
-import com.aresstack.spaceharvester.deck.betaview.http.HttpClientFactory;
+import com.aresstack.spaceharvester.deck.http.HttpClientFactory;
 import java.util.Objects;
 
 /**
@@ -35,18 +35,8 @@ public interface BetaViewAccess {
         return new BetaViewAccess() {
             @Override
             public HttpClientFactory http() {
-                return () -> {
-                    var settings = context.settings();
-                    if (settings == null) {
-                        return java.net.http.HttpClient.newBuilder();
-                    }
-                    if (!useProxy()) {
-                        return com.aresstack.spaceharvester.app.nlp.HttpModelDownload.routed(null, settings.tls());
-                    }
-                    return com.aresstack.spaceharvester.app.nlp.HttpModelDownload.routed(
-                            com.aresstack.spaceharvester.app.runtime.AppRuntime.proxy(settings.proxy(),
-                                    context.secrets()), settings.tls());
-                };
+                return com.aresstack.spaceharvester.app.ui.deck.DeckNetwork.http(context,
+                        BetaViewAccess::useProxy);
             }
         };
     }

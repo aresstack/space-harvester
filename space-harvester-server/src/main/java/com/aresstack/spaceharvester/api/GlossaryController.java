@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.glossary.GlossaryDerivation;
+import com.aresstack.spaceharvester.application.glossary.ApprovedGlossary;
 import com.aresstack.spaceharvester.application.glossary.GlossaryEntry;
 import com.aresstack.spaceharvester.application.glossary.GlossaryStore;
 import com.aresstack.spaceharvester.application.glossary.TechnicalTerms;
@@ -347,7 +348,9 @@ public class GlossaryController {
                         String categoryReason,
                         @Schema(nullable = true, description = "Beleg einer Begriffsbestimmung als Position")
                         TermRelationsController.EvidenceEntry definitionProposal,
-                        @Schema(description = "Läufe, die den Begriff zuletzt nannten: rule, ai") List<String> supportedBy) {
+                        @Schema(description = "Läufe, die den Begriff zuletzt nannten: rule, ai") List<String> supportedBy,
+                        @Schema(nullable = true, description = "Geprüftes Glossar, das den Begriff nennt (nur global)")
+                        ReferenceEntry reference) {
 
         static Entry of(GlossaryEntry entry) {
             return new Entry(entry.id(), entry.term(), entry.normalized(), entry.scope().sourceId(),
@@ -361,7 +364,18 @@ public class GlossaryController {
                     entry.classification() == null ? null : entry.classification().reason(),
                     entry.definitionProposal() == null ? null
                             : TermRelationsController.EvidenceEntry.of(entry.definitionProposal()),
-                    entry.supportedBy().stream().map(GlossaryController::lower).sorted().toList());
+                    entry.supportedBy().stream().map(GlossaryController::lower).sorted().toList(),
+                    ApprovedGlossary.reference(ApprovedGlossary.bundled(), entry).map(ReferenceEntry::of)
+                            .orElse(null));
+        }
+    }
+
+    /** Quelle eines Begriffs aus einem geprüften Glossar: Titel, Fundstelle, Begriff im Wortlaut und Seite. */
+    public record ReferenceEntry(String glossaryId, String title, String url, String wording, int page) {
+
+        static ReferenceEntry of(ApprovedGlossary.Reference reference) {
+            return new ReferenceEntry(reference.glossaryId(), reference.title(), reference.url(), reference.wording(),
+                    reference.page());
         }
     }
 

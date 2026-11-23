@@ -115,10 +115,19 @@ public final class SearchView implements View {
     final com.aresstack.spaceharvester.app.ui.controls.SelectableHeading heading =
             new com.aresstack.spaceharvester.app.ui.controls.SelectableHeading(HEADING_EMPTY);
     static final String HEADING_EMPTY = "Suche";
+    /** So viele Bereiche nennt die Überschrift mit Namen, mehr nur als Zahl. */
+    static final int MAX_NAMED_AREAS = 3;
     static final String HEADING_PREFIX = "Suche in ";
     static final String REPEAT_TIP = "Suche im selben Bereich wiederholen (nicht im links gewählten)";
     /** Wiederholt die letzte Suche in ihrem Bereich; erst nach einer Suche wählbar. */
     final javax.swing.AbstractButton repeat;
+    /** Zurück und Vor zwischen den Suchen dieser Sitzung (Begriff und Bereich). */
+    final javax.swing.AbstractButton backVisit;
+    /** Zurück und Vor für die Statuszeile, solange die Suche zu sehen ist. */
+    private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.CENTER, 2, 0));
+    final javax.swing.AbstractButton forwardVisit;
+    /** Was links im Baum markiert ist; leer für „Wissensquellen“. */
+    private List<Explorer.Scope> marked = List.of();
     /** Der Bereich der letzten Suche als Schnappschuss beim Start; {@code null} vor der ersten. */
     List<Explorer.Scope> searchedScopes;
     /** Wählt links den Bereich der Suche; {@code null} ohne Explorer. */
@@ -322,8 +331,37 @@ public final class SearchView implements View {
         frame.setBackground(Comic.SURFACE);
         frame.add(heading, BorderLayout.NORTH);
         frame.add(root, BorderLayout.CENTER);
+        backVisit = new IconButton(Glyph.BACK, "Zurück zur vorigen Suche bzw. zum vorigen Filter").compact();
+        forwardVisit = new IconButton(Glyph.FORWARD, "Vor zur nächsten Suche bzw. zum nächsten Filter").compact();
+        backVisit.addActionListener(e -> back());
+        forwardVisit.addActionListener(e -> forward());
+        navigation.setOpaque(false);
+        navigation.add(backVisit);
+        navigation.add(forwardVisit);
         repeat = heading.tool(Glyph.SYNC, REPEAT_TIP, this::repeat);
         repeat.setEnabled(false);
+        backVisit.setEnabled(false);
+        forwardVisit.setEnabled(false);
+        frame.putClientProperty(com.aresstack.spaceharvester.app.ui.content.PageDetailPanel.OWN_MOUSE_NAVIGATION,
+                Boolean.TRUE);
+        frame.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) {
+                // Solange die Suche zu sehen ist, gehören die Maustasten 4/5 im ganzen Fenster ihr.
+                javax.swing.JRootPane root = SwingUtilities.getRootPane(frame);
+                if (root != null) {
+                    root.putClientProperty(com.aresstack.spaceharvester.app.ui.content.PageDetailPanel
+                            .OWN_MOUSE_NAVIGATION, frame.isShowing() ? Boolean.TRUE : null);
+                }
+            }
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) != 0) {
+                if (frame.isDisplayable()) {
+                    java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(mouseNavigation,
+                            java.awt.AWTEvent.MOUSE_EVENT_MASK);
+                } else {
+                    java.awt.Toolkit.getDefaultToolkit().removeAWTEventListener(mouseNavigation);
+                }
+            }
+        });
         heading.onSelect(() -> {
             table.clearSelection();
             pinned.clearSelection();
@@ -334,7 +372,7 @@ public final class SearchView implements View {
         pinned.onSelect(hit -> {
             table.clearSelection();
             heading.selected(false);
-            context.navigator().revealPage(hit.sourceId(), hit.spaceKey(), hit.pageId());
+            context.navigator().hintPage(hit.sourceId(), hit.spaceKey(), hit.pageId());
         });
         pinned.onOpen(hit -> context.navigator().openPage(hit.sourceId(), hit.pageId()));
         query.setToolTipText("Wörter in Titel und Inhalt; die Quellen werden live durchsucht");
@@ -395,7 +433,7 @@ public final class SearchView implements View {
                 heading.selected(false);
                 pinned.clearSelection();
                 Hit hit = model.rows.get(table.convertRowIndexToModel(row));
-                context.navigator().revealPage(hit.sourceId(), hit.spaceKey(), hit.pageId());
+                context.navigator().hintPage(hit.sourceId(), hit.spaceKey(), hit.pageId());
             }
         });
         table.addMouseListener(new MouseAdapter() {
@@ -420,6 +458,11 @@ public final class SearchView implements View {
             }
         });
         table.setToolTipText(ROW_TIP);
+        // Nur filtern, nie sortieren: die Rangfolge kommt aus dem Core.
+        for (int column = 0; column < model.getColumnCount(); column++) {
+            sorter.setSortable(column, false);
+        }
+        table.setRowSorter(sorter);
         table.getColumnModel().getColumn(HitsModel.EXCERPT).setCellRenderer(excerpts);
         table.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
             @Override
@@ -673,6 +716,178 @@ public final class SearchView implements View {
      * Wissensquellen. Eine laufende Suche bleibt; die nächste nutzt den neuen Umfang.
      */
     public void scope(List<Explorer.Scope> selection) {
+        marked = List.copyOf(selection);
+        use(selection);
+        if (!lastChange) {
+            return;
+        }
+        if (technicalTerms.isSelected() && termsRuntime != null) {
+            // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
+            searchTechnicalTerms();
+        } else if (searchedText != null && searchedText.equals(query.getText().trim())) {
+            filterTo(selection);
+        }
+    }
+
+    /**
+     * Der Baum als Filter auf die eine Trefferliste (Angelo, 23.11.2026): Quellen, die für den Begriff schon durchsucht
+     * sind, werden nur gefiltert; fehlende werden allein nachgesucht und eingereiht. Bleibt der Filter dünn und folgen
+     * weitere Treffer, lädt die Liste einen Stapel nach. Die Überschrift nennt den Filter.
+     */
+    void filterTo(List<Explorer.Scope> area) {
+        Set<String> wanted = new LinkedHashSet<>(searchedSources());
+        Set<String> missing = new LinkedHashSet<>(wanted);
+        missing.removeAll(covered);
+        if (!missing.isEmpty() && covered.isEmpty()) {
+            // Nichts Ganzes durchsucht (die letzte Suche galt nur Spaces oder Seiten): ganz neu suchen.
+            search();
+            return;
+        }
+        searchedScopes = List.copyOf(area);
+        remember(searchedText, searchedScopes);
+        heading.title(HEADING_PREFIX + areaTitle(searchedScopes));
+        heading.selected(false);
+        applyFilter();
+        if (!missing.isEmpty()) {
+            searchMissing(missing);
+        } else if (table.getRowCount() < THIN && nextCursor != null) {
+            loadMore();
+        }
+    }
+
+    /** Weniger sichtbare Treffer als diese im Filter: einen Stapel nachladen. */
+    static final int THIN = 10;
+    /** Quellen, die für {@link #searchedText} ganz durchsucht sind; nach einem Abgleich verfällt die Quelle. */
+    final Set<String> covered = new LinkedHashSet<>();
+    /** Anmeldungen beim Bestand der durchsuchten Quellen, damit ein Abgleich ihre Treffer verfallen lässt. */
+    private final List<Subscription> coverWatch = new ArrayList<>();
+    private final javax.swing.table.TableRowSorter<HitsModel> sorter = new javax.swing.table.TableRowSorter<>(model);
+
+    /** Zeigt nur die Zeilen im Filter {@link #searchedScopes}. */
+    private void applyFilter() {
+        List<Explorer.Scope> area = searchedScopes;
+        sorter.setRowFilter(area == null || area.isEmpty() ? null : new javax.swing.RowFilter<HitsModel, Integer>() {
+            @Override
+            public boolean include(Entry<? extends HitsModel, ? extends Integer> entry) {
+                int row = entry.getIdentifier();
+                return row >= model.rows.size() || inArea(area, model.rows.get(row));
+            }
+        });
+    }
+
+    /** Merkt die ganz durchsuchten Quellen einer startenden Suche und meldet sich für ihren Abgleich an. */
+    private void cover(Set<String> sources, boolean replace) {
+        if (replace) {
+            covered.clear();
+            coverWatch.forEach(Subscription::close);
+            coverWatch.clear();
+        }
+        AppRuntime runtime = context.runtime();
+        for (String source : sources) {
+            if (!covered.add(source) || runtime == null) {
+                continue;
+            }
+            try {
+                coverWatch.add(runtime.workspace().subscribeHoldings(source, null,
+                        new com.aresstack.spaceharvester.application.holdings.HoldingsListener() {
+                            @Override
+                            public void pagesChanged(String s, String space, Set<String> pageIds) {
+                                // Seiten, die die Suche selbst lädt, ändern die Treffer nicht.
+                            }
+
+                            @Override
+                            public void spaceChanged(String s, String space) {
+                                // Abgleich oder Bereinigen: die gemerkten Treffer dieser Quelle verfallen.
+                                SwingUtilities.invokeLater(() -> covered.remove(source));
+                            }
+                        }));
+            } catch (RuntimeException e) {
+                // Ohne Anmeldung bleibt die Quelle gemerkt bis zur nächsten Suche.
+            }
+        }
+    }
+
+    /** Sucht den Begriff nur in den noch fehlenden Quellen und reiht die Treffer nach ihrer Stellung ein. */
+    private void searchMissing(Set<String> missing) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || lastQuery == null) {
+            search();
+            return;
+        }
+        KeywordSearch.Query q = new KeywordSearch.Query(searchedText, missing.size() == 1 ? missing.iterator().next()
+                : null, missing.size() > 1 ? missing : Set.of(), Set.of(), Set.of()).ofKinds(chosenKinds())
+                .withGlossarySynonyms(synonymsOn());
+        // Eigene Anfragenummer: Antworten der vorigen Suche (Neusortieren, Nachbarn, Ladestand) dürfen die
+        // nachgesuchte Quelle nicht mehr überschreiben. Bis 23.11.2026 kam ein spätes Neusortieren der alten Quelle
+        // nach dem ersten Stapel an, setzte deren (leeren) Cursor und „Weitere laden“ blieb aus (CI 45213208517).
+        int before = request;
+        int id = ++request;
+        if (neighborsFor == before) {
+            neighborsFor = id;
+        }
+        if (termPagesFor == before) {
+            termPagesFor = id;
+        }
+        cover(missing, false);
+        starting("Suche in " + String.join(", ", missing.stream().map(this::title).toList()) + " …");
+        String core = java.util.UUID.randomUUID().toString();
+        Background.run(() -> runtime.workspace().keywordSearchIn(core, q, null, LIMIT, null), results -> {
+            overlay.setBusy(false);
+            if (id != request) {
+                return;
+            }
+            Hit selected = selectedHit();
+            model.set(interleave(searchedText, model.rows, hits(results)));
+            batchStart = 0;
+            select(selected);
+            // „Weitere laden“ setzt ab jetzt die Suche der nachgesuchten Quellen fort.
+            keywordSearchId = core;
+            shownCursor = null;
+            show(q, results);
+            if (results.progress() != null && !results.progress().done()) {
+                track(results.progress());
+            } else {
+                finished(false);
+            }
+        }, error -> {
+            overlay.setBusy(false);
+            missing.forEach(covered::remove);
+            feedback.problem(error);
+        });
+    }
+
+    /**
+     * Führt zwei nach Rang geordnete Listen zusammen (Angelo, 23.11.2026): Die Ränge zweier Suchen sind nicht
+     * vergleichbar, darum entscheidet an jeder Stelle der Punktwert des Core ({@code HitRelevance}) zwischen den beiden
+     * vordersten Treffern; die Reihenfolge innerhalb jeder Liste bleibt. Bei Gleichstand gewinnt die erste Liste.
+     * Doppelte Seiten bleiben einmal, an der früheren Stelle.
+     */
+    static List<Hit> interleave(String query, List<Hit> first, List<Hit> second) {
+        List<Hit> merged = new ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        int a = 0;
+        int b = 0;
+        while (a < first.size() || b < second.size()) {
+            Hit next;
+            if (b >= second.size() || a < first.size() && relevance(query, first.get(a)) >= relevance(query,
+                    second.get(b))) {
+                next = first.get(a++);
+            } else {
+                next = second.get(b++);
+            }
+            if (seen.add(next.sourceId() + "\u0000" + next.pageId() + "\u0000" + next.passageId())) {
+                merged.add(next);
+            }
+        }
+        return merged;
+    }
+
+    static double relevance(String query, Hit hit) {
+        return com.aresstack.spaceharvester.application.query.HitRelevance.of(query, hit.title(), hit.snippet());
+    }
+
+    /** Übernimmt einen Bereich für die nächste Suche, ohne selbst zu suchen. */
+    private void use(List<Explorer.Scope> selection) {
         // Erst die Häkchen, dann der Umfang: er liest die angehakten Quellen.
         Set<String> known = knownSources();
         syncBoxesToScope(selection.stream().filter(scope -> scope.sourceId() != null
@@ -803,6 +1018,10 @@ public final class SearchView implements View {
         if (area.isEmpty()) {
             return "Wissensquellen";
         }
+        if (area.size() > MAX_NAMED_AREAS) {
+            // Mehrfachauswahl (Strg/Shift): ab vier Knoten nur die Zahl; ein Klick markiert alle wieder im Baum.
+            return area.size() + " Bereichen";
+        }
         return String.join(", ", area.stream().map(scope -> scope.pageId() != null
                 ? (scope.pageTitle() == null ? scope.pageId() : scope.pageTitle())
                 : title(scope.sourceId()) + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList());
@@ -814,6 +1033,13 @@ public final class SearchView implements View {
      */
     private void started(AppRuntime runtime, String text) {
         searchedScopes = List.copyOf(scopes);
+        remember(text, searchedScopes);
+        // Ganz durchsucht sind nur Quellen ohne Space- oder Seitengrenze; der Filter braucht sie nicht neu.
+        Set<String> whole = new LinkedHashSet<>(searchedSources());
+        scopes.stream().filter(scope -> scope.spaceKey() != null || scope.pageId() != null)
+                .forEach(scope -> whole.remove(scope.sourceId()));
+        cover(whole, true);
+        applyFilter();
         heading.title(HEADING_PREFIX + areaTitle(searchedScopes));
         heading.selected(false);
         repeat.setEnabled(true);
@@ -963,13 +1189,127 @@ public final class SearchView implements View {
             return;
         }
         query.setText(searchedText);
-        List<Explorer.Scope> before = scopes;
-        scope(searchedScopes);
-        if (scopes.equals(before)) {
-            // Gleicher Bereich: {@link #applyScope} sucht nicht von selbst.
-            search();
+        use(searchedScopes);
+        search();
+    }
+
+
+    /** Zurück und Vor der Suche für die Statuszeile des Hauptfensters. */
+    public JComponent navigation() {
+        return navigation;
+    }
+
+    /** Eine frühere Suche: Begriff, Bereich (Filter) und wie weit die Liste gescrollt war. */
+    record Visit(String text, List<Explorer.Scope> area, int scroll) {
+        Visit(String text, List<Explorer.Scope> area) {
+            this(text, area, 0);
+        }
+
+        boolean same(Visit other) {
+            return text.equals(other.text) && area.equals(other.area);
         }
     }
+
+    private javax.swing.JViewport viewport() {
+        java.awt.Container parent = table.getParent();
+        return parent instanceof javax.swing.JViewport port ? port : null;
+    }
+
+    /** Merkt die Scrollposition der gezeigten Suche, bevor eine andere kommt. */
+    private void keepScroll() {
+        javax.swing.JViewport port = viewport();
+        if (visit >= 0 && port != null) {
+            Visit shown = visits.get(visit);
+            visits.set(visit, new Visit(shown.text(), shown.area(), port.getViewPosition().y));
+        }
+    }
+
+    /** Die Suchen dieser Sitzung in Reihenfolge; {@link #visit} zeigt auf die gezeigte. */
+    final List<Visit> visits = new ArrayList<>();
+    int visit = -1;
+    /** Während Zurück/Vor eine frühere Suche wiederholt, kommt sie nicht neu in den Verlauf. */
+    private boolean revisiting;
+
+    /** Merkt eine startende Suche im Verlauf; Vor-Einträge hinter der gezeigten fallen weg. */
+    private void remember(String text, List<Explorer.Scope> area) {
+        if (revisiting) {
+            return;
+        }
+        Visit next = new Visit(text, List.copyOf(area));
+        if (visit >= 0 && visits.get(visit).same(next)) {
+            return;
+        }
+        keepScroll();
+        while (visits.size() > visit + 1) {
+            visits.remove(visits.size() - 1);
+        }
+        visits.add(next);
+        visit = visits.size() - 1;
+        updateHistoryButtons();
+    }
+
+    boolean canGoBack() {
+        return visit > 0;
+    }
+
+    boolean canGoForward() {
+        return visit >= 0 && visit < visits.size() - 1;
+    }
+
+    /** Zurück zur vorigen Suche (Begriff und Bereich). */
+    void back() {
+        if (canGoBack()) {
+            revisit(visit - 1);
+        }
+    }
+
+    /** Vor zur nächsten Suche im Verlauf. */
+    void forward() {
+        if (canGoForward()) {
+            revisit(visit + 1);
+        }
+    }
+
+    private void revisit(int index) {
+        keepScroll();
+        visit = index;
+        Visit target = visits.get(index);
+        revisiting = true;
+        try {
+            query.setText(target.text());
+            use(target.area());
+            if (target.text().equals(searchedText)) {
+                filterTo(target.area());
+                javax.swing.JViewport port = viewport();
+                if (port != null) {
+                    SwingUtilities.invokeLater(() -> port.setViewPosition(new java.awt.Point(0, target.scroll())));
+                }
+            } else {
+                search();
+            }
+        } finally {
+            revisiting = false;
+        }
+        updateHistoryButtons();
+    }
+
+    private void updateHistoryButtons() {
+        backVisit.setEnabled(canGoBack());
+        forwardVisit.setEnabled(canGoForward());
+    }
+
+    /** Die Maustasten Zurück (4) und Vor (5) über der sichtbaren Suche, wie im Lesebereich. */
+    private final java.awt.event.AWTEventListener mouseNavigation = event -> {
+        if (event instanceof MouseEvent mouse && event.getID() == MouseEvent.MOUSE_RELEASED && frame.isShowing()
+                && (mouse.getButton() == 4 || mouse.getButton() == 5) && mouse.getComponent() != null
+                && SwingUtilities.getWindowAncestor(mouse.getComponent()) == SwingUtilities.getWindowAncestor(frame)) {
+            if (mouse.getButton() == 4) {
+                back();
+            } else {
+                forward();
+            }
+        }
+    };
 
     /** Übernimmt den Umfang; die Häkchen setzt {@link #syncBoxesToScope}. */
     private void applyScope(List<Explorer.Scope> selection) {
@@ -992,15 +1332,11 @@ public final class SearchView implements View {
                             + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
         }
         watchLocalShare();
-        if (technicalTerms.isSelected() && termsRuntime != null) {
-            // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
-            searchTechnicalTerms();
-        } else if (!scopes.equals(before) && searchedText != null
-                && searchedText.equals(query.getText().trim())) {
-            // Anderer Bereich links gewählt: der Suchbegriff bleibt, gesucht wird im neuen Bereich (Angelo, 21.11.2026).
-            search();
-        }
+        lastChange = !scopes.equals(before);
     }
+
+    /** Ob der letzte {@link #applyScope} den Bereich geändert hat. */
+    private boolean lastChange;
 
     /**
      * Zählt für die Statuszeile, wie viel des Bereichs lokal liegt (K6), und meldet sich beim Bestand der berührten
@@ -2070,7 +2406,9 @@ public final class SearchView implements View {
         int at = hit == null ? -1 : model.indexOf(hit);
         if (at >= 0) {
             int view = table.convertRowIndexToView(at);
-            table.getSelectionModel().setSelectionInterval(view, view);
+            if (view >= 0) {
+                table.getSelectionModel().setSelectionInterval(view, view);
+            }
         }
     }
 

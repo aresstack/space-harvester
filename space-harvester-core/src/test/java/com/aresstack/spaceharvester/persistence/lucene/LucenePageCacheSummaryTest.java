@@ -38,7 +38,7 @@ class LucenePageCacheSummaryTest {
                                 "Ausführlich: die Startseite wurde neu gefasst."),
                         new StoredSummary.Statement("Ohne Seiten", List.of())),
                 "test-summary:1", Instant.parse("2026-11-16T20:00:00Z"), at, 2, "sha256:ab",
-                List.of(new StoredSummary.InputPage("DEV", "101", true), new StoredSummary.InputPage("OPS", "102")));
+                List.of(new StoredSummary.InputPage("DEV", "101", true), new StoredSummary.InputPage("jira", "OPS", "102", false)));
     }
 
     @Test

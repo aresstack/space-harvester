@@ -27,6 +27,10 @@ include 'enterprise-ai-sources'
 
 include 'enterprise-ai-keepass'
 
+// Chatgebundener Browser (Firefox über WebDriver BiDi) aus enterprise-ai-client, unveränderte Kopie, siehe
+// enterprise-ai-browser/UPSTREAM.md.
+include 'enterprise-ai-browser'
+
 // Dokumentausgabe des Enterprise AI Client (Word, PDF, Markdown) als eigene Bibliothek ohne Swing (angepasste Kopie,
 // siehe document-export/UPSTREAM.md).
 include 'document-export'
@@ -40,6 +44,9 @@ include 'space-harvester-server'
 // Deutsches Dependency Parsing nach Universal Dependencies (#98, ADR 0005): Laufzeitmodul mit MaltParser und
 // objektzentrierter Auswertung. Der Dienst bindet es (noch) nicht ein; das Modell kommt aus #99.
 include 'nlp-parser'
+
+// Gemeinsame deutsche Wortlisten (Verneinung, Modalverben) ohne Abhängigkeiten, für Parser und Core (ADR 0035, O4).
+include 'nlp-lexicon'
 
 // Eigenständige Trainingswerkzeuge für das deutsche MaltParser-Modell (#99); weder Anwendung noch Parser hängen davon ab.
 include 'nlp-model-training'

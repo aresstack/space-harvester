@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.check;
 
+import com.aresstack.spaceharvester.ai.ModelRetry;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
@@ -262,8 +263,9 @@ public final class StatementChecks {
                             throw new CheckUnavailableException(CheckUnavailableException.Reason.NOT_RELEASED);
                         }
                         Group group = work.group();
-                        String response = model.complete(StatementCheck.instructions(),
-                                StatementCheck.input(group.sentence(), group.context(), group.items()));
+                        String response = model.completeRetrying(StatementCheck.instructions(),
+                                StatementCheck.input(group.sentence(), group.context(), group.items()),
+                                ModelRetry.logging(cancelled));
                         StatementCheck.Parsed parsed = StatementCheck.parse(group.sentence(), group.context(),
                                 group.items().size(), response);
                         if (!released.test(page)) {

@@ -281,6 +281,87 @@ public class Glossary {
         return shown(caller, save(created, "create", actor));
     }
 
+    /** Ergebnis einer Übernahme ({@link #adopt}). */
+    public record Adoption(int added, int updated, int kept) {
+    }
+
+    /**
+     * Übernimmt ein geprüftes Glossar in das Fachglossar (Angelo 23.11.2026), ohne Aufrufer, beim Start: je Begriff
+     * ein Eintrag im globalen Geltungsbereich, {@code MANUAL} und {@code CONFIRMED}, Einordnung {@code FACHLICH} durch
+     * den Menschen, Erläuterung im Wortlaut der Quelle, Urheber {@link ApprovedGlossary#actor()}. Idempotent.
+     *
+     * <p>Entscheidungen der Bearbeiter gehen vor: Ein abgelehnter Eintrag bleibt abgelehnt, ein entfernter kommt nicht
+     * wieder (sein Protokoll nennt das Entfernen), eine eigene Erläuterung bleibt. Ein vorhandener Vorschlag desselben
+     * Begriffs wird bestätigt und behält seine Herkunft.
+     */
+    public synchronized Adoption adopt(ApprovedGlossary approved) {
+        Objects.requireNonNull(approved, "approved");
+        String actor = approved.actor();
+        Instant now = clock.instant();
+        List<GlossaryEntry> put = new ArrayList<>();
+        List<GlossaryStore.AuditEntry> audit = new ArrayList<>();
+        int added = 0;
+        int updated = 0;
+        int kept = 0;
+        List<String> missing = approved.entries().stream()
+                .map(item -> GlossaryEntry.idOf(item.term(), RelationScope.GLOBAL))
+                .filter(id -> store.find(id).isEmpty()).toList();
+        Set<String> removed = store.logged(missing, "remove");
+        for (ApprovedGlossary.Entry item : approved.entries()) {
+            String id = GlossaryEntry.idOf(item.term(), RelationScope.GLOBAL);
+            Optional<GlossaryEntry> existing = store.find(id);
+            if (existing.isEmpty()) {
+                if (removed.contains(id)) {
+                    kept++; // vom Bearbeiter entfernt
+                    continue;
+                }
+                put.add(new GlossaryEntry(id, item.term(), TermText.normalize(item.term()), RelationScope.GLOBAL,
+                        RelationOrigin.MANUAL, ReviewStatus.CONFIRMED, List.of(), false, item.explanation(), null,
+                        actor, now, now, actor, now, 1, APPROVED, null, Set.of()));
+                audit.add(new GlossaryStore.AuditEntry(id, "create", actor, now, ReviewStatus.CONFIRMED, 1));
+                added++;
+                continue;
+            }
+            GlossaryEntry current = existing.get();
+            if (current.status() == ReviewStatus.REJECTED) {
+                kept++;
+                continue;
+            }
+            GlossaryEntry next = current;
+            if (next.explanation() == null && item.explanation() != null) {
+                next = next.explained(item.explanation(), now);
+            }
+            if (next.status() != ReviewStatus.CONFIRMED) {
+                next = next.reviewed(ReviewStatus.CONFIRMED, actor, now);
+            }
+            if (next.classification() == null || next.classification().by() != GlossaryEntry.ClassifiedBy.MANUAL) {
+                next = next.classified(APPROVED, next.definitionProposal(), now);
+            }
+            if (next == current) {
+                kept++;
+                continue;
+            }
+            put.add(next);
+            audit.add(new GlossaryStore.AuditEntry(id, "confirm", actor, now, next.status(), next.revision()));
+            updated++;
+        }
+        if (!put.isEmpty()) {
+            write(put, List.of(), audit);
+        }
+        return new Adoption(added, updated, kept);
+    }
+
+    /** Einordnung übernommener Einträge: fachlich, vom Menschen geprüft. */
+    private static final GlossaryEntry.Classification APPROVED = new GlossaryEntry.Classification(
+            GlossaryDerivation.Category.FACHLICH, GlossaryEntry.ClassifiedBy.MANUAL, "APPROVED_GLOSSARY");
+
+    /** Ob es den Begriff im globalen Geltungsbereich von Hand angelegt und bestätigt gibt. */
+    private boolean confirmedGlobally(String term) {
+        return store.find(GlossaryEntry.idOf(term, RelationScope.GLOBAL))
+                .filter(entry -> entry.origin() == RelationOrigin.MANUAL && entry.status() == ReviewStatus.CONFIRMED)
+                .isPresent();
+    }
+
     /**
      * Ändert die Erläuterung; {@code null} oder leer entfernt sie. Begriff und Geltungsbereich bleiben, sie sind die
      * Identität. Fehler wie {@link #confirm}, dazu {@link InvalidQueryException} bei zu langer Erläuterung.
@@ -471,6 +552,12 @@ public class Glossary {
                 continue;
             }
             GlossaryEntry current = store.find(id).orElse(null);
+            if (current == null && !scope.global() && confirmedGlobally(proposal.term())) {
+                // Ein global von Hand bestätigter Begriff (etwa aus einem geprüften Glossar) hat Vorrang: kein
+                // zweiter, ungeprüfter Eintrag desselben Begriffs in einer Quelle oder einem Space.
+                suppressed++;
+                continue;
+            }
             if (current == null) {
                 put.put(id, new GlossaryEntry(id, proposal.term().strip(), TermText.normalize(proposal.term()), scope,
                         origin, ReviewStatus.PROPOSED, proposal.evidence(), false, null, generation, actor,

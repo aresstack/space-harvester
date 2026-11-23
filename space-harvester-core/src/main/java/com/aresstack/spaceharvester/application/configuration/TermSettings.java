@@ -12,8 +12,11 @@ import com.aresstack.spaceharvester.application.terms.SynonymBudget;
  * @param glossaryAutomatic K4: Fachbegriffe nach der Anreicherung einer Quelle von selbst ermitteln, als
  *                          Hintergrundauftrag ({@value #GLOSSARY_AUTOMATIC}, Standard aus); wirkt nur in der
  *                          Desktop-App, der Dienst liest den Schlüssel ohne Wirkung (keine Hintergrundaufträge)
+ * @param glossaryApproved  die mitgelieferten geprüften Glossare beim Start in das Fachglossar übernehmen
+ *                          ({@value #GLOSSARY_APPROVED}; ohne Schlüssel an, ohne Konfiguration aus)
  */
-public record TermSettings(SynonymBudget synonyms, GlossaryRuleSettings glossaryRules, boolean glossaryAutomatic) {
+public record TermSettings(SynonymBudget synonyms, GlossaryRuleSettings glossaryRules, boolean glossaryAutomatic,
+                           boolean glossaryApproved) {
 
     public static final String SYNONYMS_MAX_TERMS = "terms.synonyms." + SynonymBudget.MAX_TERMS;
     public static final String SYNONYMS_MAX_EMBEDDED_TERMS = "terms.synonyms." + SynonymBudget.MAX_EMBEDDED_TERMS;
@@ -22,8 +25,14 @@ public record TermSettings(SynonymBudget synonyms, GlossaryRuleSettings glossary
     public static final String SYNONYMS_GLOSSARY_TERMS_ONLY = "terms.synonyms." + SynonymBudget.GLOSSARY_TERMS_ONLY;
 
     public static final String GLOSSARY_AUTOMATIC = "terms.glossary.automatic";
+    public static final String GLOSSARY_APPROVED = "terms.glossary.approved";
 
     public static final TermSettings DEFAULT = new TermSettings(SynonymBudget.DEFAULT, GlossaryRuleSettings.DEFAULT);
+
+    /** Ohne Übernahme geprüfter Glossare. */
+    public TermSettings(SynonymBudget synonyms, GlossaryRuleSettings glossaryRules, boolean glossaryAutomatic) {
+        this(synonyms, glossaryRules, glossaryAutomatic, false);
+    }
 
     /** Ohne Glossar-Automatik. */
     public TermSettings(SynonymBudget synonyms, GlossaryRuleSettings glossaryRules) {
@@ -42,11 +51,16 @@ public record TermSettings(SynonymBudget synonyms, GlossaryRuleSettings glossary
 
     /** Dieselben Einstellungen mit anderen Regeln der Begriffsableitung. */
     public TermSettings withGlossaryRules(GlossaryRuleSettings value) {
-        return new TermSettings(synonyms, value, glossaryAutomatic);
+        return new TermSettings(synonyms, value, glossaryAutomatic, glossaryApproved);
     }
 
     /** Dieselben Einstellungen mit anderer Glossar-Automatik. */
     public TermSettings withGlossaryAutomatic(boolean value) {
-        return new TermSettings(synonyms, glossaryRules, value);
+        return new TermSettings(synonyms, glossaryRules, value, glossaryApproved);
+    }
+
+    /** Dieselben Einstellungen mit anderer Übernahme geprüfter Glossare. */
+    public TermSettings withGlossaryApproved(boolean value) {
+        return new TermSettings(synonyms, glossaryRules, glossaryAutomatic, value);
     }
 }

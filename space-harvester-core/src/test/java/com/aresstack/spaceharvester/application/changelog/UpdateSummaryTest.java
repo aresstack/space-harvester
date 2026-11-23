@@ -352,7 +352,7 @@ class UpdateSummaryTest {
         assertThat(inputs.getFirst()).contains("Startseite").doesNotContain("Geheimplan").doesNotContain("\"102\"")
                 .contains("\"nichtLesbar\":1").contains("Altes Vorwort", "Neues Vorwort");
         assertThat(summaries.get(key("wiki", id, null)).inputPages())
-                .containsExactly(new StoredSummary.InputPage("DEV", "100", true));
+                .containsExactly(new StoredSummary.InputPage("wiki", "DEV", "100", true));
         UpdateSummary summary = log.summary(CALLER, "wiki", id).orElseThrow();
         assertThat(summary.text()).isEqualTo("Die Startseite wurde überarbeitet.");
         assertThat(summary.statements()).singleElement().satisfies(statement -> {
@@ -528,13 +528,13 @@ class UpdateSummaryTest {
         }
         many.append(", {\"text\": \"  \"}]}");
 
-        UpdateSummarizer.Answer parsed = UpdateSummarizer.parse(many.toString(), Set.of("1", "2"));
+        ThematicSummarizer.Answer parsed = ThematicSummarizer.parse(many.toString(), Set.of("1", "2"));
 
-        assertThat(parsed.statements()).hasSize(UpdateSummarizer.MAX_STATEMENTS);
+        assertThat(parsed.statements()).hasSize(ThematicSummarizer.MAX_STATEMENTS);
         assertThat(parsed.statements().getFirst().pageIds()).containsExactly("1", "2");
         assertThat(parsed.text()).startsWith("A0\nA1");
-        assertThat(UpdateSummarizer.parse("kein JSON", Set.of()).statements()).isEmpty();
-        assertThat(UpdateSummarizer.parse("{\"zusammenfassung\": 3}", Set.of()).text()).isEmpty();
+        assertThat(ThematicSummarizer.parse("kein JSON", Set.of()).statements()).isEmpty();
+        assertThat(ThematicSummarizer.parse("{\"zusammenfassung\": 3}", Set.of()).text()).isEmpty();
     }
 
     @Test
@@ -578,8 +578,8 @@ class UpdateSummaryTest {
         assertThat(inputs.getFirst()).contains("Anfang der Riesenänderung", "\"gekuerzt\":true");
         assertThat(inputs.getFirst().split("\"inhaltUnbekannt\":true", -1)).as("nur Seite 100").hasSize(2);
         assertThat(summaries.get(key("wiki", id, null)).inputPages())
-                .containsExactly(new StoredSummary.InputPage("DEV", "100", false),
-                        new StoredSummary.InputPage("DEV", "101", true));
+                .containsExactly(new StoredSummary.InputPage("wiki", "DEV", "100", false),
+                        new StoredSummary.InputPage("wiki", "DEV", "101", true));
         assertThat(log.summary(CALLER, "wiki", id).orElseThrow().unreadableChanges()).isEqualTo(1);
     }
 
@@ -625,7 +625,7 @@ class UpdateSummaryTest {
         }
         StringBuilder big = new StringBuilder("{\"zusammenfassung\": \"").append("Viel. ".repeat(600))
                 .append("\", \"aussagen\": [");
-        for (int i = 0; i < UpdateSummarizer.MAX_STATEMENTS; i++) {
+        for (int i = 0; i < ThematicSummarizer.MAX_STATEMENTS; i++) {
             big.append(i == 0 ? "" : ",").append("{\"text\": \"").append("Aussage ".repeat(80))
                     .append("\", \"seiten\": [");
             for (int j = 0; j < 30; j++) {
@@ -642,20 +642,20 @@ class UpdateSummaryTest {
         assertThat(parts).isGreaterThan(4);
         assertThat(combines).as("stufenweise").isGreaterThan(1);
         assertThat(inputs).allSatisfy(input -> assertThat(input.length())
-                .isLessThanOrEqualTo(UpdateSummarizer.MAX_REQUEST_CHARS));
+                .isLessThanOrEqualTo(ThematicSummarizer.MAX_REQUEST_CHARS));
         assertThat(inputs).filteredOn(input -> input.contains("\"aenderungen\"")).allSatisfy(input ->
                 assertThat(input).contains("\"gekuerzt\":true"));
         // Das Zusammenführen ordnete nichts zu (alte Antwortform): Die Themen der Teile bleiben, keine Seite geht verloren.
         assertThat(summaries.get(key("wiki", ChangeUpdate.OPEN, null)).statements())
-                .hasSizeLessThanOrEqualTo(UpdateSummarizer.MAX_TOPICS)
+                .hasSizeLessThanOrEqualTo(ThematicSummarizer.MAX_TOPICS)
                 .allSatisfy(statement -> assertThat(statement.pageIds()).isNotEmpty());
     }
 
     /** Angelo 22.11.2026: ein vorübergehender Fehler (etwa HTTP 504) wird wiederholt und kippt den Auftrag nicht. */
     @Test
     void aPassingGatewayErrorIsRetriedAndTheJobCompletes() {
-        long before = UpdateSummarizer.backoffMillis;
-        UpdateSummarizer.backoffMillis = 1;
+        long before = ThematicSummarizer.backoffMillis;
+        ThematicSummarizer.backoffMillis = 1;
         try {
             failFirst.set(2);
             row(1, "100", "DEV", ChangeKind.NEW, "Start");
@@ -665,15 +665,15 @@ class UpdateSummaryTest {
             assertThat(run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state()).isEqualTo(JobState.COMPLETED);
             assertThat(instructions).contains(UpdateSummarizer.INSTRUCTIONS);
         } finally {
-            UpdateSummarizer.backoffMillis = before;
+            ThematicSummarizer.backoffMillis = before;
         }
     }
 
     /** Scheitert jede Anfrage gleich, bricht der Auftrag früh mit dem echten Grund ab, statt still weiterzurechnen. */
     @Test
     void whenEveryRequestFailsTheJobStopsEarlyWithTheReason() {
-        long before = UpdateSummarizer.backoffMillis;
-        UpdateSummarizer.backoffMillis = 1;
+        long before = ThematicSummarizer.backoffMillis;
+        ThematicSummarizer.backoffMillis = 1;
         try {
             row(1, "100", "DEV", ChangeKind.NEW, "Start");
             mark(10, true);
@@ -687,7 +687,7 @@ class UpdateSummaryTest {
             assertThat(done.error().code()).isEqualTo("SUMMARY_ALL_FAILED");
             assertThat(done.error().message()).contains("PROVIDER_ERROR (HTTP 504)");
         } finally {
-            UpdateSummarizer.backoffMillis = before;
+            ThematicSummarizer.backoffMillis = before;
             failWhen = null;
         }
     }
@@ -695,8 +695,8 @@ class UpdateSummaryTest {
     /** Eine Seite, die der Dienst nie annimmt, kippt den Auftrag nicht; die Zusammenfassung gilt dann als veraltet. */
     @Test
     void aPageTheServiceNeverAcceptsIsLeftOutAndTheSummaryIsNotShownAsComplete() {
-        long before = UpdateSummarizer.backoffMillis;
-        UpdateSummarizer.backoffMillis = 1;
+        long before = ThematicSummarizer.backoffMillis;
+        ThematicSummarizer.backoffMillis = 1;
         try {
             row(1, "100", "DEV", ChangeKind.NEW, "Start");
             mark(10, true);
@@ -710,7 +710,7 @@ class UpdateSummaryTest {
             assertThat(run(log.summarize(CALLER, "wiki", ChangeUpdate.OPEN)).state()).isEqualTo(JobState.COMPLETED);
             assertThat(summaries.get(key("wiki", ChangeUpdate.OPEN, null)).reportSha256()).contains("unvollstaendig");
         } finally {
-            UpdateSummarizer.backoffMillis = before;
+            ThematicSummarizer.backoffMillis = before;
             failWhen = null;
         }
     }
@@ -869,7 +869,7 @@ class UpdateSummaryTest {
             withPlan.close();
         }
 
-        assertThat(asked).hasSize(UpdateSummarizer.ATTEMPTS);
+        assertThat(asked).hasSize(ThematicSummarizer.ATTEMPTS);
         assertThat(asked.get(1)).contains("am Ausgabelimit abgeschnitten");
         assertThat(inputs).isNotEmpty().noneSatisfy(input -> assertThat(input).contains("geplantesThema"));
     }
@@ -880,8 +880,8 @@ class UpdateSummaryTest {
      */
     @Test
     void thePartsRunAsChildJobsOfTheSummary() throws Exception {
-        long backoff = UpdateSummarizer.backoffMillis;
-        UpdateSummarizer.backoffMillis = 1;
+        long backoff = ThematicSummarizer.backoffMillis;
+        ThematicSummarizer.backoffMillis = 1;
         parallel = 3;
         delayMillis = 100;
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
@@ -939,7 +939,7 @@ class UpdateSummaryTest {
             assertThat(done.progress().processed()).isGreaterThanOrEqualTo(finishedSteps);
         } finally {
             failWhen = null;
-            UpdateSummarizer.backoffMillis = backoff;
+            ThematicSummarizer.backoffMillis = backoff;
             parentLog.close();
             wide.close();
             pool.shutdownNow();
@@ -952,8 +952,8 @@ class UpdateSummaryTest {
      */
     @Test
     void aSummaryExceedingItsRunTimeLimitEndsFailedWithTimeout() throws Exception {
-        long backoff = UpdateSummarizer.backoffMillis;
-        UpdateSummarizer.backoffMillis = 1;
+        long backoff = ThematicSummarizer.backoffMillis;
+        ThematicSummarizer.backoffMillis = 1;
         parallel = 3;
         java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
         holdUntil = release;
@@ -1001,7 +1001,7 @@ class UpdateSummaryTest {
         } finally {
             release.countDown();
             holdUntil = null;
-            UpdateSummarizer.backoffMillis = backoff;
+            ThematicSummarizer.backoffMillis = backoff;
             parentLog.close();
             wide.close();
             pool.shutdownNow();
@@ -1039,7 +1039,7 @@ class UpdateSummaryTest {
                 .doesNotContain("Darf nie zur KI").doesNotContain("x".repeat(UpdateSummarizer.MAX_EXCERPT_CHARS));
         assertThat(instructions.getFirst()).contains("Bündle nach Thema", "\"details\"");
         assertThat(summaries.get(key("wiki", id, null)).inputPages()).containsExactly(
-                new StoredSummary.InputPage("DEV", "200", true), new StoredSummary.InputPage("OPS", "201", true));
+                new StoredSummary.InputPage("wiki", "DEV", "200", true), new StoredSummary.InputPage("wiki", "OPS", "201", true));
         UpdateSummary summary = log.summary(CALLER, "wiki", id).orElseThrow();
         assertThat(summary.statements()).singleElement().satisfies(topic -> {
             assertThat(topic.title()).isEqualTo("Projekttreffen");
@@ -1066,7 +1066,7 @@ class UpdateSummaryTest {
 
         assertThat(inputs.getFirst()).contains("Neu ohne Inhaltsrecht").doesNotContain("Vertraulicher Inhalt");
         assertThat(summaries.get(key("wiki", id, null)).inputPages())
-                .containsExactly(new StoredSummary.InputPage("DEV", "200", false));
+                .containsExactly(new StoredSummary.InputPage("wiki", "DEV", "200", false));
     }
 
     @Test
@@ -1075,10 +1075,10 @@ class UpdateSummaryTest {
                 new StoredSummary.Statement("A", List.of("1", "2"), "Protokolle Teil 1", "Details eins"),
                 new StoredSummary.Statement("B", List.of("3"), "Protokolle Teil 2", "Details zwei"),
                 new StoredSummary.Statement("C", List.of("4"), "Anderes", "Details drei"));
-        List<UpdateSummarizer.Answer> members = List.of(new UpdateSummarizer.Answer("Teil eins.", topics.subList(0, 1)),
-                new UpdateSummarizer.Answer("Teil zwei.", topics.subList(1, 3)));
+        List<ThematicSummarizer.Answer> members = List.of(new ThematicSummarizer.Answer("Teil eins.", topics.subList(0, 1)),
+                new ThematicSummarizer.Answer("Teil zwei.", topics.subList(1, 3)));
 
-        UpdateSummarizer.Answer merged = UpdateSummarizer.merge("""
+        ThematicSummarizer.Answer merged = ThematicSummarizer.merge("""
                 {"zusammenfassung": "Überblick.", "themen": [{"titel": "Protokolle", "text": "Beide Teile.",
                  "aus": ["t0", "t1", "t9"]}]}""", topics, members);
 
@@ -1092,7 +1092,7 @@ class UpdateSummaryTest {
         });
         assertThat(merged.statements().getLast()).isEqualTo(topics.get(2));
 
-        UpdateSummarizer.Answer broken = UpdateSummarizer.merge("kein JSON", topics, members);
+        ThematicSummarizer.Answer broken = ThematicSummarizer.merge("kein JSON", topics, members);
         assertThat(broken.statements()).containsExactlyElementsOf(topics);
         assertThat(broken.text()).isEqualTo("Teil eins. Teil zwei.");
     }

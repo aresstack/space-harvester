@@ -1,7 +1,7 @@
 name: Maven Central
 
-# Veröffentlicht den Core mit enterprise-ai-sources und document-export auf Maven Central
-# (com.aresstack:space-harvester-core, -enterprise-ai-sources, -document-export). Nur nach Bedarf und nur manuell:
+# Veröffentlicht den Core mit enterprise-ai-sources, document-export und nlp-lexicon auf Maven Central
+# (com.aresstack:space-harvester-core, -enterprise-ai-sources, -document-export, -nlp-lexicon). Nur nach Bedarf und nur manuell:
 # Actions › Maven Central › Run workflow. Bei „Use workflow from“ den Stand wählen (am besten einen Release-Tag wie
 # v0.1.1); „version“ leer lassen, dann gilt die Version des Tags. Maven-Central-Versionen sind endgültig, eine einmal
 # veröffentlichte Version lässt sich nie ersetzen. Secrets der Organisation aresstack wie bei win-proxy-java.
@@ -52,11 +52,11 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           [ -n "$GPG_PRIVATE_KEY" ] || { echo "::error::Secret GPG_PRIVATE_KEY fehlt (Organisation aresstack, Repository access)"; exit 1; }
-          # check der drei Module (Tests, Upstream-Prüfung der Kopie, verifyPublishedPom), dann das signierte Bundle
-          ./gradlew :enterprise-ai-sources:check :document-export:check :space-harvester-core:check centralBundle \
+          # check der vier Module (Tests, Upstream-Prüfung der Kopie, verifyPublishedPom), dann das signierte Bundle
+          ./gradlew :enterprise-ai-sources:check :document-export:check :nlp-lexicon:check :space-harvester-core:check centralBundle \
             -PreleaseVersion="$VERSION" --console=plain
           bundle="build/central/central-bundle-$VERSION.zip"
-          for f in space-harvester-core space-harvester-enterprise-ai-sources space-harvester-document-export; do
+          for f in space-harvester-core space-harvester-enterprise-ai-sources space-harvester-document-export space-harvester-nlp-lexicon; do
             unzip -Z1 "$bundle" | grep -qx "com/aresstack/$f/$VERSION/$f-$VERSION.jar.asc" \
               || { echo "::error::$f ist im Bundle nicht signiert"; exit 1; }
           done

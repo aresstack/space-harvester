@@ -359,6 +359,55 @@ class HoldingsTest {
     }
 
     @Test
+    void aLenientResolutionSkipsHiddenUnknownAndGoneRootsInsteadOfFailing() {
+        // ADR 0034 §4: veraltete oder nicht sichtbare Favoriten brechen die Auflösung eines Ordners nicht.
+        dev();
+        stocks.put("wiki/OPS", new Stock(CONFIRMED, List.of(new CatalogPage("o1", null, true, "1", "1")), Set.of(),
+                List.of()));
+        stocks.put("wiki/NEU", new Stock(INITIAL, List.of(), Set.of(), List.of()));
+        AccessPolicy withoutOps = (context, scope, kind) -> "OPS".equals(scope.spaceKey()) ? AccessDecision.DENY
+                : AccessDecision.ALLOW;
+        Holdings holdings = holdings(withoutOps, 100);
+        Selection.Root kept = Selection.Root.subtree("wiki", "DEV", "3");
+        Selection.Root hidden = Selection.Root.space("wiki", "OPS");
+        Selection.Root unknownSource = Selection.Root.source("nirgends");
+        Selection.Root gone = Selection.Root.subtree("wiki", "DEV", "x");
+        Selection.Root notLoaded = Selection.Root.subtree("wiki", "NEU", "n1");
+        Selection selection = new Selection(List.of(kept, hidden, unknownSource, gone, notLoaded));
+
+        Holdings.Lenient lenient = holdings.resolveLenient(CALLER, selection);
+
+        assertThat(lenient.skippedRoots()).containsExactly(hidden, unknownSource, gone);
+        assertThat(lenient.selection().pagesOf("wiki")).containsExactlyInAnyOrder("3", "4", "6");
+        assertThat(lenient.selection().complete()).as("NEU ohne Inventur").isFalse();
+        assertThatThrownBy(() -> holdings.resolve(CALLER, selection)).isInstanceOf(AccessDeniedException.class);
+        assertThat(holdings.resolveLenient(CALLER, Selection.of(kept)).selection())
+                .isEqualTo(holdings.resolve(CALLER, Selection.of(kept)));
+    }
+
+    @Test
+    void theFingerprintChangesWithTheCatalogStateOfTheSelectedPagesOnly() {
+        dev();
+        Holdings holdings = holdings(ALLOW_ALL, 100);
+        PageSelection subtree = holdings.resolve(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "3")));
+        String before = holdings.fingerprint(CALLER, subtree);
+
+        assertThat(holdings.fingerprint(CALLER, subtree)).isEqualTo(before);
+        assertThat(holdings.fingerprint(CALLER, holdings.resolve(CALLER,
+                Selection.of(Selection.Root.space("wiki", "DEV"))))).isNotEqualTo(before);
+        // Seite 1 liegt außerhalb des Teilbaums: ihr neuer Stand ändert nichts.
+        Stock stock = stocks.get("wiki/DEV");
+        List<CatalogPage> pages = new ArrayList<>(stock.pages());
+        pages.set(0, new CatalogPage("1", null, true, "9", "9"));
+        stocks.put("wiki/DEV", new Stock(stock.generation(), pages, stock.stale(), stock.locked()));
+        assertThat(holdings.fingerprint(CALLER, subtree)).isEqualTo(before);
+        // Seite 4 wird neu geladen und ist nicht mehr veraltet: der Fingerabdruck ändert sich.
+        pages.set(3, new CatalogPage("4", "3", true, "5", "5"));
+        stocks.put("wiki/DEV", new Stock(stock.generation(), pages, Set.of(), stock.locked()));
+        assertThat(holdings.fingerprint(CALLER, subtree)).isNotEqualTo(before);
+    }
+
+    @Test
     void aContentFetchReportsLoadingInTheSpaceOfThePageAndItsEndEvenWithoutAWrite() throws InterruptedException {
         dev();
         Holdings holdings = holdings(ALLOW_ALL, 100);

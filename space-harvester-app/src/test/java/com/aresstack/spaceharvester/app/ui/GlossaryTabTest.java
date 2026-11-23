@@ -134,7 +134,7 @@ class GlossaryTabTest {
         assertThat(glossary.reads.stream().filter(read -> read.startsWith("full"))).hasSize(1);
         assertThat(glossary.reads).last().asString().startsWith("refine ");
 
-        ExportPanel.Selection space = new ExportPanel.Selection("wiki", "DH", null, "Datenhaus");
+        ExportPanel.Selection space = new ExportPanel.Selection.Node("wiki", "DH", null, "Datenhaus");
         SwingUtilities.invokeAndWait(() -> {
             tab[0].showing = () -> true;
             tab[0].selection(space);
@@ -257,7 +257,7 @@ class GlossaryTabTest {
         SwingUtilities.invokeAndWait(() -> {
             tab[0] = new GlossaryTab(null, () -> Optional.of(glossary));
             tab[0].showing = () -> true;
-            tab[0].selection(new ExportPanel.Selection("wiki", "DH", "42", "Datenprodukt"));
+            tab[0].selection(new ExportPanel.Selection.Node("wiki", "DH", "42", "Datenprodukt"));
         });
         await("geladen, leer", () -> GlossaryTab.EMPTY.equals(tab[0].directory().hint()));
         SwingUtilities.invokeAndWait(() -> tab[0].detectButton().doClick());
@@ -498,6 +498,22 @@ class GlossaryTabTest {
             cells.add(table.getValueAt(row, c));
         }
         return cells;
+    }
+
+    @Test
+    void entriesFromAnApprovedGlossaryShowTheirSource() {
+        Entry plain = entry("g1", "Zahlstelle", null, null, RelationOrigin.MANUAL, ReviewStatus.CONFIRMED, 0, false);
+        GlossaryAccess.Reference reference = new GlossaryAccess.Reference("Erfundenes Glossar",
+                "https://example.org/glossar.pdf", "Zahlstelle (pl.)", 7);
+        Entry approved = new Entry(plain.id(), plain.term(), plain.normalized(), null, null, plain.origin(),
+                plain.status(), List.of(), false, "Erfundene Erläuterung.", null, T, T, T, 1, reference);
+
+        assertThat(GlossaryTab.originWord(plain)).isEqualTo("Manuell");
+        assertThat(GlossaryTab.originWord(approved)).isEqualTo(GlossaryTab.APPROVED);
+        assertThat(GlossaryTab.overlayText(approved, null, null, List.of(), List.of()))
+                .contains("Herkunft: Manuell\nQuelle: Erfundenes Glossar, Seite 7 („Zahlstelle (pl.)“)\n"
+                        + "https://example.org/glossar.pdf\nStatus: bestätigt");
+        assertThat(GlossaryTab.overlayText(plain, null, null, List.of(), List.of())).doesNotContain("Quelle:");
     }
 
     private static Entry entry(String id, String term, String sourceId, String spaceKey, RelationOrigin origin,

@@ -79,6 +79,8 @@ public final class MainWindow implements AppContext.Navigator {
     private static final String EXPLORER = "explorer";
     /** Die nächste geladene Seite im Explorer zeigen (gesetzt von {@link #openPage} und {@link #openPassage}). */
     private boolean revealOpened;
+    /** Die nächste geöffnete Seite kam aus der Suche: im Baum nur hervorheben, nicht wählen. */
+    private boolean hintOpened;
     /** Aktions- und Fortschrittszeilen der Bereiche, direkt über der Statusleiste. */
     private final CardLayout actionCards = new CardLayout();
     private final JPanel actionDeck = new JPanel(actionCards);
@@ -228,6 +230,19 @@ public final class MainWindow implements AppContext.Navigator {
                 new com.aresstack.spaceharvester.app.ui.deck.AppTerminalTunnel(context));
         // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
         commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
+        // E-Akte: Proxy und TLS-Vertrauen der App (Windows-ROOT), das Anmeldeprotokoll ohne Werte ins Log.
+        org.slf4j.Logger eakteLog = org.slf4j.LoggerFactory.getLogger("command-deck.eakte");
+        commandDeck.eakte(new com.aresstack.spaceharvester.deck.eakte.http.HttpEakteServer(
+                        com.aresstack.spaceharvester.app.ui.deck.DeckNetwork.http(context,
+                                com.aresstack.spaceharvester.app.ui.deck.EakteWorkspace::proxyWanted),
+                        java.time.Duration.ofSeconds(30), eakteLog::info));
+        // ADR 0035: Dokumentanalyse der E-Akte aus dem laufenden Core, nach jedem (Neu-)Start neu angeschlossen.
+        Runnable documentAnalyses = () -> {
+            AppRuntime running = context.runtime();
+            commandDeck.documentAnalyses(running == null ? null : running.workspace().documentAnalyses());
+        };
+        documentAnalyses.run();
+        context.onChange(ignored -> documentAnalyses.run());
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());
@@ -294,7 +309,14 @@ public final class MainWindow implements AppContext.Navigator {
             explorer.currentPage(position);
             if (position != null && revealOpened) {
                 revealOpened = false;
-                explorer.revealPage(position);
+                // Aus der Suche geöffnet: nur aufklappen und hervorheben, die Auswahl (der Suchfilter) bleibt
+                // (Angelo, 23.11.2026); sonst wie bisher wählen.
+                if (hintOpened) {
+                    hintOpened = false;
+                    explorer.hintPage(position);
+                } else {
+                    explorer.revealPage(position);
+                }
             }
         });
         // Quelle oder Space in der Bereichsanzeige angeklickt: im Baum wählen; die Auswahl bestimmt wie immer die Mitte.
@@ -1046,6 +1068,10 @@ public final class MainWindow implements AppContext.Navigator {
             searchSelection = explorer.remember();
         }
         current = section;
+        // Zurück und Vor unten blättern in der Suche zwischen ihren Suchen und Filtern, sonst in den Seiten.
+        if (jobStatus != null) {
+            jobStatus.navigation(section == AppContext.Section.SEARCH ? searchView.navigation() : content.navigation());
+        }
         placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
             if (searchSelection == null) {
@@ -1077,6 +1103,8 @@ public final class MainWindow implements AppContext.Navigator {
         }
         // Die Reiter in der Leiste zeigen ihre Auswahl nur, solange die Mitte die Seitenansicht zeigt.
         content.tabsActive(section == AppContext.Section.CONTENT);
+        // ADR 0033: Der Chat bezieht sich auf die Ansicht, die vorne ist (Leseansicht: offene Seite; Suche: Filter).
+        content.chatSidebar().chat().readingFront(section == AppContext.Section.CONTENT);
         jobStatus.navigationVisible(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
         view.shown();
@@ -1129,6 +1157,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openPage(String sourceId, String pageId) {
+        hintOpened = current == AppContext.Section.SEARCH;
         showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPage(sourceId, pageId);
@@ -1136,6 +1165,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     @Override
     public void openPassage(String sourceId, String passageId) {
+        hintOpened = current == AppContext.Section.SEARCH;
         showSection(AppContext.Section.CONTENT);
         revealOpened = true;
         content.openPassage(sourceId, passageId);
@@ -1149,6 +1179,11 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void revealPage(String sourceId, String spaceKey, String pageId) {
         explorer.revealPage(sourceId, spaceKey, pageId);
+    }
+
+    @Override
+    public void hintPage(String sourceId, String spaceKey, String pageId) {
+        explorer.hintPage(sourceId, spaceKey, pageId);
     }
 
     @Override

@@ -1,0 +1,786 @@
+{
+  "schema": "approved-glossary/v1",
+  "id": "zrb-vv-bho-anlage-1-glossar",
+  "title": "Anlage 1 Glossar – Begriffe des Kassen- und Rechnungswesens",
+  "url": "https://zrb.bund.de/fileadmin/downloads/vorschriften/vv-bho/rds_buchf_zv/Anlage_1_Glossar.pdf",
+  "entries": [
+    {
+      "term": "Abführungsgrenze",
+      "explanation": "Festgelegter Betrag, um den der Bestand einer Geldstelle den Sockelbetrag übersteigen darf, ab dem zwingend bis zur Höhe des Sockelbetrages an den zuständigen Dienstort der Bundeskasse oder eine Zahlstelle abzuführen ist.",
+      "page": 1
+    },
+    {
+      "term": "Abrechnungsnachweisung",
+      "explanation": "Nachweis der Zahlstelle gegenüber dem zuständigen Dienstort der Bundeskasse über die Einzahlungen und Auszahlungen sowie Bestandsverstärkungen und Bestandsablieferungen der Zahlstelle. Die Abrechnungsnachweisung dient dem zuständigen Dienstort der Bundeskasse als Buchungsbeleg zur Buchung im Abrechnungskonto der Zahlstelle in den Haushaltsverfahren des Bundes.",
+      "page": 1
+    },
+    {
+      "term": "Abrechnungsbuch",
+      "explanation": "Sachbuch im Rechnungswesen des Bundes, in dem der Abrechnungsverkehr gebucht wird.",
+      "page": 1
+    },
+    {
+      "term": "Abrechnungsverkehr",
+      "wording": "Abrechnungsverkehr (ABR)",
+      "explanation": "Der Abrechnungsverkehr umfasst die Buchungen im Abrechnungsbuch zwischen den Dienstorten der Bundeskasse und mit der Zentralkasse (ABR1) sowie Abrechnungsbuchungen der Zahlstellen mit den zuständigen Dienstorten der Bundeskasse (ABR2).",
+      "page": 1,
+      "abbreviations": [
+        "ABR"
+      ]
+    },
+    {
+      "term": "Abschlagsauszahlung",
+      "explanation": "Eine Auszahlung, die als Ausgabe im Titelbuch zu buchen ist und der teilweisen Erfüllung einer Verbindlichkeit, die noch nicht vollständig fällig ist bzw. der Höhe nach noch nicht feststeht, dient. (Siehe auch: Schlussauszahlung)",
+      "page": 1
+    },
+    {
+      "term": "Absetzungsbuchung",
+      "explanation": "Buchung einer Einzahlung bei einer Haushaltsstelle für Ausgaben oder die Buchung einer Auszahlung bei einer Haushaltsstelle für Einnahmen (Abweichung vom Bruttoprinzip).",
+      "page": 1
+    },
+    {
+      "term": "Annahmebeauftragte",
+      "wording": "Annahmebeauftragte (pl.)",
+      "explanation": "Ermächtigte Beschäftigte einer Zahlstelle, die außerhalb einer Zahlstelle Zahlungsmittel im Rahmen der Vorgaben der Verwaltungsvorschrift „Allgemein erteilte Kassenordnungen zur Nr. 1.1.2 VV-ZBR BHO“ annehmen dürfen.",
+      "page": 2
+    },
+    {
+      "term": "Anordnung",
+      "explanation": "Mit einer Anordnung autorisiert eine bewirtschaftende Stelle die Annahme einer Einzahlung oder die Leistung einer Auszahlung gegenüber einer für Zahlungen zuständigen Stelle bzw. eine anordnungspflichtige Buchung gegenüber der zuständigen Kasse (siehe Nr. 1.1.1 VV-ZBR BHO). Die Anordnung ist formbedürftig. Der Begriff Kassenanordnung wird synonym verwendet.",
+      "page": 2
+    },
+    {
+      "term": "Anordnungsdateien",
+      "explanation": "Dateien (F15z) mit Datensätzen nach vorgeschriebenem Aufbau, die je Sachbuchkonto einzelne Zahlungs- und Buchungsdaten enthalten.",
+      "page": 2
+    },
+    {
+      "term": "Anordnungsbefugte",
+      "wording": "Anordnungsbefugte (pl.)",
+      "explanation": "Anordnungsbefugte sind Beauftragte für den Haushalt oder von ihnen beauftragte Personen, die Anordnungen gegenüber der Kasse erteilen dürfen.",
+      "page": 2
+    },
+    {
+      "term": "Anordnungsbefugnis",
+      "explanation": "Berechtigung, Anordnungen gegenüber der Kasse erteilen zu dürfen (VV Nr. 1.3 und 3.1.1 zu § 9 BHO).",
+      "page": 2
+    },
+    {
+      "term": "Anordnungspflichtige Bewirtschaftungsmaßnahmen",
+      "explanation": "Folgende Bewirtschaftungsmaßnahmen sind gemäß Nr. 4.4.2 VV-ZBR BHO anordnungspflichtig (siehe Anordnung):\n• Anordnung von Ein- oder Auszahlungen,\n• Aufrechnung von Forderungen,\n• Änderung, Umbuchung oder Stornierung von Ein- oder Auszahlungen,\n• Anordnung zur einmaligen Aufhebung der Verfügbarkeitskontrolle,\n• Buchung von Forderungen bzw. Sollstellungen,\n• Buchung einer Veränderung von Ansprüchen (§ 59 BHO, AO, etc.),\n• Buchung von haushaltsmäßigen Verrechnungen (§ 60 BHO),\n• Änderung von zahlungsrelevanten Stammdaten in den Haushaltsverfahren des Bundes,\n• Buchung einer Einlieferung oder Auslieferung von Wertgegenständen.",
+      "page": 2
+    },
+    {
+      "term": "Anweisung",
+      "explanation": "Eine Anweisung wird von den bewirtschaftenden Stellen für nicht anordnungspflichtige, sondern nur anweisungspflichtige Buchungen gegenüber der Kasse erteilt. Der Begriff Kassenanweisung wird synonym verwendet.",
+      "page": 3
+    },
+    {
+      "term": "Anweisungspflichtige Bewirtschaftungsmaßnahmen",
+      "explanation": "Alle Bewirtschaftungsmaßnahmen, die keiner Anordnung bedürfen, sind anweisungspflichtig (siehe Anweisung), da sie die Kassensicherheit nicht berühren (Nr. 4.4.3 VV-ZBR BHO). Dazu gehören insbesondere:\n• Anweisung zur Einrichtung, Änderung oder Stilllegung von Sachbuchkonten,\n• Anweisung zur Einrichtung, Änderung oder Stilllegung von Deckungskonten,\n• Anweisung zur Zuweisung oder zum Rückruf von Haushaltsmitteln,\n• Anweisung zur Zuweisung oder zum Rückruf von Verpflichtungsermächtigungen,\n• Anweisung zur Buchung oder Aufhebung einer Verpflichtung\n• Anweisung zur Buchung oder Aufhebung einer Festlegung,\n• Anweisung zur Buchung interner Verrechnungen (§ 61 BHO),\n• Anweisung zur Verlagerung einer Verfügbarkeit oder Buchung auf ein vorläufiges Deckungs- oder Sperrkonto.",
+      "page": 3
+    },
+    {
+      "term": "Automatische Saldenzusammenführung",
+      "wording": "Automatische Saldenzusammenführung (ASZ)/ Saldenausgleich",
+      "explanation": "Funktionalität zur automatischen Verstärkung und Ablieferung von hierarchisch verbundenen Konten (englisch: Cash Concentration).",
+      "page": 3,
+      "abbreviations": [
+        "ASZ"
+      ],
+      "variants": [
+        "Saldenausgleich"
+      ]
+    },
+    {
+      "term": "Anrechnung",
+      "explanation": "Die Anrechnung regelt die Reihenfolge der Tilgung von offenen Forderungen (Sollstellungen) bei Zahlungseingang. Die Tilgungsreihenfolge ist abhängig vom jeweils einschlägigen Rechtsgebiet.",
+      "page": 4
+    },
+    {
+      "term": "Aufrechnung",
+      "explanation": "Aufrechnung ist die wechselseitige Tilgung zweier sich gegenüberstehender Forderungen durch einseitiges Rechtsgeschäft (d. h. Aufrechnungserklärung durch eine bewirtschaftende Stelle oder einen Dritten). Die Voraussetzungen der Aufrechnung sind abhängig vom jeweils einschlägigen Rechtsgebiet.",
+      "page": 4
+    },
+    {
+      "term": "Ausführungstag",
+      "explanation": "Die bewirtschaftenden Stellen geben den Ausführungstag für eine Auszahlung (requested execution date) an, die Gutschrift wird dem Empfänger innerhalb des SEPA-Raums einen Tag (TARGET2) danach auf seinem Konto gutgeschrieben.",
+      "page": 4
+    },
+    {
+      "term": "Ausgabe",
+      "explanation": "Angeordnete Auszahlung, die im Titelbuch bei einem Ausgabetitel durch die Kasse zu buchen ist.",
+      "page": 4
+    },
+    {
+      "term": "Auszahlung",
+      "explanation": "Zahlung, die von einer für Zahlungen zuständigen Stelle an Dritte geleistet wird. Eine Auszahlung ist im Titel-, Vorschuss- oder Verwahrungsbuch zu buchen. (Siehe: Abschlagsauszahlung, Schlussauszahlung)",
+      "page": 4
+    },
+    {
+      "term": "Bare Zahlung",
+      "explanation": "Zahlung mit gesetzlichen Zahlungsmitteln (Münzen und Banknoten).",
+      "page": 4
+    },
+    {
+      "term": "Begründende Unterlagen",
+      "explanation": "Alle Dokumente zu einem Beleg, aus denen die Entscheidungsabfolge von der Leitungsentscheidung bis zur einzelnen Anordnung oder Anweisung einer bewirtschaftenden Stelle hervorgeht. Die begründenden Unterlagen sind den jeweiligen Belegen eindeutig zuzuordnen. Die Begrifflichkeiten zahlungs- und buchungsbegründende Unterlagen werden synonym verwendet.\nAbzugrenzen von Rechnungsunterlagen.",
+      "page": 4
+    },
+    {
+      "term": "Beiträge Dritter",
+      "explanation": "Einnahmen, mit denen sich Dritte an Ausgaben des Bundes beteiligen. Sie sind bei dem Ausgabetitel zu buchen, wenn dieser den Haushaltsvermerk „Beiträge Dritter fließen den Ausgaben zu“ enthält.\nAbzugrenzen von Erstattungen",
+      "page": 5
+    },
+    {
+      "term": "Bestandsablieferung",
+      "wording": "Bestandsablieferung (Zahlstelle)",
+      "explanation": "Reduzierung des Zahlstellenbestands durch Einzahlung von Bargeld einer Zahlstelle auf ein Girokonto der Zahlstelle bei\n• der Deutschen Bundesbank oder\n• einem anderen Kreditinstitut mit anschließender Überweisung an die Bundeskasse.",
+      "page": 5
+    },
+    {
+      "term": "Bestandsabführung",
+      "wording": "Bestandsabführung (Geldstelle)",
+      "explanation": "Reduzierung des Geldstellenbestands durch Einzahlung von Bargeld einer Geldstelle auf ein Girokonto\n• der Bundeskasse bei der Deutschen Bundesbank oder\n• der Geldstelle bei einem anderen Kreditinstitut mit anschließender Überweisung an die Bundeskasse.\nZudem kann die Bestandsabführung auch über eine Zahlstelle erfolgen.",
+      "page": 5
+    },
+    {
+      "term": "Bestandsauffüllung",
+      "wording": "Bestandsauffüllung (Geldstelle)",
+      "explanation": "Erhöhung des Bargeldbestandes einer Geldstelle bis zur festgelegten Höhe des Sockelbetrags durch Barauszahlung über das Girokonto\n• der Geldstelle oder\n• der Dienststelle, bei der die Geldstelle eingerichtet ist.\nDie Bestandsauffüllung kann auch über eine Zahlstelle erfolgen.",
+      "page": 5
+    },
+    {
+      "term": "Bestandsverstärkung",
+      "wording": "Bestandsverstärkung (Zahlstelle)",
+      "explanation": "Erhöhung des Bargeldbestandes einer Zahlstelle durch Barauszahlung vom Girokonto der Zahlstelle\n• bei der Deutschen Bundesbank oder\n• bei einem anderen Kreditinstitut.",
+      "page": 5
+    },
+    {
+      "term": "Bewirtschaftende Stelle",
+      "explanation": "Bewirtschaftende Stellen sind Organisationseinheiten oder Teile einer Organisationseinheit, die Bewirtschaftungsmaßnahmen anordnen bzw. anweisen.",
+      "page": 5
+    },
+    {
+      "term": "Bewirtschaftung",
+      "wording": "Bewirtschaftung, Bewirtschaftungsmaßnahmen",
+      "explanation": "Alle Geschäftsfälle für Zahlungen, Buchungen und die Verteilung von Haushaltsmitteln im Rechnungswesen des Bundes.",
+      "page": 6,
+      "variants": [
+        "Bewirtschaftungsmaßnahmen"
+      ]
+    },
+    {
+      "term": "Bewirtschafternummer",
+      "explanation": "Identifikationsmerkmal einer bewirtschaftenden Stelle für die Bewirtschaftungsaufgaben in den Haushaltsverfahren des Bundes (Mittelverteilung (beginnend mit 01) oder Mittelverwendung/Titelverwaltung (beginnend mit 03)). Die Nummer ist immer achtstellig.",
+      "page": 6
+    },
+    {
+      "term": "Buchausgleich",
+      "explanation": "Verrechnung von Beträgen zwischen Kassen gemäß § 79 BHO.",
+      "page": 6
+    },
+    {
+      "term": "Buchführung",
+      "explanation": "Die Buchführung erfolgt ausschließlich durch die Kassen in den Sachbüchern und dem Zeitbuch des Bundes. Zahlstellen führen nur Vorbücher.",
+      "page": 6
+    },
+    {
+      "term": "Buchung",
+      "explanation": "Maßnahme in der Buchführung zur revisionssicheren Abbildung von Geschäftsfällen. Jede Buchung ist zu belegen (§ 75 BHO).",
+      "page": 6
+    },
+    {
+      "term": "Beleg",
+      "wording": "(Buchungs-)Beleg",
+      "explanation": "Ein Beleg ist eine Unterlage in elektronischer Form oder Papierform, in der ein Geschäftsfall bzw. ein Teil eines Geschäftsfalls revisionssicher dargestellt wird.",
+      "page": 6,
+      "variants": [
+        "Buchungsbeleg"
+      ]
+    },
+    {
+      "term": "Buchungsdatei",
+      "explanation": "Datei (F13z) mit Datensätzen nach einem vorgeschriebenen Satzaufbau, die je Sachbuchkonto die summierten Buchungsbeträge der Einzelzahlungen enthalten.",
+      "page": 6
+    },
+    {
+      "term": "Buchungskonto",
+      "explanation": "Konto in den Haushaltsverfahren des Bundes für die Buchung buchungspflichtiger Vorgänge im Vorschuss- und Verwahrungsbuch. Das Buchungskonto wird durch eine zehnstellige Nummer gekennzeichnet, beginnend mit 90. Die Buchungskonten können in Objektkonten unterteilt sein.",
+      "page": 6
+    },
+    {
+      "term": "Buchungsstelle",
+      "explanation": "In den Haushaltsverfahren des Bundes sind Buchungsstellen als Buchungskonten in den Sachbüchern Vorschussbuch und Verwahrungsbuch eingerichtet. (Unterscheide: Haushaltsstelle)",
+      "page": 6
+    },
+    {
+      "term": "Buchungstag",
+      "wording": "Buchungstag (in den Haushaltsverfahren des Bundes)",
+      "explanation": "Tag, an dem eine Kasse einen buchungspflichtigen Geschäftsfall in den Haushaltsverfahren des Bundes in das Titelbuch einträgt. Die Geschäftsfälle werden in einem IT-Verfahren der Haushaltsverfahren des Bundes an anderen Tagen gebucht.",
+      "page": 7
+    },
+    {
+      "term": "Bundeshaushalt",
+      "explanation": "Bezeichnung für das Titelbuch (= ein Sachbuch im Rechnungswesen des Bundes).",
+      "page": 7
+    },
+    {
+      "term": "Bundeskasse",
+      "explanation": "Die Bundeskasse nimmt die Aufgaben des Bundes gemäß § 79 Abs. 1 BHO für Zahlungen, die Buchführung und die Rechnungslegung wahr.",
+      "page": 7
+    },
+    {
+      "term": "Cash Concentration",
+      "explanation": "Englische Bezeichnung für den automatischen Saldenausgleich.",
+      "page": 7
+    },
+    {
+      "term": "Deckungskonto",
+      "explanation": "Sachbuchkonto für die Abbildung von Deckungsfähigkeiten zwischen Ausgabe- oder Verpflichtungsermächtigungen im Titelbuch. Der Begriff Deckungsausgleichskonto wird synonym verwendet.",
+      "page": 7
+    },
+    {
+      "term": "Devisenzahlung",
+      "explanation": "Zahlung in ausländischer Währung.",
+      "page": 7
+    },
+    {
+      "term": "IT-Verfahren der bewirtschaftenden Stellen im Haushalts-, Kassen- und Rechnungswesen des Bundes",
+      "explanation": "IT-Verfahren für das Haushaltsverfahren von bewirtschaftenden Stellen, die die Anordnungen für die Zahlung und Buchungen an die Haushaltsverfahren des Bundes übermitteln müssen (Nr. 1.2 GoBIT).",
+      "page": 7
+    },
+    {
+      "term": "Durchlaufende Gelder",
+      "explanation": "Durchlaufende Gelder gemäß VO/VW-RiB sind Zahlungen, die von Dritten zur Verfügung gestellt werden und entweder an andere Dritte weitergeleitet oder von bewirtschaftenden Stellen des Bundes im Auftrag von Dritten bewirtschaftet werden. Sie sind keine Bundesmittel und werden daher außerhalb des Titelbuchs im Vorschuss- oder Verwahrungsbuch geführt.",
+      "page": 7
+    },
+    {
+      "term": "Durchlaufende Posten",
+      "explanation": "Durchlaufende Posten (§ 14 Abs. 1 Nr. 2 BHO) sind Beträge, die im Bundeshaushalt für einen anderen vereinnahmt und in gleicher Höhe an diesen weitergeleitet werden, ohne dass der Bund an der Bewirtschaftung der Mittel beteiligt ist (Obergruppen 38 und 98).",
+      "page": 7
+    },
+    {
+      "term": "Echtzeitüberweisung",
+      "wording": "Echtzeitüberweisung (dt.)",
+      "explanation": "Überweisung im Bankenverkehr für eine Übermittlung von Giralgeld in 10 Sek. (Echtzeit), die auf besonderen technischen Voraussetzungen beruht und rund um die Uhr (24/7) möglich ist. (Siehe auch: Fälligkeitszeitpunkt)",
+      "page": 8
+    },
+    {
+      "term": "Eindeutige Identifizierung der Zahlungspartnerin oder des Zahlungspartners",
+      "explanation": "Die eindeutige Identifizierung ist die zweifelsfreie Zuordnung einer Person zu einer Anspruchsberechtigung in einem IT-Verfahren. Eine eindeutige Identifizierung umfasst bei einer natürlichen Person für IT-Verfahren die Authentifizierung über ein Portal, z. B. Mein Elster oder Bundesportal, und die eindeutige Zuordnung von Zahlungsdaten zu dieser Person. Die eindeutige Identifizierung kann auch vor Ort durch Vorlage eines Ausweisdokuments vorgenommen werden. (Ohne Anspruchsberechtigung ist eine eindeutige Identifizierung nicht notwendig).",
+      "page": 8
+    },
+    {
+      "term": "Einnahme",
+      "explanation": "Buchung im Titelbuch aufgrund einer erfolgten Einzahlung in der Kasse.",
+      "page": 8
+    },
+    {
+      "term": "Einsetzende Stelle",
+      "explanation": "Dienststelle, die ein IT-Verfahren gemäß Nr. 6.1 VV-ZBR BHO in ihrem Zuständigkeitsbereich einsetzt.",
+      "page": 8
+    },
+    {
+      "term": "Einliefernde Stelle",
+      "explanation": "Stelle, die Zahlungen und Buchungen für andere bewirtschaftende Stellen per Schnittstelle (F13z/F15z) an die Haushaltsverfahren des Bundes übermittelt, z. B. Rechenzentren. Die einliefernde Stelle hat keine Bewirtschaftungsbefugnis.",
+      "page": 8
+    },
+    {
+      "term": "Einreichende Stelle",
+      "explanation": "Bewirtschaftende Stelle, die Zahlungen und Buchungen der eigenen Sachbuchkonten oder der Sachbuchkonten anderer Stellen, deren Bewirtschaftung sie durchführt, per Schnittstelle (F13z/F15z) an die Haushaltsverfahren des Bundes übermittelt.",
+      "page": 8
+    },
+    {
+      "term": "Einreichendes IT-Verfahren",
+      "explanation": "IT-Verfahren gemäß Nr. 6.1 VV-ZBR BHO, das Daten an die Haushaltsverfahren des Bundes per Schnittstelle übermittelt.",
+      "page": 9
+    },
+    {
+      "term": "Einzahlung",
+      "explanation": "Zahlung, die bei der Kasse den Bestand auf den Girokonten erhöht oder bei einer Zahl- oder Geldstelle bar oder per Scheck eingeht.",
+      "page": 9
+    },
+    {
+      "term": "Einzahlungstag",
+      "explanation": "Tag, an dem die Gutschrift auf einem Girokonto der Kasse erfolgt (Tag der Wertstellung). Einzahlungstag ist bei Kartenzahlverfahren oder elektronischen Zahlungssystemen der Tag der Akzeptanz.",
+      "page": 9
+    },
+    {
+      "term": "für die Entwicklung zuständige Stelle",
+      "wording": "(für die) Entwicklung zuständige Stelle",
+      "explanation": "Dienststelle, die ein IT-Verfahren gemäß Nr. 6.1 VV-ZBR BHO entwickelt, entwickeln lässt oder beschafft.",
+      "page": 9,
+      "variants": [
+        "Entwicklung zuständige Stelle"
+      ]
+    },
+    {
+      "term": "Erhebungsdatum",
+      "explanation": "Erhebungsdatum (requested collection date) entspricht dem Fälligkeitstag für Einnahmen.",
+      "page": 9
+    },
+    {
+      "term": "Erstattungen",
+      "explanation": "Erstattungen sind Einzahlungen für bereits aus dem Bundeshaushalt geleistete Ausgaben. Erstattungen werden in der Regel bei dem entsprechenden Ausgabetitel gebucht.",
+      "page": 9
+    },
+    {
+      "term": "Fälligkeit",
+      "explanation": "Zeitpunkt, ab dem der Gläubiger die Leistung verlangen kann.",
+      "page": 9
+    },
+    {
+      "term": "Fälligkeitstag",
+      "explanation": "Für die Erhebung der Einnahmen ist der Fälligkeitstag gemäß den jeweiligen Rechtsvorschriften für die Erhebung anzuordnen.",
+      "page": 9
+    },
+    {
+      "term": "Fehlbetrag",
+      "explanation": "Betrag, um den der Istbestand einer Kasse, Zahl- bzw. Geldstelle oder von Annahmebeauftragten geringer ist als der Sollbestand.",
+      "page": 9
+    },
+    {
+      "term": "Festlegung",
+      "explanation": "Buchung von rechtsverbindlich eingegangenen Verpflichtungen zur Leistung von Ausgaben im laufenden Haushaltsjahr. (Siehe auch: Verpflichtung)",
+      "page": 9
+    },
+    {
+      "term": "Finanzmittel",
+      "explanation": "Finanzmittel sind die liquiden Guthaben auf den Girokonten der Kassen und Zahlstellen. (Unterscheide: Haushaltsmittel)",
+      "page": 9
+    },
+    {
+      "term": "Geldstellen",
+      "explanation": "Geldstellen dürfen nur Zahlungen in geringfügiger Höhe durchführen. Sie unterliegen weniger strengen Anforderungen als eine Zahlstelle.",
+      "page": 10
+    },
+    {
+      "term": "Geschäftsfall",
+      "explanation": "Ein planerisch oder wirtschaftlich bedeutsamer Vorgang, der in der Buchführung revisionssicher abzubilden ist. Für jeden Geschäftsfall ist mindestens eine Buchung einschließlich Buchungsbeleg notwendig (§ 75 BHO). Der Begriff Geschäftsvorfall wird synonym verwendet.",
+      "page": 10
+    },
+    {
+      "term": "Grenzvollstreckung",
+      "explanation": "Eine besondere Form der Vollstreckung öffentlich-rechtlicher Geldforderungen bei Schuldnern ohne inländischen Wohn- bzw. Geschäftssitz, die von den Hauptzollämtern durchgeführt wird. Im Anschluss an eine Zollkontrolle nach § 1 Absatz 1 bis 5 i. V. m. § 10 Zollverwaltungsgesetz können die Kontrollbeamten der Hauptzollämter bewegliche Sachen nach § 286 AO pfänden.",
+      "page": 10
+    },
+    {
+      "term": "Haushaltsjahr",
+      "explanation": "Nach § 4 BHO ist das Rechnungsjahr (Haushaltsjahr) das Kalenderjahr. Das BMF kann für einzelne (Organisations-)Bereiche etwas anderes bestimmen.",
+      "page": 10
+    },
+    {
+      "term": "Haushaltsmittel",
+      "explanation": "Haushaltsmittel sind die rechtliche Verpflichtung zur Erhebung von Einnahmen und die rechtliche Ermächtigung zur Leistung von Ausgaben und dem Eingehen von Verpflichtungen sowie die Planstellen und Stellen im Titelbuch. (Unterscheide: Finanzmittel)",
+      "page": 10
+    },
+    {
+      "term": "Haushaltsmäßige Verrechnung",
+      "explanation": "Verrechnung zwischen dem Titelbuch und dem Vorschuss- bzw. Verwahrungsbuch (§ 60 BHO). (Unterscheide: Interne Verrechnung)",
+      "page": 10
+    },
+    {
+      "term": "Haushaltsstelle",
+      "explanation": "Bezeichnung für die in den Haushaltsverfahren des Bundes eingerichteten Titel- oder Objektkonten im Titelbuch (Unterscheide: Buchungsstelle)",
+      "page": 10
+    },
+    {
+      "term": "Hierarchieebenen in den Haushaltsverfahren des Bundes",
+      "explanation": "In den Haushaltsverfahren des Bundes gibt es verschiedene Hierarchieebenen der Buchungskonten. Die oberste Ebene ist die Mittelverteilungsebene (MV1), mit der die Haushaltsmittel den bewirtschaftenden Stellen zugewiesen werden. Die absteigenden Hierarchieebenen in den Haushaltsverfahren des Bundes werden als MV2, MV3 usw. bezeichnet. Die unterste Hierarchieebene ist die Titelverwaltungsebene.",
+      "page": 10
+    },
+    {
+      "term": "HKR-Dialoganwendung",
+      "explanation": "Dialoganwendung der Haushaltsverfahren des Bundes mit Zugriff auf die Sachbuchkonten zur Durchführung und Überwachung von Bewirtschaftungsmaßnahmen, z. B. HKRweb.",
+      "page": 11
+    },
+    {
+      "term": "Haushaltsverfahren des Bundes",
+      "wording": "Haushaltsverfahren des Bundes (HaVdB)",
+      "explanation": "IT-Verfahren für das zentrale Haushalts-, Kassen- und Rechnungswesen des Bundes, in denen die Mittelverteilung, die zentrale Buchführung und Rechnungslegung des Bundes erfolgt. (Siehe: IT-Verfahren der bewirtschaftenden Stellen im Haushalts-, Kassen- und Rechnungswesen des Bundes)",
+      "page": 11,
+      "abbreviations": [
+        "HaVdB"
+      ]
+    },
+    {
+      "term": "Interne Verrechnung",
+      "explanation": "Eine interne Verrechnung ist ein Buchungsvorgang im Titelbuch, der in gleicher Betragshöhe über die Einnahmetitel der Gruppe 381 und die Ausgabetitel der Gruppe 981 durchzuführen ist (siehe VV Nr. 1 zu § 61 BHO). (Unterscheide: Haushaltsmäßige Verrechnung)",
+      "page": 11
+    },
+    {
+      "term": "Instant Payment",
+      "wording": "Instant Payment (engl.)",
+      "explanation": "Siehe Echtzeitüberweisung.",
+      "page": 11
+    },
+    {
+      "term": "Istbestand",
+      "explanation": "Summe aus dem Bestand in den Kontogegenbüchern und dem Bestand an Zahlungsmitteln ohne fremde Geldsorten.",
+      "page": 11
+    },
+    {
+      "term": "ISO-Alpha-2-Länder-Code",
+      "explanation": "Bei Auslandszahlungen sind die Länder nach diesem zweistelligen Code anzugeben.",
+      "page": 11
+    },
+    {
+      "term": "ISO-Währungscode",
+      "explanation": "Zahlungen in Fremdwährung sind nach diesem dreistelligen Code anzugeben.",
+      "page": 11
+    },
+    {
+      "term": "Kameralistik",
+      "wording": "Kameralistik/Kamerale Buchführung",
+      "explanation": "Erweiterte Einnahmen- und Ausgabenrechnung der öffentlichen Verwaltung zur Kontrolle der Haushaltsführung durch den Haushaltsgesetzgeber.",
+      "page": 11,
+      "variants": [
+        "Kamerale Buchführung"
+      ]
+    },
+    {
+      "term": "Kassen",
+      "explanation": "Kassen sind die für den unbaren Zahlungsverkehr des Bundes und für die Aufgaben nach §§ 34, 59, 60, 70 und 71 BHO zuständige Stellen. Die Kassen des Bundes bestehen ausschließlich aus der Zentralkasse und der Bundeskasse (§ 79 BHO).",
+      "page": 12
+    },
+    {
+      "term": "Kassenanordnung",
+      "explanation": "Siehe Anordnung",
+      "page": 12
+    },
+    {
+      "term": "Kassenanweisung",
+      "explanation": "Siehe Anweisung",
+      "page": 12
+    },
+    {
+      "term": "Kassenaufsicht",
+      "explanation": "Die Kassenaufsicht führt im Auftrag des Kassenreferats im BMF die laufenden und unvermuteten Prüfungen bei den Kassen des Bundes durch (§ 78 BHO).",
+      "page": 12
+    },
+    {
+      "term": "Kassensicherheit",
+      "explanation": "Unter Kassensicherheit wird die ordnungsgemäße Durchführung des Zahlungsverkehrs sowie die Prävention von schadhaften (dolosen) Handlungen sowohl durch eigene Beschäftigte als auch durch Externe verstanden. Zentrales Element der Kassensicherheit in der öffentlichen Verwaltung ist die Trennung der Anordnung einer Zahlung und von der Ausführung einer Zahlung (§ 77 BHO).",
+      "page": 12
+    },
+    {
+      "term": "Kassenzeichen",
+      "explanation": "Zwölfstelliges Ordnungsmerkmal eines Personen-, Steuer- oder Funktionskontos im Zahlungsüberwachungsverfahren (ZÜV). Das Kassenzeichen dient der automatisierten Zuordnung von Einzahlungen zu Konten im ZÜV.",
+      "page": 12
+    },
+    {
+      "term": "Kassenwirksamkeit",
+      "explanation": "Begriff aus der Haushaltsaufstellung (§ 11 BHO). Es sollen nur Einnahmen und Ausgaben im Haushalt veranschlagt werden, die zu Zahlungen in dem Haushaltsjahr führen (d. h. kassenwirksam werden). Der Begriff Etatreife wird synonym verwendet.",
+      "page": 12
+    },
+    {
+      "term": "Mittelverteilung",
+      "explanation": "Die Mittelverteilung ist eine Bewirtschaftungsmaßnahme, mit der in den Haushaltsverfahren des Bundes die zur Verfügung gestellten Haushaltsmittel den nachfolgenden organisatorischen Ebenen (Mittelverteilungs- und Titelverwaltungsebenen) zugewiesen werden. Die Mittelverteilung umfasst neben der Zuweisung auch den Rückruf von Haushaltsmitteln sowie die Einrichtung und Änderung von Konten und die Änderung von Stammdaten zu einem Sachbuchkonto.",
+      "page": 12
+    },
+    {
+      "term": "Mittelverwendung",
+      "explanation": "Die Mittelverwendung ist eine Bewirtschaftungsmaßnahme, mit der in den Haushaltsverfahren des Bundes u.a. die Leistung und Annahme von Zahlungen sowie deren Aufhebung angeordnet werden. Die Buchung von Festlegungen sowie eingegangenen Verpflichtungen sind auch Maßnahmen der Mittelverwendung.",
+      "page": 13
+    },
+    {
+      "term": "Nachweisungen",
+      "explanation": "Synonym für Beleg in einem IT-Verfahren",
+      "page": 13
+    },
+    {
+      "term": "Objektkonto",
+      "explanation": "Unterkonto eines Titel- oder Buchungskontos in den Haushaltsverfahren des Bundes, das durch eine achtstellige Nummer gekennzeichnet wird.",
+      "page": 13
+    },
+    {
+      "term": "Ordnungsgemäße Durchführung des Zahlungsverkehrs",
+      "explanation": "Rechtskonforme und fehlerfreie Durchführung des Zahlungsverkehrs. Dies wird in IT-Verfahren beispielsweise erreicht durch die Durchführung notwendiger r Prüfschritte. Für Papierbelege ist die Einhaltung des Vier-Augen-Prinzips erforderlich.",
+      "page": 13
+    },
+    {
+      "term": "Personenkonto im ZÜV",
+      "explanation": "Vorkonto zur Darstellung von buchungspflichtigen Geschäftsfällen pro Person in einem IT-Verfahren der Haushaltsverfahren des Bundes. Der Begriff Steuerkonto wird synonym verwendet.",
+      "page": 13
+    },
+    {
+      "term": "Protokoll",
+      "explanation": "In einem IT-Verfahren wird der Begriff des Protokolls für eine Aufzeichnung von Prozessen und Ereignissen verwendet.",
+      "page": 13
+    },
+    {
+      "term": "Rechnungsunterlagen",
+      "explanation": "Rechnungsunterlagen werden aus den abgeschlossenen Büchern und den dazu gehörenden Belegen abgeleitet.\nAbzugrenzen von begründenden Unterlagen.",
+      "page": 13
+    },
+    {
+      "term": "Risikoanalyse",
+      "explanation": "Die Risikoanalyse im Sinne der VV-ZBR BHO benennt und bewertet die Risiken für die Kassensicherheit sowie Zuverlässigkeit, Vollständigkeit und Revisionsfähigkeit in einem IT-Verfahren gemäß Nr. 6.1 VV-ZBR BHO.",
+      "page": 13
+    },
+    {
+      "term": "Rucksackdatei",
+      "explanation": "Datei, deren Datenstruktur nicht zu den definierten Schnittstellen F13z oder F15z passt und die daher in einer eigenen Datei per Schnittstelle übermittelt wird.",
+      "page": 14
+    },
+    {
+      "term": "Rückzahlung",
+      "explanation": "Auszahlung zu viel erhobener Einnahmen an Dritte oder Einzahlung von Dritten aufgrund unrichtiger Auszahlungen, Doppelzahlungen oder Überzahlungen. Rückzahlungen sind gemäß § 12 HG von den jeweiligen Titeln abzusetzen, d. h. zu buchen (Auszahlung bei Einnahmetitel, Einzahlungen bei Ausgabetitel), solange das Haushaltsjahr noch nicht abgeschlossen ist.\nRückeinzahlungen von flexibilisierten Ausgaben und Personalausgaben sind auch dann bei dem Ausgabetitel zu buchen, wenn die Ausgaben in vorhergehenden Haushaltsjahren geleistet wurden.",
+      "page": 14
+    },
+    {
+      "term": "Sachbuch",
+      "explanation": "Buch, in dem die buchungspflichtigen Geschäftsfälle in der sachlichen Ordnung aufzuzeichnen sind. Sachbücher des Bundes sind das Titelbuch, das Vorschussbuch, das Verwahrungsbuch und das Abrechnungsbuch (Hauptbuch im kaufmännischen Rechnungswesen). Die Sachbücher des Bundes werden in den Haushaltsverfahren des Bundes ausschließlich von den Kassen geführt.",
+      "page": 14
+    },
+    {
+      "term": "Sachbuchkonto",
+      "explanation": "Konto von bewirtschaftenden Stellen in den Haushaltsverfahren des Bundes für jede Haushalts- bzw. Buchungsstelle.",
+      "page": 14
+    },
+    {
+      "term": "Sachbuchkontonummer",
+      "explanation": "Jedes Sachbuchkonto hat eine 18-stellige Sachbuchkontonummer. Diese setzt sich zusammen aus der achtstelligen Bewirtschafternummer plus der zehnstelligen Titelkontonummer (Haushaltsstelle und Prüfziffer) oder Buchungskontonummer oder der achtstelligen Objektkontonummer mit zwei führenden Nullen. Beispiel:\nBewirtschafternummer: 03147113\nHaushaltsstelle: 0812 53201 errechnete Prüfziffer 2\nSachbuchkontonummer: 03147113 081253201 2",
+      "page": 14
+    },
+    {
+      "term": "Sammelbeleg",
+      "explanation": "Ein Sammelbeleg F13Z oder F15Z einschließlich des Datenblatts F15Z-D dient der Überprüfung einer erfolgreichen Übermittlung von Anordnungs- und/oder Buchungsdateien nach Nr.1.1.1 VV-ZBR BHO.",
+      "page": 15
+    },
+    {
+      "term": "Schlussauszahlung",
+      "explanation": "Eine Auszahlung, die als Ausgabe im Titelbuch zu buchen ist und der vollständigen Erfüllung einer Verbindlichkeit nach bereits erfolgter Abschlagsauszahlung dient.",
+      "page": 15
+    },
+    {
+      "term": "Selbstbewirtschaftungsmittel",
+      "explanation": "Ausgaben können zur Selbstbewirtschaftung veranschlagt werden, wenn hierdurch eine sparsame Bewirtschaftung gefördert wird (§ 15 Abs. 2 BHO) oder das Haushaltsgesetz eine Selbstbewirtschaftung erlaubt. Voraussetzung für die Zuweisung zur Selbstbewirtschaftung ist ein Haushaltsvermerk im Bundeshaushaltsplan.",
+      "page": 15
+    },
+    {
+      "term": "SEPA-Lastschriftverfahren",
+      "explanation": "SEPA-Lastschriftverfahren ist eine Zahlungsart im Bankverkehr, bei dem der Zahler mittels der Erteilung eines SEPA-Lastschriftmandats in die Abbuchung von seinem Girokonto zugunsten des Zahlungsempfängers einwilligt. Es wird unterschieden zwischen SEPA-Lastschriftverfahren zu Lasten von Girokonten des Bundes (passives Basislastschriftverfahren) und SEPA-Lastschriftverfahren zu Gunsten von Girokonten des Bundes (aktives Lastschriftverfahren).",
+      "page": 15
+    },
+    {
+      "term": "Soll=Ist-Fall",
+      "explanation": "Ein Soll=Ist-Fall liegt vor, wenn Zahlungen insbesondere zur Erfüllung eines gesetzlichen Anspruchs zu leisten sind, unabhängig davon, ob auf dem Sachbuchkonto genügend Ausgabeermächtigungen vorhanden sind. Daher gibt es für die Soll=Ist-Fälle keine Verfügbarkeitskontrolle in den Haushaltsverfahren des Bundes.",
+      "page": 15
+    },
+    {
+      "term": "Sollbestand",
+      "explanation": "Errechneter Kassenbestand für einen bestimmten Zeitraum (Differenz zwischen gebuchten oder nachgewiesenen Einzahlungen und Auszahlungen).",
+      "page": 15
+    },
+    {
+      "term": "Sollstellung",
+      "explanation": "Buchung des zu erhebenden Betrags oder Ermächtigung zur Ausgabe eines Betrags.",
+      "page": 16
+    },
+    {
+      "term": "Sperrkonto",
+      "explanation": "Sachbuchkonto für die Buchung haushaltswirtschaftlich gesperrter Ausgabe- und Verpflichtungsermächtigungen.",
+      "page": 16
+    },
+    {
+      "term": "Steuerkonto in den Instanzen ZÜV-K und ZÜV-S",
+      "explanation": "Vorkonto zur Darstellung von buchungspflichtigen Geschäftsfällen pro Person und Steuerfall in einem IT-Verfahren der Haushaltsverfahren des Bundes. Der Begriff Personenkonto wird synonym verwendet.",
+      "page": 16
+    },
+    {
+      "term": "IT-Verfahren der Haushaltsverfahren des Bundes",
+      "explanation": "Diese sind u.a.:\n• Zahlungsüberwachungsverfahren des Bundes (ZÜV) für\n  • Verwaltungseinnahmen (ZÜV-P),\n  • Kraftfahrzeugsteuer (ZÜV-K) und\n  • andere Bundessteuern (ZÜV-S),\n• Zahlungsaufschubverfahren des Bundes (ZAUF) für Zölle, Einfuhrumsatzsteuer und Verbrauchssteuern,\n• Darlehensverfahren des Bundes für zu überwachende Bundesdarlehen.",
+      "page": 16
+    },
+    {
+      "term": "Tag der Akzeptanz",
+      "explanation": "Tag, an dem ein Anbieter eines elektronischen Zahlungssystems eine Zahlung bestätigt.",
+      "page": 16
+    },
+    {
+      "term": "Tagesabschluss",
+      "explanation": "Zur Kontrolle der Buchführung hat die für Zahlungen zuständige Stelle einen Tagesabschluss (Abgleich Sollbestand mit Istbestand) zu erstellen.",
+      "page": 16
+    },
+    {
+      "term": "Titel",
+      "explanation": "Durch fünf Ziffern gekennzeichnete unterste Gliederung im Titelbuch, die sich aus der numerischen Bezeichnung der Haupt- und Obergruppe sowie Gruppe und der laufenden Nummer (zweistellig) zusammensetzt.",
+      "page": 16
+    },
+    {
+      "term": "Titelbuch",
+      "explanation": "Sachbuch für den Bundeshaushalt.",
+      "page": 16
+    },
+    {
+      "term": "Titelkonto",
+      "explanation": "Konto in den Haushaltsverfahren des Bundes für alle Maßnahmen zur Bewirtschaftung eines Titels. Ein Titelkonto kann in Objektkonten unterteilt werden.",
+      "page": 16
+    },
+    {
+      "term": "Titelkontonummer",
+      "explanation": "Die zehnstellige Titelkontonummer setzt sich zusammen aus Kapitel + Titel + Prüfziffer. Zum Beispiel: 0812511013\nKapitel 0812\nTitel 511 01\nPrüfziffer 3",
+      "page": 17
+    },
+    {
+      "term": "Titelverwaltung",
+      "explanation": "Funktion von Bewirtschaftenden für die Anordnung oder Anweisung von Maßnahmen der Mittelverwendung in den Haushaltsverfahren des Bundes.",
+      "page": 17
+    },
+    {
+      "term": "Überzahlte Kassenzeichen",
+      "explanation": "Überzahlte Kassenzeichen sind im Zahlungsüberwachungsverfahren des Bundes auf ein Personenkonto bzw. Steuerkonto gebuchte und nicht bzw. niedriger angeordnete Einzahlungen.",
+      "page": 17
+    },
+    {
+      "term": "Überzahlung",
+      "explanation": "Ein- oder Auszahlungsbetrag, der den angeordneten Betrag übersteigt.",
+      "page": 17
+    },
+    {
+      "term": "Umbuchung",
+      "explanation": "Umbuchungen können nur innerhalb des gleichen Sachbuchs und der gleichen Einnahmen- oder Ausgabenseite angeordnet werden (§ 12 HG). Durch eine Umbuchung werden z. B. Titelverwechslungen korrigiert.",
+      "page": 17
+    },
+    {
+      "term": "Unanbringliche Auszahlung",
+      "explanation": "Auszahlung, die von einem Kreditinstitut nicht ausgeführt werden konnte und dem Girokonto der Kasse wieder gutgeschrieben wird.",
+      "page": 17
+    },
+    {
+      "term": "Unanbringliche Einzahlung",
+      "wording": "Unanbringliche Einzahlung (nicht zuordenbare Einzahlungen)",
+      "explanation": "Einzahlung ohne Kassenzeichen oder sonstiges Ordnungsmerkmal. Diese Einzahlungen werden zunächst bei der Kasse in Verwahrung gebucht.",
+      "page": 17,
+      "variants": [
+        "nicht zuordenbare Einzahlungen"
+      ]
+    },
+    {
+      "term": "Unbare Zahlung",
+      "explanation": "Zahlung per Überweisung, im Lastschriftverfahren oder per elektronischem Zahlungssystem, die von einem Konto der Kasse bei einer Bank angenommen (Einzahlungen) oder geleistet (Auszahlungen) wird.",
+      "page": 17
+    },
+    {
+      "term": "Verantwortliche Stelle",
+      "explanation": "Stelle in der obersten Bundesbehörde, die für ein IT-Verfahren gegenüber den das IT-Verfahren einsetzenden Stellen weisungsbefugt ist und für die Einhaltung der rechtlichen Bestimmungen das Notwendige veranlassen kann.",
+      "page": 17
+    },
+    {
+      "term": "Verdichtungsergebnis",
+      "explanation": "Summiertes Ergebnis mehrerer einzelner Buchungen für einen Titel im Bundeshaushalt.",
+      "page": 18
+    },
+    {
+      "term": "Verpflichtung",
+      "explanation": "Buchung von rechtsverbindlich eingegangenen Verpflichtungen für künftige Haushaltsjahre (§ 16 BHO). (Siehe auch: Festlegung)",
+      "page": 18
+    },
+    {
+      "term": "Verpflichtungsermächtigung",
+      "explanation": "Eine Verpflichtungsermächtigung (VE) ist eine im Haushaltsplan ausgebrachte Ermächtigung zum Eingehen von rechtlichen Verpflichtungen zur Leistung von Ausgaben in künftigen Jahren (§ 6 BHO).",
+      "page": 18,
+      "abbreviations": [
+        "VE"
+      ]
+    },
+    {
+      "term": "Verrechnung",
+      "explanation": "Eine Verrechnung ist eine Buchung, bei der ein gleich hoher Betrag sowohl auf der Einnahme- als auch der Ausgabeseite gebucht wird (siehe Interne Verrechnung und Haushaltsmäßige Verrechnung), eine Verrechnung kann auch zwischen verschiedenen Sachbüchern erfolgen. (Unterscheide: Aufrechnung)",
+      "page": 18
+    },
+    {
+      "term": "Verwahrung",
+      "explanation": "Eine Verwahrung ist eine Einzahlung, die noch nicht endgültig im Haushalt gebucht werden kann und daher zunächst auf einer Buchungsstelle mit der entsprechenden Zweckbestimmung im Verwahrungsbuch gebucht wird (§ 60 BHO).",
+      "page": 18
+    },
+    {
+      "term": "Verwahrungsbuch",
+      "explanation": "Das Verwahrungsbuch ist ein Sachbuch für die Buchung von Einzahlungen in den Kassenmitteln des Bundes, die (noch) nicht im Titelbuch gebucht werden können.",
+      "page": 18
+    },
+    {
+      "term": "Vollständige Prüfung",
+      "explanation": "Eine vollständige Prüfung der Anordnung auf Ordnungsmäßigkeit gemäß Nr. 1.2 VV-ZBR BHO erfolgt grundsätzlich durch mindestens zwei dazu befugte Personen bei einer Anordnung mittels Papierbeleg gemäß Anlage 3 zur VV-ZBR BHO und in teilautomatisierten IT-Verfahren gemäß Nr. 4.1 GoBIT. Unter bestimmten Voraussetzungen gilt in teilautomatisierten IT-Verfahren auch eine Stichprobenprüfung gemäß Nr. 4.2 GoBIT als vollständig geprüft. Bei vollautomatisierten IT-Verfahren kann die Prüfung der Ordnungsmäßigkeit durch berechtigte Personen entfallen, wenn eine regelbasierte Entscheidung möglich ist (siehe Nr. 4.1.3 GoBIT). Das Restrisiko bei Einsatz eines IT-Verfahrens muss immer unter 1% der bewirtschafteten Mittel liegen.",
+      "page": 18
+    },
+    {
+      "term": "Vollstreckung",
+      "explanation": "Öffentlich-rechtliche Geldforderungen des Bundes können durch ein Hauptzollamt (HZA) beigetrieben werden.",
+      "page": 19
+    },
+    {
+      "term": "Vorgelagertes Verfahren",
+      "explanation": "IT-Verfahren gemäß Nr. 6.1 VV-ZBR BHO, das Daten an ein einreichendes IT-Verfahren oder ein anderes vorgelagertes IT-Verfahren per Schnittstelle übermitteln.",
+      "page": 19
+    },
+    {
+      "term": "Vorschuss",
+      "explanation": "Ein Vorschuss ist eine Auszahlung, die direkt aus den Kassenmitteln des Bundes erfolgt. Voraussetzung für die Zahlung eines Vorschusses ist eine Buchungsstelle mit der entsprechenden Zweckbestimmung im Vorschussbuch (§ 60 BHO).",
+      "page": 19
+    },
+    {
+      "term": "Vorschussbuch",
+      "explanation": "Das Vorschussbuch ist ein Sachbuch für die Buchung von Auszahlungen aus den Kassenmitteln des Bundes, die (noch) nicht im Titelbuch gebucht werden können.",
+      "page": 19
+    },
+    {
+      "term": "VV-ZBR BHO",
+      "explanation": "Verwaltungsvorschrift für Zahlungen, Buchführung und Rechnungslegung (§§ 70 bis 71 sowie 75 bis 80 BHO)",
+      "page": 19
+    },
+    {
+      "term": "Wechselgeldbetrag",
+      "explanation": "Betrag, der bei der Einrichtung der Zahlstelle festgelegt wird und über den die Zahlstelle dauerhaft verfügen kann. Auch Annahmebeauftragte erhalten einen Wechselgeldbetrag.",
+      "page": 19
+    },
+    {
+      "term": "Wertgegenstände",
+      "explanation": "Wertgegenstände sind Wertpapiere (Dokumente über finanzielles Vermögen) und sonstige Urkunden sowie Kostbarkeiten. Kryptowährungen sind wie Wertgegenstände zu behandeln.",
+      "page": 19
+    },
+    {
+      "term": "Wiederkehrende Zahlung",
+      "explanation": "Zahlung, die in regelmäßigen Abständen in gleicher Höhe anzunehmen oder zu leisten ist. Wiederkehrende Auszahlungen werden auch als „WAZ“ bezeichnet, wiederkehrende Einzahlungen werden auch als „WEZ“ bezeichnet.",
+      "page": 19
+    },
+    {
+      "term": "Zahlungsart",
+      "explanation": "Unterschiedliche Art der Übermittlung von Zahlungen. Der Begriff Zahlungsweg wird synonym verwendet.\nFür die Bundesverwaltung zulässige Zahlungsarten sind in Nr. 2 VV-ZBR BHO abschließend geregelt.",
+      "page": 20
+    },
+    {
+      "term": "Zahlungsmittel",
+      "wording": "Zahlungsmittel (gesetzlich)",
+      "explanation": "In der Eurozone sind Euro-Münzen und -Banknoten das gesetzliche Zahlungsmittel. Fremde Geldsorten sind gesetzliche Zahlungsmittel anderer Länder.",
+      "page": 20
+    },
+    {
+      "term": "Zahlungsrelevante Daten",
+      "explanation": "Zahlungsrelevante Daten sind alle für die Anordnung von Einzahlungen und Auszahlungen notwendigen Angaben, wie z. B. Name des Zahlungsempfangenden oder Zahlungspflichtigen, Betrag und Bankverbindung.",
+      "page": 20
+    },
+    {
+      "term": "Zahlungsdatei",
+      "explanation": "Datei mit Datensätzen für die elektronische Überweisung durch Banken, in der Regel die Deutsche Bundesbank. Der Aufbau der Zahlungsdatei muss den Bedingungen der Kreditwirtschaft entsprechen.",
+      "page": 20
+    },
+    {
+      "term": "Zeitbuch",
+      "explanation": "Buch, in dem die buchungspflichtigen Geschäftsfälle in der chronologischen Ordnung aufzuzeichnen sind (Grundbuch im kaufmännischen Rechnungswesen).",
+      "page": 20
+    },
+    {
+      "term": "Zentrale zahlungsrelevante Daten",
+      "explanation": "Zentrale zahlungsrelevante Daten sind Daten mit Einfluss auf Zahlungsgruppen, insbesondere Berechnungsgrundlagen für gesetzlich oder vertraglich vorgesehene Zahlungen, z. B.: zentrale Daten in Tabellen, Besoldungstabellen oder zentrale Eingabefelder für Berechnungsgrößen.",
+      "page": 20
+    },
+    {
+      "term": "Zentralkasse",
+      "explanation": "Die Zentralkasse nimmt die Aufgaben des Bundes gemäß § 79 Abs. 2 BHO für Zahlungen, die Buchführung und die Rechnungslegung wahr. Das Zentralkonto des Bundes bei der Deutschen Bundesbank wird bei der Zentralkasse geführt.",
+      "page": 20
+    }
+  ]
+}

@@ -688,6 +688,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param summaryPlan   Zeile „Zusammenfassung – Plan“ ({@code summary-plan-*}); {@code null}: Standards des Core
      * @param podcast       Zeile „Podcast“ ({@code podcast-*}); {@code null}: Standards des Core
      * @param imagePlan     Zeile „Bildgenerierung – Plan“ ({@code image-plan-*}); {@code null}: Standards des Core
+     * @param deadline      Zeile „Fristen“ ({@code deadline-*}, ADR 0035); {@code null}: Standards des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
@@ -697,7 +698,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                              String stepThinking, Integer parallel, Integer visionMaxTokens, String imageModel,
                              Integer imageMaxTokens, String visionThinking, String imageThinking,
                              AiServiceSettings.ModelUse summary, AiServiceSettings.ModelUse summaryPlan,
-                             AiServiceSettings.ModelUse podcast, AiServiceSettings.ModelUse imagePlan) {
+                             AiServiceSettings.ModelUse podcast, AiServiceSettings.ModelUse imagePlan,
+                             AiServiceSettings.ModelUse deadline) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -708,6 +710,24 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             summaryPlan = summaryPlan == null ? AiServiceSettings.ModelUse.DEFAULT : summaryPlan;
             podcast = podcast == null ? AiServiceSettings.ModelUse.DEFAULT : podcast;
             imagePlan = imagePlan == null ? AiServiceSettings.ModelUse.DEFAULT : imagePlan;
+            deadline = deadline == null ? AiServiceSettings.ModelUse.DEFAULT : deadline;
+        }
+
+        /** Ohne eigene Zeile der Fristenextraktion. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                          Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                          Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
+                          String visionThinking, String imageThinking, AiServiceSettings.ModelUse summary,
+                          AiServiceSettings.ModelUse summaryPlan, AiServiceSettings.ModelUse podcast,
+                          AiServiceSettings.ModelUse imagePlan) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens,
+                    imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan, podcast,
+                    imagePlan, null);
         }
 
         /** Ohne eigene Zeile für den Plan der Schaubilder. */

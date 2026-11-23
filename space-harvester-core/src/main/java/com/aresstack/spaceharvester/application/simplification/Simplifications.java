@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.simplification;
 
+import com.aresstack.spaceharvester.ai.ModelRetry;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import java.util.ArrayList;
@@ -172,8 +173,8 @@ public final class Simplifications {
                             throw new SimplificationUnavailableException(
                                     SimplificationUnavailableException.Reason.NOT_RELEASED);
                         }
-                        String response = model.complete(SentenceSimplifier.instructions(),
-                                SentenceSimplifier.input(work.section()));
+                        String response = model.completeRetrying(SentenceSimplifier.instructions(),
+                                SentenceSimplifier.input(work.section()), ModelRetry.logging(cancelled));
                         SentenceSimplifier.Parsed parsed = SentenceSimplifier.parse(work.section(), response);
                         if (!released.test(page)) {
                             throw new SimplificationUnavailableException(
