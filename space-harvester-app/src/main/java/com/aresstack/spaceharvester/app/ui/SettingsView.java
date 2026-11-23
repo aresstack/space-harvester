@@ -58,6 +58,8 @@ public final class SettingsView implements View {
     static final String CONNECTION_HEADING = "Verbindung";
     static final String NDV = "NDV";
     static final String BETAVIEW = "BetaView";
+    /** Bereich „Browser“: die Profile der Websuche im Chat (Extern, Intern), wie im Enterprise AI Client. */
+    static final String BROWSER = "Browser";
     /** Bereich „Diagramme“: Diagramm-Ansicht „Visuell“ und Systemfunktionen (MainframeMate: Einstellungen › Systemfunktionen). */
     static final String DIAGRAMS = "Diagramme";
     static final String SECURITY = "Sicherheit";
@@ -110,6 +112,7 @@ public final class SettingsView implements View {
     private final java.util.Map<String, SettingsNavRow> rows = new java.util.LinkedHashMap<>();
     /** Bereich „BetaView“: Standard-Suchfilter wie in MainframeMate. */
     final BetaViewSettingsPanel betaView = new BetaViewSettingsPanel();
+    final BrowserSettingsPanel browser = new BrowserSettingsPanel();
     private String selected;
     /** „Zurück“ im Drawer: verlässt die Einstellungen (setzt das Hauptfenster). */
     private Runnable leave = () -> { };
@@ -335,6 +338,10 @@ public final class SettingsView implements View {
         page(BETAVIEW, Comic.column(
                 Comic.plate(BetaViewSettingsPanel.CONNECTION_HEADING, Comic.BLUE, betaView.connection()),
                 Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
+        page(BROWSER, Comic.column(
+                Comic.plate(BrowserSettingsPanel.HEADING, Comic.ORANGE, browser.note()),
+                Comic.plate("Profil Extern", Comic.BLUE, browser.external()),
+                Comic.plate("Profil Intern", Comic.ORANGE, browser.internal())));
         var deck = new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel();
         page(DIAGRAMS, Comic.column(
                 Comic.plate(com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel.DIAGRAM_HEADING,
