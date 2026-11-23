@@ -42,11 +42,15 @@ final class ConnectForm extends JPanel {
 
     static final String ENTRY_KEY = "deck.terminal.entry";
     static final String MODEL_KEY = "deck.terminal.model";
-    static final String TLS_KEY = "deck.terminal.tls";
+    /** Neuer Schlüssel: die alte Vorgabe „ohne TLS“ war falsch (MainframeMate: Port 992 mit TLS) und bleibt nicht hängen. */
+    static final String TLS_KEY = "deck.terminal.use-tls";
     static final String CODE_PAGE_KEY = "deck.terminal.code-page";
     static final String KEEP_ALIVE_KEY = "deck.terminal.keep-alive";
     static final String AUTO_LOGIN_KEY = "deck.terminal.auto-login";
-    static final String COMMAND_KEY = "deck.terminal.command";
+    /** Neuer Schlüssel: Vorgabe „a“ wie tn3270AutoCommandText in MainframeMate (das alte leere Feld bleibt nicht hängen). */
+    static final String COMMAND_KEY = "deck.terminal.start-command";
+    /** Startkommando nach der Anmeldung, wie in MainframeMate voreingestellt. */
+    static final String DEFAULT_COMMAND = "a";
 
     final JComboBox<ServerAccount> server = new JComboBox<>();
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
@@ -116,14 +120,15 @@ final class ConnectForm extends JPanel {
         row(fields, 0, "Server", serverFrame);
         row(fields, 1, "", serverState);
         row(fields, 2, "Port", port);
-        row(fields, 3, "", autoLogin);
+        // TLS ist eine Entscheidung (wie in MainframeMate sichtbar): mit TLS gilt Port 992, ohne Port 23.
+        row(fields, 3, "", tls);
+        row(fields, 4, "", autoLogin);
         advanced.setOpaque(false);
         row(advanced, 0, "Host", host);
         row(advanced, 1, "Startkommando", command);
         row(advanced, 2, "Modell", model);
-        row(advanced, 3, "", tls);
-        row(advanced, 4, "Codepage", codePage);
-        row(advanced, 5, "Keep-Alive (s)", keepAlive);
+        row(advanced, 3, "Codepage", codePage);
+        row(advanced, 4, "Keep-Alive (s)", keepAlive);
         advanced.setVisible(false);
         advancedToggle.setFont(Comic.regular(12.5f));
         advancedToggle.setForeground(Comic.BLUE);
@@ -398,11 +403,12 @@ final class ConnectForm extends JPanel {
                 model.setSelectedItem(candidate);
             }
         }
-        tls.setSelected(state.getBoolean(TLS_KEY, false));
+        tls.setSelected(state.getBoolean(TLS_KEY, true));
         codePage.setText(nonNull(state.get(CODE_PAGE_KEY)));
         keepAlive.setText(nonNull(state.get(KEEP_ALIVE_KEY)));
         autoLogin.setSelected(state.getBoolean(AUTO_LOGIN_KEY, true));
-        command.setText(nonNull(state.get(COMMAND_KEY)));
+        String startCommand = state.get(COMMAND_KEY);
+        command.setText(startCommand == null ? DEFAULT_COMMAND : startCommand);
     }
 
     private static String nonNull(String text) {

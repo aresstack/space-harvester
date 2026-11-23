@@ -658,11 +658,20 @@ public final class TerminalWorkspace extends JPanel {
             return;
         }
         String text = session.profile().label() + " · " + session.state().label()
-                + session.failure().map(reason -> " – " + reason).orElse("")
+                + session.failure().map(reason -> " – " + reason + hint(session, reason)).orElse("")
                 + (session.state() == SessionState.CONNECTED ? session.note().map(note -> " · " + note).orElse("")
                         : "");
         status.setText(text);
         status.setForeground(session.state() == SessionState.FAILED ? Comic.RED : Comic.MUTED);
+    }
+
+    /** Abgewiesen heißt: dort lauscht nichts. Meist falscher Port bzw. TLS (MainframeMate: 992 mit TLS). */
+    static String hint(TerminalSession session, String reason) {
+        if (reason == null || !reason.contains("Connection refused")) {
+            return "";
+        }
+        return session.profile().tls() ? " · Port prüfen"
+                : " · Port oder TLS prüfen (MainframeMate verbindet mit TLS auf Port 992)";
     }
 
     private void fitScreen() {

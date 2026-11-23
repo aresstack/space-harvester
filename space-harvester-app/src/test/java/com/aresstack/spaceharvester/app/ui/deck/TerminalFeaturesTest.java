@@ -52,6 +52,7 @@ class TerminalFeaturesTest {
                 ConnectForm form = deck.terminal().form();
                 form.host.setText("127.0.0.1");
                 form.port.setText(String.valueOf(host.port()));
+                form.tls.setSelected(false); // der Schein-Host spricht kein TLS
                 form.submit();
             });
             TerminalSession session = deck.sessions().all().get(0);
