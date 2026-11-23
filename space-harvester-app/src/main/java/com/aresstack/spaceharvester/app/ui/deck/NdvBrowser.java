@@ -497,13 +497,13 @@ final class NdvBrowser extends JPanel {
         tools.add(indexToggle);
         tools.add(refresh);
 
-        // Fuß (Angelo 23.11.): nur Aktionen, links; Trennen und Schließen macht das ✕ am Reiter, der Stand steht in der
+        // Aktionen neben der Lupe der gemeinsamen Fußleiste (Angelo 23.11.); Trennen und Schließen macht das ✕ am Reiter, der Stand steht in der
         // Statuszeile der App. „Neu verbinden“ erscheint nur, wenn die Verbindung weg ist.
         open.addActionListener(e -> openSelected());
         save.addActionListener(e -> save());
         reconnect.addActionListener(e -> sessions.reconnect(session));
         foot.setOpaque(false);
-        foot.add(Comic.row(open, save, reconnect), BorderLayout.WEST);
+        foot.add(DeckBars.tools(open, save, reconnect), BorderLayout.CENTER);
 
         state.restoreFilter(nameFilter, session.profile().host(), session.user(), scope());
         applyDetails();
@@ -1418,6 +1418,11 @@ final class NdvBrowser extends JPanel {
      */
     void openByName(String name, int line) {
         openByName(name, line, null);
+    }
+
+    /** Öffnet ein Objekt einer bestimmten Bibliothek ({@code null} = Suchreihenfolge) und springt zur Zeile. */
+    void openInLibrary(String library, String name, int line) {
+        openByName(name, line, library == null || library.isBlank() ? null : library.trim().toUpperCase(Locale.ROOT));
     }
 
     private void openByName(String name, int line, String inLibrary) {

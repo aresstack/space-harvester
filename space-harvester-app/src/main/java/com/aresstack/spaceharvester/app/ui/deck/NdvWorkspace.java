@@ -16,6 +16,7 @@ import java.awt.CardLayout;
 import java.awt.FlowLayout;
 import java.awt.GridBagLayout;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import javax.swing.ButtonGroup;
@@ -29,7 +30,7 @@ import javax.swing.SwingUtilities;
  * Bibliotheken, Objekte und Quelltext ({@link NdvBrowser}), unten Zustand und Aktionen. Die Sitzungen gehören dem
  * Anwendungsfall {@link NdvSessions}; Wechsel des Bereichs oder der Perspektive trennen nichts und laden nichts.
  */
-public final class NdvWorkspace extends JPanel {
+public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
 
     /**
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
@@ -67,6 +68,8 @@ public final class NdvWorkspace extends JPanel {
     private final Map<NdvSession, JPanel> tabOf = new LinkedHashMap<>();
     /** Sitzungen, die noch nie verbunden waren: ihr erster Erfolg wird gemerkt, ihr Fehlschlag zeigt das Formular. */
     private final java.util.Set<NdvSession> fresh = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Analysen der offenen Sitzungen, die gewählte zuerst; gelesen auch abseits des EDT (Beziehungen im Editor). */
+    private volatile List<com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis> analyses = List.of();
 
     /** @param editors der gemeinsame Editor des Command Deck; NDV öffnet seine Quelltexte darin */
     public NdvWorkspace(NdvSessions sessions, ServerAccounts accounts, EditorSessions editors) {
@@ -104,8 +107,8 @@ public final class NdvWorkspace extends JPanel {
         center.setOpaque(false);
         center.add(formStage, NEW);
 
-        // Fuß wie in den anderen Bereichen (DeckBars): nur die Aktionen der gewählten Sitzung, der Stand steht in der
-        // Statuszeile der App. Das Formular hat keine Aktionen unten.
+        // Kein eigener Fuß: die Aktionen der gewählten Sitzung stehen neben der Lupe der gemeinsamen Fußleiste
+        // (footTools), der Stand in der Statuszeile der App. Das Formular hat keine Aktionen unten.
         foot.setOpaque(false);
         JPanel formFoot = new JPanel();
         formFoot.setOpaque(false);
@@ -113,7 +116,6 @@ public final class NdvWorkspace extends JPanel {
 
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
-        add(DeckBars.foot(null, foot), BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.all().forEach(this::added);
@@ -128,6 +130,7 @@ public final class NdvWorkspace extends JPanel {
         }
         NdvBrowser browser = new NdvBrowser(session, sessions, editors, background, () -> closeSession(session));
         browsers.put(session, browser);
+        refreshAnalyses();
         String key = session.id();
         center.add(browser, key);
         tools.add(browser.tools(), key);
@@ -137,22 +140,9 @@ public final class NdvWorkspace extends JPanel {
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         pill.getAccessibleContext().setAccessibleName(session.label());
         pill.addActionListener(e -> select(session));
-        pill.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent event) {
-                if (SwingUtilities.isMiddleMouseButton(event)) {
-                    closeSession(session);
-                }
-            }
-        });
-        // Das ✕ trennt und schließt in einem Schritt (Angelo 23.11.), wie im Terminal direkt hinter dem Reiter.
-        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
-                ComposerIcons.close(), "Trennen und schließen (auch Mittelklick auf den Reiter)").compact();
-        cross.addActionListener(e -> closeSession(session));
-        JPanel tab = new JPanel(new BorderLayout(0, 0));
-        tab.setOpaque(false);
-        tab.add(pill, BorderLayout.CENTER);
-        tab.add(cross, BorderLayout.EAST);
+        // Das ✕ trennt und schließt in einem Schritt (Angelo 23.11.).
+        JPanel tab = DeckBars.tab(pill, "Trennen und schließen (auch Mittelklick auf den Reiter)",
+                () -> closeSession(session));
         pillGroup.add(pill);
         pills.add(tab, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
@@ -201,6 +191,7 @@ public final class NdvWorkspace extends JPanel {
     /** Zeigt die Sitzung (oder mit {@code null} das Formular „Neue Verbindung“). */
     void select(NdvSession session) {
         selected = session;
+        refreshAnalyses();
         ComposerToggleButton pill = session == null ? newPill : pillOf.get(session);
         if (pill != null) {
             pill.setSelected(true);
@@ -252,6 +243,7 @@ public final class NdvWorkspace extends JPanel {
         fresh.remove(session);
         sessions.close(session);
         NdvBrowser browser = browsers.remove(session);
+        refreshAnalyses();
         if (browser != null) {
             browser.closeDocuments();
             center.remove(browser);
@@ -273,6 +265,70 @@ public final class NdvWorkspace extends JPanel {
         NdvBrowser browser = selected == null ? null : browsers.get(selected);
         statusInfo.show(browser == null ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(NO_SESSION)
                 : browser.statusNote());
+    }
+
+    /**
+     * Die Aktionen der gewählten Sitzung, mittig neben der Lupe in der gemeinsamen Fußleiste des Command Deck; das
+     * Formular „Neue Verbindung“ hat keine.
+     */
+    @Override
+    public javax.swing.JComponent footTools() {
+        return foot;
+    }
+
+    private void refreshAnalyses() {
+        List<com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis> list = new java.util.ArrayList<>();
+        NdvBrowser first = selected == null ? null : browsers.get(selected);
+        if (first != null) {
+            list.add(first.analysis());
+        }
+        for (NdvBrowser browser : browsers.values()) {
+            if (browser != first) {
+                list.add(browser.analysis());
+            }
+        }
+        analyses = List.copyOf(list);
+    }
+
+    /** Die Analysen der offenen Sitzungen, die gewählte zuerst (für die Natural-Beziehungen im Editor). */
+    List<com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis> analyses() {
+        return analyses;
+    }
+
+    /**
+     * Natural-Programm aus der JCL ({@code STACK=(LOGON steplib;programm)}) in der gewählten Sitzung öffnen, wie
+     * {@code MainFrame.openNaturalFromJcl}. Ohne Sitzung sagt die Statuszeile, dass erst verbunden werden muss.
+     *
+     * @return ob eine Sitzung das Öffnen übernommen hat
+     */
+    boolean openFromJcl(String stepLib, String program) {
+        NdvBrowser browser = selectedBrowser();
+        if (browser == null) {
+            statusInfo.show(warning("„" + program + "“ aus der JCL: zuerst mit NDV verbinden"));
+            return false;
+        }
+        browser.openFromJcl(stepLib, program);
+        return true;
+    }
+
+    /** Ein Natural-Objekt ({@code ndv://LIB/OBJEKT}) in der gewählten Sitzung öffnen und zur Zeile springen. */
+    boolean openNatural(String library, String object, int line) {
+        NdvBrowser browser = selectedBrowser();
+        if (browser == null) {
+            statusInfo.show(warning("„" + object + "“: zuerst mit NDV verbinden"));
+            return false;
+        }
+        browser.openInLibrary(library, object, line);
+        return true;
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.controls.StatusNote warning(String text) {
+        return new com.aresstack.spaceharvester.app.ui.controls.StatusNote(text,
+                com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.WARNING, null, null);
+    }
+
+    private NdvBrowser selectedBrowser() {
+        return selected == null ? null : browsers.get(selected);
     }
 
     /** Für Tests: der Text in der Statuszeile. */

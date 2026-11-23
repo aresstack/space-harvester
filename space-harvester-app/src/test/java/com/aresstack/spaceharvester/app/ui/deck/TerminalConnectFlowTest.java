@@ -78,6 +78,11 @@ class TerminalConnectFlowTest {
             assertThat(form.getParent()).as("kein Formular bei jedem Start").isNull();
             deck.terminal().showForm();
             assertThat(form.getParent()).as("auf Wunsch doch").isNotNull();
+            // Die F-Tasten stehen in der Fußleiste des Deck neben der Lupe, keine eigene Leiste darunter.
+            assertThat(javax.swing.SwingUtilities.isDescendingFrom(deck.terminal().functionKeys(),
+                    deck.terminal().footTools())).isTrue();
+            assertThat(((java.awt.BorderLayout) deck.terminal().getLayout())
+                    .getLayoutComponent(java.awt.BorderLayout.SOUTH)).isNull();
         });
     }
 

@@ -43,7 +43,7 @@ import javax.swing.SwingUtilities;
  * der gewählten Sitzung über dem gemeinsamen Statusband. Die Sitzungen gehören dem Anwendungsfall
  * {@link TerminalSessions}; Wechsel des Bereichs oder der Perspektive trennen nichts.
  */
-public final class TerminalWorkspace extends JPanel {
+public final class TerminalWorkspace extends JPanel implements DeckBars.FootTools {
 
     /**
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
@@ -90,8 +90,10 @@ public final class TerminalWorkspace extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.IconButton more;
     /** Höhe der Kopfzeile samt Linie: wie alle Bereiche des Command Deck ({@link DeckBars}). */
     static final int HEAD_HEIGHT = DeckBars.HEAD_HEIGHT;
-    /** Höhe der F-Tasten-Leiste unten: wie die Fußleiste des Space Harvesters ({@link DeckBars}). */
+    /** Höhe der F-Tasten-Leiste unten: die Fußleiste des Command Deck mit der Lupe ({@link DeckBars}). */
     static final int FOOT_HEIGHT = DeckBars.FOOT_HEIGHT;
+    /** Die F-Tasten für die Fußleiste des Command Deck, mittig neben der Lupe. */
+    private final JPanel footKeys = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout());
     /** Als Lesezeichen merken: Ziel, Anmeldung und Makro (Stern in MainframeMate). */
     private final com.aresstack.spaceharvester.app.ui.IconButton star;
     private final TerminalSettings settings;
@@ -107,6 +109,7 @@ public final class TerminalWorkspace extends JPanel {
     private final java.util.Set<Component> keyWatched = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
     private final Runnable screenChanged = () -> SwingUtilities.invokeLater(() -> {
         readLegend();
+        forgetStaleFinds();
         showAssist();
     });
     /** KI-Maskenassistent (#1151): Hinweis und Zurücknehmen links neben den Aktionen. */
@@ -235,12 +238,10 @@ public final class TerminalWorkspace extends JPanel {
         }
         JPanel headBar = DeckBars.head(head, actions);
 
-        // Unten nur die F-Tasten, mittig, so hoch wie die Fußleiste des Space Harvesters; der Stand steht in der
-        // Statuszeile der App, nie hier.
-        JPanel keys = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout());
-        keys.setOpaque(false);
-        keys.add(functionKeys);
-        JPanel foot = DeckBars.foot(keys, null);
+        // Unten nur die F-Tasten, mittig neben der Lupe in der Fußleiste des Command Deck ({@link #footTools()}); der
+        // Stand steht in der Statuszeile der App, nie hier.
+        footKeys.setOpaque(false);
+        footKeys.add(functionKeys);
 
         // Mitte: nur der Himmel mit dem Terminal bzw. dem Formular.
         JPanel stage = new JPanel(new BorderLayout());
@@ -249,7 +250,6 @@ public final class TerminalWorkspace extends JPanel {
 
         add(headBar, BorderLayout.NORTH);
         add(stage, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.onReopened((lost, fresh) -> SwingUtilities.invokeLater(() -> reopened(lost, fresh)));
@@ -510,6 +510,9 @@ public final class TerminalWorkspace extends JPanel {
             view.addScreenListener(screenChanged);
         });
         session.view(JComponent.class).filter(keyWatched::add).ifPresent(screen -> {
+            // Die Lupe der Fußleiste sucht auch im selbst gezeichneten Bild.
+            session.view(TerminalView.class).ifPresent(view -> screen.putClientProperty(
+                    com.aresstack.spaceharvester.app.ui.FindableSurface.KEY, new ScreenFind(view)));
             screen.addKeyListener(new java.awt.event.KeyAdapter() {
                 @Override
                 public void keyPressed(java.awt.event.KeyEvent event) {
@@ -582,6 +585,67 @@ public final class TerminalWorkspace extends JPanel {
 
     static final String UNDO_TIP =
             "KI-Eingaben zurücknehmen: setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt";
+
+    /** F-Tasten neben die Lupe der gemeinsamen Fußleiste (Angelo, 23.11.2026: überall dieselbe Leiste). */
+    @Override
+    public JComponent footTools() {
+        return footKeys;
+    }
+
+    /** Ein neues Bild vom Host: Treffer der Lupe auf dem alten Bild wegnehmen, sie stünden an falscher Stelle. */
+    private void forgetStaleFinds() {
+        view(JComponent.class).map(screen -> screen.getClientProperty(
+                com.aresstack.spaceharvester.app.ui.FindableSurface.KEY)).filter(ScreenFind.class::isInstance)
+                .map(ScreenFind.class::cast).ifPresent(ScreenFind::forgetIfChanged);
+    }
+
+    /**
+     * Das Terminalbild für die Lupe: Der Text ist {@link TerminalView#text()} (Zeilen mit Zeilenumbruch), die Treffer
+     * malt die Anzeige als Pufferbereiche.
+     */
+    static final class ScreenFind implements com.aresstack.spaceharvester.app.ui.FindableSurface {
+
+        private final TerminalView view;
+        private String marked;
+
+        ScreenFind(TerminalView view) {
+            this.view = view;
+        }
+
+        @Override
+        public String findText() {
+            return view.text();
+        }
+
+        @Override
+        public void showFound(java.util.List<int[]> found, int current) {
+            String text = view.text();
+            marked = found.isEmpty() ? null : text;
+            view.markFound(spans(text, found), current);
+        }
+
+        void forgetIfChanged() {
+            if (marked != null && !marked.equals(view.text())) {
+                marked = null;
+                view.markFound(java.util.List.of(), -1);
+            }
+        }
+
+        /** Textstellen in Pufferbereiche: Jede Zeile ist {@code Spalten + 1} Zeichen lang (der Zeilenumbruch). */
+        static java.util.List<TerminalView.Span> spans(String text, java.util.List<int[]> found) {
+            int newline = text.indexOf('\n');
+            int columns = newline < 0 ? text.length() : newline;
+            java.util.List<TerminalView.Span> spans = new java.util.ArrayList<>();
+            if (columns <= 0) {
+                return spans;
+            }
+            for (int[] range : found) {
+                int start = (range[0] / (columns + 1)) * columns + range[0] % (columns + 1);
+                spans.add(new TerminalView.Span(start, range[1] - range[0]));
+            }
+            return spans;
+        }
+    }
 
     static String assistText(int fields) {
         return (fields == 1 ? "KI hat 1 Feld" : "KI hat " + fields + " Felder")
