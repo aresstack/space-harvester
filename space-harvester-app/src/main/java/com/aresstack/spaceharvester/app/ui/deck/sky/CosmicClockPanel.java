@@ -67,6 +67,24 @@ public class CosmicClockPanel extends JPanel {
         this(120);
     }
 
+    /** Whether the sky is drawn; off = classic black background (MainframeMate: cosmicClockEnabled). */
+    private volatile boolean skyEnabled = true;
+
+    /** Switches the sky on or off; off stops the animation and leaves a plain black background. */
+    public void setSkyEnabled(boolean enabled) {
+        skyEnabled = enabled;
+        if (!enabled) {
+            stop();
+        } else if (isShowing()) {
+            start();
+        }
+        repaint();
+    }
+
+    public boolean isSkyEnabled() {
+        return skyEnabled;
+    }
+
     /** Set whether constellation names should be displayed in German (true) or English/Latin (false). */
     public void setUseGermanNames(boolean german) {
         this.useGermanNames = german;
@@ -97,7 +115,7 @@ public class CosmicClockPanel extends JPanel {
 
     /** Start the animation timer (~20 fps). */
     public void start() {
-        if (animationTimer != null) return;
+        if (animationTimer != null || !skyEnabled) return;
         animationTimer = new Timer(50, e -> repaint());
         animationTimer.setCoalesce(true);
         animationTimer.start();
@@ -189,6 +207,10 @@ public class CosmicClockPanel extends JPanel {
             // Black sky background
             g.setColor(Color.BLACK);
             g.fillRect(0, 0, w, h);
+            if (!skyEnabled) {
+                visibleBodies.clear();
+                return;
+            }
 
             // Subtle horizon gradient (very dark blue at the bottom few pixels)
             int horizonH = Math.max(h / 15, 4);

@@ -42,11 +42,15 @@ final class ConnectForm extends JPanel {
 
     static final String ENTRY_KEY = "deck.terminal.entry";
     static final String MODEL_KEY = "deck.terminal.model";
-    static final String TLS_KEY = "deck.terminal.tls";
+    /** Neuer Schlüssel: die alte Vorgabe „ohne TLS“ war falsch (MainframeMate: Port 992 mit TLS) und bleibt nicht hängen. */
+    static final String TLS_KEY = "deck.terminal.use-tls";
     static final String CODE_PAGE_KEY = "deck.terminal.code-page";
     static final String KEEP_ALIVE_KEY = "deck.terminal.keep-alive";
     static final String AUTO_LOGIN_KEY = "deck.terminal.auto-login";
-    static final String COMMAND_KEY = "deck.terminal.command";
+    /** Neuer Schlüssel: Vorgabe „a“ wie tn3270AutoCommandText in MainframeMate (das alte leere Feld bleibt nicht hängen). */
+    static final String COMMAND_KEY = "deck.terminal.start-command";
+    /** Startkommando nach der Anmeldung, wie in MainframeMate voreingestellt. */
+    static final String DEFAULT_COMMAND = "a";
 
     final JComboBox<ServerAccount> server = Comic.combo(ConnectForm::accountText);
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
@@ -63,8 +67,23 @@ final class ConnectForm extends JPanel {
     private final JLabel advancedToggle = new JLabel();
     private final ServerAccounts accounts;
     private ServerAccount shownAccount;
-    private final BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect;
+    private final java.util.function.Consumer<Request> connect;
     private boolean loaded;
+    /** Terminal-Lesezeichen (MainframeMate): Ziel, KeePass-Eintrag, Makro. Nur sichtbar, wenn es welche gibt. */
+    private final TerminalBookmarks bookmarks;
+    final JComboBox<TerminalBookmarks.Bookmark> bookmark = Comic.combo();
+    private final JPanel bookmarkRow = new JPanel(new BorderLayout(6, 0));
+
+    /**
+     * Was „Verbinden“ (oder ein Lesezeichen) öffnet: Ziel, Anmeldung, dazu woher sie kam (für ein späteres
+     * Lesezeichen) und das abzuspielende Makro.
+     *
+     * @param entry   KeePass-Eintrag der Anmeldung, leer ohne automatische Anmeldung
+     * @param command Startkommando nach der Anmeldung
+     */
+    record Request(TerminalProfile profile, TerminalSessions.LoginSource login, String entry, String command,
+                   List<com.aresstack.spaceharvester.deck.terminal.TerminalMacro.Step> steps) {
+    }
 
     /** Beschriftung eines KeePass-Zugangs in den Auswahllisten des Command Deck: Eintrag und Benutzer. */
     static String accountText(Object value) {
@@ -74,9 +93,15 @@ final class ConnectForm extends JPanel {
     }
 
     ConnectForm(ServerAccounts accounts, BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect) {
+        this(accounts, new TerminalBookmarks(AppState.shared()),
+                request -> connect.accept(request.profile(), request.login()));
+    }
+
+    ConnectForm(ServerAccounts accounts, TerminalBookmarks bookmarks, java.util.function.Consumer<Request> connect) {
         super(new BorderLayout());
         this.accounts = accounts;
         this.connect = connect;
+        this.bookmarks = bookmarks;
         setOpaque(false);
         server.addActionListener(e -> serverChanged());
         IconButton reload = new IconButton(Glyph.REFRESH, "Einträge neu aus KeePass laden");
@@ -89,14 +114,15 @@ final class ConnectForm extends JPanel {
         row(fields, 0, "Server", serverFrame);
         row(fields, 1, "", serverState);
         row(fields, 2, "Port", port);
-        row(fields, 3, "", autoLogin);
+        // TLS ist eine Entscheidung (wie in MainframeMate sichtbar): mit TLS gilt Port 992, ohne Port 23.
+        row(fields, 3, "", tls);
+        row(fields, 4, "", autoLogin);
         advanced.setOpaque(false);
         row(advanced, 0, "Host", host);
         row(advanced, 1, "Startkommando", command);
         row(advanced, 2, "Modell", new InputFrame(model));
-        row(advanced, 3, "", tls);
-        row(advanced, 4, "Codepage", codePage);
-        row(advanced, 5, "Keep-Alive (s)", keepAlive);
+        row(advanced, 3, "Codepage", codePage);
+        row(advanced, 4, "Keep-Alive (s)", keepAlive);
         advanced.setVisible(false);
         advancedToggle.setFont(Comic.regular(12.5f));
         advancedToggle.setForeground(Comic.BLUE);
@@ -118,10 +144,34 @@ final class ConnectForm extends JPanel {
         host.addActionListener(e -> submit());
         port.addActionListener(e -> submit());
 
+        // Lesezeichen: wählen und öffnen (verbindet, meldet an, spielt das Makro ab) oder entfernen.
+        var openBookmark = Comic.button("Öffnen", "Lesezeichen öffnen: verbinden, anmelden, Makro abspielen");
+        openBookmark.addActionListener(e -> openBookmark());
+        IconButton dropBookmark = new IconButton(Glyph.TRASH, "Lesezeichen entfernen");
+        dropBookmark.addActionListener(e -> dropBookmark());
+        InputFrame bookmarkFrame = new InputFrame(bookmark);
+        bookmarkFrame.addButton(dropBookmark);
+        JLabel bookmarkLabel = Comic.text("Lesezeichen");
+        bookmarkLabel.setPreferredSize(new Dimension(110, bookmarkLabel.getPreferredSize().height));
+        bookmarkRow.setOpaque(false);
+        bookmarkRow.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
+        bookmarkRow.add(bookmarkLabel, BorderLayout.WEST);
+        bookmarkRow.add(bookmarkFrame, BorderLayout.CENTER);
+        bookmarkRow.add(openBookmark, BorderLayout.EAST);
+        bookmarks.observe(() -> {
+            if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+                showBookmarks();
+            } else {
+                javax.swing.SwingUtilities.invokeLater(this::showBookmarks);
+            }
+        });
+        showBookmarks();
+
         JPanel body = new JPanel();
         body.setOpaque(false);
         body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
-        for (JComponent part : new JComponent[] {fields, advancedToggle, advanced, problem, Comic.row(button)}) {
+        for (JComponent part : new JComponent[] {fields, advancedToggle, advanced, problem, Comic.row(button),
+                bookmarkRow}) {
             part.setAlignmentX(LEFT_ALIGNMENT);
             body.add(part);
         }
@@ -232,8 +282,14 @@ final class ConnectForm extends JPanel {
         if (account == null || !autoLogin.isSelected()) {
             return null;
         }
-        String entry = account.entry();
-        String startCommand = command.getText();
+        return loginFor(account.entry(), command.getText());
+    }
+
+    /** Anmeldung über einen KeePass-Eintrag; das Passwort wird erst beim Aufruf gelesen und danach gelöscht. */
+    TerminalSessions.LoginSource loginFor(String entry, String startCommand) {
+        if (entry == null || entry.isBlank()) {
+            return null;
+        }
         return () -> {
             try (ServerCredentials credentials = accounts.credentials(entry)) {
                 char[] password = credentials.copyPassword();
@@ -268,7 +324,44 @@ final class ConnectForm extends JPanel {
         }
         problem.setText(" ");
         remember();
-        connect.accept(profile, login());
+        TerminalSessions.LoginSource login = login();
+        connect.accept(new Request(profile, login, login == null ? "" : selected().entry(), command.getText().trim(),
+                List.of()));
+    }
+
+    private void showBookmarks() {
+        Object wanted = bookmark.getSelectedItem();
+        List<TerminalBookmarks.Bookmark> list = bookmarks.all();
+        DefaultComboBoxModel<TerminalBookmarks.Bookmark> items = new DefaultComboBoxModel<>();
+        list.forEach(items::addElement);
+        bookmark.setModel(items);
+        list.stream().filter(candidate -> wanted instanceof TerminalBookmarks.Bookmark old
+                && old.name().equals(candidate.name())).findFirst().ifPresent(bookmark::setSelectedItem);
+        bookmarkRow.setVisible(!list.isEmpty());
+        revalidate();
+        repaint();
+    }
+
+    /** Öffnet das gewählte Lesezeichen wie in MainframeMate: verbinden, anmelden, Makro abspielen. */
+    void openBookmark() {
+        if (!(bookmark.getSelectedItem() instanceof TerminalBookmarks.Bookmark chosen)) {
+            return;
+        }
+        problem.setText(" ");
+        connect.accept(new Request(chosen.profile(), loginFor(chosen.entry(), chosen.command()), chosen.entry(),
+                chosen.command(), chosen.steps()));
+    }
+
+    private void dropBookmark() {
+        if (bookmark.getSelectedItem() instanceof TerminalBookmarks.Bookmark chosen
+                && com.aresstack.spaceharvester.app.ui.Dialogs.confirm(this, "Lesezeichen entfernen",
+                "Lesezeichen „" + chosen.name() + "“ wirklich entfernen?")) {
+            bookmarks.remove(chosen.name());
+        }
+    }
+
+    boolean bookmarksShown() {
+        return bookmarkRow.isVisible();
     }
 
     String problemText() {
@@ -299,11 +392,12 @@ final class ConnectForm extends JPanel {
                 model.setSelectedItem(candidate);
             }
         }
-        tls.setSelected(state.getBoolean(TLS_KEY, false));
+        tls.setSelected(state.getBoolean(TLS_KEY, true));
         codePage.setText(nonNull(state.get(CODE_PAGE_KEY)));
         keepAlive.setText(nonNull(state.get(KEEP_ALIVE_KEY)));
         autoLogin.setSelected(state.getBoolean(AUTO_LOGIN_KEY, true));
-        command.setText(nonNull(state.get(COMMAND_KEY)));
+        String startCommand = state.get(COMMAND_KEY);
+        command.setText(startCommand == null ? DEFAULT_COMMAND : startCommand);
     }
 
     private static String nonNull(String text) {
