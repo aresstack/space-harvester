@@ -134,7 +134,7 @@ class GlossaryTabTest {
         assertThat(glossary.reads.stream().filter(read -> read.startsWith("full"))).hasSize(1);
         assertThat(glossary.reads).last().asString().startsWith("refine ");
 
-        ExportPanel.Selection space = new ExportPanel.Selection("wiki", "DH", null, "Datenhaus");
+        ExportPanel.Selection space = new ExportPanel.Selection.Node("wiki", "DH", null, "Datenhaus");
         SwingUtilities.invokeAndWait(() -> {
             tab[0].showing = () -> true;
             tab[0].selection(space);
@@ -257,7 +257,7 @@ class GlossaryTabTest {
         SwingUtilities.invokeAndWait(() -> {
             tab[0] = new GlossaryTab(null, () -> Optional.of(glossary));
             tab[0].showing = () -> true;
-            tab[0].selection(new ExportPanel.Selection("wiki", "DH", "42", "Datenprodukt"));
+            tab[0].selection(new ExportPanel.Selection.Node("wiki", "DH", "42", "Datenprodukt"));
         });
         await("geladen, leer", () -> GlossaryTab.EMPTY.equals(tab[0].directory().hint()));
         SwingUtilities.invokeAndWait(() -> tab[0].detectButton().doClick());

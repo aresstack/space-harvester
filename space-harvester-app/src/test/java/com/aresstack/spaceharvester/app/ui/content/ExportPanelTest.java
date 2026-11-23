@@ -93,7 +93,7 @@ class ExportPanelTest {
         SwingUtilities.invokeAndWait(() -> {
             panel[0] = new ExportPanel(context);
             assertThat(panel[0].exportBlocked("pdf")).as("ohne Auswahl").isEqualTo(ExportPanel.NO_SELECTION);
-            panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
+            panel[0].selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
         });
         await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
         SwingUtilities.invokeAndWait(() -> {
@@ -127,7 +127,7 @@ class ExportPanelTest {
         ExportPanel[] panel = new ExportPanel[1];
         SwingUtilities.invokeAndWait(() -> {
             panel[0] = new ExportPanel(context);
-            panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
+            panel[0].selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
         });
         await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
         SwingUtilities.invokeAndWait(() -> {
@@ -167,7 +167,7 @@ class ExportPanelTest {
         ExportPanel[] panel = new ExportPanel[1];
         SwingUtilities.invokeAndWait(() -> {
             panel[0] = new ExportPanel(context);
-            panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
+            panel[0].selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
         });
         await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
         SwingUtilities.invokeAndWait(() -> {
@@ -195,7 +195,7 @@ class ExportPanelTest {
             panel[0] = new ExportPanel(context);
             // Ohne Auswahl nur der Hinweis; die Quelle zeigt ihre Spaces; erst der Space zeigt Stand und Ausgabe.
             assertThat(panel[0].exportBlocked("pdf")).isEqualTo(ExportPanel.NO_SELECTION);
-            panel[0].selection(new ExportPanel.Selection("handbuch", space, null, space));
+            panel[0].selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
         });
         // Sobald der Download fertig ist, hängt der Datenbestand an der Auswahl (Auftragsmeldung, kein Zeitgeber).
         await(() -> panel[0].shownDataset() != null && panel[0].shownDataset().exportId().equals(job));
@@ -240,13 +240,39 @@ class ExportPanelTest {
                 .anyMatch(j -> "true".equals(j.parameter("holdings")));
         // Eine Seite derselben Quelle hat keinen eigenen Download: „Noch nicht geladen“, der Datenbestand des Space
         // gilt nicht für sie; der Knopf bleibt frei und lädt erst (Angelo 16.11.2026).
-        SwingUtilities.invokeAndWait(() -> panel[0].selection(new ExportPanel.Selection("handbuch", space, "x",
+        SwingUtilities.invokeAndWait(() -> panel[0].selection(new ExportPanel.Selection.Node("handbuch", space, "x",
                 "Seite x")));
         await(() -> panel[0].shownDataset() == null);
         SwingUtilities.invokeAndWait(() -> assertThat(panel[0].exportBlocked("pdf")).isNull());
     }
 
     /** Stand = jüngster fertiger Download genau dieser Auswahl; ein Seiten-Download zählt nicht für den Space. */
+    @Test
+    void aCollectionIsNeverTheGlobalSelectionAndCoversOnlyItsRoots() {
+        // ADR 0034 §3: „global“ heißt All, nie „ohne Quelle“; eine Sammlung gilt sonst als „Alle Wissensquellen“.
+        com.aresstack.spaceharvester.application.holdings.Selection.Root page =
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree("wiki", "OPS", "4711");
+        com.aresstack.spaceharvester.application.holdings.Selection.Root space =
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.space("wiki", "DEV");
+        ExportPanel.Selection collection = new ExportPanel.Selection.Collection("f1", "Betrieb", List.of(page, space),
+                true);
+
+        assertThat(collection.global()).isFalse();
+        assertThat(collection.sourceId()).isNull();
+        assertThat(ExportPanel.Selection.ALL.global()).isTrue();
+        assertThat(ExportPanel.Selection.of(null, null, null, "egal")).isSameAs(ExportPanel.Selection.ALL);
+        assertThat(collection.toCore(null).roots()).containsExactly(page, space);
+        assertThat(collection.covers(job("a", "OPS", "4711", JobState.COMPLETED, null))).isTrue();
+        assertThat(collection.covers(job("b", "DEV", null, JobState.COMPLETED, null))).isTrue();
+        assertThat(collection.covers(job("c", "OPS", null, JobState.COMPLETED, null))).isFalse();
+        // Die aufgelösten Wurzeln stehen in equals: eine Änderung am Ordner ist eine neue Auswahl.
+        assertThat(collection).isNotEqualTo(new ExportPanel.Selection.Collection("f1", "Betrieb", List.of(page), true));
+        assertThat(collection.normalized()).isEqualTo(
+                new ExportPanel.Selection.Collection("f1", "Umbenannt", List.of(page, space), true).normalized());
+        assertThat(new ExportPanel.Selection.Node("wiki", "OPS", null, "Betrieb").toCore(null).roots())
+                .containsExactly(com.aresstack.spaceharvester.application.holdings.Selection.Root.space("wiki", "OPS"));
+    }
+
     @Test
     void theStandIsTheNewestCompletedDownloadOfExactlyTheSelection() {
         JobStatus older = job("j1", "OPS", null, JobState.COMPLETED, Instant.parse("2026-11-13T18:00:00Z"));
@@ -255,9 +281,9 @@ class ExportPanelTest {
         JobStatus other = job("j4", "DEV", null, JobState.COMPLETED, Instant.parse("2026-11-13T19:40:00Z"));
         JobStatus running = job("j5", "OPS", null, JobState.RUNNING, null);
         List<JobStatus> jobs = List.of(older, newer, page, other, running);
-        ExportPanel.Selection space = new ExportPanel.Selection("wiki", "OPS", null, "Betrieb");
-        ExportPanel.Selection subtree = new ExportPanel.Selection("wiki", "OPS", "4711", "Seite");
-        ExportPanel.Selection none = new ExportPanel.Selection("wiki", "QA", null, "QA");
+        ExportPanel.Selection space = new ExportPanel.Selection.Node("wiki", "OPS", null, "Betrieb");
+        ExportPanel.Selection subtree = new ExportPanel.Selection.Node("wiki", "OPS", "4711", "Seite");
+        ExportPanel.Selection none = new ExportPanel.Selection.Node("wiki", "QA", null, "QA");
 
         assertThat(ExportPanel.newest(jobs, space)).isSameAs(newer);
         assertThat(ExportPanel.running(jobs, space)).isSameAs(running);
@@ -373,7 +399,7 @@ class ExportPanelTest {
                 return !question.contains("Word");
             });
             // Eine Quelle, deren Space nie geladen wurde.
-            panel[0].selection(new ExportPanel.Selection("anhang", null, null, "Anhang"));
+            panel[0].selection(new ExportPanel.Selection.Node("anhang", null, null, "Anhang"));
         });
         await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).contains(ExportPanel.NOTHING_YET));
         SwingUtilities.invokeAndWait(() -> {
@@ -410,7 +436,7 @@ class ExportPanelTest {
 
         // Eine einzelne Quelle startet ohne Rückfrage, nur für ihre Spaces.
         asked.clear();
-        SwingUtilities.invokeAndWait(() -> panel[0].selection(new ExportPanel.Selection("anhang", null, null, "Anhang")));
+        SwingUtilities.invokeAndWait(() -> panel[0].selection(new ExportPanel.Selection.Node("anhang", null, null, "Anhang")));
         await(() -> texts(panel[0].spaces).stream().filter(text -> text.contains(".pdf")).count() == 1);
         SwingUtilities.invokeAndWait(() -> panel[0].output("analysis"));
         await(() -> workspace.jobs().stream().filter(job -> job.type() == JobType.CONVERSION
