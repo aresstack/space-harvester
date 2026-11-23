@@ -43,7 +43,7 @@ import javax.swing.SwingUtilities;
  * der gewählten Sitzung über dem gemeinsamen Statusband. Die Sitzungen gehören dem Anwendungsfall
  * {@link TerminalSessions}; Wechsel des Bereichs oder der Perspektive trennen nichts.
  */
-public final class TerminalWorkspace extends JPanel {
+public final class TerminalWorkspace extends JPanel implements DeckBars.FootTools {
 
     /**
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
@@ -90,8 +90,10 @@ public final class TerminalWorkspace extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.IconButton more;
     /** Höhe der Kopfzeile samt Linie: wie alle Bereiche des Command Deck ({@link DeckBars}). */
     static final int HEAD_HEIGHT = DeckBars.HEAD_HEIGHT;
-    /** Höhe der F-Tasten-Leiste unten: wie die Fußleiste des Space Harvesters ({@link DeckBars}). */
+    /** Höhe der F-Tasten-Leiste unten: die Fußleiste des Command Deck mit der Lupe ({@link DeckBars}). */
     static final int FOOT_HEIGHT = DeckBars.FOOT_HEIGHT;
+    /** Die F-Tasten für die Fußleiste des Command Deck, mittig neben der Lupe. */
+    private final JPanel footKeys = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout());
     /** Als Lesezeichen merken: Ziel, Anmeldung und Makro (Stern in MainframeMate). */
     private final com.aresstack.spaceharvester.app.ui.IconButton star;
     private final TerminalSettings settings;
@@ -236,12 +238,10 @@ public final class TerminalWorkspace extends JPanel {
         }
         JPanel headBar = DeckBars.head(head, actions);
 
-        // Unten nur die F-Tasten, mittig, so hoch wie die Fußleiste des Space Harvesters; der Stand steht in der
-        // Statuszeile der App, nie hier.
-        JPanel keys = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout());
-        keys.setOpaque(false);
-        keys.add(functionKeys);
-        JPanel foot = DeckBars.foot(keys, null);
+        // Unten nur die F-Tasten, mittig neben der Lupe in der Fußleiste des Command Deck ({@link #footTools()}); der
+        // Stand steht in der Statuszeile der App, nie hier.
+        footKeys.setOpaque(false);
+        footKeys.add(functionKeys);
 
         // Mitte: nur der Himmel mit dem Terminal bzw. dem Formular.
         JPanel stage = new JPanel(new BorderLayout());
@@ -250,7 +250,6 @@ public final class TerminalWorkspace extends JPanel {
 
         add(headBar, BorderLayout.NORTH);
         add(stage, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.onReopened((lost, fresh) -> SwingUtilities.invokeLater(() -> reopened(lost, fresh)));
@@ -586,6 +585,12 @@ public final class TerminalWorkspace extends JPanel {
 
     static final String UNDO_TIP =
             "KI-Eingaben zurücknehmen: setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt";
+
+    /** F-Tasten neben die Lupe der gemeinsamen Fußleiste (Angelo, 23.11.2026: überall dieselbe Leiste). */
+    @Override
+    public JComponent footTools() {
+        return footKeys;
+    }
 
     /** Ein neues Bild vom Host: Treffer der Lupe auf dem alten Bild wegnehmen, sie stünden an falscher Stelle. */
     private void forgetStaleFinds() {
