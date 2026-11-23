@@ -59,6 +59,12 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
    eigener Knoten auf der Liste (ohne Unterseiten, `PageReleaseService.releasePage`). Im Rückfall ohne Werkzeuge gilt
    die bisherige Regel von ADR 0028 (die Auswahl beim Senden). Herkunft „chat“ und Zeitpunkt wie bisher.
 
+9. **Die Ansicht vorne bestimmt den Bereich** (Angelo, 23.11.2026): Ist die Leseansicht vorne und zeigt sie eine
+   Seite, ist diese Seite der Bereich (samt Unterseiten wie eine gewählte Seite), auch wenn sie aus der Suche geöffnet
+   wurde und der Baum woanders steht. Ist die Suche vorne, ist es die Auswahl im Baum, also der Filter. Die Vorschläge
+   („Seite zusammenfassen“ …) und die Zeile „Wissen:“ folgen demselben Bereich. Der Baum wird dafür nie verändert
+   (`ChatPanel.reading`, `readingFront`, `scope`).
+
 ## Folgen
 
 - Große Bereiche kosten keinen Kontext mehr, solange das Modell nicht liest; die Qualität hängt davon ab, dass das
