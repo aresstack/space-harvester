@@ -128,4 +128,30 @@ class FtpSessionsTest {
         assertThatThrownBy(() -> session.files(FileConnection::home).get(10, TimeUnit.SECONDS))
                 .hasCauseInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void readsFollowTheRetryPolicyOfTheProfile() throws Exception {
+        FtpProfile once = host.profile().withRetry(new RetryPolicy(1, 0, false, 0, true, true, java.util.Set.of()));
+        FtpSession session = sessions.open(once, "Raumhafen", login("geheim"));
+        session.connect().get(10, TimeUnit.SECONDS);
+        host.dropConnections();
+        // Ein Versuch: der Abbruch kommt durch, der nächste Auftrag verbindet neu.
+        assertThatThrownBy(() -> session.files(files -> files.list("'KKR.JCL'")).get(10, TimeUnit.SECONDS))
+                .isInstanceOf(ExecutionException.class);
+        assertThat(session.files(files -> files.list("'KKR.JCL'")).get(10, TimeUnit.SECONDS)).hasSize(2);
+    }
+
+    @Test
+    void spoolNamesAreProbedOverParallelConnections() throws Exception {
+        host.jesInterfaceLevel1();
+        FtpProfile parallel = host.profile().withSpoolNaming(
+                new com.aresstack.spaceharvester.deck.ftp.jes.SpoolNaming(
+                        com.aresstack.spaceharvester.deck.ftp.jes.SpoolNaming.Mode.OFF, 2, false));
+        FtpSession session = sessions.open(parallel, "Raumhafen", login("geheim"));
+        session.connect().get(10, TimeUnit.SECONDS);
+        int before = host.logins();
+        java.util.Map<Integer, String> names = session.probeSpoolNames("JOB04700", 3).get(10, TimeUnit.SECONDS);
+        assertThat(names).containsEntry(1, "JESMSGLG").containsEntry(2, "JESJCL").containsEntry(3, "SYSPRINT");
+        assertThat(host.logins() - before).isEqualTo(2);
+    }
 }

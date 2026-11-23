@@ -350,6 +350,10 @@ public final class FakeMvsFtpHost implements AutoCloseable {
 
     /** {@code LIST 'X.*'} wie z/OS: eine Zeile je Dataset mit Dsorg PO (partitioniert) oder PS (sequenziell). */
     private void listDatasets(Client client, String name, PrintWriter out) throws IOException {
+        if (partitioned.containsKey(name)) {
+            listMembers(client, partitioned.get(name), out);
+            return;
+        }
         if (!name.endsWith(".*")) {
             reply(out, "550 No data sets found.");
             return;
@@ -369,6 +373,21 @@ public final class FakeMvsFtpHost implements AutoCloseable {
         if (count == 0) {
             reply(out, "550 No data sets found.");
             return;
+        }
+        send(client, out, text.toString());
+    }
+
+    /** {@code LIST 'PDS'} wie z/OS mit ISPF-Statistik: Größe = Zeilen, Id = Benutzer. */
+    private void listMembers(Client client, Map<String, String> members, PrintWriter out) throws IOException {
+        if (members.isEmpty()) {
+            reply(out, "550 No members found.");
+            return;
+        }
+        StringBuilder text = new StringBuilder(" Name     VV.MM   Created       Changed      Size  Init   Mod   Id\r\n");
+        for (Map.Entry<String, String> member : new TreeMap<>(members).entrySet()) {
+            int lines = member.getValue().isEmpty() ? 0 : member.getValue().split("\n", -1).length;
+            text.append(String.format(Locale.ROOT, "%-8s  01.00 2026/11/01 2026/11/20 10:15 %5d %5d     0 %s\r\n",
+                    member.getKey(), lines, lines, user));
         }
         send(client, out, text.toString());
     }

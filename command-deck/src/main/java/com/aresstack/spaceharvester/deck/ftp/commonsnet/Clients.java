@@ -17,20 +17,19 @@ final class Clients {
     static FTPClient connect(FtpProfile profile, String user, char[] password) throws IOException {
         FTPClient ftp = new FTPClient();
         ftp.setControlEncoding(profile.encoding());
-        if (profile.timeoutSeconds() > 0) {
-            Duration timeout = Duration.ofSeconds(profile.timeoutSeconds());
-            ftp.setDefaultTimeout((int) timeout.toMillis());
-            ftp.setConnectTimeout((int) timeout.toMillis());
-            ftp.setDataTimeout(timeout);
+        // Drei Zeitlimits wie MainframeMate (Connect, Control, Data); 0 heißt keines.
+        if (profile.connectTimeoutSeconds() > 0) {
+            int millis = (int) Duration.ofSeconds(profile.connectTimeoutSeconds()).toMillis();
+            ftp.setDefaultTimeout(millis);
+            ftp.setConnectTimeout(millis);
         }
+        ftp.setDataTimeout(Duration.ofSeconds(profile.dataTimeoutSeconds()));
         try {
             ftp.connect(profile.host(), profile.port());
             if (!FTPReply.isPositiveCompletion(ftp.getReplyCode())) {
                 throw new IOException("Verbindung zu " + profile.label() + " abgelehnt: " + reply(ftp));
             }
-            if (profile.timeoutSeconds() > 0) {
-                ftp.setSoTimeout(profile.timeoutSeconds() * 1000);
-            }
+            ftp.setSoTimeout(profile.controlTimeoutSeconds() * 1000);
             if (!ftp.login(user, new String(password))) {
                 throw new FtpReplyException("Anmeldung als " + user + " abgelehnt: " + reply(ftp),
                         ftp.getReplyCode());

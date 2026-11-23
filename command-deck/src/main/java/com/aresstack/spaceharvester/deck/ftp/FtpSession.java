@@ -19,8 +19,9 @@ import java.util.function.Consumer;
  *
  * <p>Jede Verbindung bedient einen Auftrag zur Zeit (FTP ist ein Zwiegespräch); Aufträge laufen auf dem
  * Hintergrund-Executor und liefern ein {@link CompletableFuture}. Bricht die Verbindung weg, wird beim nächsten
- * Auftrag neu verbunden; lesende Aufträge werden dabei einmal wiederholt (MainframeMate: zwei Versuche), schreibende
- * nie, damit nichts doppelt geschieht. Zustandswechsel melden die Beobachter, kein Abfragen.
+ * Auftrag neu verbunden; lesende Aufträge werden nach der {@link RetryPolicy} des Profils wiederholt (MainframeMate:
+ * Versuche, Wartezeit, Backoff, Antwortcodes), schreibende nie, damit nichts doppelt geschieht. Zustandswechsel melden
+ * die Beobachter, kein Abfragen.
  */
 public final class FtpSession {
 
@@ -46,6 +47,7 @@ public final class FtpSession {
     private final FtpProfile profile;
     private final CredentialSource credentials;
     private final Executor background;
+    private final FtpConnector connector;
     private final List<Consumer<FtpSession>> observers = new CopyOnWriteArrayList<>();
     private final ReentrantLock stateLock = new ReentrantLock();
     private final Lane<FileConnection> files;
@@ -62,7 +64,7 @@ public final class FtpSession {
         this.label = label == null || label.isBlank() ? profile.label() : label;
         this.credentials = Objects.requireNonNull(credentials, "credentials");
         this.background = Objects.requireNonNull(background, "background");
-        Objects.requireNonNull(connector, "connector");
+        this.connector = Objects.requireNonNull(connector, "connector");
         files = new Lane<>(connector::files, FileConnection::alive, FileConnection::close, true);
         jobs = new Lane<>(connector::jes, JesConnection::alive, JesConnection::close, false);
     }
@@ -144,6 +146,54 @@ public final class FtpSession {
         return submit(jobs, task, false);
     }
 
+    /**
+     * Lädt die DD-Namen der Spool-Dateien {@code 1..count} einzeln nach, über so viele eigene JES-Verbindungen, wie
+     * das Profil erlaubt (MainframeMate „Parallele Verbindungen“, Verfahren OFF und FAST mit Nachladen). Die
+     * Verbindungen werden danach geschlossen; was nicht abrufbar war, fehlt in der Antwort.
+     */
+    public CompletableFuture<java.util.Map<Integer, String>> probeSpoolNames(String jobId, int count) {
+        java.util.Map<Integer, String> names = new java.util.concurrent.ConcurrentHashMap<>();
+        if (state().ended() || count < 1) {
+            return CompletableFuture.completedFuture(names);
+        }
+        int lanes = Math.max(1, Math.min(profile.spoolNaming().connections(), count));
+        List<CompletableFuture<Void>> parts = new java.util.ArrayList<>();
+        for (int lane = 0; lane < lanes; lane++) {
+            int first = lane + 1;
+            parts.add(CompletableFuture.runAsync(() -> {
+                try (JesConnection jes = openJes()) {
+                    for (int id = first; id <= count && !state().ended(); id += lanes) {
+                        try {
+                            jes.probe(jobId, id).ifPresent(file -> names.put(file.id(), file.ddName()));
+                        } catch (FtpReplyException missing) {
+                            // nicht abrufbar: Name bleibt SPOOL#n
+                        }
+                    }
+                } catch (Exception e) {
+                    throw new java.util.concurrent.CompletionException(e);
+                }
+            }, background));
+        }
+        return CompletableFuture.allOf(parts.toArray(CompletableFuture[]::new)).handle((done, error) -> {
+            if (error != null && names.isEmpty()) {
+                throw error instanceof java.util.concurrent.CompletionException completion ? completion
+                        : new java.util.concurrent.CompletionException(error);
+            }
+            return names;
+        });
+    }
+
+    private JesConnection openJes() throws Exception {
+        try (ServerCredentials login = credentials.open()) {
+            char[] password = login.copyPassword();
+            try {
+                return connector.jes(profile, login.user(), password);
+            } finally {
+                Arrays.fill(password, '\0');
+            }
+        }
+    }
+
     /** Trennt beide Verbindungen; laufende Aufträge brechen ab. Danach nimmt die Sitzung nichts mehr an. */
     public void disconnect() {
         change(ConnectionState.DISCONNECTED, null, false);
@@ -221,28 +271,39 @@ public final class FtpSession {
         <T> T call(Task<C, T> task, boolean retry) throws Exception {
             lock.lock();
             try {
-                C current = ensure();
-                try {
-                    return task.run(current);
-                } catch (FtpReplyException refused) {
-                    throw refused;
-                } catch (IOException broken) {
-                    drop();
-                    if (!retry || shut) {
-                        throw broken;
-                    }
+                RetryPolicy policy = profile.retry();
+                for (int attempt = 1; ; attempt++) {
+                    C current = ensure();
                     try {
-                        return task.run(ensure());
+                        return task.run(current);
                     } catch (FtpReplyException refused) {
-                        throw refused;
-                    } catch (IOException brokenAgain) {
-                        // Auch die Ersatzverbindung ist kaputt: nicht stehen lassen, der nächste Auftrag baut neu auf.
+                        // Abgelehnt, die Verbindung steht: nur bei eingestellten Antwortcodes noch einmal.
+                        if (!retry || shut || !policy.shouldRetry(refused, attempt)) {
+                            throw refused;
+                        }
+                    } catch (IOException broken) {
+                        // Kaputte Verbindung nie stehen lassen: der nächste Versuch oder Auftrag baut neu auf.
                         drop();
-                        throw brokenAgain;
+                        if (!retry || shut || !policy.shouldRetry(broken, attempt)) {
+                            throw broken;
+                        }
                     }
+                    pause(policy.delayMillis(attempt));
                 }
             } finally {
                 lock.unlock();
+            }
+        }
+
+        private void pause(long millis) throws java.io.InterruptedIOException {
+            if (millis <= 0) {
+                return;
+            }
+            try {
+                Thread.sleep(millis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new java.io.InterruptedIOException("Wiederholung abgebrochen");
             }
         }
 
