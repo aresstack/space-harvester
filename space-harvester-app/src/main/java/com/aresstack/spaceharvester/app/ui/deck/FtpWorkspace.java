@@ -31,7 +31,7 @@ import javax.swing.SwingUtilities;
  * „Datasets | JES-Jobs“ stellt der Bereich oben rechts in die Titelleiste ({@link #tools()}); er gilt für alle
  * Sitzungen. Die Sitzungen gehören dem Anwendungsfall {@link FtpSessions}; Wechsel trennen nichts.
  */
-public final class FtpWorkspace extends JPanel {
+public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
 
     static final String VIEW_KEY = "deck.ftp.view";
     private static final String FORM = "form";
@@ -53,6 +53,9 @@ public final class FtpWorkspace extends JPanel {
     private boolean autoTried;
     private final ComposerToggleButton newPill;
     private final CardLayout cards = new CardLayout();
+    /** Neben der Lupe in der Fußleiste des Command Deck: die Aktionen der gewählten Sitzung. */
+    private final CardLayout footCards = new CardLayout();
+    private final JPanel footTools = new JPanel(footCards);
     private final JPanel center = new JPanel(cards);
     private final FtpConnectForm form;
     private final SegmentedToggle toggle = new SegmentedToggle();
@@ -102,6 +105,10 @@ public final class FtpWorkspace extends JPanel {
         formHolder.add(form);
         center.setBackground(Comic.SURFACE);
         center.add(formHolder, FORM);
+        footTools.setOpaque(false);
+        JPanel noTools = new JPanel();
+        noTools.setOpaque(false);
+        footTools.add(noTools, FORM);
 
         toggle.segment(FtpSessionView.DATASETS).segment(FtpSessionView.JOBS);
         toggle.setToolTipText("Unteransicht des FTP-Bereichs: MVS-Datasets oder JES-Jobs mit Spool");
@@ -178,6 +185,11 @@ public final class FtpWorkspace extends JPanel {
         return status.note();
     }
 
+    @Override
+    public JComponent footTools() {
+        return footTools;
+    }
+
     /** Der Umschalter „Datasets | JES-Jobs“ für die Titelleiste (nur im FTP-Bereich gezeigt). */
     public JComponent tools() {
         return toggle;
@@ -206,22 +218,8 @@ public final class FtpWorkspace extends JPanel {
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         pill.getAccessibleContext().setAccessibleName(session.label());
         pill.addActionListener(e -> select(session));
-        pill.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent event) {
-                if (SwingUtilities.isMiddleMouseButton(event)) {
-                    closeTab(session);
-                }
-            }
-        });
-        // Gezeichnetes Kreuz (nicht das Zeichen „✕“, das nicht jede Schrift hat), direkt hinter dem Reiter.
-        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
-                ComposerIcons.close(), "Trennen und schließen (auch Mittelklick auf den Reiter)").compact();
-        cross.addActionListener(e -> closeTab(session));
-        JPanel tab = new JPanel(new BorderLayout(0, 0));
-        tab.setOpaque(false);
-        tab.add(pill, BorderLayout.CENTER);
-        tab.add(cross, BorderLayout.EAST);
+        JPanel tab = DeckBars.tab(pill, "Trennen und schließen (auch Mittelklick auf den Reiter)",
+                () -> closeTab(session));
         pillGroup.add(pill);
         pills.add(tab, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
@@ -231,6 +229,7 @@ public final class FtpWorkspace extends JPanel {
         view.show(toggle.selected());
         viewOf.put(session, view);
         center.add(view, session.id());
+        footTools.add(view.footTools(), session.id());
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
         select(session);
         pills.revalidate();
@@ -274,14 +273,16 @@ public final class FtpWorkspace extends JPanel {
             }
         });
         if (session == null) {
-            status.show(StatusNote.plain(" "));
+            status.show(StatusNote.plain(NdvWorkspace.NO_SESSION));
             cards.show(center, FORM);
+            footCards.show(footTools, FORM);
             SwingUtilities.invokeLater(form::focusServer);
         } else {
             FtpSessionView view = viewOf.get(session);
             view.show(toggle.selected());
             view.statusTo(status::show);
             cards.show(center, session.id());
+            footCards.show(footTools, session.id());
         }
     }
 
@@ -318,6 +319,7 @@ public final class FtpWorkspace extends JPanel {
         }
         if (view != null) {
             center.remove(view);
+            footTools.remove(view.footTools());
         }
         select(pillOf.isEmpty() ? null : pillOf.keySet().iterator().next());
     }

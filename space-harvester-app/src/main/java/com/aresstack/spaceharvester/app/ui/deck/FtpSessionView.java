@@ -6,7 +6,6 @@ import com.aresstack.spaceharvester.deck.ftp.ConnectionState;
 import com.aresstack.spaceharvester.deck.ftp.FtpSession;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
-import java.awt.FlowLayout;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import javax.swing.JComponent;
@@ -36,6 +35,7 @@ final class FtpSessionView extends JPanel {
     private final FtpDatasetsView datasets;
     private final FtpJobsView jobs;
     private final com.aresstack.spaceharvester.app.ui.IconButton reconnect;
+    private final JPanel footTools;
     private String view = DATASETS;
     private boolean started;
 
@@ -58,16 +58,16 @@ final class FtpSessionView extends JPanel {
         reconnect.addActionListener(e -> later(session.connect(), home -> { }, error -> { }));
         // Die Aktionszeile enthält nur Knöpfe und beginnt links; Trennen und Schließen macht das ✕ am Reiter in einem
         // Schritt, der Stand steht in der Statuszeile der App (Angelo, 23.11.2026).
-        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
-        row.setOpaque(false);
-        row.add(actions);
-        row.add(reconnect);
-        JPanel foot = DeckBars.foot(row, null);
+        footTools = DeckBars.tools(actions, reconnect);
         add(center, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
 
         session.observe(changed -> SwingUtilities.invokeLater(this::stateChanged));
         stateChanged();
+    }
+
+    /** Die Aktionen dieser Sitzung für die Fußleiste des Command Deck neben der Lupe. */
+    JComponent footTools() {
+        return footTools;
     }
 
     FtpSession session() {

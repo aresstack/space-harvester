@@ -64,6 +64,11 @@ class FtpConnectFlowTest {
                 assertThat(FtpConnectForm.isConfigured()).isFalse();
                 deck.ftp().newConnection();
                 assertThat(deck.ftp().selected()).as("beim ersten Mal das Formular").isNull();
+                assertThat(deck.ftp().statusNote().text()).isEqualTo(NdvWorkspace.NO_SESSION);
+                java.awt.Component frame = SwingUtilities.getAncestorOfClass(
+                        com.aresstack.spaceharvester.app.ui.controls.InputFrame.class, deck.ftp().form().server);
+                assertThat(frame.getPreferredSize().width).as("so breit wie beim Terminal")
+                        .isEqualTo(FtpConnectForm.FIELD_WIDTH);
                 FtpConnectForm form = deck.ftp().form();
                 form.show(entries);
                 form.server.setSelectedIndex(1);
@@ -84,6 +89,11 @@ class FtpConnectFlowTest {
             assertThat(second.profile().port()).as("die gemerkten Einstellungen").isEqualTo(host.port());
 
             SwingUtilities.invokeAndWait(() -> {
+                // Die Aktionen der gewählten Sitzung stehen in der Fußleiste des Command Deck neben der Lupe.
+                assertThat(deck.ftp()).isInstanceOf(DeckBars.FootTools.class);
+                assertThat(deck.ftp().view(second).footTools().getParent()).isSameAs(deck.ftp().footTools());
+                assertThat(deck.ftp().view(second).footTools().isVisible()).isTrue();
+                assertThat(deck.ftp().view(first).footTools().isVisible()).isFalse();
                 deck.ftp().closeTab(second);
                 assertThat(deck.ftpSessions().all()).containsExactly(first);
                 assertThat(second.state().ended()).as("✕ trennt").isTrue();
