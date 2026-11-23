@@ -3,10 +3,9 @@ package com.aresstack.spaceharvester.app.ui.deck.editor;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.deck.editor.LineDiff;
 import java.awt.Color;
+import java.util.ArrayList;
 import java.util.List;
 import javax.swing.text.BadLocationException;
-import javax.swing.text.DefaultHighlighter;
-import javax.swing.text.Highlighter;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 
 /**
@@ -46,26 +45,30 @@ final class DiffHighlighter {
     }
 
     static void clear(RSyntaxTextArea area) {
-        Highlighter highlighter = area.getHighlighter();
-        for (Highlighter.Highlight highlight : highlighter.getHighlights()) {
-            if (highlight.getPainter() instanceof DiffPainter) {
-                highlighter.removeHighlight(highlight);
-            }
+        for (Object tag : tags(area)) {
+            area.removeLineHighlight(tag);
         }
+        tags(area).clear();
     }
 
+    /** Ganze Zeile einfärben (über die volle Breite), damit die Abweichung auch bei kurzen Zeilen auffällt. */
     private static void line(RSyntaxTextArea area, int line, Color color) {
         try {
-            area.getHighlighter().addHighlight(area.getLineStartOffset(line), area.getLineEndOffset(line),
-                    new DiffPainter(color));
+            tags(area).add(area.addLineHighlight(line, color));
         } catch (BadLocationException ignored) {
             // Zeile gibt es nicht (mehr).
         }
     }
 
-    private static final class DiffPainter extends DefaultHighlighter.DefaultHighlightPainter {
-        DiffPainter(Color color) {
-            super(color);
+    @SuppressWarnings("unchecked")
+    private static List<Object> tags(RSyntaxTextArea area) {
+        Object tags = area.getClientProperty(TAGS);
+        if (tags == null) {
+            tags = new ArrayList<Object>();
+            area.putClientProperty(TAGS, tags);
         }
+        return (List<Object>) tags;
     }
+
+    private static final String TAGS = "deck.diff.tags";
 }
