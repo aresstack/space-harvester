@@ -1,35 +1,32 @@
 package com.aresstack.spaceharvester.application.deadlines;
 
-import com.tngtech.archunit.core.domain.JavaClasses;
-import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
-import org.junit.jupiter.api.Test;
+import com.tngtech.archunit.junit.AnalyzeClasses;
+import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchRule;
 
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo;
 import static com.tngtech.archunit.core.domain.JavaCall.Predicates.target;
 import static com.tngtech.archunit.core.domain.properties.HasOwner.Predicates.With.owner;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
-/** Fristentscheidungen fallen nur im Core und nur im Evaluator (ADR 0035, Abschnitte 1 und 6). */
+/**
+ * Fristentscheidungen fallen nur im Core und nur im Evaluator (ADR 0035, Abschnitte 1 und 6). Dieselbe Klassenmenge
+ * wie {@code CoreModuleTest}, damit ArchUnit den Import aus seinem Cache teilt: Ein eigener statischer Import des ganzen
+ * Core blieb bis zum Ende der Test-JVM im Speicher und brachte sie zum OutOfMemoryError.
+ */
+@AnalyzeClasses(packages = "com.aresstack.spaceharvester", importOptions = ImportOption.DoNotIncludeTests.class)
 class DeadlinesLayeringTest {
 
-    private static final JavaClasses CORE = new ClassFileImporter()
-            .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-            .importPackages("com.aresstack.spaceharvester");
+    @ArchTest
+    static final ArchRule onlyTheEvaluatorCreatesAssessments = noClasses()
+            .that().doNotHaveSimpleName("DeadlineRuleEvaluator")
+            .should().callConstructorWhere(target(owner(assignableTo(DeadlineAssessment.class))))
+            .allowEmptyShould(true);
 
-    @Test
-    void onlyTheEvaluatorCreatesAssessments() {
-        noClasses().that().doNotHaveSimpleName("DeadlineRuleEvaluator")
-                .should().callConstructorWhere(target(owner(assignableTo(DeadlineAssessment.class))))
-                .allowEmptyShould(true)
-                .check(CORE);
-    }
-
-    @Test
-    void deadlinesStayFreeOfUiAndInfrastructure() {
-        noClasses().that().resideInAPackage("..application.deadlines..")
-                .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "org.apache.lucene..",
-                        "..source..", "..app..")
-                .check(CORE);
-    }
+    @ArchTest
+    static final ArchRule deadlinesStayFreeOfUiAndInfrastructure = noClasses()
+            .that().resideInAPackage("..application.deadlines..")
+            .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "org.apache.lucene..",
+                    "..source..", "..app..");
 }
