@@ -43,7 +43,7 @@ final class NdvConnectForm extends JPanel {
         void open(NdvProfile profile, String account, NdvSessions.LoginSource login);
     }
 
-    final JComboBox<ServerAccount> server = new JComboBox<>();
+    final JComboBox<ServerAccount> server = Comic.combo(ConnectForm::accountText);
     final PlaceholderField port = new PlaceholderField(6, String.valueOf(NdvProfile.DEFAULT_PORT));
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
     final PlaceholderField library = new PlaceholderField(12, "leer = Bibliotheksliste");
@@ -61,19 +61,6 @@ final class NdvConnectForm extends JPanel {
         this.accounts = accounts;
         this.connect = connect;
         setOpaque(false);
-        server.setRenderer(new javax.swing.DefaultListCellRenderer() {
-            @Override
-            public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value,
-                                                                   int index, boolean selected, boolean focus) {
-                super.getListCellRendererComponent(list, value, index, selected, focus);
-                if (value instanceof ServerAccount account) {
-                    setText(account.toString() + (account.user().isEmpty() ? "" : " · " + account.user()));
-                } else {
-                    setText("KeePass-Eintrag wählen …");
-                }
-                return this;
-            }
-        });
         server.addActionListener(e -> serverChanged());
         IconButton reload = new IconButton(Glyph.REFRESH, "Einträge neu aus KeePass laden");
         reload.addActionListener(e -> load());

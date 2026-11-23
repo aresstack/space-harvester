@@ -439,6 +439,26 @@ public final class Comic {
         return ComicComboBoxUI.install(combo);
     }
 
+    /**
+     * Auswahlliste im Comic-Stil, deren Einträge ein eigener Text beschriftet (auch der Zustand „nichts gewählt“,
+     * dann ist der Wert {@code null}). Ein eigener {@code DefaultListCellRenderer} nähme der Liste ihr Aussehen;
+     * hier bleibt der Renderer des Comic-Stils und bekommt nur den Text.
+     */
+    public static <T> JComboBox<T> combo(java.util.function.Function<Object, String> text) {
+        JComboBox<T> combo = combo();
+        javax.swing.ListCellRenderer<? super T> look = combo.getRenderer();
+        combo.setRenderer((list, value, index, selected, focused) -> {
+            java.awt.Component cell = look.getListCellRendererComponent(list, value, index, selected, focused);
+            if (cell instanceof JLabel label) {
+                String shown = text.apply(value);
+                label.setText(shown);
+                label.setToolTipText(shown);
+            }
+            return cell;
+        });
+        return combo;
+    }
+
     /** Tabelle im Comic-Stil: weiße Fläche, feine Linien, gelbe Auswahl mit Tinte. */
     public static JTable table(JTable table) {
         table.setFont(regular(13f));

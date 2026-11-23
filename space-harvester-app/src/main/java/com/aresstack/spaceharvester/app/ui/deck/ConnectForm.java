@@ -52,12 +52,12 @@ final class ConnectForm extends JPanel {
     /** Startkommando nach der Anmeldung, wie in MainframeMate voreingestellt. */
     static final String DEFAULT_COMMAND = "a";
 
-    final JComboBox<ServerAccount> server = new JComboBox<>();
+    final JComboBox<ServerAccount> server = Comic.combo(ConnectForm::accountText);
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
     final PlaceholderField port = new PlaceholderField(6, String.valueOf(TerminalProfile.DEFAULT_PORT));
-    final JCheckBox autoLogin = new JCheckBox("Automatisch anmelden (Benutzer und Passwort aus KeePass)");
-    final JComboBox<TerminalModel> model = new JComboBox<>(TerminalModel.values());
-    final JCheckBox tls = new JCheckBox("Verschlüsselt (TLS)");
+    final JCheckBox autoLogin = Comic.checkBox("Automatisch anmelden (Benutzer und Passwort aus KeePass)");
+    final JComboBox<TerminalModel> model = Comic.combo();
+    final JCheckBox tls = Comic.checkBox("Verschlüsselt (TLS)");
     final PlaceholderField codePage = new PlaceholderField(8, TerminalProfile.DEFAULT_CODE_PAGE);
     final PlaceholderField keepAlive = new PlaceholderField(6, "aus");
     final PlaceholderField command = new PlaceholderField(22, "nach der Anmeldung eingeben, z. B. ein Menü");
@@ -71,7 +71,7 @@ final class ConnectForm extends JPanel {
     private boolean loaded;
     /** Terminal-Lesezeichen (MainframeMate): Ziel, KeePass-Eintrag, Makro. Nur sichtbar, wenn es welche gibt. */
     private final TerminalBookmarks bookmarks;
-    final JComboBox<TerminalBookmarks.Bookmark> bookmark = new JComboBox<>();
+    final JComboBox<TerminalBookmarks.Bookmark> bookmark = Comic.combo();
     private final JPanel bookmarkRow = new JPanel(new BorderLayout(6, 0));
 
     /**
@@ -85,6 +85,13 @@ final class ConnectForm extends JPanel {
                    List<com.aresstack.spaceharvester.deck.terminal.TerminalMacro.Step> steps) {
     }
 
+    /** Beschriftung eines KeePass-Zugangs in den Auswahllisten des Command Deck: Eintrag und Benutzer. */
+    static String accountText(Object value) {
+        return value instanceof ServerAccount account
+                ? account.toString() + (account.user().isEmpty() ? "" : " · " + account.user())
+                : "KeePass-Eintrag wählen …";
+    }
+
     ConnectForm(ServerAccounts accounts, BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect) {
         this(accounts, new TerminalBookmarks(AppState.shared()),
                 request -> connect.accept(request.profile(), request.login()));
@@ -96,19 +103,6 @@ final class ConnectForm extends JPanel {
         this.connect = connect;
         this.bookmarks = bookmarks;
         setOpaque(false);
-        server.setRenderer(new javax.swing.DefaultListCellRenderer() {
-            @Override
-            public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value,
-                                                                   int index, boolean selected, boolean focus) {
-                super.getListCellRendererComponent(list, value, index, selected, focus);
-                if (value instanceof ServerAccount account) {
-                    setText(account.toString() + (account.user().isEmpty() ? "" : " · " + account.user()));
-                } else {
-                    setText("KeePass-Eintrag wählen …");
-                }
-                return this;
-            }
-        });
         server.addActionListener(e -> serverChanged());
         IconButton reload = new IconButton(Glyph.REFRESH, "Einträge neu aus KeePass laden");
         reload.addActionListener(e -> load());
@@ -126,7 +120,7 @@ final class ConnectForm extends JPanel {
         advanced.setOpaque(false);
         row(advanced, 0, "Host", host);
         row(advanced, 1, "Startkommando", command);
-        row(advanced, 2, "Modell", model);
+        row(advanced, 2, "Modell", new InputFrame(model));
         row(advanced, 3, "Codepage", codePage);
         row(advanced, 4, "Keep-Alive (s)", keepAlive);
         advanced.setVisible(false);
@@ -140,13 +134,9 @@ final class ConnectForm extends JPanel {
             }
         });
         advanced(false);
-        for (JCheckBox box : new JCheckBox[] {tls, autoLogin}) {
-            box.setOpaque(false);
-            box.setFont(Comic.regular(13f));
-        }
         // Mit TLS ist 992 der übliche Port; ein eingetragener Port bleibt, wie er ist.
         tls.addActionListener(e -> serverChanged());
-        model.setFont(Comic.regular(13f));
+        model.setModel(new DefaultComboBoxModel<>(TerminalModel.values()));
         problem.setFont(Comic.regular(12.5f));
         problem.setForeground(Comic.RED);
         var button = Comic.primary("Verbinden", "TN3270-Sitzung zu diesem Server öffnen (Eingabe)");
@@ -155,7 +145,6 @@ final class ConnectForm extends JPanel {
         port.addActionListener(e -> submit());
 
         // Lesezeichen: wählen und öffnen (verbindet, meldet an, spielt das Makro ab) oder entfernen.
-        bookmark.setFont(Comic.regular(13f));
         var openBookmark = Comic.button("Öffnen", "Lesezeichen öffnen: verbinden, anmelden, Makro abspielen");
         openBookmark.addActionListener(e -> openBookmark());
         IconButton dropBookmark = new IconButton(Glyph.TRASH, "Lesezeichen entfernen");
