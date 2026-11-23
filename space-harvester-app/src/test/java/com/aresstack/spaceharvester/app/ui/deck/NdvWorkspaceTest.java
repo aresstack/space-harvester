@@ -322,6 +322,31 @@ class NdvWorkspaceTest {
     }
 
     @Test
+    void theFormIsAsWideAsTheTerminalFormSoTheServerListShowsItsText() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            NdvConnectForm form = new NdvWorkspace(sessions, accounts, editors, Runnable::run).form();
+            ConnectForm terminal = new ConnectForm(accounts, (profile, login) -> { });
+            assertThat(form.getPreferredSize().width).isEqualTo(terminal.getPreferredSize().width);
+            form.setSize(form.getPreferredSize());
+            layout(form);
+            terminal.setSize(terminal.getPreferredSize());
+            layout(terminal);
+            assertThat(form.server.getWidth()).as("Server-Liste so breit wie im Terminal")
+                    .isEqualTo(terminal.server.getWidth()).isGreaterThan(200);
+            assertThat(form.port.getWidth()).isEqualTo(terminal.port.getWidth());
+        });
+    }
+
+    private static void layout(java.awt.Container root) {
+        root.doLayout();
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof java.awt.Container container) {
+                layout(container);
+            }
+        }
+    }
+
+    @Test
     void theHeadIsAsHighAsElsewhereAndTheActionsSitNextToTheSharedSearchBar() throws Exception {
         NdvWorkspace[] workspace = new NdvWorkspace[1];
         SwingUtilities.invokeAndWait(() -> workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run));
