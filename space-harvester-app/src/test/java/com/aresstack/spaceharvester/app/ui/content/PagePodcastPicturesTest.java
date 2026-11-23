@@ -64,6 +64,42 @@ class PagePodcastPicturesTest {
     }
 
     @Test
+    void picturesWithoutAPlaceStandAtTheEndAndTheTextGrowsDownToTheLastOne() throws Exception {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                JTextPane text = new JTextPane();
+                text.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+                text.setText("Der Nachtlauf Nordlicht in Kürze.");
+                text.setSize(900, 400);
+                text.doLayout();
+                PagePodcastPictures pictures = new PagePodcastPictures(text);
+
+                // Themen über Unterseiten haben keine Stelle im Text der Seite: ihr Bild geht nicht verloren
+                pictures.show(List.of(placed(1, 0, "Einleitung"), placed(2, Integer.MAX_VALUE, "Unterseite Eskalation"),
+                        placed(3, Integer.MAX_VALUE, "Unterseite Rufnummern")));
+
+                assertThat(pictures.captions()).containsExactly("Einleitung", "Unterseite Eskalation",
+                        "Unterseite Rufnummern");
+                List<java.awt.Rectangle> bounds = pictures.bounds();
+                java.awt.Rectangle last = bounds.get(2);
+                java.awt.Rectangle end = text.modelToView2D(text.getDocument().getLength()).getBounds();
+                // die Bilder ragen weit unter die eine Textzeile: der Text wird so hoch, dass man hinrollen kann
+                assertThat(last.y + last.height).isGreaterThan(end.y + end.height);
+                assertThat(text.getPreferredSize().height).isGreaterThanOrEqualTo(last.y + last.height);
+
+                pictures.show(List.of());
+                assertThat(text.getInsets().bottom).isEqualTo(10);
+            } catch (Throwable e) {
+                failure.set(e);
+            }
+        });
+        if (failure.get() != null) {
+            throw new AssertionError(failure.get());
+        }
+    }
+
+    @Test
     void theFocusOfAPageArrivesAsPairsOfStartAndEnd() {
         assertThat(PageDetailPanel.spans(List.of(4, 9, 20, 31, 7))).extracting(span -> span[0] + "-" + span[1])
                 .containsExactly("4-9", "20-31");

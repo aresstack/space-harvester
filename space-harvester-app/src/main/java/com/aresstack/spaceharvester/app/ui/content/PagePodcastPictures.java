@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
 import com.aresstack.spaceharvester.app.ui.controls.TextWithPicture;
 import com.aresstack.spaceharvester.app.ui.controls.ViewerPopup;
@@ -66,6 +67,8 @@ final class PagePodcastPictures {
     private final DefaultHighlighter.DefaultHighlightPainter painter = new DefaultHighlighter.DefaultHighlightPainter(MARK);
     /** Der rechte Innenabstand des Texts ohne Bildspalte; {@code -1}, solange keine Spalte steht. */
     private int baseRight = -1;
+    /** Der untere Innenabstand ohne Bilder, die über das Textende hinausragen; {@code -1}, solange keine Spalte steht. */
+    private int baseBottom = -1;
     private ViewerPopup cued;
     private Runnable closedByUser = () -> { };
 
@@ -92,7 +95,9 @@ final class PagePodcastPictures {
         labels.clear();
         placed.clear();
         int length = text.getDocument().getLength();
-        pictures.stream().filter(picture -> picture.offset() >= 0 && picture.offset() <= length)
+        // Themen ohne Stelle im Text (etwa über Unterseiten) stehen am Ende, damit kein Bild verloren geht
+        pictures.stream().map(picture -> picture.offset() >= 0 && picture.offset() <= length ? picture
+                        : new Placed(picture.topic(), length, picture.image(), picture.caption(), picture.viewer()))
                 .sorted(Comparator.comparingInt(Placed::offset)).forEach(placed::add);
         column(!placed.isEmpty());
         for (int i = 0; i < placed.size(); i++) {
@@ -102,7 +107,7 @@ final class PagePodcastPictures {
             label.setToolTipText(picture.caption().isBlank() ? "Bild zum Thema: Klick vergrößert"
                     : picture.caption() + " · Klick vergrößert");
             label.setBorder(BorderFactory.createLineBorder(Comic.LINE, 1));
-            label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(label, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             int position = i;
             label.addMouseListener(new MouseAdapter() {
                 @Override
@@ -189,11 +194,13 @@ final class PagePodcastPictures {
         Insets insets = text.getInsets();
         if (shown && baseRight < 0) {
             baseRight = insets.right;
+            baseBottom = insets.bottom;
             text.setBorder(BorderFactory.createEmptyBorder(insets.top, insets.left, insets.bottom,
                     baseRight + COLUMN + GAP));
         } else if (!shown && baseRight >= 0) {
-            text.setBorder(BorderFactory.createEmptyBorder(insets.top, insets.left, insets.bottom, baseRight));
+            text.setBorder(BorderFactory.createEmptyBorder(insets.top, insets.left, baseBottom, baseRight));
             baseRight = -1;
+            baseBottom = -1;
         }
         text.revalidate();
     }
@@ -213,7 +220,26 @@ final class PagePodcastPictures {
             label.setBounds(Math.max(0, x), y, size.width, size.height);
             below = y + size.height + GAP;
         }
+        reach(below);
         text.repaint();
+    }
+
+    /**
+     * Ragen Bilder unter das Textende, wächst der untere Innenabstand so weit, dass die Bildlaufleiste bis zum letzten
+     * Bild reicht; die Wunschhöhe des Texts kennt nur das Dokument, nicht die Bilder darüber.
+     */
+    private void reach(int bottom) {
+        if (baseBottom < 0) {
+            return;
+        }
+        Rectangle end = rectangle(text.getDocument().getLength());
+        int textBottom = end == null ? 0 : end.y + end.height;
+        int wanted = baseBottom + Math.max(0, bottom - textBottom);
+        Insets insets = text.getInsets();
+        if (insets.bottom != wanted) {
+            text.setBorder(BorderFactory.createEmptyBorder(insets.top, insets.left, wanted, insets.right));
+            text.revalidate();
+        }
     }
 
     private Rectangle rectangle(int offset) {

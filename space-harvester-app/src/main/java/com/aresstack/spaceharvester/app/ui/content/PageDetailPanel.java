@@ -250,6 +250,8 @@ public final class PageDetailPanel extends JPanel {
     private final PagePodcastPictures pagePictures;
     /** Zähler der Bilder-Leseläufe: ein Ergebnis zu einer früheren Seite verfällt. */
     private int pagePictureLoads;
+    /** Die Stellen, von denen der Seiten-Podcast gerade erzählt; nach einem Neuaufbau des Lesetexts wieder gelb. */
+    private List<int[]> pageSpans = List.of();
 
     /** Wofür der Erklär-Podcast entsteht: eine Seite samt Unterseiten. */
     record PodcastPage(String sourceId, String pageId) {
@@ -560,7 +562,10 @@ public final class PageDetailPanel extends JPanel {
         pagePodcast.events(context.events()::publish);
         // Bilder neben dem Text, laufende Stelle gelb, das Bild des Kapitels geht aus seiner Stelle auf (23.11.2026).
         pagePictures = new PagePodcastPictures(reader);
-        pagePodcast.follow(spans -> pagePictures.mark(spans(spans)));
+        pagePodcast.follow(spans -> {
+            pageSpans = spans(spans);
+            pagePictures.mark(pageSpans);
+        });
         pagePodcast.cue(new PodcastControl.Cue() {
             @Override
             public boolean open(int topic) {
@@ -2976,6 +2981,11 @@ public final class PageDetailPanel extends JPanel {
         }
         reader.setStyledDocument(document.document());
         reader.setCaretPosition(0);
+        // Neu berechnet bei gleichem Text, während der Podcast läuft: die laufende Stelle bleibt gelb.
+        if (!sameText) {
+            pageSpans = List.of();
+        }
+        pagePictures.mark(pageSpans);
         loadPagePictures();
         readerPage.contentChanged();
         // Die Wolken der Leseansicht zählen wiederholte Überschriften im jetzt gezeigten Klartext.
@@ -5643,15 +5653,14 @@ public final class PageDetailPanel extends JPanel {
                 continue;
             }
             var spans = workspace.pagePodcastFocus(source, page, part.topic());
-            if (spans.isEmpty()) {
-                continue;
-            }
             try {
                 com.aresstack.spaceharvester.app.ui.controls.PictureStage.Picture read =
                         PodcastControl.read(part.picture());
                 java.awt.image.BufferedImage image = read.image() != null ? read.image()
                         : read.vector().raster(2 * PagePodcastPictures.COLUMN);
-                placed.add(new PagePodcastPictures.Placed(part.topic(), spans.get(0).start(), image, read.caption(),
+                // ein Thema über Unterseiten hat keine Stelle im Text: sein Bild steht am Ende
+                placed.add(new PagePodcastPictures.Placed(part.topic(),
+                        spans.isEmpty() ? Integer.MAX_VALUE : spans.get(0).start(), image, read.caption(),
                         new com.aresstack.spaceharvester.app.ui.controls.ImageViewer.Picture(image, read.caption(),
                                 read.vector())));
             } catch (java.io.IOException | RuntimeException e) {
