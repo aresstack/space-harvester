@@ -43,6 +43,36 @@ class PagePodcastsTest {
     }
 
     @Test
+    void eachPartKnowsWhereItStandsInThePageTextForTheMarking() {
+        String text = "Wozu es den Nachtlauf gibt.\nAblauf\nErst Prüfung, dann Start.\nStörungen\nBereitschaft anrufen.";
+        int ablauf = text.indexOf("Ablauf");
+        int stoerungen = text.indexOf("Störungen");
+        PagePodcasts.Page root = page("1", "Nachtlauf Nordlicht", text,
+                new PageText.Section("Ablauf", 2, ablauf, stoerungen),
+                new PageText.Section("Störungen", 2, stoerungen, text.length()));
+
+        List<PagePodcasts.Part> parts = PagePodcasts.parts(root, PagePodcasts.MAX_SECTIONS);
+
+        assertThat(parts).extracting(PagePodcasts.Part::title).containsExactly("Einleitung", "Ablauf", "Störungen");
+        assertThat(parts).extracting(part -> text.substring(part.start(), part.end()).strip()).containsExactly(
+                "Wozu es den Nachtlauf gibt.", "Ablauf\nErst Prüfung, dann Start.", "Störungen\nBereitschaft anrufen.");
+        // Meldung n des Materials ist Teil n−1: dieselbe Reihenfolge, dieselben Titel
+        assertThat(PagePodcasts.material(root, List.of(), List.of()).stories()).extracting(PodcastWriter.Story::title)
+                .containsExactly("Einleitung", "Ablauf", "Störungen");
+    }
+
+    @Test
+    void aPageWithoutHeadingsKnowsWhereEachPieceStands() {
+        String paragraph = "Ein Absatz über die Testumgebung. ".repeat(60).strip();
+        String text = paragraph + "\n" + paragraph + "\n" + paragraph;
+
+        List<PagePodcasts.Part> parts = PagePodcasts.parts(page("1", "Testumgebung", text), PagePodcasts.MAX_SECTIONS);
+
+        assertThat(parts).hasSize(3);
+        assertThat(parts).allSatisfy(part -> assertThat(text.substring(part.start(), part.end())).isEqualTo(paragraph));
+    }
+
+    @Test
     void leadingSubsectionsBeforeTheFirstMainHeadingBelongToTheIntroduction() {
         String text = "Vorab\nWichtiger Hinweis zum Start.\nAblauf\nErst prüfen.";
         int vorab = text.indexOf("Vorab");
