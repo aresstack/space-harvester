@@ -30,4 +30,22 @@ class PageReleasesPanelTest {
         assertThat(PageReleasesPanel.question(List.of(one, new Group("wiki", "OPS", null, null, 1, at))))
                 .startsWith("Die Freigabe von 4 Seiten in 2 Gruppen wirklich entfernen?");
     }
+
+    /**
+     * Angelo 22.11.2026: Mit Haken an der Quelle löscht das Entfernen der Seitenfreigabe keine KI-Ergebnisse; die
+     * Rückfrage darf das nicht behaupten.
+     */
+    @Test
+    void theQuestionOnlyPromisesToDeleteWhatIsNoLongerReleased() {
+        Instant at = Instant.parse("2026-11-13T21:00:00Z");
+        Group dev = new Group("wiki", "DEV", null, null, 15528, at);
+        Group ops = new Group("intranet", "OPS", null, null, 2, at);
+
+        assertThat(PageReleasesPanel.question(List.of(dev), "wiki"::equals)).isEqualTo("Die Freigabe von 15528 Seiten "
+                + "(Space DEV, ganzer Space) wirklich entfernen? Die Quelle ist für den KI-Dienst freigegeben; die "
+                + "KI-Ergebnisse bleiben.");
+        assertThat(PageReleasesPanel.question(List.of(dev, ops), "wiki"::equals)).endsWith("Die KI-Ergebnisse von "
+                + "2 Seiten werden gelöscht; die übrigen gehören zu freigegebenen Quellen und behalten sie.");
+        assertThat(PageReleasesPanel.lostPages(List.of(dev, ops), "wiki"::equals)).isEqualTo(2);
+    }
 }
