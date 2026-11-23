@@ -58,6 +58,8 @@ public final class SettingsView implements View {
     static final String CONNECTION_HEADING = "Verbindung";
     static final String NDV = "NDV";
     static final String BETAVIEW = "BetaView";
+    /** Bereich „Systemfunktionen“: bekannte z/OS-Programme mit Wikipedia-Artikel (wie MainframeMate). */
+    static final String SYSTEM_FUNCTIONS = "Systemfunktionen";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -125,6 +127,8 @@ public final class SettingsView implements View {
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
     final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
+    /** Bereich „Systemfunktionen“: PGM-Namen mit Wikipedia-Artikel für die JCL-Beziehungen. */
+    final SystemFunctionsSettingsPanel systemFunctions = new SystemFunctionsSettingsPanel();
     final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
@@ -333,6 +337,8 @@ public final class SettingsView implements View {
         page(BETAVIEW, Comic.column(
                 Comic.plate(BetaViewSettingsPanel.CONNECTION_HEADING, Comic.BLUE, betaView.connection()),
                 Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
+        page(SYSTEM_FUNCTIONS, Comic.column(Comic.plate(SystemFunctionsSettingsPanel.HEADING, Comic.PETROL,
+                systemFunctions.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "

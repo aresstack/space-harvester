@@ -112,6 +112,48 @@ class DocumentEditorTest {
     }
 
     @Test
+    void showsJclRelationsAndOpensNaturalProgramsOverNdv() throws Exception {
+        AppState.shared().put(DocumentEditor.RELATIONS_KEY, true);
+        java.util.List<String> opened = new java.util.concurrent.CopyOnWriteArrayList<>();
+        DocumentEditors.naturalFromJcl((lib, program) -> opened.add(lib + "/" + program));
+        try {
+            DocumentEditor editor = open("NATJOB.jcl", """
+                    //NATJOB   JOB (ACCT),'TESTLAUF',CLASS=A
+                    //         JCLLIB ORDER=(TEST.PROCLIB)
+                    //SCHRITT1 EXEC PGM=IEFBR14
+                    //SCHRITT2 EXEC PGM=NATBATCH,PARM='STACK=(LOGON TESTLIB;UMSATZ)'
+                    //EINGABE  DD DSN=TEST.DATEN.EINGABE,DISP=SHR
+                    """);
+
+            assertThat(on(editor::relationsShown)).isTrue();
+            RelationsPanel panel = editor.relationsPanel();
+            assertThat(waitFor(() -> String.join("|", panel.resourceLabels()), s -> s.contains("JCLLIB")))
+                    .contains("📚 JCLLIB (1)", "📄 Datasets (DSN) (1)");
+            assertThat(on(() -> panel.sideTitle(RelationsPanel.CALLEES))).startsWith("Callees (");
+            assertThat(on(() -> panel.labels(RelationsPanel.CALLEES))).anyMatch(l -> l.startsWith("📋 NATJOB"))
+                    .anyMatch(l -> l.startsWith("🌿 UMSATZ (Lib: TESTLIB)"));
+
+            // Natural-Knoten finden und doppelt klicken: geht über den Öffner des NDV-Bereichs.
+            SwingUtilities.invokeAndWait(() -> panel.clickLabel(RelationsPanel.CALLEES, "🌿 UMSATZ", 2));
+            assertThat(opened).containsExactly("TESTLIB/UMSATZ");
+
+            // Einfachklick springt zur Zeile.
+            SwingUtilities.invokeAndWait(() -> panel.clickLabel(RelationsPanel.CALLEES, "🌿 UMSATZ", 1));
+            assertThat(on(editor::caretLine)).isEqualTo(4);
+        } finally {
+            DocumentEditors.naturalFromJcl(null);
+        }
+    }
+
+    @Test
+    void relationsAreHiddenForPlainText() throws Exception {
+        AppState.shared().put(DocumentEditor.RELATIONS_KEY, true);
+        DocumentEditor editor = open("notiz.txt", "Nur Text\n");
+
+        assertThat(on(editor::relationsShown)).isFalse();
+    }
+
+    @Test
     void comparesWithTheVersionKeptWhenOpening() throws Exception {
         DocumentEditor editor = open("BEISPJOB.jcl", JCL);
 
