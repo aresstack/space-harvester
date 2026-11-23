@@ -149,6 +149,8 @@ final class NdvBrowser extends JPanel {
     private NdvObject shown;
     /** Objekt, das nach dem Laden der Bibliothek geöffnet wird (Lesezeichen, wie {@code pendingObjectName}). */
     private String pendingObject;
+    /** Die Bibliothek, zu der {@link #pendingObject} gehört; eine andere Navigation verwirft es. */
+    private String pendingLibrary;
     /** Das Dokument, das unten im Editor steht. */
     private EditorSession document;
     private long announcedRevision;
@@ -440,6 +442,9 @@ final class NdvBrowser extends JPanel {
     private void stateChanged() {
         if (session.state() == NdvState.CONNECTED && !everConnected) {
             everConnected = true;
+            // Erst jetzt ist der Benutzer bekannt: den gemerkten Filter dieses Benutzers holen (nicht den anonymen).
+            state.restoreFilter(nameFilter, session.profile().host(), session.user(), scope());
+            updateFilterButtons();
             loadLibraries();
         }
         showState();
@@ -450,6 +455,7 @@ final class NdvBrowser extends JPanel {
     /** Bibliotheken neu und, wenn eine gewählt ist, ihre Objekte. */
     void refresh() {
         pendingObject = null;
+        pendingLibrary = null;
         String current = library;
         library = null;
         loadLibraries();
@@ -473,8 +479,11 @@ final class NdvBrowser extends JPanel {
                 String preferred = session.profile().defaultLibrary();
                 String wanted = !preferred.isEmpty() ? preferred : AppState.shared().get(LIBRARY_KEY);
                 if (wanted != null && allLibraries.contains(wanted)) {
+                    // Die Bibliotheksliste zuerst in den Verlauf, damit „Zurück“ dorthin und „Vor“ wieder zurück führt.
+                    history.add("");
                     libraryList.setSelectedValue(wanted, true);
                 } else if (wanted != null && wanted.equals(preferred) && !preferred.isEmpty()) {
+                    history.add("");
                     openLibrary(preferred);
                 } else {
                     history.add("");
@@ -497,12 +506,18 @@ final class NdvBrowser extends JPanel {
     /** Öffnet eine Bibliothek und danach ein Objekt darin (Lesezeichen, {@code navigateToLibraryAndOpen}). */
     void openLibraryAndObject(String name, String objectName) {
         pendingObject = objectName;
+        pendingLibrary = name == null ? null : name.toUpperCase(Locale.ROOT);
         openLibrary(name);
     }
 
     /** Listet die Objekte einer Bibliothek; jede Seite erscheint sofort, Abbrechen lässt sie stehen. */
     private void openLibraryInternal(String name) {
         library = name.toUpperCase(Locale.ROOT);
+        if (pendingLibrary != null && !pendingLibrary.equals(library)) {
+            // Eine andere Bibliothek gewählt, bevor das Lesezeichen geladen war: das Lesezeichen gilt nicht mehr.
+            pendingObject = null;
+            pendingLibrary = null;
+        }
         AppState.shared().put(LIBRARY_KEY, library);
         if (!library.equals(libraryList.getSelectedValue())) {
             if (libraries.contains(library)) {
@@ -560,6 +575,8 @@ final class NdvBrowser extends JPanel {
     /** Zeigt wieder die Bibliotheksliste (Eintrag „host:port“ im Verlauf). */
     private void showLibraries() {
         listing.incrementAndGet();
+        pendingObject = null;
+        pendingLibrary = null;
         library = null;
         libraryList.clearSelection();
         objects.clear();
@@ -628,8 +645,10 @@ final class NdvBrowser extends JPanel {
     /** Nach dem Laden das vorgemerkte Objekt öffnen (wie {@code autoOpenPendingObject}). */
     private void openPending() {
         String wanted = pendingObject;
+        String wantedLibrary = pendingLibrary;
         pendingObject = null;
-        if (wanted == null || wanted.isEmpty()) {
+        pendingLibrary = null;
+        if (wanted == null || wanted.isEmpty() || wantedLibrary != null && !wantedLibrary.equals(library)) {
             return;
         }
         NdvBookmark probe = new NdvBookmark(library, wanted);
