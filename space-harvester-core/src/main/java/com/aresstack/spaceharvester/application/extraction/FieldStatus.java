@@ -4,7 +4,10 @@ package com.aresstack.spaceharvester.application.extraction;
 public enum FieldStatus {
     /** Steht ausdrücklich im Dokument. */
     EXPLICIT,
-    /** Aus anderen Angaben abgeleitet. */
+    /**
+     * Aus Dokumentfakten abgeleitet, nur durch Normalisieren oder Rechnen auf ihnen (etwa ein Datum aus „Ende des
+     * Haushaltsjahres 2026“). Nie das Ergebnis einer fachlichen Regel; Regelergebnisse sind keine Extraktion.
+     */
     DERIVED,
     /** Nicht gefunden; der Wert ist dann leer. */
     NOT_FOUND,

@@ -6,6 +6,6 @@ public enum ExtractionOrigin {
     REGEX,
     /** KI-gestützte semantische Extraktion. */
     AI,
-    /** Aus anderen Feldern abgeleitet. */
+    /** Normalisiert oder berechnet aus anderen Dokumentfakten, nie durch fachliche Regeln ({@link FieldStatus#DERIVED}). */
     DERIVED
 }

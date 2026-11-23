@@ -12,10 +12,10 @@ import java.util.Objects;
  * @param failure  Grund bei {@link AnalysisState#FAILED}, sonst leer
  * @param sample     Beispieldaten für Oberfläche und Tests, keine echte Analyse; wird so angezeigt
  * @param notes      Prüfhinweise zum ganzen Ergebnis (Unvollständigkeit, fehlende KI …)
- * @param processors Kennung und Version je beteiligter Stufe, etwa {@code regex/1} oder {@code ai/gemma4:12b/prompt-1}
+ * @param processors beteiligte Stufen mit Version, etwa {@code regex/1} oder {@code ai/gemma4:12b/prompt-1}
  */
 public record DocumentAnalysis(DocumentRef document, AnalysisState state, List<AnalysisSection> sections,
-                               String failure, boolean sample, List<AnalysisNote> notes, List<String> processors) {
+                               String failure, boolean sample, List<AnalysisNote> notes, List<Processor> processors) {
 
     public DocumentAnalysis {
         Objects.requireNonNull(document, "document");
