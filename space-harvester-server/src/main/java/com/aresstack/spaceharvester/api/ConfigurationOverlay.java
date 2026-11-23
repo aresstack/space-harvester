@@ -52,6 +52,8 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.SUMMARY_PLAN_MODEL, "ai." + AiServiceSettings.SUMMARY_PLAN_MAX_TOKENS,
             "ai." + AiServiceSettings.SUMMARY_PLAN_THINKING, "ai." + AiServiceSettings.IMAGE_PLAN_MODEL,
             "ai." + AiServiceSettings.IMAGE_PLAN_MAX_TOKENS, "ai." + AiServiceSettings.IMAGE_PLAN_THINKING,
+            "ai." + AiServiceSettings.DEADLINE_MODEL, "ai." + AiServiceSettings.DEADLINE_MAX_TOKENS,
+            "ai." + AiServiceSettings.DEADLINE_THINKING,
             SearchSettings.SEMANTIC, SearchSettings.RERANK, SearchSettings.PREFETCH_HITS,
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
@@ -138,6 +140,9 @@ public final class ConfigurationOverlay {
         put(properties, "ai." + AiServiceSettings.IMAGE_PLAN_MODEL, ai.imagePlanUse().model());
         put(properties, "ai." + AiServiceSettings.IMAGE_PLAN_MAX_TOKENS, ai.imagePlanUse().maxTokens());
         put(properties, "ai." + AiServiceSettings.IMAGE_PLAN_THINKING, ai.imagePlanUse().thinking());
+        put(properties, "ai." + AiServiceSettings.DEADLINE_MODEL, ai.deadlineUse().model());
+        put(properties, "ai." + AiServiceSettings.DEADLINE_MAX_TOKENS, ai.deadlineUse().maxTokens());
+        put(properties, "ai." + AiServiceSettings.DEADLINE_THINKING, ai.deadlineUse().thinking());
         SearchSettings search = configuration.search();
         put(properties, SearchSettings.SEMANTIC, search.semantic());
         put(properties, SearchSettings.RERANK, search.rerank());

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
+import com.aresstack.spaceharvester.application.text.TextSpan;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementCandidates.MentionCandidate;

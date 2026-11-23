@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester;
 
+import static com.tngtech.archunit.base.DescribedPredicate.not;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.aresstack.spaceharvester.source.confluence.WebClientConfluenceTransport;
@@ -38,9 +41,12 @@ class CoreModuleTest {
 
     @ArchTest
     static final ArchRule noParserModelInTheCore = noClasses()
-            .should().dependOnClassesThat().resideInAnyPackage("com.aresstack.spaceharvester.nlp..",
+            .that().resideOutsideOfPackage("com.aresstack.spaceharvester.nlp.lexicon..")
+            .should().dependOnClassesThat(resideInAnyPackage("com.aresstack.spaceharvester.nlp..",
                     "org.maltparser..", "opennlp.tools.postag..", "opennlp.tools.lemmatizer..",
                     "opennlp.tools.tokenize..")
+                    .and(not(resideInAPackage("com.aresstack.spaceharvester.nlp.lexicon.."))))
             .because("MaltParser und die OpenNLP-Modelle laufen nur in der Desktop-App auf Anforderung (#499, ADR 0024); "
-                    + "der Core kennt nur den Port StatementAnalyzer");
+                    + "der Core kennt nur den Port StatementAnalyzer. Ausnahme sind die abhängigkeitsfreien Wortlisten "
+                    + "aus :nlp-lexicon (ADR 0035, O4)");
 }
