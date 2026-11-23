@@ -744,6 +744,11 @@ class SourceUpdatesViewTest {
         assertThat(summary.podcastMarked()).as("nur das laufende Thema").containsExactlyInAnyOrder(
                 "Archivumstellung", "Das Archiv wird auf ein neues Format umgestellt.");
 
+        // Einstieg und Abschluss erzählen den Überblick: der Überblickstext ist gelb (Angelo 23.11.2026)
+        summary.followPodcast(List.of(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW));
+
+        assertThat(summary.podcastMarked()).as("Einstieg").containsExactly("Zwei Neuerungen im Beispielarchiv.");
+
         summary.followPodcast(List.of());
 
         assertThat(summary.podcastMarked()).isEmpty();
