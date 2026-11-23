@@ -162,6 +162,8 @@ final class NdvBrowser extends JPanel {
     private final Map<String, Integer> pendingLine = new LinkedHashMap<>();
     private final Runnable rulesChanged = () -> SwingUtilities.invokeLater(this::rulesChanged);
     private final Runnable analysisChanged = () -> SwingUtilities.invokeLater(this::analysisChanged);
+    /** Geänderte Wissensquellen oder Einstellungen: Zustand „Globale Suche“ neu zeigen. */
+    private final Runnable settingsChanged = () -> SwingUtilities.invokeLater(this::updateSearchLink);
     /** Rückfrage (in Tests ersetzbar). */
     java.util.function.BiPredicate<String, String> confirm = (title, question) -> Dialogs.confirm(this, title,
             question);
@@ -459,6 +461,8 @@ final class NdvBrowser extends JPanel {
             }
         });
         indexPanel.clearCache.addActionListener(e -> clearCache());
+        indexPanel.indexRule.addActionListener(e -> createSearchRule());
+        indexPanel.indexNow.addActionListener(e -> indexNow());
         indexPanel.whitelist.addActionListener(e -> rules.whitelist(selectedPaths()));
         indexPanel.blacklist.addActionListener(e -> rules.blacklist(selectedPaths()));
         indexPanel.removeFilter.addActionListener(e -> rules.remove(selectedPaths()));
@@ -1052,12 +1056,15 @@ final class NdvBrowser extends JPanel {
         rules.unobserve(rulesChanged);
         analysis.unobserve(analysisChanged);
         analysis.cache().unobserve(analysisChanged);
+        NdvAnalysisSettings.unobserve(settingsChanged);
         rules.observe(rulesChanged);
         analysis.observe(analysisChanged);
         analysis.cache().observe(analysisChanged);
+        NdvAnalysisSettings.observe(settingsChanged);
     }
 
     private void unwatch() {
+        NdvAnalysisSettings.unobserve(settingsChanged);
         rules.unobserve(rulesChanged);
         analysis.unobserve(analysisChanged);
         analysis.cache().unobserve(analysisChanged);
@@ -1220,11 +1227,98 @@ final class NdvBrowser extends JPanel {
         }
     }
 
+    // ---- Globale Suche: „Indexieren (Regel anlegen)“ und „Jetzt indexieren“ wie die IndexingSidebar -------------
+
+    /** Die Bibliotheken für die Regel: die geöffnete, sonst die in der Liste gewählten. */
+    List<String> indexLibraries() {
+        if (library != null) {
+            return List.of(library);
+        }
+        return List.copyOf(libraryList.getSelectedValuesList());
+    }
+
+    /** Zustand „Globale Suche“ in der Index-Leiste: Regel vorhanden, deckt die Bibliothek ab, oder fehlt. */
+    void updateSearchLink() {
+        if (indexPanel == null) {
+            return;
+        }
+        NdvSearchLink link = NdvAnalysisSettings.searchLink();
+        List<String> libs = indexLibraries();
+        if (!link.available()) {
+            indexPanel.searchRule("Ohne Wissensquellen nicht verfügbar", Comic.MUTED, false, false);
+            return;
+        }
+        java.util.Optional<NdvSearchLink.Rule> rule;
+        try {
+            rule = link.rule(session.profile());
+        } catch (RuntimeException e) {
+            indexPanel.searchRule("Wissensquellen nicht lesbar: " + ConnectForm.describe(e), Comic.RED, false,
+                    false);
+            return;
+        }
+        if (rule.isEmpty()) {
+            indexPanel.searchRule("Nicht in der globalen Suche", Comic.MUTED, !libs.isEmpty(), false);
+        } else if (!libs.isEmpty() && libs.stream().allMatch(rule.get()::covers)) {
+            indexPanel.searchRule("In „" + rule.get().title() + "“, global durchsuchbar", Comic.GREEN, true, true);
+        } else if (libs.isEmpty()) {
+            indexPanel.searchRule("Quelle „" + rule.get().title() + "“: " + String.join(", ",
+                    rule.get().libraries()), Comic.GREEN, false, true);
+        } else {
+            indexPanel.searchRule("„" + rule.get().title() + "“ ohne " + String.join(", ", libs.stream()
+                    .filter(lib -> !rule.get().covers(lib)).toList()), Comic.YELLOW, true, true);
+        }
+    }
+
+    /**
+     * „Indexieren (Regel anlegen)“: Wissensquelle für diesen Server anlegen oder um die Bibliothek ergänzen; nach dem
+     * Speichern gleich indexieren (wie die erste Ausführung der Regel in MainframeMate).
+     */
+    void createSearchRule() {
+        List<String> libs = indexLibraries();
+        NdvSearchLink link = NdvAnalysisSettings.searchLink();
+        if (libs.isEmpty() || !link.available()) {
+            note("Für die globale Suche erst eine Bibliothek wählen", true);
+            return;
+        }
+        List<String> blocked = libs.stream().filter(lib -> !rules.isAllowed(NdvAccessRules.path(lib, ""))).toList();
+        if (!blocked.isEmpty()) {
+            note("Gesperrt, nicht indiziert: " + String.join(", ", blocked), true);
+            return;
+        }
+        try {
+            link.createRule(this, session.profile(), session.account(), libs, sourceId -> {
+                note("Regel für " + String.join(", ", libs) + " gespeichert; Indexieren startet", false);
+                indexNow(sourceId);
+            });
+        } catch (RuntimeException e) {
+            note("Regel nicht angelegt: " + ConnectForm.describe(e), true);
+        }
+    }
+
+    /** „Jetzt indexieren“: Abgleich der Wissensquelle dieses Servers als eigener Auftrag. */
+    void indexNow() {
+        NdvAnalysisSettings.searchLink().rule(session.profile()).ifPresentOrElse(rule -> indexNow(rule.sourceId()),
+                () -> note("Für diesen Server gibt es noch keine Regel", true));
+    }
+
+    private void indexNow(String sourceId) {
+        NdvSearchLink link = NdvAnalysisSettings.searchLink();
+        indexPanel.indexNow.setEnabled(false);
+        work(() -> link.indexNow(sourceId), started -> {
+            note(started, false);
+            updateSearchLink();
+        }, error -> {
+            note("Indexieren nicht gestartet: " + ConnectForm.describe(error), true);
+            updateSearchLink();
+        });
+    }
+
     private void analysisChanged() {
         updateIndex();
     }
 
     private void updateFilterState() {
+        updateSearchLink();
         List<String> paths = selectedPaths();
         if (paths.isEmpty()) {
             indexPanel.filter("-");
@@ -1500,6 +1594,10 @@ final class NdvBrowser extends JPanel {
                 : "Auswahl zwischenspeichern (" + selectedCount + ")");
         cache.addActionListener(e -> cacheSelectedOrAll());
         menu.add(cache);
+        JMenuItem rule = new JMenuItem("Indexieren (Regel anlegen)");
+        rule.setEnabled(NdvAnalysisSettings.searchLink().available() && !indexLibraries().isEmpty());
+        rule.addActionListener(e -> createSearchRule());
+        menu.add(rule);
         menu.addSeparator();
         JMenuItem block = new JMenuItem("Sperren");
         block.addActionListener(e -> rules.blacklist(selectedPaths()));

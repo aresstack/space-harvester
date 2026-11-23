@@ -42,6 +42,14 @@ public class NdvTransaction implements IPalTransactions {
         this.debugService = new DebugService(ctx);
     }
 
+    /**
+     * Der Weg zum NDV-Server für das nächste {@code connect}: {@code null} oder {@link java.net.Proxy#NO_PROXY} direkt
+     * (Vorgabe, wie MainframeMate), sonst über diesen Proxy (HTTP per CONNECT oder SOCKS).
+     */
+    public void setProxy(java.net.Proxy proxy) {
+        ctx.setProxy(proxy);
+    }
+
     public NdvTransaction(IPalClientIdentification id) {
         this();
         ctx.setIdentification(id);

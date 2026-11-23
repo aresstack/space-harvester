@@ -28,8 +28,9 @@ import javax.swing.ListSelectionModel;
 
 /**
  * Die Index-Leiste des NDV-Bereichs wie die {@code IndexingSidebar} aus MainframeMate: Pfad und Bereich, Zustand des
- * Zwischenspeichers (Ampel), Fortschritt des Vorabladens, „Auswahl zwischenspeichern“ und „Cache leeren“; darunter der
- * Filterzustand der Auswahl mit Freigeben, Sperren, Filter entfernen; zuletzt die Suche im zwischengespeicherten
+ * Zwischenspeichers (Ampel), Fortschritt des Vorabladens, „Auswahl zwischenspeichern“ und „Cache leeren“; dann der
+ * Anschluss an die globale Suche („Indexieren (Regel anlegen)“, „Jetzt indexieren“); darunter der Filterzustand
+ * der Auswahl mit Freigeben, Sperren, Filter entfernen; zuletzt die Suche im zwischengespeicherten
  * Quelltext der Bibliothek.
  */
 final class NdvIndexPanel extends JPanel {
@@ -50,6 +51,12 @@ final class NdvIndexPanel extends JPanel {
     final ComposerButton cancel = Comic.button("Abbrechen", "Zwischenspeichern anhalten; Geladenes bleibt");
     final ComposerButton clearCache = Comic.danger("Cache leeren",
             "Zwischengespeicherte Quelltexte, Suche und Abhängigkeiten dieser Bibliothek verwerfen");
+    private final JLabel searchRule = Comic.muted("-");
+    final ComposerButton indexRule = Comic.button("Indexieren (Regel anlegen)",
+            "Wiederkehrende Indexierung für die Bibliothek: legt die Wissensquelle an oder ergänzt sie; danach ist "
+                    + "der Quelltext in der globalen Suche und der KI-Suche");
+    final ComposerButton indexNow = Comic.button("Jetzt indexieren",
+            "Abgleich der Wissensquelle sofort starten (eigener Auftrag)");
     final ComposerButton whitelist = Comic.button("Freigeben", "Auswahl auf die Freigabeliste setzen");
     final ComposerButton blacklist = Comic.button("Sperren", "Auswahl auf die Sperrliste setzen");
     final ComposerButton removeFilter = Comic.button("Filter entfernen", "Auswahl aus beiden Listen nehmen");
@@ -81,6 +88,11 @@ final class NdvIndexPanel extends JPanel {
         y = wide(rows, y, progress);
         y = wide(rows, y, Comic.row(cacheSelection, cancel));
         y = wide(rows, y, Comic.row(clearCache));
+        y = heading(rows, y, "Globale Suche");
+        y = row(rows, y, "Regel", searchRule);
+        y = wide(rows, y, Comic.row(indexRule));
+        y = wide(rows, y, Comic.row(indexNow));
+        indexNow.setEnabled(false);
         y = heading(rows, y, "Sperrliste");
         y = row(rows, y, "Auswahl", filter);
         y = wide(rows, y, Comic.row(whitelist, blacklist));
@@ -196,6 +208,15 @@ final class NdvIndexPanel extends JPanel {
         cancel.setEnabled(false);
     }
 
+    /** Zustand des Anschlusses an die globale Suche: Satz, Ampelfarbe, was sich bedienen lässt. */
+    void searchRule(String text, Color color, boolean canCreate, boolean canIndex) {
+        searchRule.setText(text);
+        searchRule.setToolTipText(text);
+        searchRule.setForeground(color);
+        indexRule.setEnabled(canCreate);
+        indexNow.setEnabled(canIndex);
+    }
+
     void filter(String text) {
         filter.setText(text);
         filter.setToolTipText(text);
@@ -215,6 +236,10 @@ final class NdvIndexPanel extends JPanel {
 
     String countText() {
         return count.getText();
+    }
+
+    String searchRuleText() {
+        return searchRule.getText();
     }
 
     String filterText() {

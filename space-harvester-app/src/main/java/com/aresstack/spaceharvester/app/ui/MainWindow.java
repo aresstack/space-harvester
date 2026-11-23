@@ -111,6 +111,8 @@ public final class MainWindow implements AppContext.Navigator {
     static final String CHAT_UNREAD_TOOLTIP = "Chat (Strg+J) · neue Antwort";
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
+    /** Karte des Stands einer Perspektive in der Statuszeile (Präfix vor der Kennung). */
+    private static final String PERSPECTIVE_STATUS = "perspective:";
     private JobStatusLine jobStatus;
     private final JLabel status = Comic.muted(" ");
     /** ✕ hinter dem Stand der App: ein Ergebnis (etwa eines Exports) bleibt stehen, bis es der Benutzer wegklickt. */
@@ -224,6 +226,8 @@ public final class MainWindow implements AppContext.Navigator {
                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
                 com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context),
                 new com.aresstack.spaceharvester.app.ui.deck.AppTerminalTunnel(context));
+        // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
+        commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());
@@ -238,6 +242,8 @@ public final class MainWindow implements AppContext.Navigator {
                 .map(entry -> new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite(
                         entry.config().title(), entry.config().baseUrl().toString()))
                 .toList());
+        // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
+        com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
@@ -535,6 +541,11 @@ public final class MainWindow implements AppContext.Navigator {
         perspectives.add(Perspectives.missionControl());
         for (Perspective perspective : perspectives.all()) {
             stage.add(perspective.workspace(), perspective.id());
+            if (perspective.status() != null) {
+                // Der Stand der Perspektive steht in derselben Statuszeile wie der der Harvester-Bereiche.
+                perspective.status().setOpaque(false);
+                viewStatus.add(perspective.status(), PERSPECTIVE_STATUS + perspective.id());
+            }
         }
         harvesterNavigation = icons;
         navigationSlot.add(icons, BorderLayout.CENTER);
@@ -905,7 +916,13 @@ public final class MainWindow implements AppContext.Navigator {
         stageCards.show(stage, next.id());
         if (!harvester) {
             // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.
-            viewStatus.setVisible(false);
+            // Eine Perspektive mit eigenem Stand zeigt ihn an derselben Stelle.
+            if (next.status() != null) {
+                viewStatusCards.show(viewStatus, PERSPECTIVE_STATUS + next.id());
+                viewStatus.setVisible(true);
+            } else {
+                viewStatus.setVisible(false);
+            }
             jobStatus.navigationVisible(false);
         }
         if (next.drawer() == null) {

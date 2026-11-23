@@ -45,7 +45,10 @@ public final class CommandDeck {
     private final JPanel workspace = new JPanel(cards);
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
-    private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(), connecting);
+    /** Weg zum NDV-Server für Verbindungen mit „Proxy der App verwenden“; ohne App (Tests) direkt. */
+    private volatile PalNdvConnector.Route ndvRoute = profile -> java.net.Proxy.NO_PROXY;
+    private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(profile -> ndvRoute.to(profile)),
+            connecting);
     private final TerminalWorkspace terminal;
     private final BetaViewWorkspace betaView;
     /** Gemeinsamer Editor aller Bereiche (Dateien, NDV, später FTP); die Dokumente überleben jeden Wechsel. */
@@ -64,6 +67,9 @@ public final class CommandDeck {
     private final FtpWorkspace ftp;
     /** Oben rechts in der Titelleiste: die Bedienelemente des gewählten Bereichs (FTP: Datasets | JES-Jobs). */
     private final JPanel tools = new JPanel(new BorderLayout());
+    /** Links in der Statuszeile der App: der Stand des gewählten Bereichs, eine Karte je Bereich. */
+    private final CardLayout statusCards = new CardLayout();
+    private final JPanel status = new JPanel(statusCards);
     private final NdvWorkspace ndv;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
@@ -138,11 +144,32 @@ public final class CommandDeck {
                 case NDV -> ndv;
                 default -> placeholder(candidate);
             }, candidate.name());
+            javax.swing.JComponent info = switch (candidate) {
+                case TERMINAL -> terminal.statusInfo();
+                case BETAVIEW -> betaView.statusInfo();
+                case FILES -> files.statusInfo();
+                case FTP -> ftp.statusInfo();
+                case NDV -> ndv.statusInfo();
+                default -> new JPanel();
+            };
+            info.setOpaque(false);
+            status.add(info, candidate.name());
         }
+        status.setOpaque(false);
         show(DeckArea.TERMINAL);
-        perspective = Perspective.of(Perspectives.COMMAND_DECK, "Command Deck",
+        perspective = new Perspective(Perspectives.COMMAND_DECK, "Command Deck",
                 "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", true, navigation,
-                workspace, null, tools);
+                workspace, null, tools, null, null, status);
+    }
+
+    /** Der Stand des gewählten Bereichs für die Statuszeile (für Tests). */
+    JPanel statusPanel() {
+        return status;
+    }
+
+    /** Der Proxy-Weg der App für NDV-Verbindungen, die ihn gewählt haben (Vorgabe direkt). */
+    public void ndvRoute(PalNdvConnector.Route route) {
+        ndvRoute = route == null ? profile -> java.net.Proxy.NO_PROXY : route;
     }
 
     public Perspective perspective() {
@@ -178,6 +205,7 @@ public final class CommandDeck {
         area = next;
         buttons.get(next).setSelected(true);
         cards.show(workspace, next.name());
+        statusCards.show(status, next.name());
         tools.removeAll();
         if (next == DeckArea.FTP) {
             tools.add(ftp.tools(), BorderLayout.CENTER);

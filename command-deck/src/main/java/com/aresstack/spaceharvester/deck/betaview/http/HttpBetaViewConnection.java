@@ -207,13 +207,20 @@ final class HttpBetaViewConnection implements BetaViewConnection {
         if (search.action().isEmpty()) {
             throw new IOException("Die gespeicherte Suche „" + search.name() + "“ hat keine Aktion");
         }
-        Map<String, String> form = new LinkedHashMap<>();
-        if (!search.tokenName().isEmpty()) {
-            form.put("struts.token.name", search.tokenName());
-            form.put(search.tokenName(), search.tokenValue());
-        }
-        if (!search.id().isEmpty()) {
-            form.put("ssIDForm", search.id());
+        // Das Struts-Token im Formular gilt nur einmal und wird von jeder neu gezeichneten Seite ersetzt; ein Token aus
+        // einer früher geladenen Liste lehnt der Server ab (HTTP 400). Darum wie der Browser direkt davor die Liste
+        // lesen und das frische Formular dieser Suche vollständig absenden.
+        Map<String, String> form = BetaViewHtml.savedSearchForm(
+                http.postText("savedSelection.list.action", csrfForm()), search);
+        if (form.isEmpty()) {
+            // Wie MainframeMate (BetaViewConnectionTab.loadSavedSearch): Token und ssIDForm aus der Liste.
+            if (!search.tokenName().isEmpty()) {
+                form.put("struts.token.name", search.tokenName());
+                form.put(search.tokenName(), search.tokenValue());
+            }
+            if (!search.id().isEmpty()) {
+                form.put("ssIDForm", search.id());
+            }
         }
         String html = http.postText(search.action(), form);
         if (!html.contains("resulttable") && !html.contains("showResult")) {
