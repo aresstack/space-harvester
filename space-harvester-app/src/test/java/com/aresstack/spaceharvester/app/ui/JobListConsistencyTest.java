@@ -88,6 +88,11 @@ class JobListConsistencyTest {
                 NONE);
         assertThat(WaitReason.of(second, List.of(first, second), 3)).hasValueSatisfying(reason ->
                 assertThat(reason).contains("vorigen Teil", "Läuft"));
+        // Mehrere Vorstufen, durch Komma getrennt: jede zählt (Codex #1174).
+        JobStatus third = job("p3", JobType.BACKGROUND, "ALPHA", JobState.QUEUED, Map.of(Jobs.AFTER, "fertig,p1"), 3,
+                NONE);
+        assertThat(WaitReason.of(third, List.of(first, third), 3)).hasValueSatisfying(reason ->
+                assertThat(reason).contains("vorigen Teil", "Läuft"));
 
         // Nur wartende haben einen Grund.
         assertThat(WaitReason.of(busy.get(0), all, 3)).isEmpty();

@@ -35,8 +35,13 @@ final class WaitReason {
         }
         String after = job.parameter(Jobs.AFTER);
         if (after != null && !after.isBlank()) {
-            Optional<JobStatus> before = all.stream().filter(other -> other.id().equals(after)).findFirst();
-            if (before.isPresent() && !before.get().state().terminal()) {
+            // Mehrere Vorstufen stehen durch Komma getrennt (BackgroundJobs#startSteps); Jobs#held prüft jede einzeln
+            // (Codex #1174).
+            java.util.Set<String> ids = java.util.Arrays.stream(after.split(",")).map(String::trim)
+                    .filter(id -> !id.isEmpty()).collect(java.util.stream.Collectors.toSet());
+            Optional<JobStatus> before = all.stream()
+                    .filter(other -> ids.contains(other.id()) && !other.state().terminal()).findFirst();
+            if (before.isPresent()) {
                 return Optional.of("wartet auf den vorigen Teil (" + Texts.state(before.get()) + ")");
             }
         }
