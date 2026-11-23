@@ -164,17 +164,19 @@ public final class FilterPatterns {
                     return new Extension(ExtensionMode.CONSTANT, v, "");
                 }
             }
-            if (v.startsWith("B") && v.endsWith("F13FB")) {
+            // Wie MainframeMate, aber eine Art nur dann, wenn ihre Nummer wirklich aus Ziffern besteht: sonst ginge
+            // beim Wiederherstellen etwa aus BK*BANK still BKBANK hervor (value() behält nur Ziffern).
+            if (v.startsWith("B") && v.endsWith("F13FB") && digits(v.substring(1, v.length() - 5))) {
                 return new Extension(ExtensionMode.BEW_FB, v.substring(1, v.length() - "F13FB".length()), "");
             }
-            if (v.startsWith("B") && v.endsWith("F13LB")) {
+            if (v.startsWith("B") && v.endsWith("F13LB") && digits(v.substring(1, v.length() - 5))) {
                 return new Extension(ExtensionMode.BEW_LB, v.substring(1, v.length() - "F13LB".length()), "");
             }
-            if (v.startsWith("BK") && v.contains("BANK")) {
+            if (v.startsWith("BK") && v.contains("BANK") && digits(v.substring(2, v.indexOf("BANK")))) {
                 int bank = v.indexOf("BANK");
                 return new Extension(ExtensionMode.BK_BANK, v.substring(2, bank), v.substring(bank + "BANK".length()));
             }
-            if (v.startsWith("BK") && v.length() >= 4) {
+            if (v.startsWith("BK") && v.length() >= 4 && digits(v.substring(2, 4))) {
                 return new Extension(ExtensionMode.BK_FREE, v.substring(2, 4), v.substring(4));
             }
             return new Extension(ExtensionMode.CUSTOM, v, "");
@@ -285,18 +287,32 @@ public final class FilterPatterns {
             if ("*A".equals(v) || "*E".equals(v) || "*K".equals(v)) {
                 return new Report(ReportMode.PREFIX, v, "");
             }
-            if (v.startsWith("BA") && v.length() == 6) {
+            // BA und K9999 nur, wenn Liste und Typ in den Auswahllisten stehen; sonst bliebe beim Wiederherstellen
+            // etwa aus BA001* still BA001A.
+            if (v.startsWith("BA") && v.length() == 6 && contains(BA_LISTS, v.substring(0, 5))
+                    && contains(baTypes(v.substring(0, 5)), v.substring(5))) {
                 return new Report(ReportMode.BA, v.substring(0, 5), v.substring(5));
             }
             // MainframeMate prüft hier Länge 10; K9999BA + 3 Ziffern + Typ sind aber 11 Zeichen.
-            if (v.startsWith("K9999BA") && v.length() == 11) {
+            if (v.startsWith("K9999BA") && v.length() == 11 && digits(v.substring(7, 10))
+                    && contains(K_TYPES, v.substring(10))) {
                 return new Report(ReportMode.K9999, v.substring(7, 10), v.substring(10));
             }
-            if ((v.startsWith("%") || v.startsWith("*")) && v.endsWith("*") && v.length() > 2) {
+            // MainframeMate nimmt auch *nnn* als Bewirtschafternummer, value() machte daraus aber %nnn*; deshalb
+            // bleibt *nnn* als freier Wert erhalten.
+            if (v.startsWith("%") && v.endsWith("*") && v.length() > 2) {
                 return new Report(ReportMode.BEWIRT, v.substring(1, v.length() - 1), "");
             }
             return new Report(ReportMode.CUSTOM, v, "");
         }
+    }
+
+    private static boolean digits(String s) {
+        return !s.isEmpty() && s.chars().allMatch(Character::isDigit);
+    }
+
+    private static boolean contains(List<Option> options, String value) {
+        return options.stream().anyMatch(option -> option.value().equals(value));
     }
 
     private static String safe(String s) {
