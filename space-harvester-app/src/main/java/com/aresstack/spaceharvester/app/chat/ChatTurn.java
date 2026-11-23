@@ -334,6 +334,17 @@ public final class ChatTurn {
 
     private java.util.function.Supplier<Set<String>> appSources;
 
+    /**
+     * Ein Favoriten-Ordner ist der Bereich (ADR 0034 §5): {@code nodes} liefert seine Unterordner und Favoriten für
+     * {@value ChatTools#LIST}; {@code null} für jeden anderen Bereich.
+     */
+    public ChatTurn collection(CollectionNodes nodes) {
+        this.collection = nodes;
+        return this;
+    }
+
+    private CollectionNodes collection;
+
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
     public void start() {
         Thread worker = new Thread(this::run, "chat-turn");
@@ -493,7 +504,7 @@ public final class ChatTurn {
             public void delivered(String spaceKey, PageKey key) {
                 releasePageOrThrow(spaceKey, key);
             }
-        }).neighbors(neighbors).glossarySynonyms(glossarySynonyms);
+        }).neighbors(neighbors).glossarySynonyms(glossarySynonyms).collection(collection);
         if (termLookup != null) {
             running.termLookup(termLookup);
         }

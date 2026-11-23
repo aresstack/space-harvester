@@ -2160,6 +2160,43 @@ public final class ChatPanel extends JPanel {
     }
 
     /**
+     * Die Ordner und Favoriten einer Sammlung für {@code seiten_auflisten} (ADR 0034 §5), gelesen beim Aufruf: der
+     * gewählte Ordner und, mit „mit Unterseiten“, jeder Ordner darunter; je direkter Favorit seine Wurzel, soweit sie in
+     * der aufgelösten Sammlung steht. Ein Ordner außerhalb oder ein inzwischen gelöschter gehört nicht zum Bereich.
+     */
+    static com.aresstack.spaceharvester.app.chat.CollectionNodes collectionNodes(
+            com.aresstack.spaceharvester.app.ui.Favorites favorites, Selection.Collection collection) {
+        return folderId -> {
+            var top = favorites.folder(collection.folderId());
+            var folder = folderId == null ? top
+                    : collection.withSubfolders() ? top.flatMap(found -> found.subfolder(folderId))
+                    : java.util.Optional.<com.aresstack.spaceharvester.app.ui.Favorites.Folder>empty();
+            if (folder.isEmpty()) {
+                return null;
+            }
+            List<com.aresstack.spaceharvester.app.chat.CollectionNodes.Folder> folders = new ArrayList<>();
+            List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots = new ArrayList<>();
+            for (var entry : folder.get().children()) {
+                switch (entry) {
+                    case com.aresstack.spaceharvester.app.ui.Favorites.Folder child -> {
+                        if (collection.withSubfolders()) {
+                            folders.add(new com.aresstack.spaceharvester.app.chat.CollectionNodes.Folder(child.id(),
+                                    child.name()));
+                        }
+                    }
+                    case com.aresstack.spaceharvester.app.ui.Favorites.Bookmark bookmark -> {
+                        var root = bookmark.favorite().root();
+                        if (collection.roots().contains(root)) {
+                            roots.add(root);
+                        }
+                    }
+                }
+            }
+            return new com.aresstack.spaceharvester.app.chat.CollectionNodes.Content(folders, roots);
+        };
+    }
+
+    /**
      * Meldet, sobald eine Antwort des angezeigten Chats fertig oder gescheitert ist (Observer, kein Polling). Ein
      * Abbruch meldet nichts: den löst der Benutzer selbst aus.
      */
@@ -2381,12 +2418,16 @@ public final class ChatPanel extends JPanel {
     }
 
     /**
-     * Die Kennung eines Bereichs: Quelle, Space und Seite, dazu ob nur die Seite ohne Unterseiten gemeint ist. Zwei
-     * gleich benannte Spaces oder Seiten sind damit verschiedene Bereiche; {@code null} ohne Auswahl.
+     * Die Kennung eines Bereichs: Quelle, Space und Seite, dazu ob nur die Seite ohne Unterseiten gemeint ist, oder der
+     * Favoriten-Ordner einer Sammlung. Zwei gleich benannte Spaces, Seiten oder Ordner sind damit verschiedene Bereiche;
+     * {@code null} ohne Auswahl.
      */
     static String scopeKey(ChatNode node, boolean pageOnly) {
         if (node == null) {
             return null;
+        }
+        if (node.isCollection()) {
+            return "ordner\u0000" + node.folderId();
         }
         if (node.sourceId() == null) {
             return "*";

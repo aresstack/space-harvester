@@ -106,5 +106,9 @@ class ChatStoreTest {
         assertThat(ChatNode.segment("a/b")).isNotEqualTo(ChatNode.segment("a_b"));
         assertThat(new ChatNode("q", null, null).directory(Path.of("r"))).isEqualTo(Path.of("r/q/_quelle/_space"));
         assertThat(ChatNode.ALL.directory(Path.of("r"))).isEqualTo(Path.of("r/_alle"));
+        // Eine Sammlung liegt bei ihrer Ordner-ID, nie neben einer Quelle gleichen Namens.
+        assertThat(ChatNode.collection("f-1").directory(Path.of("r"))).isEqualTo(Path.of("r/_sammlung/f-1"));
+        assertThat(new ChatNode("_sammlung", null, null).directory(Path.of("r")).startsWith(Path.of("r/_sammlung")))
+                .isFalse();
     }
 }
