@@ -186,6 +186,16 @@ class HttpBetaViewServerTest {
     }
 
     @Test
+    void anOfflineDocumentReportsTheReasonFromTheSessionStatus() throws IOException {
+        BetaViewConnection connection = login();
+        String link = "opendocumentlink.action?docid=" + FakeBetaViewServer.OFFLINE_DOC + "&favid="
+                + FakeBetaViewServer.FAVORITE;
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> connection.open(link))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Server antwortet HTTP 400 auf opendocumentlink.action: Das Dokument ist offline.");
+    }
+
+    @Test
     void decodesDoublyEncodedNamesOfSavedSearchesAndSendsTheWholeForm() {
         String html = "<div class=\"el_wall_btn\"><div name=\"we_id_selection_name\">R&amp;uuml;cknachrichten</div>"
                 + "<div name=\"selection_desc\">Gr&uuml;n</div><form action=\"/betaview/executeSavedSelection.action?ssID=7\">"

@@ -96,8 +96,7 @@ final class BetaViewHttp {
     Response get(String relative) throws IOException {
         Response response = follow(send(request(withCsrf(relative)).GET()));
         if (!response.success()) {
-            throw new IOException("Server antwortet HTTP " + response.status() + " auf " + action(relative)
-                    + where(response));
+            throw rejected(relative, response);
         }
         return response;
     }
@@ -109,8 +108,7 @@ final class BetaViewHttp {
     Response postResponse(String relative, Map<String, String> fields) throws IOException {
         Response response = follow(post(relative, fields));
         if (!response.success()) {
-            throw new IOException("Server antwortet HTTP " + response.status() + " auf " + action(relative)
-                    + where(response));
+            throw rejected(relative, response);
         }
         return response;
     }
@@ -218,10 +216,31 @@ final class BetaViewHttp {
         return query < 0 ? relative : relative.substring(0, query);
     }
 
+    /**
+     * Die Ausnahme für eine abgelehnte Anfrage, mit dem Grund des Servers. Steht er nicht in der Antwort selbst, liest
+     * sie ihn wie die Webseite aus {@code getSessionStatus.action} (dort meldet der Server etwa „Das Dokument ist
+     * offline.“ oder „Das Layout existiert nicht“).
+     */
     private static String where(Response response) {
         String where = response.location() == null ? "" : " (weitergeleitet nach " + action(response.location()) + ")";
         return serverMessage(response.text()).map(message -> where + ": " + message).orElse(where);
     }
+
+    private IOException rejected(String relative, Response response) {
+        String where = response.location() == null ? "" : " (weitergeleitet nach " + action(response.location()) + ")";
+        Optional<String> reason = serverMessage(response.text());
+        if (reason.isEmpty() && !relative.startsWith(SESSION_STATUS)) {
+            try {
+                reason = serverMessage(send(request(withCsrf(SESSION_STATUS)).GET()).text());
+            } catch (IOException | RuntimeException ignored) {
+                // Ohne Grund bleibt es bei Status und Aktion.
+            }
+        }
+        return new IOException("Server antwortet HTTP " + response.status() + " auf " + action(relative) + where
+                + reason.map(text -> ": " + text).orElse(""));
+    }
+
+    private static final String SESSION_STATUS = "getSessionStatus.action";
 
     private static final java.util.regex.Pattern ERRORS =
             java.util.regex.Pattern.compile("\"errors\"\\s*:\\s*\\[\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
