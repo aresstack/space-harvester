@@ -84,6 +84,11 @@ class FtpConnectFlowTest {
             assertThat(second.profile().port()).as("die gemerkten Einstellungen").isEqualTo(host.port());
 
             SwingUtilities.invokeAndWait(() -> {
+                // Die Aktionen der gewählten Sitzung stehen in der Fußleiste des Command Deck neben der Lupe.
+                assertThat(deck.ftp()).isInstanceOf(DeckBars.FootTools.class);
+                assertThat(deck.ftp().view(second).footTools().getParent()).isSameAs(deck.ftp().footTools());
+                assertThat(deck.ftp().view(second).footTools().isVisible()).isTrue();
+                assertThat(deck.ftp().view(first).footTools().isVisible()).isFalse();
                 deck.ftp().closeTab(second);
                 assertThat(deck.ftpSessions().all()).containsExactly(first);
                 assertThat(second.state().ended()).as("✕ trennt").isTrue();
