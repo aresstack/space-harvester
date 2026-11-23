@@ -13,7 +13,10 @@ Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPS
 | `browser-api` | vollständig: `ChatBrowserPort`, `ChatBrowser`, Seiten, Links, Bedienelemente, Engine-SPI |
 | `browser-runtime` | vollständig: Profil je Chat, verzögerter Start, Wiederverbinden nach Verbindungsverlust |
 | `browser-firefox` | vollständig: Firefox-Adapter und das vendorte WD4J aus MainframeMate (`de.bund.zrb`, MIT), siehe [`VENDORED.md`](VENDORED.md) |
-| `astu` | nur `chat/ChatConversationId` |
+| `astu` | `chat/ChatConversationId` und das Paket `approval` (Rückfrage vor Werkzeugaufrufen, `ToolApprovalGate`) |
+| `astu/acropolis` | nur `AttachmentTextExtractor` und `AttachmentException` (Text verlinkter Dokumente) |
+| `proasteion/katagogion` | nur die Werkzeugbeschreibung `McpToolCall`, `McpToolContribution`, `McpToolHandler`, `McpToolParameter`, `McpToolResult`, `McpToolType`, `McpContextResource` |
+| `proasteion/application` | die Browser-Werkzeuge des Chats `agent/BrowserMcpTools`, `browser/*` (Freigaben je Profil, Rückfrage vor verändernden Aktionen, Fortschritt der Webrecherche) und `config/BrowserAccessConfig`, `config/BrowserProfile` |
 | `LICENSE` | die Lizenz des Upstreams (MIT, AresStack), mitkopiert und mitgeprüft |
 
 Neue Abhängigkeit gegenüber den anderen Kopien: `org.reflections:reflections` (wie im Upstream-Build von

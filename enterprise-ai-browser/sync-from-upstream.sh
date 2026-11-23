@@ -26,6 +26,40 @@ modules=(
 # Der Rest von astu wird hier nicht gebraucht; Teile davon liegen in :enterprise-ai-sources.
 astu_classes=(
   chat/ChatConversationId
+  approval/ApprovalDecision
+  approval/ApprovalPolicy
+  approval/ApprovalPromptPort
+  approval/ApprovalRequest
+  approval/ApprovalRules
+  approval/ApprovalTarget
+  approval/ApprovalTargetResolver
+  approval/ToolApprovalGate
+  approval/package-info
+)
+
+# Einzelne Klassen anderer Module: <Modulpfad>:<Pfad unter src/main/java ohne .java>, samt Test, falls vorhanden.
+# Die Browser-Werkzeuge des Chats (BrowserMcpTools) mit allem, was sie brauchen: Werkzeugbeschreibung (katagogion),
+# Freigaben je Profil, Rückfrage vor verändernden Aktionen, Fortschritt der Webrecherche.
+app="com/aresstack/enterpriseai/proasteion/application"
+module_classes=(
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/attachment/AttachmentTextExtractor
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/attachment/AttachmentException
+  proasteion/katagogion:com/aresstack/enterpriseai/proasteion/katagogion/McpToolCall
+  proasteion/katagogion:com/aresstack/enterpriseai/proasteion/katagogion/McpToolContribution
+  proasteion/katagogion:com/aresstack/enterpriseai/proasteion/katagogion/McpToolHandler
+  proasteion/katagogion:com/aresstack/enterpriseai/proasteion/katagogion/McpToolParameter
+  proasteion/katagogion:com/aresstack/enterpriseai/proasteion/katagogion/McpToolResult
+  proasteion/katagogion:com/aresstack/enterpriseai/proasteion/katagogion/McpToolType
+  proasteion/katagogion:com/aresstack/enterpriseai/proasteion/katagogion/McpContextResource
+  proasteion/application:$app/agent/BrowserMcpTools
+  proasteion/application:$app/browser/BrowserAccessService
+  proasteion/application:$app/browser/BrowserActApproval
+  proasteion/application:$app/browser/BrowserPolicyStore
+  proasteion/application:$app/browser/DelegatingBrowserAccessGuard
+  proasteion/application:$app/browser/WebExplorationRun
+  proasteion/application:$app/browser/WebExplorationProgress
+  proasteion/application:$app/config/BrowserAccessConfig
+  proasteion/application:$app/config/BrowserProfile
 )
 
 usage() {
@@ -59,6 +93,17 @@ copy_selection() {
         cp -R "$upstream/$module/src/$set/." "$dest/src/$set/"
       fi
     done
+  done
+  local entry module class
+  for entry in "${module_classes[@]}"; do
+    module="${entry%%:*}"
+    class="${entry#*:}"
+    mkdir -p "$dest/src/main/java/$(dirname "$class")"
+    cp "$upstream/$module/src/main/java/$class.java" "$dest/src/main/java/$class.java"
+    if [ -f "$upstream/$module/src/test/java/${class}Test.java" ]; then
+      mkdir -p "$dest/src/test/java/$(dirname "$class")"
+      cp "$upstream/$module/src/test/java/${class}Test.java" "$dest/src/test/java/${class}Test.java"
+    fi
   done
   local astu="com/aresstack/enterpriseai/astu"
   for class in "${astu_classes[@]}"; do
