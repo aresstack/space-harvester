@@ -20,7 +20,9 @@ public record AnalysisNote(Code code, String text, Processor processor) {
         /** Die KI war nicht erreichbar; nur deterministische Extraktion. */
         AI_UNAVAILABLE,
         /** Die KI lieferte nur einen Teil. */
-        AI_PARTIAL
+        AI_PARTIAL,
+        /** Das Dokument ist nicht für die KI freigegeben (ADR 0028); nur deterministische Extraktion. */
+        AI_NOT_RELEASED
     }
 
     public AnalysisNote {

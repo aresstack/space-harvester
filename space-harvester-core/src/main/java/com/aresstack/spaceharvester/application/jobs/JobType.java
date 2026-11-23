@@ -134,6 +134,13 @@ public enum JobType {
      */
     READING_PREFETCH,
     /**
+     * „Analysieren“ eines Dokuments (ADR 0035, Abschnitt 4), etwa aus der E-Akte: Fakten in drei Stufen (Regex, KI nur
+     * mit Freigabe, Validierung), Teilergebnisse sofort; ein Klick ({@link Jobs#submitInteractive}). Ergebnisse liegen
+     * nur im Speicher; nach einem Neustart wird nichts fortgesetzt
+     * ({@code application.deadlines.DeadlineAnalysisService}).
+     */
+    DOCUMENT_ANALYSIS,
+    /**
      * Hintergrundauftrag (Angelo 21.11.2026, ADR 0025 Nachtrag „Hintergrundaufträge“): alles, was die App von sich aus
      * anstößt, etwa fehlende Seiten nachladen oder Bilder automatisch beschreiben. Welche Arbeit, sagt die Angabe
      * {@code background.kind}; zusammengehörige Unteraufträge (je Space einer) tragen dieselbe {@code background.group}

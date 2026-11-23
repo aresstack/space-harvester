@@ -14,10 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -613,52 +609,10 @@ final class ThematicSummarizer {
             @Override
             public <T, R> List<R> run(List<T> items, IntFunction<String> title, BiFunction<T, JobContext, R> work,
                                       JobContext context) {
-                return inParallel(Math.max(1, model.parallel()), items, context, item -> work.apply(item, context));
+                return com.aresstack.spaceharvester.application.jobs.ParallelWork.map(Math.max(1, model.parallel()), items,
+                        context, "summary-", item -> work.apply(item, context));
             }
         };
-    }
-
-    private static <T, R> List<R> inParallel(int lanes, List<T> items, JobContext context, Function<T, R> work) {
-        int parallel = Math.max(1, Math.min(lanes, items.size()));
-        if (parallel == 1) {
-            List<R> results = new ArrayList<>(items.size());
-            for (T item : items) {
-                context.checkpoint();
-                results.add(work.apply(item));
-            }
-            return results;
-        }
-        ExecutorService pool = Executors.newFixedThreadPool(parallel,
-                Thread.ofPlatform().daemon().name("summary-", 0).factory());
-        try {
-            List<Future<R>> running = new ArrayList<>(items.size());
-            for (T item : items) {
-                running.add(pool.submit(() -> {
-                    context.checkpoint();
-                    return work.apply(item);
-                }));
-            }
-            List<R> results = new ArrayList<>(items.size());
-            for (Future<R> future : running) {
-                try {
-                    results.add(future.get());
-                } catch (ExecutionException e) {
-                    running.forEach(other -> other.cancel(true));
-                    if (e.getCause() instanceof RuntimeException runtime) {
-                        throw runtime;
-                    }
-                    throw new IllegalStateException(e.getCause());
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    running.forEach(other -> other.cancel(true));
-                    throw new JobCancelledException(context.jobId());
-                }
-            }
-            context.checkpoint();
-            return results;
-        } finally {
-            pool.shutdownNow();
-        }
     }
 
     /**

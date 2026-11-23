@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.extraction.Processor;
 import com.aresstack.spaceharvester.application.extraction.Qualifier;
 import com.aresstack.spaceharvester.application.extraction.SourceReference;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
+import com.aresstack.spaceharvester.application.jobs.ParallelWork;
 import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
@@ -28,6 +29,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.function.Function;
+import java.util.function.IntSupplier;
 
 import static com.aresstack.spaceharvester.application.deadlines.DeadlineFieldKeys.*;
 
@@ -79,6 +81,7 @@ public final class AiFactExtractor implements ExtractionStage {
             Gibt es nichts, antworte {"facts":[]}.""".formatted(keyList());
 
     private final StepModel model;
+    private final IntSupplier lanes;
     private final ModelRetry.Listener retry;
     private final int maxChars;
     private final Function<AnalysisInput, List<DocumentPart>> parts;
@@ -91,6 +94,17 @@ public final class AiFactExtractor implements ExtractionStage {
      */
     public AiFactExtractor(StepModel model, ModelRetry.Listener retry, int maxChars,
                            Function<AnalysisInput, List<DocumentPart>> parts) {
+        this(model, retry, maxChars, parts, () -> 1);
+    }
+
+    /**
+     * Wie oben, die Sachverhalte parallel.
+     *
+     * @param lanes so viele Sachverhalte zugleich an das Modell, produktiv {@code ai.parallel}
+     */
+    public AiFactExtractor(StepModel model, ModelRetry.Listener retry, int maxChars,
+                           Function<AnalysisInput, List<DocumentPart>> parts, IntSupplier lanes) {
+        this.lanes = Objects.requireNonNull(lanes, "lanes");
         this.model = Objects.requireNonNull(model, "model");
         this.retry = retry == null ? ModelRetry.Listener.LOG_ONLY : retry;
         if (maxChars < 1000) {
@@ -118,8 +132,12 @@ public final class AiFactExtractor implements ExtractionStage {
         List<DocumentPart> all = parts.apply(input);
         int failed = 0;
         int total = 0;
-        for (DocumentPart part : all.isEmpty() ? List.of(DocumentPart.whole(input.text())) : all) {
-            PartResult result = extractPart(input, part, processor);
+        List<DocumentPart> work = all.isEmpty() ? List.of(DocumentPart.whole(input.text())) : all;
+        List<PartResult> results = ParallelWork.map(lanes.getAsInt(), work, "deadline-ai-", () -> {
+        }, CancellationException::new, part -> extractPart(input, part, processor));
+        for (int i = 0; i < work.size(); i++) {
+            DocumentPart part = work.get(i);
+            PartResult result = results.get(i);
             total += result.chunks();
             failed += result.failures().size();
             result.failures().forEach(reason -> notes.add(new AnalysisNote(AnalysisNote.Code.AI_PARTIAL,
