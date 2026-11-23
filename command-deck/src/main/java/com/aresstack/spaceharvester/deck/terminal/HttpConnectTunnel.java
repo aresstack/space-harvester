@@ -60,7 +60,7 @@ public final class HttpConnectTunnel {
     }
 
     /** IPv6-Adressen in eckigen Klammern, genau einmal. */
-    static String authority(String host) {
+    public static String authority(String host) {
         String bare = host.startsWith("[") && host.endsWith("]") ? host.substring(1, host.length() - 1) : host;
         return bare.indexOf(':') >= 0 ? "[" + bare + "]" : bare;
     }
