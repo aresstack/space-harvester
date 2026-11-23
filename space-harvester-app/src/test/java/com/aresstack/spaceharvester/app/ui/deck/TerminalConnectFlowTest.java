@@ -110,6 +110,17 @@ class TerminalConnectFlowTest {
                 assertThat(session.profile().port()).isEqualTo(host.port());
                 assertThat(session.profile().tls()).isFalse();
                 assertThat(deck.terminal().selected()).as("gleich das Terminal, kein Formular").isSameAs(session);
+                // Kopfzeile so hoch wie die übrigen; Trennen und Schließen stehen im ▾-Menü, der Stand unten links.
+                assertThat(TerminalWorkspace.HEAD_HEIGHT).isEqualTo(35);
+                javax.swing.JPopupMenu menu = deck.terminal().moreMenu();
+                List<String> items = new java.util.ArrayList<>();
+                for (java.awt.Component part : menu.getComponents()) {
+                    if (part instanceof javax.swing.JMenuItem item) {
+                        items.add(item.getText() + (item.isEnabled() ? "" : " (aus)"));
+                    }
+                }
+                assertThat(items).containsExactly("Eingabe-Verlauf …", "Neu verbinden (aus)", "Trennen", "Schließen");
+                assertThat(deck.terminal().statusText()).contains("Verbunden");
                 // ✕ auf einer laufenden Sitzung fragt; eine beendete verschwindet sofort.
                 session.disconnect();
                 deck.terminal().askClose(session);

@@ -73,15 +73,18 @@ public final class TerminalWorkspace extends JPanel {
     private final ComposerToggleButton newPill;
     private final CosmicClockPanel sky = new CosmicClockPanel(120);
     private final ConnectForm form;
-    private final JLabel status = Comic.muted(" ");
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton copy;
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton paste;
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton disconnect;
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton close;
-    /** Knopf „Verbinden“ aus MainframeMate: eine beendete Sitzung mit demselben Ziel neu öffnen. */
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton reconnect;
-    /** Eingabe-Verlauf (Makro-Aufzeichnung) der Sitzung, wie der Knopf 📜 in MainframeMate. */
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton history;
+    /** Kopieren und Einfügen als Symbolknöpfe rechts in der Kopfzeile (Angelo, 23.11.2026). */
+    private final com.aresstack.spaceharvester.app.ui.IconButton copy;
+    private final com.aresstack.spaceharvester.app.ui.IconButton paste;
+    /**
+     * Das ▾-Menü ganz rechts: Eingabe-Verlauf (📜 in MainframeMate), Neu verbinden, Trennen, Schließen. Trennen und
+     * Schließen stehen nur hier bzw. als ✕ am Reiter (Angelo, 23.11.2026).
+     */
+    private final com.aresstack.spaceharvester.app.ui.IconButton more;
+    /** Höhe der Kopfzeile samt Linie: wie die Kopfzeilen der übrigen Perspektiven. */
+    static final int HEAD_HEIGHT = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.HEAD_HEIGHT;
+    /** Mindesthöhe der F-Tasten-Leiste unten: wie die Fußleiste des Space Harvesters (Knopf 22 px, Linie, Abstand). */
+    static final int FOOT_HEIGHT = 31;
     /** Als Lesezeichen merken: Ziel, Anmeldung und Makro (Stern in MainframeMate). */
     private final com.aresstack.spaceharvester.app.ui.IconButton star;
     private final TerminalSettings settings;
@@ -142,13 +145,15 @@ public final class TerminalWorkspace extends JPanel {
         });
         pillGroup.add(newPill);
         pills.add(newPill);
-        JPanel head = new JPanel(new BorderLayout());
+        // Kopfzeile wie die der übrigen Perspektiven: Reiter links, Tasten mittig, Aktionen rechts (Angelo, 23.11.).
+        JPanel head = new JPanel(new HeadLayout());
         head.setOpaque(false);
         head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        head.add(pills, BorderLayout.CENTER);
+                BorderFactory.createEmptyBorder(0, 12, 0, 8)));
+        head.setPreferredSize(new java.awt.Dimension(0, HEAD_HEIGHT));
+        head.add(pills, HeadLayout.LEFT);
         // Sondertasten wie in der Werkzeugleiste von MainframeMate: ENT, CLR, PA1–PA3, SYS.
-        JPanel special = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        JPanel special = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
         special.setOpaque(false);
         for (AidKey key : AidKey.SPECIAL) {
             var button = Comic.button(key.label(), key.hint());
@@ -156,15 +161,27 @@ public final class TerminalWorkspace extends JPanel {
             specialKeys.put(key, button);
             special.add(button);
         }
-        // Rechts daneben wie in MainframeMate: Eingabe-Verlauf und Lesezeichen.
-        history = Comic.button("Verlauf", "Eingabe-Verlauf (Makro-Aufzeichnung) dieser Sitzung");
-        history.addActionListener(e -> showHistory());
-        special.add(history);
+        head.add(special, HeadLayout.CENTER);
+        // Rechts: KI-Hinweis, Kopieren, Einfügen, Lesezeichen (Stern wie in MainframeMate) und das ▾-Menü.
+        copy = new com.aresstack.spaceharvester.app.ui.IconButton(
+                com.aresstack.spaceharvester.app.ui.controls.CopyButton.glyph(),
+                "Kopieren: Auswahl oder ganzes Bild (Strg+C)").compact();
+        copy.addActionListener(e -> view(TerminalView.class).ifPresent(TerminalView::copy));
+        paste = new com.aresstack.spaceharvester.app.ui.IconButton(
+                new com.aresstack.spaceharvester.app.ui.controls.PasteGlyph(),
+                "Einfügen: Text der Zwischenablage an der Schreibmarke eintippen (Strg+V)").compact();
+        paste.addActionListener(e -> view(TerminalView.class).ifPresent(TerminalView::paste));
         star = new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.STAR,
-                "Als Lesezeichen merken: Server, Anmeldung und die aufgezeichneten Eingaben");
+                "Als Lesezeichen merken: Server, Anmeldung und die aufgezeichneten Eingaben").compact();
         star.addActionListener(e -> bookmark());
-        special.add(star);
-        head.add(special, BorderLayout.EAST);
+        more = new com.aresstack.spaceharvester.app.ui.IconButton(
+                new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(),
+                "Weitere Aktionen: Verlauf, Neu verbinden, Trennen, Schließen").compact();
+        more.addActionListener(e -> {
+            javax.swing.JPopupMenu menu = com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(
+                    moreMenu(), more);
+            menu.show(more, more.getWidth() - menu.getPreferredSize().width, more.getHeight());
+        });
 
         // Mitte: Sternenhimmel, darin zentriert das Terminal bzw. das Formular. Er läuft nur, solange er sichtbar ist.
         sky.setLayout(new GridBagLayout());
@@ -191,86 +208,37 @@ public final class TerminalWorkspace extends JPanel {
             }
         });
 
-        // Unten: Aktionen der gewählten Sitzung, wie die Aktionszeile des Space Harvesters.
-        copy = Comic.button("Kopieren", "Auswahl oder ganzes Bild kopieren (Strg+C)");
-        copy.addActionListener(e -> view(TerminalView.class).ifPresent(TerminalView::copy));
-        paste = Comic.button("Einfügen", "Text der Zwischenablage an der Schreibmarke eintippen (Strg+V)");
-        paste.addActionListener(e -> view(TerminalView.class).ifPresent(TerminalView::paste));
-        disconnect = Comic.button("Trennen", "Verbindung dieser Sitzung trennen");
-        disconnect.addActionListener(e -> {
-            if (selected != null) {
-                selected.disconnect();
-            }
-        });
-        close = Comic.button("Schließen", "Getrennte Sitzung aus der Liste nehmen");
-        close.addActionListener(e -> {
-            if (selected != null) {
-                closeSession(selected);
-            }
-        });
-        reconnect = Comic.button("Verbinden", "Verbindung wiederherstellen: dasselbe Ziel, dieselbe Anmeldung, "
-                + "dasselbe Lesezeichen-Makro");
-        reconnect.addActionListener(e -> {
-            if (selected != null) {
-                reconnect(selected);
-            }
-        });
         undoAssist = Comic.button("KI-Eingaben zurücknehmen",
                 "Setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt");
         undoAssist.addActionListener(e -> undoAssist());
         undoAssist.setVisible(false);
         assistHint.setForeground(Comic.INK);
         assistHint.setVisible(false);
-        JPanel actions = Comic.row(assistHint, undoAssist, copy, paste, reconnect, disconnect, close);
-        JPanel foot = new JPanel(new BorderLayout());
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(status, BorderLayout.CENTER);
-        foot.add(actions, BorderLayout.EAST);
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+        actions.setOpaque(false);
+        for (JComponent part : new JComponent[] {assistHint, undoAssist, copy, paste, star, more}) {
+            actions.add(part);
+        }
+        head.add(actions, HeadLayout.RIGHT);
 
-        // Der Himmel füllt die Fläche, die PF-Leiste schwebt halb durchsichtig am unteren Rand (wie in MainframeMate).
-        JPanel stage = new JPanel() {
+        // Unten nur die F-Tasten, so hoch wie die Fußleiste des Space Harvesters; der Stand steht in der Statuszeile.
+        JPanel foot = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout()) {
             @Override
-            public boolean isOptimizedDrawingEnabled() {
-                return false;
+            public java.awt.Dimension getPreferredSize() {
+                java.awt.Insets in = getInsets();
+                int bar = functionKeys.isVisible() ? functionKeys.getPreferredSize().height : 0;
+                return new java.awt.Dimension(0, Math.max(FOOT_HEIGHT, bar + in.top + in.bottom));
             }
         };
-        stage.setLayout(new java.awt.LayoutManager() {
-            @Override
-            public void addLayoutComponent(String name, Component comp) {
-            }
+        foot.setOpaque(false);
+        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(0, 8, 0, 8)));
+        foot.add(functionKeys);
 
-            @Override
-            public void removeLayoutComponent(Component comp) {
-            }
-
-            @Override
-            public java.awt.Dimension preferredLayoutSize(java.awt.Container parent) {
-                return sky.getPreferredSize();
-            }
-
-            @Override
-            public java.awt.Dimension minimumLayoutSize(java.awt.Container parent) {
-                return new java.awt.Dimension(0, 0);
-            }
-
-            @Override
-            public void layoutContainer(java.awt.Container parent) {
-                int width = parent.getWidth();
-                int height = parent.getHeight();
-                int bar = functionKeys.isVisible() ? functionKeys.getPreferredSize().height : 0;
-                // Das Terminal mittig über der Leiste, der Himmel trotzdem bis unten.
-                if (!(sky.getBorder() instanceof javax.swing.border.EmptyBorder empty)
-                        || empty.getBorderInsets().bottom != bar) {
-                    sky.setBorder(BorderFactory.createEmptyBorder(0, 0, bar, 0));
-                }
-                sky.setBounds(0, 0, width, height);
-                functionKeys.setBounds(0, height - bar, width, bar);
-            }
-        });
-        stage.add(functionKeys);
-        stage.add(sky);
+        // Mitte: nur der Himmel mit dem Terminal bzw. dem Formular.
+        JPanel stage = new JPanel(new BorderLayout());
+        stage.setOpaque(false);
+        stage.add(sky, BorderLayout.CENTER);
 
         add(head, BorderLayout.NORTH);
         add(stage, BorderLayout.CENTER);
@@ -316,8 +284,7 @@ public final class TerminalWorkspace extends JPanel {
             select(null);
             return;
         }
-        status.setText("Verbinde mit der gemerkten Verbindung …");
-        status.setForeground(Comic.MUTED);
+        note("Verbinde mit der gemerkten Verbindung …", false);
         TerminalSession before = selected;
         if (before != null) {
             pillOf.get(before).setSelected(true);
@@ -402,9 +369,9 @@ public final class TerminalWorkspace extends JPanel {
                 }
             }
         });
-        javax.swing.JButton cross = com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("✕",
-                "Sitzung schließen (auch Mittelklick auf den Reiter)");
-        cross.setFont(Comic.regular(11f));
+        // Gezeichnetes Kreuz (nicht das Zeichen „✕“, das nicht jede Schrift hat), direkt hinter dem Reiter.
+        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
+                ComposerIcons.close(), "Sitzung schließen (auch Mittelklick auf den Reiter)").compact();
         cross.addActionListener(e -> askClose(session));
         JPanel tab = new JPanel(new BorderLayout(0, 0));
         tab.setOpaque(false);
@@ -597,7 +564,7 @@ public final class TerminalWorkspace extends JPanel {
         try {
             session.assistant().undo();
         } catch (com.aresstack.spaceharvester.deck.terminal.MaskRefused refused) {
-            status.setText(refused.getMessage());
+            note(refused.getMessage(), true);
         }
         showAssist();
         view(TerminalView.class).ifPresent(TerminalView::focus);
@@ -662,7 +629,7 @@ public final class TerminalWorkspace extends JPanel {
         javax.swing.JPopupMenu popup = new javax.swing.JPopupMenu();
         popup.setLayout(new BorderLayout());
         popup.add(historyPanel(session, () -> popup.setVisible(false)), BorderLayout.CENTER);
-        popup.show(history, 0, history.getHeight());
+        popup.show(more, more.getWidth() - popup.getPreferredSize().width, more.getHeight());
     }
 
     /** Inhalt des Verlaufs (für Tests auch ohne Popup). */
@@ -748,7 +715,7 @@ public final class TerminalWorkspace extends JPanel {
         steps.addAll(session.macro().steps());
         bookmarks.add(new TerminalBookmarks.Bookmark(name, session.profile(), origin == null ? "" : origin.entry(),
                 origin == null ? "" : origin.command(), steps));
-        status.setText("Lesezeichen „" + name + "“ gemerkt");
+        note("Lesezeichen „" + name + "“ gemerkt", false);
     }
 
     /** F1–F24 einer echten Taste, sonst 0 (wie fkeyNumberFromEvent in MainframeMate). */
@@ -794,20 +761,14 @@ public final class TerminalWorkspace extends JPanel {
 
     private void showState() {
         TerminalSession session = selected;
-        boolean live = session != null && !session.state().ended();
-        copy.setEnabled(session != null && session.state() == SessionState.CONNECTED);
-        paste.setEnabled(session != null && session.state() == SessionState.CONNECTED);
-        disconnect.setEnabled(live);
-        close.setEnabled(session != null && session.state().ended());
-        reconnect.setEnabled(session != null && session.state().ended());
-        history.setEnabled(session != null);
-        star.setEnabled(session != null);
         boolean connected = session != null && session.state() == SessionState.CONNECTED;
+        copy.setEnabled(connected);
+        paste.setEnabled(connected);
+        star.setEnabled(session != null);
         specialKeys.values().forEach(button -> button.setEnabled(connected));
         functionKeys.setEnabled(connected);
         if (session == null) {
-            status.setText("Keine Sitzung gewählt – Server wählen und verbinden");
-            status.setForeground(Comic.MUTED);
+            note("Keine Sitzung gewählt – Server wählen und verbinden", false);
             return;
         }
         String text = session.profile().label() + " · " + session.state().label()
@@ -815,8 +776,40 @@ public final class TerminalWorkspace extends JPanel {
                 + session.note().filter(note -> session.state() == SessionState.CONNECTED
                         || note.startsWith("Verbindung verloren") || note.startsWith("Kein automatischer"))
                         .map(note -> " · " + note).orElse("");
-        status.setText(text);
-        status.setForeground(session.state() == SessionState.FAILED ? Comic.RED : Comic.MUTED);
+        note(text, session.state() == SessionState.FAILED);
+    }
+
+    /** Der Stand links in der Statuszeile der App; Fehler rot (Angelo, 23.11.2026: nicht in einer eigenen Leiste). */
+    private void note(String text, boolean error) {
+        com.aresstack.spaceharvester.app.ui.controls.StatusLabel label =
+                (com.aresstack.spaceharvester.app.ui.controls.StatusLabel) statusInfo();
+        label.show(new com.aresstack.spaceharvester.app.ui.controls.StatusNote(text,
+                error ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR
+                        : com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.PLAIN, null, null));
+    }
+
+    /**
+     * Das ▾-Menü: Verlauf, Neu verbinden (nur beendet), Trennen (nur laufend), Schließen. Schließen gibt es auch als ✕
+     * am Reiter.
+     */
+    javax.swing.JPopupMenu moreMenu() {
+        TerminalSession session = selected;
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        menu.add(menuItem("Eingabe-Verlauf …", session != null, this::showHistory));
+        menu.addSeparator();
+        menu.add(menuItem("Neu verbinden", session != null && session.state().ended(), () -> reconnect(session)));
+        menu.add(menuItem("Trennen", session != null && !session.state().ended(), session == null ? () -> { }
+                : session::disconnect));
+        menu.add(menuItem("Schließen", session != null, () -> askClose(session)));
+        return menu;
+    }
+
+    private static javax.swing.JMenuItem menuItem(String text, boolean enabled, Runnable action) {
+        javax.swing.JMenuItem item = new javax.swing.JMenuItem(text);
+        item.setFont(Comic.regular(13f));
+        item.setEnabled(enabled);
+        item.addActionListener(e -> action.run());
+        return item;
     }
 
     /** Abgewiesen heißt: dort lauscht nichts. Meist falscher Port bzw. TLS (MainframeMate: 992 mit TLS). */
@@ -829,9 +822,8 @@ public final class TerminalWorkspace extends JPanel {
     }
 
     private void fitScreen() {
-        // Unter der PF-Leiste bleibt nichts verborgen: das Bild bekommt die Höhe ohne sie.
-        int bar = functionKeys.isVisible() ? functionKeys.getPreferredSize().height : 0;
-        view(TerminalView.class).ifPresent(view -> view.fit(sky.getWidth() - 24, sky.getHeight() - 24 - bar));
+        // Die PF-Leiste steht unten in der eigenen Leiste: das Bild bekommt den ganzen Himmel.
+        view(TerminalView.class).ifPresent(view -> view.fit(sky.getWidth() - 24, sky.getHeight() - 24));
     }
 
     private <T> Optional<T> view(Class<T> type) {
@@ -860,7 +852,7 @@ public final class TerminalWorkspace extends JPanel {
     }
 
     String statusText() {
-        return status.getText();
+        return ((javax.swing.JLabel) statusInfo()).getText();
     }
 
     /** Zustandspunkt: grün verbunden, blau im Aufbau, rot Fehler, grau getrennt (Ampel der App). */
@@ -891,5 +883,104 @@ public final class TerminalWorkspace extends JPanel {
                 return 12;
             }
         };
+    }
+
+    /**
+     * Kopfzeile in drei Teilen, alle senkrecht mittig: Reiter links, Tasten in der Mitte der ganzen Breite, Aktionen
+     * rechts. Wird es eng, rückt die Mitte zwischen die beiden Seiten, statt sie zu überdecken.
+     */
+    static final class HeadLayout implements java.awt.LayoutManager2 {
+
+        static final String LEFT = "left";
+        static final String CENTER = "center";
+        static final String RIGHT = "right";
+        private final Map<String, Component> parts = new java.util.HashMap<>();
+
+        @Override
+        public void addLayoutComponent(Component comp, Object constraints) {
+            parts.put(String.valueOf(constraints), comp);
+        }
+
+        @Override
+        public void addLayoutComponent(String name, Component comp) {
+            parts.put(name, comp);
+        }
+
+        @Override
+        public void removeLayoutComponent(Component comp) {
+            parts.values().remove(comp);
+        }
+
+        @Override
+        public java.awt.Dimension preferredLayoutSize(java.awt.Container parent) {
+            java.awt.Insets in = parent.getInsets();
+            int width = 0;
+            int height = 0;
+            for (Component part : parts.values()) {
+                java.awt.Dimension size = part.getPreferredSize();
+                width += size.width;
+                height = Math.max(height, size.height);
+            }
+            return new java.awt.Dimension(width + in.left + in.right, height + in.top + in.bottom);
+        }
+
+        @Override
+        public java.awt.Dimension minimumLayoutSize(java.awt.Container parent) {
+            return new java.awt.Dimension(0, preferredLayoutSize(parent).height);
+        }
+
+        @Override
+        public java.awt.Dimension maximumLayoutSize(java.awt.Container target) {
+            return new java.awt.Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE);
+        }
+
+        @Override
+        public void layoutContainer(java.awt.Container parent) {
+            java.awt.Insets in = parent.getInsets();
+            int x0 = in.left;
+            int width = Math.max(0, parent.getWidth() - in.left - in.right);
+            int height = Math.max(0, parent.getHeight() - in.top - in.bottom);
+            Component right = parts.get(RIGHT);
+            Component left = parts.get(LEFT);
+            Component center = parts.get(CENTER);
+            int rightWidth = right == null ? 0 : Math.min(width, right.getPreferredSize().width);
+            if (right != null) {
+                place(right, x0 + width - rightWidth, rightWidth, in.top, height);
+            }
+            int centerWidth = center == null ? 0 : center.getPreferredSize().width;
+            int leftWidth = left == null ? 0 : left.getPreferredSize().width;
+            int centerX = x0 + (width - centerWidth) / 2;
+            // Nicht über die Reiter und nicht unter die Aktionen.
+            centerX = Math.max(centerX, x0 + Math.min(leftWidth, width - rightWidth - centerWidth));
+            centerX = Math.min(centerX, x0 + width - rightWidth - centerWidth);
+            centerX = Math.max(centerX, x0);
+            if (center != null) {
+                place(center, centerX, Math.max(0, Math.min(centerWidth, x0 + width - rightWidth - centerX)),
+                        in.top, height);
+            }
+            if (left != null) {
+                int room = Math.max(0, (center == null ? x0 + width - rightWidth : centerX) - x0);
+                place(left, x0, Math.min(leftWidth, room), in.top, height);
+            }
+        }
+
+        private static void place(Component part, int x, int width, int top, int height) {
+            int own = Math.min(height, part.getPreferredSize().height);
+            part.setBounds(x, top + (height - own) / 2, width, own);
+        }
+
+        @Override
+        public float getLayoutAlignmentX(java.awt.Container target) {
+            return 0.5f;
+        }
+
+        @Override
+        public float getLayoutAlignmentY(java.awt.Container target) {
+            return 0.5f;
+        }
+
+        @Override
+        public void invalidateLayout(java.awt.Container target) {
+        }
     }
 }

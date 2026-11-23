@@ -61,11 +61,11 @@ final class GraalJsExecutor {
     // ── Warm-context state ──────────────────────────────────────────────────
 
     /** Dedicated thread for the warm context (GraalJS contexts are thread-confined). */
-    private ExecutorService warmThread;
+    private volatile ExecutorService warmThread;
     /** The pre-initialised GraalJS context (preamble already evaluated). */
-    private Context warmContext;
+    private volatile Context warmContext;
     /** Number of renders executed on the current warm context. */
-    private int warmRenderCount;
+    private volatile int warmRenderCount;
     /** Maximum renders before recycling the warm context (prevents memory bloat). */
     private static final int MAX_WARM_RENDERS = 100;
 
@@ -266,7 +266,7 @@ final class GraalJsExecutor {
      * @param resultExpression JS expression to read the final SVG result
      * @return execution result, or failure if the warm context is not available
      */
-    JsExecutionResult executeWarm(final String renderScript, final String resultExpression) {
+    synchronized JsExecutionResult executeWarm(final String renderScript, final String resultExpression) {
         if (warmContext == null || warmThread == null || warmThread.isShutdown()) {
             return JsExecutionResult.failure("Warm context not available");
         }
@@ -302,6 +302,36 @@ final class GraalJsExecutor {
         } catch (Exception e) {
             return JsExecutionResult.failure("Warm execution error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Warms up only if no usable warm context exists (none yet, or due for recycling) — the check and the warm-up
+     * happen under the same lock. Several threads (the background pre-warm from {@code MermaidRenderer.getInstance()}
+     * and the first render) used to check {@link #isWarm()} outside the lock and then each call {@link #warmUp},
+     * which disposes the context just built: two or three full evaluations of the 2.9 MB preamble, and a render
+     * submitted in between was cancelled and fell back to a cold context. On a loaded machine (GraalJS runs in
+     * interpreter mode on a stock JDK) that exceeded two minutes.
+     *
+     * @param preamble the preamble for a warm-up, built only when needed
+     * @return true if a warm context is ready afterwards
+     */
+    synchronized boolean ensureWarm(java.util.function.Supplier<String> preamble) {
+        if (isWarm() && !needsRecycle()) {
+            return true;
+        }
+        return warmUp(preamble.get());
+    }
+
+    /**
+     * Ensures a warm context and renders against it in one step, so no other thread can dispose or recycle the
+     * context between the two.
+     */
+    synchronized JsExecutionResult executeWarm(java.util.function.Supplier<String> preamble,
+                                               String renderScript, String resultExpression) {
+        if (!ensureWarm(preamble)) {
+            return JsExecutionResult.failure("Warm-up failed");
+        }
+        return executeWarm(renderScript, resultExpression);
     }
 
     /** @return true if a warm context is active and ready for {@link #executeWarm} calls. */
