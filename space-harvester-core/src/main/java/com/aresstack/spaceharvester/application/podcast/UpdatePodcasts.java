@@ -56,6 +56,8 @@ public final class UpdatePodcasts {
     public static final String UPDATE_PARAMETER = "update";
     /** Kennung des Verfahrens; Teil des Schlüssels, damit eine neue Fassung neu plant. */
     public static final String VERSION = "update-podcast-v3";
+    /** In {@link #statements}: der Überblickstext der Zusammenfassung statt einer Meldung. */
+    public static final int OVERVIEW = -1;
 
     private final Jobs jobs;
     private final PodcastProduction production;
@@ -185,14 +187,19 @@ public final class UpdatePodcasts {
     /**
      * Wovon ein Thema des Podcasts erzählt, als Nummern der Themen der Zusammenfassung
      * ({@link UpdateSummary#statements()}, ab 0): Die Leseansicht rollt dorthin und markiert sie, solange das Thema
-     * läuft (Angelo 22.11.2026). Leer für Einstieg und Abschluss, ohne Plan oder bei älteren Zusammenfassungen ohne
-     * Themen. Liest eine Datei, nie auf dem EDT.
+     * läuft (Angelo 22.11.2026). Einstieg und Abschluss erzählen keine eigene Meldung, sondern den Überblick bzw. die
+     * Summe der Folge: Sie markieren den Überblickstext der Zusammenfassung ({@link #OVERVIEW}; Angelo 23.11.2026: „vor
+     * dem ersten gelben Strich markiert er nichts“). Leer ohne Plan oder bei älteren Zusammenfassungen ohne Themen.
+     * Liest eine Datei, nie auf dem EDT.
      */
     public List<Integer> statements(UpdateSummary summary, int topic) {
         Objects.requireNonNull(summary, "summary");
         Optional<PodcastPlan> plan = production.store().plan(key(summary));
         if (plan.isEmpty() || topic < 0 || topic >= plan.get().topics().size()) {
             return List.of();
+        }
+        if (plan.get().topics().get(topic).stories().isEmpty()) {
+            return blank(summary.text()) ? List.of() : List.of(OVERVIEW);
         }
         // Meldung n (ab 1) ist das n-te Thema mit Text, wie material() sie zählt
         List<Integer> told = new ArrayList<>();

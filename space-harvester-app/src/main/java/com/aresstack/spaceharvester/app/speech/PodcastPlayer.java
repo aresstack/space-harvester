@@ -144,6 +144,24 @@ public final class PodcastPlayer {
         }
     }
 
+    /**
+     * Beendet die Wiedergabe und vergisst den Podcast: keine Abschnitte, Position 0. Für einen anderen Podcast, damit
+     * dessen Zeitleiste nicht mit Länge und Endstand des vorigen beginnt (Angelo 23.11.2026).
+     */
+    public void reset() {
+        synchronized (lock) {
+            generation++;
+            playing = false;
+            paused = false;
+            tracks = List.of();
+            durations = new long[0];
+            producing = false;
+            position = 0;
+            seekTo = -1;
+            lock.notifyAll();
+        }
+    }
+
     /** Die aktuelle Position. */
     public long position() {
         synchronized (lock) {
