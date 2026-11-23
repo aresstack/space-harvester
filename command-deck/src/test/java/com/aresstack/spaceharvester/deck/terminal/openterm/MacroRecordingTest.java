@@ -62,6 +62,10 @@ class MacroRecordingTest {
                 Thread.sleep(50);
             }
             assertThat(keyboard.awaitUnlocked(Duration.ofSeconds(10))).isTrue();
+            // Wie in MainframeMate wartet erst die Aktionsverzögerung, bis das Bild samt Feldern steht.
+            while (!view.text().contains("ANMELDUNG") && System.nanoTime() < until) {
+                Thread.sleep(50);
+            }
 
             assertThat(keyboard.firstInputField()).isTrue();
             type(screen, 'a');
@@ -84,7 +88,7 @@ class MacroRecordingTest {
                 new FakeTn3270Host.Line(1, 2, "MENUE", false),
                 FakeTn3270Host.Line.input(3, 2, 8, false, false)), "Cp273")) {
             TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(),
-                    runnable -> Thread.ofVirtual().start(runnable), new LoginScript(Duration.ZERO));
+                    runnable -> Thread.ofVirtual().start(runnable), new LoginScript(Duration.ofMillis(300) /* Aktionsverzögerung wie in MainframeMate, kürzer */));
             TerminalSession session = sessions.open(TerminalProfile.of("127.0.0.1", host.port()), null,
                     List.of(TerminalMacro.Step.aid(AidKey.PF8), TerminalMacro.Step.aid(AidKey.PF3)));
             long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
