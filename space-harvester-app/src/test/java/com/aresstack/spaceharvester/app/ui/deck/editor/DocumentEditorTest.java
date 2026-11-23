@@ -94,6 +94,24 @@ class DocumentEditorTest {
     }
 
     @Test
+    void editingRefreshesTheSearchMatches() throws Exception {
+        DocumentEditor editor = open("BEISPJOB.jcl", JCL);
+        SwingUtilities.invokeAndWait(() -> {
+            editor.lineFilter(false);
+            editor.search("exec");
+        });
+        assertThat(on(editor::searchCount)).isEqualTo("– / 2");
+
+        SwingUtilities.invokeAndWait(() -> {
+            editor.goToLine(1);
+            editor.type("//SCHRITT0 EXEC PGM=IEFBR14\n");
+            editor.searchStep(1);
+        });
+
+        assertThat(on(editor::searchCount)).isEqualTo("1 / 3");
+    }
+
+    @Test
     void comparesWithTheVersionKeptWhenOpening() throws Exception {
         DocumentEditor editor = open("BEISPJOB.jcl", JCL);
 

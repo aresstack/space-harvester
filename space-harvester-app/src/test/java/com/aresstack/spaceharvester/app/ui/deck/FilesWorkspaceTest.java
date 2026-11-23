@@ -112,6 +112,27 @@ class FilesWorkspaceTest {
     }
 
     @Test
+    void aDocumentSavedUnderANewNameKeepsItsTab() throws Exception {
+        start();
+        int row = names().indexOf("job.jcl");
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
+        flush();
+        EditorSession session = workspace.selected();
+
+        session.saveAs(root.resolve("kopie.jcl").toString());
+        flush();
+        SwingUtilities.invokeAndWait(() -> workspace.select(null));
+        SwingUtilities.invokeAndWait(() -> workspace.select(session));
+        flush();
+
+        assertThat(session.location()).isEqualTo(root.resolve("kopie.jcl").toString());
+        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "kopie.jcl");
+        boolean[] shown = new boolean[1];
+        SwingUtilities.invokeAndWait(() -> shown[0] = workspace.editor(session).isVisible());
+        assertThat(shown[0]).isTrue();
+    }
+
+    @Test
     void opensATextFileInTheSharedEditorAndSavesIt() throws Exception {
         start();
         int row = names().indexOf("job.jcl");

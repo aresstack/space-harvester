@@ -12,7 +12,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Anmeldung an SharePoint über den Windows-Dienst „WebClient“ wie {@code SharePointAuthenticator} in MainframeMate:
@@ -106,15 +109,26 @@ public final class NetUseLogin implements WebDavLogin {
                     java.util.Arrays.fill(bytes, (byte) 0);
                 }
             }
-            byte[] output;
-            try (InputStream out = process.getInputStream()) {
-                output = out.readAllBytes();
-            }
+            // Ausgabe nebenher lesen: Hängt „net use“ mit offener Ausgabe, greift trotzdem die Zeitgrenze.
+            CompletableFuture<byte[]> output = new CompletableFuture<>();
+            Thread.ofVirtual().name("net-use-output").start(() -> {
+                try (InputStream out = process.getInputStream()) {
+                    output.complete(out.readAllBytes());
+                } catch (IOException e) {
+                    output.complete(new byte[0]);
+                }
+            });
             if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 return new Run(-1, "keine Antwort von „net use“");
             }
-            return new Run(process.exitValue(), new String(output, Charset.defaultCharset()));
+            byte[] text;
+            try {
+                text = output.get(5, TimeUnit.SECONDS);
+            } catch (ExecutionException | TimeoutException e) {
+                text = new byte[0];
+            }
+            return new Run(process.exitValue(), new String(text, Charset.defaultCharset()));
         } catch (IOException e) {
             return new Run(-1, "„net use“ ließ sich nicht starten (" + e.getClass().getSimpleName() + ")");
         } catch (InterruptedException e) {

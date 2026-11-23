@@ -114,6 +114,8 @@ public final class DocumentEditor extends JPanel {
     private final JLabel findCount = Comic.muted("");
     private final JComboBox<EditorLanguage> languageChoice = Comic.combo();
     private final Timer reparse = new Timer(400, e -> reparse());
+    /** Sucht nach einer Textänderung neu, damit Treffer und Zahl zum aktuellen Text passen. */
+    private final Timer refind = new Timer(300, e -> find());
     private final java.util.function.Consumer<EditorSession> observer =
             changed -> SwingUtilities.invokeLater(this::render);
     private final List<TextSearch.Match> matches = new ArrayList<>();
@@ -157,6 +159,7 @@ public final class DocumentEditor extends JPanel {
         scroll = new RTextScrollPane(area, true);
         style(scroll);
         reparse.setRepeats(false);
+        refind.setRepeats(false);
 
         // Werkzeuge oben rechts als Symbolknöpfe.
         tools.setOpaque(false);
@@ -228,6 +231,7 @@ public final class DocumentEditor extends JPanel {
                 } else {
                     session.unobserve(observer);
                     reparse.stop();
+                    refind.stop();
                 }
             }
         });
@@ -688,6 +692,12 @@ public final class DocumentEditor extends JPanel {
     // ---- Zustand ---------------------------------------------------------------------------------------------------
 
     private void edited() {
+        if (!findField.getText().isBlank()) {
+            // Alte Fundstellen zeigen nach einer Änderung auf falsche Stellen: sofort verwerfen, gleich neu suchen.
+            matches.clear();
+            current = -1;
+            refind.restart();
+        }
         if (!filling) {
             session.edit(area.getText());
             undo.setEnabled(area.canUndo());
