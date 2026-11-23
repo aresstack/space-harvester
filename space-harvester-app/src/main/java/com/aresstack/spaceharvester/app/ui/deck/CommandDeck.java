@@ -5,6 +5,7 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess;
 import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewWorkspace;
+import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditors;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
 import com.aresstack.spaceharvester.deck.access.ServerAccounts;
@@ -146,6 +147,7 @@ public final class CommandDeck {
         ftp = new FtpWorkspace(ftpSessions, accounts, editors);
         tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts, editors);
+        wireNatural();
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
@@ -205,6 +207,23 @@ public final class CommandDeck {
     /** Der Stand des gewählten Bereichs für die Statuszeile (für Tests). */
     JPanel statusPanel() {
         return status;
+    }
+
+    /**
+     * Hängt NDV in die Editoren ein (wie MainframeMate {@code openNaturalFromJcl} und das Öffnen von
+     * {@code ndv://}-Zielen): Natural aus der JCL und Doppelklicks in den Beziehungen wechseln in den NDV-Bereich und
+     * öffnen dort in der gewählten Sitzung; Aufrufhierarchie und DDM-Benutzer kommen aus deren Abhängigkeitsgraphen.
+     */
+    private void wireNatural() {
+        DocumentEditors.naturalFromJcl((stepLib, program) -> {
+            show(DeckArea.NDV);
+            ndv.openFromJcl(stepLib, program);
+        });
+        DocumentEditors.naturalOpener((library, object, line) -> {
+            show(DeckArea.NDV);
+            ndv.openNatural(library, object, line);
+        });
+        DocumentEditors.naturalRelations(new NdvNaturalRelations(ndv::analyses));
     }
 
     /** Der Proxy-Weg der App für NDV-Verbindungen, die ihn gewählt haben (Vorgabe direkt). */
