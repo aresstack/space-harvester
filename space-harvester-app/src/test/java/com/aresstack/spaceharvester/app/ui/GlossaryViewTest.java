@@ -45,6 +45,9 @@ class GlossaryViewTest {
                 space-harvester-app:
                   data-directory: %s
                 space-harvester:
+                  terms:
+                    glossary:
+                      approved: false
                   sources:
                     - id: handbuch
                       type: files

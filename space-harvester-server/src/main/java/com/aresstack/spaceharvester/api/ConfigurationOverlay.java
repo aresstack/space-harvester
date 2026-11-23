@@ -183,6 +183,7 @@ public final class ConfigurationOverlay {
         put(properties, TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY,
                 configuration.terms().synonyms().glossaryTermsOnly());
         put(properties, TermSettings.GLOSSARY_AUTOMATIC, configuration.terms().glossaryAutomatic());
+        put(properties, TermSettings.GLOSSARY_APPROVED, configuration.terms().glossaryApproved());
         put(properties, EnrichmentSettings.DOCUMENTS_ENABLED, configuration.enrichment().documents());
         put(properties, EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS,
                 configuration.enrichment().documentEmbeddingMaxChars());
