@@ -59,7 +59,21 @@ public final class PodcastOrb extends JButton {
         }
     });
 
+    /** Was der Knopf je Zustand ansagt (Bildschirmleser). */
+    private final java.util.function.Function<State, String> names;
+
     public PodcastOrb() {
+        this(state -> switch (state) {
+            case PLAY -> "Podcast abspielen";
+            case PAUSE -> "Podcast anhalten";
+            case WAITING -> "Podcast wird vorbereitet";
+            case FAILED -> "Podcast erneut versuchen";
+        });
+    }
+
+    /** Derselbe Knopf für etwas anderes als den Podcast, etwa das Vorlesen der Leseansicht. */
+    public PodcastOrb(java.util.function.Function<State, String> names) {
+        this.names = java.util.Objects.requireNonNull(names, "names");
         setName("updates.podcastOrb");
         setContentAreaFilled(false);
         setBorderPainted(false);
@@ -106,12 +120,7 @@ public final class PodcastOrb extends JButton {
     }
 
     private void updateName() {
-        getAccessibleContext().setAccessibleName(switch (state) {
-            case PLAY -> "Podcast abspielen";
-            case PAUSE -> "Podcast anhalten";
-            case WAITING -> "Podcast wird vorbereitet";
-            case FAILED -> "Podcast erneut versuchen";
-        });
+        getAccessibleContext().setAccessibleName(names.apply(state));
     }
 
     @Override

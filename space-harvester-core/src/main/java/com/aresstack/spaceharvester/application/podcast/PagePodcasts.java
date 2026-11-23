@@ -89,6 +89,8 @@ public final class PagePodcasts {
     private final Jobs jobs;
     private final PodcastProduction production;
     private final Pages pages;
+    private final PodcastSpeech speech;
+    private final PodcastVoices voices;
     private final LongSupplier clock;
     private final Object starting = new Object();
     private final Map<String, Remembered> remembered = new ConcurrentHashMap<>();
@@ -113,6 +115,43 @@ public final class PagePodcasts {
         this.pages = Objects.requireNonNull(pages, "pages");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.production = new PodcastProduction(model, speech, store, voices, parallel, waits);
+        this.speech = Objects.requireNonNull(speech, "speech");
+        this.voices = Objects.requireNonNull(voices, "voices");
+    }
+
+    /**
+     * Der Text, den die Leseansicht einer Seite vorliest (Angelo 23.11.2026): die kanonische Textfassung der Seite wie
+     * im Enterprise AI Client ({@code KnowledgeDocument.text()}), nie die Darstellung. Nur für Seiten, die der
+     * Aufrufer lesen darf, die lokal liegen und an einen KI-Dienst dürfen (ADR 0028), denn die Sprachausgabe ist ein
+     * KI-Dienst; sonst leer. Liest, nie auf dem EDT.
+     */
+    public Optional<String> readAloudText(AccessContext caller, String sourceId, String pageId) {
+        return pages.page(caller, sourceId, pageId).map(page -> page.text().text()).filter(text -> !text.isBlank());
+    }
+
+    /** Ob ein Dienst mit Sprachausgabe eingerichtet ist (ohne zu fragen, auch auf dem EDT). */
+    public boolean readAloudAvailable() {
+        return speech.available();
+    }
+
+    /**
+     * Vorlesen über die Sprachausgabe mit demselben Modell und derselben Stimme wie der Podcast: das bevorzugte
+     * TTS-Modell des Dienstes ({@link PodcastVoices#ranked}) mit der Stimme des Gastgebers. Fragt den Dienst, nie auf
+     * dem EDT.
+     *
+     * @throws IllegalStateException ohne Sprachausgabe oder ohne TTS-Modell beim Dienst
+     */
+    public ReadAloud readAloud(ReadAloud.Playback playback) {
+        Objects.requireNonNull(playback, "playback");
+        if (!speech.available()) {
+            throw new IllegalStateException("Keine Sprachausgabe eingerichtet");
+        }
+        List<String> models = voices.ranked(speech.models());
+        if (models.isEmpty()) {
+            throw new IllegalStateException("Der KI-Dienst bietet kein Sprachmodell (TTS) an");
+        }
+        String model = models.get(0);
+        return speech.readAloud(model, voices.pair(model).host(), playback);
     }
 
     /** Der Schlüssel des Podcasts einer Seite für diesen Aufrufer; ohne Lesen, also auch auf dem EDT. */
