@@ -173,7 +173,7 @@ final class DeckHome extends JPanel {
         card.setBackground(Comic.SURFACE);
         card.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.MUTED, 1, true),
                 BorderFactory.createEmptyBorder(12, 14, 12, 14)));
-        card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        com.aresstack.spaceharvester.app.ui.controls.Cursors.set(card, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         card.setFocusable(true);
         card.setToolTipText(tile.area().title() + " öffnen");
         card.getAccessibleContext().setAccessibleName(tile.area().title());
