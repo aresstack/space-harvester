@@ -181,8 +181,6 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private final javax.swing.JButton reload;
     /** Neben der Lupe in der Fußleiste des Command Deck: die Aktionen des gewählten Reiters. */
     private final JPanel footTools = new JPanel(new CardLayout());
-    /** Reiter samt Kreuz je Dokument. */
-    private final Map<EditorSession, JPanel> tabOf = new LinkedHashMap<>();
     private boolean creatingFolder;
     private boolean started;
     private EditorSession selected;
@@ -354,27 +352,27 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     /** Ein Ordner-Reiter: eigener Browser (Ordner, Verlauf, Filter), Beschriftung = Ordnername. */
     private static final class BrowseTab {
         final FileBrowser browser;
-        final ComposerToggleButton pill;
-        JPanel tab;
+        ComposerToggleButton pill;
         String filter = "";
 
-        BrowseTab(FileBrowser browser, ComposerToggleButton pill) {
+        BrowseTab(FileBrowser browser) {
             this.browser = browser;
-            this.pill = pill;
         }
     }
 
     /** Legt einen Ordner-Reiter an; der erste hat kein Kreuz, er bleibt immer. */
     private BrowseTab addBrowseTab(FileBrowser tabBrowser, boolean closable) {
-        ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.folder(), "Durchsuchen",
-                tabBrowser.source().name());
+        BrowseTab tab = new BrowseTab(tabBrowser);
+        ComposerToggleButton pill = closable
+                ? new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(FilesIcons.folder(), "Durchsuchen",
+                        tabBrowser.source().name(), "Reiter schließen (auch Mittelklick auf den Reiter)",
+                        () -> closeBrowseTab(tab))
+                : new ComposerToggleButton(FilesIcons.folder(), "Durchsuchen", tabBrowser.source().name());
+        tab.pill = pill;
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        BrowseTab tab = new BrowseTab(tabBrowser, pill);
         pill.addActionListener(e -> showBrowseTab(tab));
         pillGroup.add(pill);
-        tab.tab = closable ? DeckBars.tab(pill, "Reiter schließen (auch Mittelklick auf den Reiter)",
-                () -> closeBrowseTab(tab)) : null;
-        pills.add(closable ? tab.tab : pill, browseTabs.size());
+        pills.add(pill, browseTabs.size());
         browseTabs.add(tab);
         tabBrowser.observe(changed -> SwingUtilities.invokeLater(() -> {
             titleBrowseTab(tab);
@@ -414,7 +412,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         }
         browseTabs.remove(index);
         pillGroup.remove(tab.pill);
-        pills.remove(tab.tab);
+        pills.remove(tab.pill);
         pills.revalidate();
         pills.repaint();
         if (tab == browseTab) {
@@ -716,9 +714,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         String card = "doc-" + (++cardCounter);
         cardOf.put(session, card);
         center.add(editor, card);
-        ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.forName(session.name()),
-                session.store() == preview ? session.name() + " (Vorschau)" : session.name(), session.location());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(FilesIcons.forName(session.name()),
+                session.store() == preview ? session.name() + " (Vorschau)" : session.name(), session.location(),
+                "Dokument schließen (auch Mittelklick auf den Reiter)", () -> closeDocument(session));
         pill.getAccessibleContext().setAccessibleName(session.name());
         pill.addActionListener(e -> select(session));
         pill.addMouseListener(new MouseAdapter() {
@@ -733,10 +731,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             }
         });
         pillGroup.add(pill);
-        JPanel tab = DeckBars.tab(pill, "Dokument schließen (auch Mittelklick auf den Reiter)",
-                () -> closeDocument(session));
-        pills.add(tab, pills.getComponentCount() - 1);
-        tabOf.put(session, tab);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
         session.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
         pills.revalidate();
@@ -771,7 +766,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         cardOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tabOf.remove(session));
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }
