@@ -51,6 +51,13 @@ public final class TerminalWorkspace extends JPanel {
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<TerminalSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
+    /** Reiter samt ✕ je Sitzung (das ✕ schließt, wie der Mittelklick auf den Reiter). */
+    private final Map<TerminalSession, JComponent> tabOf = new java.util.HashMap<>();
+    /**
+     * Sitzungen aus dem Formular oder einem Lesezeichen, die noch nie verbunden waren. Scheitern sie, bleibt kein toter
+     * Reiter: Das Formular kommt mit dem Grund wieder. Der Wert sagt, ob ein Erfolg die gemerkte Verbindung einrichtet.
+     */
+    private final Map<TerminalSession, Boolean> firstConnect = new java.util.concurrent.ConcurrentHashMap<>();
     private final ComposerToggleButton newPill;
     private final CosmicClockPanel sky = new CosmicClockPanel(120);
     private final ConnectForm form;
@@ -108,7 +115,7 @@ public final class TerminalWorkspace extends JPanel {
         newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neue Verbindung",
                 "Neue TN3270-Verbindung öffnen");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        newPill.addActionListener(e -> select(null));
+        newPill.addActionListener(e -> newConnection());
         pillGroup.add(newPill);
         pills.add(newPill);
         JPanel head = new JPanel(new BorderLayout());
@@ -264,6 +271,48 @@ public final class TerminalWorkspace extends JPanel {
     private void open(ConnectForm.Request request) {
         TerminalSession session = sessions.open(request.profile(), request.login(), request.steps());
         origins.put(session, request);
+        if (session.state() == SessionState.CONNECTED) {
+            if (request.fromForm()) {
+                ConnectForm.configured();
+            }
+        } else if (session.state().ended()) {
+            SwingUtilities.invokeLater(() -> failedFirst(session));
+        } else {
+            firstConnect.put(session, request.fromForm());
+        }
+    }
+
+    /**
+     * „Neue Verbindung“: Ist die Verbindung eingerichtet, verbindet sie direkt; das Formular kommt nur beim ersten Mal
+     * und wenn es scheitert (Angelo, 23.11.2026).
+     */
+    void newConnection() {
+        if (!ConnectForm.isConfigured()) {
+            select(null);
+            return;
+        }
+        status.setText("Verbinde mit der gemerkten Verbindung …");
+        status.setForeground(Comic.MUTED);
+        TerminalSession before = selected;
+        if (before != null) {
+            pillOf.get(before).setSelected(true);
+        }
+        form.connectDirectly(reason -> select(null));
+    }
+
+    /** Eine nie verbundene Sitzung ist gescheitert: Reiter weg, Formular mit dem Grund. */
+    private void failedFirst(TerminalSession session) {
+        firstConnect.remove(session);
+        String reason = session.failure().map(text -> text + hint(session, text))
+                .orElse("Der Host hat die Verbindung sofort getrennt");
+        if (pillOf.containsKey(session)) {
+            closeSession(session);
+        } else {
+            sessions.close(session);
+            origins.remove(session);
+        }
+        form.problem(session.profile().label() + ": " + reason);
+        select(null);
     }
 
     /** „Verbinden“: dieselbe Sitzung neu, die alte verschwindet aus der Liste. */
@@ -288,9 +337,26 @@ public final class TerminalWorkspace extends JPanel {
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         pill.getAccessibleContext().setAccessibleName(session.profile().label());
         pill.addActionListener(e -> select(session));
+        pill.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent event) {
+                if (SwingUtilities.isMiddleMouseButton(event)) {
+                    askClose(session);
+                }
+            }
+        });
+        javax.swing.JButton cross = com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("✕",
+                "Sitzung schließen (auch Mittelklick auf den Reiter)");
+        cross.setFont(Comic.regular(11f));
+        cross.addActionListener(e -> askClose(session));
+        JPanel tab = new JPanel(new BorderLayout(0, 0));
+        tab.setOpaque(false);
+        tab.add(pill, BorderLayout.CENTER);
+        tab.add(cross, BorderLayout.EAST);
         pillGroup.add(pill);
-        pills.add(pill, pills.getComponentCount() - 1);
+        pills.add(tab, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
+        tabOf.put(session, tab);
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
         // Makro-Aufzeichnung: was der Mensch an der Anzeige eingibt (verdeckte Felder meldet sie nie).
         session.view(TerminalView.class).ifPresent(view -> view.addInputListener(new TerminalView.InputListener() {
@@ -315,6 +381,18 @@ public final class TerminalWorkspace extends JPanel {
     }
 
     private void changed(TerminalSession session) {
+        Boolean configures = firstConnect.get(session);
+        if (configures != null) {
+            if (session.state() == SessionState.CONNECTED) {
+                firstConnect.remove(session);
+                if (configures) {
+                    ConnectForm.configured();
+                }
+            } else if (session.state().ended()) {
+                failedFirst(session);
+                return;
+            }
+        }
         ComposerToggleButton pill = pillOf.get(session);
         if (pill != null) {
             pill.setIcon(dot(session.state()));
@@ -626,13 +704,24 @@ public final class TerminalWorkspace extends JPanel {
         closeSession(session);
     }
 
+    /** ✕ oder Mittelklick: Eine laufende Sitzung wird erst nach „wirklich“ getrennt, eine beendete sofort entfernt. */
+    void askClose(TerminalSession session) {
+        if (!session.state().ended() && !com.aresstack.spaceharvester.app.ui.Dialogs.confirm(this,
+                "Sitzung schließen", "Sitzung " + session.profile().label() + " wirklich trennen und schließen?")) {
+            return;
+        }
+        closeSession(session);
+    }
+
     private void closeSession(TerminalSession session) {
         sessions.close(session);
         origins.remove(session);
+        firstConnect.remove(session);
         ComposerToggleButton pill = pillOf.remove(session);
+        JComponent tab = tabOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(pill);
+            pills.remove(tab == null ? pill : tab);
             pills.revalidate();
             pills.repaint();
         }

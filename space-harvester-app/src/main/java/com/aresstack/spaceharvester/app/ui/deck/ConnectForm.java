@@ -51,6 +51,14 @@ final class ConnectForm extends JPanel {
     static final String COMMAND_KEY = "deck.terminal.start-command";
     /** Startkommando nach der Anmeldung, wie in MainframeMate voreingestellt. */
     static final String DEFAULT_COMMAND = "a";
+    /** Abweichende Adresse und abweichender Port des gemerkten Eintrags (leer: aus KeePass bzw. Vorgabe). */
+    static final String HOST_KEY = "deck.terminal.host";
+    static final String PORT_KEY = "deck.terminal.port";
+    /**
+     * Die gemerkte Verbindung ist eingerichtet: Sie hat schon einmal verbunden oder wurde unter Einstellungen › Mainframe
+     * gespeichert. Dann verbindet „Neue Verbindung“ direkt, das Formular kommt nur noch, wenn es scheitert (Angelo, 23.11.).
+     */
+    static final String CONFIGURED_KEY = "deck.terminal.configured";
 
     final JComboBox<ServerAccount> server = new JComboBox<>();
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
@@ -68,6 +76,8 @@ final class ConnectForm extends JPanel {
     private final ServerAccounts accounts;
     private ServerAccount shownAccount;
     private final java.util.function.Consumer<Request> connect;
+    /** Seite „Mainframe“ der Einstellungen: dieselben Felder, „Speichern“ statt „Verbinden“, keine Lesezeichen. */
+    private final boolean settingsMode;
     private boolean loaded;
     /** Terminal-Lesezeichen (MainframeMate): Ziel, KeePass-Eintrag, Makro. Nur sichtbar, wenn es welche gibt. */
     private final TerminalBookmarks bookmarks;
@@ -82,7 +92,13 @@ final class ConnectForm extends JPanel {
      * @param command Startkommando nach der Anmeldung
      */
     record Request(TerminalProfile profile, TerminalSessions.LoginSource login, String entry, String command,
-                   List<com.aresstack.spaceharvester.deck.terminal.TerminalMacro.Step> steps) {
+                   List<com.aresstack.spaceharvester.deck.terminal.TerminalMacro.Step> steps, boolean fromForm) {
+
+        /** Nicht aus den gemerkten Feldern (etwa ein Lesezeichen): Ein Erfolg richtet nichts ein. */
+        Request(TerminalProfile profile, TerminalSessions.LoginSource login, String entry, String command,
+                List<com.aresstack.spaceharvester.deck.terminal.TerminalMacro.Step> steps) {
+            this(profile, login, entry, command, steps, false);
+        }
     }
 
     ConnectForm(ServerAccounts accounts, BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect) {
@@ -91,10 +107,21 @@ final class ConnectForm extends JPanel {
     }
 
     ConnectForm(ServerAccounts accounts, TerminalBookmarks bookmarks, java.util.function.Consumer<Request> connect) {
+        this(accounts, bookmarks, connect, false);
+    }
+
+    /** Für Einstellungen › Mainframe: speichert statt zu verbinden. */
+    static ConnectForm forSettings(ServerAccounts accounts) {
+        return new ConnectForm(accounts, new TerminalBookmarks(AppState.shared()), request -> { }, true);
+    }
+
+    private ConnectForm(ServerAccounts accounts, TerminalBookmarks bookmarks,
+                        java.util.function.Consumer<Request> connect, boolean settingsMode) {
         super(new BorderLayout());
         this.accounts = accounts;
         this.connect = connect;
         this.bookmarks = bookmarks;
+        this.settingsMode = settingsMode;
         setOpaque(false);
         server.setRenderer(new javax.swing.DefaultListCellRenderer() {
             @Override
@@ -149,10 +176,13 @@ final class ConnectForm extends JPanel {
         model.setFont(Comic.regular(13f));
         problem.setFont(Comic.regular(12.5f));
         problem.setForeground(Comic.RED);
-        var button = Comic.primary("Verbinden", "TN3270-Sitzung zu diesem Server öffnen (Eingabe)");
-        button.addActionListener(e -> submit());
-        host.addActionListener(e -> submit());
-        port.addActionListener(e -> submit());
+        var button = settingsMode
+                ? Comic.primary("Speichern", "Verbindung merken; „Neue Verbindung“ verbindet dann direkt (Eingabe)")
+                : Comic.primary("Verbinden", "TN3270-Sitzung zu diesem Server öffnen (Eingabe)");
+        Runnable action = settingsMode ? this::save : this::submit;
+        button.addActionListener(e -> action.run());
+        host.addActionListener(e -> action.run());
+        port.addActionListener(e -> action.run());
 
         // Lesezeichen: wählen und öffnen (verbindet, meldet an, spielt das Makro ab) oder entfernen.
         bookmark.setFont(Comic.regular(13f));
@@ -188,7 +218,7 @@ final class ConnectForm extends JPanel {
         }
         advancedToggle.setBorder(BorderFactory.createEmptyBorder(6, 0, 4, 0));
         problem.setBorder(BorderFactory.createEmptyBorder(4, 0, 6, 0));
-        add(Comic.plate("Neue Verbindung", Comic.YELLOW, body), BorderLayout.CENTER);
+        add(settingsMode ? body : Comic.plate("Neue Verbindung", Comic.YELLOW, body), BorderLayout.CENTER);
         recall();
         serverChanged();
         getAccessibleContext().setAccessibleName("Neue TN3270-Verbindung");
@@ -232,7 +262,10 @@ final class ConnectForm extends JPanel {
 
     /** Zeigt die Einträge (für Tests auch direkt). */
     void show(List<ServerAccount> list) {
-        String wanted = selected() == null ? AppState.shared().get(ENTRY_KEY) : selected().entry();
+        show(list, selected() == null ? AppState.shared().get(ENTRY_KEY) : selected().entry());
+    }
+
+    private void show(List<ServerAccount> list, String wanted) {
         DefaultComboBoxModel<ServerAccount> items = new DefaultComboBoxModel<>();
         items.addElement(null);
         list.forEach(items::addElement);
@@ -241,6 +274,12 @@ final class ConnectForm extends JPanel {
         serverState.setText(list.isEmpty() ? "KeePass liefert keine Einträge" : list.size() + " Einträge aus KeePass");
         serverState.setForeground(Comic.MUTED);
         serverChanged();
+        // Für den gemerkten Eintrag gelten auch die gemerkte Adresse und der gemerkte Port.
+        AppState state = AppState.shared();
+        if (selected() != null && selected().entry().equals(state.get(ENTRY_KEY))) {
+            host.setText(nonNull(state.get(HOST_KEY)));
+            port.setText(nonNull(state.get(PORT_KEY)));
+        }
     }
 
     private ServerAccount selected() {
@@ -325,19 +364,78 @@ final class ConnectForm extends JPanel {
         }
     }
 
-    void submit() {
+    /** @return ob verbunden wird; sonst steht der Grund im Formular */
+    boolean submit() {
         TerminalProfile profile;
         try {
             profile = profile();
         } catch (IllegalArgumentException e) {
-            problem.setText(e.getMessage());
-            return;
+            problem(e.getMessage());
+            return false;
         }
         problem.setText(" ");
         remember();
         TerminalSessions.LoginSource login = login();
         connect.accept(new Request(profile, login, login == null ? "" : selected().entry(), command.getText().trim(),
-                List.of()));
+                List.of(), true));
+        return true;
+    }
+
+    /** „Speichern“ in Einstellungen › Mainframe: prüfen, merken, als eingerichtet markieren. */
+    void save() {
+        try {
+            profile();
+        } catch (IllegalArgumentException e) {
+            problem(e.getMessage());
+            return;
+        }
+        remember();
+        configured();
+        problem.setForeground(Comic.MUTED);
+        problem.setText("Gespeichert · „Neue Verbindung“ verbindet jetzt direkt");
+    }
+
+    /** Ob die gemerkte Verbindung eingerichtet ist und „Neue Verbindung“ direkt verbinden darf. */
+    static boolean isConfigured() {
+        AppState state = AppState.shared();
+        String entry = state.get(ENTRY_KEY);
+        return state.getBoolean(CONFIGURED_KEY, false) && entry != null && !entry.isBlank();
+    }
+
+    /** Die gemerkte Verbindung hat funktioniert (oder wurde gespeichert). */
+    static void configured() {
+        AppState.shared().put(CONFIGURED_KEY, "true");
+    }
+
+    /**
+     * „Neue Verbindung“ ohne Formular: die gemerkten Werte, der gemerkte KeePass-Eintrag (im Hintergrund geladen).
+     * Klappt schon das nicht, meldet {@code failed} den Grund; das Formular zeigt ihn dann.
+     */
+    void connectDirectly(java.util.function.Consumer<String> failed) {
+        recall();
+        loaded = true;
+        String wanted = AppState.shared().get(ENTRY_KEY);
+        serverState.setText("Lade Einträge aus KeePass …");
+        Background.run(accounts::accounts, list -> {
+            show(list, wanted);
+            if (selected() == null) {
+                problem("Der gemerkte KeePass-Eintrag „" + wanted + "“ fehlt");
+                failed.accept(problemText());
+            } else if (!submit()) {
+                failed.accept(problemText());
+            }
+        }, error -> {
+            serverState.setText(describe(error));
+            serverState.setForeground(Comic.RED);
+            problem("KeePass nicht lesbar: " + describe(error));
+            failed.accept(problemText());
+        });
+    }
+
+    /** Zeigt, warum es nicht geklappt hat (auch für eine gescheiterte Verbindung). */
+    void problem(String text) {
+        problem.setForeground(Comic.RED);
+        problem.setText(text == null || text.isBlank() ? " " : text);
     }
 
     private void showBookmarks() {
@@ -348,7 +446,7 @@ final class ConnectForm extends JPanel {
         bookmark.setModel(items);
         list.stream().filter(candidate -> wanted instanceof TerminalBookmarks.Bookmark old
                 && old.name().equals(candidate.name())).findFirst().ifPresent(bookmark::setSelectedItem);
-        bookmarkRow.setVisible(!list.isEmpty());
+        bookmarkRow.setVisible(!list.isEmpty() && !settingsMode);
         revalidate();
         repaint();
     }
@@ -375,6 +473,10 @@ final class ConnectForm extends JPanel {
         return bookmarkRow.isVisible();
     }
 
+    String selectedEntryForTest() {
+        return selected() == null ? null : selected().entry();
+    }
+
     String problemText() {
         return problem.getText();
     }
@@ -392,7 +494,8 @@ final class ConnectForm extends JPanel {
         AppState.shared().putAll(Map.of(ENTRY_KEY, account == null ? "" : account.entry(),
                 MODEL_KEY, ((TerminalModel) model.getSelectedItem()).name(), TLS_KEY, String.valueOf(tls.isSelected()),
                 CODE_PAGE_KEY, codePage.getText().trim(), KEEP_ALIVE_KEY, keepAlive.getText().trim(),
-                AUTO_LOGIN_KEY, String.valueOf(autoLogin.isSelected()), COMMAND_KEY, command.getText().trim()));
+                AUTO_LOGIN_KEY, String.valueOf(autoLogin.isSelected()), COMMAND_KEY, command.getText().trim(),
+                HOST_KEY, host.getText().trim(), PORT_KEY, port.getText().trim()));
     }
 
     private void recall() {
