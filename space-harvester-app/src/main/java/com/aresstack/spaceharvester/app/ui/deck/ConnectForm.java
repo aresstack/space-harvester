@@ -52,8 +52,10 @@ final class ConnectForm extends JPanel {
     /** Startkommando nach der Anmeldung, wie in MainframeMate voreingestellt. */
     static final String DEFAULT_COMMAND = "a";
     /** Abweichende Adresse und abweichender Port des gemerkten Eintrags (leer: aus KeePass bzw. Vorgabe). */
-    static final String HOST_KEY = "deck.terminal.host";
-    static final String PORT_KEY = "deck.terminal.port";
+    // Neue Schlüssel: Ältere Fassungen merkten unter „deck.terminal.host/port“ etwa Port 23 ohne TLS. Diese alten Werte
+    // dürfen nicht wieder aufleben, sonst verbindet das Terminal trotz der Vorgabe 992 mit TLS falsch (Angelo, 23.11.).
+    static final String HOST_KEY = "deck.terminal.target-host";
+    static final String PORT_KEY = "deck.terminal.target-port";
     /**
      * Die gemerkte Verbindung ist eingerichtet: Sie hat schon einmal verbunden oder wurde unter Einstellungen › Mainframe
      * gespeichert. Dann verbindet „Neue Verbindung“ direkt, das Formular kommt nur noch, wenn es scheitert (Angelo, 23.11.).
