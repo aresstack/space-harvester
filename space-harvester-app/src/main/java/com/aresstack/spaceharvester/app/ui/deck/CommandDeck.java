@@ -43,6 +43,11 @@ public final class CommandDeck {
     private final TerminalSessions sessions;
     private final CardLayout cards = new CardLayout();
     private final JPanel workspace = new JPanel(cards);
+    /** Die Fußleiste wie im Space Harvester: links die Lupe (Strg+F), mittig die Bedienelemente des Bereichs. */
+    private final com.aresstack.spaceharvester.app.ui.FindBar findBar =
+            new com.aresstack.spaceharvester.app.ui.FindBar(() -> areaView(this.area));
+    /** Arbeitsfläche samt Fußleiste. */
+    private final JPanel stage = new JPanel(new BorderLayout());
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
     /** Weg zum NDV-Server für Verbindungen mit „Proxy der App verwenden“; ohne App (Tests) direkt. */
@@ -175,10 +180,26 @@ public final class CommandDeck {
             status.add(info, candidate.name());
         }
         status.setOpaque(false);
+        stage.setOpaque(false);
+        stage.add(workspace, BorderLayout.CENTER);
+        stage.add(findBar, BorderLayout.SOUTH);
+        stage.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
+        stage.getActionMap().put("find", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                findBar.focus();
+            }
+        });
         show(DeckArea.TERMINAL);
         perspective = new Perspective(Perspectives.COMMAND_DECK, "Command Deck",
                 "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", true, navigation,
-                workspace, null, tools, null, null, status);
+                stage, null, tools, null, null, status);
+    }
+
+    /** Die Fußleiste mit der Lupe (für Tests). */
+    com.aresstack.spaceharvester.app.ui.FindBar findBar() {
+        return findBar;
     }
 
     /** Der Stand des gewählten Bereichs für die Statuszeile (für Tests). */
@@ -336,6 +357,9 @@ public final class CommandDeck {
         }
         tools.revalidate();
         tools.repaint();
+        // Die Suche gilt dem gezeigten Bereich: Markierungen des vorigen weg, seine Bedienelemente neben die Lupe.
+        findBar.tools(areaView(next) instanceof DeckBars.FootTools with ? with.footTools() : null);
+        findBar.areaChanged();
         if (areaObservers != null) {
             areaObservers.forEach(Runnable::run);
         }
