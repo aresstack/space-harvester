@@ -52,6 +52,31 @@ public final class LocalDocumentStore implements DocumentStore {
     }
 
     @Override
+    public java.util.List<String> siblings(String location, String name) throws DocumentException {
+        if (location == null || name == null || name.isBlank()) {
+            return java.util.List.of();
+        }
+        Path parent = fileSystem.getPath(location).toAbsolutePath().getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            return java.util.List.of();
+        }
+        String wanted = name.trim();
+        try (java.util.stream.Stream<Path> files = Files.list(parent)) {
+            return files.filter(Files::isRegularFile)
+                    .filter(p -> {
+                        String file = p.getFileName().toString();
+                        int dot = file.indexOf('.');
+                        return (dot > 0 ? file.substring(0, dot) : file).equalsIgnoreCase(wanted);
+                    })
+                    .sorted()
+                    .map(Path::toString)
+                    .toList();
+        } catch (IOException e) {
+            throw new DocumentException("Ordner nicht lesbar: " + parent, e);
+        }
+    }
+
+    @Override
     public SaveResult save(EditorDocument loaded, String text, boolean overwrite) throws DocumentException {
         // Bei einer Verknüpfung wird das Ziel gelesen, geprüft und ersetzt, nie die Verknüpfung selbst.
         Path path = target(fileSystem.getPath(loaded.location()));

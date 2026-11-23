@@ -51,6 +51,30 @@ public final class NdvDocumentStore implements DocumentStore {
         return document(location, object, text);
     }
 
+    /** Objekte mit Quelltext und diesem Namen in der Bibliothek von {@code location} (Pfad {@code LIB/NAME.EXT}). */
+    @Override
+    public java.util.List<String> siblings(String location, String name) throws DocumentException {
+        if (location == null || name == null || name.isBlank() || !location.contains("/")) {
+            return java.util.List.of();
+        }
+        String library = location.substring(0, location.indexOf('/'));
+        String wanted = name.trim();
+        java.util.List<String> found = new java.util.ArrayList<>();
+        try {
+            session.objects(library, wanted, (page, total) -> {
+                for (NdvObject object : page) {
+                    if (object.source() && object.displayName().equalsIgnoreCase(wanted)) {
+                        found.add(register(object));
+                    }
+                }
+                return true;
+            });
+        } catch (IOException e) {
+            throw new DocumentException("Suche in " + library + " gescheitert: " + NdvSessions.describe(e), e);
+        }
+        return found;
+    }
+
     @Override
     public SaveResult save(EditorDocument loaded, String text, boolean overwrite) throws DocumentException {
         NdvObject object = object(loaded.location());

@@ -29,6 +29,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 import javax.swing.AbstractAction;
@@ -122,6 +123,10 @@ public final class DocumentEditor extends JPanel {
     private long shownRevision;
     /** Während der Editor selbst Text setzt, ist das keine Bearbeitung. */
     private boolean filling;
+    private static final List<Consumer<DocumentEditor>> CREATED = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final List<Runnable> languageObservers = new ArrayList<>();
+    private final List<OutlinePanel> extraOutlines = new ArrayList<>();
+    private CenterSearch centerSearch;
     private boolean choosingLanguage;
     private EditorLanguage chosen = EditorLanguage.AUTO;
     private EditorLanguage effective = EditorLanguage.AUTO;
@@ -233,6 +238,9 @@ public final class DocumentEditor extends JPanel {
         });
         session.observe(observer);
         render();
+        for (Consumer<DocumentEditor> created : CREATED) {
+            created.accept(this);
+        }
     }
 
     // ---- Schnittstelle für die Arbeitsbereiche ----------------------------------------------------------------------
@@ -242,12 +250,55 @@ public final class DocumentEditor extends JPanel {
     }
 
     /** Hängt einen Symbolknopf an die Werkzeugleiste (z. B. „JCL ausführen“ im FTP-Bereich, „Visuell“). */
-    public void addAction(String tooltip, Icon icon, Consumer<DocumentEditor> action) {
+    public IconButton addAction(String tooltip, Icon icon, Consumer<DocumentEditor> action) {
         IconButton button = new IconButton(icon, tooltip);
         button.addActionListener(e -> action.accept(this));
         tools.add(button);
         tools.revalidate();
         tools.repaint();
+        return button;
+    }
+
+    /**
+     * Meldet jeden neu gebauten Editor, gleich in welchem Bereich (Dateien, FTP, NDV); so hängen Erweiterungen wie die
+     * Diagramm-Ansicht „Visuell“ ihre Knöpfe an, ohne dass jeder Bereich davon weiß. Aufruf auf dem EDT.
+     */
+    public static void onCreated(Consumer<DocumentEditor> observer) {
+        CREATED.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    /** Meldet, wenn die Sprache wechselt (gewählt oder nach dem Laden erkannt). */
+    public void onLanguageChanged(Runnable observer) {
+        languageObservers.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    /** Ersetzt den ganzen Text wie eine Eingabe (rückgängig machbar), z. B. nach einer Änderung im Diagramm. */
+    public void replaceText(String text) {
+        if (!area.isEditable() || text == null || text.equals(area.getText())) {
+            return;
+        }
+        area.beginAtomicEdit();
+        try {
+            area.setText(text);
+        } finally {
+            area.endAtomicEdit();
+        }
+    }
+
+    /**
+     * Eine weitere Gliederung desselben Texts, die mit jeder neuen Gliederung mitgeht; die Auswahl meldet sie an
+     * {@code chosen} statt zur Zeile zu springen (Diagramm-Ansicht: Element im Diagramm zeigen).
+     */
+    public JComponent outlineView(Consumer<com.aresstack.spaceharvester.mainframe.model.JclElement> chosen) {
+        OutlinePanel panel = new OutlinePanel(line -> { }, Objects.requireNonNull(chosen, "chosen"));
+        panel.show(Optional.ofNullable(outline));
+        extraOutlines.add(panel);
+        return panel;
+    }
+
+    /** Ob der Text gerade bearbeitet werden darf. */
+    public boolean editable() {
+        return area.isEditable();
     }
 
     /** Die Parser-Sprache, mit der der Text gerade gelesen wird (gewählt oder erkannt). */
@@ -260,8 +311,25 @@ public final class DocumentEditor extends JPanel {
         return Optional.ofNullable(outline);
     }
 
+    /**
+     * Suche einer eigenen Ansicht in der Mitte: Solange sie gezeigt wird, sucht die Suchzeile unten darin (in
+     * MainframeMate suchte die Suchleiste im Diagramm nach Knoten), Enter/Shift+Enter springen von Treffer zu Treffer.
+     */
+    public interface CenterSearch {
+
+        /** Sucht und markiert; gibt die Zahl der Treffer zurück. */
+        int search(String query);
+
+        /** Nächster ({@code +1}) oder vorheriger ({@code -1}) Treffer; Anzeige wie „2 / 5“ oder {@code null}. */
+        String step(int direction);
+
+        /** Suche aufheben (beim Zurückschalten zum Text). */
+        void clearSearch();
+    }
+
     /** Ersetzt die Mitte durch eine eigene Ansicht (z. B. ein Diagramm); {@link #showText()} holt den Text zurück. */
     public void showInCenter(JComponent view) {
+        centerSearch = view instanceof CenterSearch search ? search : null;
         for (java.awt.Component component : center.getComponents()) {
             if (component != textAndOutline) {
                 center.remove(component);
@@ -274,7 +342,12 @@ public final class DocumentEditor extends JPanel {
     }
 
     public void showText() {
+        if (centerSearch != null) {
+            centerSearch.clearSearch();
+            centerSearch = null;
+        }
         centerCards.show(center, TEXT_CARD);
+        find();
         focusText();
     }
 
@@ -394,6 +467,15 @@ public final class DocumentEditor extends JPanel {
 
     /** Markiert alle Treffer neu, faltet im Filtermodus und zeigt die Zahl. */
     private void find() {
+        if (centerSearch != null) {
+            String query = findField.getText().trim();
+            int count = query.isEmpty() ? 0 : centerSearch.search(query);
+            findField.setBackground(!query.isEmpty() && count == 0 ? Comic.CHANGE_REMOVED : Color.WHITE);
+            findFrame.setBackground(findField.getBackground());
+            findCount.setText(query.isEmpty() ? "" : count == 0 ? "kein Treffer" : "1 / " + count);
+            findCount.setToolTipText(null);
+            return;
+        }
         String regex = findField.getText();
         clearFindMarks();
         matches.clear();
@@ -429,6 +511,13 @@ public final class DocumentEditor extends JPanel {
     }
 
     private void step(int direction) {
+        if (centerSearch != null) {
+            String position = centerSearch.step(direction);
+            if (position != null) {
+                findCount.setText(position);
+            }
+            return;
+        }
         if (matches.isEmpty()) {
             find();
             if (matches.isEmpty()) {
@@ -495,6 +584,9 @@ public final class DocumentEditor extends JPanel {
             choosingLanguage = false;
         }
         reparse();
+        for (Runnable observer : List.copyOf(languageObservers)) {
+            observer.run();
+        }
     }
 
     private void reparse() {
@@ -504,6 +596,7 @@ public final class DocumentEditor extends JPanel {
         if (parser.isEmpty()) {
             outline = null;
             outlinePanel.show(Optional.empty());
+            extraOutlines.forEach(panel -> panel.show(Optional.empty()));
             return;
         }
         String text = area.getText();
@@ -520,6 +613,7 @@ public final class DocumentEditor extends JPanel {
                 if (ticket == parseTicket) {
                     outline = result;
                     outlinePanel.show(Optional.ofNullable(result));
+                    extraOutlines.forEach(panel -> panel.show(Optional.ofNullable(result)));
                 }
             });
         });

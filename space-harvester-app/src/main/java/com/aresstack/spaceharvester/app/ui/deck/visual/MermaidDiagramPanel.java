@@ -537,7 +537,7 @@ public class MermaidDiagramPanel extends JPanel {
                             : "";
                     statusLabel.setText(nodes + " Knoten, " + edges + " Kanten" + tileInfo
                             + (editable ? " \u2014 Rechtsklick: Verbindung ziehen" : "")
-                            + " \u2014 Mausrad: Zoom, Linksklick: Pan");
+                            + " \u2014 Mausrad: bl\u00E4ttern, Strg+Rad: Zoom, Ziehen: verschieben");
                 }
 
                 // In tiled mode, trigger async loading of visible tiles at current LOD
