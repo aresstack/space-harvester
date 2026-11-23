@@ -1,6 +1,6 @@
 # ADR 0035: Fristen-Fachlogik nach Grundsatz und Ausnahme
 
-- Status: **Entwurf** (23.11.2026); Urteil des Architekten eingearbeitet, Abnahme der geänderten Abschnitte offen.
+- Status: **Angenommen** (23.11.2026), vom Architekten abgenommen. Vorgaben Angelos bindend; O1 offen.
 - Bezüge: [ADR 0012](0012-core-als-gemeinsame-bibliothek.md) §4 (Abgrenzung), [ADR 0026](0026-anhaenge-und-enthaltene-dateien-als-dokumente.md)
   (Dokumenttext), ADR 0027 (Beobachter statt Abfragen), ADR 0028 (KI-Freigabe je Seite),
   [ADR 0032](0032-fachlogik-aus-aussagen.md) (Analyseschritte, `StepModel`). Ergebnismodell: Paket
@@ -70,7 +70,8 @@ unbemerkt. Kein Umbenennen, kein neuer Chat-Port; wird später vereinheitlicht, 
 ### 3. Extraktion in drei Stufen (`application.deadlines`, je Stufe eine `ExtractionStage`)
 1. **Regex** (`IdentifierExtractor`): Fachmuster mit Rohschreibweise und normalisiertem Wert (Bewirtschafternummer,
    Objektkonto, Buchungsstelle, Geschäftszeichen, deutsche Daten, Abschnitt/Unterabschnitt, Vorschuss-/
-   Verwahrungsbuch). Fristsätze nicht per bloßem Schlüsselwort, sondern mit Modalität und Verneinung (O4).
+   Verwahrungsbuch). Fristsätze nicht per bloßem Schlüsselwort, sondern mit Modalität und Verneinung
+   aus dem Modul `nlp-lexicon` (O4).
    Versionskonvention wie `EnrichmentProcessor`. Sachverhalte werden an Abschnitts- und Kontogrenzen getrennt; ein
    Wert wird nie über Sachverhalte hinweg zugeordnet. Gemeinsame Normalisierer der Kennzeichen, damit Regex und KI
    keine falschen CONFLICTs erzeugen.
@@ -101,7 +102,8 @@ public final class TextGrounding {
 ### 4. Auftrag
 - Neuer `JobType.DOCUMENT_ANALYSIS`. Klick auf „Analysieren“ → `submitInteractive`; Automatik → BACKGROUND.
 - Teile je Sachverhalt, parallel bis `ai.parallel` (je Teil gelesen), jeder Teil mit Wiederholung
-  (`retries()` an `ChatStepModel` wie bei `ChatUpdateSummaryModel`), gestreamt. Jeder Fehler mit Grundcode in der
+  (`StepModel.retries()`, mindestens 2, wie bei `ChatUpdateSummaryModel`; gilt für **alle** Nutzer von `StepModel`,
+  auch die Schritte aus ADR 0032), gestreamt. Jeder Fehler mit Grundcode in der
   Diagnose; das Ergebnis ist dann teilweise mit Hinweis.
 - Zerlegung an Sachverhaltsgrenzen, mit Tabellen, nach dem Zeichenbudget der Modellzeile. Nie still auslassen:
   `TEXT_TRUNCATED` bzw. `CHUNKS_SKIPPED` mit Anzahl. `ParagraphText.split` ist ungeeignet (verliert Tabellen und
@@ -157,6 +159,8 @@ Pyloros mit dem erfundenen Erlass.
 | --- | --- | --- |
 | P0 Vertrag | nur Typen: `DeadlineFieldKeys` (Schlüssel/Gruppen aus 3), `ExtractionStage`, `LegalKnowledgeRepository` + Treffer + Zustand, `DeadlineAssessment` versiegelt mit Gründen, `TextGrounding`-Signatur, Normalisierer | nach #1279 |
 | P1 | `TextGrounding` + `TextSpan`/`GroundedText` nach `application.text`, `StrictJsonAnswer` | sofort |
+| P1b | `StepModel.retries()` für alle Nutzer, Test: gescheiterter Schritt wird wiederholt, Grund in der Diagnose | sofort |
+| P1c | Modul `nlp-lexicon` (ohne Abhängigkeiten) mit Wortlisten Modalität/Verneinung; `StatementFeatures` delegiert, Verhalten gleich | sofort |
 | P2 | Regex-Stufe + Sachverhaltstrennung | nach P0 |
 | P3 | KI-Stufe + Modellzeile „Fristen“ + Validierung | nach P0 |
 | P4 | Rechtswissen-Adapter über `KeywordSearch`/`RelevanceSearch` | nach P0 |
@@ -168,5 +172,5 @@ Pyloros mit dem erfundenen Erlass.
 - O1: Offizielle Quelle für den Wortlaut von Nr. 6/8 VO/VW-RiB (bei Angelo angefragt).
 - O2: entschieden — Abschluss nur durch ausdrückliche Bestätigung des Benutzers.
 - O3: entschieden — frühere Erlasse in denselben Wissensquellen, über Metadaten.
-- O4: `StatementFeatures` liegt in `nlp-parser`, der Core hängt davon nicht ab. Vorschlag: die Wortlisten für
-  Modalität/Verneinung in ein gemeinsames, abhängigkeitsfreies Paket ziehen, das beide nutzen (kein Kopieren).
+- O4: entschieden — neues, abhängigkeitsfreies Modul `nlp-lexicon` mit den Wortlisten für Modalität und Verneinung;
+  Core und `nlp-parser` hängen davon ab, nicht voneinander (P1c).
