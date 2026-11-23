@@ -24,8 +24,8 @@ import javax.swing.table.AbstractTableModel;
 /**
  * Bereich „Terminal“ der Einstellungen, übernommen aus MainframeMate (Tn3270SettingsPanel): Aktionsverzögerung,
  * Deckkraft der F-Tasten-Leiste, Sternenhimmel und die Maus-Aktionen (Seitentasten und Scrollrad lösen F-Tasten aus).
- * Verbindungswerte (Port, TLS, Modell, Codepage, Keep-Alive, Anmeldung, Startkommando) stehen wie bisher im Formular
- * „Neue Verbindung“ und werden dort gemerkt. Jede Änderung gilt sofort für alle Sitzungen. Nur auf dem EDT.
+ * Die Verbindung (Server, Port, TLS, Modell, Codepage, Keep-Alive, Anmeldung, Startkommando) steht auf derselben Seite
+ * „Mainframe“ darüber ({@code ConnectionSettings}). Jede Änderung gilt sofort für alle Sitzungen. Nur auf dem EDT.
  */
 final class TerminalSettingsPanel {
 

@@ -20,10 +20,12 @@ import java.util.Objects;
  * @param retry                 Wiederholung lesender Aufträge
  * @param startHlq              Start-HLQ auf MVS; leer = Anmeldename (MainframeMate „Login-Namen als HLQ verwenden“)
  * @param spoolNaming           DD-Namen der Spool-Dateien
+ * @param useProxy              {@code true} (Vorgabe): wie bisher die Proxy-Einstellungen von Java/System; {@code false}:
+ *                              immer direkt (MainframeMate {@code useProxy=false})
  */
 public record FtpProfile(String host, int port, String encoding, int connectTimeoutSeconds, int controlTimeoutSeconds,
                          int dataTimeoutSeconds, TransferOptions transfer, RetryPolicy retry, String startHlq,
-                         SpoolNaming spoolNaming) {
+                         SpoolNaming spoolNaming, boolean useProxy) {
 
     public static final int DEFAULT_PORT = 21;
     public static final String DEFAULT_ENCODING = "ISO-8859-1";
@@ -53,7 +55,7 @@ public record FtpProfile(String host, int port, String encoding, int connectTime
     /** Ein Zeitlimit für alles, sonst die Vorgaben. */
     public FtpProfile(String host, int port, String encoding, int timeoutSeconds) {
         this(host, port, encoding, timeoutSeconds, timeoutSeconds, timeoutSeconds, TransferOptions.DEFAULT,
-                RetryPolicy.DEFAULT, "", SpoolNaming.DEFAULT);
+                RetryPolicy.DEFAULT, "", SpoolNaming.DEFAULT, true);
     }
 
     /** Ein Profil mit den üblichen Vorgaben: ISO-8859-1, 60 Sekunden Zeitlimit. */
@@ -63,22 +65,27 @@ public record FtpProfile(String host, int port, String encoding, int connectTime
 
     public FtpProfile withTransfer(TransferOptions value) {
         return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
-                value, retry, startHlq, spoolNaming);
+                value, retry, startHlq, spoolNaming, useProxy);
     }
 
     public FtpProfile withRetry(RetryPolicy value) {
         return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
-                transfer, value, startHlq, spoolNaming);
+                transfer, value, startHlq, spoolNaming, useProxy);
     }
 
     public FtpProfile withStartHlq(String value) {
         return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
-                transfer, retry, value, spoolNaming);
+                transfer, retry, value, spoolNaming, useProxy);
     }
 
     public FtpProfile withSpoolNaming(SpoolNaming value) {
         return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
-                transfer, retry, startHlq, value);
+                transfer, retry, startHlq, value, useProxy);
+    }
+
+    public FtpProfile withUseProxy(boolean value) {
+        return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
+                transfer, retry, startHlq, spoolNaming, value);
     }
 
     public Charset charset() {

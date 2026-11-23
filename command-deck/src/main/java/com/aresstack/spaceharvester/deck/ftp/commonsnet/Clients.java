@@ -16,9 +16,11 @@ final class Clients {
 
     static FTPClient connect(FtpProfile profile, String user, char[] password) throws IOException {
         FTPClient ftp = new FTPClient();
-        // Immer direkt wie MainframeMate (useProxy=false): kein Proxy, auch kein SOCKS aus Systemeinstellungen oder
-        // einem ProxySelector der App; gilt für Steuer- und Datenverbindung.
-        ftp.setProxy(java.net.Proxy.NO_PROXY);
+        // „Proxy verwenden“ aus (MainframeMate useProxy=false): immer direkt, auch an SOCKS aus den
+        // Systemeinstellungen vorbei; gilt für Steuer- und Datenverbindung. An (Vorgabe): wie bisher.
+        if (!profile.useProxy()) {
+            ftp.setProxy(java.net.Proxy.NO_PROXY);
+        }
         ftp.setControlEncoding(profile.encoding());
         // Drei Zeitlimits wie MainframeMate (Connect, Control, Data); 0 heißt keines.
         if (profile.connectTimeoutSeconds() > 0) {

@@ -18,7 +18,7 @@ public final class PlaceholderField extends JTextField {
         Comic.style(this);
     }
 
-    String placeholder() {
+    public String placeholder() {
         return placeholder;
     }
 
