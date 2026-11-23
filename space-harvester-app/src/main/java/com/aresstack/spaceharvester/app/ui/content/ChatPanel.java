@@ -819,26 +819,56 @@ public final class ChatPanel extends JPanel {
                             com.aresstack.spaceharvester.app.chat.ChatToolset tools, String system) {
     }
 
+    /** Hinweis über dem Eingabefeld und Vorschläge (Chips) einer Perspektive, je nach gewähltem Bereich. */
+    public record ToolHints(String hint, List<QuickAction> actions) {
+
+        public ToolHints {
+            actions = actions == null ? List.of() : List.copyOf(actions);
+        }
+    }
+
+    /** Ein Vorschlag als Chip: Beschriftung, Tooltip und die Frage, die er stellt. */
+    public record QuickAction(String label, String tip, String question) {
+    }
+
     private java.util.function.Supplier<ToolScope> toolScope;
+    private java.util.function.Supplier<ToolHints> toolHints;
 
     /**
-     * Setzt die Werkzeuge der aktiven Perspektive (beim Senden ausgewertet) oder nimmt sie mit {@code null} weg; dann
-     * gilt wieder der links gewählte Bereich des Space Harvesters.
+     * Setzt die Werkzeuge der aktiven Perspektive (beim Senden ausgewertet) samt Hinweis und Vorschlägen oder nimmt
+     * sie mit {@code null} weg; dann gilt wieder der links gewählte Bereich des Space Harvesters.
      */
-    public void toolScope(java.util.function.Supplier<ToolScope> scope) {
+    public void toolScope(java.util.function.Supplier<ToolScope> scope,
+                          java.util.function.Supplier<ToolHints> hints) {
         this.toolScope = scope;
+        this.toolHints = scope == null ? null : hints;
         if (scope != null) {
-            knowledge.setText(TOOL_SCOPE_HINT);
-            load.setVisible(false);
-            updateSend();
+            toolScopeChanged();
         } else {
             refresh();
         }
     }
 
+    /** Der Bereich der Perspektive hat gewechselt: Hinweis und Vorschläge neu. */
+    public void toolScopeChanged() {
+        if (toolScope == null) {
+            return;
+        }
+        knowledge.setText(toolScopeHint());
+        load.setVisible(false);
+        updateSend();
+        updateQuickActions();
+    }
+
     /** Der Hinweis über dem Eingabefeld, solange die Werkzeuge einer Perspektive gelten. */
-    static final String TOOL_SCOPE_HINT = "Command Deck: Der Chat liest die Terminal-Maske und füllt Felder aus – "
-            + "abschicken kannst nur du.";
+    String toolScopeHint() {
+        ToolHints hints = toolHints == null ? null : toolHints.get();
+        return hints == null || hints.hint() == null ? TOOL_SCOPE_HINT : hints.hint();
+    }
+
+    /** Der Hinweis, wenn die Perspektive keinen eigenen nennt. */
+    static final String TOOL_SCOPE_HINT = "Command Deck: Der Chat sieht den gewählten Bereich – ändern kannst nur "
+            + "du.";
 
     /** Die Auswahl links; {@code null} ohne Auswahl. Erst anmelden, dann lesen (ADR 0027). */
     public void selection(Selection selection) {
@@ -994,8 +1024,8 @@ public final class ChatPanel extends JPanel {
         load.setVisible(current != null && !current.global() && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
         if (toolScope != null) {
-            // Im Command Deck gilt nicht die Auswahl links, sondern das Terminal (#1151).
-            knowledge.setText(TOOL_SCOPE_HINT);
+            // Im Command Deck gilt nicht die Auswahl links, sondern der gewählte Bereich (#1151).
+            knowledge.setText(toolScopeHint());
             load.setVisible(false);
         }
         // Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird.
@@ -1029,7 +1059,18 @@ public final class ChatPanel extends JPanel {
     private void updateQuickActions() {
         quickActions.removeAll();
         Selection current = selection;
-        if (current != null) {
+        if (toolScope != null) {
+            // Command Deck: die Vorschläge des gewählten Bereichs; die Werkzeuge kommen beim Klick frisch.
+            ToolHints hints = toolHints == null ? null : toolHints.get();
+            for (QuickAction action : hints == null ? List.<QuickAction>of() : hints.actions()) {
+                quickActions.add(chip(action.label(), action.tip(), turn == null, () -> {
+                    ToolScope custom = toolScope == null ? null : toolScope.get();
+                    if (custom != null) {
+                        submit(action.question(), null, custom.area(), ChatTurn.Kind.QUESTION, custom);
+                    }
+                }));
+            }
+        } else if (current != null) {
             // Bereit wie Senden: Auswahl aufgelöst und keine Antwort unterwegs.
             boolean ready = settled && turn == null;
             String area = areaText(current, resolved == null ? null : resolved.counts());
@@ -1491,7 +1532,7 @@ public final class ChatPanel extends JPanel {
         };
     }
 
-    /** Hängt lesbare Textdateien aus den Chips an die Nachricht; Binäres wird nur genannt. */
+    /** Hängt lesbare Textdateien und Dokumente (PDF, Word …) aus den Chips an; Binäres wird nur genannt. */
     private String withAttachments(String text) {
         if (attachments.isEmpty()) {
             return text;
@@ -1500,9 +1541,14 @@ public final class ChatPanel extends JPanel {
         for (Path file : attachments) {
             b.append("\n\n--- Anhang: ").append(file.getFileName()).append(" ---\n");
             try {
-                String content = Files.readString(file, StandardCharsets.UTF_8);
+                // Dokumente (PDF, Word, Excel …) wie die Vorschau im Command Deck über den Tika-Adapter des Core.
+                String name = file.getFileName() == null ? "" : file.getFileName().toString();
+                String content = com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(name)
+                        ? new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().load(file.toString()).text()
+                        : Files.readString(file, StandardCharsets.UTF_8);
                 b.append(ChatKnowledge.excerpt(content, ChatKnowledge.MAX_PAGE_CHARS));
-            } catch (java.io.IOException | RuntimeException unreadable) {
+            } catch (java.io.IOException | RuntimeException
+                     | com.aresstack.spaceharvester.deck.editor.DocumentException unreadable) {
                 b.append("(nicht als Text lesbar)");
             }
         }
