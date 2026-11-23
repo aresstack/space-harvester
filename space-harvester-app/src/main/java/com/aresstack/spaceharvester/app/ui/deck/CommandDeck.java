@@ -39,7 +39,9 @@ public final class CommandDeck {
 
     private final ExecutorService connecting = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("command-deck-", 0).factory());
-    private final TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(), connecting);
+    /** Die Aktionsverzögerung (Anmeldung, Lesezeichen-Makro) kommt live aus Einstellungen › Terminal. */
+    private final TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(), connecting,
+            new com.aresstack.spaceharvester.deck.terminal.LoginScript(() -> TerminalSettings.shared().actionDelay()));
     private final CardLayout cards = new CardLayout();
     private final JPanel workspace = new JPanel(cards);
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));

@@ -89,4 +89,21 @@ class ConnectFormTest {
         assertThat(login.get()).isNull();
         assertThat(read).isEmpty();
     }
+
+    @Test
+    void defaultsAreThoseOfMainframeMate() throws Exception {
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.TLS_KEY, (String) null);
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.COMMAND_KEY, (String) null);
+        SwingUtilities.invokeAndWait(() -> {
+            ConnectForm form = new ConnectForm(accounts, (profile, source) -> { });
+            // MainframeMate: tn3270Port 992, tn3270Tls true, tn3270AutoCommandText „a“.
+            assertThat(form.tls.isSelected()).isTrue();
+            assertThat(form.tls.isShowing() || form.tls.getParent() != null).isTrue();
+            assertThat(form.command.getText()).isEqualTo("a");
+            form.host.setText("10.0.0.9");
+            form.port.setText("");
+            assertThat(form.profile().port()).isEqualTo(992);
+            assertThat(form.profile().tls()).isTrue();
+        });
+    }
 }
