@@ -1,0 +1,59 @@
+// Mermaid-Renderer aus MainframeMate (Modul mermaid-renderer, vollständige Kopie): Mermaid 11.4.1 auf GraalJS (reines
+// Java, kein Browser, nichts Natives), Batik für echte Textmaße (getBBox) und das Rastern, ANTLR-Grammatiken für das
+// Bearbeiten im Diagramm (SourceEditBridge) und das Auslesen des Layouts (DiagramLayoutExtractor).
+// Eigene Pakete com.aresstack.spaceharvester.mermaid.* und Ressourcen unter /spaceharvester-mermaid/, damit nichts mit
+// com.aresstack:mermaid-java (Markdown-Ausgabe, document-export) im selben Klassenpfad kollidiert.
+plugins {
+    id 'java-library'
+    id 'antlr'
+}
+
+description = 'Mermaid-Diagramme als SVG/Bild in reinem Java (GraalJS, Batik), Kopie aus MainframeMate.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // Dieselbe GraalJS-Fassung wie drawio-java; gemischte Truffle-Fassungen scheitern zur Laufzeit
+    api libs.graal.sdk
+    implementation libs.graal.js
+    // Batik: SVG-DOM und GVT für getBBox(), Transcoder/Codec zum Rastern (Fassung 1.20 erzwingt die Wurzel)
+    implementation 'org.apache.xmlgraphics:batik-bridge:1.17'
+    implementation 'org.apache.xmlgraphics:batik-transcoder:1.17'
+    implementation 'org.apache.xmlgraphics:batik-codec:1.17'
+    // ANTLR wie in MainframeMate und mermaid-java (4.9.3): ein Laufzeit-Stand, sonst lesen ältere Parser ihr ATN nicht
+    antlr libs.antlr.tool
+    implementation libs.antlr.runtime
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation libs.gson
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Parser in das Paket com.aresstack.spaceharvester.mermaid.parser erzeugen
+tasks.named('generateGrammarSource') {
+    arguments += ['-visitor', '-listener', '-package', 'com.aresstack.spaceharvester.mermaid.parser']
+    outputDirectory = layout.buildDirectory.dir('generated-src/antlr/main/com/aresstack/spaceharvester/mermaid/parser').get().asFile
+}
+
+// Das antlr-Plugin hängt das Werkzeug sonst an api/compileClasspath an; zur Laufzeit genügt antlr4-runtime
+configurations {
+    api {
+        setExtendsFrom(extendsFrom.findAll { it != configurations.antlr })
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    // Visuelle Prüfprogramme (main) und die GraalJS-Hänger-Diagnose laufen nur von Hand
+    exclude '**/GraalJsHangDiagnostic*'
+    systemProperty 'java.awt.headless', 'true'
+}
