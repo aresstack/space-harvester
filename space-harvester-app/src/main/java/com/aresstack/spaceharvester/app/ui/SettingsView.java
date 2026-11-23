@@ -50,9 +50,14 @@ public final class SettingsView implements View {
     static final String CACHE = "Cache";
     /** Bereich „Video“: Marken, Standbilder und Player ({@code space-harvester-app.video.*}). */
     static final String VIDEO = "Video";
-    /** Bereich „Terminal“: Einstellungen des 3270-Terminals im Command Deck (aus MainframeMate). */
-    static final String TERMINAL = "Terminal";
+    /**
+     * Bereich „Mainframe“: Verbindung, 3270-Terminal und Maus-Aktionen des Command Deck (aus MainframeMate). Hier liegt
+     * die Verbindung, mit der „Neue Verbindung“ direkt verbindet (Angelo, 23.11.2026).
+     */
+    static final String TERMINAL = "Mainframe";
+    static final String CONNECTION_HEADING = "Verbindung";
     static final String NDV = "NDV";
+    static final String BETAVIEW = "BetaView";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -101,6 +106,8 @@ public final class SettingsView implements View {
     /** Unten im Drawer, über „Zurück“: Zeilen, die nicht mitscrollen (Bibliotheken). */
     private final JPanel bottomRows = new JPanel();
     private final java.util.Map<String, SettingsNavRow> rows = new java.util.LinkedHashMap<>();
+    /** Bereich „BetaView“: Standard-Suchfilter wie in MainframeMate. */
+    final BetaViewSettingsPanel betaView = new BetaViewSettingsPanel();
     private String selected;
     /** „Zurück“ im Drawer: verlässt die Einstellungen (setzt das Hauptfenster). */
     private Runnable leave = () -> { };
@@ -117,6 +124,7 @@ public final class SettingsView implements View {
             new TerminalSettingsPanel(com.aresstack.spaceharvester.app.ui.deck.TerminalSettings.shared());
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
+    final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
     final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
@@ -313,9 +321,18 @@ public final class SettingsView implements View {
         page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache, viewChangeLog))));
         page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
-        page(TERMINAL, Comic.column(Comic.plate(TerminalSettingsPanel.HEADING, Comic.PETROL, terminal.component()),
+        page(TERMINAL, Comic.column(Comic.plate(CONNECTION_HEADING, Comic.PETROL,
+                        com.aresstack.spaceharvester.app.ui.deck.ConnectionSettings.form(
+                                new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass))),
+                Comic.plate(TerminalSettingsPanel.HEADING, Comic.PETROL, terminal.component()),
                 Comic.plate(TerminalSettingsPanel.MOUSE_HEADING, Comic.PETROL, terminal.mouseComponent())));
-        page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component())));
+        page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component()),
+                Comic.plate(NdvAnalysisSettingsPanel.ORDER_HEADING, Comic.PETROL, ndvAnalysis.orderComponent()),
+                Comic.plate(NdvAnalysisSettingsPanel.STEPLIB_HEADING, Comic.PETROL, ndvAnalysis.stepLibComponent()),
+                Comic.plate(NdvAnalysisSettingsPanel.RULES_HEADING, Comic.ORANGE, ndvAnalysis.rulesComponent())));
+        page(BETAVIEW, Comic.column(
+                Comic.plate(BetaViewSettingsPanel.CONNECTION_HEADING, Comic.BLUE, betaView.connection()),
+                Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "

@@ -156,6 +156,23 @@ class PalNdvConnectorTest {
         return connector.connect(new NdvProfile("10.0.0.7", 2700), "pilot", "geheim".toCharArray());
     }
 
+    /** Angelo 23.11.: Proxy je Verbindung wählbar, Vorgabe direkt; ohne gültigen Weg wird nicht verbunden. */
+    @Test
+    void theProxyRouteIsAskedOnlyWhenTheConnectionChoseIt() throws IOException {
+        java.util.List<NdvProfile> asked = new java.util.ArrayList<>();
+        PalNdvConnector routed = PalNdvConnector.over(pal::proxy, profile -> {
+            asked.add(profile);
+            throw new IOException("Kein Weg über den Proxy zu " + profile.label());
+        });
+        routed.connect(new NdvProfile("10.0.0.7", 8011), "pilot", "geheim".toCharArray()).close();
+        assertThat(asked).isEmpty();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> routed.connect(
+                        new NdvProfile("10.0.0.7", 8011, "", true), "pilot", "geheim".toCharArray()))
+                .isInstanceOf(IOException.class).hasMessageContaining("Kein Weg über den Proxy");
+        assertThat(asked).hasSize(1);
+    }
+
     @Test
     void connectsWithTheParametersOfMainframeMate() throws IOException {
         NdvConnection connection = connect();

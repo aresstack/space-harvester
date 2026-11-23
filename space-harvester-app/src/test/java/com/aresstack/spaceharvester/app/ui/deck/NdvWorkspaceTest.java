@@ -60,6 +60,17 @@ class NdvWorkspaceTest {
         }
         AppState.shared().put(NdvBrowser.LIBRARY_KEY, "");
         AppState.shared().put(NdvConnectForm.LIBRARY_KEY, "");
+        NdvAnalysisSettings.searchLink(NdvSearchLink.NONE);
+        // Der NDV-Zwischenspeicher der Tests liegt nie im echten App-Ordner.
+        if (System.getProperty(NdvAnalysisSettings.CACHE_PROPERTY) == null) {
+            try {
+                System.setProperty(NdvAnalysisSettings.CACHE_PROPERTY,
+                        java.nio.file.Files.createTempDirectory("ndv-cache").toString());
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
+        NdvAnalysisSettings.forgetAnalyses();
     }
 
     private static void flush() throws Exception {
@@ -241,6 +252,25 @@ class NdvWorkspaceTest {
         assertThat(browser.statusText()).contains("Fehler").contains("abgelehnt");
     }
 
+    /** Angelo 23.11.: Die Meldung lief in der Statuszeile ohne Trenner zusammen („…:2700Mögliche Ursachen:•“). */
+    @Test
+    void aMultiLineFailureReadsAsOneLineInTheStatusBar() {
+        String message = "Verbindung abgelehnt: 10.0.0.7:8011\n\nMögliche Ursachen:"
+                + "\n• NDV-Server läuft nicht oder ist nicht erreichbar\n• Port 8011 ist falsch (Standard: 8011)";
+        assertThat(NdvBrowser.oneLine(message)).isEqualTo("Verbindung abgelehnt: 10.0.0.7:8011 · Mögliche Ursachen: "
+                + "NDV-Server läuft nicht oder ist nicht erreichbar · Port 8011 ist falsch (Standard: 8011)");
+    }
+
+    /** Ohne Portangabe gilt 8011 wie in MainframeMate (Angelo 23.11.: damit klappt die Verbindung). */
+    @Test
+    void withoutAPortTheFormUsesTheMainframeMateDefault() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            NdvConnectForm form = new NdvWorkspace(sessions, accounts, editors, Runnable::run).form();
+            form.show(List.of(HOST));
+            assertThat(form.profile().port()).isEqualTo(8011);
+        });
+    }
+
     @Test
     void theNavigatorWorksLikeMainframeMate() throws Exception {
         NdvWorkspace[] workspace = new NdvWorkspace[1];
@@ -338,8 +368,89 @@ class NdvWorkspaceTest {
         assertThat(browser.selectedObjects()).hasSize(2);
         SwingUtilities.invokeAndWait(browser::selectNone);
         assertThat(browser.selectedObjects()).isEmpty();
-        assertThat(browser.contextMenu().getComponentCount()).isEqualTo(4);
+        // Öffnen, Alles/Nichts auswählen, Zwischenspeichern, Indexieren (Regel anlegen), Sperren, Freigeben, Filter
+        // entfernen (mit Trennern)
+        assertThat(browser.contextMenu().getComponentCount()).isEqualTo(11);
         assertThat(server.writes()).isEmpty();
+    }
+
+    /** Codex-Befunde aus #1180: Filter des angemeldeten Benutzers, Verlauf ab der Bibliotheksliste, Lesezeichen. */
+    @Test
+    void slowConnectionsKeepFilterHistoryAndBookmarksRight() throws Exception {
+        // Gemerkter Bibliotheksfilter des Benutzers PILOT: nur „KA…“.
+        com.aresstack.spaceharvester.deck.ndv.NdvNameFilter saved = new com.aresstack.spaceharvester.deck.ndv.NdvNameFilter();
+        saved.toggle("KA", true);
+        new NdvNavigatorState().saveFilter(saved, "10.0.0.7", "PILOT", NdvNavigatorState.SCOPE_LIBRARIES);
+        List<Runnable> connecting = new java.util.ArrayList<>();
+        List<Runnable> listing = new java.util.ArrayList<>();
+        NdvSessions slow = new NdvSessions(server, connecting::add);
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(slow, accounts, editors, listing::add);
+            NdvConnectForm form = workspace[0].form();
+            form.show(List.of(HOST));
+            form.server.setSelectedItem(HOST);
+            form.library.setText("");
+            form.submit();
+        });
+        flush();
+        NdvBrowser browser = workspace[0].browser(slow.all().getFirst());
+        assertThat(slow.all().getFirst().user()).as("noch nicht angemeldet").isEmpty();
+        drain(connecting, listing);
+        assertThat(browser.visibleLibraries()).as("Filter des angemeldeten Benutzers").containsExactly("KASSE");
+        new NdvNavigatorState().saveFilter(new com.aresstack.spaceharvester.deck.ndv.NdvNameFilter(), "10.0.0.7",
+                "PILOT", NdvNavigatorState.SCOPE_LIBRARIES);
+
+        // Lesezeichen in KASSE, aber vor dem Laden schon LAGER gewählt: in LAGER öffnet sich nichts, auch wenn es
+        // dort ein gleichnamiges Objekt gibt.
+        server.add("LAGER", "KASSE001", FakeNdvServer.PROGRAM, "* gleichnamig, erfunden\nEND");
+        SwingUtilities.invokeAndWait(() -> {
+            browser.openBookmark(new com.aresstack.spaceharvester.deck.ndv.NdvBookmark("KASSE", "KASSE001.NSP"));
+            browser.openLibrary("LAGER");
+        });
+        drain(connecting, listing);
+        assertThat(browser.library()).isEqualTo("LAGER");
+        assertThat(browser.shown()).as("das Lesezeichen gehörte zu KASSE").isNull();
+    }
+
+    @Test
+    void theDefaultLibraryLeavesTheLibraryListInTheHistory() throws Exception {
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            NdvConnectForm form = workspace[0].form();
+            form.show(List.of(HOST));
+            form.server.setSelectedItem(HOST);
+            form.library.setText("LAGER");
+            form.submit();
+        });
+        flush();
+        flush();
+        NdvBrowser browser = workspace[0].browser(sessions.all().getFirst());
+        assertThat(browser.library()).isEqualTo("LAGER");
+        SwingUtilities.invokeAndWait(browser::navigateBack);
+        flush();
+        assertThat(browser.library()).as("zurück zur Bibliotheksliste").isNull();
+        SwingUtilities.invokeAndWait(browser::navigateForward);
+        flush();
+        assertThat(browser.library()).as("vor wieder zur Bibliothek").isEqualTo("LAGER");
+    }
+
+    /** Führt wartende Hintergrundarbeit und die Antworten auf dem EDT aus, bis nichts mehr ansteht. */
+    private static void drain(List<Runnable> first, List<Runnable> second) throws Exception {
+        for (int round = 0; round < 50; round++) {
+            flush();
+            List<Runnable> work = new java.util.ArrayList<>(first);
+            first.clear();
+            work.addAll(second);
+            second.clear();
+            if (work.isEmpty()) {
+                flush();
+                return;
+            }
+            work.forEach(Runnable::run);
+        }
+        throw new AssertionError("Hintergrundarbeit endet nicht");
     }
 
     @Test

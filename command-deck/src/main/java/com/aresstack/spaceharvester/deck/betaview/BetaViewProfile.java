@@ -13,6 +13,12 @@ import java.util.Locale;
  */
 public record BetaViewProfile(URI address, String user) {
 
+    /**
+     * Vorgabe der Adresse wie MainframeMate ({@code betaview-integration/src/main/resources/betaview.properties},
+     * Schlüssel {@code url}): der BetaView-Webserver (Web Enabler) vor dem Host.
+     */
+    public static final String DEFAULT_ADDRESS = "https://webenabler.zivit.iv.bfinv.de/betaview/";
+
     public BetaViewProfile {
         if (address == null) {
             throw new IllegalArgumentException("Adresse fehlt");

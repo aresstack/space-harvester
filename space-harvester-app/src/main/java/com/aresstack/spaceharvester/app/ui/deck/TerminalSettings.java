@@ -22,6 +22,7 @@ public final class TerminalSettings {
     static final String SKY_FACTOR_KEY = "deck.terminal.sky-factor";
     static final String SKY_GERMAN_KEY = "deck.terminal.sky-german";
     static final String MOUSE_KEY = "deck.terminal.mouse";
+    static final String RECONNECT_KEY = "deck.terminal.auto-reconnect";
 
     public static final int DEFAULT_DELAY_MS = (int) LoginScript.DEFAULT_DELAY.toMillis();
     public static final int DEFAULT_SKY_FACTOR = 120;
@@ -70,6 +71,17 @@ public final class TerminalSettings {
     /** Sternbilder auf Deutsch. */
     public boolean skyGerman() {
         return state.getBoolean(SKY_GERMAN_KEY, true);
+    }
+
+    /** Abgerissene Verbindung automatisch neu aufbauen und anmelden (Vorgabe an: das Terminal soll nicht tot bleiben). */
+    public boolean autoReconnect() {
+        return state.getBoolean(RECONNECT_KEY, true);
+    }
+
+    /** Schaltet den Neuaufbau um und meldet die Änderung. */
+    public void autoReconnect(boolean enabled) {
+        state.putAll(Map.of(RECONNECT_KEY, String.valueOf(enabled)));
+        listeners.forEach(Runnable::run);
     }
 
     /** Maus → F-Taste; ohne Eintrag die Vorgaben aus MainframeMate. */
