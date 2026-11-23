@@ -123,7 +123,7 @@ public final class IdentifierExtractor implements ExtractionStage {
         }
         for (int i = 0; i < matters.size(); i++) {
             Matter matter = matters.get(i);
-            String matterId = "sachverhalt-" + (i + 1);
+            String matterId = matterId(i);
             List<ExtractedField> account = new ArrayList<>();
             for (Label label : ACCOUNT_LABELS) {
                 label.find(text, matter.start(), matter.end(), matter.heading(), "", account);
@@ -146,6 +146,29 @@ public final class IdentifierExtractor implements ExtractionStage {
     }
 
     // --- Sachverhalte ------------------------------------------------------------------------------------------
+
+    /**
+     * Die Teile für KI-Stufe und Validierung (ADR 0035, Abschnitt 4): der Kopf vor dem ersten Sachverhalt (ohne
+     * Kennung) und jeder Sachverhalt mit derselben Kennung wie seine Abschnitte hier. Ohne Sachverhalt leer; dann gilt
+     * das ganze Dokument als ein Teil.
+     */
+    public static List<DocumentPart> parts(AnalysisInput input) {
+        String text = input.text();
+        List<Matter> matters = matters(text);
+        List<DocumentPart> parts = new ArrayList<>();
+        if (!matters.isEmpty() && !text.substring(0, matters.get(0).start()).isBlank()) {
+            parts.add(new DocumentPart("", "", 0, matters.get(0).start()));
+        }
+        for (int i = 0; i < matters.size(); i++) {
+            Matter matter = matters.get(i);
+            parts.add(new DocumentPart(matterId(i), matter.heading(), matter.start(), matter.end()));
+        }
+        return List.copyOf(parts);
+    }
+
+    private static String matterId(int index) {
+        return "sachverhalt-" + (index + 1);
+    }
 
     /** Ein Sachverhalt: Bereich im Text und seine Überschrift (oder die erste Zeile). */
     record Matter(int start, int end, String heading, int headingEnd) {
