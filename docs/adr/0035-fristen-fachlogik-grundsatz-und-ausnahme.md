@@ -1,10 +1,11 @@
 # ADR 0035: Fristen-Fachlogik nach Grundsatz und Ausnahme
 
-- Status: **Entwurf** (23.11.2026), zur Prüfung durch den Architekten.
-- Bezüge: [ADR 0026](0026-anhaenge-und-enthaltene-dateien-als-dokumente.md) (Dokumenttext, Fundstellen),
-  [ADR 0032](0032-fachlogik-aus-aussagen.md) (Aussagen), [ADR 0033](0033-wissen-des-chats-per-verweis-und-werkzeug.md).
-  Ergebnismodell: Paket `application.extraction` aus dem Strang „Extraktionsansicht für E-Akte-Dokumente“ (ein Modell
-  für beide Stränge). Keine neue Bibliothek.
+- Status: **Entwurf** (23.11.2026); Urteil des Architekten eingearbeitet, Abnahme der geänderten Abschnitte offen.
+- Bezüge: [ADR 0012](0012-core-als-gemeinsame-bibliothek.md) §4 (Abgrenzung), [ADR 0026](0026-anhaenge-und-enthaltene-dateien-als-dokumente.md)
+  (Dokumenttext), ADR 0027 (Beobachter statt Abfragen), ADR 0028 (KI-Freigabe je Seite),
+  [ADR 0032](0032-fachlogik-aus-aussagen.md) (Analyseschritte, `StepModel`). Ergebnismodell: Paket
+  `application.extraction` (PR #1279, Strang „Extraktionsansicht für E-Akte-Dokumente“), ein Modell für beide
+  Stränge. Keine neue Bibliothek.
 
 ## Vorgaben Angelos (23.11.2026, bindend)
 
@@ -23,97 +24,149 @@
 6. Nichts erfinden: Fehlendes bleibt unbekannt; Erlassdatum ist nicht Entstehungsdatum; Antrag ist keine Genehmigung;
    Widersprüche bleiben sichtbar.
 
-## Befund im Code (develop, 138e3560)
+## Befund im Code (develop, 07e74afe)
 
-| Baustein | Stelle | Eignung |
+| Baustein | Stelle | Verwendung |
 | --- | --- | --- |
-| `DocumentText` / `TikaDocumentText` | `application.assets`, `source` | liefert `Extracted(text, truncated)`; Eingang der Fachlogik, kein zweiter Parser |
-| `DocumentStructure` / `StructuredDocument` | `application.assets` | Blöcke (Überschrift, Absatz, Tabelle) für Abschnittsbezug der Fundstellen, später |
-| `StatementChat` | `application.enrichment.statements` | KI-Port des Core (Nachrichten → Antwort); `RemoteAi#statementChat` ruft gestreamt (`streamed(...)`) |
-| `ChatStatementExtractor` | dito | Muster für strenge JSON-Antwort + Reparaturanfrage; Inhalt (Erwähnungen/Handlungen) passt **nicht** zu Merkmalen |
-| `StatementValidator`, `TextSpan`, `GroundedText` | dito | Verankerungsregel „Wortlaut muss an der Stelle stehen, eindeutig“ — wird für Merkmale wiederverwendet |
-| `PageSearchIndex` | `application.query` | Seitenindex je Quelle mit Generationen und Rechteprüfung; **kein** Rechtsquellenindex, nicht umdeuten |
+| `DocumentText` / `TikaDocumentText` | `application.assets`, `source` | `Extracted(text, truncated)`; Eingang, kein zweiter Parser |
+| `StepModel` / `ChatStepModel` | `application.stepmodel`, `source.ai` | KI-Port der Analyseschritte (ADR 0032): Modellzeile je Schritt, Temperatur 0, abgeschnittene Antwort wirft |
+| `ChatStatementExtractor` | `application.enrichment.statements` | nur die JSON-Reparaturanfrage wird als `StrictJsonAnswer` herausgelöst |
+| `StatementValidator`, `TextSpan`, `GroundedText` | dito | Verankerung wird als `TextGrounding` herausgelöst |
+| `KeywordSearch`, `RelevanceSearch` | `application.query`, `application.ranking` | Suche des Standardadapters für Rechtswissen |
+| `PageSearchIndex` | `application.query` | Titel- und Metadatenindex (ohne Rechteprüfung); **nicht** als Rechtsquellenindex umgedeutet |
+| `AiRelease.mayProcess(sourceId, pageId)` | `application.release` | KI-Freigabe je Dokument |
+| `Jobs.submitInteractive`, `JobType` | `application.jobs` | Auftrag der Analyse |
+| `StatementFeatures` | `nlp-parser` | Modalität und Verneinung; der Core hängt heute **nicht** von `nlp-parser` ab (siehe O4) |
 
-Folge: Die KI-Stufe nutzt den Port `StatementChat` (umbenennen in einen allgemeinen Namen ist ein eigener
-Refaktor-PR, falls der Architekt es will). Die Verankerung (Text an Stelle prüfen, einmal vorkommender Text repariert
-einen falschen Bereich, zweimal = mehrdeutig) wird aus `StatementValidator` in eine gemeinsame Hilfe
-`TextGrounding` herausgezogen und von beiden genutzt, nicht kopiert. Für Rechtsquellen gibt es vorerst nur den Port.
+`StatementChat` wird **nicht** genutzt: keine eigene Modellzeile, keine Wiederholung, abgeschnittene Antworten
+unbemerkt. Kein Umbenennen, kein neuer Chat-Port; wird später vereinheitlicht, geht `StatementChat` in `StepModel` auf.
 
 ## Entscheidung
 
 ### 1. Ein Ergebnismodell, drei Bereiche
-- **Dokumentfakten** = `application.extraction` (`DocumentAnalysis`, `AnalysisSection` je Sachverhalt,
-  `ExtractedField` mit `origin` REGEX/AI/DERIVED, `status` EXPLICIT/DERIVED/NOT_FOUND/CONFLICT, `verified`,
-  `SourceReference`). Ergänzt um `group` (Felder einer Fristaussage), `notes` (Prüfhinweise mit festen Codes) und
-  `processors` (Kennung+Version je Stufe). `DeadlineAnalysisService` implementiert `DocumentAnalysisProvider`.
-- **Rechtswissen** = Port `LegalKnowledgeRepository` (Treffer mit Quelle, Fundstelle, Ausschnitt, Gültigkeit,
-  Herkunft). Erste Umsetzung In-Memory; der Zustand „nicht eingerichtet/leer“ ist ausdrücklich abfragbar.
-- **Prüfergebnisse** = eigenes Modell in `application.deadlines` (`DeadlineAssessment`), nie in `ExtractedField`.
+- **Dokumentfakten** = `application.extraction` aus #1279: `DocumentAnalysis` (mit `notes`, `processors` als
+  `Processor(id, version)`), `AnalysisSection` je Sachverhalt mit stabiler `matterId`, `ExtractedField` (`origin`
+  REGEX/AI/DERIVED, `status`, `verified`, `group`, Qualifier NONE/REQUESTED/GRANTED für Antrag/Genehmigung),
+  `SourceReference`. Eine neuere Version eines Prozessors ersetzt dessen Felder (Muster ADR 0032).
+  `DERIVED` heißt nur Normalisierung oder Rechnen auf Dokumentfakten, nie Regelanwendung.
+- **Eine Konfliktregel** (`FieldMerge`, aus `InMemoryDocumentAnalyses.merge`): Identität = (matterId, Schlüssel,
+  Gruppe, Qualifier); abweichende Werte derselben Identität werden beide CONFLICT. `ExtractionValidator` nutzt
+  denselben Helfer.
+- **Rechtswissen** = Port `LegalKnowledgeRepository` (Abschnitt 5).
+- **Prüfergebnisse** = `DeadlineAssessment` in `application.deadlines` (Abschnitt 6), nie in `ExtractedField`.
+- Abhängigkeiten (ArchUnit): `application.extraction` importiert nie `application.deadlines` oder Rechtswissen.
+  Entscheidungen fallen nur im Core (`application.deadlines`); angezeigt wird in der Desktop-App, Command Deck ›
+  E-Akte (`app.ui.deck`); dort keine Fristlogik.
 
-### 2. Extraktion in drei Stufen (Paket `application.deadlines`)
-1. **Regex** (`IdentifierExtractor`): Kennzeichen mit Rohschreibweise und normalisiertem Wert (Bewirtschafternummer,
-   Objektkonto, Buchungsstelle, Geschäftszeichen, Daten, Abschnitt/Unterabschnitt, Vorschuss-/Verwahrungsbuch,
-   Fristformulierungen per Schlüsselwort „spätestens“, „bis zum“, „innerhalb von“). Sachverhalte werden an
-   Abschnittsgrenzen und Kontonennungen getrennt; ein Wert wird nie über Sachverhalte hinweg zugeordnet.
-2. **KI** (`AiFactExtractor` über `StatementChat`, gestreamt): strenges JSON, jeder Wert mit wörtlichem Zitat;
-   Schwerpunkt Fristaussagen, Bedingungen, Ausnahmen, Antrag vs. Genehmigung, durchlaufende Gelder,
-   Fristbezug (einzelne Zahlung / Konto), abweichende Buchungsreihenfolge, Verweise auf Normen und Erlasse.
-3. **Validierung** (`ExtractionValidator`): Zitat muss im Originaltext stehen (`TextGrounding`), sonst verworfen
-   oder `verified=false`. Regex und KI werden zusammengeführt; abweichende Werte desselben Schlüssels im selben
-   Sachverhalt werden beide CONFLICT.
+### 2. Eingang
+- E-Akte: Die App (Modul `command-deck`, WebDAV) liest die Bytes und gibt sie über den Core-Port
+  `DocumentContent: DocumentRef → (Bytes, Medientyp)` weiter; der Core ruft `DocumentText.extract`. Kein WebDAV-
+  oder E-Akte-Typ im Core. `DocumentRef` = (origin "eakte", href, ETag).
+- Bibliothek: `DocumentKey`, übersetzt durch genau einen Adapter nach `DocumentRef`; kein zweites Schlüsselschema.
+- KI-Freigabe: Die E-Akte ist Quellen-ID `eakte`; `AiRelease.mayProcess("eakte", href)` wird unmittelbar vor jedem
+  Senden im Auftrag geprüft. Ohne Freigabe nur Regex-Stufe mit Hinweis `AI_NOT_RELEASED` (getrennt von
+  `AI_UNAVAILABLE`).
 
-Ohne KI-Dienst liefert Stufe 1 einen regelbasierten Teilbefund mit Hinweis `AI_UNAVAILABLE`; ein abgeschnittener
-Text trägt `TEXT_TRUNCATED`.
+### 3. Extraktion in drei Stufen (`application.deadlines`, je Stufe eine `ExtractionStage`)
+1. **Regex** (`IdentifierExtractor`): Fachmuster mit Rohschreibweise und normalisiertem Wert (Bewirtschafternummer,
+   Objektkonto, Buchungsstelle, Geschäftszeichen, deutsche Daten, Abschnitt/Unterabschnitt, Vorschuss-/
+   Verwahrungsbuch). Fristsätze nicht per bloßem Schlüsselwort, sondern mit Modalität und Verneinung (O4).
+   Versionskonvention wie `EnrichmentProcessor`. Sachverhalte werden an Abschnitts- und Kontogrenzen getrennt; ein
+   Wert wird nie über Sachverhalte hinweg zugeordnet. Gemeinsame Normalisierer der Kennzeichen, damit Regex und KI
+   keine falschen CONFLICTs erzeugen.
+2. **KI** (`AiFactExtractor` über `ChatStepModel("deadline-facts", …)`): eigene Modellzeile „Fristen“
+   (`ai.deadline-model`, `-max-tokens`, `-thinking`; nur vorhandene Nachdenk-Werte) in beiden Loadern,
+   `ConfigurationParityTest`, `AiSettingsPanel` und `CONFIGURATION.md`. Strenges JSON über `StrictJsonAnswer`;
+   jeder Wert mit wörtlichem Zitat. Schwerpunkt: Fristaussagen, Bedingungen, Ausnahmen, Antrag vs. Genehmigung,
+   durchlaufende Gelder, Fristbezug (einzelne Zahlung / Konto), abweichende Buchungsreihenfolge, Verweise.
+3. **Validierung** (`ExtractionValidator`): Zitat über `TextGrounding` im Abschnitt des Sachverhalts (größeres
+   Fenster), sonst verworfen oder `verified=false`; Zusammenführung über `FieldMerge`.
 
-### 3. Merkmale für die Ausnahmesuche
-Die Extraktion priorisiert die Merkmale, an denen eine Ausnahme erkennbar ist: Kontoart (Vorschuss/Verwahrung),
-Einzel- oder Sammelkonto, Kontenzweck (z. B. durchlaufende Gelder, Sockelbetrag einer Geldstelle), Buchungsstelle,
-Bewirtschafter, Geltungszeitraum, genannte Normen und Bezugserlasse, Fristaussagen samt Bedingung, Anträge und
-Genehmigungen (getrennt, `note` „beantragt“/„genehmigt“). Daraus entsteht später die Suchanfrage an
-`LegalKnowledgeRepository`.
+**`TextGrounding`** (neutrales Paket `application.text`, dorthin ziehen auch `TextSpan` und `GroundedText`; kein
+drittes `TextSpan`). Aus `StatementValidator` herausgelöst ohne Verhaltensänderung (ground, squash, Wortfenster,
+Ablehnungsgründe); `StatementValidator` behält seine Prüfungen und Fehlertexte.
 
-### 4. Regelkatalog und Evaluator (erst nach der Extraktion)
-- `DeadlineRuleCatalog`: versionierte Regeln mit Rechtsgrundlage, **belegtem Wortlaut und Quelle**, Gültigkeit,
-  Voraussetzungen, Ausschlussbedingungen, Art (STANDARD oder AUSNAHME mit verdrängter Regel).
-- `DeadlineRuleEvaluator` prüft nach Grundsatz und Ausnahme und liefert genau einen der drei Zustände je
-  Sachverhalt: `STANDARD_CONFIRMED`, `DEVIATION_CONFIRMED`, `STANDARD_PROVISIONAL`. `STANDARD_CONFIRMED` ist nur
-  erreichbar, wenn die Ausnahmenprüfung als abgeschlossen gilt; solange der Rechtsquellenindex leer oder
-  unvollständig ist, ist das Ergebnis höchstens `STANDARD_PROVISIONAL`. Wer die Prüfung abschließen darf
-  (Nutzerbestätigung, vollständiger Katalog für einen Kontenzweck), ist offen (Punkt O2).
-- Je Ausnahme: Sachverhaltsbezug, Wirksamkeit zum maßgeblichen Zeitpunkt, Rechtswirkung, jeweils
-  nachgewiesen/nicht nachgewiesen/offen. Ein Antrag zählt nie als Genehmigung.
-- Ohne Entstehungsdatum keine konkrete Frist, sondern die abstrakte Regel („Ende des zweiten auf die Entstehung
-  folgenden Haushaltsjahres“). Das Erlassdatum wird nie als Entstehungsdatum genommen.
-- Entscheidungen fallen nur im Core; das Command Deck zeigt an.
+```java
+public final class TextGrounding {
+    public sealed interface Result permits Grounded, Rejected {}
+    public record Grounded(GroundedText text) implements Result {}
+    public record Rejected(Reason reason) implements Result {}
+    public enum Reason { MISSING, NOT_FOUND, AMBIGUOUS }
 
-### 5. Rechtsnormen im Katalog
-Nur mit belegtem Wortlaut aus offizieller Quelle, versioniert. Belegt (gesetze-im-internet.de, § 60 BHO, abgerufen
-23.11.2026): Abs. 1 Satz 2 „Ein Vorschuß ist bis zum Ende des zweiten auf seine Entstehung folgenden Haushaltsjahres
-endgültig zu buchen; Ausnahmen bedürfen der Einwilligung des Bundesministeriums der Finanzen.“ Nr. 6 und Nr. 8
-VO/VW-RiB (Fassung 2021) sind **noch nicht belegt**; sie kommen erst mit Wortlaut aus einer offiziellen Quelle in
-den Katalog (offen O1).
+    /** hint: vermuteter Bereich oder null; window: Suchbereich im Text. */
+    public static Result ground(String text, TextSpan hint, String quote, TextSpan window);
+}
+```
 
-### 6. Tests
-Der Referenz-Erlass wird nur **synthetisch nachgebildet** mit erfundenen Nummern (Bewirtschafter, Konto, Datum,
-Geschäftszeichen); kein echter Inhalt im Repo. Abgedeckt werden alle Abnahmekriterien des Auftrags
-(Kennzeichen, Buchungsstelle vs. Objektkonto, durchlaufende Gelder, getrennte Fristaussagen, Bezug einzelne
-Zahlung, abweichende Buchungsreihenfolge, kein Entstehungsdatum aus dem Erlassdatum, mehrere Sachverhalte, keine
-erfundenen Fundstellen, leere Wissensbasis, ohne KI, Versionen, Unvollständigkeit) sowie synthetisch: mehrdeutige
-Kennzeichen, widersprüchliche Fristen, Verlängerungsantrag, genehmigte Ausnahme.
+### 4. Auftrag
+- Neuer `JobType.DOCUMENT_ANALYSIS`. Klick auf „Analysieren“ → `submitInteractive`; Automatik → BACKGROUND.
+- Teile je Sachverhalt, parallel bis `ai.parallel` (je Teil gelesen), jeder Teil mit Wiederholung
+  (`retries()` an `ChatStepModel` wie bei `ChatUpdateSummaryModel`), gestreamt. Jeder Fehler mit Grundcode in der
+  Diagnose; das Ergebnis ist dann teilweise mit Hinweis.
+- Zerlegung an Sachverhaltsgrenzen, mit Tabellen, nach dem Zeichenbudget der Modellzeile. Nie still auslassen:
+  `TEXT_TRUNCATED` bzw. `CHUNKS_SKIPPED` mit Anzahl. `ParagraphText.split` ist ungeeignet (verliert Tabellen und
+  alles nach dem 40. Absatz).
+- Ergebnis per Beobachter (ADR 0027), nicht synchron.
+
+### 5. Rechtswissen
+- `LegalKnowledgeRepository` ist ein dünner Core-Port; Treffer mit Quelle, Fundstelle, Ausschnitt, Gültigkeit, Art
+  (Norm, Erlass, Einzelgenehmigung), Herkunft. Zustand „nicht eingerichtet/leer“ abfragbar.
+- Standardadapter über `KeywordSearch`/`RelevanceSearch`, begrenzt auf Quellen, die der Benutzer als Rechtsquellen
+  markiert. Rechtsquellen sind normale Wissensquellen (z. B. files-Ordner mit öffentlichen Gesetzestexten);
+  Gültigkeit und Art stehen in den Metadaten. Frühere Erlasse gehören dazu, unterschieden über Metadaten (O3 = ja).
+- In-Memory nur als Test-Fake.
+
+### 6. Prüfergebnisse
+`DeadlineAssessment` ist versiegelt; nur `DeadlineRuleEvaluator` (deterministisch, seiteneffektfrei) erzeugt es.
+- `StandardConfirmed` nur mit `ExceptionCheckClosure(closedBy, closedAt, catalogVersion, knowledgeGeneration,
+  DocumentRef samt ETag, matterId)`. **Abgeschlossen wird nur durch ausdrückliche Bestätigung des Benutzers** (O2).
+- `DeviationConfirmed` nur mit Beleg der Ausnahme: Sachverhaltsbezug, Wirksamkeit, Rechtswirkung, je nachgewiesen.
+- `StandardProvisional` mit Gründen: `KNOWLEDGE_EMPTY`, `UNCHECKED_EXCEPTIONS`, `NO_ORIGIN_DATE`.
+- Ohne Entstehungsdatum keine konkrete Frist, sondern die abstrakte Regel. Das Erlassdatum ist nie das
+  Entstehungsdatum. Ein Antrag (REQUESTED) zählt nie als Genehmigung.
+- Ablage im Core-Speicher je (DocumentRef samt ETag, matterId); veraltet bei Änderung von ETag, Katalogversion,
+  Wissensgeneration oder Prozessorversion. Nie stillschweigend „bestätigt“ weiterführen.
+
+### 7. Regelkatalog
+`DeadlineRuleCatalog`: Regeln mit Rechtsgrundlage, belegtem Wortlaut, Quelle (URL, Abrufdatum), Gültigkeit,
+Voraussetzungen, Ausschlussbedingungen, Art (STANDARD oder AUSNAHME mit verdrängter Regel), Version. Im Repo nur
+Schema, Evaluator, öffentliche Normen und erfundene Testregeln. Nicht öffentliche Regeln und Erlasse sind
+Benutzerdaten (Wissensquelle oder Core-Speicher), nie im Repo oder in der YAML.
+
+Belegt: § 60 Abs. 1 Satz 2 BHO (https://www.gesetze-im-internet.de/bho/__60.html, abgerufen 23.11.2026): „Ein
+Vorschuß ist bis zum Ende des zweiten auf seine Entstehung folgenden Haushaltsjahres endgültig zu buchen; Ausnahmen
+bedürfen der Einwilligung des Bundesministeriums der Finanzen.“ Nr. 6 und Nr. 8 VO/VW-RiB nur mit Wortlaut aus
+öffentlicher Quelle (O1), sonst Benutzerdaten.
+
+### 8. Abgrenzung
+Im Core erlaubt (README, ADR 0012 §4, ADR 0032): Faktenextraktion, der deterministische `DeadlineRuleEvaluator`,
+Suche über Wissensquellen mit den vorhandenen Anwendungsfällen. Eine Recherche-Steuerung (welche Quellen, welche
+Anfragen) wird kein Orchestrator im Core.
+
+### 9. Tests
+Alles synthetisch: ein nachgebildeter Referenz-Erlass mit erfundenen Nummern; kein echter Inhalt im Repo. Abgedeckt:
+Kennzeichen, Buchungsstelle vs. Objektkonto, durchlaufende Gelder, getrennte Fristaussagen, Bezug einzelne Zahlung,
+abweichende Buchungsreihenfolge, kein Entstehungsdatum aus dem Erlassdatum, mehrere Sachverhalte, keine erfundenen
+Fundstellen, leere Wissensbasis, ohne KI, ohne Freigabe, Versionen, Unvollständigkeit; dazu mehrdeutige Kennzeichen,
+widersprüchliche Fristen, Verlängerungsantrag, genehmigte Ausnahme. KI-Stufe zusätzlich echt gegen Ollama über
+Pyloros mit dem erfundenen Erlass.
 
 ## Pakete (kleine PRs auf develop)
 
-| Paket | Inhalt | hängt ab von |
+| Paket | Inhalt | startet |
 | --- | --- | --- |
-| P1 | `TextGrounding` aus `StatementValidator` herausziehen (Verhalten unverändert) | – |
-| P2 | Regex-Stufe + Sachverhaltstrennung + `DeadlineAnalysisService` als Provider, synthetischer Erlass | Modell-PR der Extraktionsansicht |
-| P3 | KI-Stufe über `StatementChat` + Validierung + Zusammenführung; Live-Test gegen Ollama | P1, P2 |
-| P4 | `LegalKnowledgeRepository` + In-Memory-Adapter | – |
-| P5 | Regelkatalog (§ 60 BHO, VO/VW-RiB erst mit Beleg) + Evaluator mit drei Zuständen | P2, P4 |
+| P0 Vertrag | nur Typen: `DeadlineFieldKeys` (Schlüssel/Gruppen aus 3), `ExtractionStage`, `LegalKnowledgeRepository` + Treffer + Zustand, `DeadlineAssessment` versiegelt mit Gründen, `TextGrounding`-Signatur, Normalisierer | nach #1279 |
+| P1 | `TextGrounding` + `TextSpan`/`GroundedText` nach `application.text`, `StrictJsonAnswer` | sofort |
+| P2 | Regex-Stufe + Sachverhaltstrennung | nach P0 |
+| P3 | KI-Stufe + Modellzeile „Fristen“ + Validierung | nach P0 |
+| P4 | Rechtswissen-Adapter über `KeywordSearch`/`RelevanceSearch` | nach P0 |
+| P5 | Regelkatalog (§ 60 BHO) + Evaluator | nach P0 |
+| P6 Anschluss | `JobType`, Freigabe je Dokument, `DocumentContent`, Provider-Registrierung, Beobachter | nach P0 |
+| UI | Extraktionsansicht (Strang Extraktionsansicht, nur App), gegen Beispieldaten | nach #1279 |
 
 ## Offene Punkte
-- O1: Offizielle Quelle für den Wortlaut von Nr. 6/8 VO/VW-RiB (Angelo hat sie geprüft; bitte Link oder Datei).
-- O2: Wann gilt die Ausnahmenprüfung als abgeschlossen? Vorschlag: nur durch ausdrückliche Bestätigung des Nutzers;
-  bis dahin `STANDARD_PROVISIONAL`.
-- O3: Sollen Ausnahmen aus früheren Erlassen (Bezugsschreiben) in denselben Rechtsquellenindex? Vorschlag ja,
-  unterschieden über Metadaten.
+- O1: Offizielle Quelle für den Wortlaut von Nr. 6/8 VO/VW-RiB (bei Angelo angefragt).
+- O2: entschieden — Abschluss nur durch ausdrückliche Bestätigung des Benutzers.
+- O3: entschieden — frühere Erlasse in denselben Wissensquellen, über Metadaten.
+- O4: `StatementFeatures` liegt in `nlp-parser`, der Core hängt davon nicht ab. Vorschlag: die Wortlisten für
+  Modalität/Verneinung in ein gemeinsames, abhängigkeitsfreies Paket ziehen, das beide nutzen (kein Kopieren).
