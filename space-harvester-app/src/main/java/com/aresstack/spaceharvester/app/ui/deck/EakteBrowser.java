@@ -5,8 +5,12 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Glyph;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.SaveChooser;
+import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
+import com.aresstack.spaceharvester.app.ui.extraction.ExtractionView;
+import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider;
+import com.aresstack.spaceharvester.application.extraction.DocumentRef;
 import com.aresstack.spaceharvester.deck.editor.DocumentStore;
 import com.aresstack.spaceharvester.deck.editor.EditorSession;
 import com.aresstack.spaceharvester.deck.editor.EditorSessions;
@@ -63,6 +67,10 @@ import javax.swing.tree.TreeSelectionModel;
  * Dateien: PDF, Word, Outlook-Nachricht … als Text). Aktionen in der Fußleiste des Deck ({@link #footTools()}), Stand und
  * Fehler in der Statuszeile der App; ein Fehler leert die Tabelle nie stillschweigend zu „leer“, er steht als Fehler da.
  * Kennung jedes Eintrags ist das vom Server gelieferte {@code DAV:href}, nie ein Name.
+ *
+ * <p>Zum gezeigten Dokument gibt es zwei Sichten, umgeschaltet über „Vorschau | Extraktion“ in der Titelleiste
+ * ({@link #viewToggle()}, nur sichtbar, solange ein Dokument gezeigt wird; die Stellung gilt je Sitzungsreiter). Die
+ * Extraktion ({@link ExtractionView}, experimentell) ordnet ihre Ergebnisse dem Dokumentstand {@code href} + ETag zu.
  */
 final class EakteBrowser extends JPanel {
 
@@ -70,6 +78,11 @@ final class EakteBrowser extends JPanel {
             DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY).withZone(ZoneId.systemDefault());
     private static final String READ_ONLY = "nur lesen";
     private static final String NO_PREVIEW = "keine";
+    private static final String EXTRACTION_CARD = "extraktion";
+    static final String PREVIEW = "Vorschau";
+    static final String EXTRACTION = "Extraktion";
+    /** Herkunft der Dokumentreferenzen der Extraktion. */
+    static final String ORIGIN = "eakte";
 
     private final EakteSession session;
     private final EditorSessions editors;
@@ -89,6 +102,8 @@ final class EakteBrowser extends JPanel {
     private Consumer<StatusNote> status = note -> { };
     private StatusNote current = StatusNote.plain(" ");
     private EditorSession shownPreview;
+    private final SegmentedToggle viewToggle = new SegmentedToggle();
+    private final ExtractionView extraction = new ExtractionView(DocumentAnalysisProvider.NONE);
     private Path temp;
     /** „Speichern unter“: Ziel wählen (Dialog im Ausgabeordner der App); Tests setzen ein festes Ziel. */
     Function<String, Optional<Path>> saveTarget = this::chooseTarget;
@@ -145,6 +160,18 @@ final class EakteBrowser extends JPanel {
         JPanel none = new JPanel();
         none.setOpaque(false);
         previewStage.add(none, NO_PREVIEW);
+        previewStage.add(extraction, EXTRACTION_CARD);
+        viewToggle.segment(PREVIEW).segment(EXTRACTION);
+        viewToggle.setToolTipText("Sicht auf das gezeigte Dokument: Vorschau oder experimentelle Extraktion");
+        viewToggle.getAccessibleContext().setAccessibleName("Vorschau oder Extraktion");
+        viewToggle.setVisible(false);
+        viewToggle.onSelect(view -> showView());
+        extraction.onSource(source -> viewToggle.select(PREVIEW));
+        extraction.onStatus(note -> {
+            if (extractionShown()) {
+                report(note);
+            }
+        });
         right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, Comic.scroll(table), previewStage);
         right.setResizeWeight(1.0);
         right.setOpaque(false);
@@ -164,7 +191,42 @@ final class EakteBrowser extends JPanel {
                         + "Outlook-Nachricht … als Text", this::previewSelected),
                 DeckBars.action(ComposerIcons.openExternal(), "Öffnen mit dem zugehörigen Programm (Kopie in einem "
                         + "temporären Ordner, der beim Schließen gelöscht wird)", this::openExternally),
-                DeckBars.action(ComposerIcons.download(), "Speichern unter …", this::saveSelected));
+                DeckBars.action(ComposerIcons.download(), "Speichern unter …", this::saveSelected),
+                extraction.actions());
+        extraction.actions().setVisible(false);
+    }
+
+    /** Der Umschalter „Vorschau | Extraktion“ für die Titelleiste des Bereichs. */
+    JComponent viewToggle() {
+        return viewToggle;
+    }
+
+    /** Die Extraktionsansicht dieser Sitzung (später schließt der Bereich hier die Analyse an). */
+    ExtractionView extraction() {
+        return extraction;
+    }
+
+    /** Die Dokumentreferenz der Extraktion: {@code DAV:href} plus ETag, nie der Name. */
+    static DocumentRef documentRef(EakteEntry entry) {
+        return new DocumentRef(ORIGIN, entry.href(), entry.etag());
+    }
+
+    private boolean extractionShown() {
+        return shownPreview != null && EXTRACTION.equals(viewToggle.selected());
+    }
+
+    /** Zeigt im Vorschaubereich die gewählte Sicht des gezeigten Dokuments. */
+    private void showView() {
+        boolean extracting = extractionShown();
+        extraction.actions().setVisible(extracting);
+        if (shownPreview == null) {
+            previewCards.show(previewStage, NO_PREVIEW);
+            return;
+        }
+        previewCards.show(previewStage, extracting ? EXTRACTION_CARD : shownPreview.location());
+        if (extracting) {
+            report(extraction.currentStatus());
+        }
     }
 
     JComponent footTools() {
@@ -338,11 +400,15 @@ final class EakteBrowser extends JPanel {
         previewFiles.put(opened, file);
         shownPreview = opened;
         previewStage.add(new DocumentEditor(opened), opened.location());
-        previewCards.show(previewStage, opened.location());
+        extraction.show(documentRef(entry));
+        viewToggle.setVisible(true);
+        showView();
         if (right.getDividerLocation() > right.getHeight() - 60) {
             right.setDividerLocation(0.4);
         }
-        report(StatusNote.plain("Vorschau: „" + entry.name() + "“ · " + READ_ONLY));
+        if (!extractionShown()) {
+            report(StatusNote.plain("Vorschau: „" + entry.name() + "“ · " + READ_ONLY));
+        }
     }
 
     private void dropPreview() {
@@ -356,7 +422,9 @@ final class EakteBrowser extends JPanel {
                 previewStage.remove(component);
             }
         }
-        previewCards.show(previewStage, NO_PREVIEW);
+        extraction.show(null);
+        viewToggle.setVisible(false);
+        showView();
         editors.close(old);
         deleteQuietly(previewFiles.remove(old));
     }
@@ -462,6 +530,7 @@ final class EakteBrowser extends JPanel {
     /** Schließt die Vorschau und löscht den temporären Ordner dieser Sitzung (Reiter zu, Programmende). */
     void dispose() {
         dropPreview();
+        extraction.close();
         if (temp != null) {
             try (Stream<Path> files = Files.walk(temp)) {
                 files.sorted(Comparator.reverseOrder()).forEach(EakteBrowser::deleteQuietly);

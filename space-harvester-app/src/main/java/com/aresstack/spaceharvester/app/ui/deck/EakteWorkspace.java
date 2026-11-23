@@ -57,6 +57,8 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
     private final JPanel center = new JPanel(cards);
     private final CardLayout toolCards = new CardLayout();
     private final JPanel footTools = new JPanel(toolCards);
+    /** Titelleiste: der Umschalter „Vorschau | Extraktion“ der gewählten Sitzung. */
+    private final JPanel headTools = new JPanel(new BorderLayout());
     private final EakteConnectForm form;
     /** Sitzungen in der Anmeldung mit einem KeePass-Eintrag, bis sie angemeldet sind oder scheitern. */
     private final Map<EakteSession, String> loggingIn = new HashMap<>();
@@ -89,6 +91,7 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         JPanel none = new JPanel();
         none.setOpaque(false);
         footTools.add(none, FORM);
+        headTools.setOpaque(false);
         add(DeckBars.head(pills, null), BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
@@ -103,6 +106,11 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
                 }
             }
         });
+    }
+
+    /** Der Umschalter „Vorschau | Extraktion“ der gewählten Sitzung für die Titelleiste (nur im E-Akte-Bereich). */
+    public JComponent tools() {
+        return headTools;
     }
 
     /** Ob die E-Akte den Proxy der App nimmt (Erweitert im Formular; Vorgabe ja). */
@@ -231,6 +239,12 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         cards.show(center, session == null ? FORM : session.id());
         toolCards.show(footTools, session == null ? FORM : session.id());
         EakteBrowser browser = session == null ? null : browserOf.get(session);
+        headTools.removeAll();
+        if (browser != null) {
+            headTools.add(browser.viewToggle(), BorderLayout.CENTER);
+        }
+        headTools.revalidate();
+        headTools.repaint();
         statusInfo.show(browser == null ? StatusNote.plain(" ") : session.failure()
                 .map(reason -> new StatusNote(reason, StatusNote.Tone.ERROR, null, null))
                 .orElse(browser.status()));
