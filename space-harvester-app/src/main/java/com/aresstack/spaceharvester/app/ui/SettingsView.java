@@ -57,6 +57,7 @@ public final class SettingsView implements View {
     static final String TERMINAL = "Mainframe";
     static final String CONNECTION_HEADING = "Verbindung";
     static final String NDV = "NDV";
+    static final String BETAVIEW = "BetaView";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -105,6 +106,8 @@ public final class SettingsView implements View {
     /** Unten im Drawer, über „Zurück“: Zeilen, die nicht mitscrollen (Bibliotheken). */
     private final JPanel bottomRows = new JPanel();
     private final java.util.Map<String, SettingsNavRow> rows = new java.util.LinkedHashMap<>();
+    /** Bereich „BetaView“: Standard-Suchfilter wie in MainframeMate. */
+    final BetaViewSettingsPanel betaView = new BetaViewSettingsPanel();
     private String selected;
     /** „Zurück“ im Drawer: verlässt die Einstellungen (setzt das Hauptfenster). */
     private Runnable leave = () -> { };
@@ -327,6 +330,9 @@ public final class SettingsView implements View {
                 Comic.plate(NdvAnalysisSettingsPanel.ORDER_HEADING, Comic.PETROL, ndvAnalysis.orderComponent()),
                 Comic.plate(NdvAnalysisSettingsPanel.STEPLIB_HEADING, Comic.PETROL, ndvAnalysis.stepLibComponent()),
                 Comic.plate(NdvAnalysisSettingsPanel.RULES_HEADING, Comic.ORANGE, ndvAnalysis.rulesComponent())));
+        page(BETAVIEW, Comic.column(
+                Comic.plate(BetaViewSettingsPanel.CONNECTION_HEADING, Comic.BLUE, betaView.connection()),
+                Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "

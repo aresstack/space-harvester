@@ -276,11 +276,62 @@ final class BetaViewHtml {
                 }
             }
             Element idInput = item.selectFirst("input[name=ssIDForm]");
-            result.add(new SavedSearch(name.text(), description == null ? "" : description.text(),
+            result.add(new SavedSearch(decoded(name.text()), description == null ? "" : decoded(description.text()),
                     Parser.unescapeEntities(action, false), tokenName, tokenValue,
                     idInput == null ? "" : idInput.attr("value")));
         }
         return result;
+    }
+
+    /**
+     * Die Felder des Formulars einer gespeicherten Suche, wie der Browser sie beim Absenden schickt: alle benannten
+     * Eingaben außer Knöpfen und nicht angehakten Kästchen, in der Reihenfolge der Seite. Gefunden wird das Formular
+     * über die Kennung ({@code ssIDForm}) oder die Aktion; leer, wenn es in der Liste fehlt.
+     */
+    static Map<String, String> savedSearchForm(String html, SavedSearch search) {
+        Map<String, String> result = new LinkedHashMap<>();
+        if (html == null) {
+            return result;
+        }
+        for (Element form : Jsoup.parse(html).select("form[action*=executeSavedSelection]")) {
+            Element idInput = form.selectFirst("input[name=ssIDForm]");
+            String id = idInput == null ? "" : idInput.attr("value");
+            String action = form.attr("action");
+            action = Parser.unescapeEntities(action.substring(action.lastIndexOf('/') + 1), false);
+            boolean match = !search.id().isEmpty() ? search.id().equals(id) : action.equals(search.action());
+            if (!match) {
+                continue;
+            }
+            for (Element input : form.select("input[name], select[name], textarea[name]")) {
+                String type = input.attr("type").toLowerCase(java.util.Locale.ROOT);
+                if (type.equals("submit") || type.equals("button") || type.equals("reset") || type.equals("image")
+                        || type.equals("file")) {
+                    continue;
+                }
+                if ((type.equals("checkbox") || type.equals("radio")) && !input.hasAttr("checked")) {
+                    continue;
+                }
+                String value;
+                if (input.tagName().equals("select")) {
+                    Element option = input.selectFirst("option[selected]");
+                    option = option == null ? input.selectFirst("option") : option;
+                    value = option == null ? "" : option.hasAttr("value") ? option.attr("value") : option.text();
+                } else if (input.tagName().equals("textarea")) {
+                    value = input.wholeText();
+                } else {
+                    value = input.attr("value");
+                }
+                result.put(input.attr("name"), value);
+            }
+            return result;
+        }
+        return result;
+    }
+
+    /** Manche Namen kommen doppelt kodiert ({@code R&amp;uuml;ck}); jsoup löst nur eine Stufe auf. */
+    private static String decoded(String text) {
+        return text.indexOf('&') >= 0 && text.indexOf(';') > text.indexOf('&')
+                ? Parser.unescapeEntities(text, false) : text;
     }
 
     /** Die gemerkten Dokumente ({@code .el_wall_btn} mit {@code a.we_id_bookmark_link}). */

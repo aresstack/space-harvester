@@ -46,7 +46,10 @@ public final class CommandDeck {
     private final JPanel workspace = new JPanel(cards);
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
-    private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(), connecting);
+    /** Weg zum NDV-Server für Verbindungen mit „Proxy der App verwenden“; ohne App (Tests) direkt. */
+    private volatile PalNdvConnector.Route ndvRoute = profile -> java.net.Proxy.NO_PROXY;
+    private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(profile -> ndvRoute.to(profile)),
+            connecting);
     private final TerminalWorkspace terminal;
     private final BetaViewWorkspace betaView;
     /** Gemeinsamer Editor aller Bereiche (Dateien, NDV, später FTP); die Dokumente überleben jeden Wechsel. */
@@ -152,6 +155,11 @@ public final class CommandDeck {
     /** Der Stand des gewählten Bereichs für die Statuszeile (für Tests). */
     JPanel statusPanel() {
         return status;
+    }
+
+    /** Der Proxy-Weg der App für NDV-Verbindungen, die ihn gewählt haben (Vorgabe direkt). */
+    public void ndvRoute(PalNdvConnector.Route route) {
+        ndvRoute = route == null ? profile -> java.net.Proxy.NO_PROXY : route;
     }
 
     public Perspective perspective() {

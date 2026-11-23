@@ -57,6 +57,34 @@ class SourceFormTest {
     }
 
     @Test
+    void aPresetFromTheNdvAreaFillsTypeAndFields() throws Exception {
+        Path handbuch = Files.createDirectories(home.resolve("handbuch"));
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), handbuch));
+        start(config, null);
+
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            f.preset("ndv", java.util.Map.of("host", "ndv.example.test", "port", "8011", "startPoints", "LAGER"),
+                    null);
+            assertThat(f.typeId()).isEqualTo("ndv");
+            assertThat(((JTextField) f.fields.input("host")).getText()).isEqualTo("ndv.example.test");
+            assertThat(((JTextField) f.fields.input("port")).getText()).isEqualTo("8011");
+            assertThat(((JTextField) f.fields.input("startPoints")).getText()).isEqualTo("LAGER");
+            assertThat(f.kind.isEnabled()).as("eine neue Quelle, alles änderbar").isTrue();
+        });
+    }
+
+    @Test
     void addsALocalFolderAsSourceAndStartsIt() throws Exception {
         Path handbuch = Files.createDirectories(home.resolve("handbuch"));
         Files.writeString(handbuch.resolve("betrieb.md"), "# Betrieb\n");

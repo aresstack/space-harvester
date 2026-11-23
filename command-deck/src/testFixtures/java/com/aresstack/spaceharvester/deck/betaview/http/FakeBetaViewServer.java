@@ -62,6 +62,10 @@ public final class FakeBetaViewServer implements AutoCloseable {
         boolean loggedIn;
         String csrf;
         final Set<String> strutsTokens = ConcurrentHashMap.newKeySet();
+        /** Die Tokens der zuletzt gezeichneten Liste gespeicherter Suchen; jede neue Liste ersetzt sie. */
+        final Set<String> listTokens = ConcurrentHashMap.newKeySet();
+        /** Meldung für den nächsten Sitzungsstatus. */
+        volatile String message;
         List<Doc> lastResult = List.of();
         Map<String, String> lastFilter = Map.of();
         final List<Doc> openDocs = new ArrayList<>();
@@ -183,12 +187,19 @@ public final class FakeBetaViewServer implements AutoCloseable {
             }
             case "showResult.action" -> html(exchange, resultPage(session.lastResult));
             case "executeSavedSelection.action" -> {
-                if (!strutsOk(session, form)) {
-                    html(exchange, "<html><body>Ungültiges Token</body></html>");
+                // Wie der echte Server: veraltetes Token oder unvollständiges Formular → HTTP 400.
+                if (!strutsOk(session, form) || !"ja".equals(form.get("ssParaMode"))) {
+                    send(exchange, 400, "text/html;charset=UTF-8", "<html><body>Bad Request</body></html>");
                     return;
                 }
                 int id = Integer.parseInt(query.getOrDefault("ssID", "0"));
                 String[] saved = session.savedSearches.get(id - 1);
+                if (BROKEN_LAYOUT.equals(saved[0])) {
+                    // So antwortet der echte Server, wenn das Layout der Suche fehlt (auch im Browser).
+                    send(exchange, 400, "application/json; charset=UTF-8", "{ \"errors\":[\"Das Layout existiert "
+                            + "nicht (in Ihrer Sprache). Bitte l&ouml;schen Sie die gespeicherte Suche. \"]}");
+                    return;
+                }
                 session.lastResult = filter(parse(saved[2]));
                 html(exchange, resultPage(session.lastResult));
             }
@@ -196,7 +207,22 @@ public final class FakeBetaViewServer implements AutoCloseable {
                 int index = Integer.parseInt(query.getOrDefault("index", "0"));
                 openDoc(exchange, session, session.lastResult.get(index));
             }
-            case "opendocumentlink.action" -> openDoc(exchange, session, byId(query.get("docid")));
+            case "opendocumentlink.action" -> {
+                if (OFFLINE_DOC.equals(query.get("docid"))) {
+                    // Wie der echte Server: Ablehnung ohne Text, der Grund steht danach im Sitzungsstatus.
+                    session.message = "Das Dokument ist offline.";
+                    send(exchange, 400, "text/html;charset=UTF-8", "");
+                    return;
+                }
+                openDoc(exchange, session, byId(query.get("docid")));
+            }
+            case "getSessionStatus.action" -> {
+                String message = session.message;
+                session.message = null;
+                send(exchange, message == null ? 200 : 400, "application/json; charset=UTF-8",
+                        "{\"messages\":[" + (message == null ? "" : "{\"key\":\"x\",\"text\":\"" + message
+                                + "\",\"type\":\"error\"}") + "],\"successful\":" + (message == null) + "}");
+            }
             case "document.viewer.navigation.action" -> {
                 session.currentPage = Integer.parseInt(query.getOrDefault("directItem", "1"));
                 send(exchange, 200, "application/json", "{\"ok\":true}");
@@ -274,14 +300,17 @@ public final class FakeBetaViewServer implements AutoCloseable {
                 html(exchange, "<html><body>ok</body></html>");
             }
             case "savedSelection.list.action" -> {
+                session.strutsTokens.removeAll(session.listTokens);
+                session.listTokens.clear();
                 StringBuilder html = new StringBuilder("<html><body>");
                 for (int i = 0; i < session.savedSearches.size(); i++) {
                     String[] s = session.savedSearches.get(i);
                     html.append("<div class=\"el_wall_btn we-saved-selection\"><div name=\"we_id_selection_name\">")
                             .append(s[0]).append("</div><div name=\"selection_desc\">").append(s[1])
                             .append("</div><form action=\"/betaview/executeSavedSelection.action?ssID=").append(i + 1)
-                            .append("\">").append(tokenFields(session)).append(hidden("ssIDForm",
-                                    String.valueOf(i + 1))).append("</form></div>");
+                            .append("\">").append(listTokenFields(session)).append(hidden("ssIDForm",
+                                    String.valueOf(i + 1))).append(hidden("ssParaMode", "ja"))
+                            .append("<input type=\"submit\" name=\"go\" value=\"Ausführen\"></form></div>");
                 }
                 html(exchange, html.append("</body></html>").toString());
             }
@@ -402,6 +431,18 @@ public final class FakeBetaViewServer implements AutoCloseable {
         session.strutsTokens.add(token);
         return hidden("struts.token.name", "token") + hidden("token", token);
     }
+
+    private String listTokenFields(Session session) {
+        String fields = tokenFields(session);
+        session.listTokens.add("T" + counter.get());
+        return fields;
+    }
+
+    /** Kennung eines gemerkten Dokuments, das auf dem Server offline ist. */
+    public static final String OFFLINE_DOC = "OFFLINE1";
+
+    /** Name einer gespeicherten Suche, deren Layout auf dem Server fehlt. */
+    public static final String BROKEN_LAYOUT = "Altes Layout";
 
     /** Ein Struts-Token gilt genau einmal. */
     private static boolean strutsOk(Session session, Map<String, String> form) {

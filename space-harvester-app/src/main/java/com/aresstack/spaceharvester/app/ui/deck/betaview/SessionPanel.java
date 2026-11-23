@@ -148,7 +148,11 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
             info("Gespeicherte Suche „" + saved.name() + "“: " + result.rows().size() + " Treffer");
             // Wie MainframeMate: die Liste neu lesen, denn jede Ausführung verbraucht ihr Formular-Token.
             loadSaved();
-        }, "Gespeicherte Suche gescheitert", () -> search.busy(false, null));
+        }, "Gespeicherte Suche gescheitert", () -> {
+            search.busy(false, null);
+            // Auch nach einem Fehler die Liste mit frischen Formularen neu lesen, still: der Fehler bleibt stehen.
+            session.savedSearches().thenAccept(items -> SwingUtilities.invokeLater(() -> search.showSaved(items)));
+        });
     }
 
     @Override

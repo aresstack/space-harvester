@@ -8,6 +8,8 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.core.impl.t
 
 import java.io.*;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
@@ -133,6 +135,8 @@ public final class Ndv {
     private String sitzungsKennung = "";
     private String benutzerKennung = "";
     private Socket tcpVerbindung;
+    /** Weg zum NDV-Server; Vorgabe direkt. Ein HTTP-Proxy tunnelt per CONNECT, ein SOCKS-Proxy per SOCKS. */
+    private Proxy proxy = Proxy.NO_PROXY;
     private DataOutputStream sendeDatenStrom;
     private DataInputStream empfangsDatenStrom;
     private Uebergabebereich uebergabeBereich;
@@ -166,6 +170,13 @@ public final class Ndv {
     // =================================================================
     //  connect(host, port)
     // =================================================================
+    /**
+     * Der Weg zum NDV-Server für die nächste Verbindung; {@code null} oder {@link Proxy#NO_PROXY} verbindet direkt.
+     */
+    public void setProxy(Proxy proxy) {
+        this.proxy = proxy == null ? Proxy.NO_PROXY : proxy;
+    }
+
     public void connect(String zielAdresse, String zielPort) throws IOException, UnknownHostException {
         init();
 
@@ -177,7 +188,17 @@ public final class Ndv {
         }
 
         byte[] ipBytes = parseIPv4Bytes(zielAdresse);
-        if (ipBytes != null) {
+        if (proxy != null && proxy.type() != Proxy.Type.DIRECT) {
+            // Über den Proxy: Der Name bleibt unaufgelöst, der Proxy löst ihn auf (wie ein Browser).
+            Socket tunnel = new Socket(proxy);
+            try {
+                tunnel.connect(InetSocketAddress.createUnresolved(zielAdresse, portNummer));
+            } catch (IOException | RuntimeException e) {
+                tunnel.close();
+                throw e;
+            }
+            this.tcpVerbindung = tunnel;
+        } else if (ipBytes != null) {
             this.tcpVerbindung = new Socket(InetAddress.getByAddress(ipBytes), portNummer);
         } else {
             this.tcpVerbindung = new Socket(zielAdresse, portNummer);

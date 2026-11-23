@@ -225,6 +225,8 @@ public final class MainWindow implements AppContext.Navigator {
         commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
                 com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
+        // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
+        commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());
@@ -239,6 +241,8 @@ public final class MainWindow implements AppContext.Navigator {
                 .map(entry -> new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite(
                         entry.config().title(), entry.config().baseUrl().toString()))
                 .toList());
+        // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
+        com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);

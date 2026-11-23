@@ -40,6 +40,16 @@ class NdvClient implements Closeable {
     }
 
     /**
+     * Der Weg zum NDV-Server für das nächste {@link #connect}: {@link java.net.Proxy#NO_PROXY} direkt, sonst über
+     * diesen Proxy (HTTP per CONNECT).
+     */
+    void proxy(java.net.Proxy proxy) {
+        if (pal instanceof NdvTransaction transaction) {
+            transaction.setProxy(proxy);
+        }
+    }
+
+    /**
      * Connect to the NDV server.
      */
     public void connect(String host, int port, String user, String password) throws IOException, NdvException {
