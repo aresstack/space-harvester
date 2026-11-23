@@ -249,6 +249,21 @@ final class NdvConnectForm extends JPanel {
         connect.open(profile, entry, () -> accounts.credentials(entry));
     }
 
+    /** Breite des Terminal-Formulars, einmal gemessen: die Formulare des Deck sehen gleich aus (UX 23.11.). */
+    private static int terminalWidth;
+
+    @Override
+    public Dimension getPreferredSize() {
+        Dimension own = super.getPreferredSize();
+        if (isPreferredSizeSet()) {
+            return own;
+        }
+        if (terminalWidth == 0) {
+            terminalWidth = new ConnectForm(accounts, (profile, login) -> { }).getPreferredSize().width;
+        }
+        return new Dimension(Math.max(own.width, terminalWidth), own.height);
+    }
+
     /** Zeigt im Formular, warum das Verbinden misslang. */
     void problem(String reason) {
         problem.setText(reason == null || reason.isBlank() ? " " : reason);
