@@ -474,6 +474,43 @@ class SearchViewTest {
     }
 
     /**
+     * Angelo 23.11.2026: unterhalb der Quellen (Space, Seite) sucht die Auswahl links nicht von selbst; erst „Im
+     * markierten Bereich erneut suchen“. Zurück und Vor wechseln zwischen den Suchen.
+     */
+    @Test
+    void belowSourcesOnlyTheButtonSearchesTheMarkedAreaAndBackReturns() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].scope(List.of(new Explorer.Scope("beta", null)));
+            view[0].search("betrieb");
+        });
+        assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta");
+        SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("beta", "DEV"))));
+        assertThat(view[0].heading.titleText()).as("keine Suche von selbst").isEqualTo("Suche in Beta");
+        assertThat(view[0].visits).hasSize(1);
+        SwingUtilities.invokeAndWait(() -> view[0].searchMarked.doClick());
+        assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta › DEV");
+        assertThat(view[0].backVisit.isEnabled()).isTrue();
+        SwingUtilities.invokeAndWait(() -> view[0].backVisit.doClick());
+        assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta");
+        assertThat(view[0].forwardVisit.isEnabled()).isTrue();
+        SwingUtilities.invokeAndWait(() -> view[0].forwardVisit.doClick());
+        assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta › DEV");
+        assertThat(view[0].visits).hasSize(2);
+        // Wechsel in eine andere Quelle unterhalb ihres Knotens: die Suche schaltet auf die ganze Quelle um.
+        SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("alpha", "DEV"))));
+        assertThat(view[0].heading.titleText()).isEqualTo("Suche in Alpha");
+        // Mehrfachauswahl: alle Bereiche, ab vier nur die Zahl.
+        assertThat(view[0].areaTitle(List.of(new Explorer.Scope("alpha", null), new Explorer.Scope("beta", "DEV"))))
+                .isEqualTo("Alpha, Beta › DEV");
+        assertThat(view[0].areaTitle(List.of(new Explorer.Scope("alpha", "A"), new Explorer.Scope("alpha", "B"),
+                new Explorer.Scope("beta", "C"), new Explorer.Scope("beta", "D")))).isEqualTo("4 Bereichen");
+    }
+
+    /**
      * Angelo 20.11.2026: statt „Überall suchen“ ein Häkchen je eingetragener Quelle, Vorgabe alle an; abgehakt fehlt
      * die Quelle in der Suche, auch wenn der Explorer sie wählt; die Häkchen bleiben beim Wechsel der Auswahl.
      */

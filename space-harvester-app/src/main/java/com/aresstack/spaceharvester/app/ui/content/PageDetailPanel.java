@@ -453,6 +453,8 @@ public final class PageDetailPanel extends JPanel {
             new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Leseansicht", READING_HELP);
     /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */
     static final int MOUSE_BACK_BUTTON = 4;
+    /** Client-Eigenschaft einer Ansicht mit eigenem Zurück/Vor (etwa die Suche): dort blättert die Seite nicht. */
+    public static final String OWN_MOUSE_NAVIGATION = "spaceharvester.ownMouseNavigation";
     /** Maustaste Vor (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_FORWARD_BUTTON}). */
     static final int MOUSE_FORWARD_BUTTON = 5;
     /**
@@ -3739,6 +3741,12 @@ public final class PageDetailPanel extends JPanel {
     boolean mouseButton(int button, java.awt.Component source) {
         if (source == null || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
             return false;
+        }
+        // Über der Suche gelten ihr eigenes Zurück und Vor (Angelo, 23.11.2026).
+        for (java.awt.Component c = source; c != null; c = c.getParent()) {
+            if (c instanceof javax.swing.JComponent jc && jc.getClientProperty(OWN_MOUSE_NAVIGATION) != null) {
+                return false;
+            }
         }
         java.awt.Window window = javax.swing.SwingUtilities.getWindowAncestor(this);
         if (!javax.swing.SwingUtilities.isDescendingFrom(source, this)

@@ -115,10 +115,20 @@ public final class SearchView implements View {
     final com.aresstack.spaceharvester.app.ui.controls.SelectableHeading heading =
             new com.aresstack.spaceharvester.app.ui.controls.SelectableHeading(HEADING_EMPTY);
     static final String HEADING_EMPTY = "Suche";
+    /** So viele Bereiche nennt die Überschrift mit Namen, mehr nur als Zahl. */
+    static final int MAX_NAMED_AREAS = 3;
     static final String HEADING_PREFIX = "Suche in ";
     static final String REPEAT_TIP = "Suche im selben Bereich wiederholen (nicht im links gewählten)";
     /** Wiederholt die letzte Suche in ihrem Bereich; erst nach einer Suche wählbar. */
     final javax.swing.AbstractButton repeat;
+    static final String MARKED_TIP = "Im markierten Bereich erneut suchen (links im Baum gewählt)";
+    /** Sucht denselben Begriff im links markierten Bereich. */
+    final javax.swing.AbstractButton searchMarked;
+    /** Zurück und Vor zwischen den Suchen dieser Sitzung (Begriff und Bereich). */
+    final javax.swing.AbstractButton backVisit;
+    final javax.swing.AbstractButton forwardVisit;
+    /** Was links im Baum markiert ist; leer für „Wissensquellen“. */
+    private List<Explorer.Scope> marked = List.of();
     /** Der Bereich der letzten Suche als Schnappschuss beim Start; {@code null} vor der ersten. */
     List<Explorer.Scope> searchedScopes;
     /** Wählt links den Bereich der Suche; {@code null} ohne Explorer. */
@@ -322,8 +332,25 @@ public final class SearchView implements View {
         frame.setBackground(Comic.SURFACE);
         frame.add(heading, BorderLayout.NORTH);
         frame.add(root, BorderLayout.CENTER);
+        backVisit = heading.tool(Glyph.BACK, "Zurück zur vorigen Suche", this::back);
+        forwardVisit = heading.tool(Glyph.FORWARD, "Vor zur nächsten Suche", this::forward);
+        searchMarked = heading.tool(Glyph.CROSSHAIR, MARKED_TIP, this::searchMarked);
         repeat = heading.tool(Glyph.SYNC, REPEAT_TIP, this::repeat);
         repeat.setEnabled(false);
+        backVisit.setEnabled(false);
+        forwardVisit.setEnabled(false);
+        frame.putClientProperty(com.aresstack.spaceharvester.app.ui.content.PageDetailPanel.OWN_MOUSE_NAVIGATION,
+                Boolean.TRUE);
+        frame.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) != 0) {
+                if (frame.isDisplayable()) {
+                    java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(mouseNavigation,
+                            java.awt.AWTEvent.MOUSE_EVENT_MASK);
+                } else {
+                    java.awt.Toolkit.getDefaultToolkit().removeAWTEventListener(mouseNavigation);
+                }
+            }
+        });
         heading.onSelect(() -> {
             table.clearSelection();
             pinned.clearSelection();
@@ -673,6 +700,34 @@ public final class SearchView implements View {
      * Wissensquellen. Eine laufende Suche bleibt; die nächste nutzt den neuen Umfang.
      */
     public void scope(List<Explorer.Scope> selection) {
+        marked = List.copyOf(selection);
+        Set<String> sources = sourcesOf(selection);
+        boolean otherSource = searchedScopes != null && !selection.isEmpty()
+                && !sources.equals(sourcesOf(searchedScopes));
+        if (otherSource && !topLevel(selection)) {
+            // In eine andere Quelle gewechselt, etwa auf eine Jira-Unterseite nach einer Confluence-Suche: die Suche
+            // schaltet auf diese Quelle(n) um, ganz, nicht auf den Knoten (Angelo, 23.11.2026).
+            use(sources.stream().map(id -> new Explorer.Scope(id, null)).toList());
+            if (searchedText != null && searchedText.equals(query.getText().trim())) {
+                search();
+            }
+            return;
+        }
+        use(selection);
+        if (!lastChange || !topLevel(selection)) {
+            return;
+        }
+        if (technicalTerms.isSelected() && termsRuntime != null) {
+            // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
+            searchTechnicalTerms();
+        } else if (searchedText != null && searchedText.equals(query.getText().trim())) {
+            // Wissensquellen oder eine Quelle links gewählt: gesucht wird direkt dort (Angelo, 21. und 23.11.2026).
+            search();
+        }
+    }
+
+    /** Übernimmt einen Bereich für die nächste Suche, ohne selbst zu suchen. */
+    private void use(List<Explorer.Scope> selection) {
         // Erst die Häkchen, dann der Umfang: er liest die angehakten Quellen.
         Set<String> known = knownSources();
         syncBoxesToScope(selection.stream().filter(scope -> scope.sourceId() != null
@@ -803,6 +858,10 @@ public final class SearchView implements View {
         if (area.isEmpty()) {
             return "Wissensquellen";
         }
+        if (area.size() > MAX_NAMED_AREAS) {
+            // Mehrfachauswahl (Strg/Shift): ab vier Knoten nur die Zahl; ein Klick markiert alle wieder im Baum.
+            return area.size() + " Bereichen";
+        }
         return String.join(", ", area.stream().map(scope -> scope.pageId() != null
                 ? (scope.pageTitle() == null ? scope.pageId() : scope.pageTitle())
                 : title(scope.sourceId()) + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList());
@@ -814,6 +873,7 @@ public final class SearchView implements View {
      */
     private void started(AppRuntime runtime, String text) {
         searchedScopes = List.copyOf(scopes);
+        remember(text, searchedScopes);
         heading.title(HEADING_PREFIX + areaTitle(searchedScopes));
         heading.selected(false);
         repeat.setEnabled(true);
@@ -963,13 +1023,102 @@ public final class SearchView implements View {
             return;
         }
         query.setText(searchedText);
-        List<Explorer.Scope> before = scopes;
-        scope(searchedScopes);
-        if (scopes.equals(before)) {
-            // Gleicher Bereich: {@link #applyScope} sucht nicht von selbst.
-            search();
+        use(searchedScopes);
+        search();
+    }
+
+    /**
+     * Sucht denselben Begriff im links markierten Bereich (Angelo, 23.11.2026); die Überschrift wechselt auf ihn. Steht
+     * im Suchfeld ein anderer Text, gilt der.
+     */
+    void searchMarked() {
+        if (query.getText().isBlank() && searchedText != null) {
+            query.setText(searchedText);
+        }
+        use(marked);
+        search();
+    }
+
+    /** Eine frühere Suche: Begriff und Bereich, für Zurück und Vor. */
+    record Visit(String text, List<Explorer.Scope> area) {
+    }
+
+    /** Die Suchen dieser Sitzung in Reihenfolge; {@link #visit} zeigt auf die gezeigte. */
+    final List<Visit> visits = new ArrayList<>();
+    int visit = -1;
+    /** Während Zurück/Vor eine frühere Suche wiederholt, kommt sie nicht neu in den Verlauf. */
+    private boolean revisiting;
+
+    /** Merkt eine startende Suche im Verlauf; Vor-Einträge hinter der gezeigten fallen weg. */
+    private void remember(String text, List<Explorer.Scope> area) {
+        if (revisiting) {
+            return;
+        }
+        Visit next = new Visit(text, List.copyOf(area));
+        if (visit >= 0 && visits.get(visit).equals(next)) {
+            return;
+        }
+        while (visits.size() > visit + 1) {
+            visits.remove(visits.size() - 1);
+        }
+        visits.add(next);
+        visit = visits.size() - 1;
+        updateHistoryButtons();
+    }
+
+    boolean canGoBack() {
+        return visit > 0;
+    }
+
+    boolean canGoForward() {
+        return visit >= 0 && visit < visits.size() - 1;
+    }
+
+    /** Zurück zur vorigen Suche (Begriff und Bereich). */
+    void back() {
+        if (canGoBack()) {
+            revisit(visit - 1);
         }
     }
+
+    /** Vor zur nächsten Suche im Verlauf. */
+    void forward() {
+        if (canGoForward()) {
+            revisit(visit + 1);
+        }
+    }
+
+    private void revisit(int index) {
+        visit = index;
+        Visit target = visits.get(index);
+        revisiting = true;
+        try {
+            query.setText(target.text());
+            use(target.area());
+            search();
+        } finally {
+            revisiting = false;
+        }
+        updateHistoryButtons();
+    }
+
+    private void updateHistoryButtons() {
+        backVisit.setEnabled(canGoBack());
+        forwardVisit.setEnabled(canGoForward());
+    }
+
+    /** Die Maustasten Zurück (4) und Vor (5) über der sichtbaren Suche, wie im Lesebereich. */
+    private final java.awt.event.AWTEventListener mouseNavigation = event -> {
+        if (event instanceof MouseEvent mouse && event.getID() == MouseEvent.MOUSE_RELEASED && frame.isShowing()
+                && (mouse.getButton() == 4 || mouse.getButton() == 5) && mouse.getComponent() != null
+                && SwingUtilities.getWindowAncestor(mouse.getComponent()) == SwingUtilities.getWindowAncestor(frame)) {
+            if (mouse.getButton() == 4) {
+                back();
+            } else {
+                forward();
+            }
+        }
+    };
 
     /** Übernimmt den Umfang; die Häkchen setzt {@link #syncBoxesToScope}. */
     private void applyScope(List<Explorer.Scope> selection) {
@@ -992,14 +1141,24 @@ public final class SearchView implements View {
                             + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
         }
         watchLocalShare();
-        if (technicalTerms.isSelected() && termsRuntime != null) {
-            // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
-            searchTechnicalTerms();
-        } else if (!scopes.equals(before) && searchedText != null
-                && searchedText.equals(query.getText().trim())) {
-            // Anderer Bereich links gewählt: der Suchbegriff bleibt, gesucht wird im neuen Bereich (Angelo, 21.11.2026).
-            search();
-        }
+        lastChange = !scopes.equals(before);
+    }
+
+    /** Ob der letzte {@link #applyScope} den Bereich geändert hat. */
+    private boolean lastChange;
+
+    /**
+     * Ob ein Bereich nur aus oberen Knoten besteht: „Wissensquellen“ oder ganze Quellen. Nur dort schaltet die Auswahl
+     * links die Suche direkt um (Angelo, 23.11.2026); darunter erst „Im markierten Bereich erneut suchen“.
+     */
+    static Set<String> sourcesOf(List<Explorer.Scope> area) {
+        Set<String> sources = new LinkedHashSet<>();
+        area.forEach(scope -> sources.add(scope.sourceId()));
+        return sources;
+    }
+
+    static boolean topLevel(List<Explorer.Scope> area) {
+        return area.stream().allMatch(scope -> scope.spaceKey() == null && scope.pageId() == null);
     }
 
     /**
