@@ -40,6 +40,9 @@ public final class DocumentEditor extends JPanel {
     private long shownRevision;
     /** Während der Editor selbst Text setzt, ist das keine Bearbeitung. */
     private boolean filling;
+    /** Fasst schnelles Tippen zusammen, bevor die Natural-Blöcke neu gefärbt werden. */
+    private final javax.swing.Timer blocks;
+    private final Runnable recolor = () -> SwingUtilities.invokeLater(this::recolorBlocks);
 
     public DocumentEditor(EditorSession session) {
         super(new BorderLayout());
@@ -53,6 +56,8 @@ public final class DocumentEditor extends JPanel {
         area.setHighlightCurrentLine(true);
         area.setCurrentLineHighlightColor(Comic.NOTICE);
         area.setSyntaxEditingStyle(SyntaxStyles.forExtension(extension(session.name())));
+        blocks = new javax.swing.Timer(300, e -> NaturalBlockHighlighter.apply(area));
+        blocks.setRepeats(false);
         area.setEditable(false);
         area.getAccessibleContext().setAccessibleName(session.name());
         area.getDocument().addDocumentListener(new DocumentListener() {
@@ -99,13 +104,16 @@ public final class DocumentEditor extends JPanel {
             if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) != 0) {
                 if (isDisplayable()) {
                     session.observe(observer);
+                    NaturalBlockHighlighter.observe(recolor);
                     render();
                 } else {
                     session.unobserve(observer);
+                    NaturalBlockHighlighter.unobserve(recolor);
                 }
             }
         });
         session.observe(observer);
+        NaturalBlockHighlighter.observe(recolor);
         render();
     }
 
@@ -145,6 +153,21 @@ public final class DocumentEditor extends JPanel {
         if (!filling) {
             session.edit(area.getText());
         }
+        // Wie SplitPreviewTab.scheduleSubroutineHighlighting in MainframeMate: nach 300 ms Ruhe neu einfärben.
+        if (natural()) {
+            blocks.restart();
+        }
+    }
+
+    private boolean natural() {
+        return SyntaxStyles.NATURAL.equals(area.getSyntaxEditingStyle());
+    }
+
+    /** Färbt die Natural-Blöcke sofort neu (etwa nach geänderten Farben in den Einstellungen). */
+    public void recolorBlocks() {
+        if (natural()) {
+            NaturalBlockHighlighter.apply(area);
+        }
     }
 
     private void render() {
@@ -175,6 +198,9 @@ public final class DocumentEditor extends JPanel {
             area.discardAllEdits();
         } finally {
             filling = false;
+        }
+        if (natural()) {
+            SwingUtilities.invokeLater(() -> NaturalBlockHighlighter.apply(area));
         }
         session.edit(area.getText());
     }

@@ -1,12 +1,32 @@
 package com.aresstack.spaceharvester.app.ui.deck.editor;
 
 import java.util.Map;
+import org.fife.ui.rsyntaxtextarea.AbstractTokenMakerFactory;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+import org.fife.ui.rsyntaxtextarea.TokenMakerFactory;
 
 /** Welche Syntaxhervorhebung zu welcher Dateiendung gehört; Unbekanntes bleibt einfacher Text. */
 public final class SyntaxStyles {
 
+    /** Natural (Software AG), wie in MainframeMate ({@code MainframeSyntaxSupport.SYNTAX_STYLE_NATURAL}). */
+    public static final String NATURAL = "text/natural";
+
+    static {
+        // Wie MainframeSyntaxSupport.register() in MainframeMate: der eigene TokenMaker für Natural.
+        TokenMakerFactory factory = TokenMakerFactory.getDefaultInstance();
+        if (factory instanceof AbstractTokenMakerFactory tokenMakers) {
+            tokenMakers.putMapping(NATURAL, NaturalTokenMaker.class.getName());
+        }
+    }
+
     private static final Map<String, String> BY_EXTENSION = Map.ofEntries(
+            // Natural-Objekte mit den Endungen von NaturalONE (ObjectType.getInstanceIdExtension).
+            Map.entry("nsp", NATURAL), Map.entry("nsn", NATURAL), Map.entry("nss", NATURAL),
+            Map.entry("nsh", NATURAL), Map.entry("nsc", NATURAL), Map.entry("nsm", NATURAL),
+            Map.entry("nsl", NATURAL), Map.entry("nsg", NATURAL), Map.entry("nsa", NATURAL),
+            Map.entry("nsd", NATURAL), Map.entry("ns4", NATURAL), Map.entry("ns3", NATURAL),
+            Map.entry("nst", NATURAL), Map.entry("ns5", NATURAL), Map.entry("ns6", NATURAL),
+            Map.entry("ns7", NATURAL), Map.entry("ns8", NATURAL),
             Map.entry("java", SyntaxConstants.SYNTAX_STYLE_JAVA),
             Map.entry("kt", SyntaxConstants.SYNTAX_STYLE_KOTLIN),
             Map.entry("groovy", SyntaxConstants.SYNTAX_STYLE_GROOVY),

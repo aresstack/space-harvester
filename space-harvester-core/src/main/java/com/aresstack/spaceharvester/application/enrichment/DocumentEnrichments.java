@@ -115,6 +115,15 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
     private final Map<String, Integer> removals = new HashMap<>();
     /** Anhänge für den Bestand ({@link #catchUp}); ohne sie holt der Lauf nichts nach. */
     private volatile DocumentInventory assets;
+    /** Der Netzzustand, oder {@code null}: dann zählt ein Netzfehler eines Prozessors wie jeder andere. */
+    private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
+
+    /** Ein Abschnitt scheiterte, während das Netz weg ist: derselbe Anhang, sobald es zurück ist. */
+    private static final class Offline extends RuntimeException {
+        Offline() {
+            super(null, null, false, false);
+        }
+    }
     /** Hintergrundaufträge; ohne sie ein eigener Auftrag ohne Auftraggeber (Dienst). */
     private volatile BackgroundJobs background;
     /** Die Seiten eines Space, aus denen ein Hintergrundteil seine Anhänge bestimmt. */
@@ -182,6 +191,15 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         this.jobs = jobs;
         this.enabled = Objects.requireNonNull(enabled, "enabled");
         this.settings = Objects.requireNonNull(settings, "settings");
+    }
+
+    /**
+     * Hängt den Netzzustand an (Angelo 22.11.2026): Scheitern Prozessoren eines Abschnitts, während das Netz weg ist,
+     * zählt nichts als gescheitert; der Teil wartet sichtbar und rechnet denselben Anhang im selben Teil erneut, sobald
+     * das Netz zurück ist. Die Prozessoren melden ihre Netzfehler selbst an den Netzzustand.
+     */
+    public void network(com.aresstack.spaceharvester.application.network.NetworkState network) {
+        this.network = network;
     }
 
     /** Schließt die Anhänge an, aus deren Ablage {@link #catchUp} den Bestand nachholt. */
@@ -651,7 +669,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 }
                 int removed = removals(item);
                 try {
-                    process(item, context);
+                    process(item, context, null);
                 } catch (JobCancelledException | JobFailedException e) {
                     // Abgebrochen, angehalten oder Zeit abgelaufen: Der Anhang bleibt gemeldet, wenn er nicht neu
                     // gemeldet wurde.
@@ -728,8 +746,12 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         if (context != null) {
             context.phase(COMPONENT, PHASE);
         }
+        com.aresstack.spaceharvester.application.network.NetworkState net = network;
+        com.aresstack.spaceharvester.application.network.NetworkWait wait = net == null || context == null ? null
+                : new com.aresstack.spaceharvester.application.network.NetworkWait(net, context, COMPONENT);
         try {
-            for (Asset asset : documents) {
+            for (int next = 0; next < documents.size(); next++) {
+                Asset asset = documents.get(next);
                 if (context != null) {
                     context.checkpoint();
                 }
@@ -738,7 +760,11 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                         asset.sha256(), structured.get());
                 int removed = removals(item);
                 try {
-                    process(item, context);
+                    process(item, context, wait);
+                } catch (Offline offline) {
+                    // Wartet sichtbar, bis das Netz zurück ist (oder dieser Teil prüft), dann derselbe Anhang.
+                    wait.offline();
+                    next--;
                 } catch (JobCancelledException | JobFailedException e) {
                     throw e;
                 } catch (RuntimeException e) {
@@ -838,7 +864,13 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * das Manifest nicht schon genügt: Hash des Lesetextes je Dokument. Zweiter Durchgang nur für Dokumente mit
      * anderem Hash oder fehlenden Ständen. Gleicher Hash aus einer neuen Extraktion trägt nur die Extraktion nach.
      */
-    private void process(Pending item, JobContext context) {
+    /**
+     * @param wait mit Netzzustand: Scheitert ein Abschnitt, während das Netz weg ist, endet der Anhang mit
+     *             {@link Offline}, ohne etwas als gescheitert zu zählen; {@code null} wie bisher
+     */
+    private void process(Pending item, JobContext context,
+                         com.aresstack.spaceharvester.application.network.NetworkWait wait) {
+        com.aresstack.spaceharvester.application.network.NetworkState net = wait == null ? null : network;
         Optional<StoredExtraction> extraction = item.extractions().readable(item.sha256());
         if (extraction.isEmpty()) {
             // Ohne lesbare Extraktion gilt der alte Stand weiter.
@@ -892,6 +924,16 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 Enrichments.Run run = enrichments.refreshDocument(document, index, hashes.get(document), null, text,
                         stored.getOrDefault(document, List.of()), null, new DocumentPosition(offset,
                                 embeddingMaxChars));
+                if (wait != null && run.failed() > 0 && !net.online()) {
+                    // Am Netz gescheitert: nichts rot, kein Versuch verbraucht.
+                    if (context != null) {
+                        context.processed(1);
+                    }
+                    throw new Offline();
+                }
+                if (wait != null && run.failed() == 0 && run.computed() > 0) {
+                    wait.answered();
+                }
                 if (context != null) {
                     context.written(run.computed() - run.failed());
                     context.failed(run.failed());

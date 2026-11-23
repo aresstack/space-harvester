@@ -34,6 +34,8 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntSupplier;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
@@ -182,6 +184,10 @@ public class Enrichments {
     private final List<HandOver> handOvers = new ArrayList<>();
     /** Die Wiederholung (↻), damit das Bereinigen auch ihre bereitgelegte Arbeit vergisst. */
     private volatile RetryFailed retryFailed;
+    /** Wie viele Berechnungen ein Teil zugleich rechnet: ai.parallel, bei jedem Teil neu gelesen. */
+    private volatile IntSupplier parallel = () -> 1;
+    /** Der Netzzustand: ohne Netz wartet eine Berechnung, statt Versuche zu verbrauchen; ohne ihn wie bisher. */
+    private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
 
     /**
      * Die Arbeit eines gescheiterten Teils von vor dem Neustart.
@@ -906,10 +912,10 @@ public class Enrichments {
         /** Unter {@link #pendingLock}: Die Quelle wurde bereinigt ({@link #forgetQueued}), die Gruppe gilt nicht mehr. */
         boolean forgotten;
         /**
-         * Die Berechnung, die der Teil gerade rechnet: Sie bleibt im abgelegten Stand, bis ihr Ergebnis feststeht
-         * (Abnahme #1112); unter {@link #pendingLock}.
+         * Die Berechnungen, die der Teil gerade rechnet, bis zu ai.parallel zugleich: Sie bleiben im abgelegten Stand,
+         * bis ihr Ergebnis feststeht (Abnahme #1112); unter {@link #pendingLock}.
          */
-        Work current;
+        final Set<Work> running = new java.util.LinkedHashSet<>();
 
         Pending(String groupId, String sourceId) {
             this.groupId = groupId;
@@ -953,14 +959,13 @@ public class Enrichments {
             work.addAll(order);
         }
 
-        /** Was der Teil noch vor sich hat, die laufende Berechnung zuerst. Unter {@link #pendingLock}. */
+        /** Was der Teil noch vor sich hat, die laufenden Berechnungen zuerst. Unter {@link #pendingLock}. */
         List<Work> open() {
-            if (current == null) {
+            if (running.isEmpty()) {
                 return List.copyOf(work);
             }
-            List<Work> open = new java.util.ArrayList<>(work.size() + 1);
-            open.add(current);
-            work.stream().filter(each -> !each.equals(current)).forEach(open::add);
+            List<Work> open = new java.util.ArrayList<>(running);
+            work.stream().filter(each -> !running.contains(each)).forEach(open::add);
             return open;
         }
     }
@@ -1650,30 +1655,147 @@ public class Enrichments {
             context.processed(carried);
             context.failed(carried);
         }
-        int sinceSaved = 0;
+        // Angelo 22.11.2026: Jeder Auftrag hält sich an die Parallelität der KI-Einstellungen (ai.parallel), auch
+        // innerhalb seines Schritts; vorher rechnete ein Teil streng nacheinander.
+        int width = Math.max(1, Math.min(MAX_PARALLEL, parallel.getAsInt()));
+        java.util.concurrent.Semaphore slots = new java.util.concurrent.Semaphore(width);
+        AtomicReference<RuntimeException> stop = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicInteger sinceSaved = new java.util.concurrent.atomic.AtomicInteger();
+        // Je Seite bleibt die Reihenfolge der Prozessoren (die Navigation braucht etwa das Embedding derselben Seite):
+        // parallel laufen nur Berechnungen verschiedener Seiten. Jede beendete Berechnung meldet sich hier.
+        java.util.concurrent.Semaphore finished = new java.util.concurrent.Semaphore(0);
+        try {
+            while (stop.get() == null) {
+                if (closed) {
+                    // Beim Beenden des Dienstes unterbrochen, nicht fertig.
+                    throw new JobCancelledException(context.jobId());
+                }
+                context.checkpoint();
+                acquire(slots, 1, context);
+                if (closed) {
+                    // Während des Wartens auf einen Platz beendet: nichts Neues mehr anfangen, der Rest bleibt abgelegt.
+                    slots.release();
+                    throw new JobCancelledException(context.jobId());
+                }
+                finished.drainPermits();
+                Work next = null;
+                boolean blocked;
+                synchronized (pendingLock) {
+                    if (closed || groups.get(groupId) != mine || mine.work.isEmpty()) {
+                        slots.release();
+                        break;
+                    }
+                    Set<PageKey> busy = new HashSet<>();
+                    mine.running.forEach(each -> busy.add(each.key()));
+                    for (java.util.Iterator<Work> waiting = mine.work.iterator(); waiting.hasNext(); ) {
+                        Work candidate = waiting.next();
+                        if (!busy.contains(candidate.key())) {
+                            next = candidate;
+                            waiting.remove();
+                            mine.running.add(next);
+                            break;
+                        }
+                    }
+                    blocked = next == null;
+                }
+                if (blocked) {
+                    // Alles Wartende gehört zu Seiten, die gerade rechnen: auf deren Ende warten, dann neu wählen.
+                    slots.release();
+                    acquire(finished, 1, context);
+                    continue;
+                }
+                Work started = next;
+                Thread.ofVirtual().name("enrichment-" + mine.sourceId).start(() -> {
+                    try {
+                        computeOne(part, context, groupId, mine, started, sinceSaved);
+                    } catch (RuntimeException e) {
+                        stop.compareAndSet(null, e);
+                    } finally {
+                        slots.release();
+                        finished.release();
+                    }
+                });
+            }
+        } finally {
+            // Laufende Berechnungen enden immer mit ihrem Ergebnis oder kommen wieder vorn an, nie mittendrin
+            // abgebrochen (ein Interrupt schlösse die Dateikanäle des Lucene-Index).
+            slots.acquireUninterruptibly(width);
+            slots.release(width);
+        }
+        RuntimeException stopped = stop.get();
+        if (stopped != null) {
+            throw stopped;
+        }
+        if (closed) {
+            throw new JobCancelledException(context.jobId());
+        }
+        synchronized (pendingLock) {
+            if (groups.get(groupId) == mine && mine.work.isEmpty() && mine.running.isEmpty()) {
+                groups.remove(groupId);
+            }
+        }
+    }
+
+    /**
+     * Woher ein Teil der Warteschlange seine Breite nimmt (ai.parallel, Angelo 22.11.2026: jeder Auftrag hält sich an
+     * die Job-Parallel-Einstellungen, auch innerhalb seines Schritts). Ohne Angabe rechnet er nacheinander.
+     */
+    public void parallel(IntSupplier value) {
+        this.parallel = Objects.requireNonNull(value, "value");
+    }
+
+    /**
+     * Angelo 22.11.2026: Ohne Netz wartet die KI-Anreicherung, bis es zurück ist, und rechnet dieselbe Seite dann im
+     * selben Teil weiter; ein Netzfehler zählt nicht als Fehlversuch und nicht als gescheitert.
+     */
+    public void network(com.aresstack.spaceharvester.application.network.NetworkState value) {
+        this.network = value;
+    }
+
+    /** Höchstens so viele Berechnungen eines Teils zugleich, gleich was ai.parallel sagt. */
+    static final int MAX_PARALLEL = 16;
+    /**
+     * So oft rechnet ein Teil eine Berechnung, die am Dienst scheiterte (nicht erreichbar, Frist), bevor sie als
+     * gescheitert zählt (Angelo 22.11.2026: selbstheilend, nie stumm scheitern). Jeder Fehlversuch steht mit Grund in
+     * der Diagnose.
+     */
+    static final int ATTEMPTS = 3;
+
+    /** Wartet auf einen Platz; Anhalten und Abbrechen greifen auch währenddessen. */
+    private static void acquire(java.util.concurrent.Semaphore slots, int permits, JobContext context) {
         while (true) {
-            if (closed) {
-                // Beim Beenden des Dienstes unterbrochen, nicht fertig.
+            context.checkpoint();
+            try {
+                if (slots.tryAcquire(permits, 1, java.util.concurrent.TimeUnit.SECONDS)) {
+                    return;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 throw new JobCancelledException(context.jobId());
             }
-            context.checkpoint();
-            Work next;
-            synchronized (pendingLock) {
-                if (groups.get(groupId) != mine) {
-                    return;
-                }
-                java.util.Iterator<Work> waiting = mine.work.iterator();
-                if (!waiting.hasNext()) {
-                    groups.remove(groupId);
-                    return;
-                }
-                next = waiting.next();
-                waiting.remove();
-                mine.current = next;
-            }
-            Queued queued;
+        }
+    }
+
+    /**
+     * Eine Berechnung des Teils, auf ihrem eigenen Thread: am Dienst gescheiterte rechnet sie bis {@link #ATTEMPTS}-mal
+     * (erzwungen, ein gescheitertes Ergebnis gälte sonst als aktuell), jeder Fehlversuch mit Grund in der Diagnose;
+     * erst der letzte zählt als gescheitert und wartet auf ↻.
+     */
+    private void computeOne(BackgroundPart part, JobContext context, String groupId, Pending mine, Work next,
+                            java.util.concurrent.atomic.AtomicInteger sinceSaved) {
+        Work attempt = next;
+        Queued queued;
+        int tries = 0;
+        com.aresstack.spaceharvester.application.network.NetworkState net = network;
+        com.aresstack.spaceharvester.application.network.NetworkWait wait = net == null ? null
+                : new com.aresstack.spaceharvester.application.network.NetworkWait(net, context, COMPONENT);
+        while (true) {
+            tries++;
             try {
-                queued = computeWork(next);
+                if (wait != null) {
+                    wait.beforeFetch();
+                }
+                queued = computeWork(attempt);
             } catch (JobCancelledException e) {
                 // Angehalten, abgebrochen oder beim Beenden unterbrochen: Die Berechnung kommt wieder vorn an.
                 backToFront(groupId, mine, next);
@@ -1685,46 +1807,94 @@ public class Enrichments {
                         next.processorId(), mine.sourceId, e.getClass().getName());
                 queued = new Queued(Outcome.FAILED, e);
             }
-            Outcome outcome = queued.outcome();
-            if (outcome == Outcome.FAILED && closed) {
-                // Abnahme #1112: Beim Beenden unterbrochen ist kein Fehler der Seite. Sie wartet wieder (erzwungen, ein
-                // gescheitertes Ergebnis gälte sonst als aktuell), ohne rotes Ereignis; der Teil gilt als unterbrochen.
+            if (wait != null && !closed) {
+                boolean offline;
+                try {
+                    // Wartet ohne Netz, bis es zurück ist (Beobachter, kein Abfragen); dann dieselbe Seite erneut.
+                    offline = queued.outcome() == Outcome.FAILED && wait.failed(queued.cause());
+                } catch (RuntimeException e) {
+                    backToFront(groupId, mine, next);
+                    throw e;
+                }
+                if (offline) {
+                    tries--;
+                    attempt = new Work(next.processorId(), next.key(), true);
+                    continue;
+                }
+                if (queued.outcome() == Outcome.WRITTEN) {
+                    wait.answered();
+                }
+            }
+            if (queued.outcome() != Outcome.FAILED || closed || tries >= ATTEMPTS || !retryable(queued.cause())) {
+                break;
+            }
+            context.record(failure(next, mine.sourceId, queued.cause(), tries));
+            try {
+                context.checkpoint();
+            } catch (RuntimeException e) {
+                // Zwischen zwei Versuchen angehalten oder abgebrochen: Die Berechnung kommt wieder vorn an.
                 backToFront(groupId, mine, next);
-                throw new JobCancelledException(context.jobId());
+                throw e;
             }
-            boolean mineStill;
-            synchronized (pendingLock) {
-                mine.current = null;
-                // Nach dem Bereinigen der Quelle (forgetQueued) nimmt nichts mehr Gescheitertes auf (Abnahme #1112).
-                mineStill = groups.get(groupId) == mine;
-                if (outcome == Outcome.FAILED && mineStill) {
-                    failed.computeIfAbsent(groupId, ignored -> new Failed(mine.sourceId, part.jobId())).work.add(next);
-                }
-            }
-            if (outcome == Outcome.FAILED) {
-                context.record(failure(next, mine.sourceId, queued.cause()));
-            }
-            switch (outcome) {
-                case WRITTEN -> context.written(1);
-                case FAILED -> context.failed(1);
-                case SKIPPED -> {
-                }
-            }
-            context.processed(1);
-            // Ein Fehlschlag sofort (Nachabnahme #1112): Sein FAILED-Ergebnis gilt schon als aktuell, nach einem Absturz
-            // käme er sonst als gewöhnliche Berechnung zurück und fiele weg. Geschrieben wird außerhalb des Riegels.
-            if ((++sinceSaved >= PERSIST_EVERY || outcome == Outcome.FAILED) && mineStill) {
-                sinceSaved = 0;
-                persist(groupId);
+            attempt = new Work(next.processorId(), next.key(), true);
+        }
+        Outcome outcome = queued.outcome();
+        if (outcome == Outcome.FAILED && closed) {
+            // Abnahme #1112: Beim Beenden unterbrochen ist kein Fehler der Seite. Sie wartet wieder (erzwungen, ein
+            // gescheitertes Ergebnis gälte sonst als aktuell), ohne rotes Ereignis; der Teil gilt als unterbrochen.
+            backToFront(groupId, mine, next);
+            throw new JobCancelledException(context.jobId());
+        }
+        boolean mineStill;
+        synchronized (pendingLock) {
+            mine.running.remove(next);
+            // Nach dem Bereinigen der Quelle (forgetQueued) nimmt nichts mehr Gescheitertes auf (Abnahme #1112).
+            mineStill = groups.get(groupId) == mine;
+            if (outcome == Outcome.FAILED && mineStill) {
+                failed.computeIfAbsent(groupId, ignored -> new Failed(mine.sourceId, part.jobId())).work.add(next);
             }
         }
+        if (outcome == Outcome.FAILED) {
+            context.record(failure(next, mine.sourceId, queued.cause()));
+        }
+        switch (outcome) {
+            case WRITTEN -> context.written(1);
+            case FAILED -> context.failed(1);
+            case SKIPPED -> {
+            }
+        }
+        context.processed(1);
+        // Ein Fehlschlag sofort (Nachabnahme #1112): Sein FAILED-Ergebnis gilt schon als aktuell, nach einem Absturz
+        // käme er sonst als gewöhnliche Berechnung zurück und fiele weg. Geschrieben wird außerhalb des Riegels.
+        if ((sinceSaved.incrementAndGet() >= PERSIST_EVERY || outcome == Outcome.FAILED) && mineStill) {
+            sinceSaved.set(0);
+            persist(groupId);
+        }
+    }
+
+    /**
+     * Ob ein Fehlschlag am Dienst lag und ein neuer Versuch helfen kann: nicht erreichbar oder Frist überschritten,
+     * auch als Netz-Ausnahme in der Kette. Eine unbrauchbare Antwort, eine fehlende Freigabe oder ein Fehler im eigenen
+     * Code wiederholt sich nicht.
+     */
+    static boolean retryable(Throwable cause) {
+        java.util.Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (Throwable each = cause; each != null && seen.add(each); each = each.getCause()) {
+            if (each instanceof com.aresstack.spaceharvester.ai.AiServiceException service) {
+                return service.reason() == com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNREACHABLE
+                        || service.reason() == com.aresstack.spaceharvester.ai.AiServiceException.Reason.TIMEOUT;
+            }
+            if (each instanceof java.io.IOException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Stellt die laufende Berechnung wieder vorn an, solange die Gruppe dem Teil gehört. */
     private void backToFront(String groupId, Pending mine, Work next) {
         synchronized (pendingLock) {
-            if (mine.current == next) {
-                mine.current = null;
+            if (mine.running.remove(next)) {
                 if (groups.get(groupId) == mine) {
                     mine.pushFront(next);
                 }
@@ -1739,11 +1909,23 @@ public class Enrichments {
      * enthalten.
      */
     static JobEvent.Draft failure(Work work, String sourceId, Throwable cause) {
+        return failure(work, sourceId, cause, 0);
+    }
+
+    /**
+     * Wie {@link #failure(Work, String, Throwable)}; mit {@code attempt > 0} ein Fehlversuch, der wiederholt wird
+     * (Angelo 22.11.2026: Versuchszähler und Grund in der Diagnose), als Warnung statt als Fehler.
+     */
+    static JobEvent.Draft failure(Work work, String sourceId, Throwable cause, int attempt) {
         String where = "Berechnung " + work.processorId() + " der Seite " + work.key().pageId() + " in Quelle "
                 + sourceId + " gescheitert";
+        boolean retried = attempt > 0;
+        JobEvent.Severity severity = retried ? JobEvent.Severity.WARNING : JobEvent.Severity.ERROR;
+        String then = retried ? "; Versuch " + attempt + " von " + ATTEMPTS + ", wird wiederholt"
+                : "; weiter mit der nächsten";
         if (cause == null) {
-            return new JobEvent.Draft(JobEvent.Severity.ERROR, JobEvent.Category.JOB, COMPONENT, WORK_FAILED,
-                    where + ", weiter mit der nächsten", null, null, null);
+            return new JobEvent.Draft(severity, JobEvent.Category.JOB, COMPONENT, WORK_FAILED,
+                    where + then, null, null, null);
         }
         com.aresstack.spaceharvester.application.jobs.FailureDiagnosis.Findings findings =
                 com.aresstack.spaceharvester.application.jobs.FailureDiagnosis.of(cause, WORK_FAILED);
@@ -1761,8 +1943,8 @@ public class Enrichments {
         if (tls != null && tls.indexOf(": ") >= 0) {
             tls = tls.substring(0, tls.indexOf(": "));
         }
-        return new JobEvent.Draft(JobEvent.Severity.ERROR, findings.category(), COMPONENT, WORK_FAILED,
-                where + ": " + reason + "; weiter mit der nächsten", findings.httpStatus(), tls, null);
+        return new JobEvent.Draft(severity, findings.category(), COMPONENT, WORK_FAILED,
+                where + ": " + reason + then, findings.httpStatus(), tls, null);
     }
 
     /** Rechnet eine Berechnung der Warteschlange mit dem Snapshot von jetzt. */

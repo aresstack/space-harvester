@@ -152,7 +152,9 @@ final class PalNdvConnection implements NdvConnection {
                     new NdvObjectType(info.getType(), info.getTypeName(), info.getTypeExtension()), info.hasSource(),
                     info.getSourceSize(), info.getUser(), info.getSourceDate(),
                     new NdvObject.Location(info.getDatabaseId(), info.getFileNumber(), info.getLongName(),
-                            info.getKind(), info.getType() == ObjectType.DDM)));
+                            info.getKind(), info.getType() == ObjectType.DDM),
+                    new NdvObject.Details(info.getProgrammingMode(), info.getKindName(), info.getCodePage(),
+                            info.getGpUser(), info.getGpDate(), info.getAccessDate())));
         }
         return objects;
     }

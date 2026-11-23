@@ -165,6 +165,84 @@ class ChatTurnTest {
                 .doesNotContain(ChatKnowledge.NO_CONTEXT);
     }
 
+    /**
+     * Angelo 22.11.2026: Ohne Werkzeuge trug das Senden die ganze links gewählte Auswahl auf die Liste freigegebener
+     * Seiten ein, und die KI-Anreicherung bettete danach alle ihre Seiten ein. Jetzt kommt nur auf die Liste, wessen Text
+     * im Kontextblock an das Modell geht (ADR 0033 Punkt 8, wie mit Werkzeugen).
+     */
+    @Test
+    void withoutToolsOnlyThePagesWhoseTextGoesToTheModelAreReleased() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("zollstock.md"), "# Zollstock\n\nDer Zollstock misst zwei Meter.\n");
+        for (int i = 1; i <= 5; i++) {
+            Files.writeString(files.resolve("kapitel-" + i + ".md"), "# Kapitel " + i + "\n\nInhalt des Kapitels "
+                    + i + " über das Datenhaus.\n");
+        }
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        Workspace workspace = context.runtime().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        workspace.startSync("handbuch", space, SyncMode.FULL);
+        PageSelection scope = await(() -> {
+            PageSelection resolved = workspace.resolveSelection(Selection.of(Selection.Root.space("handbuch", space)));
+            return resolved.counts().stored() >= 6 ? resolved : null;
+        });
+        // Der Volltextindex kommt nach dem Speichern: erst fragen, wenn die Suche den Zollstock findet.
+        ChatTools probe = new ChatTools(workspace, scope, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt,
+                            com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+            }
+        });
+        await(() -> probe.search("Zollstock").contains("zollstock") ? true : null);
+
+        String model = "modell-ohne-werkzeuge-" + System.nanoTime();
+        ChatTurn.WITHOUT_TOOLS.add(model);
+        try {
+            List<com.aresstack.spaceharvester.application.snapshot.PageKey> released =
+                    java.util.Collections.synchronizedList(new ArrayList<>());
+            FakeAiChat port = new FakeAiChat(List.of("Zwei Meter."), null);
+            Events events = new Events();
+            new ChatTurn(workspace, port, model, null, List.of(), "Wie lang ist der Zollstock?", scope,
+                    "Space " + space, events, Runnable::run).releasing((spaceKey, key) -> {
+                        assertThat(spaceKey).isEqualTo(space);
+                        released.add(key);
+                        return 1;
+                    }).start();
+            assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(events.context.accepted()).isNotEmpty();
+            assertThat(events.context.accepted().get(0).text()).contains("zwei Meter");
+            assertThat(released).as("genau die Seiten im Kontextblock, nicht die ganze Auswahl")
+                    .containsExactlyInAnyOrderElementsOf(events.context.accepted().stream()
+                            .map(excerpt -> new com.aresstack.spaceharvester.application.snapshot.PageKey(
+                                    excerpt.sourceId(), excerpt.pageId()))
+                            .toList())
+                    .hasSizeLessThan((int) scope.counts().stored());
+        } finally {
+            ChatTurn.WITHOUT_TOOLS.remove(model);
+        }
+    }
+
     @Test
     void whatsNewListsOnlyChangedPagesOfTheSelectionSinceEachSourcesOwnMark() throws Exception {
         Path a = Files.createDirectories(home.resolve("a"));

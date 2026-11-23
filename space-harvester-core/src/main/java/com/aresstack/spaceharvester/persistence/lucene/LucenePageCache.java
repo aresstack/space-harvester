@@ -1485,7 +1485,7 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
         released = true;
         try {
             searchers.close();
-            writer.rollback();
+            TragicWriters.rollbackOnClose(writer, "Seiten-Cache");
         } catch (IOException e) {
             throw new PageCacheException("Cache " + path + " kann nicht geschlossen werden", e);
         } finally {

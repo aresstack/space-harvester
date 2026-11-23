@@ -45,6 +45,15 @@ import java.util.function.Function;
  * <p>Der Balken der Statuszeile umfasst einen Durchgang: alle Aufträge, die seit dem letzten Ende offen waren
  * (wartend, laufend, angehalten). Fertige zählen darin voll, bis keiner mehr offen ist; dann zeigt die Statuszeile das
  * Ende, und der nächste Auftrag beginnt einen neuen Durchgang bei 0 %.
+ *
+ * <p>Nur die Aufträge zählen, nicht der Hintergrund (Angelo 23.11.2026, Workspace#inBackgroundTab, derselbe Schnitt
+ * wie die Reiter der Liste): Hintergrundaufträge laufen nachrangig und oft lange, etwa die KI-Anreicherung oder eine
+ * Füllung, die nach einem Netzabbruch auf ihre Wartezeit wartet; sie würden Anteil und Restzeit der eigenen Aufträge
+ * auf Stunden aufblähen.
+ *
+ * <p>Ohne Fortschritt keine Hochrechnung: Solange ein Auftrag noch kein Element erledigt hat, gilt für ihn der Startwert
+ * (oder sein zuletzt gemessenes Tempo), nicht seine bisherige Laufzeit. Sonst wüchse die Schätzung eines Auftrags, der
+ * steht, mit jeder Minute über alle seine Elemente (0 von 825 nach 30 Minuten ergab rechnerisch rund 41 Stunden).
  */
 final class OverallProgress {
 
@@ -103,10 +112,12 @@ final class OverallProgress {
     static final Duration FRESH = Duration.ofSeconds(10);
 
     /**
-     * Nimmt den neuen Stand aller Aufträge der Liste auf: Tempo, Größen und den Durchgang. Vor {@link #event} und
-     * {@link #estimate} aufrufen, einmal je Abruf.
+     * Nimmt den neuen Stand aller Aufträge der Liste auf, ohne die Hintergrundaufträge: Tempo, Größen und den
+     * Durchgang. Vor {@link #event} und {@link #estimate} aufrufen, einmal je Abruf.
      */
-    void observe(List<JobStatus> jobs, Instant now, Function<JobType, Duration> averages) {
+    void observe(List<JobStatus> all, Instant now, Function<JobType, Duration> averages) {
+        List<JobStatus> jobs = all.stream()
+                .filter(job -> !com.aresstack.spaceharvester.app.runtime.Workspace.inBackgroundTab(job)).toList();
         Set<String> ids = new HashSet<>();
         Map<JobType, double[]> sums = new EnumMap<>(JobType.class);
         for (JobStatus job : jobs) {
@@ -389,7 +400,8 @@ final class OverallProgress {
 
     /**
      * Sekunden je Element: Startwert, gemischt mit dem eigenen Tempo. Bilder und Anhänge messen ab dem Laden, alle
-     * anderen ab ihrem Start; misst ein Auftrag gerade nicht, gilt sein zuletzt gemessenes Tempo.
+     * anderen ab ihrem Start; misst ein Auftrag gerade nicht oder hat er seither noch nichts erledigt, gilt sein zuletzt
+     * gemessenes Tempo, sonst der Startwert (ohne Fortschritt keine Hochrechnung der Laufzeit).
      */
     double perUnit(JobStatus job, Instant now, Function<JobType, Duration> averages) {
         double prior = priorSeconds(Texts.kind(job), averages);
@@ -399,9 +411,12 @@ final class OverallProgress {
                 return paces.getOrDefault(job.id(), prior);
             }
             double files = Math.max(0, job.progress().processed() - since.processed());
+            if (files <= 0) {
+                return paces.getOrDefault(job.id(), prior);
+            }
             return blend(prior, seconds(since.since(), now), files);
         }
-        if (job.startedAt() == null) {
+        if (job.startedAt() == null || units(job)[0] <= 0) {
             return paces.getOrDefault(job.id(), prior);
         }
         Instant end = job.finishedAt() != null ? job.finishedAt() : now;
