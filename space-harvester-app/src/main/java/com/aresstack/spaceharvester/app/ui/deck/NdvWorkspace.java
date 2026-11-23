@@ -63,9 +63,9 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     private final NdvConnectForm form;
     private final EditorSessions editors;
     private NdvSession selected;
+    /** Ob seit dem letzten Erfolg schon automatisch verbunden wurde; ein Fehlschlag wiederholt sich so nicht. */
+    private boolean autoTried;
     private final ServerAccounts accounts;
-    /** Reiter samt ✕ je Sitzung. */
-    private final Map<NdvSession, JPanel> tabOf = new LinkedHashMap<>();
     /** Sitzungen, die noch nie verbunden waren: ihr erster Erfolg wird gemerkt, ihr Fehlschlag zeigt das Formular. */
     private final java.util.Set<NdvSession> fresh = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Analysen der offenen Sitzungen, die gewählte zuerst; gelesen auch abseits des EDT (Beziehungen im Editor). */
@@ -122,6 +122,20 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         if (pillOf.isEmpty()) {
             select(null);
         }
+        // Beim Öffnen des Bereichs ohne Sitzung gleich verbinden, wenn Zugangsdaten da sind (Angelo 23.11.).
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                shown();
+            }
+        });
+    }
+
+    /** Der Bereich wird gezeigt: ohne offene Sitzung einmal automatisch verbinden (nach einem Fehlschlag nicht). */
+    void shown() {
+        if (pillOf.isEmpty() && !autoTried) {
+            autoTried = true;
+            newConnection();
+        }
     }
 
     private void added(NdvSession session) {
@@ -135,18 +149,13 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         center.add(browser, key);
         tools.add(browser.tools(), key);
         foot.add(browser.foot(), key);
-        ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.label(),
-                session.state().label());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        pill.getAccessibleContext().setAccessibleName(session.label());
+        // Das ✕ im Reiter trennt und schließt in einem Schritt (Angelo 23.11.).
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.label(), session.state().label(),
+                "Trennen und schließen (auch Mittelklick auf den Reiter)", () -> closeSession(session));
         pill.addActionListener(e -> select(session));
-        // Das ✕ trennt und schließt in einem Schritt (Angelo 23.11.).
-        JPanel tab = DeckBars.tab(pill, "Trennen und schließen (auch Mittelklick auf den Reiter)",
-                () -> closeSession(session));
         pillGroup.add(pill);
-        pills.add(tab, pills.getComponentCount() - 1);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
-        tabOf.put(session, tab);
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
         browser.onLibraryChanged(() -> changed(session));
         browser.onStatusChanged(() -> {
@@ -167,10 +176,12 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         if (fresh.contains(session)) {
             if (session.state() == NdvState.CONNECTED) {
                 fresh.remove(session);
+                autoTried = false;
                 NdvConnectForm.rememberWorking(session.profile(), session.account());
             } else if (session.state() == NdvState.FAILED && pillOf.containsKey(session)) {
-                // Erstes Verbinden misslungen: zurück ins Formular, mit Grund.
+                // Erstes Verbinden misslungen: zurück ins Formular, mit Grund; beim nächsten Öffnen nicht von selbst.
                 fresh.remove(session);
+                autoTried = true;
                 String reason = NdvBrowser.oneLine(session.failure().orElse("Verbindung fehlgeschlagen"));
                 discard(session);
                 select(null);
@@ -224,6 +235,31 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
      */
     void newConnection() {
         java.util.Optional<NdvConnectForm.Working> working = NdvConnectForm.working();
+        if (working.isPresent()) {
+            connectOrForm(working);
+            return;
+        }
+        // Noch nie verbunden: der gemerkte KeePass-Eintrag (auch der des Terminals) reicht, wenn er Adresse und
+        // Benutzer hat. Die Einträge kommen im Hintergrund.
+        select(null);
+        background.execute(() -> {
+            java.util.List<com.aresstack.spaceharvester.deck.access.ServerAccount> list;
+            try {
+                list = accounts.accounts();
+            } catch (Exception e) {
+                return; // das Formular lädt selbst und zeigt den Grund
+            }
+            java.util.Optional<NdvConnectForm.Working> remembered = NdvConnectForm.fromRemembered(list);
+            SwingUtilities.invokeLater(() -> {
+                if (remembered.isPresent() && selected == null) {
+                    connectOrForm(remembered);
+                }
+            });
+        });
+    }
+
+    /** Verbindet mit den gemerkten Daten; ist diese Verbindung schon offen, zeigt es das Formular für eine andere. */
+    private void connectOrForm(java.util.Optional<NdvConnectForm.Working> working) {
         if (working.isEmpty() || pillOf.keySet().stream().anyMatch(open -> open.profile().host()
                 .equalsIgnoreCase(working.get().profile().host()) && open.profile().port() == working.get().profile()
                 .port())) {
@@ -251,10 +287,9 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
             foot.remove(browser.foot());
         }
         ComposerToggleButton pill = pillOf.remove(session);
-        JPanel tab = tabOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tab != null ? tab : pill);
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }

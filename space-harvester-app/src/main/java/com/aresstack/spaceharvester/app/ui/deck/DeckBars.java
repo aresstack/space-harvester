@@ -45,8 +45,8 @@ public final class DeckBars {
     /**
      * Was ein Bereich in die Fußleiste des Command Deck stellt, neben die Lupe, wie die Umschalter im Space Harvester
      * (Angelo, 23.11.2026: überall dieselbe Leiste mit Lupe). Symbolknöpfe mit Tooltip, keine Textknöpfe; kein Stand,
-     * keine Zähler (die stehen in der Statuszeile), kein Trennen, Schließen oder Abmelden (das macht das Kreuz am
-     * Reiter, {@link #tab}).
+     * keine Zähler (die stehen in der Statuszeile), kein Trennen, Schließen oder Abmelden (das macht das Kreuz im
+     * Reiter, {@link com.aresstack.spaceharvester.app.ui.controls.ClosableTab}).
      */
     public interface FootTools {
 
@@ -70,29 +70,6 @@ public final class DeckBars {
             row.add(part);
         }
         return row;
-    }
-
-    /**
-     * Ein Reiter mit Kreuz direkt dahinter (Sitzung, Dokument). Das Kreuz und ein Mittelklick auf den Reiter rufen
-     * {@code close}: in EINEM Schritt trennen bzw. abmelden und schließen, ohne eigene Knöpfe dafür.
-     */
-    public static JPanel tab(javax.swing.AbstractButton pill, String closeTooltip, Runnable close) {
-        var cross = new com.aresstack.spaceharvester.app.ui.IconButton(
-                com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.close(), closeTooltip).compact();
-        cross.addActionListener(e -> close.run());
-        pill.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent event) {
-                if (javax.swing.SwingUtilities.isMiddleMouseButton(event)) {
-                    close.run();
-                }
-            }
-        });
-        JPanel tab = new JPanel(new java.awt.BorderLayout(0, 0));
-        tab.setOpaque(false);
-        tab.add(pill, java.awt.BorderLayout.CENTER);
-        tab.add(cross, java.awt.BorderLayout.EAST);
-        return tab;
     }
 
     private static JPanel bar(JComponent main, JComponent east, int height, boolean head) {
