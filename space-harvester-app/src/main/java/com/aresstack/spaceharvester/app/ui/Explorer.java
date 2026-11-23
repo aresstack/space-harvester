@@ -2165,14 +2165,12 @@ public final class Explorer {
                 AppRuntime runtime = context.runtime();
                 String source = sourceTitle(page.sourceId());
                 if (runtime == null) {
-                    store.toggle(new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(), page.title(),
-                            List.of(source, page.spaceKey()), List.of()));
+                    store.toggle(favorite(null, source, page));
                     return;
                 }
                 Background.run(() -> runtime.workspace().position(page.sourceId(), page.pageId()), position ->
                         store.toggle(favorite(position, source, page)), error ->
-                        store.toggle(new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(),
-                                page.title(), List.of(source, page.spaceKey()), List.of())));
+                        store.toggle(favorite(null, source, page)));
             }
             default -> {
             }
@@ -2181,23 +2179,8 @@ public final class Explorer {
 
     /** Ein Seiten-Favorit aus dem Pfad der Seite: Quelle › Space › Vorfahren, dazu die IDs der Vorfahren. */
     static Favorites.Favorite favorite(PageNavigation.Position position, String sourceTitle, PageItem page) {
-        List<String> path = new ArrayList<>();
-        List<String> ancestors = new ArrayList<>();
-        path.add(sourceTitle);
-        if (position == null || position.page() == null) {
-            path.add(page.spaceKey());
-            return new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(), page.title(), path,
-                    ancestors);
-        }
-        path.add(position.spaceName() == null || position.spaceName().isBlank() ? position.spaceKey()
-                : position.spaceName());
-        for (HarvestSource.PageNode ancestor : position.ancestors()) {
-            path.add(ancestor.title());
-            ancestors.add(ancestor.pageId());
-        }
-        return new Favorites.Favorite(page.sourceId(), position.spaceKey() == null ? page.spaceKey()
-                : position.spaceKey(), page.pageId(), position.page().title() == null ? page.title()
-                : position.page().title(), path, ancestors);
+        return Favorites.Favorite.page(page.sourceId(), page.spaceKey(), page.pageId(), page.title(), position,
+                sourceTitle);
     }
 
     private String sourceTitle(String sourceId) {
@@ -2213,7 +2196,7 @@ public final class Explorer {
         favoritesChanged();
         if (filter.getText().trim().isEmpty()) {
             cards.show(deck, only ? FAVORITES : TREE);
-            note.setText(only && favorites.isEmpty() ? "Noch keine Favoriten: Stern an Space oder Seite" : " ");
+            note.setText(only && favorites.isEmpty() ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
     }
 
@@ -2235,9 +2218,17 @@ public final class Explorer {
         return path != null && path.getLastPathComponent() instanceof Node node ? node.item() : null;
     }
 
-    /** Für Tests: die Favoritenliste und ihr Umschalter. */
-    JList<Favorites.Favorite> favoriteList() {
-        return favorites.list();
+    /**
+     * Ein Ordner der Favoriten wurde gewählt (ADR 0034): bekommt ID und Namen; der Empfänger wählt die Sammlung
+     * ({@code ContentView.folder}), damit es genau eine Auflösung Ordner → Wurzeln gibt.
+     */
+    public void onFolder(java.util.function.BiConsumer<String, String> listener) {
+        favorites.onFolder(listener);
+    }
+
+    /** Für Tests: die Favoritenansicht und ihr Umschalter. */
+    FavoritesView favoriteView() {
+        return favorites;
     }
 
     IconButton favoritesButton() {
