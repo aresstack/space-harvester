@@ -216,7 +216,8 @@ public final class MainWindow implements AppContext.Navigator {
         // über den Netzweg der App (Proxy, Zertifikate).
         commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
-                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
+                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context),
+                new com.aresstack.spaceharvester.app.ui.deck.AppTerminalTunnel(context));
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());

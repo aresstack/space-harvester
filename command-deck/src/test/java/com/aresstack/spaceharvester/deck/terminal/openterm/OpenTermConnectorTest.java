@@ -92,6 +92,56 @@ class OpenTermConnectorTest {
     }
 
     @Test
+    void withProxyTheSessionGoesThroughTheTunnel() throws Exception {
+        try (FakeTn3270Host host = new FakeTn3270Host(java.util.List.of(
+                new FakeTn3270Host.Line(1, 2, "UEBER DEN PROXY", false)), "Cp273");
+             com.aresstack.spaceharvester.deck.terminal.FakeConnectProxy proxy =
+                     new com.aresstack.spaceharvester.deck.terminal.FakeConnectProxy(200)) {
+            TerminalSessions sessions = new TerminalSessions(new OpenTermConnector((target, port, timeout) ->
+                    com.aresstack.spaceharvester.deck.terminal.HttpConnectTunnel.open("127.0.0.1", proxy.port(),
+                            null, null, target, port, timeout)), runnable -> Thread.ofVirtual().start(runnable));
+            CountDownLatch connected = new CountDownLatch(1);
+            sessions.onOpened(session -> session.observe(s -> {
+                if (s.state() == SessionState.CONNECTED) {
+                    connected.countDown();
+                }
+            }));
+            // Erfundenes Ziel, das der Schein-Proxy auflöst: Der Host wird nur über den Tunnel erreicht.
+            TerminalSession session = sessions.open(new TerminalProfile("127.0.0.1", host.port(),
+                    com.aresstack.spaceharvester.deck.terminal.TerminalModel.MODEL_2, false, 0, "Cp273", true));
+
+            assertThat(connected.await(20, TimeUnit.SECONDS)).isTrue();
+            TerminalView view = session.view(TerminalView.class).orElseThrow();
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            while (!view.text().contains("UEBER DEN PROXY") && System.nanoTime() < until) {
+                Thread.sleep(50);
+            }
+            assertThat(view.text()).contains("UEBER DEN PROXY");
+            assertThat(proxy.requests()).singleElement().asString().startsWith("CONNECT 127.0.0.1:" + host.port());
+            session.disconnect();
+        }
+    }
+
+    @Test
+    void aRefusedTunnelFailsTheSessionWithTheProxyReason() throws Exception {
+        TerminalSessions sessions = new TerminalSessions(new OpenTermConnector((target, port, timeout) -> {
+            throw new java.io.IOException("Der Proxy verlangt eine Anmeldung (HTTP 407)");
+        }), runnable -> Thread.ofVirtual().start(runnable));
+        CountDownLatch ended = new CountDownLatch(1);
+        sessions.onOpened(session -> session.observe(s -> {
+            if (s.state().ended()) {
+                ended.countDown();
+            }
+        }));
+        TerminalSession session = sessions.open(new TerminalProfile("10.0.0.7", 992,
+                com.aresstack.spaceharvester.deck.terminal.TerminalModel.MODEL_2, false, 0, "Cp273", true));
+        assertThat(ended.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(session.state()).isEqualTo(SessionState.FAILED);
+        assertThat(session.failure()).hasValueSatisfying(reason -> assertThat(reason).contains("Proxy")
+                .contains("407"));
+    }
+
+    @Test
     void aSecondCodePageIsRefusedWhileASessionIsOpenAndAllowedAfterwards() throws Exception {
         try (FakeTn3270Host host = new FakeTn3270Host(java.util.List.of(
                 new FakeTn3270Host.Line(1, 2, "BEREIT", false)), "Cp273")) {

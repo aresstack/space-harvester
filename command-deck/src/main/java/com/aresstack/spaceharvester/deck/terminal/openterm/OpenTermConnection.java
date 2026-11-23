@@ -22,11 +22,22 @@ final class OpenTermConnection implements TerminalConnection {
     private final AtomicReference<OpenTermScreen> screen = new AtomicReference<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicReference<OpenTermMask> mask = new AtomicReference<>();
+    /** Brücke zum Proxy-Tunnel oder {@code null} (direkt). */
+    private final java.io.Closeable relay;
+    /** Warum der Tunnel scheiterte; ersetzt dann das allgemeine „Verbindungsfehler“. */
+    private final AtomicReference<String> problem;
 
     OpenTermConnection(Terminal terminal, TerminalProfile profile, Listener listener) {
+        this(terminal, profile, listener, null, new AtomicReference<>());
+    }
+
+    OpenTermConnection(Terminal terminal, TerminalProfile profile, Listener listener, java.io.Closeable relay,
+                       AtomicReference<String> problem) {
         this.terminal = terminal;
         this.profile = profile;
         this.listener = listener;
+        this.relay = relay;
+        this.problem = problem;
     }
 
     /**
@@ -39,7 +50,16 @@ final class OpenTermConnection implements TerminalConnection {
         if (closed.get()) {
             return;
         }
-        terminal.connect();
+        try {
+            terminal.connect();
+        } catch (IOException | RuntimeException e) {
+            closeRelay();
+            String reason = problem.get();
+            if (reason != null) {
+                throw new IOException(reason, e);
+            }
+            throw e;
+        }
         if (closed.get()) {
             quietlyDisconnect();
             return;
@@ -57,7 +77,24 @@ final class OpenTermConnection implements TerminalConnection {
     private void close() {
         if (closed.compareAndSet(false, true)) {
             CodePages.release();
+            closeRelay();
         }
+    }
+
+    private void closeRelay() {
+        if (relay != null) {
+            try {
+                relay.close();
+            } catch (IOException ignored) {
+                // schon zu
+            }
+        }
+    }
+
+    /** Der Grund aus dem Tunnel, sonst {@code fallback}. */
+    private String reason(String fallback) {
+        String reason = problem.get();
+        return reason == null ? fallback : reason;
     }
 
     private void quietlyDisconnect() {
@@ -131,11 +168,11 @@ final class OpenTermConnection implements TerminalConnection {
             case com.ascert.open.term.core.TnAction.READY -> listener.connected();
             case com.ascert.open.term.core.TnAction.DISCONNECTED_BY_REMOTE_HOST -> {
                 close();
-                listener.closed(null);
+                listener.closed(reason(null));
             }
             case com.ascert.open.term.core.TnAction.CONNECTION_ERROR -> {
                 close();
-                listener.closed("Verbindungsfehler");
+                listener.closed(reason("Verbindungsfehler"));
             }
             default -> {
                 // CONNECTING, X_WAIT, DISCONNECTED: nichts zu melden; DISCONNECTED folgt dem eigenen Trennen.

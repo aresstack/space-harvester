@@ -123,6 +123,7 @@ class ConnectFormTest {
     void defaultsAreThoseOfMainframeMate() throws Exception {
         com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.TLS_KEY, (String) null);
         com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.COMMAND_KEY, (String) null);
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.PROXY_KEY, (String) null);
         SwingUtilities.invokeAndWait(() -> {
             ConnectForm form = new ConnectForm(accounts, (profile, source) -> { });
             // MainframeMate: tn3270Port 992, tn3270Tls true, tn3270AutoCommandText „a“.
@@ -133,6 +134,11 @@ class ConnectFormTest {
             form.port.setText("");
             assertThat(form.profile().port()).isEqualTo(992);
             assertThat(form.profile().tls()).isTrue();
+            // Wie bisher direkt; „Proxy verwenden“ wählt man selbst (Angelo, 23.11.).
+            assertThat(form.proxy.isSelected()).isFalse();
+            assertThat(form.profile().viaProxy()).isFalse();
+            form.proxy.setSelected(true);
+            assertThat(form.profile().viaProxy()).isTrue();
         });
     }
 }
