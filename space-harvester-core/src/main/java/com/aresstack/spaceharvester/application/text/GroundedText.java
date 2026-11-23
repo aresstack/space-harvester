@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.application.enrichment.statements;
+package com.aresstack.spaceharvester.application.text;
 
 import java.util.Objects;
 

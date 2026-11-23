@@ -45,6 +45,9 @@ include 'space-harvester-server'
 // objektzentrierter Auswertung. Der Dienst bindet es (noch) nicht ein; das Modell kommt aus #99.
 include 'nlp-parser'
 
+// Gemeinsame deutsche Wortlisten (Verneinung, Modalverben) ohne Abhängigkeiten, für Parser und Core (ADR 0035, O4).
+include 'nlp-lexicon'
+
 // Eigenständige Trainingswerkzeuge für das deutsche MaltParser-Modell (#99); weder Anwendung noch Parser hängen davon ab.
 include 'nlp-model-training'
 

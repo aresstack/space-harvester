@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
+import com.aresstack.spaceharvester.application.text.TextSpan;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;

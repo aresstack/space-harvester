@@ -1,0 +1,23 @@
+// Gemeinsame deutsche Wortlisten ohne Abhängigkeiten (ADR 0035, O4): Verneinung und Modalverben. Der Parser
+// (:nlp-parser) und der Core nutzen dieselben Listen, ohne voneinander abzuhängen.
+plugins {
+    id 'java-library'
+}
+
+description = 'Deutsche Wortlisten (Verneinung, Modalverben) ohne Abhängigkeiten (ADR 0035).'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    testImplementation platform(libs.junit.bom)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}

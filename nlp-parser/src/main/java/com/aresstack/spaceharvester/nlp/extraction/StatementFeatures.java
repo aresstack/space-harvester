@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.nlp.extraction;
 
+import com.aresstack.spaceharvester.nlp.lexicon.GermanLexicon;
 import com.aresstack.spaceharvester.nlp.syntax.Sentence;
 import com.aresstack.spaceharvester.nlp.syntax.Token;
 import java.util.ArrayList;
@@ -81,13 +82,6 @@ public final class StatementFeatures {
     private static final Set<String> INDEFINITE = Set.of("ein", "eine", "einen", "einem", "einer", "eines");
     private static final Set<String> DEFINITE = Set.of("der", "die", "das", "den", "dem", "des");
 
-    private static final Set<String> NEGATIONS = Set.of("nicht", "nie", "niemals", "nimmer");
-    private static final Set<String> NEGATING_DETERMINERS = Set.of("kein", "keine", "keinen", "keinem", "keiner",
-            "keines");
-    private static final Map<String, Modality> MODALS = Map.of("müssen", Modality.MUSS, "sollen", Modality.SOLL,
-            "können", Modality.KANN, "dürfen", Modality.DARF);
-    /** Formen der Modalverben, falls die Grundform fehlt oder abweicht (Konjunktiv II). */
-    private static final Map<String, Modality> MODAL_FORMS = modalForms();
     /** Präteritum der Hilfsverben, der Kopula und von müssen/können/dürfen („sollte“ ist meist Konjunktiv). */
     private static final Set<String> PAST_AUXILIARIES = Set.of("war", "warst", "waren", "wart", "wurde", "wurdest",
             "wurden", "wurdet", "hatte", "hattest", "hatten", "hattet", "musste", "musstest", "mussten", "musstet",
@@ -141,7 +135,7 @@ public final class StatementFeatures {
         if (DEFINITE.contains(form)) {
             return Article.BESTIMMT;
         }
-        return NEGATING_DETERMINERS.contains(form) ? Article.KEIN : Article.SONSTIGER;
+        return GermanLexicon.isNegatingDeterminer(form) ? Article.KEIN : Article.SONSTIGER;
     }
 
     /** „um/ohne/statt … zu“: eigene Absicht, Merkmale des regierenden Prädikats gelten nicht. */
@@ -170,7 +164,7 @@ public final class StatementFeatures {
                                    List<Token> scope) {
         for (Token token : scope) {
             String form = lower(token.form());
-            if (NEGATIONS.contains(form) && ("advmod".equals(token.baseRelation()) || token.hasUpos("PART"))
+            if (GermanLexicon.isNegation(form) && ("advmod".equals(token.baseRelation()) || token.hasUpos("PART"))
                     && !notOnly(sentence, token)) {
                 return true;
             }
@@ -188,7 +182,7 @@ public final class StatementFeatures {
                 continue;
             }
             for (Token determiner : sentence.dependents(mention.head())) {
-                if ("det".equals(determiner.baseRelation()) && NEGATING_DETERMINERS.contains(lower(determiner.form()))) {
+                if ("det".equals(determiner.baseRelation()) && GermanLexicon.isNegatingDeterminer(determiner.form())) {
                     return true;
                 }
             }
@@ -207,9 +201,10 @@ public final class StatementFeatures {
             if (!"aux".equals(token.deprel()) && token != verb) {
                 continue;
             }
-            Modality modality = token.lemma() == null ? null : MODALS.get(lower(token.lemma()));
+            Modality modality = token.lemma() == null ? null
+                    : GermanLexicon.modalOfLemma(token.lemma()).map(StatementFeatures::modality).orElse(null);
             if (modality == null) {
-                modality = MODAL_FORMS.get(lower(token.form()));
+                modality = GermanLexicon.modalOfForm(token.form()).map(StatementFeatures::modality).orElse(null);
             }
             if (modality != null && token != verb) {
                 return modality;
@@ -354,20 +349,12 @@ public final class StatementFeatures {
         return value == null ? "" : value.toLowerCase(Locale.ROOT);
     }
 
-    private static Map<String, Modality> modalForms() {
-        Map<String, Modality> forms = new HashMap<>();
-        for (String form : List.of("muss", "musst", "müssen", "müsst", "musste", "mussten", "müsste", "müssten")) {
-            forms.put(form, Modality.MUSS);
-        }
-        for (String form : List.of("soll", "sollst", "sollen", "sollt", "sollte", "sollten")) {
-            forms.put(form, Modality.SOLL);
-        }
-        for (String form : List.of("kann", "kannst", "können", "könnt", "konnte", "konnten", "könnte", "könnten")) {
-            forms.put(form, Modality.KANN);
-        }
-        for (String form : List.of("darf", "darfst", "dürfen", "dürft", "durfte", "durften", "dürfte", "dürften")) {
-            forms.put(form, Modality.DARF);
-        }
-        return Map.copyOf(forms);
+    private static Modality modality(GermanLexicon.Modal modal) {
+        return switch (modal) {
+            case MUESSEN -> Modality.MUSS;
+            case SOLLEN -> Modality.SOLL;
+            case KOENNEN -> Modality.KANN;
+            case DUERFEN -> Modality.DARF;
+        };
     }
 }
