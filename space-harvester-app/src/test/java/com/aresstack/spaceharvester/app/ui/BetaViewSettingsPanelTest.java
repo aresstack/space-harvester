@@ -13,6 +13,7 @@ class BetaViewSettingsPanelTest {
     void savesTheStandardFilterAndResetsToTheMainframeMateValues() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             AppState.shared().put("deck.betaview.filter.favorite", "ALT1");
+            AppState.shared().put("deck.betaview.filter.unit", "HOURS");
             BetaViewSettingsPanel panel = new BetaViewSettingsPanel();
             panel.favorite.setText("F002");
             panel.extension.setText("WV00BANK");
@@ -22,6 +23,8 @@ class BetaViewSettingsPanelTest {
             assertThat(saved).isEqualTo(new BetaViewDefaults("F002", "de", "WV00BANK", "APZF", 14));
             // Gilt für die nächste Suchmaske: die zuletzt benutzte Favorit-Angabe ist vergessen.
             assertThat(AppState.shared().get("deck.betaview.filter.favorite")).isNull();
+            // Die Einheit des letzten Zeitraums gilt nicht für die neue Zahl in Tagen.
+            assertThat(AppState.shared().get("deck.betaview.filter.unit")).isNull();
 
             panel.daysBack.setText("zwei");
             panel.save();

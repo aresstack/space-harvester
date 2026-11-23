@@ -48,7 +48,9 @@ public record BetaViewDefaults(String favoriteId, String locale, String extensio
         values.put(KEY + "extension", extension);
         values.put(KEY + "form", form);
         values.put(KEY + "days-back", String.valueOf(daysBack));
-        for (String field : new String[] {"favorite", "locale", "extension", "form", "amount"}) {
+        // Zahl, Einheit und Art des Zeitraums gehören zusammen: sonst würden aus 14 Tagen nach einer Suche in Stunden
+        // 14 Stunden. Wie MainframeMate beginnt die nächste Suchmaske mit „Letzte 7 Tage“ und der Zahl in Tagen.
+        for (String field : new String[] {"favorite", "locale", "extension", "form", "amount", "unit", "period"}) {
             values.put(SearchPane.KEY + field, null);
         }
         AppState.shared().putAll(values);
