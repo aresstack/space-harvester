@@ -125,7 +125,12 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
 
-        sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        sessions.onOpened(session -> {
+            // Vor dem ersten Anmelden: Jede abgelehnte Anmeldung dieser Sitzung (Datasets, JES, DD-Namen) sperrt den
+            // KeePass-Eintrag in allen Bereichen; nur ein Erfolg löst die Sperre wieder.
+            session.onLoginRefused(reason -> DeckLogin.guard().failed(session.label(), reason));
+            SwingUtilities.invokeLater(() -> added(session));
+        });
         sessions.all().forEach(this::added);
         select(null);
         // Wer einmal erfolgreich verbunden war, bekommt beim Öffnen des Bereichs direkt seine Verbindung.
@@ -213,7 +218,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
 
     private void connect(FtpProfile profile, String entry) {
         directPending = false;
-        FtpSession session = sessions.open(profile, entry, () -> accounts.credentials(entry));
+        FtpSession session = sessions.open(profile, entry, guarded(entry));
         if (session.state() == ConnectionState.CONNECTED) {
             FtpConnectForm.configured();
         } else if (session.state() == ConnectionState.FAILED) {
@@ -223,6 +228,22 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
             // Schon entschieden, bevor der Eintrag stand? Dann holt changed es nach.
             SwingUtilities.invokeLater(() -> changed(session));
         }
+    }
+
+    /**
+     * Die Zugangsdaten einer Sitzung hinter dem Anmelde-Wächter (Angelo, 23.11.2026): Die erste Anmeldung ist schon
+     * geprüft (Formular von Hand oder gemerkte Verbindung nach {@code mayTry}). Jede weitere – Neuaufbau nach Abriss,
+     * erste JES-Verbindung, DD-Namen nachladen, „Erneut verbinden“ – liest das Passwort nur, wenn der KeePass-Eintrag
+     * nirgends gesperrt ist; sonst scheitert sie mit dem Grund, ohne den Host zu fragen.
+     */
+    private FtpSession.CredentialSource guarded(String entry) {
+        java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        return () -> {
+            if (!first.getAndSet(false) && !DeckLogin.guard().mayTry(entry)) {
+                throw new IllegalStateException(DeckLogin.notice(entry));
+            }
+            return accounts.credentials(entry);
+        };
     }
 
     private void added(FtpSession session) {
@@ -255,8 +276,6 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         // Ergebnis der Anmeldung je KeePass-Eintrag melden: nur eine abgelehnte Anmeldung sperrt, nur ein Erfolg löst.
         if (session.state() == ConnectionState.CONNECTED) {
             DeckLogin.guard().succeeded(session.label());
-        } else if (session.loginRefused()) {
-            DeckLogin.guard().failed(session.label(), session.failure().orElse("Anmeldung abgelehnt"));
         }
         if (firstConnect.contains(session)) {
             if (session.state() == ConnectionState.CONNECTED) {

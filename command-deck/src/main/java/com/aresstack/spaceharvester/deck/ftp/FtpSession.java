@@ -93,6 +93,8 @@ public final class FtpSession {
     }
 
     private volatile boolean loginRefused;
+    /** Wer hören will, dass der Host eine Anmeldung abgelehnt hat, auf welcher Verbindung auch immer. */
+    private final List<Consumer<String>> refusalObservers = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public ConnectionState state() {
         stateLock.lock();
@@ -106,6 +108,24 @@ public final class FtpSession {
     /** Ist die Sitzung gescheitert, weil der Host die Anmeldung abgelehnt hat (nicht wegen Netz oder Zeitlimit)? */
     public boolean loginRefused() {
         return loginRefused && state() == ConnectionState.FAILED;
+    }
+
+    /**
+     * Meldet jede abgelehnte Anmeldung dieser Sitzung mit lesbarem Grund: Dataset-Verbindung, JES-Verbindung und die
+     * Verbindungen zum Nachladen der DD-Namen (Schutz vor der Kontosperre).
+     */
+    public void onLoginRefused(Consumer<String> observer) {
+        refusalObservers.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    /** Meldet eine Anmelde-Ablehnung weiter und wirft den Fehler unverändert. */
+    private Exception refused(Exception error) {
+        if (refusal(error)) {
+            loginRefused = true;
+            String reason = describe(error);
+            refusalObservers.forEach(observer -> observer.accept(reason));
+        }
+        return error;
     }
 
     private static boolean refusal(Throwable error) {
@@ -218,6 +238,8 @@ public final class FtpSession {
             char[] password = login.copyPassword();
             try {
                 return connector.jes(profile, login.user(), password);
+            } catch (Exception e) {
+                throw refused(e);
             } finally {
                 Arrays.fill(password, '\0');
             }
@@ -367,6 +389,7 @@ public final class FtpSession {
             }
             connection = current;
             if (primary) {
+                loginRefused = false;
                 change(ConnectionState.CONNECTED, null, false);
             }
             return current;
@@ -376,7 +399,12 @@ public final class FtpSession {
             try (ServerCredentials login = credentials.open()) {
                 char[] password = login.copyPassword();
                 try {
-                    C opened = opener.open(profile, login.user(), password);
+                    C opened;
+                    try {
+                        opened = opener.open(profile, login.user(), password);
+                    } catch (Exception e) {
+                        throw refused(e);
+                    }
                     user = login.user();
                     if (opened instanceof FileConnection fileConnection) {
                         mvs = fileConnection.mvs();

@@ -163,6 +163,36 @@ class FtpConnectFlowTest {
     }
 
     @Test
+    void aLockedEntryIsNotSentAgainWhenAnOpenSessionRebuildsItsConnections() throws Exception {
+        try (FakeMvsFtpHost host = FakeMvsFtpHost.sample()) {
+            AppState state = AppState.shared();
+            state.put(FtpConnectForm.ENTRY_KEY, "Raumhafen");
+            state.put(FtpConnectForm.PORT_KEY, String.valueOf(host.port()));
+            state.put(FtpConnectForm.CONFIGURED_KEY, "true");
+            SwingUtilities.invokeAndWait(() -> {
+                deck = new CommandDeck(accounts(host.host()));
+                deck.ftp().newConnection();
+            });
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            waitFor(() -> !deck.ftpSessions().all().isEmpty()
+                    && deck.ftpSessions().all().get(0).state() == ConnectionState.CONNECTED, until);
+            FtpSession session = deck.ftpSessions().all().get(0);
+            int logins = host.logins();
+            // Das Passwort ist anderswo (etwa im Terminal) abgelehnt worden; dann reißt die Verbindung ab.
+            DeckLogin.guard().failed("Raumhafen", "Passwort abgelaufen");
+            host.dropConnections();
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                    () -> session.files(files -> files.list("'KKR.JCL'")).get(10, TimeUnit.SECONDS))
+                    .hasMessageContaining("Letzte Anmeldung mit „Raumhafen“ fehlgeschlagen");
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                    () -> session.jobs(jes -> jes.jobs(com.aresstack.spaceharvester.deck.ftp.jes.JobFilter.mine()))
+                            .get(10, TimeUnit.SECONDS))
+                    .hasMessageContaining("Letzte Anmeldung mit „Raumhafen“ fehlgeschlagen");
+            assertThat(host.logins()).as("kein Passwort an den Host, solange gesperrt").isEqualTo(logins);
+        }
+    }
+
+    @Test
     void aFailedFirstConnectionLeavesNoTabAndShowsTheFormWithTheReason() throws Exception {
         int port;
         try (ServerSocket socket = new ServerSocket(0)) {

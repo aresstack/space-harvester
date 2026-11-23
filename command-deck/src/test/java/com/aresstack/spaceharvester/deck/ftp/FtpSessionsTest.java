@@ -184,4 +184,38 @@ class FtpSessionsTest {
                 TransferOptions.TransferMode.COMPRESSED)).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Stream");
     }
+
+    @Test
+    void aRefusedLoginOnTheJesLaneAndOnProbesIsReportedAndNeverRetried() throws Exception {
+        CommonsNetFtpConnector real = new CommonsNetFtpConnector();
+        java.util.concurrent.atomic.AtomicInteger jesLogins = new java.util.concurrent.atomic.AtomicInteger();
+        FtpConnector refusingJes = new FtpConnector() {
+            @Override
+            public FileConnection files(FtpProfile profile, String user, char[] password) throws java.io.IOException {
+                return real.files(profile, user, password);
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.deck.ftp.jes.JesConnection jes(FtpProfile profile, String user,
+                                                                               char[] password) throws java.io.IOException {
+                jesLogins.incrementAndGet();
+                throw new LoginRefusedException("Anmeldung als " + user + " abgelehnt: 530 PASS command failed", 530);
+            }
+        };
+        FtpSessions guarded = new FtpSessions(refusingJes, background);
+        List<String> refusals = new CopyOnWriteArrayList<>();
+        guarded.onOpened(opened -> opened.onLoginRefused(refusals::add));
+        FtpSession session = guarded.open(host.profile(), "Raumhafen", login("geheim"));
+        session.connect().get(10, TimeUnit.SECONDS);
+        assertThatThrownBy(() -> session.jobs(jes -> jes.jobs(JobFilter.mine())).get(10, TimeUnit.SECONDS))
+                .hasRootCauseInstanceOf(LoginRefusedException.class);
+        assertThat(jesLogins).as("abgelehnte JES-Anmeldung nicht wiederholt").hasValue(1);
+        assertThat(refusals).singleElement().asString().contains("530");
+        assertThat(session.state()).as("die Dataset-Verbindung steht weiter").isEqualTo(ConnectionState.CONNECTED);
+
+        assertThatThrownBy(() -> session.probeSpoolNames("JOB04700", 1).get(10, TimeUnit.SECONDS))
+                .hasRootCauseInstanceOf(LoginRefusedException.class);
+        assertThat(refusals).as("auch die Verbindung zum Nachladen meldet").hasSize(2);
+        guarded.closeAll();
+    }
 }
