@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.deck.betaview.http;
 
+import com.aresstack.spaceharvester.deck.http.CookieJar;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;

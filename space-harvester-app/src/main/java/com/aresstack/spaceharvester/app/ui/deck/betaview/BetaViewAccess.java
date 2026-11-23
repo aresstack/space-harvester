@@ -1,7 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.deck.betaview;
 
 import com.aresstack.spaceharvester.app.ui.AppContext;
-import com.aresstack.spaceharvester.deck.betaview.http.HttpClientFactory;
+import com.aresstack.spaceharvester.deck.http.HttpClientFactory;
 import java.util.Objects;
 
 /**
