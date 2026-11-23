@@ -47,6 +47,10 @@ public record RetryPolicy(int maxAttempts, int backoffMillis, boolean exponentia
         if (attempt >= maxAttempts) {
             return false;
         }
+        if (error instanceof LoginRefusedException) {
+            // Abgelehnte Anmeldung nie wiederholen, auch nicht mit 530 in der Liste: Schutz vor der Kontosperre.
+            return false;
+        }
         if (error instanceof FtpReplyException refused) {
             return refused.code() > 0 && replyCodes.contains(refused.code());
         }

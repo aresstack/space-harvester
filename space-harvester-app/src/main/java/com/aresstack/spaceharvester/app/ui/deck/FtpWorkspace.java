@@ -157,6 +157,14 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
             select(null);
             return;
         }
+        // Schutz vor der Kontosperre: Ist die letzte Anmeldung mit diesem KeePass-Eintrag gescheitert (hier oder in
+        // einem anderen Bereich), versucht nur noch der Mensch im Formular (Angelo, 23.11.2026).
+        String entry = FtpConnectForm.rememberedEntry();
+        if (!DeckLogin.guard().mayTry(entry)) {
+            form.problem(DeckLogin.notice(entry));
+            select(null);
+            return;
+        }
         status.show(StatusNote.plain("Verbinde mit der gemerkten Verbindung …"));
         if (selected != null) {
             pillOf.get(selected).setSelected(true);
@@ -251,6 +259,12 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     }
 
     private void changed(FtpSession session) {
+        // Ergebnis der Anmeldung je KeePass-Eintrag melden: nur eine abgelehnte Anmeldung sperrt, nur ein Erfolg löst.
+        if (session.state() == ConnectionState.CONNECTED) {
+            DeckLogin.guard().succeeded(session.label());
+        } else if (session.loginRefused()) {
+            DeckLogin.guard().failed(session.label(), session.failure().orElse("Anmeldung abgelehnt"));
+        }
         if (firstConnect.contains(session)) {
             if (session.state() == ConnectionState.CONNECTED) {
                 firstConnect.remove(session);
