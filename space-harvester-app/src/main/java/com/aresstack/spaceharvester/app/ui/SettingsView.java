@@ -53,6 +53,8 @@ public final class SettingsView implements View {
     /** Bereich „Terminal“: Einstellungen des 3270-Terminals im Command Deck (aus MainframeMate). */
     static final String TERMINAL = "Terminal";
     static final String NDV = "NDV";
+    /** Bereich „Systemfunktionen“: bekannte z/OS-Programme mit Wikipedia-Artikel (wie MainframeMate). */
+    static final String SYSTEM_FUNCTIONS = "Systemfunktionen";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -118,6 +120,8 @@ public final class SettingsView implements View {
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
     final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
+    /** Bereich „Systemfunktionen“: PGM-Namen mit Wikipedia-Artikel für die JCL-Beziehungen. */
+    final SystemFunctionsSettingsPanel systemFunctions = new SystemFunctionsSettingsPanel();
     final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
@@ -320,6 +324,8 @@ public final class SettingsView implements View {
                 Comic.plate(NdvAnalysisSettingsPanel.ORDER_HEADING, Comic.PETROL, ndvAnalysis.orderComponent()),
                 Comic.plate(NdvAnalysisSettingsPanel.STEPLIB_HEADING, Comic.PETROL, ndvAnalysis.stepLibComponent()),
                 Comic.plate(NdvAnalysisSettingsPanel.RULES_HEADING, Comic.ORANGE, ndvAnalysis.rulesComponent())));
+        page(SYSTEM_FUNCTIONS, Comic.column(Comic.plate(SystemFunctionsSettingsPanel.HEADING, Comic.PETROL,
+                systemFunctions.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
