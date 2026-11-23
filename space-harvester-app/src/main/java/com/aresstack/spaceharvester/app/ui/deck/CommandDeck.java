@@ -378,6 +378,11 @@ public final class CommandDeck {
         sharePointSites = sites == null ? java.util.List::of : sites;
     }
 
+    /** Wo der Bereich Dateien SharePoint-Zugangsdaten nach der ersten erfolgreichen Anmeldung speichert. */
+    public void sharePointLogins(com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins) {
+        files.savedLogins(logins);
+    }
+
     /** Reicht an den gerade gesetzten Verlauf weiter (er kommt erst nach dem Bau aus der App). */
     private final class HistoryDelegate implements com.aresstack.spaceharvester.deck.editor.VersionHistory {
         @Override
