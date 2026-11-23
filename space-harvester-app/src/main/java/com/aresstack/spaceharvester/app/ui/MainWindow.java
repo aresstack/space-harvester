@@ -239,6 +239,8 @@ public final class MainWindow implements AppContext.Navigator {
                 .map(entry -> new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite(
                         entry.config().title(), entry.config().baseUrl().toString()))
                 .toList());
+        // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
+        com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
