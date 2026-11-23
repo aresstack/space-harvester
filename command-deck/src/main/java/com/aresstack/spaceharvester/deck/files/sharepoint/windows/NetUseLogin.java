@@ -49,6 +49,9 @@ public final class NetUseLogin implements WebDavLogin {
         if (run.ok() || exists(uncPath)) {
             return Outcome.ok();
         }
+        if (transportFailure(run.exit(), run.output())) {
+            return Outcome.failed(run.reason("SharePoint nicht erreichbar"));
+        }
         return Outcome.credentialsNeeded(run.reason("Die Windows-Anmeldung reicht nicht"));
     }
 
@@ -65,7 +68,24 @@ public final class NetUseLogin implements WebDavLogin {
         if (run.ok() || exists(uncPath)) {
             return Outcome.ok();
         }
+        // Nur eine echte Ablehnung zählt als falsche Zugangsdaten (Sperre gegen die Kontosperre); Zeitüberschreitung,
+        // Startfehler und Netzfehler nicht.
+        if (transportFailure(run.exit(), run.output())) {
+            return Outcome.failed(run.reason("SharePoint nicht erreichbar"));
+        }
         return Outcome.credentialsNeeded(run.reason("Anmeldung abgelehnt"));
+    }
+
+    /** Windows-Fehler, die das Netz meinen, nicht die Anmeldung (Pfad/Name nicht gefunden, Netz weg, WebClient aus). */
+    private static final java.util.regex.Pattern TRANSPORT = java.util.regex.Pattern.compile(
+            "\\b(51|53|64|67|121|1203|1222|1231|2250)\\b");
+
+    /**
+     * Ob ein gescheitertes {@code net use} am Transport lag statt an den Zugangsdaten: kein Prozess, keine Antwort
+     * (Exit -1) oder ein Netzfehler laut Ausgabe ({@code Systemfehler 53} usw.).
+     */
+    static boolean transportFailure(int exit, String output) {
+        return exit < 0 || (output != null && TRANSPORT.matcher(output).find());
     }
 
     /** {@code \\host@SSL\DavWWWRoot} – verbunden wird der Rechner, nicht der einzelne Ordner. */

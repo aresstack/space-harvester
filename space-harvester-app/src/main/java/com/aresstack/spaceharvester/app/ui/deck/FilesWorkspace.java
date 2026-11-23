@@ -1001,11 +1001,13 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             Optional<ServerAccount> found = account;
             SwingUtilities.invokeLater(() -> {
                 if (found.isPresent() && !guard.mayTry(found.get().entry())) {
-                    askLogin(tab, unc, DeckLogin.notice(found.get().entry()), found.get().user());
+                    askLogin(tab, unc, DeckLogin.notice(found.get().entry()), found.get().user(),
+                            found.get().entry());
                 } else if (found.isPresent() && !reason.startsWith("KeePass")) {
                     loginWithKeePass(tab, unc, found.get());
                 } else {
-                    askLogin(tab, unc, reason, found.map(ServerAccount::user).orElse(user));
+                    askLogin(tab, unc, reason, found.map(ServerAccount::user).orElse(user),
+                            found.map(ServerAccount::entry).orElse(null));
                 }
             });
         });
@@ -1026,7 +1028,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                             guard.failed(account.entry(), result.outcome().reason());
                         }
                         askLogin(tab, unc, "KeePass-Eintrag „" + account.entry() + "“ passt nicht: "
-                                + result.outcome().reason(), credentials.user());
+                                + result.outcome().reason(), credentials.user(), account.entry());
                     }
                 }));
                 java.util.Arrays.fill(password, '\0');
@@ -1037,8 +1039,18 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         });
     }
 
-    /** Anmeldedialog wie {@code SharePointAuthenticator.showLoginDialog} in MainframeMate. */
     private void askLogin(FileBrowser tab, String unc, String reason, String user) {
+        askLogin(tab, unc, reason, user, null);
+    }
+
+    /**
+     * Anmeldedialog wie {@code SharePointAuthenticator.showLoginDialog} in MainframeMate.
+     *
+     * @param keePassEntry der KeePass-Eintrag, dessen Ablehnung zum Dialog führte; klappt die Anmeldung mit seinem
+     *                     Benutzer, ist das Konto wieder frei und die Sperre des Eintrags fällt (sonst bliebe er für
+     *                     immer gesperrt, denn automatisch wird er nicht mehr versucht)
+     */
+    private void askLogin(FileBrowser tab, String unc, String reason, String user, String keePassEntry) {
         busy().setBusy(browser.loading());
         JTextField userField = Comic.field(24);
         userField.setText(user == null ? "" : user);
@@ -1064,6 +1076,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             busy().setBusy(browser.loading());
             if (result.connected()) {
                 guard.succeeded(savedEntry(entered));
+                if (keePassEntry != null && user != null && entered.strip().equalsIgnoreCase(user.strip())) {
+                    guard.succeeded(keePassEntry);
+                }
                 // Nach dem ersten Erfolg merken: beim nächsten Mal kein Dialog (Angelo, 23.11.).
                 Thread.ofVirtual().name("deck-sharepoint-save").start(() -> {
                     try {
@@ -1081,7 +1096,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 if (result.outcome().needsCredentials()) {
                     guard.failed(savedEntry(entered), result.outcome().reason());
                 }
-                askLogin(tab, unc, result.outcome().reason(), entered);
+                askLogin(tab, unc, result.outcome().reason(), entered, keePassEntry);
             }
         }));
     }
