@@ -1,0 +1,153 @@
+package com.aresstack.spaceharvester.app.ui.controls;
+
+import java.awt.AWTEvent;
+import java.awt.Component;
+import java.awt.Point;
+import java.awt.Toolkit;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.event.AWTEventListener;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseEvent;
+import javax.swing.JMenuItem;
+import javax.swing.JPasswordField;
+import javax.swing.JPopupMenu;
+import javax.swing.KeyStroke;
+import javax.swing.MenuSelectionManager;
+import javax.swing.SwingUtilities;
+import javax.swing.text.JTextComponent;
+
+/**
+ * Das Rechtsklick-Menü JEDES Textfelds der App (Angelo, 23.11.2026): Ausschneiden, Kopieren, Einfügen, Alles
+ * markieren, dasselbe wie Strg+X, Strg+C, Strg+V und Strg+A. Einmal für die ganze App eingerichtet
+ * ({@link #install()}), damit kein Feld vergessen wird: Suchleisten, Filter, Formulare, Editoren, Chat-Eingabe, in
+ * jedem Fenster und jedem Dialog, auch in später gebauten.
+ *
+ * <p>Ein Feld mit eigenem Kontextmenü behält es: Dieses Menü erscheint erst, nachdem das Feld den Rechtsklick
+ * verarbeitet hat, und nur, wenn dabei kein anderes Menü aufgegangen ist und niemand den Klick verbraucht hat.
+ * Schreibgeschützte Felder bieten nur Kopieren und Alles markieren, Passwortfelder weder Ausschneiden noch Kopieren.
+ * Die Editoren (RSyntaxTextArea) zeigen statt ihres eigenen englischen Menüs dieses, mit Rückgängig und Wiederholen.
+ */
+public final class TextContextMenu {
+
+    /** Beschriftungen, auch für selbst gezeichnete Flächen mit eigenem Menü (Terminal), damit es überall gleich heißt. */
+    public static final String CUT = "Ausschneiden";
+    public static final String COPY = "Kopieren";
+    public static final String PASTE = "Einfügen";
+    public static final String SELECT_ALL = "Alles markieren";
+    public static final String UNDO = "Rückgängig";
+    public static final String REDO = "Wiederholen";
+
+    private static AWTEventListener installed;
+
+    private TextContextMenu() {
+    }
+
+    /** Richtet das Menü für alle Textfelder der App ein; mehrfaches Aufrufen schadet nicht. */
+    public static synchronized void install() {
+        if (installed != null || java.awt.GraphicsEnvironment.isHeadless()) {
+            return;
+        }
+        installed = event -> {
+            if (event instanceof MouseEvent mouse && mouse.isPopupTrigger()) {
+                requested(mouse);
+            }
+        };
+        Toolkit.getDefaultToolkit().addAWTEventListener(installed, AWTEvent.MOUSE_EVENT_MASK);
+    }
+
+    /**
+     * Ein Rechtsklick irgendwo in der App. Trifft er ein Textfeld, kommt das Menü, sobald das Feld den Klick selbst
+     * verarbeitet hat: So gewinnt ein eigenes Menü des Feldes.
+     */
+    static void requested(MouseEvent mouse) {
+        if (!(mouse.getSource() instanceof Component source)) {
+            return;
+        }
+        Component hit = source instanceof JTextComponent ? source
+                : SwingUtilities.getDeepestComponentAt(source, mouse.getX(), mouse.getY());
+        if (!(hit instanceof JTextComponent field) || !field.isEnabled() || !field.isShowing()) {
+            return;
+        }
+        if (field instanceof org.fife.ui.rtextarea.RTextArea editor) {
+            // Der Editor bringt ein eigenes, englisches Menü mit denselben Einträgen mit; hier gilt das der App.
+            editor.setPopupMenu(null);
+        }
+        Point at = SwingUtilities.convertPoint(source, mouse.getPoint(), field);
+        SwingUtilities.invokeLater(() -> {
+            if (mouse.isConsumed() || field.getComponentPopupMenu() != null || !field.isShowing()
+                    || MenuSelectionManager.defaultManager().getSelectedPath().length > 0) {
+                return;
+            }
+            prepare(field, at);
+            menu(field).show(field, at.x, at.y);
+        });
+    }
+
+    /** Wie überall üblich: Das Feld bekommt den Fokus; ein Klick außerhalb der Markierung setzt die Schreibmarke dorthin. */
+    static void prepare(JTextComponent field, Point at) {
+        field.requestFocusInWindow();
+        int position = field.viewToModel2D(at);
+        if (position >= 0 && (position < field.getSelectionStart() || position > field.getSelectionEnd()
+                || field.getSelectionStart() == field.getSelectionEnd())) {
+            field.setCaretPosition(Math.min(position, field.getDocument().getLength()));
+        }
+    }
+
+    /** Das Menü für dieses Feld, im Zustand von jetzt (Markierung, Schreibschutz, Zwischenablage). */
+    public static JPopupMenu menu(JTextComponent field) {
+        boolean secret = field instanceof JPasswordField;
+        boolean writable = field.isEditable() && field.isEnabled();
+        boolean marked = field.getSelectionStart() != field.getSelectionEnd();
+        boolean any = field.getDocument().getLength() > 0;
+        int shortcut = shortcutMask();
+        JPopupMenu menu = new JPopupMenu();
+        if (writable && field instanceof org.fife.ui.rtextarea.RTextArea editor) {
+            menu.add(item(UNDO, KeyEvent.VK_Z, shortcut, editor.canUndo(), editor::undoLastAction));
+            menu.add(item(REDO, KeyEvent.VK_Y, shortcut, editor.canRedo(), editor::redoLastAction));
+            menu.addSeparator();
+        }
+        if (writable && !secret) {
+            menu.add(item(CUT, KeyEvent.VK_X, shortcut, marked, field::cut));
+        }
+        if (!secret) {
+            menu.add(item(COPY, KeyEvent.VK_C, shortcut, marked, field::copy));
+        }
+        if (writable) {
+            menu.add(item(PASTE, KeyEvent.VK_V, shortcut, clipboardHasText(), field::paste));
+        }
+        menu.addSeparator();
+        menu.add(item(SELECT_ALL, KeyEvent.VK_A, shortcut, any, () -> {
+            field.requestFocusInWindow();
+            field.selectAll();
+        }));
+        return menu;
+    }
+
+    /** Strg, auf dem Mac die Befehlstaste; ohne Bildschirm (Tests) Strg. */
+    private static int shortcutMask() {
+        try {
+            return Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        } catch (java.awt.HeadlessException e) {
+            return InputEvent.CTRL_DOWN_MASK;
+        }
+    }
+
+    private static JMenuItem item(String text, int key, int shortcut, boolean enabled, Runnable action) {
+        JMenuItem item = new JMenuItem(text);
+        // Nur zur Anzeige des Kürzels; ausgelöst wird es weiter vom Feld selbst.
+        item.setAccelerator(KeyStroke.getKeyStroke(key, shortcut));
+        item.setEnabled(enabled);
+        item.addActionListener(e -> action.run());
+        return item;
+    }
+
+    private static boolean clipboardHasText() {
+        try {
+            return Toolkit.getDefaultToolkit().getSystemClipboard().isDataFlavorAvailable(DataFlavor.stringFlavor);
+        } catch (IllegalStateException | java.awt.HeadlessException e) {
+            // Die Zwischenablage ist gerade von einem anderen Programm belegt: Einfügen anbieten, das Feld prüft selbst.
+            return true;
+        }
+    }
+}

@@ -46,6 +46,8 @@ public final class SpaceHarvesterApp {
                 default -> throw new IllegalArgumentException("Unbekannte Option: " + args[i]);
             }
         }
+        // Rechtsklick-Menü (Ausschneiden, Kopieren, Einfügen, Alles markieren) für jedes Textfeld der App.
+        com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.install();
         Path home = AppSettingsLoader.defaultHome();
         if (config == null) {
             String fromEnv = System.getenv("SPACE_HARVESTER_APP_CONFIG");
