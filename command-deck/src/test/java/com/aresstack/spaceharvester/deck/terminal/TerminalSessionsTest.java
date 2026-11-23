@@ -361,4 +361,53 @@ class TerminalSessionsTest {
         assertThat(guard.failure("Testhost")).hasValueSatisfying(
                 failure -> assertThat(failure.reason()).isEqualTo("Kennwort ungueltig"));
     }
+
+    @Test
+    void theHandExceptionCoversOnlyTheOneTryFromTheForm() {
+        List<RejectingConnection> connections = new ArrayList<>();
+        TerminalSessions sessions = new TerminalSessions((profile, listener) -> {
+            RejectingConnection connection = new RejectingConnection(listener);
+            connections.add(connection);
+            return connection;
+        }, Runnable::run, new LoginScript(java.time.Duration.ZERO));
+        sessions.autoReconnect(TerminalSessions.Reconnect.standard(() -> true), (delay, task) -> scheduled.add(task));
+        var guard = new com.aresstack.spaceharvester.deck.access.LoginGuard(
+                com.aresstack.spaceharvester.deck.access.LoginGuard.Store.memory());
+        guard.failed("Testhost", "Passwort abgelaufen");
+        sessions.guard(guard);
+        int[] reads = new int[1];
+        TerminalSessions.LoginSource fromForm = new TerminalSessions.LoginSource() {
+            @Override
+            public TerminalLogin login() {
+                reads[0]++;
+                return new TerminalLogin("TESTUSR", "geheim1".toCharArray(), "");
+            }
+
+            @Override
+            public String entry() {
+                return "Testhost";
+            }
+
+            @Override
+            public boolean byHand() {
+                return true;
+            }
+        };
+
+        TerminalSession first = sessions.open(TerminalProfile.of("host.example", 23), fromForm);
+        assertThat(reads[0]).as("der Handversuch darf trotz Sperre").isEqualTo(1);
+        assertThat(guard.mayTry("Testhost")).isFalse();
+        assertThat(first.loginSource().byHand()).isFalse();
+
+        // Der Host trennt: Der Neuaufbau darf das abgelehnte Passwort nicht noch einmal schicken.
+        connections.get(0).listener.closed(null);
+        scheduled.forEach(Runnable::run);
+        assertThat(reads[0]).isEqualTo(1);
+        assertThat(first.note()).hasValueSatisfying(note -> assertThat(note).contains("Kein automatischer Neuaufbau"));
+
+        // Auch das Wiederöffnen der Sitzung tippt nichts, solange die Sperre gilt.
+        TerminalSession again = sessions.reopen(first);
+        assertThat(reads[0]).isEqualTo(1);
+        assertThat(again.note()).hasValueSatisfying(note -> assertThat(note).contains("fehlgeschlagen"));
+    }
 }

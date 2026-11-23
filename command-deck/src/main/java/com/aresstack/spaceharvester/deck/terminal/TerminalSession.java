@@ -144,7 +144,8 @@ public final class TerminalSession {
     }
 
     void origin(TerminalSessions.LoginSource login, List<TerminalMacro.Step> steps) {
-        loginSource = login;
+        // Die Ausnahme „von Hand“ gilt nur für den Versuch, der diese Sitzung öffnet, nie für Neuaufbau oder Wiederöffnen.
+        loginSource = TerminalSessions.LoginSource.automatic(login);
         replay = steps == null ? List.of() : List.copyOf(steps);
     }
 
