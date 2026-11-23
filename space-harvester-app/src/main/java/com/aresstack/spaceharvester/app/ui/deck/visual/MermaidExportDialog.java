@@ -334,6 +334,24 @@ public class MermaidExportDialog extends JDialog {
                             TiledExporter.export(tiledRenderer,
                                     diagramPanel.getTileCache(), 3,
                                     target, progressListener);
+                        } else if (isViewport && diagramPanel.getViewport() != null
+                                && svgContent != null && !svgContent.isEmpty()) {
+                            // Non-tiled, aktueller Ausschnitt: SVG auf den Ausschnitt beschneiden und rastern
+                            double[] vp = diagramPanel.getViewport();
+                            progressListener.onStep("Ausschnitt wird gerastert\u2026");
+                            String clipped = TiledDiagramRenderer.clipSvgToViewBox(svgContent,
+                                    vp[0], vp[1], vp[2], vp[3]);
+                            float width = (float) Math.min(16000, Math.max(800, vp[2] * 2));
+                            java.awt.image.BufferedImage img =
+                                    com.aresstack.spaceharvester.mermaid.SvgRenderer.renderToBufferedImageForced(
+                                            clipped.getBytes(java.nio.charset.StandardCharsets.UTF_8), width);
+                            if (img != null) {
+                                javax.imageio.ImageIO.write(img, "PNG", target);
+                                progressListener.onProgress(100);
+                                progressListener.onStep("Export abgeschlossen.");
+                            } else {
+                                error = "Ausschnitt nicht gerastert.";
+                            }
                         } else {
                             // Non-tiled: direct image export
                             progressListener.onStep("PNG wird geschrieben\u2026");

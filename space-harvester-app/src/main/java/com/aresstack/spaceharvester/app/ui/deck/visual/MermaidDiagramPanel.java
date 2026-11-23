@@ -89,6 +89,8 @@ public class MermaidDiagramPanel extends JPanel {
 
     // ── Auto-refresh after zoom ──
     private double lastRefreshZoom = 1.0;
+    /** Zählt die Render-Aufträge; Ergebnisse eines überholten Auftrags werden verworfen. */
+    private long renderGeneration;
     /** Threshold in absolute zoom-percent points (e.g. 1.0 = 1%). */
     private double autoRefreshThresholdPercent = 1.0;
     private Timer autoRefreshTimer;
@@ -391,6 +393,7 @@ public class MermaidDiagramPanel extends JPanel {
      * Render (or re-render) the given Mermaid source code.
      */
     public void setMermaidSource(String source) {
+        final long generation = ++renderGeneration;
         this.mermaidSource = source;
         this.selectedNode = null;
         this.selectedEdge = null;
@@ -482,6 +485,9 @@ public class MermaidDiagramPanel extends JPanel {
 
             @Override
             protected void process(List<String> chunks) {
+                if (generation != renderGeneration) {
+                    return; // ein neuerer Quelltext wird gerendert
+                }
                 // Show the latest progress message
                 String msg = chunks.get(chunks.size() - 1);
                 loadingMessage = msg;
@@ -491,6 +497,9 @@ public class MermaidDiagramPanel extends JPanel {
 
             @Override
             protected void done() {
+                if (generation != renderGeneration) {
+                    return; // überholt: der aktuelle Quelltext gehört einem neueren Auftrag
+                }
                 loading = false;
                 loadingMessage = "";
                 renderError = error;
@@ -847,7 +856,13 @@ public class MermaidDiagramPanel extends JPanel {
                 double currentPct = zoom * 100.0;
                 double lastPct = lastRefreshZoom * 100.0;
                 if (Math.abs(currentPct - lastPct) >= autoRefreshThresholdPercent) {
-                    reRasterize();
+                    if (tiledMode) {
+                        // Kachel-Modus: nur die sichtbaren Kacheln neu laden, nie das ganze SVG rastern
+                        lastRefreshZoom = zoom;
+                        scheduleVisibleTileRefresh();
+                    } else {
+                        reRasterize();
+                    }
                 }
             }
         });
@@ -864,6 +879,10 @@ public class MermaidDiagramPanel extends JPanel {
      * Re-rasterize the existing SVG at a resolution that matches the current zoom level.
      */
     private void reRasterize() {
+        if (tiledMode) {
+            scheduleVisibleTileRefresh();
+            return;
+        }
         if (svg == null || svg.isEmpty()) {
             statusLabel.setText("\u26A0 Kein SVG zum Neu-Rendern vorhanden");
             return;
@@ -873,6 +892,7 @@ public class MermaidDiagramPanel extends JPanel {
 
         final String currentSvg = this.svg;
         final double currentZoom = this.zoom;
+        final long generation = renderGeneration;
 
         SwingWorker<BufferedImage, Void> worker = new SwingWorker<BufferedImage, Void>() {
             @Override
@@ -891,6 +911,9 @@ public class MermaidDiagramPanel extends JPanel {
 
             @Override
             protected void done() {
+                if (generation != renderGeneration || tiledMode) {
+                    return; // inzwischen ein anderes Diagramm
+                }
                 try {
                     BufferedImage newImage = get();
                     if (newImage != null) {

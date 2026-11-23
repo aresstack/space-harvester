@@ -347,6 +347,7 @@ public final class MermaidSourceEditor {
         int stopIdx = edge.stopTokenIndex;
 
         // Extend to include leading whitespace (on hidden channel)
+        boolean leadingNewline = false;
         while (startIdx > 0) {
             Token prev = tokens.get(startIdx - 1);
             if (prev.getChannel() == Token.HIDDEN_CHANNEL || prev.getType() == -1) {
@@ -354,6 +355,7 @@ public final class MermaidSourceEditor {
             } else if (prev.getText().equals("\n") || prev.getText().equals("\r\n")) {
                 // Include the preceding newline to remove the whole line
                 startIdx--;
+                leadingNewline = true;
                 break;
             } else {
                 break;
@@ -366,7 +368,10 @@ public final class MermaidSourceEditor {
             if (next.getChannel() == Token.HIDDEN_CHANNEL) {
                 stopIdx++;
             } else if (next.getText().equals("\n") || next.getText().equals("\r\n")) {
-                stopIdx++;
+                // Nur EIN Zeilenumbruch fällt weg, sonst rücken die Nachbaranweisungen in eine Zeile
+                if (!leadingNewline) {
+                    stopIdx++;
+                }
                 break;
             } else {
                 break;
@@ -381,18 +386,26 @@ public final class MermaidSourceEditor {
      */
     public void renameNode(String oldId, String newId) {
         tokens.fill();
-        // Walk ALL tokens (including hidden-channel) and replace matching content
+        // Nur Verweise auf genau diesen Knoten: ganze ID-Tokens, dazu die Form/Beschriftung direkt hinter einem
+        // solchen Token (z. B. A[A-Text]) – dort nur als ganzes Wort. Andere Knoten wie „AA“ bleiben unberührt.
+        java.util.regex.Pattern word = java.util.regex.Pattern.compile(
+                "(?<![\\p{L}\\p{N}_])" + java.util.regex.Pattern.quote(oldId) + "(?![\\p{L}\\p{N}_])");
+        boolean afterMatch = false;
         for (int i = 0; i < tokens.size(); i++) {
             Token t = tokens.get(i);
             String text = t.getText();
             if (text.equals(oldId)) {
-                // Exact match: ID token
                 rewriter.replace(i, newId);
-            } else if (text.contains(oldId)) {
-                // SHAPE tokens like [Rechteck] or ([Rund]) contain the label text
-                // Replace the old ID inside the token text
-                String newText = text.replace(oldId, newId);
-                rewriter.replace(i, newText);
+                afterMatch = true;
+                continue;
+            }
+            if (afterMatch && t.getChannel() != Token.HIDDEN_CHANNEL && word.matcher(text).find()) {
+                // Form-Token des umbenannten Knotens, etwa [Rechteck] oder ([Rund]) mit der alten ID im Text
+                rewriter.replace(i, word.matcher(text).replaceAll(
+                        java.util.regex.Matcher.quoteReplacement(newId)));
+            }
+            if (t.getChannel() != Token.HIDDEN_CHANNEL) {
+                afterMatch = false;
             }
         }
     }

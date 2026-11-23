@@ -61,7 +61,7 @@ public final class TiledExporter {
             if (img != null) {
                 colWidths[c] = img.getWidth();
                 rowHeights[0] = Math.max(rowHeights[0], img.getHeight());
-                t.setImage(img);
+                t.setImage(img, lod);
             } else {
                 colWidths[c] = t.getPixelWidth();
                 rowHeights[0] = Math.max(rowHeights[0], t.getPixelHeight());
@@ -72,7 +72,7 @@ public final class TiledExporter {
             BufferedImage img = renderer.renderTile(t, lod, cache);
             if (img != null) {
                 rowHeights[r] = img.getHeight();
-                t.setImage(img);
+                t.setImage(img, lod);
             } else {
                 rowHeights[r] = t.getPixelHeight();
             }
@@ -114,7 +114,9 @@ public final class TiledExporter {
                     @Override
                     public TileResult call() {
                         DiagramTile t = renderer.getTile(fc, fr);
-                        BufferedImage tileImg = t.getImage();
+                        // Nur Kacheln in der Export-Auflösung wiederverwenden: eine Vorschau (LOD 1/2) hätte
+                        // eine andere Größe und ergäbe verkleinerte Inhalte mit Lücken
+                        BufferedImage tileImg = t.getImageLod() == lod ? t.getImage() : null;
                         if (tileImg == null) {
                             tileImg = renderer.renderTile(t, lod, cache);
                         }

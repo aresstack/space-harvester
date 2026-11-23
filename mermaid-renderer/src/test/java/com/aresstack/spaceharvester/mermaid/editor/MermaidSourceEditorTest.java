@@ -96,6 +96,27 @@ class MermaidSourceEditorTest {
     }
 
     @Test
+    @DisplayName("Flowchart: Delete middle edge keeps neighbours on separate lines")
+    void flowchart_deleteEdge_keepsSeparator() {
+        MermaidSourceEditor editor = MermaidSourceEditor.parse(FLOWCHART_TC2);
+        editor.deleteEdge(editor.findEdge("Beta", "Echo"));
+        String result = editor.getText();
+        assertTrue(result.contains("Alpha --> Delta\n"), "Zeilenumbruch nach der ersten Kante bleibt: " + result);
+        MermaidSourceEditor again = MermaidSourceEditor.parse(result);
+        assertEquals(2, again.getEdges().size(), "Beide übrigen Kanten bleiben eigene Anweisungen: " + result);
+    }
+
+    @Test
+    @DisplayName("Rename node leaves nodes whose id only contains the old id")
+    void flowchart_renameNode_onlySelectedNode() {
+        MermaidSourceEditor editor = MermaidSourceEditor.parse("graph LR\n    A --> AA\n    AA --> C");
+        editor.renameNode("A", "B");
+        String result = editor.getText();
+        assertTrue(result.contains("B --> AA"), result);
+        assertTrue(result.contains("AA --> C"), result);
+    }
+
+    @Test
     @DisplayName("Flowchart: Replace edge label")
     void flowchart_replaceLabel() {
         MermaidSourceEditor editor = MermaidSourceEditor.parse(FLOWCHART_TC2);
