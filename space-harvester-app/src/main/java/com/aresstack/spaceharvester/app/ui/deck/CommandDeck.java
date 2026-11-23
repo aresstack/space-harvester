@@ -125,6 +125,9 @@ public final class CommandDeck {
                 });
         // Diagramm-Ansicht „Visuell“ (MainframeMate) an jedem Editor, gleich in welchem Bereich
         com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.install(editors);
+        // Beziehungen und Diagramm teilen eine Liste (Einstellungen › Diagramme › Systemfunktionen).
+        com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditors.systemFunctions(
+                () -> com.aresstack.spaceharvester.app.ui.deck.visual.SystemFunctionsStore.shared().lookup());
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), accounts);
