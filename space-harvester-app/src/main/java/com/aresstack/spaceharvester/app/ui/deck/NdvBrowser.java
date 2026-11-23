@@ -1395,12 +1395,15 @@ final class NdvBrowser extends JPanel {
             filtered = " · " + objectTable.getRowCount() + " passen zum Filter";
         }
         String text = switch (current) {
-            case FAILED -> head + session.failure().map(reason -> " – " + reason).orElse("");
+            case FAILED -> head + session.failure().map(reason -> " – " + oneLine(reason)).orElse("");
             case CONNECTED -> note.isEmpty() ? head : head + " · " + note + filtered;
             default -> head;
         };
         status.setText(text);
-        status.setToolTipText(text);
+        status.setToolTipText(current == NdvState.FAILED
+                ? session.failure().map(reason -> "<html>" + escape(head) + "<br>"
+                        + escape(reason).replace("\n", "<br>") + "</html>").orElse(text)
+                : text);
         status.setForeground(current == NdvState.FAILED || connected && noteIsError ? Comic.RED : Comic.MUTED);
     }
 
@@ -1442,6 +1445,29 @@ final class NdvBrowser extends JPanel {
                 action.run();
             }
         };
+    }
+
+    /**
+     * Eine mehrzeilige Meldung (Ursache, Leerzeile, „Mögliche Ursachen:“ mit Aufzählung) als eine Zeile für die
+     * Statuszeile: Zeilen mit „ · “ getrennt, nach einem Doppelpunkt nur ein Leerzeichen. JLabel zeigt Umbrüche
+     * nicht an, ohne Trenner liefen die Zeilen zusammen („…:2700Mögliche Ursachen:•“).
+     */
+    static String oneLine(String message) {
+        StringBuilder line = new StringBuilder();
+        for (String part : message.split("\\R")) {
+            String text = part.strip();
+            if (text.startsWith("•")) {
+                text = text.substring(1).strip();
+            }
+            if (text.isEmpty()) {
+                continue;
+            }
+            if (!line.isEmpty()) {
+                line.append(line.charAt(line.length() - 1) == ':' ? " " : " · ");
+            }
+            line.append(text);
+        }
+        return line.toString();
     }
 
     // Für Tests
