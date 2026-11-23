@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
+import com.aresstack.spaceharvester.application.text.TextSpan;
+import com.aresstack.spaceharvester.application.text.GroundedText;
+
 /**
  * Eine verankerte Aussage über eine Erwähnung oder zwischen Handlungen (#108): eine Eigenschaft mit Wortlaut aus dem
  * Text ({@link RelationKind#ATTRIBUTE}, {@link RelationKind#STATE}) oder die Folge zweier Handlungen nach einem
