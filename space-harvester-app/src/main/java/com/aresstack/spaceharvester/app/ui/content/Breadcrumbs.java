@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
@@ -102,7 +103,7 @@ final class Breadcrumbs extends JPanel {
         JLabel label = Comic.muted(text);
         if (pageId != null) {
             label.setForeground(Comic.BLUE);
-            label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(label, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             label.setToolTipText("Seite " + pageId + " öffnen");
             label.addMouseListener(new MouseAdapter() {
                 @Override

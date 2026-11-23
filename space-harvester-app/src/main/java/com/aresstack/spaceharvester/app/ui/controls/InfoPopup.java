@@ -130,7 +130,7 @@ public final class InfoPopup extends JPopupMenu {
         JLabel link = new JLabel(text);
         link.setFont(Comic.regular(13f));
         link.setForeground(Comic.BLUE);
-        link.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(link, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         link.putClientProperty("info-popup.link", Boolean.TRUE);
         @SuppressWarnings("unchecked")
         Map<java.awt.font.TextAttribute, Object> attributes =

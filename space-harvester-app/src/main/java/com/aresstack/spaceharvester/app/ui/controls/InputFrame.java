@@ -127,7 +127,7 @@ public class InputFrame extends JPanel {
         button.setContentAreaFilled(false);
         button.setOpaque(false);
         button.setForeground(ICON);
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(button, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
     }
 
     /** Hängt einen Knopf (oder eine Anzeige, etwa „2 / 5“) rechts ins Feld; Reihenfolge = Aufrufreihenfolge. */

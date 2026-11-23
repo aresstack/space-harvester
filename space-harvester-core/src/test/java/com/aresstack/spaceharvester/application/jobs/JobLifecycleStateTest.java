@@ -42,6 +42,22 @@ class JobLifecycleStateTest {
     }
 
     @Test
+    void aRunningJobWaitingForTheNetworkSaysSoAndKeepsTheButtonsOfARunningJob() {
+        JobStatus offline = new JobStatus("j", JobType.EXPORT, "confluence", "DEV", "client-a", JobState.RUNNING,
+                new JobProgress(3, 1, 1, 0), null, false, T0, T0, null, null, null, Map.of(), false, false, null,
+                JobStage.OFFLINE);
+        assertThat(offline.lifecycle().key()).isEqualTo("AWAITING_NETWORK");
+        assertThat(offline.lifecycle().actions())
+                .isEqualTo(status(JobType.EXPORT, JobState.RUNNING, 0, false, false, false).lifecycle().actions());
+        // Nur ein laufender Auftrag wartet auf das Netz.
+        JobStatus done = new JobStatus("j", JobType.EXPORT, "confluence", "DEV", "client-a", JobState.COMPLETED,
+                new JobProgress(3, 3, 3, 0), null, false, T0, T0, T0, null, null, Map.of(), false, false, null,
+                JobStage.OFFLINE);
+        assertThat(done.stage()).isNull();
+        assertThat(done.lifecycle().key()).isEqualTo("COMPLETED");
+    }
+
+    @Test
     void playAndPauseNeverShowTogetherAndWaitingJobsStartNow() {
         assertThat(actions(JobType.EXPORT, JobState.QUEUED, 0, false))
                 .containsExactly(JobAction.START_NOW, JobAction.CANCEL, JobAction.DELETE);

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.vladsch.flexmark.ast.AutoLink;
 import com.vladsch.flexmark.ast.Code;
 import com.vladsch.flexmark.ast.Emphasis;
@@ -363,7 +364,7 @@ final class InlineMarkdownRenderer {
     }
 
     private void installLinkHandling(final JTextPane pane) {
-        pane.setCursor(Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR));
+        Cursors.set(pane, Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR));
         LinkMouseListener listener = new LinkMouseListener(pane, linkOpener);
         pane.addMouseListener(listener);
         pane.addMouseMotionListener(listener);

@@ -42,7 +42,7 @@ public final class MessagePlate extends JPanel {
         Map<TextAttribute, Object> underline = Map.of(TextAttribute.UNDERLINE, TextAttribute.UNDERLINE_ON);
         action.setFont(Comic.semiBold(13f));
         action.setForeground(Comic.BLUE);
-        action.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(action, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         action.setFocusable(true);
         action.setBorder(BorderFactory.createEmptyBorder(1, 1, 1, 1));
         action.addMouseListener(new MouseAdapter() {
