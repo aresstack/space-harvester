@@ -55,6 +55,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.Icon;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
@@ -406,6 +407,17 @@ public final class PageDetailPanel extends JPanel {
     /** Die Unterreiter von „Erweitert“ einer Seite bzw. ohne Seite, in der unteren Leiste. */
     private final TabFoot advancedFoot;
     private final TabFoot wideAdvancedFoot;
+    /**
+     * „mit Unterseiten“ am Favoriten-Ordner (ADR 0034 §6), dieselbe Checkbox wie an der Seite ({@link
+     * Subpages#checkBox}): aus = die direkten Favoriten, an = samt Unterordnern rekursiv. Sie steht im Fuß der breiten
+     * Ebene, solange ein Ordner gewählt ist und der Reiter keine eigene Leiste hat; nie gesperrt.
+     */
+    private final JCheckBox folderSubfolders = Subpages.checkBox();
+    private final TabFoot folderFoot = new TabFoot(javax.swing.Box.createHorizontalBox(), folderSubfolders);
+    /** Der gewählte Ordner, sonst {@code null}; seine Stellung zeigt {@link #folderSubfolders}. */
+    private ExportPanel.Selection.Collection folder;
+    /** Bekommt die Stellung, die der Benutzer an {@link #folderSubfolders} wählt. */
+    private java.util.function.Consumer<Boolean> onFolderSubfolders = on -> { };
     /** Aktionen von „Analysen“ einer Seite in der Kopfzeile links vom Stern. */
     private final JPanel analysisActions = actionRow();
     /** Aktionen von „Erweitert“ einer Seite in der Kopfzeile links vom Stern. */
@@ -669,6 +681,11 @@ public final class PageDetailPanel extends JPanel {
         wideAdvanced.select(PROPERTIES);
         wideAdvanced.onSelect(name -> showDeck());
         wideAdvancedFoot = new TabFoot(wideAdvanced.detachBar(), null);
+        folderSubfolders.addActionListener(e -> {
+            if (folder != null) {
+                onFolderSubfolders.accept(folderSubfolders.isSelected());
+            }
+        });
         JPanel advanced = new JPanel(new BorderLayout(0, 8));
         advanced.setOpaque(false);
         advanced.add(advancedTabs, BorderLayout.CENTER);
@@ -1152,6 +1169,12 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         overviewSelection = selection;
+        folder = selection instanceof ExportPanel.Selection.Collection collection ? collection : null;
+        if (folder != null) {
+            // Ohne Ereignis: nur der Benutzer schaltet (ActionListener), das Setzen zeigt bloß die Stellung.
+            folderSubfolders.setSelected(folder.withSubfolders());
+        }
+        updateFootTools(tabs.selected());
         overviewTermsDirty = true;
         overviewRecount = false;
         tabStatus(OVERVIEW_TERMS, " ");
@@ -1257,6 +1280,24 @@ public final class PageDetailPanel extends JPanel {
     /** Für Tests: die Unterreiter von „Erweitert“ einer Seite in der unteren Leiste. */
     TabFoot advancedFoot() {
         return advancedFoot;
+    }
+
+    /**
+     * {@code listener} bekommt die Stellung, die der Benutzer an „mit Unterseiten“ eines Ordners wählt; die Ansicht
+     * löst den Ordner damit neu auf und wendet die Auswahl an ({@link ContentView#folder}).
+     */
+    void onFolderSubfolders(java.util.function.Consumer<Boolean> listener) {
+        this.onFolderSubfolders = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Für Tests: „mit Unterseiten“ am gewählten Ordner im Fuß der breiten Ebene. */
+    JCheckBox folderSubfolders() {
+        return folderSubfolders;
+    }
+
+    /** Für Tests: der Fuß der breiten Ebene mit „mit Unterseiten“ eines Ordners. */
+    TabFoot folderFoot() {
+        return folderFoot;
     }
 
     /** Für Tests: die Checkbox „mit Unterseiten“ der Analyse-Reiter. */
@@ -2973,6 +3014,7 @@ public final class PageDetailPanel extends JPanel {
                 : READ.equals(selected) && videoTranscriptShown ? videoTranscript.action()
                 : READING.equals(selected) && SOURCE_CARD.equals(pageCard) ? sourceFoot
                 : READING.equals(selected) && PAGE.equals(pageCard) ? pageFoot
+                : wide && folder != null ? folderFoot
                 : null;
         if (footTools.getComponentCount() == (shown == null ? 0 : 1)
                 && (shown == null || footTools.getComponent(0) == shown)) {

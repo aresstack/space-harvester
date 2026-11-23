@@ -50,7 +50,7 @@ final class Subpages {
         }
     }
 
-    private final JCheckBox box = Comic.checkBox(LABEL);
+    private final JCheckBox box = checkBox();
     private final List<Runnable> listeners = new ArrayList<>();
     private Runner runner = com.aresstack.spaceharvester.app.ui.Background::run;
     private Workspace workspace;
@@ -70,9 +70,18 @@ final class Subpages {
 
     Subpages() {
         box.setSelected(false);
-        box.setFocusable(true);
         box.addItemListener(e -> changed());
         describe();
+    }
+
+    /**
+     * Die Checkbox „mit Unterseiten“, wie sie jede Ebene zeigt: an der Seite hier, am Favoriten-Ordner im Fuß der
+     * breiten Ebene (ADR 0034 §6). Nie gesperrt; was sie bedeutet, bindet der Aufrufer.
+     */
+    static JCheckBox checkBox() {
+        JCheckBox box = Comic.checkBox(LABEL);
+        box.setFocusable(true);
+        return box;
     }
 
     /** Die Checkbox für die Reiterzeile. */

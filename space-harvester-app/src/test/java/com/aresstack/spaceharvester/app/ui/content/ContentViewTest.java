@@ -101,6 +101,56 @@ class ContentViewTest {
     }
 
     @Test
+    void aFolderShowsWithSubpagesInTheWideFootAndResolvesAgainWhenSwitched() throws Exception {
+        // ADR 0034 §6: „mit Unterseiten“ am Ordner, Vorgabe an; aus = nur die direkten Favoriten.
+        com.aresstack.spaceharvester.app.ui.Favorites favorites = context.favorites();
+        String top = favorites.createFolder("Betrieb", null);
+        String below = favorites.createFolder("Notfall", top);
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite handbook =
+                com.aresstack.spaceharvester.app.ui.Favorites.Favorite.source("handbuch", "handbuch");
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite notes =
+                com.aresstack.spaceharvester.app.ui.Favorites.Favorite.source("notizen", "notizen");
+        favorites.toggle(handbook, top);
+        favorites.toggle(notes, below);
+        PageDetailPanel detail = view.detail();
+
+        onEdt(() -> {
+            view.folder(top, "Betrieb");
+            detail.tabs().select("Analysen");
+            return null;
+        });
+
+        assertThat(onEdt(() -> detail.folderSubfolders().isSelected())).isTrue();
+        assertThat(onEdt(() -> detail.folderSubfolders().isEnabled())).isTrue();
+        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.folderFoot());
+        assertThat(onEdt(() -> detail.export().selection().roots(null)))
+                .containsExactly(handbook.root(), notes.root());
+
+        onEdt(() -> {
+            detail.folderSubfolders().doClick();
+            return null;
+        });
+        assertThat(onEdt(() -> detail.export().selection().roots(null))).containsExactly(handbook.root());
+        // Gemerkt für die Sitzung: der nächste Ordner kommt mit derselben Stellung.
+        onEdt(() -> {
+            view.folder(below, "Notfall");
+            return null;
+        });
+        assertThat(onEdt(() -> detail.folderSubfolders().isSelected())).isFalse();
+        // Eine Änderung am Ordner gilt sofort (ADR 0034 §3).
+        favorites.toggle(com.aresstack.spaceharvester.app.ui.Favorites.Favorite.space("handbuch", "erfunden",
+                "Erfunden", "handbuch"), below);
+        await(() -> detail.export().selection().roots(null).size() == 2);
+
+        // Eine Quelle ist kein Ordner: die Leiste ohne Checkbox.
+        onEdt(() -> {
+            view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(() -> detail.footTools().getComponentCount())).isZero();
+    }
+
+    @Test
     void aPageLoadsRightAwayEvenWithoutLocalCopyAndNamesWhereItLies() throws Exception {
         String space = space("handbuch");
         onEdt(() -> {
