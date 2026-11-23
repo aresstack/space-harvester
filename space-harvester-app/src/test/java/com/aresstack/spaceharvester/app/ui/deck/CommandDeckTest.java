@@ -32,7 +32,7 @@ class CommandDeckTest {
             deck = new CommandDeck();
             List<String> names = java.util.Arrays.stream(deck.navigation().getComponents())
                     .map(c -> ((AbstractButton) c).getAccessibleContext().getAccessibleName()).toList();
-            assertThat(names).containsExactly("Home", "Terminal", "FTP", "NDV", "BetaView", "Dateien");
+            assertThat(names).containsExactly("Home", "Terminal", "FTP", "NDV", "BetaView", "Dateien", "E-Akte");
             assertThat(deck.area()).as("Start auf Home, damit nichts verbindet").isEqualTo(DeckArea.HOME);
             assertThat(deck.sessions().all()).as("Öffnen baut keine Verbindung auf").isEmpty();
             assertThat(deck.perspective().drawer()).isNull();

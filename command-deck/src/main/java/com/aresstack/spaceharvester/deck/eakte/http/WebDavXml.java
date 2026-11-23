@@ -27,10 +27,12 @@ final class WebDavXml {
 
     static final String DAV = "DAV:";
 
-    /** Nur die Eigenschaften, die der Bereich zeigt (schneller als {@code allprop}). */
+    /**
+     * {@code allprop} wie im Testprogramm v2.0, das damit auf dem echten System 207 bekam; so kommen auch die
+     * Fabasoft-Eigenschaften ({@code objaddress}) mit, die nicht im DAV-Namensraum stehen.
+     */
     static final String PROPFIND = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-            + "<D:propfind xmlns:D=\"DAV:\"><D:prop><D:displayname/><D:resourcetype/><D:getcontentlength/>"
-            + "<D:getlastmodified/><D:getcontenttype/></D:prop></D:propfind>";
+            + "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>";
 
     private WebDavXml() {
     }
@@ -51,7 +53,9 @@ final class WebDavXml {
                 continue;
             }
             Element prop = okProp(response);
-            boolean folder = prop != null && child(child(prop, "resourcetype"), "collection") != null;
+            boolean folder = prop != null && (child(child(prop, "resourcetype"), "collection") != null
+                    || "1".equals(text(child(prop, "iscollection")))
+                    || "true".equalsIgnoreCase(text(child(prop, "iscollection"))));
             String name = prop == null ? "" : text(child(prop, "displayname"));
             if (name.isEmpty()) {
                 name = lastSegment(path);
@@ -65,7 +69,9 @@ final class WebDavXml {
             }
             entries.add(new EakteEntry(name, path, folder, size,
                     modified(prop == null ? "" : text(child(prop, "getlastmodified"))),
-                    prop == null ? "" : text(child(prop, "getcontenttype"))));
+                    prop == null ? "" : text(child(prop, "getcontenttype")),
+                    modified(prop == null ? "" : text(child(prop, "creationdate"))),
+                    prop == null ? "" : text(child(prop, "getetag")), objectAddress(prop)));
         }
         entries.sort(Comparator.comparing((EakteEntry entry) -> !entry.folder())
                 .thenComparing(EakteEntry::name, String.CASE_INSENSITIVE_ORDER));
@@ -109,6 +115,20 @@ final class WebDavXml {
             }
         }
         return fallback;
+    }
+
+    /** Die Fabasoft-Objektadresse: ein Element, dessen lokaler Name auf {@code objaddress} endet, gleich welcher Namensraum. */
+    private static String objectAddress(Element prop) {
+        if (prop == null) {
+            return "";
+        }
+        for (Node node = prop.getFirstChild(); node != null; node = node.getNextSibling()) {
+            if (node instanceof Element element && element.getLocalName() != null
+                    && element.getLocalName().toLowerCase(java.util.Locale.ROOT).endsWith("objaddress")) {
+                return text(element);
+            }
+        }
+        return "";
     }
 
     private static Element child(Element parent, String localName) {

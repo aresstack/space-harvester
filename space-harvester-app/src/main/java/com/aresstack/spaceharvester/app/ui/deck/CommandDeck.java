@@ -91,6 +91,15 @@ public final class CommandDeck {
         }
     };
     private final NdvWorkspace ndv;
+    /** E-Akte: Anmeldung und WebDAV über den Netzweg, den die App setzt ({@link #eakte}); ohne App direkt. */
+    private volatile com.aresstack.spaceharvester.deck.eakte.EakteServer eakteServer =
+            new com.aresstack.spaceharvester.deck.eakte.http.HttpEakteServer(
+                    com.aresstack.spaceharvester.deck.http.HttpClientFactory.direct(), java.time.Duration.ofSeconds(30),
+                    null);
+    private final com.aresstack.spaceharvester.deck.eakte.EakteSessions eakteSessions =
+            new com.aresstack.spaceharvester.deck.eakte.EakteSessions(
+                    (profile, password) -> eakteServer.connect(profile, password), connecting);
+    private final EakteWorkspace eakte;
     private final Perspective perspective;
     /** Startseite: beim Wechsel ins Deck gewählt, verbindet nichts. */
     private final DeckHome home;
@@ -151,6 +160,7 @@ public final class CommandDeck {
         ftp = new FtpWorkspace(ftpSessions, accounts, editors);
         tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts, editors);
+        eakte = new EakteWorkspace(eakteSessions, accounts);
         wireNatural();
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
@@ -168,7 +178,8 @@ public final class CommandDeck {
                         .count(), NdvConnectForm.ENTRY_KEY)),
                 new DeckHome.Tile(DeckArea.BETAVIEW, () -> status(betaView.connectedCount(),
                         com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewWorkspace.ENTRY_KEY)),
-                new DeckHome.Tile(DeckArea.FILES, () -> java.util.List.of("Lokale Ordner: ohne Anmeldung bereit"))),
+                new DeckHome.Tile(DeckArea.FILES, () -> java.util.List.of("Lokale Ordner: ohne Anmeldung bereit")),
+                new DeckHome.Tile(DeckArea.EAKTE, () -> status(eakte.connectedCount(), EakteWorkspace.ENTRY_KEY))),
                 this::show);
         ButtonGroup group = new ButtonGroup();
         for (DeckArea candidate : DeckArea.values()) {
@@ -187,7 +198,7 @@ public final class CommandDeck {
                 case FILES -> files;
                 case FTP -> ftp;
                 case NDV -> ndv;
-                default -> placeholder(candidate);
+                case EAKTE -> eakte;
             }, candidate.name());
             javax.swing.JComponent info = switch (candidate) {
                 case TERMINAL -> terminal.statusInfo();
@@ -195,6 +206,7 @@ public final class CommandDeck {
                 case FILES -> files.statusInfo();
                 case FTP -> ftp.statusInfo();
                 case NDV -> ndv.statusInfo();
+                case EAKTE -> eakte.statusInfo();
                 default -> new JPanel();
             };
             info.setOpaque(false);
@@ -217,7 +229,7 @@ public final class CommandDeck {
         // soll erst passieren, wenn man einen davon anklickt. Schon beim Verlassen auf Home zurück: Beim Wiederkommen
         // wird die Arbeitsfläche sichtbar, bevor onShown läuft, und der zuletzt gewählte Bereich würde sonst verbinden.
         perspective = new Perspective(Perspectives.COMMAND_DECK, "Command Deck",
-                "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", true, navigation,
+                "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien, E-Akte", true, navigation,
                 stage, null, tools, () -> show(DeckArea.HOME), () -> show(DeckArea.HOME), status);
     }
 
@@ -349,6 +361,7 @@ public final class CommandDeck {
                     + "sie.";
             case FILES -> "Command Deck › Dateien: Der Chat sieht den offenen Ordner und liest Dateien darin, auch "
                     + "PDF, Word und Excel – ändern kannst nur du.";
+            case EAKTE -> "Command Deck › E-Akte: Der Chat sieht die offene Mappe – ändern kannst nur du.";
         }, switch (shown) {
             case HOME -> java.util.List.of(action("Bereiche erklären",
                     "Erkläre mir kurz, wofür die Bereiche des Command Deck da sind."));
@@ -362,6 +375,7 @@ public final class CommandDeck {
             case FILES -> java.util.List.of(action("Ordner zusammenfassen",
                             "Fasse zusammen, was in diesem Ordner liegt und worum es in den Dateien geht."),
                     action("Auswahl zusammenfassen", "Fasse die ausgewählte Datei zusammen."));
+            case EAKTE -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."));
         });
     }
 
@@ -382,7 +396,8 @@ public final class CommandDeck {
             case FILES -> "Dort sieht er einen Ordner seiner Festplatte oder eines Netzlaufwerks; offene Dateien stehen "
                     + "als Text im Editor.";
             case TERMINAL -> "Dort arbeitet er in einer TN3270-Sitzung.";
-            case HOME -> "Dort sieht er die Übersicht der Bereiche Terminal, FTP, NDV, BetaView und Dateien mit ihrem "
+            case EAKTE -> "Dort sieht er Mappen und Dokumente der E-Akte (Fabasoft) über WebDAV.";
+            case HOME -> "Dort sieht er die Übersicht der Bereiche Terminal, FTP, NDV, BetaView, Dateien und E-Akte mit ihrem "
                     + "Verbindungsstand; verbunden wird erst beim Öffnen eines Bereichs.";
         };
     }
@@ -396,6 +411,7 @@ public final class CommandDeck {
             case NDV -> ndv;
             case BETAVIEW -> betaView;
             case FILES -> files;
+            case EAKTE -> eakte;
         };
     }
 
@@ -445,6 +461,7 @@ public final class CommandDeck {
         betaView.shutdown();
         ftpSessions.closeAll();
         ndvSessions.closeAll();
+        eakte.shutdown();
         connecting.shutdownNow();
     }
 
@@ -500,6 +517,21 @@ public final class CommandDeck {
 
     FilesWorkspace files() {
         return files;
+    }
+
+    EakteWorkspace eakte() {
+        return eakte;
+    }
+
+    /**
+     * Netzweg der E-Akte aus der App: Proxy und TLS-Vertrauen wie die anderen HTTP-Bereiche, das Protokoll der
+     * Anmeldung (ohne Werte) ins Log der App. „Speichern unter“ öffnet wie überall im Ausgabeordner
+     * ({@link com.aresstack.spaceharvester.app.ui.controls.SaveChooser}).
+     */
+    public void eakte(com.aresstack.spaceharvester.deck.eakte.EakteServer server) {
+        if (server != null) {
+            eakteServer = server;
+        }
     }
 
     public FtpSessions ftpSessions() {
