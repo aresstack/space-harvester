@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.deadlines;
 
 import java.time.DateTimeException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -15,6 +16,9 @@ import java.util.regex.Pattern;
  */
 public final class IdentifierNormalizer {
 
+    /** Ein deutsches Datum im Fließtext (Ziffern oder Monatsname), etwa für Muster der Regex-Stufe. */
+    public static final String DATE_TEXT = "\\d{1,2}\\.\\s?(?:\\d{1,2}\\.\\s?|\\p{L}+\\s+)\\d{4}";
+    private static final Pattern DATES = Pattern.compile(DATE_TEXT);
     private static final Pattern GERMAN_DATE = Pattern.compile("(\\d{1,2})\\.\\s?(\\d{1,2})\\.\\s?(\\d{4})");
     private static final Pattern GERMAN_DATE_WORDS = Pattern.compile("(\\d{1,2})\\.\\s?(\\p{L}+)\\s+(\\d{4})");
     private static final List<String> MONTHS = List.of("januar", "februar", "märz", "april", "mai", "juni", "juli",
@@ -72,5 +76,17 @@ public final class IdentifierNormalizer {
         } catch (DateTimeException e) {
             return Optional.empty();
         }
+    }
+
+    /** Alle gültigen deutschen Daten im Text, in Lesereihenfolge. */
+    public static List<LocalDate> datesIn(String text) {
+        List<LocalDate> dates = new ArrayList<>();
+        if (text != null) {
+            Matcher matcher = DATES.matcher(text);
+            while (matcher.find()) {
+                germanDate(matcher.group()).ifPresent(dates::add);
+            }
+        }
+        return dates;
     }
 }

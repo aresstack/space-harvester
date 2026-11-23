@@ -32,6 +32,8 @@ class IdentifierNormalizerTest {
         assertThat(IdentifierNormalizer.germanDate("3. Februar 2031")).contains(LocalDate.of(2031, 2, 3));
         assertThat(IdentifierNormalizer.germanDate("3. März 2031")).contains(LocalDate.of(2031, 3, 3));
         assertThat(IdentifierNormalizer.germanDate("3. Brumaire 2031")).isEmpty();
+        assertThat(IdentifierNormalizer.datesIn("vom 3. Februar 2031 bis 31.02.2031 und 01.03.2031"))
+                .containsExactly(LocalDate.of(2031, 2, 3), LocalDate.of(2031, 3, 1));
     }
 
     @Test

@@ -66,7 +66,7 @@ public final class IdentifierExtractor implements ExtractionStage {
             line(SUBJECT, "Betreff", "Betreff", String::strip),
             line(REFERENCED_DOCUMENT, "Bezug", "Bezug", String::strip),
             new Label(DOCUMENT_DATE, "Datum", Pattern.compile(
-                    "(?im)^\\s*(?:Datum\\s*:?|[\\p{L}][\\p{L} .\\-]*,)\\s*(\\d{1,2}\\.\\s?(?:\\d{1,2}\\.\\s?|\\p{L}+\\s+)\\d{4})\\s*$"),
+                    "(?im)^\\s*(?:Datum\\s*:?|[\\p{L}][\\p{L} .\\-]*,)\\s*(" + IdentifierNormalizer.DATE_TEXT + ")\\s*$"),
                     raw -> IdentifierNormalizer.germanDate(raw).map(Object::toString)));
 
     private static final Pattern BOOK_ADVANCE_WORD = Pattern.compile("(?i)\\bVorschu(?:ss|ß)buch(?:es|s)?\\b");
@@ -89,11 +89,8 @@ public final class IdentifierExtractor implements ExtractionStage {
     private static final Pattern WORD = Pattern.compile("\\p{L}+");
     private static final Pattern DEADLINE_END_DATE = Pattern.compile(
             "(?i)\\b(?:bis\\s+(?:spätestens\\s+)?(?:zum|am)?|spätestens\\s+(?:zum|am|bis\\s+zum)?)\\s*"
-                    + "(\\d{1,2}\\.\\s?(?:\\d{1,2}\\.\\s?|\\p{L}+\\s+)\\d{4})");
+                    + "(" + IdentifierNormalizer.DATE_TEXT + ")");
     private static final Pattern EXTENSION = Pattern.compile("(?i)\\b(?:verlänger\\p{L}*|fristverlänger\\p{L}*)");
-    private static final Pattern GRANTED = Pattern.compile(
-            "(?i)\\b(?:genehmigt|bewilligt|zugestimmt|eingewilligt|gewährt|erteilt)\\b");
-    private static final Pattern REQUESTED = Pattern.compile("(?i)\\b(?:beantragt\\p{L}*|antrag\\p{L}*)\\b");
     private static final Pattern PAYMENT_REFERENCE = Pattern.compile(
             "(?i)\\b(?:je(?:de[rsn]?)?\\s+(?:einzelne[nr]?\\s+)?(?:zahlung|buchung|betrag)|einzelne[nr]?\\s+(?:zahlung|buchung|betr\\p{L}+))\\b");
     private static final Pattern ACCOUNT_REFERENCE = Pattern.compile("(?i)\\b(?:das|des|dem)\\s+(?:gesamte[nm]?\\s+)?konto\\b");
@@ -378,8 +375,8 @@ public final class IdentifierExtractor implements ExtractionStage {
      * Antrag ist nie eine Genehmigung; ist beides oder nichts eindeutig, bleibt der Qualifier offen.
      */
     private static ExtractedField extension(String sentence, String flat, SourceReference source, String note) {
-        boolean granted = GRANTED.matcher(sentence).find();
-        boolean requested = REQUESTED.matcher(sentence).find();
+        boolean granted = ApprovalWording.namesGrant(sentence);
+        boolean requested = ApprovalWording.namesRequest(sentence);
         boolean negated = negated(sentence);
         Qualifier qualifier = Qualifier.NONE;
         String extra = "";
