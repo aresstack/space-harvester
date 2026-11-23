@@ -60,6 +60,7 @@ class NdvWorkspaceTest {
         }
         AppState.shared().put(NdvBrowser.LIBRARY_KEY, "");
         AppState.shared().put(NdvConnectForm.LIBRARY_KEY, "");
+        NdvAnalysisSettings.searchLink(NdvSearchLink.NONE);
         // Der NDV-Zwischenspeicher der Tests liegt nie im echten App-Ordner.
         if (System.getProperty(NdvAnalysisSettings.CACHE_PROPERTY) == null) {
             try {
@@ -367,8 +368,9 @@ class NdvWorkspaceTest {
         assertThat(browser.selectedObjects()).hasSize(2);
         SwingUtilities.invokeAndWait(browser::selectNone);
         assertThat(browser.selectedObjects()).isEmpty();
-        // Öffnen, Alles/Nichts auswählen, Zwischenspeichern, Sperren, Freigeben, Filter entfernen (mit Trennern)
-        assertThat(browser.contextMenu().getComponentCount()).isEqualTo(10);
+        // Öffnen, Alles/Nichts auswählen, Zwischenspeichern, Indexieren (Regel anlegen), Sperren, Freigeben, Filter
+        // entfernen (mit Trennern)
+        assertThat(browser.contextMenu().getComponentCount()).isEqualTo(11);
         assertThat(server.writes()).isEmpty();
     }
 

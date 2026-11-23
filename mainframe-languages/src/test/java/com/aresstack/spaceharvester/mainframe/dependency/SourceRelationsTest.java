@@ -103,7 +103,8 @@ class SourceRelationsTest {
                 .isEqualTo("https://de.wikipedia.org/wiki/Access_Method_Services");
         assertThat(functions.wikipedia("UNBEKANNT").toString()).isEqualTo("https://de.wikipedia.org/wiki/UNBEKANNT");
         assertThat(SystemFunctions.parse(functions.serialize()).entries()).isEqualTo(functions.entries());
-        assertThat(SystemFunctions.parse("").entries()).hasSize(functions.entries().size());
+        assertThat(SystemFunctions.parse(null).entries()).hasSize(functions.entries().size());
+        assertThat(SystemFunctions.parse("").entries()).as("alle entfernt bleibt leer").isEmpty();
     }
 
     private static void collectTargets(CallNode node, List<String> out) {

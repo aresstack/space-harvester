@@ -456,15 +456,34 @@ final class RelationsPanel extends JPanel {
             for (CallNode child : children) {
                 total += 1 + child.descendants();
                 boolean kindHidden = child.kind() != null && hidden.contains(child.kind());
-                if (kindHidden || !nameMatches(child, names)) {
+                if (kindHidden) {
                     continue;
                 }
-                DefaultMutableTreeNode node = new DefaultMutableTreeNode(item(child));
-                int[] sub = addFiltered(node, child.children(), names);
-                visible += 1 + sub[1];
-                parent.add(node);
+                DefaultMutableTreeNode node = filtered(child, names);
+                if (node != null) {
+                    visible += countNodes(node);
+                    parent.add(node);
+                }
             }
             return new int[] {total, visible};
+        }
+
+        /**
+         * Knoten mit gefilterten Kindern, oder {@code null}, wenn weder er noch ein Nachfahre zum Namen passt. Passt
+         * nur ein Nachfahre, bleiben die Vorfahren als Pfad dorthin stehen.
+         */
+        private DefaultMutableTreeNode filtered(CallNode child, Pattern names) {
+            DefaultMutableTreeNode node = new DefaultMutableTreeNode(item(child));
+            addFiltered(node, child.children(), names);
+            return nameMatches(child, names) || node.getChildCount() > 0 ? node : null;
+        }
+
+        private static int countNodes(DefaultMutableTreeNode node) {
+            int count = 1;
+            for (int i = 0; i < node.getChildCount(); i++) {
+                count += countNodes((DefaultMutableTreeNode) node.getChildAt(i));
+            }
+            return count;
         }
 
         private int[] addGrouped(DefaultMutableTreeNode parent, List<CallNode> children, Pattern names) {
@@ -482,12 +501,11 @@ final class RelationsPanel extends JPanel {
                 DefaultMutableTreeNode group = new DefaultMutableTreeNode();
                 int groupVisible = 0;
                 for (CallNode child : entry.getValue()) {
-                    if (!nameMatches(child, names)) {
+                    DefaultMutableTreeNode node = filtered(child, names);
+                    if (node == null) {
                         continue;
                     }
-                    DefaultMutableTreeNode node = new DefaultMutableTreeNode(item(child));
-                    int[] sub = addFiltered(node, child.children(), names);
-                    visible += 1 + sub[1];
+                    visible += countNodes(node);
                     groupVisible++;
                     group.add(node);
                 }

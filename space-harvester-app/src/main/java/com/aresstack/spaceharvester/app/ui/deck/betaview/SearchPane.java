@@ -410,15 +410,16 @@ final class SearchPane extends JPanel {
 
     private void recall() {
         AppState state = AppState.shared();
-        // Ohne gespeicherte Auswahl die Vorgaben von MainframeMate (BetaViewAppProperties).
-        Map<String, String> defaults = Map.of("favorite", FilterPatterns.DEFAULT_FAVORITE,
-                "locale", FilterPatterns.DEFAULT_LOCALE, "amount", String.valueOf(FilterPatterns.DEFAULT_DAYS_BACK));
+        // Ohne gespeicherte Auswahl der Standard-Suchfilter (Einstellungen › BetaView, wie in MainframeMate).
+        BetaViewDefaults standard = BetaViewDefaults.load();
+        Map<String, String> defaults = Map.of("favorite", standard.favoriteId(),
+                "locale", standard.locale(), "amount", String.valueOf(standard.daysBack()));
         fields().forEach((name, field) -> {
             String value = state.get(KEY + name);
             field.setText(value == null ? defaults.getOrDefault(name, "") : value);
         });
-        Map<String, String> patternDefaults = Map.of("form", FilterPatterns.DEFAULT_FORM,
-                "extension", FilterPatterns.DEFAULT_EXTENSION, "report", FilterPatterns.DEFAULT_REPORT,
+        Map<String, String> patternDefaults = Map.of("form", standard.form(),
+                "extension", standard.extension(), "report", FilterPatterns.DEFAULT_REPORT,
                 "job-name", FilterPatterns.DEFAULT_JOB_NAME);
         patterns().forEach((name, field) -> {
             String value = state.get(KEY + name);

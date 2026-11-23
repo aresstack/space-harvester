@@ -78,6 +78,17 @@ class RelationsPanelTest {
         });
         assertThat(on(() -> p.labels(RelationsPanel.CALLEES))).containsExactly("UNTERPRG", "AUSGABE");
 
+        // Passt nur ein Nachfahre, bleibt der Pfad dorthin stehen (Codex #1204).
+        SwingUtilities.invokeAndWait(() -> p.nameFilter(RelationsPanel.CALLEES, "^UNTERPRG$"));
+        assertThat(on(() -> p.labels(RelationsPanel.CALLEES))).containsExactly("UNTERPRG", "HILFE");
+        SwingUtilities.invokeAndWait(() -> p.group(RelationsPanel.CALLEES, true));
+        assertThat(on(() -> p.labels(RelationsPanel.CALLEES))).containsExactly("📞 CALLNAT (1)", "UNTERPRG",
+                "HILFE");
+        SwingUtilities.invokeAndWait(() -> {
+            p.group(RelationsPanel.CALLEES, false);
+            p.nameFilter(RelationsPanel.CALLEES, "^UMSATZ$");
+        });
+
         // Einfachklick: Zeile in der Quelle; Doppelklick: Ziel öffnen.
         SwingUtilities.invokeAndWait(() -> p.clickFirst(RelationsPanel.CALLEES, 1));
         SwingUtilities.invokeAndWait(() -> p.clickFirst(RelationsPanel.CALLEES, 2));

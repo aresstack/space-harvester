@@ -139,9 +139,12 @@ public final class SystemFunctions {
         return out.toString();
     }
 
-    /** Gegenstück zu {@link #serialize()}; {@code null} oder leer ergibt die Vorgaben. */
+    /**
+     * Gegenstück zu {@link #serialize()}. Nur {@code null} (nie gespeichert) ergibt die Vorgaben; eine gespeicherte
+     * leere Liste bleibt leer, damit „alle entfernt“ einen Neustart übersteht.
+     */
     public static SystemFunctions parse(String stored) {
-        if (stored == null || stored.isBlank()) {
+        if (stored == null) {
             return defaults();
         }
         List<Entry> entries = new ArrayList<>();
