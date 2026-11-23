@@ -20,10 +20,19 @@ import javax.swing.JComponent;
  *                   im FTP-Bereich des Command Deck, #1142), {@code null} für keine
  * @param onShown    läuft nach dem Einblenden
  * @param onHidden   läuft nach dem Ausblenden
+ * @param status     Stand der Perspektive links in der Statuszeile der App (etwa der Zustand der Terminal-Sitzung samt
+ *                   Fehler), {@code null} für keinen
  */
 public record Perspective(String id, String title, String hint, boolean ready, JComponent navigation,
                           JComponent workspace, JComponent drawer, JComponent tools, Runnable onShown,
-                          Runnable onHidden) {
+                          Runnable onHidden, JComponent status) {
+
+    /** Ohne eigenen Stand in der Statuszeile. */
+    public Perspective(String id, String title, String hint, boolean ready, JComponent navigation,
+                       JComponent workspace, JComponent drawer, JComponent tools, Runnable onShown,
+                       Runnable onHidden) {
+        this(id, title, hint, ready, navigation, workspace, drawer, tools, onShown, onHidden, null);
+    }
 
     public Perspective {
         Objects.requireNonNull(id, "id");

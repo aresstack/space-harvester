@@ -111,6 +111,8 @@ public final class MainWindow implements AppContext.Navigator {
     static final String CHAT_UNREAD_TOOLTIP = "Chat (Strg+J) · neue Antwort";
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
+    /** Karte des Stands einer Perspektive in der Statuszeile (Präfix vor der Kennung). */
+    private static final String PERSPECTIVE_STATUS = "perspective:";
     private JobStatusLine jobStatus;
     private final JLabel status = Comic.muted(" ");
     /** ✕ hinter dem Stand der App: ein Ergebnis (etwa eines Exports) bleibt stehen, bis es der Benutzer wegklickt. */
@@ -528,6 +530,11 @@ public final class MainWindow implements AppContext.Navigator {
         perspectives.add(Perspectives.missionControl());
         for (Perspective perspective : perspectives.all()) {
             stage.add(perspective.workspace(), perspective.id());
+            if (perspective.status() != null) {
+                // Der Stand der Perspektive steht in derselben Statuszeile wie der der Harvester-Bereiche.
+                perspective.status().setOpaque(false);
+                viewStatus.add(perspective.status(), PERSPECTIVE_STATUS + perspective.id());
+            }
         }
         harvesterNavigation = icons;
         navigationSlot.add(icons, BorderLayout.CENTER);
@@ -883,7 +890,13 @@ public final class MainWindow implements AppContext.Navigator {
         stageCards.show(stage, next.id());
         if (!harvester) {
             // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.
-            viewStatus.setVisible(false);
+            // Eine Perspektive mit eigenem Stand zeigt ihn an derselben Stelle.
+            if (next.status() != null) {
+                viewStatusCards.show(viewStatus, PERSPECTIVE_STATUS + next.id());
+                viewStatus.setVisible(true);
+            } else {
+                viewStatus.setVisible(false);
+            }
             jobStatus.navigationVisible(false);
         }
         if (next.drawer() == null) {

@@ -33,6 +33,18 @@ import javax.swing.SwingUtilities;
  */
 public final class BetaViewWorkspace extends JPanel {
 
+    /**
+     * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
+     * ({@code StatusNote.Tone.ERROR}). Lange Texte kürzt das Label selbst, der volle Text steht im Tooltip.
+     */
+    private final com.aresstack.spaceharvester.app.ui.controls.StatusLabel statusInfo =
+            new com.aresstack.spaceharvester.app.ui.controls.StatusLabel();
+
+    /** Die Karte dieses Bereichs in der Statuszeile der App. */
+    public javax.swing.JComponent statusInfo() {
+        return statusInfo;
+    }
+
     private static final String FORM = "form";
 
     private final BetaViewSessions sessions;
