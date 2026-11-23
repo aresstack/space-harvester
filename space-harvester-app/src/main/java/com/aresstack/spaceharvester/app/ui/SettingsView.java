@@ -112,6 +112,7 @@ public final class SettingsView implements View {
     final VideoSettingsPanel video;
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
+    final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
     final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
@@ -308,7 +309,10 @@ public final class SettingsView implements View {
         page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache, viewChangeLog))));
         page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
-        page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component())));
+        page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component()),
+                Comic.plate(NdvAnalysisSettingsPanel.ORDER_HEADING, Comic.PETROL, ndvAnalysis.orderComponent()),
+                Comic.plate(NdvAnalysisSettingsPanel.STEPLIB_HEADING, Comic.PETROL, ndvAnalysis.stepLibComponent()),
+                Comic.plate(NdvAnalysisSettingsPanel.RULES_HEADING, Comic.ORANGE, ndvAnalysis.rulesComponent())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "

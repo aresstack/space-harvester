@@ -145,6 +145,33 @@ public final class DocumentEditor extends JPanel {
         plate.clickAction();
     }
 
+    /** Springt zu einer Zeile (ab 1) und markiert sie, wie das Öffnen aus der Aufrufhierarchie in MainframeMate. */
+    public void goToLine(int line) {
+        if (line < 1 || area.getLineCount() == 0) {
+            return;
+        }
+        try {
+            int index = Math.min(line, area.getLineCount()) - 1;
+            int start = area.getLineStartOffset(index);
+            int end = area.getLineEndOffset(index);
+            area.setCaretPosition(start);
+            area.moveCaretPosition(Math.max(start, end - 1));
+            java.awt.geom.Rectangle2D box = area.modelToView2D(start);
+            if (box != null) {
+                java.awt.Rectangle visible = box.getBounds();
+                visible.height = Math.max(visible.height * 6, visible.height);
+                area.scrollRectToVisible(visible);
+            }
+        } catch (javax.swing.text.BadLocationException ignored) {
+            // Zeile gibt es nicht (mehr): bleiben, wo die Schreibmarke steht.
+        }
+    }
+
+    /** Zeile der Schreibmarke (ab 1), für Tests. */
+    public int caretLine() {
+        return area.getCaretLineNumber() + 1;
+    }
+
     public String syntaxStyle() {
         return area.getSyntaxEditingStyle();
     }
