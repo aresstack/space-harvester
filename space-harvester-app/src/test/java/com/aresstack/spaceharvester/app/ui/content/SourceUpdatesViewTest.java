@@ -892,6 +892,10 @@ class SourceUpdatesViewTest {
 
         view.followPodcast(List.of(1));
         assertThat(view.podcastMarked()).as("die Seite des laufenden Themas").containsExactly("Noch eine Seite");
+        // zwei Themen derselben Seite: nach dem Zurücknehmen ist nichts mehr gelb
+        view.followPodcast(List.of(0, 1, 1));
+        view.followPodcast(List.of());
+        assertThat(view.podcastMarked()).isEmpty();
         view.followPodcast(List.of(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW));
         assertThat(view.podcastMarked()).as("Einstieg: die Überschrift des Updates").hasSize(1);
         view.followPodcast(List.of());

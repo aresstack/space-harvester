@@ -1653,8 +1653,14 @@ final class SourceUpdatesView extends JPanel {
         unmark.forEach(Runnable::run);
         unmark.clear();
         JComponent first = null;
+        // Mehrere Themen können dieselbe Seite nennen: jedes Teil nur einmal markieren, sonst hielte die zweite
+        // Markierung Gelb für den Ausgangszustand und es bliebe nach dem Zurücknehmen stehen.
+        java.util.Set<JComponent> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         for (Integer number : followed) {
             for (JComponent part : topicParts.getOrDefault(number, List.of())) {
+                if (!seen.add(part)) {
+                    continue;
+                }
                 first = first == null ? part : first;
                 mark(part);
             }
