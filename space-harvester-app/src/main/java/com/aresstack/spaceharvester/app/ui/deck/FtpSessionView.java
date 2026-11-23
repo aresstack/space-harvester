@@ -1,12 +1,12 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
-import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.deck.ftp.ConnectionState;
 import com.aresstack.spaceharvester.deck.ftp.FtpSession;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.FlowLayout;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import javax.swing.JComponent;
@@ -35,13 +35,11 @@ final class FtpSessionView extends JPanel {
     private Consumer<StatusNote> statusSink = note -> { };
     private final FtpDatasetsView datasets;
     private final FtpJobsView jobs;
-    private final ComposerButton reconnect;
-    private final ComposerButton disconnect;
-    private final ComposerButton close;
+    private final com.aresstack.spaceharvester.app.ui.IconButton reconnect;
     private String view = DATASETS;
     private boolean started;
 
-    FtpSessionView(FtpSession session, Consumer<FtpSession> onClose, Runnable showJobs,
+    FtpSessionView(FtpSession session, Runnable showJobs,
                    com.aresstack.spaceharvester.deck.editor.EditorSessions editors) {
         super(new BorderLayout());
         this.session = session;
@@ -55,23 +53,16 @@ final class FtpSessionView extends JPanel {
         actions.add(datasets.actions(), DATASETS);
         actions.add(jobs.actions(), JOBS);
 
-        reconnect = Comic.button("Erneut verbinden", "Die Verbindung zu diesem Server noch einmal aufbauen");
+        reconnect = new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.SYNC,
+                "Erneut verbinden – die Verbindung zu diesem Server noch einmal aufbauen");
         reconnect.addActionListener(e -> later(session.connect(), home -> { }, error -> { }));
-        disconnect = Comic.button("Trennen", "Beide Verbindungen dieser Sitzung trennen (Datasets und Jobs)");
-        disconnect.addActionListener(e -> session.disconnect());
-        close = Comic.button("Schließen", "Getrennte Sitzung aus der Liste nehmen");
-        close.addActionListener(e -> {
-            if (datasets.closeDocuments()) {
-                onClose.accept(session);
-            }
-        });
-        JPanel east = new JPanel(new BorderLayout(12, 0));
-        east.setOpaque(false);
-        east.add(actions, BorderLayout.CENTER);
-        east.add(Comic.row(reconnect, disconnect, close), BorderLayout.EAST);
-        // Die Aktionszeile enthält nur Knöpfe, eine Zeile wie die Aktionszeilen im Space Harvester; der Stand steht in
-        // der Statuszeile der App.
-        JPanel foot = DeckBars.foot(null, east);
+        // Die Aktionszeile enthält nur Knöpfe und beginnt links; Trennen und Schließen macht das ✕ am Reiter in einem
+        // Schritt, der Stand steht in der Statuszeile der App (Angelo, 23.11.2026).
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        row.setOpaque(false);
+        row.add(actions);
+        row.add(reconnect);
+        JPanel foot = DeckBars.foot(row, null);
         add(center, BorderLayout.CENTER);
         add(foot, BorderLayout.SOUTH);
 
@@ -108,8 +99,6 @@ final class FtpSessionView extends JPanel {
     private void stateChanged() {
         ConnectionState state = session.state();
         reconnect.setVisible(state == ConnectionState.FAILED);
-        disconnect.setEnabled(!state.ended());
-        close.setEnabled(state.ended() || state == ConnectionState.FAILED);
         boolean connected = state == ConnectionState.CONNECTED;
         datasets.setConnected(connected);
         jobs.setConnected(connected);

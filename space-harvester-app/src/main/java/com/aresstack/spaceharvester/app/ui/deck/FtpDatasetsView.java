@@ -1,6 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
-import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
@@ -75,9 +75,11 @@ final class FtpDatasetsView extends JPanel {
     private final JPanel documents = new JPanel(documentCards);
     private final Map<EditorSession, DocumentEditor> editorOf = new LinkedHashMap<>();
     private final Map<EditorSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
-    private final ComposerButton save;
+    private static final String DELETE_TIP =
+            "Gewählte Einträge löschen (mit Rückfrage; Mehrfachauswahl mit Strg/Umschalt)";
+    private final IconButton save;
     private final IconButton reloadDocument;
-    private final ComposerButton closeDocument;
+    private final IconButton closeDocument;
     private final JPanel documentsHead;
     /** Rückfrage vor dem Überschreiben eines vorhandenen Members (Tests ersetzen sie). */
     java.util.function.Predicate<String> confirmOverwrite =
@@ -87,12 +89,12 @@ final class FtpDatasetsView extends JPanel {
     private final JLabel newLabel = Comic.text("");
     private final JPanel newBar = new JPanel(new BorderLayout(8, 0));
     private final JPanel actions;
-    private final ComposerButton download;
-    private final ComposerButton upload;
-    private final ComposerButton newMember;
-    private final ComposerButton newDataset;
-    private final ComposerButton delete;
-    private final ComposerButton submit;
+    private final IconButton download;
+    private final IconButton upload;
+    private final IconButton newMember;
+    private final IconButton newDataset;
+    private final IconButton delete;
+    private final IconButton submit;
     private final IconButton back = new IconButton(Glyph.BACK, "Zurück (zum vorher gezeigten Pfad, Pfeil links)");
     private final IconButton forward = new IconButton(new Mirrored(Glyph.BACK), "Vor (Pfeil rechts)");
     private final Deque<String> history = new ArrayDeque<>();
@@ -334,20 +336,20 @@ final class FtpDatasetsView extends JPanel {
         add(north, BorderLayout.NORTH);
         add(split, BorderLayout.CENTER);
 
-        download = Comic.button("Herunterladen …", "Gewähltes Member als Textdatei speichern");
+        download = new IconButton(ComposerIcons.download(), "Herunterladen … – gewähltes Member als Textdatei speichern");
         download.addActionListener(e -> download());
-        upload = Comic.button("Hochladen …", "Lokale Textdatei hierher hochladen (als Member bzw. Datei)");
+        upload = new IconButton(ComposerIcons.export(), "Hochladen … – lokale Textdatei hierher hochladen (als Member bzw. Datei)");
         upload.addActionListener(e -> upload());
-        newMember = Comic.button("Neues Member …", "Leeres Member in diesem Dataset anlegen");
+        newMember = new IconButton(FilesIcons.newFile(), "Neues Member … – leeres Member in diesem Dataset anlegen");
         newMember.addActionListener(e -> askNew(false));
-        newDataset = Comic.button("Neues Dataset …", "Dataset unter diesem Pfad anlegen (mit DSORG, RECFM, LRECL …)");
+        newDataset = new IconButton(FilesIcons.newFolder(),
+                "Neues Dataset … – unter diesem Pfad anlegen (mit DSORG, RECFM, LRECL …)");
         newDataset.addActionListener(e -> askNew(true));
-        delete = Comic.danger("Löschen", "Gewählte Einträge löschen (mit Rückfrage; Mehrfachauswahl mit Strg/Umschalt)");
+        delete = new IconButton(Glyph.TRASH, DELETE_TIP);
         delete.addActionListener(e -> delete());
-        submit = Comic.button("Als Job einreichen", "Gewähltes Member als JCL an JES übergeben");
+        submit = new IconButton(new PlayIcon(), "Als Job einreichen – gewähltes Member als JCL an JES übergeben");
         submit.addActionListener(e -> submit());
-        save = Comic.primary("Speichern", "Änderungen zurück auf den Host schreiben (Strg+S)");
-        save.setIcon(FilesIcons.save());
+        save = new IconButton(FilesIcons.save(), "Speichern – Änderungen zurück auf den Host schreiben (Strg+S)");
         save.addActionListener(e -> {
             if (document != null) {
                 document.save();
@@ -355,7 +357,7 @@ final class FtpDatasetsView extends JPanel {
         });
         reloadDocument = new IconButton(Glyph.REFRESH, "Member neu lesen; ungespeicherte Änderungen gehen verloren");
         reloadDocument.addActionListener(e -> reloadDocument());
-        closeDocument = Comic.button("Schließen", "Dokument schließen");
+        closeDocument = new IconButton(ComposerIcons.close(), "Dokument schließen");
         closeDocument.addActionListener(e -> {
             if (document != null) {
                 closeDocument(document);
@@ -854,12 +856,14 @@ final class FtpDatasetsView extends JPanel {
         submit.setEnabled(connected && file);
         int count = selectedAll().size();
         delete.setEnabled(connected && count > 0);
-        delete.setText(count > 1 ? "Löschen (" + count + ")" : "Löschen");
+        delete.setToolTipText(count > 1 ? "Löschen (" + count + ") – " + DELETE_TIP : DELETE_TIP);
         upload.setEnabled(connected && !current.isEmpty());
         newMember.setEnabled(connected && !current.isEmpty() && (!mvs || MvsPath.unquote(current).contains(".")));
         newDataset.setEnabled(connected && !current.isEmpty());
-        newMember.setText(mvs ? "Neues Member …" : "Neue Datei …");
-        newDataset.setText(mvs ? "Neues Dataset …" : "Neuer Ordner …");
+        newMember.setToolTipText(mvs ? "Neues Member … – leeres Member in diesem Dataset anlegen"
+                : "Neue Datei … – leere Datei in diesem Ordner anlegen");
+        newDataset.setToolTipText(mvs ? "Neues Dataset … – unter diesem Pfad anlegen (mit DSORG, RECFM, LRECL …)"
+                : "Neuer Ordner … – Ordner unter diesem Pfad anlegen");
         back.setEnabled(!history.isEmpty());
         forward.setEnabled(!future.isEmpty());
         boolean showing = document != null;
@@ -1333,7 +1337,7 @@ final class FtpDatasetsView extends JPanel {
     }
 
     /** Dreieck „Ausführen“ als 16-px-Symbol. */
-    private record PlayIcon() implements javax.swing.Icon {
+    record PlayIcon() implements javax.swing.Icon {
         @Override
         public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
             java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
