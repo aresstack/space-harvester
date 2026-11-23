@@ -81,10 +81,10 @@ public final class TerminalWorkspace extends JPanel {
      * Schließen stehen nur hier bzw. als ✕ am Reiter (Angelo, 23.11.2026).
      */
     private final com.aresstack.spaceharvester.app.ui.IconButton more;
-    /** Höhe der Kopfzeile samt Linie: wie die Kopfzeilen der übrigen Perspektiven. */
-    static final int HEAD_HEIGHT = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.HEAD_HEIGHT;
-    /** Mindesthöhe der F-Tasten-Leiste unten: wie die Fußleiste des Space Harvesters (Knopf 22 px, Linie, Abstand). */
-    static final int FOOT_HEIGHT = 31;
+    /** Höhe der Kopfzeile samt Linie: wie alle Bereiche des Command Deck ({@link DeckBars}). */
+    static final int HEAD_HEIGHT = DeckBars.HEAD_HEIGHT;
+    /** Höhe der F-Tasten-Leiste unten: wie die Fußleiste des Space Harvesters ({@link DeckBars}). */
+    static final int FOOT_HEIGHT = DeckBars.FOOT_HEIGHT;
     /** Als Lesezeichen merken: Ziel, Anmeldung und Makro (Stern in MainframeMate). */
     private final com.aresstack.spaceharvester.app.ui.IconButton star;
     private final TerminalSettings settings;
@@ -146,11 +146,9 @@ public final class TerminalWorkspace extends JPanel {
         pillGroup.add(newPill);
         pills.add(newPill);
         // Kopfzeile wie die der übrigen Perspektiven: Reiter links, Tasten mittig, Aktionen rechts (Angelo, 23.11.).
+        // Reiter und Tasten teilen sich die linke Seite der Kopfleiste; die Tasten stehen dort mittig.
         JPanel head = new JPanel(new HeadLayout());
         head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, 12, 0, 8)));
-        head.setPreferredSize(new java.awt.Dimension(0, HEAD_HEIGHT));
         head.add(pills, HeadLayout.LEFT);
         // Sondertasten wie in der Werkzeugleiste von MainframeMate: ENT, CLR, PA1–PA3, SYS.
         JPanel special = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
@@ -219,28 +217,21 @@ public final class TerminalWorkspace extends JPanel {
         for (JComponent part : new JComponent[] {assistHint, undoAssist, copy, paste, star, more}) {
             actions.add(part);
         }
-        head.add(actions, HeadLayout.RIGHT);
+        JPanel headBar = DeckBars.head(head, actions);
 
-        // Unten nur die F-Tasten, so hoch wie die Fußleiste des Space Harvesters; der Stand steht in der Statuszeile.
-        JPanel foot = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout()) {
-            @Override
-            public java.awt.Dimension getPreferredSize() {
-                java.awt.Insets in = getInsets();
-                int bar = functionKeys.isVisible() ? functionKeys.getPreferredSize().height : 0;
-                return new java.awt.Dimension(0, Math.max(FOOT_HEIGHT, bar + in.top + in.bottom));
-            }
-        };
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, 8, 0, 8)));
-        foot.add(functionKeys);
+        // Unten nur die F-Tasten, mittig, so hoch wie die Fußleiste des Space Harvesters; der Stand steht in der
+        // Statuszeile der App, nie hier.
+        JPanel keys = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout());
+        keys.setOpaque(false);
+        keys.add(functionKeys);
+        JPanel foot = DeckBars.foot(keys, null);
 
         // Mitte: nur der Himmel mit dem Terminal bzw. dem Formular.
         JPanel stage = new JPanel(new BorderLayout());
         stage.setOpaque(false);
         stage.add(sky, BorderLayout.CENTER);
 
-        add(head, BorderLayout.NORTH);
+        add(headBar, BorderLayout.NORTH);
         add(stage, BorderLayout.CENTER);
         add(foot, BorderLayout.SOUTH);
 
