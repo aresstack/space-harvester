@@ -10,7 +10,7 @@ import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.CopyButton;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.app.ui.controls.SaveChooser;
-import com.aresstack.spaceharvester.app.ui.deck.editor.MainframeSyntax;
+import com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax;
 import com.aresstack.spaceharvester.deck.ftp.FtpSession;
 import com.aresstack.spaceharvester.deck.ftp.NameFilter;
 import com.aresstack.spaceharvester.deck.ftp.jes.JesJob;
@@ -710,7 +710,8 @@ final class FtpJobsView extends JPanel {
         SpoolText.Language effective = SpoolText.detect(spoolText.getText(),
                 (String) spoolText.getClientProperty("ddName"), chosen);
         String style = switch (effective) {
-            case JCL -> SyntaxConstants.SYNTAX_STYLE_PROPERTIES_FILE;
+            case JCL -> MainframeSyntax.JCL;
+            case COBOL -> MainframeSyntax.COBOL;
             case NATURAL -> MainframeSyntax.NATURAL;
             default -> SyntaxConstants.SYNTAX_STYLE_NONE;
         };

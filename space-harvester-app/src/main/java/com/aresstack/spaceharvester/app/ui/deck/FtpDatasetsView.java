@@ -22,6 +22,7 @@ import com.aresstack.spaceharvester.deck.ftp.FtpSession;
 import com.aresstack.spaceharvester.deck.ftp.MvsPath;
 import com.aresstack.spaceharvester.deck.ftp.RemoteEntry;
 import com.aresstack.spaceharvester.deck.ftp.RemoteFile;
+import com.aresstack.spaceharvester.mainframe.outline.SourceLanguage;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.FlowLayout;
@@ -679,6 +680,11 @@ final class FtpDatasetsView extends JPanel {
             return;
         }
         DocumentEditor editor = new DocumentEditor(session);
+        if (owner.session().mvs()) {
+            // Wie MainframeMate (FileTabImpl „▶ Ausführen“, nur FTP + MVS + JCL): den Editor-Inhalt einreichen,
+            // auch ungespeichert.
+            editor.addAction("JCL als Job einreichen (▶ Ausführen)", new PlayIcon(), this::runJcl);
+        }
         editorOf.put(session, editor);
         documents.add(editor, session.location());
         ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.file(), session.name(), session.location());
@@ -1120,6 +1126,23 @@ final class FtpDatasetsView extends JPanel {
                 });
     }
 
+    /** „▶ Ausführen“: den Text im Editor an JES übergeben, sofern er als JCL gelesen wird. */
+    void runJcl(DocumentEditor editor) {
+        if (editor.language().filter(language -> language == SourceLanguage.JCL).isEmpty()) {
+            owner.status("Ausführen geht nur mit JCL – im Editor die Sprache JCL wählen", true);
+            return;
+        }
+        String jcl = editor.text();
+        String name = editor.session().name();
+        FtpSession session = owner.session();
+        owner.status("Reiche " + name + " ein …", false);
+        owner.run(session.jobsOnce(jes -> jes.submit(jcl)), "Einreichen von " + name + " fehlgeschlagen", job -> {
+            owner.status(FtpJobsView.submitted(job), false);
+            owner.jobs().refreshLater(FtpJobsView.submitted(job));
+            showJobs.run();
+        });
+    }
+
     private static String fileName(RemoteEntry entry) {
         String name = MvsPath.isMember(entry.path()) ? MvsPath.splitMember(entry.path())[1] : entry.name();
         return name.replaceAll("[\\\\/:*?\"<>|']", "_");
@@ -1301,6 +1324,32 @@ final class FtpDatasetsView extends JPanel {
         @Override
         public int getIconHeight() {
             return icon.getIconHeight();
+        }
+    }
+
+    /** Dreieck „Ausführen“ als 16-px-Symbol. */
+    private record PlayIcon() implements javax.swing.Icon {
+        @Override
+        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                        java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(c == null || !c.isEnabled() ? Comic.MUTED : Comic.GREEN);
+                g2.fillPolygon(new int[] {x + 4, x + 13, x + 4}, new int[] {y + 2, y + 8, y + 14}, 3);
+            } finally {
+                g2.dispose();
+            }
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 16;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 16;
         }
     }
 

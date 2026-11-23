@@ -322,10 +322,19 @@ class FtpWorkspaceTest {
             assertThat(host.submitted()).containsExactly("//ORBIT    JOB\n");
             assertThat(onEdt(view::statusText)).contains("JOB04711").contains("ORBIT");
 
+            // „▶ Ausführen“ im Editor reicht den Editor-Inhalt (JCL) ein, wie in MainframeMate.
+            SwingUtilities.invokeAndWait(() -> datasets.runJcl(datasets.editor(build)));
+            waitFor(() -> host.submitted().size() == 2 || onEdt(view::statusText).contains("nur mit JCL"), until);
+            assertThat(host.submitted()).hasSize(2);
+            assertThat(host.submitted().get(1)).contains("*NOCH EINS").contains("//BUILD    JOB");
+            // Ohne Fenster ist nichts „sichtbar“; die Oberfläche fragt sonst beim Zeigen neu ab.
+            SwingUtilities.invokeAndWait(jobs::refresh);
+            waitFor(() -> onEdt(() -> jobs.shownJobs().size() == 5), until);
+
             // Löschen (die Rückfrage gehört der Oberfläche; hier direkt).
             JesJob submitted = onEdt(() -> jobs.shownJobs().get(3));
             SwingUtilities.invokeAndWait(() -> jobs.deleteJob(submitted));
-            waitFor(() -> onEdt(() -> jobs.shownJobs().size() == 3), until);
+            waitFor(() -> onEdt(() -> jobs.shownJobs().size() == 4), until);
 
             // Bereichswechsel trennt nichts.
             SwingUtilities.invokeAndWait(() -> {
