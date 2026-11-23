@@ -568,8 +568,11 @@ public final class AppSettingsLoader {
         // K4: terms.glossary.automatic, Standard aus, wie beim Dienst.
         boolean glossaryAutomatic = flag(get(map(get(terms, "glossary")), "automatic"), false,
                 "space-harvester." + TermSettings.GLOSSARY_AUTOMATIC, problems);
+        // Geprüfte Glossare: terms.glossary.approved, Standard an, wie beim Dienst.
+        boolean glossaryApproved = flag(get(map(get(terms, "glossary")), "approved"), true,
+                "space-harvester." + TermSettings.GLOSSARY_APPROVED, problems);
         return terms(terms, problems).withGlossaryRules(glossaryRules(map(get(glossary, "rules")), problems))
-                .withGlossaryAutomatic(glossaryAutomatic);
+                .withGlossaryAutomatic(glossaryAutomatic).withGlossaryApproved(glossaryApproved);
     }
 
     /**

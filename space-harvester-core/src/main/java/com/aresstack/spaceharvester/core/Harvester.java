@@ -810,6 +810,10 @@ public final class Harvester implements AutoCloseable {
             // #122 Stufe 2: Fachglossar als Nutzerdaten neben den Beziehungen; KI nur auf Knopfdruck, dasselbe Modell.
             this.glossary = new Glossary(catalog, new FileGlossaryStore(builder.dataDirectory.resolve("glossary")),
                     access, cache::findHeader, clock);
+            // Geprüfte Glossare (Angelo 23.11.2026) beim Start übernehmen, nur mit terms.glossary.approved.
+            if (builder.terms.glossaryApproved()) {
+                com.aresstack.spaceharvester.application.glossary.ApprovedGlossary.bundled().forEach(glossary::adopt);
+            }
             // K5b: Suchmethode „Nur Fachbegriffe“ über Glossar und Synonymbeziehungen, nichts gespeichert.
             // Reihenfolge wie im Reiter „Fachglossar“: Wichtigkeit aus der Übersicht (entsteht weiter unten, gefragt
             // wird erst bei der Suche), je Bereich gehalten bis zur nächsten Aussagenanalyse.

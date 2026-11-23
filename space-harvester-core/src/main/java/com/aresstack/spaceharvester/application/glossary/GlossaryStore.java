@@ -3,8 +3,10 @@ package com.aresstack.spaceharvester.application.glossary;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Port der Glossarablage. Glossareinträge sind Nutzerdaten, kein Cache: Die Ablage liegt außerhalb des
@@ -29,6 +31,20 @@ public interface GlossaryStore {
 
     /** Protokoll eines Eintrags, älteste zuerst. */
     List<AuditEntry> history(String id);
+
+    /**
+     * Welche der Kennungen das Protokoll mit {@code action} nennt, etwa {@code remove}. Eine Ablage mit großem
+     * Protokoll liest es dafür nur einmal.
+     */
+    default Set<String> logged(Collection<String> ids, String action) {
+        Set<String> found = new HashSet<>();
+        for (String id : ids) {
+            if (history(id).stream().anyMatch(entry -> action.equals(entry.action()))) {
+                found.add(id);
+            }
+        }
+        return found;
+    }
 
     /**
      * Ein Eintrag im Änderungsprotokoll.
