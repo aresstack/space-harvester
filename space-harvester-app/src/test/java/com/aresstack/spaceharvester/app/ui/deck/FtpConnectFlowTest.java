@@ -64,6 +64,11 @@ class FtpConnectFlowTest {
                 assertThat(FtpConnectForm.isConfigured()).isFalse();
                 deck.ftp().newConnection();
                 assertThat(deck.ftp().selected()).as("beim ersten Mal das Formular").isNull();
+                assertThat(deck.ftp().statusNote().text()).isEqualTo(NdvWorkspace.NO_SESSION);
+                java.awt.Component frame = SwingUtilities.getAncestorOfClass(
+                        com.aresstack.spaceharvester.app.ui.controls.InputFrame.class, deck.ftp().form().server);
+                assertThat(frame.getPreferredSize().width).as("so breit wie beim Terminal")
+                        .isEqualTo(FtpConnectForm.FIELD_WIDTH);
                 FtpConnectForm form = deck.ftp().form();
                 form.show(entries);
                 form.server.setSelectedIndex(1);

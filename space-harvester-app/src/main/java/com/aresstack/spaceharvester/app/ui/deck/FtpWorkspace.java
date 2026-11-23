@@ -273,7 +273,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
             }
         });
         if (session == null) {
-            status.show(StatusNote.plain(" "));
+            status.show(StatusNote.plain(NdvWorkspace.NO_SESSION));
             cards.show(center, FORM);
             footCards.show(footTools, FORM);
             SwingUtilities.invokeLater(form::focusServer);

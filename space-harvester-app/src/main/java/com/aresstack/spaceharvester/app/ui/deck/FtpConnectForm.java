@@ -46,6 +46,8 @@ final class FtpConnectForm extends JPanel {
         void connect(FtpProfile profile, String entry);
     }
 
+    /** Breite des Server-Felds wie im Formular des Terminals. */
+    static final int FIELD_WIDTH = 415;
     static final String ENTRY_KEY = "deck.ftp.entry";
     /** Die gemerkte Verbindung hat einmal geklappt: „Neue Verbindung“ verbindet dann ohne Formular. */
     static final String CONFIGURED_KEY = "deck.ftp.configured";
@@ -122,6 +124,9 @@ final class FtpConnectForm extends JPanel {
         JPanel fields = new JPanel(new GridBagLayout());
         fields.setOpaque(false);
         row(fields, 0, "Server", serverFrame);
+        // So breit wie im Formular des Terminals, damit die Formulare des Command Deck gleich aussehen und der Eintrag
+        // lesbar ist.
+        serverFrame.setPreferredSize(new Dimension(FIELD_WIDTH, serverFrame.getPreferredSize().height));
         row(fields, 1, "", serverState);
         advanced.setOpaque(false);
         // Zwei Spalten, damit „Verbinden“ auch bei kleinem Fenster sichtbar bleibt: links Verbindung und Übertragung,
