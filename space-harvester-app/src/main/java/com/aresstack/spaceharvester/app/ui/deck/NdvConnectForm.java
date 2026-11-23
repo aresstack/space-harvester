@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -27,12 +28,14 @@ import javax.swing.JPanel;
 /**
  * „Neue Verbindung“ zum NDV-Server (Natural Development Server). Ein Server ist derselbe KeePass-Eintrag wie beim
  * Terminal (Angelo, 22.11.2026): Adresse aus dem URL-Feld, Benutzer und Passwort aus dem Eintrag. Sichtbar sind nur
- * Server und Port (Vorgabe {@value NdvProfile#DEFAULT_PORT}; der Port des Eintrags gilt fürs Terminal); ein Host von
- * Hand steht unter „Erweitert“. Verbunden wird erst auf „Verbinden“, das Passwort liest die Sitzung im Hintergrund.
+ * Server und Port (Vorgabe {@value NdvProfile#DEFAULT_PORT} wie in MainframeMate; der Port des Eintrags gilt fürs
+ * Terminal); ein Host von Hand und die Standard-Bibliothek stehen unter „Erweitert“. Verbunden wird erst auf „Verbinden“, das Passwort liest die Sitzung im Hintergrund.
  */
 final class NdvConnectForm extends JPanel {
 
     static final String ENTRY_KEY = "deck.ndv.entry";
+    /** Standard-Bibliothek, die nach dem Verbinden geöffnet wird (wie {@code ndvDefaultLibrary} in MainframeMate). */
+    static final String LIBRARY_KEY = "deck.ndv.defaultLibrary";
 
     /** Verbinden mit Profil, Eintragstitel für die Anzeige und der Quelle der Anmeldung. */
     @FunctionalInterface
@@ -43,6 +46,7 @@ final class NdvConnectForm extends JPanel {
     final JComboBox<ServerAccount> server = new JComboBox<>();
     final PlaceholderField port = new PlaceholderField(6, String.valueOf(NdvProfile.DEFAULT_PORT));
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
+    final PlaceholderField library = new PlaceholderField(12, "leer = Bibliotheksliste");
     private final JLabel problem = new JLabel(" ");
     private final JLabel serverState = Comic.muted(" ");
     private final JPanel advanced = new JPanel(new GridBagLayout());
@@ -83,10 +87,14 @@ final class NdvConnectForm extends JPanel {
         row(fields, 2, "Port", port);
         advanced.setOpaque(false);
         row(advanced, 0, "Host", host);
+        row(advanced, 1, "Standard-Bibliothek", library);
+        String rememberedLibrary = AppState.shared().get(LIBRARY_KEY);
+        library.setText(rememberedLibrary == null ? "" : rememberedLibrary);
+        library.setToolTipText("Wird nach dem Verbinden geöffnet; leer zeigt die Bibliotheksliste");
         advanced.setVisible(false);
         advancedToggle.setFont(Comic.regular(12.5f));
         advancedToggle.setForeground(Comic.BLUE);
-        advancedToggle.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        Cursors.set(advancedToggle, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         advancedToggle.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseClicked(java.awt.event.MouseEvent event) {
@@ -100,6 +108,7 @@ final class NdvConnectForm extends JPanel {
         button.addActionListener(e -> submit());
         host.addActionListener(e -> submit());
         port.addActionListener(e -> submit());
+        library.addActionListener(e -> submit());
 
         JPanel body = new JPanel();
         body.setOpaque(false);
@@ -207,7 +216,7 @@ final class NdvConnectForm extends JPanel {
         if (account.user().isEmpty()) {
             throw new IllegalArgumentException("Der KeePass-Eintrag „" + account.entry() + "“ hat keinen Benutzer");
         }
-        return new NdvProfile(target, number(port.getText(), NdvProfile.DEFAULT_PORT));
+        return new NdvProfile(target, number(port.getText(), NdvProfile.DEFAULT_PORT), library.getText());
     }
 
     private static int number(String text, int fallback) {
@@ -234,6 +243,7 @@ final class NdvConnectForm extends JPanel {
         ServerAccount account = selected();
         // Nur der Server wird gemerkt; ein abweichender Host oder Port gilt nur für diese Wahl.
         AppState.shared().put(ENTRY_KEY, account.entry());
+        AppState.shared().put(LIBRARY_KEY, profile.defaultLibrary());
         String entry = account.entry();
         connect.open(profile, entry, () -> accounts.credentials(entry));
     }

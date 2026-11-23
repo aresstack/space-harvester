@@ -741,7 +741,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         }
         try {
             if (uncommitted > 0) {
-                writer.commit();
+                TragicWriters.commitOnClose(writer, "Anreicherungsablage");
             }
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
@@ -749,7 +749,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             closed = true;
             try {
                 searchers.close();
-            } catch (IOException ignored) {
+            } catch (IOException | org.apache.lucene.store.AlreadyClosedException ignored) {
                 // Der Writer wird trotzdem geschlossen.
             }
             closeQuietly(writer, directory);

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.application.links.PageLinks;
@@ -90,7 +91,7 @@ final class References extends JPanel {
         belowPanel.setVisible(false);
         // Herkunft als Link ganz rechts: ein Klick dort öffnet die Unterseite, sonst das Ziel des Verweises.
         belowTable.getColumnModel().getColumn(BelowModel.ORIGIN).setCellRenderer(new OriginRenderer());
-        belowTable.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        Cursors.set(belowTable, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         belowTable.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseClicked(java.awt.event.MouseEvent e) {

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import javax.swing.JTextPane;
 import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
@@ -26,7 +27,7 @@ final class LinkMouseListener extends MouseAdapter {
 
     @Override
     public void mouseMoved(MouseEvent event) {
-        pane.setCursor(findLink(event) == null
+        Cursors.set(pane, findLink(event) == null
                 ? Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR)
                 : Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
     }

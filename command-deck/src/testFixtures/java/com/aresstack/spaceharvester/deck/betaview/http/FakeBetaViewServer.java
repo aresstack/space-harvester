@@ -308,6 +308,26 @@ public final class FakeBetaViewServer implements AutoCloseable {
                 session.current = null;
                 html(exchange, "<html><body>ok</body></html>");
             }
+            case "document.notes.list.action" -> html(exchange, session.current.title().startsWith("Tagesabschluss")
+                    ? "<html><body><div class=\"we_note_text\">Bitte bis Freitag prüfen</div></body></html>"
+                    : "<html><body><div id=\"we_id_doc_notes_container_content\" data-counttotal=\"0\"></div>"
+                    + "</body></html>");
+            case "holdhide.list.action" -> send(exchange, 200, "application/json", "{\"holdhide\":[]}");
+            case "document.search.action" -> {
+                String needle = form.getOrDefault("searchString", "");
+                StringBuilder hits = new StringBuilder("<html><body><ul>");
+                List<String> pages = session.current.pages();
+                for (int i = 0; i < pages.size(); i++) {
+                    for (String line : pages.get(i).split("\n")) {
+                        if (line.toLowerCase(java.util.Locale.ROOT).contains(needle.toLowerCase(java.util.Locale.ROOT))) {
+                            hits.append("<li>Seite ").append(i + 1).append(": ").append(line.trim()).append("</li>");
+                        }
+                    }
+                }
+                html(exchange, hits.append("</ul></body></html>").toString());
+            }
+            case "printDialog.action" -> html(exchange, "<html><body><div class=\"modal-body\">Drucker: Etage 3, "
+                    + session.current.pages().size() + " Seiten</div></body></html>");
             default -> send(exchange, 404, "text/plain", "unbekannt: " + action);
         }
     }

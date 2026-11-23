@@ -927,6 +927,16 @@ class UpdateSummaryTest {
             assertThat(children).anySatisfy(child ->
                     assertThat(child.parameters().get(ChangeLog.STEP_PARAMETER)).startsWith("Teil 1 von "));
             assertThat(mostAtOnce.get()).as("gleichzeitig, nie mehr als ai.parallel").isBetween(2, 3);
+            // Angelo 23.11.2026: Der Oberauftrag zählt Schritte; jeder fertige Teil ist einer, ein Teil mit verlorener
+            // Seite ein gescheiterter. Die Seiten zählt der Unterauftrag (vorher stand der Oberauftrag bei 23/43,
+            // obwohl alle Teile fertig waren).
+            long stepsWithLoss = children.stream().filter(child -> child.state() == JobState.COMPLETED
+                    && child.progress().failed() > 0).count();
+            long finishedSteps = children.stream().filter(child -> child.state() == JobState.COMPLETED).count();
+            assertThat(stepsWithLoss).isEqualTo(1);
+            assertThat(done.progress().processed()).isEqualTo(done.progress().discovered());
+            assertThat(done.progress().failed()).isEqualTo(stepsWithLoss);
+            assertThat(done.progress().processed()).isGreaterThanOrEqualTo(finishedSteps);
         } finally {
             failWhen = null;
             UpdateSummarizer.backoffMillis = backoff;

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -1392,7 +1393,12 @@ final class SourceUpdatesView extends JPanel {
         boolean topical = summary.statements().stream().anyMatch(statement -> statement.title() != null);
         if (summary.text() != null && !summary.text().isBlank() && (topical || summary.statements().isEmpty())) {
             reportBody.add(Box.createVerticalStrut(6));
-            add(reportBody, Comic.wrapped(summary.text(), Comic.TEXT, 13.5f));
+            WrappedText overview = Comic.wrapped(summary.text(), Comic.TEXT, 13.5f);
+            overview.setName("summary-overview");
+            add(reportBody, overview);
+            // Einstieg und Abschluss des Podcasts erzählen diesen Überblick: dann ist er gelb (Angelo 23.11.2026).
+            topicParts.put(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW,
+                    new ArrayList<>(List.of(overview)));
         }
         Map<String, List<ReportedPage>> bySpace = new java.util.LinkedHashMap<>();
         found.pages().forEach(page -> bySpace.computeIfAbsent(page.spaceKey(), ignored -> new ArrayList<>())
@@ -2137,7 +2143,7 @@ final class SourceUpdatesView extends JPanel {
         };
         // Die Textfelder fangen Mausklicks selbst ab; der Klick gilt auf Zeile und Texten gleich.
         for (Component part : parts) {
-            part.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(part, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             part.addMouseListener(click);
             if (part instanceof JComponent component) {
                 component.setToolTipText(tip);

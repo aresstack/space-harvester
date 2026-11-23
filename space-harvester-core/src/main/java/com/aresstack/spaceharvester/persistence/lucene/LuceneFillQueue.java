@@ -231,7 +231,7 @@ public final class LuceneFillQueue implements BackgroundFill.FillQueue, AutoClos
         }
         closed = true;
         try {
-            writer.rollback();
+            TragicWriters.rollbackOnClose(writer, "Warteschlange der Hintergrundfüllung");
         } catch (IOException e) {
             throw new PageCacheException("Warteschlange der Hintergrundfüllung " + path
                     + " kann nicht geschlossen werden", e);

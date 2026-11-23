@@ -29,7 +29,7 @@ public final class EscCircle extends JComponent {
     public EscCircle(Runnable action, String tooltip) {
         this.action = Objects.requireNonNull(action, "action");
         setToolTipText(tooltip);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setOpaque(false);
         addMouseListener(new MouseAdapter() {
             @Override

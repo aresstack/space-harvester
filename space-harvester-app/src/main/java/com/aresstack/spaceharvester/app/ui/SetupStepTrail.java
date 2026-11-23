@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiTypography;
 
@@ -57,7 +58,8 @@ final class SetupStepTrail extends JComponent {
             public void mouseMoved(MouseEvent e) {
                 int index = stepAt(e.getX());
                 boolean active = navigable && onSelect != null && index >= 0 && index != current;
-                setCursor(active ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
+                Cursors.set(SetupStepTrail.this,
+                        active ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
                 setToolTipText(active ? "Zu „" + names[index] + "“ springen" : null);
             }
         };
@@ -74,7 +76,7 @@ final class SetupStepTrail extends JComponent {
     void setNavigable(boolean value) {
         this.navigable = value;
         if (!value) {
-            setCursor(Cursor.getDefaultCursor());
+            Cursors.set(this, Cursor.getDefaultCursor());
         }
     }
 

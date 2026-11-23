@@ -163,6 +163,41 @@ class PodcastControlTest {
     }
 
     @Test
+    void anotherSummaryStartsItsTimelineAtZeroNotAtTheEndOfThePreviousPodcast(
+            @org.junit.jupiter.api.io.TempDir Path dir) throws Exception {
+        // Angelo 23.11.2026: nach dem Quellwechsel stand die Zeitleiste bis zum ersten Ton auf dem Ende des vorigen
+        Path wav = dir.resolve("abschnitt.wav");
+        javax.sound.sampled.AudioFormat format = new javax.sound.sampled.AudioFormat(8000, 16, 1, true, false);
+        byte[] silence = new byte[16000]; // 1 s
+        javax.sound.sampled.AudioSystem.write(new javax.sound.sampled.AudioInputStream(
+                new java.io.ByteArrayInputStream(silence), format, silence.length / 2),
+                javax.sound.sampled.AudioFileFormat.Type.WAVE, wav.toFile());
+        onEdt(() -> {
+            control = control();
+            control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+            control.player().tracks(List.of(
+                    new com.aresstack.spaceharvester.app.speech.PodcastPlayer.Track(wav, true, "Einstieg"),
+                    new com.aresstack.spaceharvester.app.speech.PodcastPlayer.Track(wav, true, "Startseite")), false);
+            control.player().seek(2000);
+            control.timeline().update(2000, 2000);
+            assertEquals(2000, control.player().total());
+
+            control.summary(summary("Das Projekt Nordlicht hat ein Glossar."));
+
+            assertEquals(0, control.player().position());
+            assertEquals(0, control.player().total());
+            assertEquals(List.of(), control.player().topicStarts());
+            assertFalse(control.timeline().isEnabled(), "Zeitleiste ohne Länge und Endstand des vorigen");
+
+            // Der neue Podcast entsteht noch (kein Plan): ▶ zeigt die Zeitleiste, aber nicht am Ende des vorigen
+            control.orb().doClick();
+            assertTrue(control.timelineShown());
+            assertEquals(0, control.player().position());
+            assertFalse(control.timeline().isEnabled());
+        });
+    }
+
+    @Test
     void showsThePictureOfTheRunningTopicOverTheContentAndHidesItWithoutOne(@org.junit.jupiter.api.io.TempDir Path dir)
             throws Exception {
         Path raster = dir.resolve("startseite.png");

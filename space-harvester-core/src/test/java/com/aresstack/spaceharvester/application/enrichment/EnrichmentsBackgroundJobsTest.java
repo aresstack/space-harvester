@@ -436,6 +436,180 @@ class EnrichmentsBackgroundJobsTest {
     }
 
     @Test
+    void aPartComputesAsManyPagesAtOnceAsTheParallelSettingAllowsNeverMore() throws Exception {
+        // Angelo 22.11.2026: Die KI-Anreicherung lief streng nacheinander; jeder Auftrag hält sich an ai.parallel,
+        // auch innerhalb seines Schritts.
+        Remote remote = new Remote();
+        remote.together = new java.util.concurrent.CountDownLatch(3);
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.parallel(() -> 3);
+            for (int i = 1; i <= 7; i++) {
+                enrichments.refresh(page("wiki", String.valueOf(i), "Text " + i));
+            }
+
+            assertTimeoutPreemptively(Duration.ofSeconds(20), () -> runAll(held));
+
+            assertThat(remote.mostAtOnce.get()).isEqualTo(3);
+            assertThat(remote.calls).hasSize(7);
+            assertThat(part(background, "wiki").progress()).satisfies(progress -> {
+                assertThat(progress.processed()).isEqualTo(7);
+                assertThat(progress.written()).isEqualTo(7);
+                assertThat(progress.failed()).isZero();
+            });
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void inParallelTheProcessorsOfOnePageStillRunOneAfterTheOtherInTheirOrder() throws Exception {
+        // Die Navigation braucht das Embedding derselben Seite: parallel laufen nur verschiedene Seiten.
+        Remote first = new Remote();
+        Remote second = new Remote();
+        second.id = "zweiter";
+        second.log = first.log;
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = new Enrichments(PROJECTOR, List.of(first, second), store, CLOCK, executor);
+            enrichments.background(background, key -> Optional.ofNullable(cache.get(key)));
+            enrichments.parallel(() -> 4);
+            for (int i = 1; i <= 4; i++) {
+                enrichments.refresh(page("wiki", String.valueOf(i), "Text " + i));
+            }
+
+            assertTimeoutPreemptively(Duration.ofSeconds(20), () -> runAll(held));
+
+            List<String> log = first.log;
+            for (int i = 1; i <= 4; i++) {
+                String page = "wiki/" + i;
+                assertThat(log.indexOf("ende remote " + page)).as(page).isNotNegative()
+                        .isLessThan(log.indexOf("start zweiter " + page));
+            }
+            assertThat(part(background, "wiki").progress().written()).isEqualTo(8);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void anUnreachableServiceIsTriedAgainInTheSamePartAndEachMissStandsWithItsReason() throws Exception {
+        // Angelo 22.11.2026: selbstheilend, im selben Auftrag, mit Versuchszähler und Grund in der Diagnose.
+        Remote remote = new Remote();
+        remote.unreachable.put("wiki/1", new AtomicInteger(2));
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            PageSnapshot first = page("wiki", "1", "Eins");
+            enrichments.refresh(first);
+            runAll(held);
+
+            JobStatus wiki = part(background, "wiki");
+            assertThat(background.parts(Enrichments.BACKGROUND_KIND)).hasSize(1);
+            assertThat(remote.calls.get("wiki/1").get()).isEqualTo(3);
+            assertThat(wiki.progress()).satisfies(progress -> {
+                assertThat(progress.written()).isEqualTo(1);
+                assertThat(progress.failed()).isZero();
+            });
+            assertThat(store.find(first.key())).singleElement().satisfies(result -> assertThat(result.status())
+                    .isEqualTo(Enrichment.Status.OK));
+            List<JobEvent> misses = jobs.events(wiki.id()).stream()
+                    .filter(event -> Enrichments.WORK_FAILED.equals(event.code())).toList();
+            assertThat(misses).hasSize(2).allSatisfy(event -> {
+                assertThat(event.severity()).isEqualTo(JobEvent.Severity.WARNING);
+                assertThat(event.message()).contains("Seite 1", "AiServiceException", "ConnectException",
+                        "wird wiederholt").doesNotContain("Verbindung abgelehnt");
+            });
+            assertThat(misses.get(0).message()).contains("Versuch 1 von 3");
+            assertThat(misses.get(1).message()).contains("Versuch 2 von 3");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void withoutNetworkThePartWaitsForItAndComputesTheSamePageAgainWithoutCountingAnAttempt() throws Exception {
+        // Angelo 22.11.2026: auf das Netz warten, statt Versuche zu verbrauchen; dann von selbst weiter.
+        Remote remote = new Remote();
+        remote.unreachable.put("wiki/1", new AtomicInteger(1));
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try (com.aresstack.spaceharvester.application.network.NetworkState network =
+                     new com.aresstack.spaceharvester.application.network.NetworkState()) {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.network(network);
+            PageSnapshot first = page("wiki", "1", "Eins");
+            enrichments.refresh(first);
+            Thread runner = Thread.ofPlatform().start(() -> runAll(held));
+            awaitUntil(() -> !network.online());
+            assertThat(network.online()).as("der Netzfehler schaltet auf offline").isFalse();
+            network.succeeded();
+            runner.join(TimeUnit.SECONDS.toMillis(20));
+            assertThat(runner.isAlive()).isFalse();
+
+            JobStatus wiki = part(background, "wiki");
+            assertThat(remote.calls.get("wiki/1").get()).isEqualTo(2);
+            assertThat(wiki.progress().failed()).isZero();
+            assertThat(wiki.progress().written()).isEqualTo(1);
+            List<JobEvent> events = jobs.events(wiki.id());
+            assertThat(events).noneMatch(event -> Enrichments.WORK_FAILED.equals(event.code()));
+            assertThat(events).anySatisfy(event -> assertThat(event.code())
+                    .isEqualTo(com.aresstack.spaceharvester.application.network.NetworkWait.OFFLINE));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void afterTheLastAttemptThePageCountsAsFailedAndWaitsForTheRetryButton() throws Exception {
+        Remote remote = new Remote();
+        remote.unreachable.put("wiki/1", new AtomicInteger(Enrichments.ATTEMPTS));
+        ExecutorService executor = Enrichments.background(10);
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        Jobs jobs = jobs(held::add, 4);
+        BackgroundJobs background = new BackgroundJobs(jobs, "app");
+        try {
+            Enrichments enrichments = enrichments(remote, executor, background);
+            enrichments.refresh(page("wiki", "1", "Eins"));
+            runAll(held);
+
+            JobStatus wiki = part(background, "wiki");
+            assertThat(remote.calls.get("wiki/1").get()).isEqualTo(Enrichments.ATTEMPTS);
+            assertThat(wiki.progress().failed()).isEqualTo(1);
+            assertThat(jobs.events(wiki.id()).stream()
+                    .filter(event -> Enrichments.WORK_FAILED.equals(event.code()))
+                    .map(JobEvent::severity).toList())
+                    .containsExactly(JobEvent.Severity.WARNING, JobEvent.Severity.WARNING, JobEvent.Severity.ERROR);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void onlyServiceOutagesAreTriedAgainNeverAMissingReleaseOrOwnBug() {
+        assertThat(Enrichments.retryable(new com.aresstack.spaceharvester.ai.AiServiceException(
+                com.aresstack.spaceharvester.ai.AiServiceException.Reason.TIMEOUT, "x"))).isTrue();
+        assertThat(Enrichments.retryable(new IllegalStateException("x",
+                new java.io.UncheckedIOException(new java.net.SocketException("x"))))).isTrue();
+        assertThat(Enrichments.retryable(new IllegalStateException("x"))).isFalse();
+        assertThat(Enrichments.retryable(new com.aresstack.spaceharvester.ai.AiServiceException(
+                com.aresstack.spaceharvester.ai.AiServiceException.Reason.NOT_CONFIGURED, "x"))).isFalse();
+        assertThat(Enrichments.retryable(null)).isFalse();
+    }
+
+    @Test
     void aTlsFailureNamesOnlyTheExceptionClassNeverItsMessage() {
         // Codex #1103: Der TLS-Befund trug die Meldung der Ausnahme.
         RuntimeException cause = new IllegalStateException("Aufruf gescheitert",
@@ -1330,15 +1504,26 @@ class EnrichmentsBackgroundJobsTest {
         private final Map<String, Runnable> during = new ConcurrentHashMap<>();
         /** Seiten ohne KI-Freigabe. */
         private final java.util.Set<String> blocked = ConcurrentHashMap.newKeySet();
+        /** Je Seite, wie oft der Dienst noch nicht erreichbar ist, bevor er antwortet. */
+        private final Map<String, AtomicInteger> unreachable = new ConcurrentHashMap<>();
+        /** Hält jede Berechnung an, bis so viele zugleich laufen (oder die Frist abläuft). */
+        private volatile java.util.concurrent.CountDownLatch together = new java.util.concurrent.CountDownLatch(0);
+        private final AtomicInteger running = new AtomicInteger();
+        private final AtomicInteger mostAtOnce = new AtomicInteger();
 
         @Override
         public boolean appliesTo(PageKey key) {
             return !blocked.contains(key.sourceId() + "/" + key.pageId());
         }
 
+        /** Kennung des Prozessors; mehrere Prozessoren je Seite für die Reihenfolge. */
+        private String id = "remote";
+        /** Gemeinsames Protokoll mehrerer Prozessoren: „start/ende Prozessor Seite“. */
+        private java.util.List<String> log = new java.util.concurrent.CopyOnWriteArrayList<>();
+
         @Override
         public String id() {
-            return "remote";
+            return id;
         }
 
         @Override
@@ -1359,11 +1544,36 @@ class EnrichmentsBackgroundJobsTest {
         @Override
         public EnrichmentOutput process(PageKey key, PageText text) {
             String page = key.sourceId() + "/" + key.pageId();
+            log.add("start " + id + " " + page);
+            try {
+                return computed(page);
+            } finally {
+                log.add("ende " + id + " " + page);
+            }
+        }
+
+        private EnrichmentOutput computed(String page) {
             calls.computeIfAbsent(page, ignored -> new AtomicInteger()).incrementAndGet();
             order.add(page);
             Runnable hook = during.remove(page);
             if (hook != null) {
                 hook.run();
+            }
+            int now = running.incrementAndGet();
+            mostAtOnce.accumulateAndGet(now, Math::max);
+            try {
+                together.countDown();
+                together.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                running.decrementAndGet();
+            }
+            AtomicInteger outages = unreachable.get(page);
+            if (outages != null && outages.getAndDecrement() > 0) {
+                throw new com.aresstack.spaceharvester.ai.AiServiceException(
+                        com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNREACHABLE, "Embedding-Dienst: x",
+                        new java.net.ConnectException("Verbindung abgelehnt"));
             }
             if (failing.contains(page)) {
                 throw new IllegalStateException("Dienst nicht erreichbar");

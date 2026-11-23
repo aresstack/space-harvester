@@ -71,7 +71,7 @@ class NdvClient implements Closeable {
                     "Verbindung abgelehnt: " + host + ":" + port
                     + "\n\nMögliche Ursachen:"
                     + "\n• NDV-Server läuft nicht oder ist nicht erreichbar"
-                    + "\n• Port " + port + " ist falsch (Standard: 2700)"
+                    + "\n• Port " + port + " ist falsch (Standard: 8011)"
                     + "\n• Firewall/Proxy blockiert die Verbindung"
                     + "\n• VPN nicht verbunden", e);
         } catch (java.net.UnknownHostException e) {

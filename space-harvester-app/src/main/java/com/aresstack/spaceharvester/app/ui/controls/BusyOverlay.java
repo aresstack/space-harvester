@@ -383,7 +383,7 @@ public final class BusyOverlay extends JPanel {
         Stop() {
             setOpaque(false);
             setFocusable(false);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(CANCEL);
             addMouseListener(new MouseAdapter() {
                 @Override

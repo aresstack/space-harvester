@@ -67,6 +67,8 @@ class BetaViewWorkspaceTest {
 
             SwingUtilities.invokeAndWait(() -> {
                 panel.search.favorite.setText(FakeBetaViewServer.FAVORITE);
+                // Vorgabe aus MainframeMate ist Form APZF; die erfundenen Dokumente haben andere Formen.
+                panel.search.form.apply("*");
                 panel.search.search();
             });
             await(() -> panel.search.table.getRowCount() == 3, "drei Treffer");

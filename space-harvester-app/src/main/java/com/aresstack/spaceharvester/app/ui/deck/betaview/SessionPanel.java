@@ -262,6 +262,45 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
     }
 
     @Override
+    public void quickInfo(DocumentTab document, String headline,
+                          java.util.List<com.aresstack.spaceharvester.deck.betaview.InfoLine> lines) {
+        prompts.show(this, headline.isEmpty() ? document.label() : headline, lines);
+    }
+
+    @Override
+    public void print(DocumentTab document) {
+        after(session.printInfo(document), text -> prompts.showText(this, "Druckinformationen", text),
+                "Druckinformationen nicht lesbar");
+    }
+
+    @Override
+    public void notes(DocumentTab document) {
+        info("Lade Notizen …");
+        after(session.notes(document), text -> {
+            documents.notes(document, text);
+            info("Notizen geladen");
+        }, "Notizen nicht lesbar", () -> documents.notes(document, ""));
+    }
+
+    @Override
+    public void marks(DocumentTab document) {
+        info("Lade markierte Bereiche …");
+        after(session.markedRanges(document), text -> {
+            documents.marks(document, text);
+            info("Markierte Bereiche geladen");
+        }, "Markierte Bereiche nicht lesbar", () -> documents.marks(document, ""));
+    }
+
+    @Override
+    public void searchText(DocumentTab document, String query) {
+        info("Suche „" + query + "“ im Dokument …");
+        after(session.searchText(document, query), text -> {
+            documents.searchResult(document, text);
+            info("Volltextsuche fertig");
+        }, "Volltextsuche gescheitert");
+    }
+
+    @Override
     public void close(DocumentTab document) {
         after(session.close(document), done -> {
             documents.removed(document);

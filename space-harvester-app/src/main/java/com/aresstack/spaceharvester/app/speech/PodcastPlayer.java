@@ -144,6 +144,24 @@ public final class PodcastPlayer {
         }
     }
 
+    /**
+     * Beendet die Wiedergabe und vergisst den Podcast: keine Abschnitte, Position 0. Für einen anderen Podcast, damit
+     * dessen Zeitleiste nicht mit Länge und Endstand des vorigen beginnt (Angelo 23.11.2026).
+     */
+    public void reset() {
+        synchronized (lock) {
+            generation++;
+            playing = false;
+            paused = false;
+            tracks = List.of();
+            durations = new long[0];
+            producing = false;
+            position = 0;
+            seekTo = -1;
+            lock.notifyAll();
+        }
+    }
+
     /** Die aktuelle Position. */
     public long position() {
         synchronized (lock) {
@@ -274,6 +292,10 @@ public final class PodcastPlayer {
         } catch (IOException | UnsupportedAudioFileException | LineUnavailableException | RuntimeException e) {
             long at;
             synchronized (lock) {
+                if (generation != mine) {
+                    // Eine überholte Wiedergabe (gestoppt, zurückgesetzt): ihr Fehler betrifft den neuen Stand nicht.
+                    return;
+                }
                 at = position;
                 playing = false;
             }
@@ -300,7 +322,13 @@ public final class PodcastPlayer {
         }
         int block = Math.max(frameSize, (int) (format.getFrameRate() * BLOCK_MILLIS / 1000) * frameSize);
         byte[] buffer = new byte[block];
-        long start = startOf(index);
+        long start;
+        synchronized (lock) {
+            if (generation != mine) {
+                return false;
+            }
+            start = startOf(index);
+        }
         long played = offset;
         while (true) {
             synchronized (lock) {
@@ -321,6 +349,10 @@ public final class PodcastPlayer {
             int read = stream.read(buffer, 0, buffer.length - buffer.length % frameSize);
             if (read <= 0) {
                 synchronized (lock) {
+                    // Während des Lesens zurückgesetzt: Abschnitte und Position gehören schon zum neuen Stand.
+                    if (generation != mine) {
+                        return false;
+                    }
                     position = start + Math.max(played, durationAt(index));
                 }
                 return true;
@@ -329,6 +361,10 @@ public final class PodcastPlayer {
             played += Math.round(read / (double) frameSize / format.getFrameRate() * 1000);
             long total;
             synchronized (lock) {
+                if (generation != mine) {
+                    line.flush();
+                    return false;
+                }
                 position = start + played;
                 total = total(durations);
             }

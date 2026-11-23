@@ -86,7 +86,7 @@ public final class ComicDivider extends BasicSplitPaneDivider {
 
     private void showCursor() {
         boolean lying = splitPane != null && splitPane.getOrientation() == JSplitPane.VERTICAL_SPLIT;
-        setCursor(!draggable ? Cursor.getDefaultCursor()
+        Cursors.set(this, !draggable ? Cursor.getDefaultCursor()
                 : Cursor.getPredefinedCursor(lying ? Cursor.S_RESIZE_CURSOR : Cursor.E_RESIZE_CURSOR));
     }
 

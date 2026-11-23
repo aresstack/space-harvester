@@ -12,7 +12,6 @@ import com.aresstack.spaceharvester.application.holdings.HoldingsCatalog;
 import com.aresstack.spaceharvester.application.holdings.HoldingsCatalog.CatalogPage;
 import com.aresstack.spaceharvester.application.holdings.HoldingsCatalog.LockedPage;
 import com.aresstack.spaceharvester.application.holdings.HoldingsCatalog.Stock;
-import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheState;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -104,7 +103,7 @@ class PageReleaseServiceTest {
     @Test
     void aPageTheCallerMayNotSeeInAVisibleSpaceIsNeitherShownNorRemovedNorReported() {
         PageReleaseService open = service(true);
-        open.release(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "3")));
+        seed("DEV", "3", "3", "4");
         // Der Space ist sichtbar, Seite 3 (zugleich der Knoten) nicht.
         PageReleaseService restricted = service(new AccessGuard((context, scope, kind) -> kind == AccessKind.METADATA
                 && "3".equals(scope.pageId()) ? AccessDecision.DENY : AccessDecision.ALLOW));
@@ -141,37 +140,41 @@ class PageReleaseServiceTest {
         return new PageKey("wiki", pageId);
     }
 
+    /**
+     * Einträge, wie sie das frühere Eintragen ganzer Auswahlen hinterließ (Knoten = Wurzel der Auswahl, {@code null} für
+     * den ganzen Space): Die stehen noch in vorhandenen Listen und müssen sich bündeln und entfernen lassen.
+     */
+    private void seed(String spaceKey, String node, String... pageIds) {
+        List<PageReleases.Entry> entries = new java.util.ArrayList<>();
+        for (String pageId : pageIds) {
+            entries.add(new PageReleases.Entry(key(pageId), spaceKey, node, PageReleases.CHAT, NOW));
+        }
+        releases.add(entries);
+    }
+
     @Test
-    void onlyStoredPagesOfTheSelectionComeOnTheListWithTheirRootAsNode() {
+    void onlySingleStoredPagesComeOnTheListEachWithItselfAsNode() {
         PageReleaseService service = service(true);
-        Selection subtree = Selection.of(Selection.Root.subtree("wiki", "DEV", "3"));
 
-        assertThat(service.newPages(CALLER, subtree)).isEqualTo(2);
-        assertThat(service.release(CALLER, subtree)).extracting(entry -> entry.key().pageId() + "@" + entry.node())
-                .containsExactlyInAnyOrder("3@3", "4@3");
-        assertThat(releases.contains(key("6"))).as("gesperrt").isFalse();
-        assertThat(service.newPages(CALLER, subtree)).isZero();
-
-        // Der ganze Space danach: nur das Neue kommt dazu, 3 und 4 behalten ihren Knoten; 2 ist nur in der Quelle.
-        Selection space = Selection.of(Selection.Root.space("wiki", "DEV"));
-        assertThat(service.newPages(CALLER, space)).isEqualTo(1);
-        assertThat(service.release(CALLER, space)).extracting(entry -> entry.key().pageId())
-                .containsExactly("1");
-        assertThat(releases.entries()).allSatisfy(entry -> {
+        assertThat(service.releasePage(CALLER, "DEV", key("3"))).extracting(entry -> entry.key().pageId() + "@"
+                + entry.node()).containsExactly("3@3");
+        assertThat(releases.contains(key("4"))).as("Unterseiten nie mit").isFalse();
+        assertThat(service.releasePage(CALLER, "DEV", key("3"))).as("schon eingetragen").isEmpty();
+        assertThat(service.releasePage(CALLER, "DEV", key("2"))).as("nur in der Quelle").isEmpty();
+        assertThat(service.releasePage(CALLER, "DEV", key("6"))).as("gesperrt").isEmpty();
+        assertThat(releases.entries()).singleElement().satisfies(entry -> {
             assertThat(entry.spaceKey()).isEqualTo("DEV");
             assertThat(entry.origin()).isEqualTo(PageReleases.CHAT);
             assertThat(entry.releasedAt()).isEqualTo(NOW);
         });
-        assertThat(releases.contains(key("2"))).isFalse();
-        assertThat(service.release(CALLER, space)).isEmpty();
     }
 
     @Test
     void theListIsGroupedBySpaceAndNodeAndRemovableByPageGroupAndSpace() {
         PageReleaseService service = service(true);
-        service.release(CALLER, Selection.of(Selection.Root.subtree("wiki", "DEV", "3")));
-        service.release(CALLER, Selection.of(Selection.Root.space("wiki", "DEV")));
-        service.release(CALLER, Selection.of(Selection.Root.space("wiki", "OPS")));
+        seed("DEV", "3", "3", "4");
+        seed("DEV", null, "1");
+        seed("OPS", null, "8");
 
         assertThat(service.groups(CALLER)).extracting(group -> group.spaceKey() + "/" + group.node() + "/"
                 + group.nodeTitle() + "/" + group.count())
@@ -191,7 +194,8 @@ class PageReleaseServiceTest {
 
     @Test
     void pagesInSpacesTheCallerMayNotSeeNeitherAppearNorAreRemoved() {
-        service(true).release(CALLER, Selection.of(Selection.Root.space("wiki", "OPS")));
+        service(true);
+        seed("OPS", null, "8");
         PageReleaseService restricted = service(false);
 
         assertThat(restricted.groups(CALLER)).isEmpty();

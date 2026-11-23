@@ -52,7 +52,9 @@ public enum Glyph implements Icon {
      * „Alles zeigen“ bzw. „Zurück zur Gesamtsicht“ (W4b): vier Punkte auf einem Ring. Bewusst kein Pfeil, damit der
      * Knopf nicht mit „Zurück“ ({@link #BACK}) verwechselt wird.
      */
-    OVERVIEW;
+    OVERVIEW,
+    /** „Vorwärts“ im Verlauf (Pfeil rechts), Gegenstück zu {@link #BACK}. */
+    FORWARD;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -258,6 +260,14 @@ public enum Glyph implements Icon {
                     head.moveTo(7, 4);
                     head.lineTo(3, 8);
                     head.lineTo(7, 12);
+                    g.draw(head);
+                }
+                case FORWARD -> {
+                    g.draw(new Line2D.Double(2.5, 8, 13, 8));
+                    Path2D head = new Path2D.Double();
+                    head.moveTo(9, 4);
+                    head.lineTo(13, 8);
+                    head.lineTo(9, 12);
                     g.draw(head);
                 }
                 case OVERVIEW -> {
