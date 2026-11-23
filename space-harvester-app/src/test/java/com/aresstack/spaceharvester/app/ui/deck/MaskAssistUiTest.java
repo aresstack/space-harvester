@@ -40,6 +40,7 @@ class MaskAssistUiTest {
                 FakeTn3270Host.Line.input(2, 16, 20, false, false)), "Cp273")) {
             SwingUtilities.invokeAndWait(() -> {
                 deck = new CommandDeck();
+                deck.show(DeckArea.TERMINAL);
                 ConnectForm form = deck.terminal().form();
                 form.host.setText("127.0.0.1");
                 form.port.setText(String.valueOf(host.port()));

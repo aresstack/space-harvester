@@ -92,7 +92,9 @@ public final class CommandDeck {
     };
     private final NdvWorkspace ndv;
     private final Perspective perspective;
-    private DeckArea area = DeckArea.TERMINAL;
+    /** Startseite: beim Wechsel ins Deck gewählt, verbindet nichts. */
+    private final DeckHome home;
+    private DeckArea area = DeckArea.HOME;
 
     /** Ohne Passwortspeicher und Proxy (Tests). */
     public CommandDeck() {
@@ -154,6 +156,20 @@ public final class CommandDeck {
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
         navigation.setBorder(BorderFactory.createEmptyBorder(0, 20, 0, 0));
+        home = new DeckHome(java.util.List.of(
+                new DeckHome.Tile(DeckArea.TERMINAL, () -> status(sessions.all().stream()
+                        .filter(s -> s.state() == com.aresstack.spaceharvester.deck.terminal.SessionState.CONNECTED)
+                        .count(), ConnectForm.ENTRY_KEY)),
+                new DeckHome.Tile(DeckArea.FTP, () -> status(ftpSessions.all().stream()
+                        .filter(s -> s.state() == com.aresstack.spaceharvester.deck.ftp.ConnectionState.CONNECTED)
+                        .count(), FtpConnectForm.ENTRY_KEY)),
+                new DeckHome.Tile(DeckArea.NDV, () -> status(ndvSessions.all().stream()
+                        .filter(s -> s.state() == com.aresstack.spaceharvester.deck.ndv.NdvState.CONNECTED)
+                        .count(), NdvConnectForm.ENTRY_KEY)),
+                new DeckHome.Tile(DeckArea.BETAVIEW, () -> status(betaView.connectedCount(),
+                        com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewWorkspace.ENTRY_KEY)),
+                new DeckHome.Tile(DeckArea.FILES, () -> java.util.List.of("Lokale Ordner: ohne Anmeldung bereit"))),
+                this::show);
         ButtonGroup group = new ButtonGroup();
         for (DeckArea candidate : DeckArea.values()) {
             ComposerToggleButton button = new ComposerToggleButton(candidate.icon(), null,
@@ -165,6 +181,7 @@ public final class CommandDeck {
             buttons.put(candidate, button);
             navigation.add(button);
             workspace.add(switch (candidate) {
+                case HOME -> home;
                 case TERMINAL -> terminal;
                 case BETAVIEW -> betaView;
                 case FILES -> files;
@@ -195,10 +212,34 @@ public final class CommandDeck {
                 findBar.focus();
             }
         });
-        show(DeckArea.TERMINAL);
+        show(DeckArea.HOME);
+        // Angelo, 23.11.2026: Wer ins Deck wechselt, landet auf Home. Die Bereiche verbinden beim Öffnen sofort; das
+        // soll erst passieren, wenn man einen davon anklickt.
         perspective = new Perspective(Perspectives.COMMAND_DECK, "Command Deck",
                 "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", true, navigation,
-                stage, null, tools, null, null, status);
+                stage, null, tools, () -> show(DeckArea.HOME), null, status);
+    }
+
+    /**
+     * Der Stand eines Bereichs für seine Kachel auf Home: verbunden oder nicht, der gemerkte KeePass-Eintrag und eine
+     * gesetzte Anmeldesperre. Liest nur gemerkte Werte, nie ein Passwort.
+     */
+    private static java.util.List<String> status(long connected, String entryKey) {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        lines.add(connected == 0 ? "nicht verbunden" : connected == 1 ? "1 Verbindung offen"
+                : connected + " Verbindungen offen");
+        String entry = com.aresstack.spaceharvester.app.ui.AppState.shared().get(entryKey);
+        if (entry != null && !entry.isBlank()) {
+            lines.add("Zugang: " + entry.strip());
+            DeckLogin.guard().failure(entry).ifPresent(failure ->
+                    lines.add("Automatische Anmeldung gesperrt: " + failure.reason()));
+        }
+        return lines;
+    }
+
+    /** Die Startseite (für Tests). */
+    DeckHome home() {
+        return home;
     }
 
     /** Die Fußleiste mit der Lupe (für Tests). */
@@ -295,6 +336,8 @@ public final class CommandDeck {
 
     static com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints chatHints(DeckArea shown) {
         return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints(switch (shown) {
+            case HOME -> "Command Deck: Der Chat sieht die Übersicht der Bereiche – verbunden wird erst, wenn du einen "
+                    + "öffnest.";
             case TERMINAL -> "Command Deck: Der Chat liest die Terminal-Maske und füllt Felder aus – abschicken kannst "
                     + "nur du.";
             case FTP -> "Command Deck › FTP: Der Chat sieht die Ansicht, liest Datasets, Members und Spools – ändern "
@@ -306,6 +349,8 @@ public final class CommandDeck {
             case FILES -> "Command Deck › Dateien: Der Chat sieht den offenen Ordner und liest Dateien darin, auch "
                     + "PDF, Word und Excel – ändern kannst nur du.";
         }, switch (shown) {
+            case HOME -> java.util.List.of(action("Bereiche erklären",
+                    "Erkläre mir kurz, wofür die Bereiche des Command Deck da sind."));
             case TERMINAL -> java.util.List.of(action("Maske erklären", "Erkläre mir die aktuelle Maske."));
             case FTP -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
                     action("Offenes zusammenfassen", "Fasse das offene Member bzw. den offenen Spool zusammen."));
@@ -336,12 +381,15 @@ public final class CommandDeck {
             case FILES -> "Dort sieht er einen Ordner seiner Festplatte oder eines Netzlaufwerks; offene Dateien stehen "
                     + "als Text im Editor.";
             case TERMINAL -> "Dort arbeitet er in einer TN3270-Sitzung.";
+            case HOME -> "Dort sieht er die Übersicht der Bereiche Terminal, FTP, NDV, BetaView und Dateien mit ihrem "
+                    + "Verbindungsstand; verbunden wird erst beim Öffnen eines Bereichs.";
         };
     }
 
     /** Die Oberfläche eines Bereichs, wie sie in der Mitte steht. */
     private JComponent areaView(DeckArea shown) {
         return switch (shown) {
+            case HOME -> home;
             case TERMINAL -> terminal;
             case FTP -> ftp;
             case NDV -> ndv;

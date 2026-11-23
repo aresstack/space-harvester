@@ -32,8 +32,8 @@ class CommandDeckTest {
             deck = new CommandDeck();
             List<String> names = java.util.Arrays.stream(deck.navigation().getComponents())
                     .map(c -> ((AbstractButton) c).getAccessibleContext().getAccessibleName()).toList();
-            assertThat(names).containsExactly("Terminal", "FTP", "NDV", "BetaView", "Dateien");
-            assertThat(deck.area()).isEqualTo(DeckArea.TERMINAL);
+            assertThat(names).containsExactly("Home", "Terminal", "FTP", "NDV", "BetaView", "Dateien");
+            assertThat(deck.area()).as("Start auf Home, damit nichts verbindet").isEqualTo(DeckArea.HOME);
             assertThat(deck.sessions().all()).as("Öffnen baut keine Verbindung auf").isEmpty();
             assertThat(deck.perspective().drawer()).isNull();
             deck.show(DeckArea.BETAVIEW);
@@ -133,6 +133,32 @@ class CommandDeckTest {
                 deck.show(area);
                 assertThat(deck.findBar().isShowing() || deck.findBar().getParent() == stage).as(area.name()).isTrue();
             }
+        });
+    }
+
+    @Test
+    void homeIsChosenOnEveryArrivalAndItsTilesOpenTheAreaWithoutConnecting() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            deck = new CommandDeck();
+            DeckHome home = deck.home();
+            assertThat(home.statusOf(DeckArea.TERMINAL)).startsWith("nicht verbunden");
+            assertThat(home.statusOf(DeckArea.FTP)).startsWith("nicht verbunden");
+            assertThat(home.statusOf(DeckArea.FILES)).contains("ohne Anmeldung");
+
+            // Ein Klick auf eine Kachel wechselt in den Bereich, wie das Icon oben.
+            java.awt.Component ftpTile = home.tileOf(DeckArea.FTP);
+            for (java.awt.event.MouseListener listener : ftpTile.getMouseListeners()) {
+                listener.mouseClicked(new java.awt.event.MouseEvent(ftpTile, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                        0, 0, 1, 1, 1, false));
+            }
+            assertThat(deck.area()).isEqualTo(DeckArea.FTP);
+
+            // Zurück in die Perspektive: wieder Home, keine Verbindung.
+            deck.show(DeckArea.TERMINAL);
+            deck.perspective().onShown().run();
+            assertThat(deck.area()).isEqualTo(DeckArea.HOME);
+            assertThat(deck.sessions().all()).isEmpty();
+            assertThat(CommandDeck.chatHints(DeckArea.HOME).hint()).contains("verbunden wird erst");
         });
     }
 }

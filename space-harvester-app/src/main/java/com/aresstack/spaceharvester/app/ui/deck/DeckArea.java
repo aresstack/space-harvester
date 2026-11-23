@@ -3,10 +3,15 @@ package com.aresstack.spaceharvester.app.ui.deck;
 import javax.swing.Icon;
 
 /**
- * Die Arbeitsbereiche der oberen Icon-Leiste des Command Deck, in genau dieser Reihenfolge (#1141/#1142,
+ * Startseite und Arbeitsbereiche der oberen Icon-Leiste des Command Deck, in genau dieser Reihenfolge (#1141/#1142,
  * Produktentscheidung 22.11.2026). JES hat kein eigenes Symbol: Jobs und Spool gehören in den FTP-Bereich.
  */
 public enum DeckArea {
+    /**
+     * Startseite (Angelo, 23.11.2026): beim Wechsel ins Deck vorausgewählt, damit nicht sofort eine Verbindung
+     * aufgebaut wird. Erst ein Klick auf einen Bereich verbindet.
+     */
+    HOME("Home", "Übersicht der Bereiche – verbindet nichts", true),
     TERMINAL("Terminal", "Interaktive TN3270-Sitzungen", true),
     FTP("FTP", "MVS-Datasets und Members, Transfers, JES-Jobs und Spool", true),
     NDV("NDV", "Natural Development Server: Bibliotheken, Objekte, Quelltext", true),
@@ -38,6 +43,7 @@ public enum DeckArea {
 
     Icon icon() {
         return switch (this) {
+            case HOME -> DeckIcons.home();
             case TERMINAL -> DeckIcons.terminal();
             case FTP -> DeckIcons.ftp();
             case NDV -> DeckIcons.ndv();

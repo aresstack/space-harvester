@@ -112,12 +112,15 @@ class MainWindowPerspectiveTest {
             assertThat(window.split().isLeftCollapsed()).isTrue();
             perspectives.select(Perspectives.COMMAND_DECK);
             assertThat(window.commandDeck().sessions().all()).as("Wechsel verbindet nicht").isEmpty();
+            assertThat(window.commandDeck().area()).as("Wechsel landet auf Home")
+                    .isEqualTo(com.aresstack.spaceharvester.app.ui.deck.DeckArea.HOME);
             // Der Stand des Deck-Bereichs steht links in der Statuszeile der App, je Bereich eine Karte.
             assertThat(window.viewStatus().isVisible()).isTrue();
             assertThat(visible(window.viewStatus())).isSameAs(window.commandDeck().perspective().status());
             JComponent deckStatus = window.commandDeck().perspective().status();
             assertThat(deckStatus.getComponentCount())
                     .isEqualTo(com.aresstack.spaceharvester.app.ui.deck.DeckArea.values().length);
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.TERMINAL);
             Component terminalStatus = visible(deckStatus);
             assertThat(terminalStatus).isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.StatusLabel.class);
             window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.FTP);
