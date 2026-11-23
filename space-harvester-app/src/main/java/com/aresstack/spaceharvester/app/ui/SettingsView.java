@@ -50,6 +50,8 @@ public final class SettingsView implements View {
     static final String CACHE = "Cache";
     /** Bereich „Video“: Marken, Standbilder und Player ({@code space-harvester-app.video.*}). */
     static final String VIDEO = "Video";
+    /** Bereich „Command Deck“: Diagramm-Ansicht und Systemfunktionen (MainframeMate: Einstellungen › Systemfunktionen). */
+    static final String DECK = "Command Deck";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -305,6 +307,12 @@ public final class SettingsView implements View {
         page(CACHE, Comic.column(Comic.plate(SettingDialogs.SYNC_ALL_TITLE, Comic.PETROL,
                 withButtons(cache, editCache, viewChangeLog))));
         page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
+        var deck = new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel();
+        page(DECK, Comic.column(
+                Comic.plate(com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel.DIAGRAM_HEADING,
+                        Comic.BLUE, deck.diagramComponent()),
+                Comic.plate(com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel.FUNCTIONS_HEADING,
+                        Comic.PETROL, deck.functionsComponent())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "

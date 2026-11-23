@@ -316,6 +316,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
                     return new SourceDiagrams.Result(trimmed.isEmpty() ? Optional.empty() : Optional.of(trimmed),
                             wanted, false);
                 }
+                VisualAction.takeLabelProblem();
                 return SourceDiagrams.generate(text, name, language, wanted, depth, compact, targets);
             }
 
@@ -346,6 +347,11 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
                     showCollapse();
                 }
                 diagram.setMermaidSource(result.mermaid().get());
+                String labelProblem = VisualAction.takeLabelProblem();
+                if (labelProblem != null) {
+                    plate.show("KI-Kurzbeschriftung nicht möglich (" + labelProblem
+                            + ") – die Blöcke tragen die einfache Beschriftung.", null, null);
+                }
             }
         }.execute();
     }
@@ -361,6 +367,12 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
             return;
         }
         String name = CallTargets.clean(label);
+        var function = SystemFunctionsStore.shared().lookup().get(name.toUpperCase(java.util.Locale.ROOT));
+        if (function != null) {
+            // Systemfunktion (IDCAMS, IEFBR14, …): Wikipedia-Artikel wie in MainframeMate
+            openWikipedia(function);
+            return;
+        }
         diagram.getStatusLabel().setText("Suche „" + name + "“ …");
         new SwingWorker<Boolean, Void>() {
             @Override
@@ -378,6 +390,39 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
                 }
                 diagram.getStatusLabel().setText(opened ? "„" + name + "“ geöffnet."
                         : "„" + name + "“ nicht gefunden (weder offen noch neben dieser Datei).");
+            }
+        }.execute();
+    }
+
+    private void openWikipedia(com.aresstack.spaceharvester.mainframe.diagram.SystemFunction function) {
+        String url = function.wikipediaUrl();
+        diagram.getStatusLabel().setText("Öffne Wikipedia: " + function.name() + " …");
+        new SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                try {
+                    if (!java.awt.Desktop.isDesktopSupported()
+                            || !java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
+                        return "kein Browser verfügbar (" + url + ")";
+                    }
+                    java.awt.Desktop.getDesktop().browse(java.net.URI.create(url));
+                    return null;
+                } catch (Exception e) {
+                    return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                }
+            }
+
+            @Override
+            protected void done() {
+                String problem;
+                try {
+                    problem = get();
+                } catch (Exception e) {
+                    problem = e.getMessage();
+                }
+                diagram.getStatusLabel().setText(problem == null
+                        ? function.name() + ": Wikipedia geöffnet."
+                        : "Wikipedia nicht geöffnet: " + problem);
             }
         }.execute();
     }

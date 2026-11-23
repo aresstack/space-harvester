@@ -44,6 +44,27 @@ public final class VisualAction {
         }
     }
 
+    private static volatile DiagramLabels labels;
+
+    /**
+     * Schließt die Diagramm-Ansicht an die App an (beim Start des Hauptfensters): die KI-Kurzbeschriftung
+     * zusammengefasster Blöcke über den streamenden Chat-Port und die einstellbare Liste der Systemfunktionen
+     * (Einstellungen › Command Deck), beide wie in MainframeMate.
+     */
+    public static void connect(java.util.function.Supplier<DiagramLabels.Target> target) {
+        DiagramLabels next = new DiagramLabels(target);
+        labels = next;
+        com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.blockLabelSummarizer(next);
+        SystemFunctionsStore store = SystemFunctionsStore.shared();
+        com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.systemFunctions(store::names);
+    }
+
+    /** Grund, warum die KI-Kurzbeschriftung zuletzt ausblieb, einmalig; {@code null} ohne Problem. */
+    static String takeLabelProblem() {
+        DiagramLabels current = labels;
+        return current == null ? null : current.takeProblem();
+    }
+
     /** Hängt den Knopf an einen Editor (auch für Tests). */
     public static VisualAction attach(DocumentEditor editor, EditorSessions editors) {
         return new VisualAction(editor, editors);
