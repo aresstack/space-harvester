@@ -1159,12 +1159,11 @@ public final class PageDetailPanel extends JPanel {
         watchOverviewHoldings(runtime, selection);
         overviewGlossary.selection(selection);
         overviewGraph.pages(selection == null || runtime == null || selection.global() ? null
-                : () -> runtime.workspace().resolveSelection(selection.toCore(runtime)).pages());
+                : () -> SelectionHoldings.pages(runtime, selection));
         wideAnalysis.scope(selection == null || runtime == null ? null : new AnalysisView.Scope() {
             @Override
             public PageSet pages() {
-                return selection.global() ? null
-                        : runtime.workspace().resolveSelection(selection.toCore(runtime)).pages();
+                return SelectionHoldings.pages(runtime, selection);
             }
 
             @Override
@@ -1179,20 +1178,13 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Meldet sich beim Bestand der Auswahl an (eine Quelle samt Space, bei „Wissensquellen“ jede Quelle), damit Zahlen
+     * Meldet sich beim Bestand der Auswahl an (je Wurzel Quelle samt Space, bei „Wissensquellen“ jede Quelle, bei einem
+     * Favoriten-Ordner jeder Favorit; {@link SelectionHoldings}), damit Zahlen
      * und Herkunft der Begriffe nach Laden, Abgleich oder Bereinigung stimmen; kein Zeitgeber.
      */
     private void watchOverviewHoldings(AppRuntime runtime, ExportPanel.Selection selection) {
         overviewHoldings.forEach(com.aresstack.spaceharvester.application.observe.Subscription::close);
         overviewHoldings.clear();
-        if (runtime == null || selection == null) {
-            return;
-        }
-        List<String> sourceIds = selection.global()
-                ? runtime.workspace().sources().stream()
-                        .map(com.aresstack.spaceharvester.application.sources.HarvestSource::id).toList()
-                : List.of(selection.sourceId());
-        String spaceKey = selection.global() ? null : selection.spaceKey();
         com.aresstack.spaceharvester.application.holdings.HoldingsListener listener =
                 new com.aresstack.spaceharvester.application.holdings.HoldingsListener() {
                     @Override
@@ -1205,13 +1197,7 @@ public final class PageDetailPanel extends JPanel {
                         javax.swing.SwingUtilities.invokeLater(() -> holdingsChanged(selection));
                     }
                 };
-        for (String source : sourceIds) {
-            try {
-                overviewHoldings.add(runtime.workspace().subscribeHoldings(source, spaceKey, listener));
-            } catch (RuntimeException gone) {
-                // Die Quelle gibt es in dieser Laufzeit nicht mehr; der Baum räumt die Auswahl gleich weg.
-            }
-        }
+        overviewHoldings.addAll(SelectionHoldings.watch(runtime, selection, listener));
     }
 
     private void holdingsChanged(ExportPanel.Selection selection) {

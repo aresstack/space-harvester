@@ -295,6 +295,45 @@ class GlossaryTabTest {
     }
 
     @Test
+    void detectingForAFavouritesFolderRunsPerFavouriteAndNeverOverAllSources() throws Exception {
+        FakeGlossary glossary = new FakeGlossary();
+        GlossaryTab[] tab = new GlossaryTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new GlossaryTab(null, () -> Optional.of(glossary));
+            tab[0].showing = () -> true;
+            tab[0].selection(new ExportPanel.Selection.Collection("f1", "Projekt", List.of(
+                    new com.aresstack.spaceharvester.application.holdings.Selection.Root("wiki", "DH", "42"),
+                    com.aresstack.spaceharvester.application.holdings.Selection.Root.space("wiki", "OPS"),
+                    com.aresstack.spaceharvester.application.holdings.Selection.Root.source("jira")), true));
+        });
+        await("geladen, leer", () -> GlossaryTab.EMPTY.equals(tab[0].directory().hint()));
+        SwingUtilities.invokeAndWait(() -> tab[0].detectButton().doClick());
+        await("Aufträge laufen", () -> !tab[0].jobIds().isEmpty());
+        // Je Favorit derselbe Lauf wie für seinen Knoten im Baum; nie classify null/null (alle Wissensquellen).
+        assertThat(glossary.calls).filteredOn(call -> call.startsWith("classify"))
+                .containsExactly("classify wiki/DH/42", "classify wiki/OPS", "classify jira/null");
+        assertThat(GlossaryTab.collectionDetectName("Projekt")).isEqualTo("Fachbegriffe ermitteln für „Projekt“");
+    }
+
+    @Test
+    void anEmptyFavouritesFolderStartsNothing() throws Exception {
+        FakeGlossary glossary = new FakeGlossary();
+        GlossaryTab[] tab = new GlossaryTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new GlossaryTab(null, () -> Optional.of(glossary));
+            tab[0].showing = () -> true;
+            tab[0].selection(new ExportPanel.Selection.Collection("f1", "Leer", List.of(), true));
+        });
+        await("geladen, leer", () -> GlossaryTab.EMPTY.equals(tab[0].directory().hint()));
+        SwingUtilities.invokeAndWait(() -> tab[0].detectButton().doClick());
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(glossary.calls).noneMatch(call -> call.startsWith("classify"));
+            assertThat(tab[0].jobIds()).isEmpty();
+            assertThat(tab[0].detectButton().isEnabled()).isTrue();
+        });
+    }
+
+    @Test
     void aHiddenTabRemembersWhatToReadUntilItIsShown() throws Exception {
         FakeGlossary glossary = new FakeGlossary();
         glossary.put(entry("1", "Datenprodukt", "wiki", "DH", RelationOrigin.AI, ReviewStatus.PROPOSED, 1, false),

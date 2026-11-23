@@ -3059,6 +3059,16 @@ public final class Workspace {
     }
 
     /**
+     * {@link #resolveSelection} nachsichtig (ADR 0034 §4): Wurzeln, die der Aufrufer nicht sehen kann oder die der
+     * Katalog nicht mehr kennt (etwa ein veralteter Favorit), fallen heraus und stehen in {@code skippedRoots}, statt die
+     * ganze Auflösung zu brechen. Für Sammlungen; nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.holdings.Holdings.Lenient resolveLenient(
+            com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.holdings().resolveLenient(caller, selection);
+    }
+
+    /**
      * Die Nachfahren einer Seite ohne die Seite selbst ({@code Holdings.descendants}, Fahrplan P1): für „mit
      * Unterseiten“ in den Analyse-Reitern. Nie auf dem EDT.
      */
