@@ -509,10 +509,14 @@ class SearchViewTest {
     }
 
     @Test
-    void interleaveMergesByPosition() {
-        List<SearchView.Hit> merged = SearchView.interleave(List.of(hit("a1"), hit("a2"), hit("a3")),
-                List.of(hit("b1"), hit("a2")));
-        assertThat(merged).extracting(SearchView.Hit::pageId).containsExactly("a1", "b1", "a2", "a3");
+    void mergingTwoSearchesOrdersByTheComparableScore() {
+        SearchView.Hit exact = new SearchView.Hit("j", "j1", "Betrieb", "P", "", null);
+        SearchView.Hit snippetOnly = new SearchView.Hit("c", "c1", "Release", "S", "zum Betrieb", null);
+        SearchView.Hit titleWord = new SearchView.Hit("c", "c2", "Betrieb Teil 2", "S", "", null);
+        // Jede Liste behält ihre Reihenfolge; an jeder Stelle gewinnt der höhere Punktwert, Doppelte bleiben einmal.
+        List<SearchView.Hit> merged = SearchView.interleave("Betrieb", List.of(snippetOnly, titleWord),
+                List.of(exact, snippetOnly));
+        assertThat(merged).extracting(SearchView.Hit::pageId).containsExactly("j1", "c1", "c2");
     }
 
     /**

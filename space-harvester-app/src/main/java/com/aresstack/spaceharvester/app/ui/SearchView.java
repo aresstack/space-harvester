@@ -827,7 +827,7 @@ public final class SearchView implements View {
                 return;
             }
             Hit selected = selectedHit();
-            model.set(interleave(model.rows, hits(results)));
+            model.set(interleave(searchedText, model.rows, hits(results)));
             batchStart = 0;
             select(selected);
             // „Weitere laden“ setzt ab jetzt die Suche der nachgesuchten Quellen fort.
@@ -847,21 +847,33 @@ public final class SearchView implements View {
     }
 
     /**
-     * Reiht zwei nach Rang geordnete Listen nach ihrer Stellung ineinander (1., 1., 2., 2., …): die Ränge zweier
-     * Suchen sind nur über die Stellung vergleichbar. Doppelte Seiten bleiben einmal, an der früheren Stelle.
+     * Führt zwei nach Rang geordnete Listen zusammen (Angelo, 23.11.2026): Die Ränge zweier Suchen sind nicht
+     * vergleichbar, darum entscheidet an jeder Stelle der Punktwert des Core ({@code HitRelevance}) zwischen den beiden
+     * vordersten Treffern; die Reihenfolge innerhalb jeder Liste bleibt. Bei Gleichstand gewinnt die erste Liste.
+     * Doppelte Seiten bleiben einmal, an der früheren Stelle.
      */
-    static List<Hit> interleave(List<Hit> first, List<Hit> second) {
+    static List<Hit> interleave(String query, List<Hit> first, List<Hit> second) {
         List<Hit> merged = new ArrayList<>();
         Set<String> seen = new java.util.HashSet<>();
-        for (int i = 0; i < Math.max(first.size(), second.size()); i++) {
-            for (List<Hit> list : List.of(first, second)) {
-                if (i < list.size() && seen.add(list.get(i).sourceId() + "\u0000" + list.get(i).pageId()
-                        + "\u0000" + list.get(i).passageId())) {
-                    merged.add(list.get(i));
-                }
+        int a = 0;
+        int b = 0;
+        while (a < first.size() || b < second.size()) {
+            Hit next;
+            if (b >= second.size() || a < first.size() && relevance(query, first.get(a)) >= relevance(query,
+                    second.get(b))) {
+                next = first.get(a++);
+            } else {
+                next = second.get(b++);
+            }
+            if (seen.add(next.sourceId() + "\u0000" + next.pageId() + "\u0000" + next.passageId())) {
+                merged.add(next);
             }
         }
         return merged;
+    }
+
+    static double relevance(String query, Hit hit) {
+        return com.aresstack.spaceharvester.application.query.HitRelevance.of(query, hit.title(), hit.snippet());
     }
 
     /** Übernimmt einen Bereich für die nächste Suche, ohne selbst zu suchen. */
