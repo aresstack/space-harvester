@@ -450,8 +450,11 @@ final class ChangeLogSchema {
         }
         ArrayNode inputs = json.putArray("inputPages");
         for (StoredSummary.InputPage page : summary.inputPages()) {
-            inputs.addObject().put("spaceKey", page.spaceKey()).put("pageId", page.pageId())
-                    .put("content", page.content());
+            ObjectNode input = inputs.addObject();
+            if (page.sourceId() != null) {
+                input.put("sourceId", page.sourceId());
+            }
+            input.put("spaceKey", page.spaceKey()).put("pageId", page.pageId()).put("content", page.content());
         }
         Document doc = new Document();
         doc.add(new StringField(PageCacheSchema.TYPE, SUMMARY, Field.Store.NO));
@@ -477,7 +480,9 @@ final class ChangeLogSchema {
         }
         List<StoredSummary.InputPage> inputs = new ArrayList<>();
         for (JsonNode page : json.path("inputPages")) {
-            inputs.add(new StoredSummary.InputPage(page.path("spaceKey").asString(), page.path("pageId").asString(),
+            inputs.add(new StoredSummary.InputPage(
+                    page.hasNonNull("sourceId") ? page.path("sourceId").asString() : null,
+                    page.path("spaceKey").asString(), page.path("pageId").asString(),
                     page.path("content").asBoolean(false)));
         }
         return new StoredSummary(doc.get(SUMMARY_SOURCE_ID), doc.get(SUMMARY_UPDATE), doc.get(SUMMARY_SPACE),

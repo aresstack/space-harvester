@@ -41,7 +41,7 @@ import java.util.function.Consumer;
 /** Reiter „Stand“ (ADR 0032, FL6): Gruppen, Zählchips, Filter, Träger, Overlay, Sprung, nichts springt beim Neulesen. */
 class StandingTabTest {
 
-    private static final ExportPanel.Selection SPACE = new ExportPanel.Selection("wiki", "DEV", null, "DEV");
+    private static final ExportPanel.Selection SPACE = new ExportPanel.Selection.Node("wiki", "DEV", null, "DEV");
 
     @Test
     void statementsAreGroupedByStandingWithTheOutdatedOnesGreyAtTheEnd() {
