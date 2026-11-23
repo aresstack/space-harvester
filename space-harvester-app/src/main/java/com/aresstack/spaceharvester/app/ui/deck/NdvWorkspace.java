@@ -18,7 +18,6 @@ import java.awt.GridBagLayout;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
-import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.Icon;
 import javax.swing.JPanel;
@@ -88,12 +87,7 @@ public final class NdvWorkspace extends JPanel {
         JPanel noTools = new JPanel();
         noTools.setOpaque(false);
         tools.add(noTools, NEW);
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        head.add(pills, BorderLayout.CENTER);
-        head.add(tools, BorderLayout.EAST);
+        JPanel head = DeckBars.head(pills, tools);
 
         JPanel formStage = new JPanel(new GridBagLayout());
         formStage.setBackground(Comic.SURFACE);
@@ -101,19 +95,16 @@ public final class NdvWorkspace extends JPanel {
         center.setOpaque(false);
         center.add(formStage, NEW);
 
+        // Fuß wie in den anderen Bereichen (DeckBars): nur die Aktionen der gewählten Sitzung, der Stand steht in der
+        // Statuszeile der App. Das Formular hat keine Aktionen unten.
         foot.setOpaque(false);
-        JPanel formFoot = new JPanel(new BorderLayout());
+        JPanel formFoot = new JPanel();
         formFoot.setOpaque(false);
-        formFoot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        // Gleiche Höhe wie der Fuß einer Sitzung mit Knöpfen.
-        formFoot.add(javax.swing.Box.createVerticalStrut(Comic.button("Öffnen", null).getPreferredSize().height),
-                BorderLayout.EAST);
         foot.add(formFoot, NEW);
 
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
+        add(DeckBars.foot(null, foot), BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.all().forEach(this::added);

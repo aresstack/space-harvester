@@ -259,6 +259,26 @@ class NdvWorkspaceTest {
         assertThat(workspace[0].statusLine()).isEqualTo(NdvWorkspace.NO_SESSION);
     }
 
+    @Test
+    void headAndFootAreAsHighAsInTheOtherAreasWithOrWithoutASession() throws Exception {
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run));
+        java.awt.BorderLayout layout = (java.awt.BorderLayout) workspace[0].getLayout();
+        java.awt.Component head = layout.getLayoutComponent(java.awt.BorderLayout.NORTH);
+        java.awt.Component foot = layout.getLayoutComponent(java.awt.BorderLayout.SOUTH);
+        assertThat(head.getPreferredSize().height).isEqualTo(DeckBars.HEAD_HEIGHT);
+        assertThat(foot.getPreferredSize().height).isEqualTo(DeckBars.FOOT_HEIGHT);
+
+        NdvSession session = sessions.open(new com.aresstack.spaceharvester.deck.ndv.NdvProfile("10.0.0.7", 8011),
+                "Testhost NDV", () -> accounts.credentials("Testhost NDV"));
+        flush();
+        assertThat(workspace[0].selected()).isSameAs(session);
+        assertThat(head.getPreferredSize().height).isEqualTo(DeckBars.HEAD_HEIGHT);
+        assertThat(foot.getPreferredSize().height).isEqualTo(DeckBars.FOOT_HEIGHT);
+        assertThat(texts((java.awt.Container) foot)).as("unten nur Aktionen, der Stand steht in der Statuszeile")
+                .doesNotContain(workspace[0].browser(session).statusText());
+    }
+
     private static java.util.List<String> texts(java.awt.Container root) {
         java.util.List<String> found = new java.util.ArrayList<>();
         for (java.awt.Component child : root.getComponents()) {

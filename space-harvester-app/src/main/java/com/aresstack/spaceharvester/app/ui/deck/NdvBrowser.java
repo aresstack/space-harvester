@@ -504,8 +504,6 @@ final class NdvBrowser extends JPanel {
         disconnect.addActionListener(e -> session.disconnect());
         close.addActionListener(e -> closed.run());
         foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
         foot.add(Comic.row(open, save, reconnect, disconnect, close), BorderLayout.EAST);
 
         state.restoreFilter(nameFilter, session.profile().host(), session.user(), scope());
