@@ -19,6 +19,8 @@ import java.util.Set;
  *   <li>„Nicht gefunden“ weicht einem gefundenen Wert und verdrängt nie einen.</li>
  *   <li>Liefert eine Stufe ({@link Processor}) in einer anderen Version, ersetzen ihre Felder alle Felder ihrer alten
  *       Version (alte Version = veraltet).</li>
+ *   <li>Hinweise ({@link AnalysisNote}) einer Stufe, die neu geliefert hat, fallen weg, wenn ihre Version ersetzt ist
+ *       oder der neue Lauf vollständig ist ({@link AnalysisState#COMPLETED}); sonst werden Hinweise vereinigt.</li>
  * </ul>
  */
 public final class FieldMerge {
@@ -64,7 +66,12 @@ public final class FieldMerge {
         Set<Processor> processors = new LinkedHashSet<>();
         existing.processors().stream().filter(p -> !superseded(p, newer)).forEach(processors::add);
         processors.addAll(incoming.processors());
-        Set<AnalysisNote> notes = new LinkedHashSet<>(existing.notes());
+        boolean complete = incoming.state() == AnalysisState.COMPLETED;
+        Set<AnalysisNote> notes = new LinkedHashSet<>();
+        existing.notes().stream()
+                .filter(note -> !superseded(note.processor(), newer)
+                        && !(complete && note.processor().isKnown() && newer.containsKey(note.processor().id())))
+                .forEach(notes::add);
         notes.addAll(incoming.notes());
         return new DocumentAnalysis(incoming.document(), incoming.state(), out, incoming.failure(),
                 existing.sample() || incoming.sample(), List.copyOf(notes), List.copyOf(processors));

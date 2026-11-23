@@ -117,6 +117,24 @@ class InMemoryDocumentAnalysesTest {
     }
 
     @Test
+    void notesOfAReplacedOrCompletedRunDisappear() {
+        Processor ai1 = new Processor("ai", "1");
+        Processor ai2 = new Processor("ai", "2");
+        Processor regex = new Processor("regex", "1");
+        store.record(new DocumentAnalysis(DOC, AnalysisState.COMPLETED, List.of(), "", false, List.of(
+                new AnalysisNote(AnalysisNote.Code.AI_PARTIAL, "nur Teil", ai1),
+                new AnalysisNote(AnalysisNote.Code.TEXT_TRUNCATED, "abgeschnitten", regex)), List.of(ai1, regex)));
+
+        DocumentAnalysis merged = store.record(run(List.of(ai2), field(WORDING, "„neu“").from(ai2)));
+        assertThat(merged.notes()).extracting(AnalysisNote::code).containsExactly(AnalysisNote.Code.TEXT_TRUNCATED);
+
+        store.record(new DocumentAnalysis(DOC, AnalysisState.COMPLETED, List.of(), "", false, List.of(
+                new AnalysisNote(AnalysisNote.Code.AI_UNAVAILABLE, "weg", ai2)), List.of(ai2)));
+        merged = store.record(run(List.of(ai2), field(WORDING, "„neu“").from(ai2)));
+        assertThat(merged.notes()).extracting(AnalysisNote::code).containsExactly(AnalysisNote.Code.TEXT_TRUNCATED);
+    }
+
+    @Test
     void sameProcessorVersionStillMergesWithConflict() {
         Processor ai1 = new Processor("ai", "1");
         store.record(run(List.of(ai1), field(WORDING, "„a“").from(ai1)));

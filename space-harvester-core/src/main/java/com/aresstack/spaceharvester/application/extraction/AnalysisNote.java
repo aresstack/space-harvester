@@ -7,10 +7,12 @@ import java.util.Objects;
  * regelbasierten Teilbefund erkennbar. Fehlende einzelne Informationen sind Felder mit {@link FieldStatus#NOT_FOUND},
  * keine Hinweise; Zustände des Rechtswissens gehören nicht hierher, sondern zur Fristprüfung.
  *
- * @param code fester Code
- * @param text Erläuterung für Menschen
+ * @param code      fester Code
+ * @param text      Erläuterung für Menschen
+ * @param processor Stufe, die den Hinweis erzeugt hat; mit ihr wird er ersetzt ({@link FieldMerge}).
+ *                  {@link Processor#UNKNOWN} ohne
  */
-public record AnalysisNote(Code code, String text) {
+public record AnalysisNote(Code code, String text, Processor processor) {
 
     public enum Code {
         /** Der Dokumenttext war abgeschnitten. */
@@ -24,5 +26,11 @@ public record AnalysisNote(Code code, String text) {
     public AnalysisNote {
         Objects.requireNonNull(code, "code");
         text = text == null ? "" : text;
+        processor = processor == null ? Processor.UNKNOWN : processor;
+    }
+
+    /** Hinweis ohne erzeugende Stufe. */
+    public AnalysisNote(Code code, String text) {
+        this(code, text, Processor.UNKNOWN);
     }
 }
