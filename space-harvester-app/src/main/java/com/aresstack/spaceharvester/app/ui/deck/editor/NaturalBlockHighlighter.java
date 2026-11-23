@@ -39,6 +39,11 @@ public final class NaturalBlockHighlighter {
         LISTENERS.remove(listener);
     }
 
+    /** Anzahl angemeldeter Beobachter (Tests: geschlossene Editoren dürfen nicht hängen bleiben). */
+    static int observers() {
+        return LISTENERS.size();
+    }
+
     /** Speichert eine Farbe ({@code null} = Vorgabe) und meldet es den offenen Editoren. */
     public static void store(String key, Color color) {
         AppState.shared().put(key, color == null ? "" : hex(color));
