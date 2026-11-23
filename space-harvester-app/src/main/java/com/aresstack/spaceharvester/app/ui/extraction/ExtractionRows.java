@@ -65,9 +65,19 @@ final class ExtractionRows {
         };
     }
 
-    /** Feldname, mit Erläuterung in Klammern, etwa „Fristverlängerung (beantragt)“. */
+    /** Feldname, mit Art der Aussage und Erläuterung in Klammern, etwa „Fristverlängerung (beantragt)“. */
     static String label(ExtractedField field) {
-        return field.note().isEmpty() ? field.label() : field.label() + " (" + field.note() + ")";
+        List<String> extra = new ArrayList<>();
+        switch (field.qualifier()) {
+            case REQUESTED -> extra.add("beantragt");
+            case GRANTED -> extra.add("genehmigt");
+            default -> {
+            }
+        }
+        if (!field.note().isEmpty()) {
+            extra.add(field.note());
+        }
+        return extra.isEmpty() ? field.label() : field.label() + " (" + String.join(", ", extra) + ")";
     }
 
     /** Der Wert oder die ausdrückliche Leermeldung. */
