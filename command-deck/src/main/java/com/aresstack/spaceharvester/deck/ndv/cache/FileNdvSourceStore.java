@@ -15,7 +15,7 @@ import java.util.stream.Stream;
 /**
  * Dauerhafte Ablage des NDV-Zwischenspeichers in Dateien (an Stelle der H2-Tabelle in MainframeMate): je Server und
  * Bibliothek ein Ordner, je Objekt der Quelltext ({@code NAME.src}) und Art, Größe und Datum ({@code NAME.meta}).
- * Nur lesbare Namen; nichts außer den Quelltexten selbst wird abgelegt, keine Zugangsdaten.
+ * Dateinamen umkehrbar verschlüsselt ({@link #safe(String)}); nichts außer den Quelltexten selbst wird abgelegt, keine Zugangsdaten.
  */
 public final class FileNdvSourceStore implements NdvSourceCache.Store {
 
@@ -92,9 +92,27 @@ public final class FileNdvSourceStore implements NdvSourceCache.Store {
         return base.resolve(safe(server)).resolve(safe(library));
     }
 
-    /** Nur Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich; alles andere wird {@code _}. */
-    static String safe(String value) {
-        String cleaned = (value == null ? "" : value.trim()).replaceAll("[^A-Za-z0-9._-]", "_");
-        return cleaned.isEmpty() || cleaned.chars().allMatch(c -> c == '.') ? "_" : cleaned;
+    /**
+     * Umkehrbar verschlüsselter Dateiname: Buchstaben, Ziffern, Punkt und Bindestrich bleiben, alles andere (auch
+     * {@code _} selbst) wird {@code _HH} je UTF-8-Byte. So bekommen {@code A#B} und {@code A$B} verschiedene Dateien;
+     * ein Name nur aus Punkten wird ganz verschlüsselt.
+     */
+    public static String safe(String value) {
+        String text = value == null ? "" : value.trim();
+        if (text.isEmpty()) {
+            return "_";
+        }
+        boolean onlyDots = text.chars().allMatch(c -> c == '.');
+        StringBuilder out = new StringBuilder();
+        for (byte b : text.getBytes(StandardCharsets.UTF_8)) {
+            int c = b & 0xFF;
+            boolean keep = c < 0x80 && (Character.isLetterOrDigit(c) || c == '-' || c == '.' && !onlyDots);
+            if (keep) {
+                out.append((char) c);
+            } else {
+                out.append('_').append(String.format("%02X", c));
+            }
+        }
+        return out.toString();
     }
 }

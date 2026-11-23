@@ -171,6 +171,8 @@ final class NdvBrowser extends JPanel {
     private boolean indexVisible;
     private boolean relationsVisible;
     private String lastPrefetch = "";
+    /** Je Bibliothek die Regeln, mit denen der Graph zuletzt gebaut wurde. */
+    private final Map<String, Integer> builtWith = new java.util.concurrent.ConcurrentHashMap<>();
     /** Zählt Auflistungen; eine überholte hört bei der nächsten Seite auf. */
     private final AtomicInteger listing = new AtomicInteger();
     private String library;
@@ -955,7 +957,9 @@ final class NdvBrowser extends JPanel {
         if (changed.revision() != announcedRevision && docState == EditorSession.State.READY) {
             announcedRevision = changed.revision();
             String text = changed.text().orElse("");
-            loaded(changed, text);
+            // In den Zwischenspeicher nur der Stand des Servers (geladen oder gespeichert), nie ungespeicherter Text.
+            loaded(changed, changed.document().map(com.aresstack.spaceharvester.deck.editor.EditorDocument::text)
+                    .orElse(""));
             note(text.isEmpty() ? "Leerer Quelltext: " + changed.location() : "Geöffnet: " + changed.location(),
                     text.isEmpty());
         } else if (docState == EditorSession.State.READY && changed.note().isPresent()) {
@@ -965,7 +969,8 @@ final class NdvBrowser extends JPanel {
             if (message.equals("Gespeichert") && objectOf.containsKey(changed.location())) {
                 // Wie onSourceSaved: Zwischenspeicher und Abhängigkeiten nachführen.
                 NdvObject saved = objectOf.get(changed.location());
-                String text = changed.text().orElse("");
+                String text = changed.document().map(com.aresstack.spaceharvester.deck.editor.EditorDocument::text)
+                        .orElse("");
                 work(() -> {
                     analysis.saved(saved, text);
                     return Boolean.TRUE;
@@ -1013,6 +1018,15 @@ final class NdvBrowser extends JPanel {
         }
     }
 
+    /**
+     * Ob eine Bibliothek begehbar ist: erlaubt, oder bei „Alles sperren“ nicht selbst gesperrt und mit freigegebenen
+     * Objekten darin (die Objekte prüft danach jedes einzeln).
+     */
+    boolean libraryAccessible(String lib) {
+        String path = NdvAccessRules.path(lib, "");
+        return rules.isAllowed(path) || !rules.isBlacklisted(path) && rules.hasWhitelistedDescendants(path);
+    }
+
     // ---- Analyse: Zwischenspeicher, Abhängigkeiten, Sperrliste (wie NdvSourceCacheService in MainframeMate) ------
 
     private void watch() {
@@ -1044,7 +1058,10 @@ final class NdvBrowser extends JPanel {
         if (lib == null || listed.isEmpty()) {
             return;
         }
-        String key = lib + "|" + rules.snapshot().hashCode() + "|" + listed.size();
+        // Mit Größe und Datum jedes Objekts: Ein auf dem Server geänderter Quelltext ändert meist weder Anzahl noch
+        // Regeln, muss nach „Neu laden“ aber neu geprüft werden.
+        String key = lib + "|" + rules.snapshot().hashCode() + "|" + listed.stream()
+                .map(o -> o.displayName() + ":" + o.sourceSize() + ":" + o.changed()).toList().hashCode();
         if (!explicit && key.equals(lastPrefetch) && analysis.graph(lib).isPresent()) {
             return;
         }
@@ -1068,8 +1085,12 @@ final class NdvBrowser extends JPanel {
 
             @Override
             public void complete(NdvSourceCache.PrefetchResult result) {
-                if (result.loaded() > 0 || analysis.graph(lib).isEmpty()) {
+                // Nach „Cache leeren“ nichts neu bauen; nach geänderten Regeln auch ohne Neues (Gesperrtes fällt heraus).
+                int rulesNow = rules.snapshot().hashCode();
+                if (analysis.cache().size(lib) > 0 && (result.loaded() > 0 || analysis.graph(lib).isEmpty()
+                        || !Integer.valueOf(rulesNow).equals(builtWith.get(lib)))) {
                     analysis.build(lib);
+                    builtWith.put(lib, rulesNow);
                 }
             }
         }), result -> {
@@ -1101,7 +1122,7 @@ final class NdvBrowser extends JPanel {
             indexPanel.place(session.profile().label(), libs.size() == 1 ? "Bibliothek: " + libs.getFirst()
                     : libs.size() + " Bibliotheken");
             for (String lib : libs) {
-                if (!rules.isAllowed(NdvAccessRules.path(lib, ""))) {
+                if (!libraryAccessible(lib)) {
                     continue;
                 }
                 work(() -> {
@@ -1744,7 +1765,7 @@ final class NdvBrowser extends JPanel {
         libraries.clear();
         allLibraries.stream().filter(name -> pattern.matcher(name).find())
                 .filter(name -> library != null || nameFilter.matches(name))
-                .filter(name -> !hideBlocked || rules.isAllowed(NdvAccessRules.path(name, "")))
+                .filter(name -> !hideBlocked || libraryAccessible(name))
                 .forEach(libraries::addElement);
         if (selected != null && libraries.contains(selected)) {
             libraryList.setSelectedValue(selected, false);

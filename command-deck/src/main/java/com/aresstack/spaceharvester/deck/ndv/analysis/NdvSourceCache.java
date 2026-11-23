@@ -79,6 +79,8 @@ public final class NdvSourceCache {
     /** Bibliothek → Name → Eintrag; eine Bibliothek wird beim ersten Zugriff aus der Ablage gelesen. */
     private final Map<String, Map<String, Entry>> libraries = new LinkedHashMap<>();
     private final Map<String, AtomicBoolean> running = new ConcurrentHashMap<>();
+    /** Je Bibliothek ein Zähler, den „Cache leeren“ erhöht; ein laufendes Vorabladen schreibt danach nichts mehr. */
+    private final Map<String, Long> generations = new java.util.HashMap<>();
     private final List<Runnable> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public NdvSourceCache(String server, Store store, NdvAccessRules rules) {
@@ -101,7 +103,13 @@ public final class NdvSourceCache {
         return entry(library, name).map(Entry::source);
     }
 
+    /** Der Eintrag, falls zwischengespeichert und nach den aktuellen Regeln erlaubt. */
     public Optional<Entry> entry(String library, String name) {
+        return stored(library, name).filter(this::allowed);
+    }
+
+    /** Der Eintrag ohne Blick auf die Regeln (nur intern, etwa für „unverändert“). */
+    private Optional<Entry> stored(String library, String name) {
         lock.lock();
         try {
             return Optional.ofNullable(library(library).get(upper(name)));
@@ -110,21 +118,45 @@ public final class NdvSourceCache {
         }
     }
 
+    /** Ob ein zwischengespeicherter Eintrag nach den aktuellen Regeln sichtbar ist (später Gesperrtes nicht). */
+    private boolean allowed(Entry entry) {
+        return rules.isAllowed(NdvAccessRules.path(entry.library(), entry.name()));
+    }
+
     /** Legt einen Quelltext ab (nach dem Öffnen, Speichern oder Vorabladen); Gesperrtes nicht. */
     public void put(NdvObject object, String source) {
+        put(object, source, -1);
+    }
+
+    /**
+     * Wie {@link #put(NdvObject, String)}, aber nur, wenn die Bibliothek seit {@code generation} nicht geleert wurde
+     * ({@code -1} = immer). Prüfen und Schreiben geschehen unter derselben Sperre wie „Cache leeren“.
+     *
+     * @return ob abgelegt wurde
+     */
+    private boolean put(NdvObject object, String source, long generation) {
         if (!rules.isAllowed(NdvAccessRules.path(object.library(), object.displayName()))) {
-            return;
+            return false;
         }
         Entry entry = new Entry(object.library(), object.displayName(), object.type().extension(), source,
                 object.sourceSize(), object.changed());
         lock.lock();
         try {
+            if (generation >= 0 && generation(entry.library()) != generation) {
+                return false;
+            }
             library(entry.library()).put(entry.name(), entry);
+            store.put(server, entry);
         } finally {
             lock.unlock();
         }
-        store.put(server, entry);
         changed();
+        return true;
+    }
+
+    /** Unter der Sperre aufrufen. */
+    private long generation(String library) {
+        return generations.getOrDefault(upper(library), 0L);
     }
 
     /** Alle Quelltexte einer Bibliothek (Name → Text), für den Abhängigkeitsgraphen. */
@@ -132,7 +164,11 @@ public final class NdvSourceCache {
         lock.lock();
         try {
             Map<String, String> result = new LinkedHashMap<>();
-            library(library).forEach((name, entry) -> result.put(name, entry.source()));
+            library(library).forEach((name, entry) -> {
+                if (allowed(entry)) {
+                    result.put(name, entry.source());
+                }
+            });
             return result;
         } finally {
             lock.unlock();
@@ -142,7 +178,7 @@ public final class NdvSourceCache {
     public int size(String library) {
         lock.lock();
         try {
-            return library(library).size();
+            return (int) library(library).values().stream().filter(this::allowed).count();
         } finally {
             lock.unlock();
         }
@@ -152,7 +188,8 @@ public final class NdvSourceCache {
     public int totalSize() {
         lock.lock();
         try {
-            return libraries.values().stream().mapToInt(Map::size).sum();
+            return (int) libraries.values().stream().flatMap(entries -> entries.values().stream())
+                    .filter(this::allowed).count();
         } finally {
             lock.unlock();
         }
@@ -182,6 +219,13 @@ public final class NdvSourceCache {
         if (running.putIfAbsent(lib, cancelled) != null) {
             return new PrefetchResult(lib, 0, 0, 0, 0, Map.of(), false);
         }
+        long generation;
+        lock.lock();
+        try {
+            generation = generation(lib);
+        } finally {
+            lock.unlock();
+        }
         changed();
         int loaded = 0;
         int unchanged = 0;
@@ -198,14 +242,19 @@ public final class NdvSourceCache {
                     blocked++;
                     continue;
                 }
-                Optional<Entry> known = entry(lib, object.displayName());
+                Optional<Entry> known = stored(lib, object.displayName());
                 if (known.isPresent() && unchanged(known.get(), object)) {
                     unchanged++;
                     continue;
                 }
                 listener.progress(i + 1, wanted.size(), object.displayName());
                 try {
-                    put(object, session.read(object));
+                    String source = session.read(object);
+                    if (!put(object, source, generation)) {
+                        // Inzwischen geleert (oder gesperrt): nichts zurückschreiben, Vorabladen endet.
+                        cancelled.set(true);
+                        break;
+                    }
                     loaded++;
                     Thread.sleep(PAUSE_MILLIS);
                 } catch (InterruptedException e) {
@@ -244,11 +293,12 @@ public final class NdvSourceCache {
         cancel(lib);
         lock.lock();
         try {
+            generations.merge(lib, 1L, Long::sum);
             libraries.put(lib, new LinkedHashMap<>());
+            store.removeLibrary(server, lib);
         } finally {
             lock.unlock();
         }
-        store.removeLibrary(server, lib);
         changed();
     }
 
@@ -265,7 +315,7 @@ public final class NdvSourceCache {
         List<Entry> entries;
         lock.lock();
         try {
-            entries = new ArrayList<>(library(library).values());
+            entries = new ArrayList<>(library(library).values().stream().filter(this::allowed).toList());
         } finally {
             lock.unlock();
         }
@@ -288,7 +338,8 @@ public final class NdvSourceCache {
     public Set<String> names(String library) {
         lock.lock();
         try {
-            return Set.copyOf(library(library).keySet());
+            return library(library).values().stream().filter(this::allowed).map(Entry::name)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
         } finally {
             lock.unlock();
         }

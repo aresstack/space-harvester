@@ -145,7 +145,8 @@ class NdvAnalysisUiTest {
         // Cache leeren fragt; nach „Ja“ ist alles weg, das gesperrte Objekt kommt beim Neuladen nicht wieder.
         browser.confirm = (title, question) -> false;
         SwingUtilities.invokeAndWait(browser::clearCache);
-        assertThat(browser.analysis().cache().size("LAGER")).isEqualTo(7);
+        // Nichts geleert; das nachträglich gesperrte LAGERM01 zählt aber nicht mehr mit.
+        assertThat(browser.analysis().cache().size("LAGER")).isEqualTo(6);
         browser.confirm = (title, question) -> question.contains("wirklich");
         SwingUtilities.invokeAndWait(browser::clearCache);
         flush();
@@ -178,6 +179,45 @@ class NdvAnalysisUiTest {
         flush();
         flush();
         assertThat(browser.shown().displayName()).isEqualTo("KASSEN01");
+    }
+
+    @Test
+    void aLibraryWithAnAllowedObjectStaysReachableAndUnsavedTextIsNotCached() throws Exception {
+        NdvBrowser browser = connect();
+        // „Alles sperren“ und nur ein Objekt freigegeben: die Bibliothek bleibt begehbar, die übrigen nicht.
+        NdvAnalysisSettings.rules().blacklistAll(true);
+        NdvAnalysisSettings.rules().whitelist(List.of(NdvAccessRules.path("LAGER", "LAGER001")));
+        flush();
+        assertThat(browser.libraryAccessible("LAGER")).isTrue();
+        assertThat(browser.libraryAccessible("KASSE")).isFalse();
+        SwingUtilities.invokeAndWait(() -> browser.hideBlockedToggle().doClick());
+        flush();
+        assertThat(browser.visibleLibraries()).contains("LAGER").doesNotContain("KASSE");
+        SwingUtilities.invokeAndWait(() -> browser.hideBlockedToggle().doClick());
+        NdvAnalysisSettings.rules().blacklistAll(false);
+        flush();
+
+        // Ungespeicherter Text kommt nie in den Zwischenspeicher, auch nicht beim Zurückkehren zum Objekt.
+        SwingUtilities.invokeAndWait(() -> {
+            browser.selectObject("LAGER002");
+            browser.openSelected();
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> browser.document().edit("* ungespeichert\nEND"));
+        SwingUtilities.invokeAndWait(() -> {
+            browser.selectObject("LAGER001");
+            browser.openSelected();
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            browser.selectObject("LAGER002");
+            browser.openSelected();
+        });
+        flush();
+        assertThat(browser.document().dirty()).isTrue();
+        assertThat(browser.analysis().cache().source("LAGER", "LAGER002")).hasValueSatisfying(text ->
+                assertThat(text).contains("CALLNAT").doesNotContain("ungespeichert"));
+        assertThat(server.writes()).isEmpty();
     }
 
     private static JMenuItem findItem(javax.swing.JPopupMenu menu, String text) {

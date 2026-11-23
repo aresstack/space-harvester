@@ -158,6 +158,62 @@ class NdvAnalysisTest {
     }
 
     @Test
+    void clearingDuringAReadIsNotUndoneAndLaterBlockedSourcesDisappear(@TempDir Path folder) throws Exception {
+        NdvAccessRules rules = new NdvAccessRules();
+        NdvSourceCache cache = new NdvSourceCache("10.0.0.7:8011", new FileNdvSourceStore(folder), rules);
+        List<NdvObject> objects = new ArrayList<>();
+        session.objects("LAGER", "*", (page, total) -> objects.addAll(page));
+        // „Cache leeren“, während das erste Objekt gerade gelesen wird (progress kommt direkt vor dem Lesen).
+        NdvSourceCache.PrefetchResult result = cache.prefetch(session, "LAGER", objects,
+                new NdvSourceCache.PrefetchListener() {
+                    @Override
+                    public void progress(int current, int total, String name) {
+                        cache.invalidate("LAGER");
+                    }
+
+                    @Override
+                    public void complete(NdvSourceCache.PrefetchResult done) {
+                    }
+                });
+        assertThat(result.cancelled()).isTrue();
+        assertThat(cache.size("LAGER")).as("geleert bleibt geleert").isZero();
+        assertThat(new NdvSourceCache("10.0.0.7:8011", new FileNdvSourceStore(folder), rules).size("LAGER"))
+                .isZero();
+
+        NdvSourceCache.PrefetchListener quiet = new NdvSourceCache.PrefetchListener() {
+            @Override
+            public void progress(int current, int total, String name) {
+            }
+
+            @Override
+            public void complete(NdvSourceCache.PrefetchResult done) {
+            }
+        };
+        cache.prefetch(session, "LAGER", objects, quiet);
+        assertThat(cache.names("LAGER")).contains("LAGER001");
+        rules.blacklist(List.of(NdvAccessRules.path("LAGER", "LAGER001")));
+        assertThat(cache.names("LAGER")).as("nachträglich gesperrt").doesNotContain("LAGER001");
+        assertThat(cache.sources("LAGER")).doesNotContainKey("LAGER001");
+        assertThat(cache.search("LAGER", "READ ARTIKEL", 10)).isEmpty();
+        assertThat(cache.source("LAGER", "LAGER001")).isEmpty();
+        assertThat(new NdvSourceCache("10.0.0.7:8011", new FileNdvSourceStore(folder), rules).names("LAGER"))
+                .as("auch nach einem Neustart").doesNotContain("LAGER001");
+    }
+
+    @Test
+    void objectNamesWithSpecialCharactersGetTheirOwnFiles(@TempDir Path folder) {
+        FileNdvSourceStore store = new FileNdvSourceStore(folder);
+        store.put("h:1", new NdvSourceCache.Entry("LIB#1", "A#B", "NSP", "* eins", 6, ""));
+        store.put("h:1", new NdvSourceCache.Entry("LIB#1", "A$B", "NSP", "* zwei", 6, ""));
+        store.put("h:1", new NdvSourceCache.Entry("LIB$1", "A_B", "NSP", "* drei", 6, ""));
+        assertThat(store.load("h:1", "LIB#1")).containsOnlyKeys("A#B", "A$B");
+        assertThat(store.load("h:1", "LIB#1").get("A#B").source()).isEqualTo("* eins");
+        assertThat(store.load("h:1", "LIB$1")).containsOnlyKeys("A_B");
+        assertThat(FileNdvSourceStore.safe("..")).isEqualTo("_2E_2E");
+        assertThat(FileNdvSourceStore.safe("LAGER001")).isEqualTo("LAGER001");
+    }
+
+    @Test
     void dataAreasOnTheDefineDataLineAreFound() {
         NaturalDependencyService service = new NaturalDependencyService();
         assertThat(usings(service, "DEFINE DATA LOCAL USING LAGERL01\nEND-DEFINE\nEND"))
