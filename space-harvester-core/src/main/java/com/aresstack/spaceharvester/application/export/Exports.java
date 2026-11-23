@@ -286,18 +286,7 @@ public class Exports {
         stock.locked().forEach(page -> parents.putIfAbsent(page.pageId(), page.parentPageId()));
         Set<String> scope = request.rootPageId() == null ? parents.keySet()
                 : subtreeOf(parents, request.rootPageId(), request.depth());
-        java.util.TreeMap<String, String> entries = new java.util.TreeMap<>();
-        for (HoldingsCatalog.CatalogPage page : stock.pages()) {
-            if (scope.contains(page.pageId())) {
-                entries.put(page.pageId(), page.parentPageId() + "\u0000" + page.loaded() + "\u0000" + page.version()
-                        + "\u0000" + page.loadedVersion() + "\u0000" + stock.stale().contains(page.pageId()));
-            }
-        }
-        for (HoldingsCatalog.LockedPage page : stock.locked()) {
-            if (scope.contains(page.pageId())) {
-                entries.putIfAbsent(page.pageId(), page.parentPageId() + "\u0000locked");
-            }
-        }
+        java.util.TreeMap<String, String> entries = Holdings.catalogState(stock, scope);
         // Dazu je Seite, wie der Lauf sie liest: Kopfdaten (Titel, Labels, Attribute), gespeicherter Inhalt und ob der
         // Auftraggeber sie lesen darf. Ändert sich eins davon, entsteht die Ausgabe neu.
         Optional<CacheGeneration> generation = cache.currentGeneration(request.sourceId(), request.spaceKey());
@@ -323,18 +312,7 @@ public class Exports {
         } catch (NotReusable e) {
             return null;
         }
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            entries.forEach((pageId, entry) -> {
-                digest.update(pageId.getBytes(StandardCharsets.UTF_8));
-                digest.update((byte) 1);
-                digest.update(entry.getBytes(StandardCharsets.UTF_8));
-                digest.update((byte) 2);
-            });
-            return HexFormat.of().formatHex(digest.digest(), 0, 12);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 fehlt", e);
-        }
+        return Holdings.digest(entries);
     }
 
     /**
