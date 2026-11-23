@@ -107,6 +107,7 @@ public final class TerminalWorkspace extends JPanel {
     private final java.util.Set<Component> keyWatched = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
     private final Runnable screenChanged = () -> SwingUtilities.invokeLater(() -> {
         readLegend();
+        forgetStaleFinds();
         showAssist();
     });
     /** KI-Maskenassistent (#1151): Hinweis und Zurücknehmen links neben den Aktionen. */
@@ -510,6 +511,9 @@ public final class TerminalWorkspace extends JPanel {
             view.addScreenListener(screenChanged);
         });
         session.view(JComponent.class).filter(keyWatched::add).ifPresent(screen -> {
+            // Die Lupe der Fußleiste sucht auch im selbst gezeichneten Bild.
+            session.view(TerminalView.class).ifPresent(view -> screen.putClientProperty(
+                    com.aresstack.spaceharvester.app.ui.FindableSurface.KEY, new ScreenFind(view)));
             screen.addKeyListener(new java.awt.event.KeyAdapter() {
                 @Override
                 public void keyPressed(java.awt.event.KeyEvent event) {
@@ -582,6 +586,61 @@ public final class TerminalWorkspace extends JPanel {
 
     static final String UNDO_TIP =
             "KI-Eingaben zurücknehmen: setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt";
+
+    /** Ein neues Bild vom Host: Treffer der Lupe auf dem alten Bild wegnehmen, sie stünden an falscher Stelle. */
+    private void forgetStaleFinds() {
+        view(JComponent.class).map(screen -> screen.getClientProperty(
+                com.aresstack.spaceharvester.app.ui.FindableSurface.KEY)).filter(ScreenFind.class::isInstance)
+                .map(ScreenFind.class::cast).ifPresent(ScreenFind::forgetIfChanged);
+    }
+
+    /**
+     * Das Terminalbild für die Lupe: Der Text ist {@link TerminalView#text()} (Zeilen mit Zeilenumbruch), die Treffer
+     * malt die Anzeige als Pufferbereiche.
+     */
+    static final class ScreenFind implements com.aresstack.spaceharvester.app.ui.FindableSurface {
+
+        private final TerminalView view;
+        private String marked;
+
+        ScreenFind(TerminalView view) {
+            this.view = view;
+        }
+
+        @Override
+        public String findText() {
+            return view.text();
+        }
+
+        @Override
+        public void showFound(java.util.List<int[]> found, int current) {
+            String text = view.text();
+            marked = found.isEmpty() ? null : text;
+            view.markFound(spans(text, found), current);
+        }
+
+        void forgetIfChanged() {
+            if (marked != null && !marked.equals(view.text())) {
+                marked = null;
+                view.markFound(java.util.List.of(), -1);
+            }
+        }
+
+        /** Textstellen in Pufferbereiche: Jede Zeile ist {@code Spalten + 1} Zeichen lang (der Zeilenumbruch). */
+        static java.util.List<TerminalView.Span> spans(String text, java.util.List<int[]> found) {
+            int newline = text.indexOf('\n');
+            int columns = newline < 0 ? text.length() : newline;
+            java.util.List<TerminalView.Span> spans = new java.util.ArrayList<>();
+            if (columns <= 0) {
+                return spans;
+            }
+            for (int[] range : found) {
+                int start = (range[0] / (columns + 1)) * columns + range[0] % (columns + 1);
+                spans.add(new TerminalView.Span(start, range[1] - range[0]));
+            }
+            return spans;
+        }
+    }
 
     static String assistText(int fields) {
         return (fields == 1 ? "KI hat 1 Feld" : "KI hat " + fields + " Felder")

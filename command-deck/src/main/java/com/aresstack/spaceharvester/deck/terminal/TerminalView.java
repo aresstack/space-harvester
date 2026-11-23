@@ -40,6 +40,13 @@ public interface TerminalView {
     }
 
     /**
+     * Markiert Fundstellen der Lupe im Bild: alle hell, {@code current} (Index in {@code found} oder -1) kräftig. Eine
+     * leere Liste nimmt die Markierung weg.
+     */
+    default void markFound(java.util.List<Span> found, int current) {
+    }
+
+    /**
      * Meldet, was der Mensch an der Anzeige selbst eingibt (Tastatur, Einfügen, Klick auf einen Menüpunkt), für die
      * Makro-Aufzeichnung. Eingaben in verdeckte Felder (Passwörter) meldet die Anzeige nie. Abläufe ohne Menschen
      * (Anmeldung, Abspielen) laufen über {@link TerminalKeyboard} und werden nicht gemeldet.
