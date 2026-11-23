@@ -128,14 +128,20 @@ public final class UpdatePodcasts {
 
     /** Der Schlüssel des Podcasts einer Zusammenfassung. */
     public static String key(UpdateSummary summary) {
-        return key(summary.sourceId(), summary.updateId(), summary.spaceKey(), summary.text(),
-                String.valueOf(summary.createdAt()));
+        return key(PodcastArea.of(summary), summary.text(), String.valueOf(summary.createdAt()));
     }
 
-    /** Der Schlüssel aus den Teilen einer Zusammenfassung, auch einer abgelegten. */
+    /** Der Schlüssel aus den Teilen einer Update-Zusammenfassung, auch einer abgelegten. */
     public static String key(String sourceId, String updateId, String spaceKey, String text, String createdAt) {
-        String material = VERSION + '\n' + sourceId + '\n' + updateId + '\n' + (spaceKey == null ? "" : spaceKey)
-                + '\n' + createdAt + '\n' + text;
+        return key(PodcastArea.update(sourceId, updateId, spaceKey), text, createdAt);
+    }
+
+    /**
+     * Der Schlüssel des Podcasts zur Zusammenfassung eines Bereichs (ADR 0034): Verfahren, Bereich, Zeitpunkt und Text
+     * der Zusammenfassung. Für Updates derselbe Wert wie vor dem Bereichsschlüssel.
+     */
+    public static String key(PodcastArea area, String text, String createdAt) {
+        String material = VERSION + '\n' + area.key() + '\n' + createdAt + '\n' + text;
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(material.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash, 0, 16);
@@ -230,6 +236,7 @@ public final class UpdatePodcasts {
         if (!available()) {
             throw new IllegalStateException("Kein Chat-Modell oder keine Sprachausgabe eingerichtet");
         }
+        PodcastArea area = PodcastArea.of(summary);
         String key = key(summary);
         PodcastWriter.Material material = material(summary, page -> places(caller, summary, page))
                 .withShow(show(summary));
@@ -238,14 +245,12 @@ public final class UpdatePodcasts {
             if (running != null) {
                 return running;
             }
-            store.delete(meta -> !meta.key().equals(key) && meta.sourceId().equals(summary.sourceId())
-                    && summary.updateId().equals(meta.updateId())
-                    && Objects.equals(meta.spaceKey(), summary.spaceKey()));
+            // Ein neuer Podcast desselben Bereichs ersetzt den vorigen.
+            store.delete(meta -> !meta.key().equals(key) && area.key().equals(meta.area()));
             Map<String, String> parameters = Map.of(PODCAST_PARAMETER, key, UPDATE_PARAMETER, summary.updateId());
             return jobs.submit(JobType.UPDATE_PODCAST, summary.sourceId(), summary.spaceKey(), null,
                     caller.jobOwner(), parameters, JobTask.blocking(context -> production.run(context,
-                            new PodcastStore.Meta(key, summary.sourceId(), summary.updateId(), summary.spaceKey(),
-                                    null, null, material.pageIds(), null, null, null), material)));
+                            new PodcastStore.Meta(key, area, material.pageIds()), material)));
         }
     }
 
