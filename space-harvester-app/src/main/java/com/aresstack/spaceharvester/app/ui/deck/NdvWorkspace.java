@@ -82,6 +82,8 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         private final NdvSessions.LoginSource source;
         private final java.util.concurrent.atomic.AtomicBoolean manual;
         private final java.util.concurrent.atomic.AtomicBoolean sent = new java.util.concurrent.atomic.AtomicBoolean();
+        /** Wann das Passwort zuletzt gesendet wurde; ein Erfolg löst nur ältere Sperren. */
+        private volatile java.time.Instant attemptAt = java.time.Instant.EPOCH;
 
         GuardedLogin(String entry, NdvSessions.LoginSource source, boolean manual) {
             this.entry = entry;
@@ -94,6 +96,7 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
             if (!manual.getAndSet(false) && !DeckLogin.guard().mayTry(entry)) {
                 throw new java.io.IOException(DeckLogin.notice(entry));
             }
+            attemptAt = java.time.Instant.now();
             com.aresstack.spaceharvester.deck.access.ServerCredentials credentials = source.read();
             sent.set(true);
             return credentials;
@@ -330,7 +333,14 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
             if (login != null) {
                 login.sent.set(false);
             }
-            DeckLogin.guard().succeeded(session.account());
+            // Gemeldet wird erst auf dem EDT, also verspätet: Eine Ablehnung desselben Eintrags, die NACH diesem
+            // Anmeldeversuch kam (etwa von FTP), ist neuer als der Erfolg und bleibt stehen.
+            java.time.Instant attempt = login == null ? null : login.attemptAt;
+            boolean newerRejection = attempt != null && DeckLogin.guard().failure(session.account())
+                    .map(failure -> failure.at().isAfter(attempt)).orElse(false);
+            if (!newerRejection) {
+                DeckLogin.guard().succeeded(session.account());
+            }
         } else if (now == NdvState.FAILED && (login == null || login.sent.getAndSet(false))) {
             // Nur wenn das Passwort wirklich gesendet wurde; ein vom Sperrschutz verhinderter Versuch zählt nicht.
             DeckLogin.guard().failed(session.account(),
