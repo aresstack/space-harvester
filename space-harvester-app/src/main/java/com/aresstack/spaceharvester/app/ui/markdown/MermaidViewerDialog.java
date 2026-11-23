@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.controls.ViewerWheel;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
@@ -150,13 +151,13 @@ public final class MermaidViewerDialog extends JDialog {
             @Override
             public void mousePressed(MouseEvent e) {
                 imagePanel.dragStart = SwingUtilities.convertPoint(glass, e.getPoint(), imagePanel);
-                imagePanel.setCursor(Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
+                Cursors.set(imagePanel, Cursor.getPredefinedCursor(Cursor.MOVE_CURSOR));
             }
 
             @Override
             public void mouseReleased(MouseEvent e) {
                 imagePanel.dragStart = null;
-                imagePanel.setCursor(Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
+                Cursors.set(imagePanel, Cursor.getPredefinedCursor(Cursor.DEFAULT_CURSOR));
             }
 
             @Override
@@ -456,7 +457,7 @@ public final class MermaidViewerDialog extends JDialog {
         OverlayButton(javax.swing.Icon symbol, int size, String tooltip) {
             super(new BorderLayout());
             setOpaque(false);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(tooltip);
             JLabel label = new JLabel(symbol, SwingConstants.CENTER);
             label.setForeground(new Color(255, 255, 255, 210));

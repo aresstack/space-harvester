@@ -42,6 +42,11 @@ interface Prompts {
     /** Zeigt Angaben als Liste „Bezeichnung: Wert“. */
     void show(Component parent, String title, List<InfoLine> lines);
 
+    /** Zeigt einen längeren Text (Druckinformationen) zum Lesen. */
+    default void showText(Component parent, String title, String text) {
+        show(parent, title, List.of(new InfoLine("", text)));
+    }
+
     static Prompts dialogs() {
         return new Prompts() {
             @Override
@@ -95,6 +100,18 @@ interface Prompts {
                 }
                 Dialogs.view(parent, title, body);
             }
+
+            @Override
+            public void showText(Component parent, String title, String text) {
+                javax.swing.JTextArea area = Comic.code();
+                area.setLineWrap(true);
+                area.setWrapStyleWord(true);
+                area.setText(text);
+                area.setCaretPosition(0);
+                JComponent scroll = Comic.scroll(area);
+                scroll.setPreferredSize(new Dimension(560, 320));
+                Dialogs.view(parent, title, scroll);
+            }
         };
     }
 
@@ -110,6 +127,11 @@ interface Prompts {
         c.gridy = y;
         c.insets = new Insets(3, 0, 3, 10);
         c.anchor = GridBagConstraints.WEST;
+        if (field instanceof PatternFields.Field) {
+            // Auswahl mit Eingaben darunter: Bezeichnung auf Höhe der Liste, nicht in der Mitte.
+            c.anchor = GridBagConstraints.FIRST_LINE_START;
+            c.insets = new Insets(8, 0, 3, 10);
+        }
         JLabel text = Comic.text(label);
         text.setPreferredSize(new Dimension(118, text.getPreferredSize().height));
         panel.add(text, c);

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubblePalette;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
@@ -1681,10 +1682,6 @@ public final class ChatPanel extends JPanel {
                 return runtime.workspace().releasePageForChat(spaceKey, key).size();
             }
 
-            @Override
-            public int selection() {
-                return current == null ? 0 : runtime.workspace().releasePagesForChat(current.toCore(runtime)).size();
-            }
         };
     }
 
@@ -2061,7 +2058,7 @@ public final class ChatPanel extends JPanel {
             link.setBorder(BorderFactory.createEmptyBorder());
             link.setContentAreaFilled(false);
             link.setFocusPainted(false);
-            link.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+            Cursors.set(link, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
             link.setToolTipText(title + " öffnen");
             link.addActionListener(e -> open.accept(source));
             return link;

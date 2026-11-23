@@ -1954,6 +1954,14 @@ public final class Workspace {
         return harvester.signIns();
     }
 
+    /**
+     * Der Netzzustand des Core, für den Hinweis „Keine Netzverbindung“ in der Statuszeile (Angelo 22.11.2026); Änderungen
+     * über {@code network().subscribe(...)}, ohne Abfragen.
+     */
+    public com.aresstack.spaceharvester.application.network.NetworkState network() {
+        return harvester.network();
+    }
+
     /** Die Proxy-Route aller Quellen, für den Hinweis „Proxy-Skript seit … nicht erneuert“ in der Statuszeile. */
     public com.aresstack.spaceharvester.source.network.ProxyRoutes proxyRoutes() {
         return harvester.proxyRoutes();
@@ -3082,19 +3090,6 @@ public final class Workspace {
     // --- KI-Freigabe je Seite (ADR 0028) ----------------------------------------------------------------------------
 
     /**
-     * Trägt die lokal gespeicherten Seiten der links gewählten Auswahl in die Liste freigegebener Seiten ein, mit der
-     * Wurzel der Auswahl als Knoten; so beim Senden im Chat. Was nicht lokal ist, kommt nicht auf die Liste. Die
-     * KI-Auswertungen der neuen Seiten laufen danach im gedrosselten Hintergrund. Schreibt in die Ablage: nie auf dem
-     * EDT aufrufen.
-     *
-     * @return die neu eingetragenen Seiten
-     */
-    public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePagesForChat(
-            com.aresstack.spaceharvester.application.holdings.Selection selection) {
-        return harvester.pageReleaseService().release(caller, selection);
-    }
-
-    /**
      * Trägt genau eine lokal gespeicherte Seite ein, ohne Unterseiten: so, wenn der Chat sie per Werkzeug an das Modell
      * liefert (ADR 0033). Schreibt in die Ablage: nie auf dem EDT aufrufen.
      *
@@ -3103,11 +3098,6 @@ public final class Workspace {
     public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePageForChat(
             String spaceKey, com.aresstack.spaceharvester.application.snapshot.PageKey key) {
         return harvester.pageReleaseService().releasePage(caller, spaceKey, key);
-    }
-
-    /** Wie viele Seiten der Auswahl neu auf die Liste freigegebener Seiten kämen, für den Hinweis vor dem Senden. */
-    public int newPageReleases(com.aresstack.spaceharvester.application.holdings.Selection selection) {
-        return harvester.pageReleaseService().newPages(caller, selection);
     }
 
     /**

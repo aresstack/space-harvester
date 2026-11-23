@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.settings.ViewerBackground;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -145,7 +146,7 @@ final class ReadingPane extends JPanel {
                 // Abseits eines Bildes ist die Quelle null; Map.of() verträgt keinen null-Schlüssel.
                 String src = imageAt(event);
                 boolean image = src != null && originals.containsKey(src);
-                pane.setCursor(image ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
+                Cursors.set(pane, image ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
                 pane.setToolTipText(image ? "Klicken zum Vergrößern" : null);
             }
         });

@@ -100,6 +100,22 @@ class HttpBetaViewServerTest {
     }
 
     @Test
+    void readsNotesMarksPrintInfoAndSearchesInTheDocument() throws IOException {
+        BetaViewConnection connection = login();
+        ResultTable result = connection.search(filter(null));
+        connection.open(result.rows().get(0).action());
+        assertThat(connection.notes()).isEqualTo("Bitte bis Freitag prüfen");
+        assertThat(connection.markedRanges()).isEqualTo("Keine markierten Bereiche.");
+        assertThat(connection.printInfo()).isEqualTo("Drucker: Etage 3, 2 Seiten");
+        assertThat(connection.searchText("pruefziffer")).contains("Seite 2").contains("PRUEFZIFFER FALSCH");
+        assertThat(fake.requests()).contains("GET document.notes.list.action", "GET holdhide.list.action",
+                "POST document.search.action", "GET printDialog.action");
+
+        connection.open(result.rows().get(1).action());
+        assertThat(connection.notes()).isEqualTo("Keine Notizen vorhanden.");
+    }
+
+    @Test
     void downloadsQuicklyAndWithOptions() throws IOException {
         BetaViewConnection connection = login();
         connection.open(connection.search(filter(null)).rows().get(0).action());

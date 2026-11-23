@@ -50,6 +50,14 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     public static final String TITLE = "Hintergrundfüllung";
     /** Fehlercode: Seiten ließen sich nicht laden. */
     public static final String PAGES_MISSING = PageLoads.PAGES_MISSING;
+    /**
+     * Angabe: der wievielte Versuch eines Teils (Angelo 22.11.2026). Holt die Füllung gescheiterte Seiten nach ihrer
+     * Wartezeit erneut, läuft der gescheiterte Teil des Space im selben Eintrag weiter
+     * ({@link BackgroundJobs#startOrRetryUnlessRunning}), statt je Versuch einen neuen Auftrag anzulegen.
+     */
+    public static final String ATTEMPTS = "fill.attempts";
+    /** Code der Meldung, mit der ein weiterer Versuch beginnt. */
+    public static final String RETRY = "RETRY";
     private static final String COMPONENT = "background-fill";
 
     private final BackgroundJobs background;
@@ -73,6 +81,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private final Subscription parts;
     private final Subscription syncs;
     private volatile Fill fill;
+    private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
+    private volatile Subscription networkWatch = Subscription.NONE;
 
     /**
      * Was die Teile von der Füllung brauchen ({@link BackgroundFill}); eigene Schnittstelle, damit Tests einen Ablauf
@@ -103,6 +113,8 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private static final class Live {
 
         final JobContext context;
+        /** Der wievielte Versuch ({@link #ATTEMPTS}). */
+        final int attempt;
         final CompletableFuture<Void> done = new CompletableFuture<>();
         long failed;
         long processed;
@@ -118,9 +130,12 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
          * bestellten Suche gewesen sein; dann sucht der Teil einmal neu, und deren „leer“ beendet ihn.
          */
         boolean idleWhileScanAhead;
+        /** Unter {@link #monitor}: steht als „Wartet auf Netzverbindung“ ({@link #offline}). */
+        boolean offline;
 
-        Live(JobContext context) {
+        Live(JobContext context, int attempt) {
             this.context = context;
+            this.attempt = attempt;
         }
     }
 
@@ -209,6 +224,74 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
         };
         fill.observe(spaceOf, this, this::resting);
         restResting();
+    }
+
+    /**
+     * Hängt den Netzzustand an (Angelo 22.11.2026): Scheitert eine Seite am Netz, steht der Teil ihres Space als
+     * „Wartet auf Netzverbindung“ mit dem Grund in der Diagnose, nichts zählt als gescheitert; ist das Netz zurück,
+     * lädt er im selben Auftrag weiter.
+     */
+    public void network(com.aresstack.spaceharvester.application.network.NetworkState network) {
+        this.network = network;
+        Subscription previous = networkWatch;
+        networkWatch = network == null ? Subscription.NONE : network.subscribe(status -> {
+            if (status.online()) {
+                back();
+            }
+        });
+        previous.close();
+    }
+
+    /** Das Netz ist zurück: Jeder wartende Teil läuft wieder sichtbar. */
+    private void back() {
+        List<Live> waiting = new java.util.ArrayList<>();
+        synchronized (monitor) {
+            for (Live part : live.values()) {
+                if (part.offline) {
+                    part.offline = false;
+                    waiting.add(part);
+                }
+            }
+        }
+        for (Live part : waiting) {
+            part.context.awaitingNetwork(false);
+            part.context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.NETWORK, COMPONENT,
+                    com.aresstack.spaceharvester.application.network.NetworkWait.ONLINE,
+                    "Netzverbindung zurück; der Auftrag lädt hier weiter", null, null, null));
+        }
+    }
+
+    @Override
+    public void offline(BackgroundFill.Where where, Throwable cause) {
+        Live part;
+        synchronized (monitor) {
+            part = live.get(where);
+        }
+        if (part != null) {
+            markOffline(part, cause);
+        }
+    }
+
+    /** Einmal je Netzausfall: „Wartet auf Netzverbindung“ und der Grund in der Diagnose. */
+    private void markOffline(Live part, Throwable cause) {
+        synchronized (monitor) {
+            if (part.offline) {
+                return;
+            }
+            part.offline = true;
+        }
+        com.aresstack.spaceharvester.application.network.NetworkState net = network;
+        String why = net != null && net.status().reason() != null ? net.status().reason()
+                : cause == null ? "Netz nicht erreichbar" : cause.getClass().getSimpleName();
+        part.context.awaitingNetwork(true);
+        part.context.record(new JobEvent.Draft(JobEvent.Severity.WARNING, JobEvent.Category.NETWORK, COMPONENT,
+                com.aresstack.spaceharvester.application.network.NetworkWait.OFFLINE, "Keine Netzverbindung (" + why
+                + "): Der Auftrag wartet, bis sie zurück ist, und lädt dann von selbst hier weiter; nichts zählt als "
+                + "gescheitert", null, null, cause));
+        if (net != null && net.online()) {
+            // Inzwischen zurück: Die Meldung darüber kam vielleicht schon vor dem Vermerk.
+            back();
+        }
     }
 
     /** Hängt eine Füllung an, ohne dass sie hierher meldet; für Tests, die Meldungen selbst geben. */
@@ -375,9 +458,10 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
         }
         if (start) {
             try {
-                // Liegt schon ein offener Teil (etwa nach dem Neustart fortgesetzt), entsteht kein zweiter.
-                background.startUnlessRunning(KIND, TITLE, new BackgroundPart.Draft(
-                        where.sourceId(), where.spaceKey(), Map.of()));
+                // Liegt schon ein offener Teil (etwa nach dem Neustart fortgesetzt), entsteht kein zweiter; ist der
+                // jüngste gescheitert, ist dies seine Wiederholung und er läuft im selben Eintrag weiter.
+                background.startOrRetryUnlessRunning(KIND, TITLE, new BackgroundPart.Draft(
+                        where.sourceId(), where.spaceKey(), Map.of()), ATTEMPTS);
             } catch (RuntimeException e) {
                 synchronized (monitor) {
                     open.remove(where);
@@ -489,8 +573,9 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private static void finish(Live part) {
         if (part.failed > 0) {
             part.done.completeExceptionally(new JobFailedException(PAGES_MISSING, part.failed
-                    + (part.failed == 1 ? " Seite ließ" : " Seiten ließen") + " sich nicht laden; die Füllung versucht "
-                    + "sie nach ihrer Wartezeit erneut"));
+                    + (part.failed == 1 ? " Seite ließ" : " Seiten ließen") + " sich nicht laden"
+                    + (part.attempt > 1 ? " (Versuch " + part.attempt + ")" : "")
+                    + "; die Füllung versucht sie nach ihrer Wartezeit erneut, in diesem Auftrag"));
         } else {
             part.done.complete(null);
         }
@@ -499,8 +584,14 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     private JobTask work(BackgroundPart part) {
         BackgroundFill.Where where = new BackgroundFill.Where(part.sourceId() == null ? "" : part.sourceId(),
                 part.partitionKey());
+        int attempt = BackgroundJobs.attempt(part.parameters().get(ATTEMPTS));
         return context -> {
-            Live mine = new Live(context);
+            Live mine = new Live(context, attempt);
+            if (attempt > 1) {
+                // Jeder Versuch steht in der Diagnose, die Gründe der früheren bleiben darüber stehen.
+                context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, RETRY,
+                        "Versuch " + attempt + ": Die Füllung lädt die gescheiterten Seiten erneut", null, null, null));
+            }
             boolean woke;
             Early tally;
             Fill current = fill;
@@ -524,6 +615,11 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
                     mine.processed = tally.written + tally.failed;
                     mine.failed = tally.failed;
                 }
+            }
+            com.aresstack.spaceharvester.application.network.NetworkState net = network;
+            if (net != null && !net.online()) {
+                // Schon offline beim Start: Die Füllung übergibt nichts, bis das Netz zurück ist.
+                markOffline(mine, null);
             }
             if (tally != null) {
                 context.processed(tally.written + tally.failed);
@@ -591,5 +687,6 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     public void close() {
         parts.close();
         syncs.close();
+        networkWatch.close();
     }
 }

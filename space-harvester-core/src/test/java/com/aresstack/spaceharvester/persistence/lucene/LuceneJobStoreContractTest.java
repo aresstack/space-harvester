@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.persistence.lucene;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
@@ -45,6 +46,26 @@ class LuceneJobStoreContractTest extends JobStoreContract {
     @AfterEach
     void closeAll() {
         opened.forEach(LuceneJobStore::close);
+    }
+
+    @Test
+    void closingAfterAnInterruptedSaveReleasesTheStoreWithoutThrowing() {
+        // Roter develop-Build 22.11.2026: Ein Interrupt mitten in der Datei-Ein-/Ausgabe macht die Sperrdatei ungültig
+        // und schließt den Writer; Schließen und Neustart müssen trotzdem gehen.
+        LuceneJobStore store = (LuceneJobStore) newStore();
+        JobStatus a = new JobStatus("a", JobType.HARVEST, "wiki", null, null, JobState.QUEUED, JobProgress.NONE,
+                null, false, Instant.parse("2026-10-16T12:00:00Z"), null, null);
+        Thread.currentThread().interrupt();
+        try {
+            assertThatThrownBy(() -> store.save(a)).isInstanceOf(RuntimeException.class);
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertThatCode(store::close).doesNotThrowAnyException();
+        LuceneJobStore reopened = track(LuceneJobStore.open(store.path()));
+        reopened.save(a);
+        assertThat(reopened.find("a")).isPresent();
     }
 
     @Test

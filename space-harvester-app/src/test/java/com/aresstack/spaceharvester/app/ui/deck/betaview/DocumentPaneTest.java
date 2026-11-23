@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.deck.betaview.DocumentTab;
 import com.aresstack.spaceharvester.deck.betaview.DownloadOptions;
+import com.aresstack.spaceharvester.deck.betaview.InfoLine;
 import com.aresstack.spaceharvester.deck.betaview.OpenedDocument;
 import java.util.ArrayList;
 import java.util.List;
@@ -52,7 +53,74 @@ class DocumentPaneTest {
 
         @Override
         public void closeAll() {
+            calls.add("closeAll");
         }
+
+        @Override
+        public void quickInfo(DocumentTab document, String headline, List<InfoLine> lines) {
+            calls.add("quickInfo " + headline + " " + lines.size());
+        }
+
+        @Override
+        public void print(DocumentTab document) {
+            calls.add("print " + document.title());
+        }
+
+        @Override
+        public void notes(DocumentTab document) {
+            calls.add("notes " + document.title());
+        }
+
+        @Override
+        public void marks(DocumentTab document) {
+            calls.add("marks " + document.title());
+        }
+
+        @Override
+        public void searchText(DocumentTab document, String query) {
+            calls.add("search " + document.title() + " " + query);
+        }
+    }
+
+    @Test
+    void theDrawersLoadNotesAndMarksAndSearchInTheShownDocument() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            Recording actions = new Recording();
+            DocumentPane pane = new DocumentPane(actions);
+            pane.known(List.of(A, B));
+            pane.opened(new OpenedDocument(A, List.of(A, B), 2, "Lauf A vom Montag",
+                    List.of(new InfoLine("Seiten", "2"))));
+            actions.calls.clear();
+
+            pane.notesToggle.doClick();
+            assertThat(pane.activeDrawer()).isEqualTo(DocumentPane.DRAWER_NOTES);
+            assertThat(actions.calls).containsExactly("notes Lauf A");
+            pane.notes(A, "Bitte prüfen");
+            pane.notes(B, "gehört nicht hierher");
+            assertThat(pane.notesText.getText()).isEqualTo("Bitte prüfen");
+            // Zweites Öffnen lädt nicht erneut; Zuklappen und wieder Aufklappen auch nicht.
+            pane.notesToggle.doClick();
+            assertThat(pane.activeDrawer()).isEqualTo(DocumentPane.DRAWER_NONE);
+            pane.notesToggle.doClick();
+            assertThat(actions.calls).containsExactly("notes Lauf A");
+
+            pane.marksToggle.doClick();
+            assertThat(actions.calls).endsWith("marks Lauf A");
+            pane.searchToggle.doClick();
+            pane.searchField.setText("PRUEF");
+            pane.searchField.postActionEvent();
+            assertThat(actions.calls).endsWith("search Lauf A PRUEF");
+
+            pane.print.doClick();
+            pane.quickInfo.doClick();
+            assertThat(actions.calls).endsWith("print Lauf A", "quickInfo Lauf A vom Montag 1");
+
+            pane.closeAll.doClick();
+            assertThat(actions.calls).endsWith("closeAll");
+            pane.clear();
+            assertThat(pane.activeDrawer()).isEqualTo(DocumentPane.DRAWER_NONE);
+            assertThat(pane.notesText.getText()).isEmpty();
+        });
     }
 
     @Test

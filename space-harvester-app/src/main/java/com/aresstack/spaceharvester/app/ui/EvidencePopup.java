@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.controls.CountChip;
 import com.aresstack.spaceharvester.app.ui.controls.EscCircle;
@@ -1005,7 +1006,7 @@ public final class EvidencePopup extends JPopupMenu {
             Font base = Comic.regular(12f);
             setFont(base.deriveFont(Map.of(TextAttribute.UNDERLINE, TextAttribute.UNDERLINE_ON)));
             setForeground(Comic.BLUE);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setFocusable(true);
             setToolTipText(OPEN_TIP);
             getAccessibleContext().setAccessibleName(full);

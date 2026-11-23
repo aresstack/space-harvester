@@ -261,6 +261,62 @@ class OverallProgressTest {
         assertThat(OverallProgress.running(List.of(paused("e1", JobType.EXPORT, 10, 4)))).isFalse();
     }
 
+    /**
+     * Hintergrundaufträge zählen nicht zur Statuszeile (Angelo 23.11.2026): eine KI-Anreicherung bei 0 von 825 neben
+     * einem halb fertigen Abgleich lässt Anteil, Restzeit und Zahl der laufenden Aufträge beim Abgleich.
+     */
+    @Test
+    void backgroundJobsDoNotCountForTheStatusLine() {
+        OverallProgress overall = new OverallProgress();
+        JobStatus sync = running("s1", JobType.SYNC, 100, 50, 0, T0.minusSeconds(50));
+        JobStatus enrichment = running("k1", JobType.BACKGROUND, 825, 0, 0, T0.minus(Duration.ofMinutes(30)));
+        overall.observe(List.of(sync, enrichment), T0, AVERAGES);
+
+        JobProgressEvent event = overall.event(List.of(sync, enrichment), T0, AVERAGES, 4);
+        OverallProgress single = new OverallProgress();
+        single.observe(List.of(sync), T0, AVERAGES);
+        JobProgressEvent alone = single.event(List.of(sync), T0, AVERAGES, 4);
+
+        assertThat(event.text()).isEqualTo(alone.text()).startsWith("Aufträge: 1 läuft · 50 %");
+        assertThat(overall.batch(List.of(sync, enrichment))).containsExactly(sync);
+    }
+
+    /** Nur Hintergrund offen: die Statuszeile zeigt keinen Auftrag. */
+    @Test
+    void onlyBackgroundJobsLeaveTheStatusLineEmpty() {
+        OverallProgress overall = new OverallProgress();
+        JobStatus fill = running("f1", JobType.BACKGROUND, 9, 3, 0, T0.minus(Duration.ofHours(1)));
+        overall.observe(List.of(fill), T0, AVERAGES);
+
+        assertThat(overall.event(List.of(fill), T0, AVERAGES, 4)).isEqualTo(JobProgressEvent.none());
+    }
+
+    /**
+     * Ohne Fortschritt keine Hochrechnung: Ein Auftrag, der seit 30 Minuten bei 0 von 825 steht, rechnet mit dem
+     * Startwert je Element, nicht mit seiner Laufzeit (vorher (0,5 s × 10 + 1800 s) / 10 ≈ 180 s je Element, rund 41 h).
+     */
+    @Test
+    void aJobWithoutProgressIsNotExtrapolatedFromItsRuntime() {
+        OverallProgress overall = new OverallProgress();
+        JobStatus stuck = running("x1", JobType.STATEMENT_ANALYSIS, 825, 0, 0, T0.minus(Duration.ofMinutes(30)));
+        overall.observe(List.of(stuck), T0, AVERAGES);
+
+        assertThat(overall.perUnit(stuck, T0, AVERAGES))
+                .isEqualTo(OverallProgress.priorSeconds(JobType.STATEMENT_ANALYSIS, AVERAGES));
+        assertThat(overall.part(stuck, T0, AVERAGES).open()).isCloseTo(825.0, within(1e-9));
+    }
+
+    /** Dasselbe für Bilder, die seit langem laden, aber noch keine Datei fertig haben. */
+    @Test
+    void aDownloadWithoutAFinishedFileIsNotExtrapolatedFromItsRuntime() {
+        OverallProgress overall = new OverallProgress();
+        JobStatus images = staged("b1", JobType.ASSETS, 100, 0, T0.minus(Duration.ofHours(1)), JobStage.DOWNLOADING);
+        overall.observe(List.of(images), T0.minus(Duration.ofMinutes(30)), AVERAGES);
+        overall.observe(List.of(images), T0, AVERAGES);
+
+        assertThat(overall.perUnit(images, T0, AVERAGES)).isEqualTo(1.0);
+    }
+
     private static JobStatus running(String id, JobType type, long discovered, long processed, long written,
                                      Instant started) {
         return new JobStatus(id, type, "wiki", "OPS", "local", JobState.RUNNING,

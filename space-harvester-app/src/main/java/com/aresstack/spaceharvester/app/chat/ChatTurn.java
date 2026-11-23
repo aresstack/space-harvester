@@ -126,7 +126,8 @@ public final class ChatTurn {
     /**
      * Die KI-Freigabe des Chats (ADR 0028, mit Werkzeugen ADR 0033): Mit Werkzeugen kommt nur auf die Liste, was
      * wirklich an das Modell geht (die offene Seite beim Senden, jede gelesene Seite, jede Seite mit Auszug aus der
-     * Suche; die Liste der Titel nicht). Ohne Werkzeuge gilt die bisherige Regel: die ganze Auswahl beim Senden.
+     * Suche; die Liste der Titel nicht). Ohne Werkzeuge ebenso: jede Seite, deren Text im Kontextblock mitgeht, nie die
+     * ganze Auswahl (Angelo 22.11.2026).
      * Aufgerufen auf dem Thread des Turns, nie auf dem EDT.
      */
     public interface Releases {
@@ -137,17 +138,10 @@ public final class ChatTurn {
                 return 0;
             }
 
-            @Override
-            public int selection() {
-                return 0;
-            }
         };
 
         /** Trägt genau diese Seite ein; die Zahl der neuen Einträge (0 oder 1). */
         int page(String spaceKey, PageKey key);
-
-        /** Trägt die lokal gespeicherten Seiten der ganzen Auswahl ein; die Zahl der neuen Einträge. */
-        int selection();
     }
 
     /** Der Zugriff auf das Änderungsprotokoll, für Tests austauschbar. */
@@ -190,6 +184,8 @@ public final class ChatTurn {
     private final Map<PageKey, Integer> numbers = new HashMap<>();
     private Releases releases = Releases.NONE;
     private final Set<PageKey> releasedHere = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Bestand je Space für {@link #spaceOf}, je Turn einmal gelesen. */
+    private final Map<String, Map<String, PageHolding>> spacePages = new java.util.concurrent.ConcurrentHashMap<>();
 
     public ChatTurn(Workspace workspace, AiChat port, String model, String effort,
                     List<ChatRecord.Message> history, String question, PageSelection scope, String area,
@@ -334,7 +330,6 @@ public final class ChatTurn {
 
     /** Ohne Werkzeuge: Wissen aus Suche oder ganzen Seiten im Kontextblock (vor ADR 0033, und als Rückfall). */
     private void runWithSearch() {
-        releaseSelection();
         ChatKnowledge.Context context;
         String asked = question;
         if (kind == Kind.WHATS_NEW) {
@@ -369,6 +364,9 @@ public final class ChatTurn {
             finish(() -> listener.cancelled(""));
             return;
         }
+        // ADR 0033 Punkt 8 auch ohne Werkzeuge (Angelo 22.11.2026): nur die Seiten, deren Text mitgeht, nie die ganze
+        // Auswahl.
+        context = releaseDelivered(context);
         ChatKnowledge.Context chosen = context;
         onUi(() -> listener.context(chosen));
         List<AiChat.Message> messages = conversation(ChatKnowledge.systemMessage(area, context), asked);
@@ -645,16 +643,62 @@ public final class ChatTurn {
         }
     }
 
-    /** Ohne Werkzeuge: die ganze Auswahl beim Senden (ADR 0028). */
-    private void releaseSelection() {
-        try {
-            int added = releases.selection();
-            if (added > 0) {
-                onUi(() -> listener.released(added));
-            }
-        } catch (RuntimeException e) {
-            onUi(() -> listener.releaseFailed(e));
+    /**
+     * Ohne Werkzeuge: Jede Seite, deren Text im Kontextblock an das Modell geht, kommt vorher auf die Liste
+     * freigegebener Seiten, genau wie bei den Werkzeugen (ADR 0033 Punkt 8). Die übrige Auswahl bleibt draußen: Früher
+     * trug das Senden die ganze links gewählte Auswahl ein, und die KI-Anreicherung bettete danach alle ihre Seiten ein
+     * (Angelo 22.11.2026). Lässt sich eine Seite nicht eintragen (ohne Space, nicht lokal, Fehler der Ablage), geht ihr
+     * Text nicht hinaus; Auszüge ohne Seite (etwa die Titelliste des Überblicks) bleiben, wie sie sind.
+     */
+    private ChatKnowledge.Context releaseDelivered(ChatKnowledge.Context context) {
+        if (context.isEmpty()) {
+            return context;
         }
+        List<ChatKnowledge.Excerpt> kept = new ArrayList<>();
+        for (ChatKnowledge.Excerpt excerpt : context.accepted()) {
+            if (excerpt.pageId() == null || excerpt.pageId().isBlank()) {
+                kept.add(excerpt);
+                continue;
+            }
+            PageKey key = new PageKey(excerpt.sourceId(), excerpt.pageId());
+            String spaceKey = spaceOf(key);
+            if (spaceKey == null) {
+                RuntimeException missing = new IllegalStateException("Seite ohne Space im gewählten Bereich");
+                onUi(() -> listener.releaseFailed(missing));
+                continue;
+            }
+            try {
+                releasePageOrThrow(spaceKey, key);
+                kept.add(excerpt);
+            } catch (RuntimeException e) {
+                // Gemeldet hat releasePageOrThrow; der Text der Seite geht nicht an das Modell.
+            }
+        }
+        return kept.size() == context.accepted().size() ? context : ChatKnowledge.assemble(kept);
+    }
+
+    /** Der Space der Seite im gewählten Bereich, je Turn einmal je Space gelesen; {@code null}, wenn keiner sie hat. */
+    private String spaceOf(PageKey key) {
+        if (scope == null) {
+            return null;
+        }
+        for (var space : scope.spaces()) {
+            if (!space.sourceId().equals(key.sourceId())) {
+                continue;
+            }
+            Map<String, PageHolding> pages = spacePages.computeIfAbsent(space.sourceId() + "\u0000" + space.spaceKey(),
+                    ignored -> {
+                        try {
+                            return workspace.holdings(space.sourceId(), space.spaceKey()).pages();
+                        } catch (RuntimeException gone) {
+                            return Map.of();
+                        }
+                    });
+            if (pages.containsKey(key.pageId())) {
+                return space.spaceKey();
+            }
+        }
+        return null;
     }
 
     /** Nimmt eine gelesene Seite als Quelle auf (oder findet sie wieder) und meldet die Liste; gibt ihre Nummer. */

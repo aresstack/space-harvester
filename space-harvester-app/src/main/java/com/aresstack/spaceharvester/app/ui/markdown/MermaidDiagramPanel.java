@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -137,7 +138,7 @@ public final class MermaidDiagramPanel extends JPanel {
                     }
                     rendering = false;
                     copyImageButton.setEnabled(image != null);
-                    canvas.setCursor(Cursor.getPredefinedCursor(
+                    Cursors.set(canvas, Cursor.getPredefinedCursor(
                             image != null ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                     canvas.updatePreferredSize();
                     canvas.revalidate();

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.controls.PlaceholderList;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Texts;
@@ -154,7 +155,7 @@ final class ReadingFirstView extends JPanel {
             public void mouseMoved(MouseEvent e) {
                 int index = rowAt(e.getPoint());
                 boolean hot = index >= 0 && spot(index, e.getPoint()) != Spot.NONE;
-                list.setCursor(Cursor.getPredefinedCursor(hot ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                Cursors.set(list, Cursor.getPredefinedCursor(hot ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
             }
         };
         list.addMouseListener(mouse);

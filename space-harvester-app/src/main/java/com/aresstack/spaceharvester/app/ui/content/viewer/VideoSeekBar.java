@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import javax.swing.AbstractAction;
 import javax.swing.JComponent;
 import javax.swing.KeyStroke;
@@ -55,7 +56,7 @@ public final class VideoSeekBar extends JComponent {
         setPreferredSize(new Dimension(680, 48));
         setFont(new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.PLAIN, 12));
         setMinimumSize(new Dimension(140, 48));
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         putClientProperty(javax.accessibility.AccessibleContext.ACCESSIBLE_NAME_PROPERTY, "Videoposition");
         setToolTipText(" ");
         setFocusable(true);

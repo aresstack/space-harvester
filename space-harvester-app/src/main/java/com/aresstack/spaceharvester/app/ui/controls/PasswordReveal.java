@@ -37,7 +37,7 @@ public final class PasswordReveal {
         toggle.setContentAreaFilled(false);
         toggle.setOpaque(false);
         toggle.setMargin(new Insets(0, 4, 0, 4));
-        toggle.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(toggle, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         toggle.setToolTipText(TOOLTIP_SHOW);
         toggle.getAccessibleContext().setAccessibleName("Passwort anzeigen");
         toggle.addActionListener(e -> {

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.border.ComicBorder;
 import com.aresstack.enterpriseai.ui.comic.control.ComicComboBoxUI;
 import com.aresstack.enterpriseai.ui.comic.control.ComicScrollPane;
@@ -330,7 +331,7 @@ public final class Comic {
         header.setForeground(INK);
         header.setFont(semiBold(12.5f));
         header.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 2));
-        header.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        Cursors.set(header, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         header.setToolTipText(tooltip);
         return header;
     }

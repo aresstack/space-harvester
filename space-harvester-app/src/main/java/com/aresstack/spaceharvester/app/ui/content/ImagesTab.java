@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.HintActions;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
@@ -391,7 +392,7 @@ final class ImagesTab extends JPanel {
         row.add(lines, BorderLayout.CENTER);
         row.setAlignmentX(LEFT_ALIGNMENT);
         // Ein Klick öffnet das Bild groß, mit seiner Beschreibung.
-        row.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        Cursors.set(row, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         row.setToolTipText("Bild groß öffnen und die Beschreibung prüfen");
         java.awt.event.MouseAdapter open = new java.awt.event.MouseAdapter() {
             @Override

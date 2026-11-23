@@ -52,6 +52,7 @@ public final class SettingsView implements View {
     static final String VIDEO = "Video";
     /** Bereich „Terminal“: Einstellungen des 3270-Terminals im Command Deck (aus MainframeMate). */
     static final String TERMINAL = "Terminal";
+    static final String NDV = "NDV";
     static final String SECURITY = "Sicherheit";
     static final String LIBRARIES = "Bibliotheken";
     /** Die Diagnose (ehemals Bereich „Status“): Auftragsereignisse und Verbindungsprüfungen, {@link StatusView}. */
@@ -114,6 +115,8 @@ public final class SettingsView implements View {
     /** Bereich „Terminal“: Aktionsverzögerung, F-Tasten, Sternenhimmel, Maus-Aktionen. */
     final TerminalSettingsPanel terminal =
             new TerminalSettingsPanel(com.aresstack.spaceharvester.app.ui.deck.TerminalSettings.shared());
+    /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
+    final NdvSettingsPanel ndv = new NdvSettingsPanel();
     final GlossaryRulesEditor glossaryRules;
     /** Bereich „Bibliotheken“: die ausgelieferten Open-Source-Bibliotheken mit Lizenz. */
     final LibrariesView libraries = new LibrariesView();
@@ -312,6 +315,7 @@ public final class SettingsView implements View {
         page(VIDEO, Comic.column(Comic.plate(VideoSettingsPanel.HEADING, Comic.PETROL, video.component())));
         page(TERMINAL, Comic.column(Comic.plate(TerminalSettingsPanel.HEADING, Comic.PETROL, terminal.component()),
                 Comic.plate(TerminalSettingsPanel.MOUSE_HEADING, Comic.PETROL, terminal.mouseComponent())));
+        page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component())));
         JPanel vault = new JPanel(new BorderLayout(0, 8));
         vault.setOpaque(false);
         vault.add(Comic.wrapped("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
