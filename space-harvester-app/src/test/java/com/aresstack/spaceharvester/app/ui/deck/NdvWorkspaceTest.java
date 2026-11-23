@@ -386,6 +386,26 @@ class NdvWorkspaceTest {
     }
 
     @Test
+    void aLateSuccessDoesNotClearANewerRejectionOfTheSameEntry() throws Exception {
+        NdvConnectForm.rememberWorking(new com.aresstack.spaceharvester.deck.ndv.NdvProfile("10.0.0.7", 8011),
+                "Testhost NDV");
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        // Die Anmeldung klappt, die Meldung „verbunden“ wartet aber noch auf dem EDT ...
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            workspace[0].shown();
+            assertThat(sessions.all()).hasSize(1);
+            assertThat(sessions.all().getFirst().state()).isEqualTo(NdvState.CONNECTED);
+            // ... während FTP mit demselben Eintrag danach abgelehnt wird, auch in derselben Millisekunde.
+            DeckLogin.guard().failed("Testhost NDV", "Passwort abgelaufen");
+        });
+        flush();
+        assertThat(workspace[0].selected().state()).isEqualTo(NdvState.CONNECTED);
+        assertThat(DeckLogin.guard().mayTry("Testhost NDV")).as("die neuere Ablehnung bleibt").isFalse();
+        assertThat(DeckLogin.notice("Testhost NDV")).contains("Passwort abgelaufen");
+    }
+
+    @Test
     void withoutRememberedEntryOpeningTheAreaShowsTheForm() throws Exception {
         NdvWorkspace[] workspace = new NdvWorkspace[1];
         SwingUtilities.invokeAndWait(() -> {
