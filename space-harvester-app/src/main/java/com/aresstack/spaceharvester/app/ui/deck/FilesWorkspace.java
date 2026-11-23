@@ -85,7 +85,7 @@ import javax.swing.table.DefaultTableCellRenderer;
  * Logik liegen im Anwendungsfall {@link FileBrowser} bzw. {@link EditorSessions}; die Oberfläche hört nur zu (kein
  * Abfragen). Gelesen wird erst, wenn der Bereich zum ersten Mal sichtbar ist; geschrieben nur auf ausdrücklichen Wunsch.
  */
-public final class FilesWorkspace extends JPanel {
+public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
 
     /**
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
@@ -109,6 +109,11 @@ public final class FilesWorkspace extends JPanel {
                 error ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR
                         : com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.PLAIN, null, null);
         statusInfo.show(shownStatus);
+    }
+
+    @Override
+    public JComponent footTools() {
+        return footTools;
     }
 
     static final String LOCATION_KEY = "deck.files.location";
@@ -162,10 +167,14 @@ public final class FilesWorkspace extends JPanel {
     private final JTable table = Comic.table(new JTable(model));
     private final JPanel browserActions;
     private final JPanel documentActions;
-    private final ComposerButton open;
-    private final ComposerButton delete;
-    private final ComposerButton save;
-    private final ComposerButton reload;
+    private final javax.swing.JButton open;
+    private final javax.swing.JButton delete;
+    private final javax.swing.JButton save;
+    private final javax.swing.JButton reload;
+    /** Neben der Lupe in der Fußleiste des Command Deck: die Aktionen des gewählten Reiters. */
+    private final JPanel footTools = new JPanel(new CardLayout());
+    /** Reiter samt Kreuz je Dokument. */
+    private final Map<EditorSession, JPanel> tabOf = new LinkedHashMap<>();
     private boolean creatingFolder;
     private boolean started;
     private EditorSession selected;
@@ -244,41 +253,28 @@ public final class FilesWorkspace extends JPanel {
         center.setOpaque(false);
         center.add(browserCard(), BROWSER);
 
-        // Fußzeile: die Aktionen des gewählten Reiters; der Stand steht in der Statuszeile der App.
-        open = Comic.button("Öffnen", "Ordner öffnen bzw. Datei im Editor öffnen (Enter)");
-        open.addActionListener(e -> openSelected());
-        ComposerButton newFolder = Comic.button(FilesIcons.newFolder(), "Neuer Ordner", "Ordner anlegen");
-        newFolder.addActionListener(e -> askName(true));
-        ComposerButton newFile = Comic.button(FilesIcons.newFile(), "Neue Datei", "Leere Datei anlegen");
-        newFile.addActionListener(e -> askName(false));
-        delete = Comic.button(Glyph.TRASH, "Löschen", "Gewählte Einträge löschen (Entf)");
-        delete.addActionListener(e -> deleteSelected());
-        browserActions = Comic.row(open, newFolder, newFile, delete);
-        save = Comic.primary("Speichern", "Änderungen speichern (Strg+S)");
-        save.setIcon(FilesIcons.save());
-        save.addActionListener(e -> {
+        // Die Aktionen des gewählten Reiters stehen als Symbolknöpfe neben der Lupe in der Fußleiste des Command
+        // Deck (footTools); der Stand steht in der Statuszeile der App. Ein Dokument schließt das Kreuz am Reiter.
+        open = DeckBars.action(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.openExternal(),
+                "Öffnen: Ordner öffnen bzw. Datei im Editor öffnen (Enter)", this::openSelected);
+        var newFolder = DeckBars.action(FilesIcons.newFolder(), "Neuer Ordner", () -> askName(true));
+        var newFile = DeckBars.action(FilesIcons.newFile(), "Neue Datei", () -> askName(false));
+        delete = DeckBars.action(Glyph.TRASH, "Gewählte Einträge löschen (Entf)", this::deleteSelected);
+        browserActions = DeckBars.tools(open, newFolder, newFile, delete);
+        save = DeckBars.action(FilesIcons.save(), "Änderungen speichern (Strg+S)", () -> {
             if (selected != null) {
                 selected.save();
             }
         });
-        reload = Comic.button(Glyph.REFRESH, "Neu laden", "Datei neu laden; ungespeicherte Änderungen gehen verloren");
-        reload.addActionListener(e -> reloadSelected());
-        ComposerButton close = Comic.button("Schließen", "Dokument schließen");
-        close.addActionListener(e -> {
-            if (selected != null) {
-                closeDocument(selected);
-            }
-        });
-        documentActions = Comic.row(save, reload, close);
-        JPanel actions = new JPanel(new CardLayout());
-        actions.setOpaque(false);
-        actions.add(browserActions, BROWSER);
-        actions.add(documentActions, "document");
-        JPanel foot = DeckBars.foot(null, actions);
+        reload = DeckBars.action(Glyph.REFRESH, "Datei neu laden; ungespeicherte Änderungen gehen verloren",
+                this::reloadSelected);
+        documentActions = DeckBars.tools(save, reload);
+        footTools.setOpaque(false);
+        footTools.add(browserActions, BROWSER);
+        footTools.add(documentActions, "document");
 
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
 
         groupToggle.marked(AppState.shared().getBoolean(GROUP_KEY, false));
         collapseAll.setVisible(groupToggle.marked());
@@ -538,11 +534,7 @@ public final class FilesWorkspace extends JPanel {
     }
 
     private void showActions() {
-        Component actions = browserActions.getParent();
-        if (actions != null) {
-            ((CardLayout) ((JPanel) actions).getLayout()).show((JPanel) actions,
-                    selected == null ? BROWSER : "document");
-        }
+        ((CardLayout) footTools.getLayout()).show(footTools, selected == null ? BROWSER : "document");
         int count = table.getSelectedRowCount();
         open.setEnabled(count == 1);
         delete.setEnabled(count > 0);
@@ -598,13 +590,6 @@ public final class FilesWorkspace extends JPanel {
         pill.addActionListener(e -> select(session));
         pill.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseClicked(MouseEvent event) {
-                if (SwingUtilities.isMiddleMouseButton(event)) {
-                    closeDocument(session);
-                }
-            }
-
-            @Override
             public void mousePressed(MouseEvent event) {
                 pillMenu(session, pill, event);
             }
@@ -615,7 +600,10 @@ public final class FilesWorkspace extends JPanel {
             }
         });
         pillGroup.add(pill);
-        pills.add(pill);
+        JPanel tab = DeckBars.tab(pill, "Dokument schließen (auch Mittelklick auf den Reiter)",
+                () -> closeDocument(session));
+        pills.add(tab);
+        tabOf.put(session, tab);
         pillOf.put(session, pill);
         session.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
         pills.revalidate();
@@ -650,7 +638,7 @@ public final class FilesWorkspace extends JPanel {
         cardOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(pill);
+            pills.remove(tabOf.remove(session));
             pills.revalidate();
             pills.repaint();
         }

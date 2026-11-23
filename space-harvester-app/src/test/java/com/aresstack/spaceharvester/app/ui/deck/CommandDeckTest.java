@@ -118,4 +118,21 @@ class CommandDeckTest {
                     .isEqualTo(deck.terminal().statusInfo().getPreferredSize().width).isLessThan(files);
         });
     }
+
+    /** Die Leiste mit der Lupe wie im Space Harvester; sie sucht im gezeigten Bereich (Angelo, 23.11.2026). */
+    @Test
+    void theFootBarWithTheMagnifierSearchesTheShownArea() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            deck = new CommandDeck();
+            javax.swing.JComponent stage = (javax.swing.JComponent) deck.perspective().workspace();
+            assertThat(SwingUtilities.isDescendingFrom(deck.findBar(), stage)).isTrue();
+            assertThat(stage.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).get(
+                    javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F,
+                            java.awt.event.InputEvent.CTRL_DOWN_MASK))).isEqualTo("find");
+            for (DeckArea area : DeckArea.values()) {
+                deck.show(area);
+                assertThat(deck.findBar().isShowing() || deck.findBar().getParent() == stage).as(area.name()).isTrue();
+            }
+        });
+    }
 }

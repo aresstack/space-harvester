@@ -48,16 +48,68 @@ class DeckBarsTest {
                 FilesWorkspace files = deck.files();
                 BorderLayout layout = (BorderLayout) files.getLayout();
                 Component head = layout.getLayoutComponent(BorderLayout.NORTH);
-                Component foot = layout.getLayoutComponent(BorderLayout.SOUTH);
                 assertThat(head.getPreferredSize().height).isEqualTo(DeckBars.HEAD_HEIGHT);
-                assertThat(foot.getPreferredSize().height).isEqualTo(DeckBars.FOOT_HEIGHT);
-                assertThat(labels((Container) foot)).as("kein Statustext in der Werkzeugleiste").isZero();
+                assertThat(layout.getLayoutComponent(BorderLayout.SOUTH)).as("keine eigene Fußleiste").isNull();
+                // Die Aktionen stehen neben der Lupe in der Fußleiste des Command Deck, als Symbolknöpfe.
+                deck.show(DeckArea.FILES);
+                Container tools = files.footTools();
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(tools, deck.findBar())).isTrue();
+                assertThat(deck.findBar().getPreferredSize().height).isEqualTo(DeckBars.FOOT_HEIGHT);
+                assertThat(labels(tools)).as("kein Statustext in der Werkzeugleiste").isZero();
+                assertThat(buttons(tools)).isNotEmpty().allSatisfy(button -> {
+                    assertThat(button).isInstanceOf(com.aresstack.spaceharvester.app.ui.IconButton.class);
+                    assertThat(button.getText()).as("Symbol statt Text").isNullOrEmpty();
+                    assertThat(button.getToolTipText()).isNotBlank();
+                });
+                deck.show(DeckArea.TERMINAL);
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(tools, deck.findBar()))
+                        .as("jeder Bereich zeigt nur seine eigenen Bedienelemente").isFalse();
                 assertThat(files.statusText()).isNotBlank();
                 assertThat(((StatusLabel) files.statusInfo()).getAccessibleContext().getAccessibleName())
                         .isEqualTo(files.statusText());
             } finally {
                 deck.shutdown();
             }
+        });
+    }
+
+    private static java.util.List<javax.swing.AbstractButton> buttons(Container root) {
+        java.util.List<javax.swing.AbstractButton> found = new java.util.ArrayList<>();
+        for (Component child : root.getComponents()) {
+            if (child instanceof javax.swing.AbstractButton button) {
+                found.add(button);
+            } else if (child instanceof Container nested) {
+                found.addAll(buttons(nested));
+            }
+        }
+        return found;
+    }
+
+    /** Was allein in einer Leiste steht, beginnt links und nicht in der rechten Ecke (Angelo, 23.11.2026). */
+    @Test
+    void whatStandsAloneInABarStartsAtTheLeft() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.JPanel actions = DeckBars.tools(new JLabel("x"));
+            javax.swing.JPanel foot = DeckBars.foot(null, actions);
+            foot.setSize(800, DeckBars.FOOT_HEIGHT);
+            foot.doLayout();
+            assertThat(actions.getX()).isEqualTo(foot.getInsets().left);
+        });
+    }
+
+    /** Das Kreuz am Reiter und der Mittelklick schließen in einem Schritt. */
+    @Test
+    void theCrossAtATabClosesInOneStep() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            int[] closed = {0};
+            javax.swing.JToggleButton pill = new javax.swing.JToggleButton("Sitzung");
+            javax.swing.JPanel tab = DeckBars.tab(pill, "Trennen und schließen", () -> closed[0]++);
+            java.util.List<javax.swing.AbstractButton> all = buttons(tab);
+            assertThat(all).hasSize(2);
+            javax.swing.AbstractButton cross = all.stream().filter(b -> b != pill).findFirst().orElseThrow();
+            assertThat(cross.getToolTipText()).isEqualTo("Trennen und schließen");
+            cross.doClick();
+            assertThat(closed[0]).isEqualTo(1);
         });
     }
 

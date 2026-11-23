@@ -52,6 +52,8 @@ public final class BetaViewWorkspace extends JPanel {
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<BetaViewSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
+    /** Reiter samt Kreuz je Sitzung. */
+    private final Map<BetaViewSession, JPanel> tabOf = new LinkedHashMap<>();
     private final Map<BetaViewSession, SessionPanel> panelOf = new LinkedHashMap<>();
     private final ComposerToggleButton newPill;
     private final CardLayout cards = new CardLayout();
@@ -106,7 +108,10 @@ public final class BetaViewWorkspace extends JPanel {
         pill.getAccessibleContext().setAccessibleName(session.profile().label());
         pill.addActionListener(e -> select(session));
         pillGroup.add(pill);
-        pills.add(pill, pills.getComponentCount() - 1);
+        JPanel tab = com.aresstack.spaceharvester.app.ui.deck.DeckBars.tab(pill,
+                "Abmelden und schließen (auch Mittelklick auf den Reiter)", () -> close(session));
+        pills.add(tab, pills.getComponentCount() - 1);
+        tabOf.put(session, tab);
         pillOf.put(session, pill);
         SessionPanel panel = new SessionPanel(session, prompts, () -> close(session));
         panelOf.put(session, panel);
@@ -152,13 +157,13 @@ public final class BetaViewWorkspace extends JPanel {
         }
     }
 
-    /** „Abmelden“: Sitzung schließen und aus der Liste nehmen. */
+    /** Das Kreuz am Reiter: abmelden, Sitzung schließen und aus der Liste nehmen, in einem Schritt. */
     void close(BetaViewSession session) {
         sessions.close(session);
         ComposerToggleButton pill = pillOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(pill);
+            pills.remove(tabOf.remove(session));
             pills.revalidate();
             pills.repaint();
         }

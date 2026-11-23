@@ -28,7 +28,7 @@ import java.util.function.Supplier;
  * entfernt die Markierungen und klappt die Suche zu, ein zweiter Klick auf die Lupe ebenso. Gesucht und markiert wird
  * mit {@link ReaderFind} unterhalb der Wurzel, die {@code area} gerade liefert.
  */
-final class FindBar extends JPanel {
+public final class FindBar extends JPanel {
 
     static final String PLACEHOLDER = "In dieser Ansicht suchen … (Strg+F)";
     private static final int BUTTON_SIZE = 22;
@@ -73,7 +73,7 @@ final class FindBar extends JPanel {
     }
     private boolean open;
 
-    FindBar(Supplier<JComponent> area) {
+    public FindBar(Supplier<JComponent> area) {
         super(null);
         setLayout(new RowLayout());
         this.area = area;
@@ -134,7 +134,7 @@ final class FindBar extends JPanel {
     }
 
     /** Strg+F oder Klick auf die Lupe: Suche aufklappen, Fokus ins Feld, Text markiert. */
-    void focus() {
+    public void focus() {
         if (!open) {
             expand(true);
             if (!field.getText().trim().isEmpty()) {
@@ -146,7 +146,7 @@ final class FindBar extends JPanel {
     }
 
     /** Esc oder zweiter Klick auf die Lupe: Markierungen weg, Suche zuklappen; der Suchtext bleibt stehen. */
-    void close() {
+    public void close() {
         clear();
         expand(false);
     }
@@ -160,7 +160,7 @@ final class FindBar extends JPanel {
     }
 
     /** Setzt die Umschalter des gezeigten Bereichs mittig in die Leiste; {@code null} lässt die Mitte leer. */
-    void tools(JComponent component) {
+    public void tools(JComponent component) {
         tools.removeAll();
         if (component != null) {
             tools.add(component, BorderLayout.CENTER);
@@ -172,7 +172,7 @@ final class FindBar extends JPanel {
     }
 
     /** Ob die Suche aufgeklappt ist. */
-    boolean isOpen() {
+    public boolean isOpen() {
         return open;
     }
 
@@ -209,7 +209,7 @@ final class FindBar extends JPanel {
     }
 
     /** Der Bereich wurde gewechselt: alte Markierungen weg, mit stehendem Text im neuen Bereich neu suchen. */
-    void areaChanged() {
+    public void areaChanged() {
         clear();
         if (open && !field.getText().trim().isEmpty()) {
             step(true);
