@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.terms.TermQueries;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
@@ -158,15 +159,28 @@ final class TermsTab extends JPanel {
     private final JLabel completeness = badge();
     private final JLabel analysis = Comic.text("Analyse vom letzten Seitenabgleich");
     private final PlaceholderField filter = new PlaceholderField(12, "Begriffe filtern …");
-    private final JLabel acronymTitle = Comic.text("Akronyme");
+    /** Unterreiter (Angelo 23.11.2026): je Überschrift ein Reiter in der unteren Leiste; die Zähler oben bleiben. */
+    static final String ACRONYMS = "Akronyme";
+    static final String IDENTIFIERS = "Bezeichner";
+    static final String VERBS = "Verben";
+    static final String RELATIONS = "Beziehungen";
+    static final List<String> KINDS = List.of(ACRONYMS, IDENTIFIERS, VERBS, RELATIONS);
+    /** Der gewählte Unterreiter; {@code null}: alle Abschnitte untereinander (etwa beim Stand der Auswahl). */
+    private String kind;
+    private final com.aresstack.spaceharvester.app.ui.PillTabs kindTabs = new com.aresstack.spaceharvester.app.ui.PillTabs();
+    private final JPanel acronymsBox = new JPanel(new BorderLayout(0, 4));
+    private final JPanel identifiersBox = new JPanel(new BorderLayout(0, 4));
+    private final JPanel verbsBox = new JPanel(new BorderLayout(0, 4));
+    private final JPanel relationsBox = new JPanel(new BorderLayout(0, 4));
+    private final JLabel acronymTitle = heading("Akronyme");
     private final JPanel chips = new JPanel(new WrapFlow());
-    private final JLabel identifierTitle = Comic.text("Bezeichner");
+    private final JLabel identifierTitle = heading("Bezeichner");
     private final JPanel identifierChips = new JPanel(new WrapFlow());
-    private final JLabel verbTitle = Comic.text("Verben");
+    private final JLabel verbTitle = heading("Verben");
     private final JPanel verbChips = new JPanel(new WrapFlow());
     /** Die Verben der gezeigten Seite; {@code null}: unbekannt (keine aktuelle Aussagenanalyse). */
     private List<PageVerb> shownVerbs;
-    private final JLabel relationTitle = Comic.text("Beziehungen");
+    private final JLabel relationTitle = heading("Beziehungen");
     private final JPanel relationLines = new JPanel();
     private final JLabel hint = Comic.muted(" ");
     private Consumer<List<Span>> onJump = spans -> { };
@@ -274,25 +288,25 @@ final class TermsTab extends JPanel {
         chips.setOpaque(false);
         identifierChips.setOpaque(false);
         acronymTitle.setFont(Comic.semiBold(13f));
-        JPanel acronyms = new JPanel(new BorderLayout(0, 4));
+        JPanel acronyms = acronymsBox;
         acronyms.setOpaque(false);
         acronyms.add(acronymTitle, BorderLayout.NORTH);
         acronyms.add(chips, BorderLayout.CENTER);
         identifierTitle.setFont(Comic.semiBold(13f));
-        JPanel identifiers = new JPanel(new BorderLayout(0, 4));
+        JPanel identifiers = identifiersBox;
         identifiers.setOpaque(false);
         identifiers.add(identifierTitle, BorderLayout.NORTH);
         identifiers.add(identifierChips, BorderLayout.CENTER);
         verbChips.setOpaque(false);
         verbTitle.setFont(Comic.semiBold(13f));
-        JPanel verbs = new JPanel(new BorderLayout(0, 4));
+        JPanel verbs = verbsBox;
         verbs.setOpaque(false);
         verbs.add(verbTitle, BorderLayout.NORTH);
         verbs.add(verbChips, BorderLayout.CENTER);
         relationTitle.setFont(Comic.semiBold(13f));
         relationLines.setOpaque(false);
         relationLines.setLayout(new BoxLayout(relationLines, BoxLayout.Y_AXIS));
-        JPanel relations = new JPanel(new BorderLayout(0, 4));
+        JPanel relations = relationsBox;
         relations.setOpaque(false);
         relations.add(relationTitle, BorderLayout.NORTH);
         relations.add(relationLines, BorderLayout.CENTER);
@@ -1126,6 +1140,9 @@ final class TermsTab extends JPanel {
             int rowHeight = 0;
             int height = getVgap();
             for (java.awt.Component part : target.getComponents()) {
+                if (!part.isVisible()) {
+                    continue;
+                }
                 java.awt.Dimension size = part.getPreferredSize();
                 if (x > getHgap() && x + size.width + getHgap() > available) {
                     height += rowHeight + getVgap();
@@ -1137,6 +1154,77 @@ final class TermsTab extends JPanel {
             }
             return new java.awt.Dimension(available, height + rowHeight + getVgap());
         }
+    }
+
+    // --- Unterreiter Akronyme/Bezeichner/Verben/Beziehungen (Angelo 23.11.2026) ------------------------------------
+
+    private static final String KIND_KEY = "spaceHarvester.terms.kind";
+
+    /** Eine Überschrift eines Abschnitts; mit gewähltem Unterreiter überflüssig und ausgeblendet. */
+    private JLabel heading(String text) {
+        JLabel label = new JLabel(text) {
+            @Override
+            public boolean isVisible() {
+                return super.isVisible() && kind == null;
+            }
+        };
+        label.setFont(Comic.regular(13f));
+        label.setForeground(Comic.INK);
+        return label;
+    }
+
+    /**
+     * Die Unterreiter als Pillen für die untere Leiste der Seitenansicht. Ab dem ersten Aufruf zeigt die Ansicht nur
+     * noch den gewählten Abschnitt („Akronyme“ zuerst); ohne Aufruf (Stand der Auswahl) bleiben alle untereinander.
+     */
+    JComponent kindBar() {
+        if (kindTabs.names().isEmpty()) {
+            for (String name : KINDS) {
+                kindTabs.tab(name, new JPanel());
+            }
+            kindTabs.onSelect(this::kind);
+            kind(ACRONYMS);
+        }
+        return kindTabs.detachBar();
+    }
+
+    /** Wählt den Unterreiter; {@code null} zeigt alle Abschnitte. */
+    void kind(String chosen) {
+        if (chosen != null && !KINDS.contains(chosen)) {
+            throw new IllegalArgumentException("Unbekannter Unterreiter: " + chosen);
+        }
+        kind = chosen;
+        if (chosen != null && !chosen.equals(kindTabs.selected())) {
+            kindTabs.select(chosen);
+            return;
+        }
+        acronymsBox.setVisible(shows(ACRONYMS));
+        identifiersBox.setVisible(shows(IDENTIFIERS));
+        verbsBox.setVisible(shows(VERBS));
+        relationsBox.setVisible(shows(RELATIONS));
+        belowRelations.setVisible(shows(RELATIONS));
+        for (java.awt.Component chip : belowChips.getComponents()) {
+            if (chip instanceof JComponent part && part.getClientProperty(KIND_KEY) instanceof String of) {
+                part.setVisible(shows(of));
+            }
+        }
+        revalidate();
+        repaint();
+    }
+
+    /** Der gewählte Unterreiter; {@code null}: alle. */
+    String kind() {
+        return kind;
+    }
+
+    private boolean shows(String of) {
+        return kind == null || kind.equals(of);
+    }
+
+    private <T extends JComponent> T ofKind(T chip, String of) {
+        chip.putClientProperty(KIND_KEY, of);
+        chip.setVisible(shows(of));
+        return chip;
     }
 
     // --- Aus Unterseiten (Fahrplan P2) ---------------------------------------------------------------------------
@@ -1428,17 +1516,17 @@ final class TermsTab extends JPanel {
         String q = filter.getText() == null ? "" : filter.getText().trim();
         Selection terms = current.terms();
         java.util.Set<TermQueries.TermRef> own = ownRefs();
-        Consumer<List<TermQueries.TermSummary>> appendTerms = found -> {
+        java.util.function.Function<String, Consumer<List<TermQueries.TermSummary>>> appendTerms = of -> found -> {
             for (TermQueries.TermSummary term : found) {
                 if (!own.contains(TermQueries.TermRef.of(term))) {
-                    belowChips.add(belowChip(terms, term));
+                    belowChips.add(ofKind(belowChip(terms, term), of));
                 }
             }
             belowChips.revalidate();
             belowChips.repaint();
         };
-        belowSections.add(new Section<>(terms.acronyms(q), appendTerms));
-        belowSections.add(new Section<>(terms.identifiers(q), appendTerms));
+        belowSections.add(new Section<>(terms.acronyms(q), appendTerms.apply(ACRONYMS)));
+        belowSections.add(new Section<>(terms.identifiers(q), appendTerms.apply(IDENTIFIERS)));
         Pager<VerbQueries.Verb> belowVerbs = terms.verbs(q);
         if (belowVerbs != null) {
             java.util.Set<String> ownVerbs = ownVerbs();
@@ -1452,7 +1540,7 @@ final class TermsTab extends JPanel {
                             chip.removeActionListener(listener);
                         }
                         chip.addActionListener(e -> verbOccurrences(terms, verb, chip, () -> mine == belowRequest));
-                        belowChips.add(chip);
+                        belowChips.add(ofKind(chip, VERBS));
                     }
                 }
                 belowChips.revalidate();

@@ -71,6 +71,23 @@ public final class PillTabs extends JPanel {
         return this;
     }
 
+    /**
+     * Nimmt die Pillen aus der Reiterzeile über dem Inhalt und gibt sie zum Einbau an anderer Stelle zurück, etwa
+     * mittig in die untere Leiste mit der Lupe (Angelo 23.11.2026); einzeilig, mittig. Trägt die Reiterzeile keine
+     * Aktionen, entfällt sie ganz, der Inhalt rückt nach oben. Mehrfach aufgerufen: dieselbe Leiste.
+     */
+    public JComponent detachBar() {
+        if (bar.getParent() == row) {
+            row.remove(bar);
+            bar.setLayout(new FlowLayout(FlowLayout.CENTER, 4, 0));
+            if (actions.getComponentCount() == 0) {
+                remove(row);
+            }
+            revalidate();
+        }
+        return bar;
+    }
+
     /** Aktionen rechts in der Reiterzeile, auf derselben Höhe wie die Pillen; sie gelten für alle Reiter. */
     public PillTabs actions(JComponent... buttons) {
         for (JComponent button : buttons) {
