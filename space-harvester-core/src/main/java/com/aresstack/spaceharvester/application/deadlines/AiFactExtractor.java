@@ -49,7 +49,7 @@ import static com.aresstack.spaceharvester.application.deadlines.DeadlineFieldKe
 public final class AiFactExtractor implements ExtractionStage {
 
     /** Steigt, wenn sich Anweisung oder Antwortform ändern. */
-    public static final String PROMPT_VERSION = "prompt-1";
+    public static final String PROMPT_VERSION = "prompt-2";
     /** Zeichenbudget je Aufruf, wenn die Modellzeile keines vorgibt. */
     public static final int DEFAULT_MAX_CHARS = 12_000;
     /** Kennung der Stufe; die Version trägt Modell und Anweisung. */
@@ -65,8 +65,14 @@ public final class AiFactExtractor implements ExtractionStage {
 
             Regeln:
             - Jede Angabe braucht "quote": den Wortlaut aus dem Ausschnitt, Zeichen für Zeichen, höchstens 60 Wörter.
-            - Ein Antrag ist keine Genehmigung. "qualifier" ist "requested", wenn etwas nur beantragt ist, "granted" \
-            nur, wenn die Genehmigung ausdrücklich erteilt ist, sonst "none".
+            - Ein Antrag ist keine Genehmigung. "qualifier" ist "requested", wenn etwas nur beantragt ist. "granted", \
+            wenn dieses Dokument selbst verbindlich entscheidet, etwa "Die Frist wird verlängert" oder "Der \
+            Verlängerung wird zugestimmt"; ein Wort wie "genehmigt" ist dafür nicht nötig. Eine bloße Möglichkeit \
+            ("kann verlängert werden", "ist möglich") ist "none".
+            - Berichtet das Dokument nur von der Entscheidung einer anderen Stelle (etwa "mit Genehmigung des BMF"), \
+            gib "granted" und in "note" "berichtet, Nachweis prüfen".
+            - "dokument.aussteller" ist die Stelle, die das Dokument herausgibt (Briefkopf, Unterschrift), nicht eine \
+            Stelle, die nur erwähnt wird.
             - Das Datum des Erlasses ist nicht das Entstehungsdatum eines Betrags.
             - "frist.ende" nur, wenn das Ende im Text steht; nie selbst ausrechnen.
             - Widersprechen sich zwei Stellen, gib beide Angaben zurück.
