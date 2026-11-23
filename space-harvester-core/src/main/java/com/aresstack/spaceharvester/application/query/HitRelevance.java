@@ -57,7 +57,7 @@ public final class HitRelevance {
     }
 
     private static boolean contains(String text, String part) {
-        return !part.isEmpty() && (" " + text + " ").contains(part);
+        return !part.isEmpty() && (" " + text + " ").contains(" " + part + " ");
     }
 
     static String normal(String text) {

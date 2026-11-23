@@ -26,4 +26,10 @@ class HitRelevanceTest {
         assertThat(HitRelevance.of("Café", "cafe", "")).isEqualTo(HitRelevance.of("cafe", "cafe", ""));
         assertThat(HitRelevance.of("", "x", "y")).isZero();
     }
+
+    @Test
+    void aTermInsideAnotherWordDoesNotCount() {
+        assertThat(HitRelevance.of("art", "Quarterly report", "cartography")).isZero();
+        assertThat(HitRelevance.of("art", "Art", "")).isEqualTo(9.0);
+    }
 }
