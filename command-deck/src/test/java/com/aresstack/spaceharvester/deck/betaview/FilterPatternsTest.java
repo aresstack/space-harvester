@@ -42,6 +42,10 @@ class FilterPatternsTest {
                 "FREI"}) {
             assertThat(Extension.parse(value).value()).as(value).isEqualTo(value);
         }
+        // Platzhalter in der Nummer bleiben als freier Wert erhalten.
+        for (String value : new String[] {"BK*BANK", "B*F13FB", "B12*F13LB", "BK1*F05"}) {
+            assertThat(Extension.parse(value)).as(value).isEqualTo(new Extension(ExtensionMode.CUSTOM, value, ""));
+        }
         assertThat(Extension.parse("").mode()).isEqualTo(ExtensionMode.CONSTANT);
         assertThat(Extension.parse("BK18BANK*")).isEqualTo(new Extension(ExtensionMode.BK_BANK, "18", "*"));
     }
@@ -57,6 +61,9 @@ class FilterPatternsTest {
 
         for (String value : new String[] {"*", "*A", "BA001L", "K9999BA200E", "%4711*", "FREI"}) {
             assertThat(Report.parse(value).value()).as(value).isEqualTo(value);
+        }
+        for (String value : new String[] {"BA001*", "BA999A", "K9999BA1*1A", "K9999BA101X", "*4711*"}) {
+            assertThat(Report.parse(value)).as(value).isEqualTo(new Report(ReportMode.CUSTOM, value, ""));
         }
         assertThat(FilterPatterns.baTypes("BA002")).extracting(FilterPatterns.Option::value)
                 .containsExactly("B", "F", "V");
