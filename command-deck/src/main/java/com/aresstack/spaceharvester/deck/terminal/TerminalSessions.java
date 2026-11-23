@@ -1,10 +1,13 @@
 package com.aresstack.spaceharvester.deck.terminal;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -20,6 +23,44 @@ public final class TerminalSessions {
     private final List<Consumer<TerminalSession>> openedObservers = new CopyOnWriteArrayList<>();
     private final AtomicInteger counter = new AtomicInteger();
     private final LoginScript loginScript;
+    private final List<BiConsumer<TerminalSession, TerminalSession>> reopenedObservers = new CopyOnWriteArrayList<>();
+    private volatile Reconnect reconnect = Reconnect.OFF;
+    /** Programmende: nichts mehr neu aufbauen. */
+    private volatile boolean closing;
+    private volatile Scheduler scheduler = (delay, task) -> {
+    };
+
+    /** Führt eine Aufgabe einmal nach einer Wartezeit aus (ein Zeitgeber, kein Abfragen). */
+    @FunctionalInterface
+    public interface Scheduler {
+        void schedule(Duration delay, Runnable task);
+    }
+
+    /**
+     * Regel für den automatischen Neuaufbau: Trennt der Host eine verbundene Sitzung oder bricht die Leitung ab, öffnet
+     * die Sitzung sich nach {@code delays[0]} neu, mit derselben Anmeldung und demselben Makro. Scheitert auch das,
+     * folgen die weiteren Wartezeiten; danach ist Schluss. War die Sitzung mindestens {@code stable} lang verbunden,
+     * zählen die Versuche wieder von vorn.
+     *
+     * @param enabled ob der Neuaufbau gerade erlaubt ist (Einstellung, jederzeit änderbar)
+     */
+    public record Reconnect(BooleanSupplier enabled, List<Duration> delays, Duration stable) {
+
+        /** Kein Neuaufbau. */
+        public static final Reconnect OFF = new Reconnect(() -> false, List.of(), Duration.ZERO);
+
+        /** Vorgabe: nach 2 s, 10 s und 30 s, neu gezählt nach einer Minute Verbindung. */
+        public static Reconnect standard(BooleanSupplier enabled) {
+            return new Reconnect(enabled, List.of(Duration.ofSeconds(2), Duration.ofSeconds(10),
+                    Duration.ofSeconds(30)), Duration.ofMinutes(1));
+        }
+
+        public Reconnect {
+            Objects.requireNonNull(enabled, "enabled");
+            delays = List.copyOf(delays);
+            Objects.requireNonNull(stable, "stable");
+        }
+    }
 
     /** Liefert die Zugangsdaten erst im Hintergrund, nach dem Verbinden (etwa aus KeePass). */
     @FunctionalInterface
@@ -63,8 +104,14 @@ public final class TerminalSessions {
      * aufgezeichnetem Makro, wie in MainframeMate). Das Ergebnis steht als Hinweis in der Sitzung.
      */
     public TerminalSession open(TerminalProfile profile, LoginSource login, List<TerminalMacro.Step> replay) {
+        return open(profile, login, replay, 0);
+    }
+
+    private TerminalSession open(TerminalProfile profile, LoginSource login, List<TerminalMacro.Step> replay,
+                                 int attempt) {
         TerminalSession session = new TerminalSession("terminal-" + counter.incrementAndGet(), profile);
         session.origin(login, replay);
+        session.attempt(attempt);
         TerminalConnection connection;
         try {
             connection = connector.create(profile, new TerminalConnection.Listener() {
@@ -75,7 +122,12 @@ public final class TerminalSessions {
 
                 @Override
                 public void closed(String reason) {
+                    boolean wasConnected = session.state() == SessionState.CONNECTED;
                     session.change(reason == null ? SessionState.DISCONNECTED : SessionState.FAILED, reason);
+                    if (wasConnected) {
+                        // Vom Host getrennt oder Leitung weg: Das Terminal soll nicht tot bleiben.
+                        reconnectLater(session);
+                    }
                 }
             });
         } catch (Exception e) {
@@ -93,6 +145,9 @@ public final class TerminalSessions {
             } catch (Exception e) {
                 connection.disconnect();
                 session.change(SessionState.FAILED, describe(e));
+                if (session.attempt() > 0) {
+                    reconnectLater(session);
+                }
                 return;
             }
             boolean loggedIn = true;
@@ -112,6 +167,49 @@ public final class TerminalSessions {
      */
     public TerminalSession reopen(TerminalSession ended) {
         return open(ended.profile(), ended.loginSource(), ended.replay());
+    }
+
+    /**
+     * Schaltet den automatischen Neuaufbau ein (Vorgabe: aus).
+     *
+     * @param policy    wann und wie oft
+     * @param scheduler führt den Versuch nach der Wartezeit aus
+     */
+    public void autoReconnect(Reconnect policy, Scheduler scheduler) {
+        this.reconnect = Objects.requireNonNull(policy, "policy");
+        this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
+    }
+
+    /** Meldet jeden automatischen Neuaufbau: die verlorene Sitzung und ihre Nachfolgerin. */
+    public void onReopened(BiConsumer<TerminalSession, TerminalSession> observer) {
+        reopenedObservers.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    /** Plant den nächsten Versuch für eine verlorene Sitzung; der Grund steht als Hinweis in ihr. */
+    private void reconnectLater(TerminalSession lost) {
+        Reconnect policy = reconnect;
+        if (closing || !policy.enabled().getAsBoolean() || policy.delays().isEmpty()) {
+            return;
+        }
+        long since = lost.connectedSince();
+        boolean stable = since > 0 && System.currentTimeMillis() - since >= policy.stable().toMillis();
+        int next = stable ? 1 : lost.attempt() + 1;
+        int limit = policy.delays().size();
+        if (next > limit) {
+            lost.note("Kein automatischer Neuaufbau mehr: " + limit + " Versuche gescheitert");
+            return;
+        }
+        Duration delay = policy.delays().get(next - 1);
+        lost.note("Verbindung verloren · neuer Versuch in " + delay.toSeconds() + " s (" + next + "/" + limit + ")");
+        scheduler.schedule(delay, () -> {
+            // Von Hand geschlossen oder schon neu verbunden: nichts mehr tun.
+            if (closing || !sessions.contains(lost) || !policy.enabled().getAsBoolean()) {
+                return;
+            }
+            sessions.remove(lost);
+            TerminalSession fresh = open(lost.profile(), lost.loginSource(), lost.replay(), next);
+            reopenedObservers.forEach(observer -> observer.accept(lost, fresh));
+        });
     }
 
     private void play(TerminalSession session, TerminalConnection connection, boolean afterLogin) {
@@ -182,6 +280,7 @@ public final class TerminalSessions {
 
     /** Trennt alle Sitzungen (Programmende). */
     public void closeAll() {
+        closing = true;
         sessions.forEach(TerminalSession::disconnect);
     }
 

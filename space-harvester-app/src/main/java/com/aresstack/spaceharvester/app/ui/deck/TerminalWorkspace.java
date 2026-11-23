@@ -246,6 +246,7 @@ public final class TerminalWorkspace extends JPanel {
         add(foot, BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        sessions.onReopened((lost, fresh) -> SwingUtilities.invokeLater(() -> reopened(lost, fresh)));
         sessions.all().forEach(this::added);
         settings.observe(() -> SwingUtilities.invokeLater(this::applySettings));
         applySettings();
@@ -276,6 +277,22 @@ public final class TerminalWorkspace extends JPanel {
         TerminalSession fresh = sessions.reopen(ended);
         if (origin != null) {
             origins.put(fresh, origin);
+        }
+    }
+
+    /** Automatischer Neuaufbau: Die Nachfolgerin übernimmt Herkunft und Auswahl, der alte Reiter verschwindet. */
+    private void reopened(TerminalSession lost, TerminalSession fresh) {
+        boolean wasSelected = selected == lost || selected == fresh;
+        ConnectForm.Request origin = origins.get(lost);
+        if (origin != null) {
+            origins.put(fresh, origin);
+        }
+        if (pillOf.containsKey(lost)) {
+            closeSession(lost);
+        }
+        if (wasSelected || selected == null) {
+            added(fresh);
+            select(fresh);
         }
     }
 
@@ -659,8 +676,9 @@ public final class TerminalWorkspace extends JPanel {
         }
         String text = session.profile().label() + " · " + session.state().label()
                 + session.failure().map(reason -> " – " + reason + hint(session, reason)).orElse("")
-                + (session.state() == SessionState.CONNECTED ? session.note().map(note -> " · " + note).orElse("")
-                        : "");
+                + session.note().filter(note -> session.state() == SessionState.CONNECTED
+                        || note.startsWith("Verbindung verloren") || note.startsWith("Kein automatischer"))
+                        .map(note -> " · " + note).orElse("");
         status.setText(text);
         status.setForeground(session.state() == SessionState.FAILED ? Comic.RED : Comic.MUTED);
     }

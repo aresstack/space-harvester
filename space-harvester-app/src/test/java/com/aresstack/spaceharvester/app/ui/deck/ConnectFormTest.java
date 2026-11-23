@@ -104,6 +104,11 @@ class ConnectFormTest {
             form.port.setText("");
             assertThat(form.profile().port()).isEqualTo(992);
             assertThat(form.profile().tls()).isTrue();
+            // Abweichung mit Absicht: Keep-Alive an (60 s), damit die Leitung bei Leerlauf nicht gekappt wird.
+            form.keepAlive.setText("");
+            assertThat(form.profile().keepAliveSeconds()).isEqualTo(60);
+            form.keepAlive.setText("0");
+            assertThat(form.profile().keepAliveSeconds()).isZero();
         });
     }
 }
