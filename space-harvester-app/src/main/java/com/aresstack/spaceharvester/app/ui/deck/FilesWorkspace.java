@@ -197,11 +197,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
      * @param sites      SharePoint-Sites für „Orte“, jeweils aktuell gelesen
      * @param accounts   Zugänge aus KeePass; passt einer zum SharePoint-Rechner, meldet er sich damit an
      */
-    public FilesWorkspace(FileBrowser browser, EditorSessions editors, DocumentStore store, DocumentStore preview,
+    public FilesWorkspace(FileBrowser first, EditorSessions editors, DocumentStore store, DocumentStore preview,
                           SharePointAccess sharePoint, Supplier<List<SharePointSite>> sites, ServerAccounts accounts) {
         super(new BorderLayout());
-        this.browser = browser;
-        FileBrowser first = browser;
+        // Der Parameter heißt nicht „browser“: Rückrufe im Konstruktor sollen das Feld (gezeigter Reiter) lesen.
+        this.browser = first;
         this.editors = editors;
         this.store = store;
         this.preview = preview;
@@ -873,6 +873,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
 
     /** Öffnet einen Pfad; SharePoint-Adressen werden zum WebDAV-Pfad und brauchen vorher eine Anmeldung. */
     void go(String target) {
+        FileBrowser tab = browser;
         String text = target == null ? "" : target.strip();
         if (SharePointPaths.isWebUrl(text)) {
             Optional<String> unc = SharePointPaths.toUncPath(text);
@@ -886,23 +887,23 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             String unc = text;
             status("Melde an " + SharePointPaths.displayName(SharePointPaths.toWebUrl(unc)) + " an …", false);
             busy().setBusy(true);
-            sharePoint.connect(unc, result -> SwingUtilities.invokeLater(() -> connected(result)));
+            sharePoint.connect(unc, result -> SwingUtilities.invokeLater(() -> connected(tab, result)));
             return;
         }
-        browser.open(text);
+        tab.open(text);
     }
 
-    private void connected(SharePointAccess.Result result) {
+    private void connected(FileBrowser tab, SharePointAccess.Result result) {
         busy().setBusy(browser.loading());
         if (result.connected()) {
-            browser.open(result.uncPath());
+            tab.open(result.uncPath());
             return;
         }
         if (!result.outcome().needsCredentials()) {
             status(result.outcome().reason(), true);
             return;
         }
-        trySaved(result.uncPath(), result.outcome().reason());
+        trySaved(tab, result.uncPath(), result.outcome().reason());
     }
 
     /** Woher gespeicherte SharePoint-Zugangsdaten kommen und wohin neue gehen; {@code null} = nur im Speicher. */
@@ -916,7 +917,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     }
 
     /** Erst die gespeicherten Zugangsdaten; passen sie nicht oder gibt es keine, weiter mit KeePass bzw. dem Dialog. */
-    private void trySaved(String unc, String reason) {
+    private void trySaved(FileBrowser tab, String unc, String reason) {
         busy().setBusy(true);
         com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins = savedLogins;
         Thread.ofVirtual().name("deck-sharepoint-saved").start(() -> {
@@ -927,16 +928,16 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 // Tresor nicht lesbar: weiter wie ohne Gespeichertes
             }
             if (saved.isEmpty()) {
-                SwingUtilities.invokeLater(() -> tryKeePass(unc, reason, ""));
+                SwingUtilities.invokeLater(() -> tryKeePass(tab, unc, reason, ""));
                 return;
             }
             var login = saved.get();
             sharePoint.connect(unc, login.user(), login.password(), result -> SwingUtilities.invokeLater(() -> {
                 busy().setBusy(browser.loading());
                 if (result.connected()) {
-                    browser.open(unc);
+                    tab.open(unc);
                 } else {
-                    tryKeePass(unc, "Gespeicherte Zugangsdaten passen nicht: " + result.outcome().reason(),
+                    tryKeePass(tab, unc, "Gespeicherte Zugangsdaten passen nicht: " + result.outcome().reason(),
                             login.user());
                 }
             }));
@@ -944,7 +945,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         });
     }
 
-    private void tryKeePass(String unc, String reason, String user) {
+    private void tryKeePass(FileBrowser tab, String unc, String reason, String user) {
         String host = loginHost(unc);
         // Wie MainframeMate: dann KeePass (Eintrag mit diesem Rechner), zuletzt fragen.
         Thread.ofVirtual().name("deck-sharepoint-keepass").start(() -> {
@@ -957,15 +958,15 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             Optional<ServerAccount> found = account;
             SwingUtilities.invokeLater(() -> {
                 if (found.isPresent() && !reason.startsWith("KeePass")) {
-                    loginWithKeePass(unc, found.get());
+                    loginWithKeePass(tab, unc, found.get());
                 } else {
-                    askLogin(unc, reason, found.map(ServerAccount::user).orElse(user));
+                    askLogin(tab, unc, reason, found.map(ServerAccount::user).orElse(user));
                 }
             });
         });
     }
 
-    private void loginWithKeePass(String unc, ServerAccount account) {
+    private void loginWithKeePass(FileBrowser tab, String unc, ServerAccount account) {
         busy().setBusy(true);
         Thread.ofVirtual().name("deck-sharepoint-login").start(() -> {
             try (ServerCredentials credentials = accounts.credentials(account.entry())) {
@@ -973,22 +974,22 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 sharePoint.connect(unc, credentials.user(), password, result -> SwingUtilities.invokeLater(() -> {
                     busy().setBusy(browser.loading());
                     if (result.connected()) {
-                        browser.open(unc);
+                        tab.open(unc);
                     } else {
-                        askLogin(unc, "KeePass-Eintrag „" + account.entry() + "“ passt nicht: "
+                        askLogin(tab, unc, "KeePass-Eintrag „" + account.entry() + "“ passt nicht: "
                                 + result.outcome().reason(), credentials.user());
                     }
                 }));
                 java.util.Arrays.fill(password, '\0');
             } catch (Exception e) {
-                SwingUtilities.invokeLater(() -> askLogin(unc, "KeePass nicht lesbar ("
+                SwingUtilities.invokeLater(() -> askLogin(tab, unc, "KeePass nicht lesbar ("
                         + e.getClass().getSimpleName() + ")", account.user()));
             }
         });
     }
 
     /** Anmeldedialog wie {@code SharePointAuthenticator.showLoginDialog} in MainframeMate. */
-    private void askLogin(String unc, String reason, String user) {
+    private void askLogin(FileBrowser tab, String unc, String reason, String user) {
         busy().setBusy(browser.loading());
         JTextField userField = Comic.field(24);
         userField.setText(user == null ? "" : user);
@@ -1024,10 +1025,10 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                         java.util.Arrays.fill(password, '\0');
                     }
                 });
-                browser.open(unc);
+                tab.open(unc);
             } else {
                 java.util.Arrays.fill(password, '\0');
-                askLogin(unc, result.outcome().reason(), entered);
+                askLogin(tab, unc, result.outcome().reason(), entered);
             }
         }));
     }

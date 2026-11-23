@@ -294,6 +294,19 @@ class FilesWorkspaceTest {
         assertThat(workspace.browser().location()).contains(root.toString());
         assertThat(names()).contains("Berichte", "job.jcl");
 
+        // Der Filter gilt für den gezeigten Reiter (Codex #1241): im zweiten Reiter filtern, der erste bleibt ganz.
+        SwingUtilities.invokeAndWait(() -> workspace.newTab(root.toString()));
+        flush();
+        SwingUtilities.invokeAndWait(() -> workspace.filterField().setText("\\.jcl$"));
+        flush();
+        assertThat(names()).containsExactly("job.jcl");
+        SwingUtilities.invokeAndWait(() -> workspace.showBrowseTab(0));
+        flush();
+        assertThat(workspace.filterField().getText()).isEmpty();
+        assertThat(names()).contains("Berichte", "daten.json", "job.jcl", "notiz.txt");
+        SwingUtilities.invokeAndWait(() -> workspace.closeBrowseTab(2));
+        flush();
+
         // Nach Neustart sind beide Reiter wieder da; das Kreuz schließt den zweiten.
         SwingUtilities.invokeAndWait(() -> workspace = new FilesWorkspace(
                 new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
