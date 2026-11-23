@@ -106,6 +106,33 @@ class FtpConnectFlowTest {
     }
 
     @Test
+    void showingTheAreaWithoutSessionConnectsAtOnceEveryTime() throws Exception {
+        try (FakeMvsFtpHost host = FakeMvsFtpHost.sample()) {
+            AppState state = AppState.shared();
+            state.put(FtpConnectForm.ENTRY_KEY, "Raumhafen");
+            state.put(FtpConnectForm.PORT_KEY, String.valueOf(host.port()));
+            state.put(FtpConnectForm.CONFIGURED_KEY, "true");
+            SwingUtilities.invokeAndWait(() -> {
+                deck = new CommandDeck(accounts(host.host()));
+                deck.ftp().shown();
+                deck.ftp().shown();
+            });
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            waitFor(() -> onEdt(() -> deck.ftp().selected() != null
+                    && deck.ftp().selected().state() == ConnectionState.CONNECTED), until);
+            assertThat(deck.ftpSessions().all()).as("zweimal gezeigt, eine Verbindung").hasSize(1);
+            FtpSession session = deck.ftpSessions().all().get(0);
+            SwingUtilities.invokeAndWait(() -> {
+                deck.ftp().shown();
+                assertThat(deck.ftpSessions().all()).as("mit Sitzung nichts Neues").containsExactly(session);
+                deck.ftp().closeTab(session);
+                deck.ftp().shown();
+            });
+            waitFor(() -> onEdt(() -> deck.ftp().selected() != null && deck.ftp().selected() != session), until);
+        }
+    }
+
+    @Test
     void aFailedFirstConnectionLeavesNoTabAndShowsTheFormWithTheReason() throws Exception {
         int port;
         try (ServerSocket socket = new ServerSocket(0)) {

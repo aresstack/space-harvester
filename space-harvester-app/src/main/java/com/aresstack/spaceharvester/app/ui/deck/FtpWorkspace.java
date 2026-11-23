@@ -49,8 +49,8 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
      * Grund wieder. Klappt es, verbindet „Neue Verbindung“ künftig ohne Formular.
      */
     private final java.util.Set<FtpSession> firstConnect = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    /** Beim ersten Zeigen des Bereichs ohne Sitzung wird die gemerkte Verbindung aufgebaut. */
-    private boolean autoTried;
+    /** Ein Verbinden mit der gemerkten Verbindung läuft (KeePass wird gelesen), noch ohne Reiter. */
+    private boolean directPending;
     private final ComposerToggleButton newPill;
     private final CardLayout cards = new CardLayout();
     /** Neben der Lupe in der Fußleiste des Command Deck: die Aktionen der gewählten Sitzung. */
@@ -132,14 +132,20 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         select(null);
         // Wer einmal erfolgreich verbunden war, bekommt beim Öffnen des Bereichs direkt seine Verbindung.
         addHierarchyListener(event -> {
-            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()
-                    && !autoTried) {
-                autoTried = true;
-                if (pillOf.isEmpty() && FtpConnectForm.isConfigured()) {
-                    newConnection();
-                }
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                shown();
             }
         });
+    }
+
+    /**
+     * Der Bereich wird gezeigt: Ohne Sitzung baut er die gemerkte Verbindung sofort auf, jedes Mal (Angelo, 23.11.2026).
+     * So klappt es auch, wenn KeePass beim vorigen Zeigen noch nicht bereit war.
+     */
+    void shown() {
+        if (pillOf.isEmpty() && !directPending && FtpConnectForm.isConfigured()) {
+            newConnection();
+        }
     }
 
     /**
@@ -155,7 +161,11 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         if (selected != null) {
             pillOf.get(selected).setSelected(true);
         }
-        form.connectDirectly(reason -> select(null));
+        directPending = true;
+        form.connectDirectly(reason -> {
+            directPending = false;
+            select(null);
+        });
     }
 
     /** Das Formular auch, wenn die Verbindung eingerichtet ist (anderer Server, andere Einstellungen). */
@@ -196,6 +206,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     }
 
     private void connect(FtpProfile profile, String entry) {
+        directPending = false;
         FtpSession session = sessions.open(profile, entry, () -> accounts.credentials(entry));
         if (session.state() == ConnectionState.CONNECTED) {
             FtpConnectForm.configured();
