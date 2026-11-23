@@ -3,10 +3,25 @@ package com.aresstack.spaceharvester.app.ui.deck;
 import com.aresstack.enterpriseai.ui.comic.paint.StrokeIcon;
 import java.awt.Graphics2D;
 
-/** Gezeichnete Symbole der fünf Arbeitsbereiche des Command Deck (keine Schriftzeichen, siehe Glyph). */
+/** Gezeichnete Symbole der Startseite und der fünf Arbeitsbereiche des Command Deck (keine Schriftzeichen, siehe Glyph). */
 final class DeckIcons {
 
     private DeckIcons() {
+    }
+
+    /** Häuschen: die Startseite des Deck, von der aus nichts verbindet. */
+    static StrokeIcon home() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawLine(1, 8, 8, 1);
+                g2.drawLine(8, 1, 15, 8);
+                g2.drawLine(3, 6, 3, 14);
+                g2.drawLine(13, 6, 13, 14);
+                g2.drawLine(3, 14, 13, 14);
+                g2.drawRect(6, 9, 4, 5);
+            }
+        };
     }
 
     /** Bildschirm mit Eingabeaufforderung „›_“. */
@@ -78,6 +93,19 @@ final class DeckIcons {
                 g2.drawLine(6, 3, 8, 5);
                 g2.drawLine(8, 5, 15, 5);
                 g2.drawRoundRect(1, 3, 14, 11, 2, 2);
+            }
+        };
+    }
+
+    /** E-Akte: ein Aktenordner mit Rückenschild und Griffloch. */
+    static StrokeIcon eakte() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawRoundRect(3, 1, 10, 14, 2, 2);
+                g2.drawLine(6, 1, 6, 15);
+                g2.drawRect(8, 4, 3, 4);
+                g2.drawOval(8, 10, 3, 3);
             }
         };
     }

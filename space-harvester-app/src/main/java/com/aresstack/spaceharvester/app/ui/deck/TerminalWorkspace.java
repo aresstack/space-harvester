@@ -315,8 +315,9 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
     private long arrivedAt = Long.MIN_VALUE;
 
     /**
-     * Beim Wechsel ins Command Deck gleich verbinden (Angelo, 23.11.2026): Das Terminal ist das Erste, was man sieht.
-     * Nur wenn die Verbindung eingerichtet ist und noch kein Reiter steht: Ein beendeter Reiter wartet womöglich auf
+     * Beim Öffnen des Bereichs Terminal gleich verbinden (Angelo, 23.11.2026). Das Deck selbst startet auf Home
+     * ({@link DeckHome}), damit der Wechsel in die Perspektive noch nichts aufbaut; erst der Klick auf Terminal zeigt
+     * diesen Bereich und verbindet. Nur wenn die Verbindung eingerichtet ist und noch kein Reiter steht: Ein beendeter Reiter wartet womöglich auf
      * seinen automatischen Neuaufbau, und den verbindet man über ihn neu, nicht daneben.
      */
     void connectOnArrival() {

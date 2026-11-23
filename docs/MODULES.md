@@ -25,6 +25,10 @@ und hängen von keinem der beiden Module ab.
 (`proasteion/platform/security-keepassrpc`, [UPSTREAM.md](../enterprise-ai-keepass/UPSTREAM.md)). Nur
 `:space-harvester-app` hängt davon ab; Core und Server kennen KeePass nicht und erhalten nur den aufgelösten Key.
 
+`:enterprise-ai-browser` ist die unveränderte Kopie des chatgebundenen Browsers des Enterprise AI Client (`browser-api`,
+`browser-runtime`, `browser-firefox` mit dem vendorten WD4J, [UPSTREAM.md](../enterprise-ai-browser/UPSTREAM.md)) für die
+Websuche im Chat. Nur `:space-harvester-app` soll davon abhängen; Core und Server kennen keinen Browser.
+
 `:document-export` ist die Word-Ausgabe des Enterprise AI Client (Apache POI, flexmark) als eigene Bibliothek ohne Swing,
 eine angepasste Kopie (siehe `document-export/UPSTREAM.md` und [CONVERTERS.md › Word](CONVERTERS.md#word)). Nur der Core
 hängt von ihr ab; sie hat eine eigene Publikation (`com.aresstack:space-harvester-document-export`), damit die Core-POM

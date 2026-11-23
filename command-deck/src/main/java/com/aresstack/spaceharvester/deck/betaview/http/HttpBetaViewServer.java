@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.deck.betaview.http;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewConnection;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewProfile;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewServer;
+import com.aresstack.spaceharvester.deck.http.HttpClientFactory;
 import java.io.IOException;
 import java.net.http.HttpClient;
 import java.time.Duration;

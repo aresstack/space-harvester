@@ -40,19 +40,30 @@ public record StoredSummary(String sourceId, String updateId, String spaceKey, S
     }
 
     /**
-     * Eine Seite, die mit Titel an das Modell ging, samt Space für die Rechteprüfung.
+     * Eine Seite, die mit Titel an das Modell ging, samt Quelle und Space für die Rechteprüfung.
      *
-     * @param content ob auch Absätze ihres Inhalts eingingen; dann muss der Leser den Inhalt lesen dürfen
+     * @param sourceId Quelle der Seite; {@code null} bei Einträgen von vor dieser Angabe, dann die der Zusammenfassung
+     * @param content  ob auch Absätze ihres Inhalts eingingen; dann muss der Leser den Inhalt lesen dürfen
      */
-    public record InputPage(String spaceKey, String pageId, boolean content) {
+    public record InputPage(String sourceId, String spaceKey, String pageId, boolean content) {
 
         public InputPage {
             Objects.requireNonNull(spaceKey, "spaceKey");
             Objects.requireNonNull(pageId, "pageId");
         }
 
+        /** Ohne Quelle (Einträge von vor dieser Angabe). */
+        public InputPage(String spaceKey, String pageId, boolean content) {
+            this(null, spaceKey, pageId, content);
+        }
+
         public InputPage(String spaceKey, String pageId) {
             this(spaceKey, pageId, false);
+        }
+
+        /** Die Quelle der Seite, ohne eigene Angabe die der Zusammenfassung. */
+        public String sourceIdOr(String summarySourceId) {
+            return sourceId != null ? sourceId : summarySourceId;
         }
     }
 
@@ -66,6 +77,11 @@ public record StoredSummary(String sourceId, String updateId, String spaceKey, S
         Objects.requireNonNull(at, "at");
         Objects.requireNonNull(reportSha256, "reportSha256");
         inputPages = List.copyOf(inputPages);
+    }
+
+    /** Der Platz dieser Zusammenfassung in der Ablage (ADR 0034 §7): das Update ihrer Ebene. */
+    public SummaryScope.Update scope() {
+        return SummaryScope.update(sourceId, updateId, spaceKey);
     }
 
     /** Ohne bekannten Beginn der Spanne. */

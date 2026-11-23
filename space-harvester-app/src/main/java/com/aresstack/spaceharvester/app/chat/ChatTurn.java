@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.chat;
 
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiChatException;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
@@ -175,6 +177,11 @@ public final class ChatTurn {
     private volatile ChatTools tools;
     /** Die Werkzeuge der laufenden Frage: die Wissenswerkzeuge oder die der Perspektive ({@link #withToolset}). */
     private volatile ChatToolset toolset;
+    /** Websuche (Composer-Knopf „Websuche“): die Browser-Werkzeuge des Chats; sonst {@code null}. */
+    private WebSearch webSearch;
+    private final java.util.concurrent.atomic.AtomicBoolean webSearchEnded =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    private static final JsonMapper BROWSER_JSON = JsonMapper.builder().build();
     /** Von der Perspektive gesetzte Werkzeuge samt Systemnachricht (Command Deck, #1151); sonst {@code null}. */
     private ChatToolset custom;
     private String customSystem;
@@ -224,6 +231,30 @@ public final class ChatTurn {
     ChatTurn changeLog(ChangeLogReader reader) {
         this.changeLog = Objects.requireNonNull(reader, "reader");
         return this;
+    }
+
+    /**
+     * Die Websuche dieses Turns (Composer-Knopf „Websuche“, wie im Enterprise AI Client): die Browser-Werkzeuge des
+     * Chats zusätzlich zu den übrigen Werkzeugen, die Browser-Regeln im Systemhinweis und das Browser-Budget als
+     * Zahl der Werkzeugrunden. Gilt nur mit Werkzeugen.
+     */
+    public ChatTurn webSearch(WebSearch webSearch) {
+        this.webSearch = webSearch;
+        return this;
+    }
+
+    /**
+     * Die Browser-Seite eines Turns.
+     *
+     * @param tools  die an den Chat gebundenen Browser-Werkzeuge
+     * @param rules  zusätzlicher Systemhinweis (Lesen mehrerer Seiten, Browserprofil mit Such-URLs)
+     * @param rounds Werkzeugrunden dieses Turns (Browser-Budget)
+     * @param begin  wird zu Beginn des Turns auf seinem Thread gerufen (meldet den Turn beim Browser an), oder
+     *               {@code null}
+     * @param ended  wird nach dem Ende des Turns gerufen, auf eigenem Thread (schließt den Browser)
+     */
+    public record WebSearch(com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools tools, String rules,
+                            int rounds, Runnable begin, Runnable ended) {
     }
 
     /**
@@ -292,6 +323,17 @@ public final class ChatTurn {
 
     private ChatTools.TermLookup termLookup;
 
+    /**
+     * Schalter „Interne Suche“ im Composer (Angelo 23.11.2026): {@code sources} liefert die Wissensquellen, die die
+     * globale Suche des Modells durchsuchen darf (die für die KI freigegebenen); {@code null} lässt das Werkzeug weg.
+     */
+    public ChatTurn appSearch(java.util.function.Supplier<Set<String>> sources) {
+        this.appSources = sources;
+        return this;
+    }
+
+    private java.util.function.Supplier<Set<String>> appSources;
+
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
     public void start() {
         Thread worker = new Thread(this::run, "chat-turn");
@@ -317,10 +359,14 @@ public final class ChatTurn {
     }
 
     private void run() {
+        WebSearch web = webSearch;
+        if (web != null && web.begin() != null) {
+            web.begin().run();
+        }
         if (custom != null) {
-            toolset = custom;
+            toolset = withWebSearch(custom);
             onUi(() -> listener.context(ChatKnowledge.Context.EMPTY));
-            round(conversation(customSystem, question), 0);
+            round(conversation(withWebSearchRules(customSystem), question), 0);
         } else if (byTools) {
             runWithTools();
         } else {
@@ -434,7 +480,10 @@ public final class ChatTurn {
      * Antwort oder Werkzeugaufrufen. Jede Runde prüft den Abbruch; die letzte Runde geht ohne Werkzeuge.
      */
     private void runWithTools() {
-        ChatTools running = new ChatTools(workspace, scope, Set.of(), new ChatTools.Sources() {
+        // Was ich sehe, sieht der Bot (Angelo 23.11.2026): Die offene Seite gehört immer dazu, auch wenn die Auflösung
+        // des Bereichs sie nicht kennt (etwa ein Ticket aus der Suche, das im Bestandsbaum fehlt).
+        Set<PageKey> granted = openPage == null ? Set.of() : Set.of(openPage);
+        ChatTools running = new ChatTools(workspace, scope, granted, new ChatTools.Sources() {
             @Override
             public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
                 return ChatTurn.this.cite(excerpt, key);
@@ -448,11 +497,14 @@ public final class ChatTurn {
         if (termLookup != null) {
             running.termLookup(termLookup);
         }
+        if (appSources != null) {
+            running.appSearch(appSources);
+        }
         tools = running;
         toolset = new ChatToolset() {
             @Override
             public List<AiChat.Tool> definitions() {
-                return ChatTools.definitions();
+                return running.toolDefinitions();
             }
 
             @Override
@@ -470,6 +522,7 @@ public final class ChatTurn {
                 running.cancel();
             }
         };
+        toolset = withWebSearch(toolset);
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
         int shown = 0;
@@ -511,8 +564,8 @@ public final class ChatTurn {
             sourcesAnnounced = true;
         }
         reportSources();
-        List<AiChat.Message> messages = conversation(ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef),
-                question);
+        List<AiChat.Message> messages = conversation(withWebSearchRules(
+                ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef, appSources != null)), question);
         round(messages, 0);
     }
 
@@ -526,7 +579,7 @@ public final class ChatTurn {
             finish(() -> listener.cancelled(partial));
             return;
         }
-        List<AiChat.Tool> offered = round < MAX_TOOL_ROUNDS ? toolset.definitions() : List.of();
+        List<AiChat.Tool> offered = round < maxToolRounds() ? toolset.definitions() : List.of();
         int roundStart;
         synchronized (received) {
             roundStart = received.length();
@@ -1012,7 +1065,97 @@ public final class ChatTurn {
 
     // ------------------------------------------------------------------ Zustellung
 
+    /** Werkzeugrunden dieses Turns: mit Websuche das Browser-Budget, nie weniger als ohne. */
+    int maxToolRounds() {
+        return webSearch == null ? MAX_TOOL_ROUNDS : Math.max(MAX_TOOL_ROUNDS, webSearch.rounds());
+    }
+
+    /** Die Werkzeuge {@code base} samt den Browser-Werkzeugen, wenn die Websuche an ist. */
+    private ChatToolset withWebSearch(ChatToolset base) {
+        WebSearch web = webSearch;
+        if (web == null) {
+            return base;
+        }
+        return new ChatToolset() {
+            @Override
+            public List<AiChat.Tool> definitions() {
+                List<AiChat.Tool> all = new ArrayList<>(base.definitions());
+                all.addAll(web.tools().definitions());
+                return all;
+            }
+
+            /** Der Thread, der gerade ein Browser-Werkzeug ausführt (wartet er auf eine Rückfrage, weckt Stopp ihn). */
+            private volatile Thread browsing;
+
+            @Override
+            public String run(AiChat.ToolCall call) {
+                if (!web.tools().handles(call.name())) {
+                    return base.run(call);
+                }
+                if (cancelRequested) {
+                    return "Abgebrochen.";
+                }
+                browsing = Thread.currentThread();
+                try {
+                    if (cancelRequested) {
+                        return "Abgebrochen.";
+                    }
+                    return web.tools().run(call.name(), BROWSER_JSON.readTree(call.argumentsJson() == null
+                            || call.argumentsJson().isBlank() ? "{}" : call.argumentsJson()));
+                } catch (JacksonException e) {
+                    return "Die Argumente sind kein gültiges JSON.";
+                } catch (RuntimeException e) {
+                    ChatTools.diagnosis.accept("Browser-Werkzeug " + call.name() + " gescheitert: "
+                            + e.getClass().getSimpleName());
+                    return "Fehler: Das Browser-Werkzeug ist gescheitert (" + e.getClass().getSimpleName() + ").";
+                } finally {
+                    browsing = null;
+                    // Stopp zählt über cancelRequested; die Unterbrechung galt nur der offenen Rückfrage.
+                    Thread.interrupted();
+                }
+            }
+
+            @Override
+            public String describe(AiChat.ToolCall call) {
+                return web.tools().handles(call.name())
+                        ? com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools.describe(call.name())
+                        : base.describe(call);
+            }
+
+            @Override
+            public void cancel() {
+                base.cancel();
+                // Eine offene Rückfrage endet sofort als „abgebrochen, nicht ausgeführt“ (ChatApprovalPrompt).
+                Thread worker = browsing;
+                if (worker != null) {
+                    worker.interrupt();
+                }
+            }
+        };
+    }
+
+    /** Der Systemhinweis samt den Browser-Regeln, wenn die Websuche an ist. */
+    private String withWebSearchRules(String system) {
+        WebSearch web = webSearch;
+        if (web == null || web.rules() == null || web.rules().isBlank()) {
+            return system;
+        }
+        return (system == null || system.isBlank() ? "" : system + "\n\n") + web.rules();
+    }
+
+    /** Beendet die Websuche des Turns einmal, auf eigenem Thread (der Browser schließt). */
+    private void endWebSearch() {
+        WebSearch web = webSearch;
+        if (web == null || web.ended() == null || !webSearchEnded.compareAndSet(false, true)) {
+            return;
+        }
+        Thread closing = new Thread(web.ended(), "chat-websuche-ende");
+        closing.setDaemon(true);
+        closing.start();
+    }
+
     private void finish(Runnable terminal) {
+        endWebSearch();
         onUi(() -> {
             if (!closed) {
                 closed = true;

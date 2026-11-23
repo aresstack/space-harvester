@@ -46,21 +46,35 @@ public final class PodcastStore {
     }
 
     /**
-     * Wofür ein Podcast entstand: eine Update-Zusammenfassung ({@code updateId}) oder eine Seite ({@code pageId}, der
-     * Erklär-Podcast); der Schlüssel folgt aus dem Material.
+     * Wofür ein Podcast entstand: die Zusammenfassung eines Bereichs ({@code area}, bei Updates auch {@code updateId})
+     * oder eine Seite ({@code pageId}, der Erklär-Podcast); der Schlüssel folgt aus dem Material.
      *
-     * @param input die Fassung des Inhalts beim Erklär-Podcast (ändert sich der Inhalt, ist er veraltet)
-     * @param pages die Seiten, deren Text in den Podcast einging (fällt eine davon aus der KI-Freigabe, fällt er mit)
+     * @param sourceId die Quelle; {@code null} nur bei einem Bereich über mehrere Quellen
+     * @param input    die Fassung des Inhalts beim Erklär-Podcast (ändert sich der Inhalt, ist er veraltet)
+     * @param pages    die Seiten, deren Text in den Podcast einging (fällt eine davon aus der KI-Freigabe, fällt er mit)
+     * @param area     der Bereichsschlüssel ({@link PodcastArea#key()}); bei Update-Podcasts ohne Angabe (Altbestand)
+     *                 aus Quelle, Update und Space gebildet
      */
     public record Meta(String key, String sourceId, String updateId, String spaceKey, String pageId, String input,
-                       List<String> pages, String model, String host, String cohost) {
+                       List<String> pages, String model, String host, String cohost, String area) {
         public Meta {
             Objects.requireNonNull(key, "key");
-            Objects.requireNonNull(sourceId, "sourceId");
-            if (updateId == null && pageId == null) {
-                throw new IllegalArgumentException("Podcast ohne Update und ohne Seite");
+            if (area == null && updateId != null && sourceId != null) {
+                area = PodcastArea.update(sourceId, updateId, spaceKey).key();
+            }
+            if (updateId == null && pageId == null && area == null) {
+                throw new IllegalArgumentException("Podcast ohne Bereich und ohne Seite");
+            }
+            if (sourceId == null && area == null) {
+                throw new NullPointerException("sourceId");
             }
             pages = pages == null ? List.of() : List.copyOf(pages);
+        }
+
+        /** Ohne eigenen Bereichsschlüssel: Seite oder Update. */
+        public Meta(String key, String sourceId, String updateId, String spaceKey, String pageId, String input,
+                    List<String> pages, String model, String host, String cohost) {
+            this(key, sourceId, updateId, spaceKey, pageId, input, pages, model, host, cohost, null);
         }
 
         /** Der Podcast einer Update-Zusammenfassung. */
@@ -69,9 +83,15 @@ public final class PodcastStore {
             this(key, sourceId, updateId, spaceKey, null, null, List.of(), model, host, cohost);
         }
 
+        /** Der Podcast der Zusammenfassung eines Bereichs. */
+        public Meta(String key, PodcastArea area, List<String> pages) {
+            this(key, area.sourceId(), area.updateId(), area.spaceKey(), null, null, pages, null, null, null,
+                    area.key());
+        }
+
         /** Dieselbe Herkunft mit Modell und Stimmen. */
         Meta voiced(String model, String host, String cohost) {
-            return new Meta(key, sourceId, updateId, spaceKey, pageId, input, pages, model, host, cohost);
+            return new Meta(key, sourceId, updateId, spaceKey, pageId, input, pages, model, host, cohost, area);
         }
     }
 
@@ -88,12 +108,15 @@ public final class PodcastStore {
             node.path("pages").forEach(page -> pages.add(page.asString()));
             String updateId = nullable(node, "updateId");
             String pageId = nullable(node, "pageId");
-            if (updateId == null && pageId == null) {
+            String area = nullable(node, "area");
+            // Ohne Bereich wie bisher: eine fehlende Quelle liest sich als leer.
+            String sourceId = area == null ? text(node, "sourceId") : nullable(node, "sourceId");
+            if (updateId == null && pageId == null && area == null) {
                 return null; // unlesbar: zählt als fehlend
             }
-            return new Meta(key, text(node, "sourceId"), updateId, nullable(node, "spaceKey"), pageId,
+            return new Meta(key, sourceId, updateId, nullable(node, "spaceKey"), pageId,
                     nullable(node, "input"), pages,
-                    nullable(node, "model"), nullable(node, "host"), nullable(node, "cohost"));
+                    nullable(node, "model"), nullable(node, "host"), nullable(node, "cohost"), area);
         });
     }
 
@@ -109,6 +132,7 @@ public final class PodcastStore {
         node.put("model", meta.model());
         node.put("host", meta.host());
         node.put("cohost", meta.cohost());
+        node.put("area", meta.area());
         write(folder(meta.key()).resolve("podcast.json"), node);
     }
 

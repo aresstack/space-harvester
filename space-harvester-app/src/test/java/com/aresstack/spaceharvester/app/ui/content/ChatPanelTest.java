@@ -116,7 +116,7 @@ class ChatPanelTest {
             assertThat(panel[0].knowledge()).isEqualTo(ChatPanel.NO_SELECTION);
             assertThat(panel[0].chat().isEmpty()).isTrue();
             // Der Space zeigt seinen zuletzt geänderten Chat samt Verlauf.
-            panel[0].selection(new Selection("handbuch", space, null, "Handbuch"));
+            panel[0].selection(new Selection.Node("handbuch", space, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
             assertThat(panel[0].chatName()).isEqualTo(earlier.id());
             assertThat(panel[0].bubbles()).isEqualTo(5);
@@ -155,7 +155,7 @@ class ChatPanelTest {
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
             // Die ganze Quelle ist ein anderer Bereich: der offene Chat bleibt stehen (Angelo, 21.11.2026), nur der
             // Bereich der nächsten Frage wandert.
-            panel[0].selection(new Selection("handbuch", null, null, "Handbuch"));
+            panel[0].selection(new Selection.Node("handbuch", null, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
             assertThat(panel[0].bubbles()).isEqualTo(5);
             assertThat(panel[0].knowledge()).startsWith("Wissen: Handbuch · alle Spaces");
@@ -166,7 +166,7 @@ class ChatPanelTest {
             ((javax.swing.JMenuItem) panel[0].chatMenuItems().get(1)).doClick();
             assertThat(panel[0].chat().id()).isEqualTo(other.id());
             assertThat(panel[0].areaMarks()).isEmpty();
-            panel[0].selection(new Selection("handbuch", space, null, "Handbuch"));
+            panel[0].selection(new Selection.Node("handbuch", space, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(other.id());
             assertThat(menuTexts(panel[0])).containsExactly(ChatPanel.CHATS_HERE, "    Zugriffsrechte", "—",
                     ChatPanel.CHATS_ELSEWHERE, "✓ " + other.id());
@@ -175,7 +175,7 @@ class ChatPanelTest {
                     ((java.awt.Container) panel[0].headerActions()).getComponent(0);
             fresh.doClick();
             assertThat(panel[0].chat().isEmpty()).isTrue();
-            panel[0].selection(new Selection("handbuch", null, null, "Handbuch"));
+            panel[0].selection(new Selection.Node("handbuch", null, null, "Handbuch"));
             assertThat(panel[0].chat().isEmpty()).as("kein gespeicherter Chat springt mehr herein").isTrue();
             assertThat(panel[0].bubbles()).isZero();
             assertThat(panel[0].chatName()).isEqualTo(panel[0].chat().id());
@@ -262,23 +262,172 @@ class ChatPanelTest {
     }
 
     @Test
+    void theViewInFrontDecidesTheScopeAndTheTreeIsNeverTouched() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        Selection source = new Selection.Node("tickets", null, null, "Tickets");
+        Selection ticket = new Selection.Node("tickets", "PRJ", "PRJ-7", "PRJ-7 Nachtlauf bricht ab");
+        Selection space = new Selection.Node("tickets", "PRJ", null, "PRJ");
+        Selection[] seen = new Selection[7];
+        String[] quick = new String[1];
+        int[] graphUpdates = new int[3];
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            panel.onResolved(resolved -> graphUpdates[0]++);
+            // In der Suche: der Filter im Baum.
+            panel.selection(source);
+            seen[0] = panel.scope();
+            graphUpdates[1] = graphUpdates[0];
+            // Aus der Suche geöffnet, der Baum bleibt auf der Quelle; vorne ist jetzt die Leseansicht.
+            panel.reading(ticket);
+            seen[1] = panel.scope();
+            panel.readingFront(true);
+            seen[2] = panel.scope();
+            // Der Graph bleibt auf der Auswahl im Baum: die gelesene Seite meldet ihm nichts.
+            graphUpdates[2] = graphUpdates[0];
+            quick[0] = String.join(" | ", panel.quickActionLabels());
+            // Zurück in die Suche: wieder der Filter, auch wenn die Suche ihn neu setzt.
+            panel.readingFront(false);
+            panel.selection(space);
+            seen[3] = panel.scope();
+            // Wieder in der Leseansicht: das offene Dokument.
+            panel.readingFront(true);
+            seen[4] = panel.scope();
+            // Die Leseansicht zeigt eine Quelle statt einer Seite: der Baum.
+            panel.reading(null);
+            seen[5] = panel.scope();
+            panel.reading(Selection.ALL);
+            seen[6] = panel.scope();
+        });
+        assertThat(seen).containsExactly(source, source, ticket, space, ticket, space, space);
+        assertThat(graphUpdates[1]).isPositive();
+        assertThat(graphUpdates[2]).isEqualTo(graphUpdates[1]);
+        assertThat(quick[0]).as("Vorschläge folgen dem Bereich").contains(ChatPanel.SUMMARIZE_PAGE)
+                .doesNotContain(ChatPanel.SUMMARIZE_AREA);
+    }
+
+    @Test
+    void withWebSearchAndInternalSearchBothOnTheMessageAboveWarnsAndGoesAwayWhenOneIsOff() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        // Ein Firefox, den nichts startet: Die Weltkugel braucht nur seinen Pfad.
+        Path firefox = Files.writeString(home.resolve("firefox"), "");
+        String before = System.getProperty("enterpriseai.firefox");
+        System.setProperty("enterpriseai.firefox", firefox.toString());
+        try {
+            String[] texts = new String[3];
+            boolean[] visible = new boolean[3];
+            SwingUtilities.invokeAndWait(() -> {
+                ChatPanel panel = new ChatPanel(context);
+                panel.webSearch(true);
+                visible[0] = panel.feedback().isVisible();
+                panel.appSearch(true);
+                visible[1] = panel.feedback().isVisible();
+                texts[1] = panel.feedback().text();
+                panel.webSearch(false);
+                visible[2] = panel.feedback().isVisible();
+                // Ersetzt eine andere Meldung die Warnung, bleibt sie beim Ausschalten stehen.
+                panel.webSearch(true);
+                panel.feedback().warning("Download ließ sich nicht starten", null);
+                panel.appSearch(false);
+                texts[2] = panel.feedback().isVisible() ? panel.feedback().text() : "";
+            });
+            assertThat(visible).containsExactly(false, true, false);
+            assertThat(texts[1]).contains(ChatPanel.BOTH_ON_WARNING);
+            assertThat(texts[2]).contains("Download ließ sich nicht starten");
+        } finally {
+            if (before == null) {
+                System.clearProperty("enterpriseai.firefox");
+            } else {
+                System.setProperty("enterpriseai.firefox", before);
+            }
+        }
+    }
+
+    @Test
+    void theInternalSearchSwitchTogglesAndIsOffAtFirst() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        boolean[] on = new boolean[3];
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            on[0] = panel.appSearchOn();
+            panel.appSearch(true);
+            on[1] = panel.appSearchOn();
+            panel.appSearch(false);
+            on[2] = panel.appSearchOn();
+        });
+        assertThat(on).containsExactly(false, true, false);
+        assertThat(ChatPanel.appSearchSources(context.settings(), null)).isEmpty();
+    }
+
+    @Test
+    void aBrowserQuestionInTheTranscriptTakesOnlyTheFirstClickAndTheWebPopupHasAllRows() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        java.util.List<com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome> answers =
+                new java.util.ArrayList<>();
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            panel.showApproval("Bestätigung nötig", "example.org möchte geöffnet werden", true, answers::add);
+            java.util.List<javax.swing.JButton> buttons = new java.util.ArrayList<>();
+            collect(panel, buttons);
+            buttons.forEach(button -> labels.add(button.getText()));
+            buttons.stream().filter(b -> ChatPanel.APPROVE_ALWAYS_TEXT.equals(b.getText())).findFirst()
+                    .orElseThrow().doClick();
+            buttons.stream().filter(b -> ChatPanel.REJECT_TEXT.equals(b.getText())).findFirst()
+                    .orElseThrow().doClick();
+        });
+        assertThat(labels).contains(ChatPanel.APPROVE_ONCE_TEXT, ChatPanel.APPROVE_ALWAYS_TEXT,
+                ChatPanel.REJECT_ALWAYS_TEXT, ChatPanel.REJECT_TEXT);
+        assertThat(answers).containsExactly(
+                com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.APPROVED_ALWAYS);
+    }
+
+    private static void collect(java.awt.Container container, java.util.List<javax.swing.JButton> into) {
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof javax.swing.JButton button && button.getText() != null
+                    && "transcript.approval".equals(nameOfApprovalRow(button))) {
+                into.add(button);
+            }
+            if (child instanceof java.awt.Container inner) {
+                collect(inner, into);
+            }
+        }
+    }
+
+    private static String nameOfApprovalRow(java.awt.Component component) {
+        for (java.awt.Container parent = component.getParent(); parent != null; parent = parent.getParent()) {
+            if ("transcript.approval".equals(parent.getName())) {
+                return parent.getName();
+            }
+        }
+        return null;
+    }
+
+    @Test
     void theKnowledgeLineNamesTheSelectionItsPagesAndWhatIsMissing() {
         assertThat(ChatPanel.knowledgeText(null, null, true, true)).isEqualTo(ChatPanel.NO_SELECTION);
-        Selection page = new Selection("wiki", "DEV", "42", "Handbuch");
+        Selection page = new Selection.Node("wiki", "DEV", "42", "Handbuch");
         assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(120, 120, 0, 0), true, true))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 120 Seiten");
         assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(120, 80, 0, 0), true, true))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 120 Seiten · 40 davon nicht geladen");
         assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(1, 1, 0, 0), true, true))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 1 Seite");
-        Selection space = new Selection("wiki", "DEV", null, "Entwicklung");
+        Selection space = new Selection.Node("wiki", "DEV", null, "Entwicklung");
         assertThat(ChatPanel.knowledgeText(space, HoldingCounts.ZERO, true, true))
                 .isEqualTo("Wissen: Space Entwicklung · " + ChatPanel.NOT_LOADED);
         assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(3, 3, 0, 0), false, true))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 3 Seiten · " + ExportPanel.INCOMPLETE);
         assertThat(ChatPanel.knowledgeText(space, null, true, true))
                 .isEqualTo("Wissen: Space Entwicklung · " + ChatPanel.NOT_LOADED);
-        Selection source = new Selection("wiki", null, null, "Beta");
+        Selection source = new Selection.Node("wiki", null, null, "Beta");
         // Der Chat ist die Ausnahme der KI-Freigabe (Angelo, 13.11.2026): genannt, nicht gesperrt.
         assertThat(ChatPanel.knowledgeText(source, new HoldingCounts(2010, 176, 8, 0), true, false))
                 .isEqualTo("Wissen: Beta · alle Spaces · 2010 Seiten · 1826 davon nicht geladen · "

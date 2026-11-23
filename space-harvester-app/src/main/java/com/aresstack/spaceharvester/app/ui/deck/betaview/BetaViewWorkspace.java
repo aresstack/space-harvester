@@ -49,6 +49,16 @@ public final class BetaViewWorkspace extends JPanel {
     private static final String FORM = "form";
 
     private final BetaViewSessions sessions;
+
+    /** Wo der gemerkte KeePass-Eintrag steht (für die Kachel auf der Startseite des Deck). */
+    public static final String ENTRY_KEY = BetaViewConnectForm.ENTRY_KEY;
+
+    /** Wie viele Anmeldungen gerade offen sind (für die Kachel auf der Startseite des Deck). */
+    public long connectedCount() {
+        return sessions.all().stream()
+                .filter(s -> s.state() == com.aresstack.spaceharvester.deck.betaview.ConnectionState.CONNECTED)
+                .count();
+    }
     private final Prompts prompts;
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();

@@ -162,11 +162,11 @@ public final class Explorer {
         for (TreePath path : paths == null ? new TreePath[0] : paths) {
             if (path.getLastPathComponent() instanceof Node node) {
                 var selection = switch (node.item()) {
-                    case SourceItem source -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                    case SourceItem source -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
                             source.sourceId(), null, null, source.title());
-                    case SpaceItem space -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                    case SpaceItem space -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
                             space.sourceId(), space.spaceKey(), null, space.name());
-                    case PageItem page -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                    case PageItem page -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
                             page.sourceId(), page.spaceKey(), page.pageId(), page.title());
                     default -> null;
                 };
@@ -290,8 +290,8 @@ public final class Explorer {
     /** Unten rechts (Angelo, 13.11.2026): Umriss = alle Knoten, gefüllt = nur die Favoriten als Liste mit Pfad. */
     private final IconButton favoritesOnly = new IconButton(Glyph.STAR, ONLY_FAVORITES);
     private boolean onlyFavorites;
-    private final DefaultListModel<Favorites.Favorite> favoriteModel = new DefaultListModel<>();
-    private final JList<Favorites.Favorite> favorites = new JList<>(favoriteModel);
+    /** Die Favoritenansicht an Stelle des Baums (ADR 0034, 2a); im Konstruktor angelegt, sie fragt den Baum. */
+    private final FavoritesView favorites;
     /** Die zuletzt in der Leseansicht gezeigte Seite; Ziel von „Aktuelles Dokument im Baum zeigen“. */
     private PageNavigation.Position current;
     private final Timer debounce = new Timer(300, e -> runFilter());
@@ -443,6 +443,7 @@ public final class Explorer {
 
     public Explorer(AppContext context) {
         this.context = context;
+        this.favorites = new FavoritesView(context, this::selectedItem, sourceId -> reveal(sourceId, null));
         this.states = new TreeStates(context, this::statesChanged);
         states.onSpaceChanged(this::spaceStructureChanged);
         tree.setRootVisible(false);
@@ -473,7 +474,7 @@ public final class Explorer {
                 selectionChanged();
             }
             // Die Favoritenliste zeigt, welcher Favorit gerade geöffnet bzw. im Baum gewählt ist.
-            selectCurrentFavorite();
+            favorites.markCurrent();
         });
         MouseAdapter mouse = new MouseAdapter() {
             /** Die Zeile unter dem Drücken der linken Taste, bis zum Loslassen. */
@@ -645,40 +646,7 @@ public final class Explorer {
         deck.setOpaque(false);
         deck.add(treeScroll, TREE);
         deck.add(matchScroll, MATCHES);
-        favorites.setFont(Comic.regular(13f));
-        favorites.setOpaque(false);
-        favorites.setSelectionBackground(Comic.YELLOW);
-        favorites.setSelectionForeground(Comic.INK);
-        favorites.setCellRenderer(new javax.swing.DefaultListCellRenderer() {
-            @Override
-            public java.awt.Component getListCellRendererComponent(JList<?> list, Object value, int index,
-                                                                   boolean selected, boolean focus) {
-                super.getListCellRendererComponent(list, value, index, selected, focus);
-                if (value instanceof Favorites.Favorite favorite) {
-                    // Der Favorit selbst in Tinte, seine Eltern als Pfad gedämpft darunter.
-                    setText("<html>" + escape(favorite.title()) + "<br><font color='#7a7a7a'>"
-                            + escape(favorite.where()) + "</font></html>");
-                    setIcon(favorite.isSource() ? MainWindow.database()
-                            : favorite.pageId() == null ? SidebarIcons.folder() : SidebarIcons.page());
-                }
-                setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 2));
-                setOpaque(selected);
-                return this;
-            }
-        });
-        favorites.getAccessibleContext().setAccessibleName("Favoriten");
-        favorites.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent event) {
-                if (javax.swing.SwingUtilities.isLeftMouseButton(event)) {
-                    openFavorite();
-                }
-            }
-        });
-        bindEnter(favorites, this::openFavorite);
-        javax.swing.JScrollPane favoriteScroll = Comic.scroll(favorites);
-        favoriteScroll.setBorder(BorderFactory.createEmptyBorder());
-        deck.add(favoriteScroll, FAVORITES);
+        deck.add(favorites.component(), FAVORITES);
         context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::favoritesChanged));
         root.setOpaque(false);
         // Kopf wie in der Quellenverwaltung: Comic-Überschrift, darunter das Filterfeld.
@@ -793,19 +761,33 @@ public final class Explorer {
 
     /** Wie das Fadenkreuz in IntelliJ: nur den Pfad zur gezeigten Seite aufklappen und sie wählen, ohne zu öffnen. */
     void showCurrent() {
-        if (current == null) {
+        PageNavigation.Position target = current;
+        if (target == null) {
             return;
         }
         cards.show(deck, TREE);
-        // Beim Zuklappen wandert die Auswahl kurz zur Quelle; das darf den Suchumfang nicht verbreitern.
+        // Fehler bis 23.11.2026: Beim Zuklappen wanderte die Auswahl auf den zugeklappten Vorfahren; der
+        // Auswahl-Listener (nur der Umfang war stumm) zeigte dessen Ansicht in der Mitte, die meldete keine Seite mehr,
+        // current wurde null, das Fadenkreuz grau und revealPage(current) tat nichts. Jetzt schweigen beim Zuklappen
+        // beide Listener, und das Ziel ist vorher gemerkt.
+        quiet = true;
         revealing = true;
         try {
+            tree.clearSelection();
             collapseAll();
         } finally {
             revealing = false;
+            quiet = false;
         }
-        revealPage(current);
+        // Wie ein Klick des Benutzers: normale Auswahl, die Hervorhebung eines Suchtreffers verschwindet.
+        reveal(target, ++revealRequest);
+        userRequest = revealRequest;
     }
+
+    /** Während {@link #showCurrent} zuklappt, meldet die Auswahl nichts. */
+    private boolean quiet;
+    /** Die Anfrage, deren Ziel wie ein Klick gewählt wird (Fadenkreuz). */
+    private int userRequest = -1;
 
     /** Hebt die Auswahl auf, auch die globale; der Umfang ist dann wieder alles. */
     public void clearSelection() {
@@ -1078,7 +1060,7 @@ public final class Explorer {
                 // Vorfahren, die der Baum nicht als Wurzel zeigt: die Seite direkt unter dem Space suchen.
                 child = child(node, steps.get(steps.size() - 1));
                 if (child != null) {
-                    select(child);
+                    finish(child, ticket);
                     return;
                 }
             }
@@ -1086,11 +1068,67 @@ public final class Explorer {
                 // Seite nicht gefunden: aufgeklappt zeigen, wie weit der Pfad reicht, aber nichts anderes wählen.
                 tree.scrollPathToVisible(new TreePath(node.getPath()));
             } else if (index == steps.size() - 1) {
-                select(child);
+                finish(child, ticket);
             } else {
                 descend(child, steps, index + 1, ticket);
             }
         }
+    }
+
+    /** Der hervorgehobene Suchtreffer; kein gewählter Knoten, die Auswahl (der Filter der Suche) bleibt. */
+    private Node hint;
+    /** Die Anfrage, deren Ziel nur hervorgehoben statt gewählt wird. */
+    private int hintRequest = -1;
+
+    /** Ende des Abstiegs: wählen, oder bei {@link #hintPage} nur hervorheben und hinscrollen. */
+    private void finish(Node node, int ticket) {
+        if (ticket == userRequest) {
+            TreePath path = new TreePath(node.getPath());
+            tree.setSelectionPath(path);
+            tree.scrollPathToVisible(path);
+            return;
+        }
+        if (ticket != hintRequest) {
+            select(node);
+            return;
+        }
+        Node before = hint;
+        hint = node;
+        TreePath path = new TreePath(node.getPath());
+        if (before != null) {
+            ((javax.swing.tree.DefaultTreeModel) tree.getModel()).nodeChanged(before);
+        }
+        ((javax.swing.tree.DefaultTreeModel) tree.getModel()).nodeChanged(node);
+        tree.scrollPathToVisible(path);
+    }
+
+    /**
+     * Zeigt einen Suchtreffer im Baum (Angelo, 23.11.2026): Pfad aufklappen, hinscrollen und die Seite mit einem
+     * Rahmen hervorheben, ohne die Auswahl zu ändern, denn die Auswahl ist der Filter der Suche.
+     */
+    /** Wie {@link #hintPage(String, String, String)} für einen bekannten Pfad (aus der Suche geöffnete Seite). */
+    public void hintPage(PageNavigation.Position position) {
+        reveal(position, ++revealRequest);
+        hintRequest = revealRequest;
+    }
+
+    /** Nimmt die Hervorhebung eines Suchtreffers weg. */
+    void clearHint() {
+        Node before = hint;
+        hint = null;
+        if (before != null) {
+            ((javax.swing.tree.DefaultTreeModel) tree.getModel()).nodeChanged(before);
+        }
+    }
+
+    public void hintPage(String sourceId, String spaceKey, String pageId) {
+        revealPage(sourceId, spaceKey, pageId);
+        hintRequest = revealRequest;
+    }
+
+    /** Für Tests: die Seiten-ID des hervorgehobenen Treffers. */
+    String hintedPageId() {
+        return hint != null && hint.item() instanceof PageItem page ? page.pageId() : null;
     }
 
     private void select(Node node) {
@@ -1248,6 +1286,13 @@ public final class Explorer {
     private boolean merging;
 
     private void selectionChanged() {
+        if (quiet) {
+            return;
+        }
+        if (!revealing) {
+            // Der Benutzer wählt selbst: die Hervorhebung eines Suchtreffers verschwindet.
+            clearHint();
+        }
         // Ein gewählter Knoten löst die globale Auswahl ab.
         if (global && tree.getSelectionCount() > 0) {
             global = false;
@@ -1859,7 +1904,7 @@ public final class Explorer {
         }
     }
 
-    private static String escape(String text) {
+    static String escape(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
@@ -1869,6 +1914,16 @@ public final class Explorer {
      * ({@link RoundHover}).
      */
     private final class Renderer extends javax.swing.tree.DefaultTreeCellRenderer {
+
+        /** Ob die Zeile der hervorgehobene Suchtreffer ist ({@link #hint}). */
+        private boolean hinted;
+
+        /** Breite von Symbol und Titel, ohne die Spalten rechts. */
+        private int getPreferredSizeOfText() {
+            java.awt.FontMetrics metrics = getFontMetrics(getFont());
+            int icon = getIcon() == null ? 0 : getIcon().getIconWidth() + getIconTextGap();
+            return icon + metrics.stringWidth(getText() == null ? "" : getText()) + 8;
+        }
 
         /** Ob die Zeile einen Stern trägt (Space oder Seite): gefüllt als Favorit, sonst nur beim Darüberfahren. */
         private boolean starred;
@@ -1913,6 +1968,7 @@ public final class Explorer {
             favorite = starred && isFavorite(item);
             badge = badge(item);
             this.row = row;
+            hinted = value != null && value == hint;
             int depth = value instanceof Node node ? node.getLevel() : 1;
             // Die Spalten rechts liegen im rechten Rand des Labels: der Titel endet davor und wird nötigenfalls
             // mit „…“ gekürzt, statt die Symbole aus dem sichtbaren Bereich zu schieben.
@@ -1932,6 +1988,16 @@ public final class Explorer {
         @Override
         public void paint(java.awt.Graphics graphics) {
             super.paint(graphics);
+            if (hinted) {
+                // Treffer der Suche: blauer Rahmen um den Titel, keine Auswahl (der Filter bleibt, Angelo 23.11.2026).
+                java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                g.setColor(Comic.BLUE);
+                g.setStroke(new java.awt.BasicStroke(2f));
+                int textEnd = Math.min(getWidth() - 1, getPreferredSizeOfText());
+                g.drawRoundRect(1, 1, textEnd - 2, getHeight() - 3, 8, 8);
+                g.dispose();
+            }
             if (!starred) {
                 return;
             }
@@ -2147,7 +2213,7 @@ public final class Explorer {
         favoritesChanged();
         if (filter.getText().trim().isEmpty()) {
             cards.show(deck, only ? FAVORITES : TREE);
-            note.setText(only && favoriteModel.isEmpty() ? "Noch keine Favoriten: Stern an Space oder Seite" : " ");
+            note.setText(only && favorites.isEmpty() ? "Noch keine Favoriten: Stern an Space oder Seite" : " ");
         }
     }
 
@@ -2156,64 +2222,22 @@ public final class Explorer {
     }
 
     private void favoritesChanged() {
-        List<Favorites.Favorite> all = context.favorites().all();
-        favoriteModel.clear();
-        all.forEach(favoriteModel::addElement);
+        boolean empty = favorites.reload();
         if (onlyFavorites && filter.getText().trim().isEmpty()) {
-            note.setText(all.isEmpty() ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
+            note.setText(empty ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
-        selectCurrentFavorite();
         tree.repaint();
     }
 
-    /**
-     * Markiert in der Favoritenliste den Favoriten des im Baum gewählten Knotens, also der geöffneten Seite. Ohne
-     * diese Markierung sah ein Klick auf den Favoriten der schon offenen Seite so aus, als passiere nichts.
-     */
-    private void selectCurrentFavorite() {
+    /** Der im Baum gewählte Knoten, null ohne Auswahl. */
+    private Item selectedItem() {
         TreePath path = tree.getSelectionPath();
-        Item item = path != null && path.getLastPathComponent() instanceof Node node ? node.item() : null;
-        for (int index = 0; item != null && index < favoriteModel.size(); index++) {
-            if (matches(favoriteModel.get(index), item)) {
-                favorites.setSelectedIndex(index);
-                favorites.ensureIndexIsVisible(index);
-                return;
-            }
-        }
-        favorites.clearSelection();
-    }
-
-    private static boolean matches(Favorites.Favorite favorite, Item item) {
-        return switch (item) {
-            case SourceItem source -> favorite.isSource() && favorite.sourceId().equals(source.sourceId());
-            case SpaceItem space -> !favorite.isSource() && favorite.pageId() == null
-                    && favorite.sourceId().equals(space.sourceId())
-                    && java.util.Objects.equals(favorite.spaceKey(), space.spaceKey());
-            case PageItem page -> favorite.sourceId().equals(page.sourceId())
-                    && page.pageId().equals(favorite.pageId());
-            default -> false;
-        };
-    }
-
-    /** Ein Favorit in der Liste: die Seite öffnen bzw. den Space zeigen; der Baum folgt der geöffneten Seite. */
-    private void openFavorite() {
-        Favorites.Favorite favorite = favorites.getSelectedValue();
-        if (favorite == null) {
-            return;
-        }
-        if (favorite.isSource()) {
-            // Die ganze Quelle: im Baum wählen, Mitte und rechts folgen der Auswahl.
-            reveal(favorite.sourceId(), null);
-        } else if (favorite.pageId() == null) {
-            context.navigator().openSpace(favorite.sourceId(), favorite.spaceKey());
-        } else {
-            context.navigator().openPage(favorite.sourceId(), favorite.pageId());
-        }
+        return path != null && path.getLastPathComponent() instanceof Node node ? node.item() : null;
     }
 
     /** Für Tests: die Favoritenliste und ihr Umschalter. */
     JList<Favorites.Favorite> favoriteList() {
-        return favorites;
+        return favorites.list();
     }
 
     IconButton favoritesButton() {
