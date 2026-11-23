@@ -144,13 +144,13 @@ final class NdvBrowser extends JPanel {
      */
     private StatusNote statusNote = StatusNote.plain(" ");
     private Runnable statusChanged = () -> { };
-    private final ComposerButton open = Comic.button("Öffnen", "Quelltext des gewählten Objekts laden (Eingabe)");
-    private final ComposerButton save = Comic.button("Speichern",
-            "Quelltext auf den Server schreiben (Strg+S); nur, wenn ihn seit dem Laden niemand geändert hat");
-    private final ComposerButton reconnect = Comic.button("Neu verbinden", "Verbindung neu aufbauen");
-    private final ComposerButton disconnect = Comic.button("Trennen", "Verbindung dieser Sitzung trennen");
-    private final ComposerButton close = Comic.button("Schließen", "Getrennte Sitzung aus der Liste nehmen");
-    private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+    // Aktionen als Icon-Knöpfe mit Tooltip (Angelo 23.11.: keine Textknöpfe in den Leisten).
+    private final IconButton open = new IconButton(FilesIcons.file(), "Öffnen: Quelltext des gewählten Objekts laden "
+            + "(Eingabe)");
+    private final IconButton save = new IconButton(FilesIcons.save(),
+            "Speichern: Quelltext auf den Server schreiben (Strg+S); nur, wenn ihn seit dem Laden niemand geändert hat");
+    private final IconButton reconnect = new IconButton(Glyph.SYNC, "Neu verbinden: Verbindung neu aufbauen");
+    private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
     private final JPanel foot = new JPanel(new BorderLayout());
     /** Zwischenspeicher, Abhängigkeiten und Sperrliste dieses Servers (wie NdvSourceCacheService in MainframeMate). */
     private final NdvAnalysis analysis;
@@ -497,16 +497,13 @@ final class NdvBrowser extends JPanel {
         tools.add(indexToggle);
         tools.add(refresh);
 
-        // Fuß: Zustand links, Aktionen rechts.
+        // Aktionen neben der Lupe der gemeinsamen Fußleiste (Angelo 23.11.); Trennen und Schließen macht das ✕ am Reiter, der Stand steht in der
+        // Statuszeile der App. „Neu verbinden“ erscheint nur, wenn die Verbindung weg ist.
         open.addActionListener(e -> openSelected());
         save.addActionListener(e -> save());
         reconnect.addActionListener(e -> sessions.reconnect(session));
-        disconnect.addActionListener(e -> session.disconnect());
-        close.addActionListener(e -> closed.run());
         foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(Comic.row(open, save, reconnect, disconnect, close), BorderLayout.EAST);
+        foot.add(DeckBars.tools(open, save, reconnect), BorderLayout.CENTER);
 
         state.restoreFilter(nameFilter, session.profile().host(), session.user(), scope());
         applyDetails();
@@ -1423,6 +1420,11 @@ final class NdvBrowser extends JPanel {
         openByName(name, line, null);
     }
 
+    /** Öffnet ein Objekt einer bestimmten Bibliothek ({@code null} = Suchreihenfolge) und springt zur Zeile. */
+    void openInLibrary(String library, String name, int line) {
+        openByName(name, line, library == null || library.isBlank() ? null : library.trim().toUpperCase(Locale.ROOT));
+    }
+
     private void openByName(String name, int line, String inLibrary) {
         String wanted = name.toUpperCase(Locale.ROOT);
         String lib = inLibrary != null ? inLibrary : library;
@@ -2038,9 +2040,7 @@ final class NdvBrowser extends JPanel {
         EditorSession.State documentState = document == null ? null : document.state();
         save.setEnabled(connected && document != null && document.dirty()
                 && (documentState == EditorSession.State.READY || documentState == EditorSession.State.CONFLICT));
-        reconnect.setEnabled(current == NdvState.FAILED || current == NdvState.DISCONNECTED);
-        disconnect.setEnabled(current == NdvState.CONNECTED || current == NdvState.CONNECTING);
-        close.setEnabled(current == NdvState.FAILED || current == NdvState.DISCONNECTED);
+        reconnect.setVisible(current == NdvState.FAILED || current == NdvState.DISCONNECTED);
         String head = session.profile().label() + (session.user().isEmpty() ? "" : " · " + session.user()) + " · "
                 + current.label();
         String filtered = "";

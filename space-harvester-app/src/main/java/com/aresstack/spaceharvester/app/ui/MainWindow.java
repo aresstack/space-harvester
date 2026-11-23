@@ -242,6 +242,9 @@ public final class MainWindow implements AppContext.Navigator {
                 .map(entry -> new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite(
                         entry.config().title(), entry.config().baseUrl().toString()))
                 .toList());
+        // SharePoint-Anmeldung nur einmal: nach dem ersten Erfolg verschlüsselt im Tresor (Unterordner sharepoint).
+        commandDeck.sharePointLogins(new com.aresstack.spaceharvester.app.deck.VaultSavedLogins(
+                context.vault() == null ? null : context.vault().scope("sharepoint")));
         // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
         com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
         // Diagramm-Ansicht „Visuell“: KI-Kurzbeschriftung über das Modell der Zeile „Zusammenfassung“ (sonst das

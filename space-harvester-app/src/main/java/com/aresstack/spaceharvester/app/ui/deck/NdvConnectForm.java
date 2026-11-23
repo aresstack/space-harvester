@@ -38,6 +38,8 @@ final class NdvConnectForm extends JPanel {
     static final String LIBRARY_KEY = "deck.ndv.defaultLibrary";
     /** Ob über den Proxy der App verbunden wird; Vorgabe nein (direkt wie MainframeMate, Angelo 23.11.). */
     static final String PROXY_KEY = "deck.ndv.useProxy";
+    /** Die zuletzt erfolgreich verbundene Verbindung (Eintrag, Host, Port, Bibliothek, Proxy). */
+    static final String WORKING_KEY = "deck.ndv.working";
     static final String PROXY_TEXT = "Proxy der App verwenden";
 
     /** Verbinden mit Profil, Eintragstitel für die Anzeige und der Quelle der Anmeldung. */
@@ -245,6 +247,53 @@ final class NdvConnectForm extends JPanel {
         AppState.shared().put(PROXY_KEY, String.valueOf(profile.useProxy()));
         String entry = account.entry();
         connect.open(profile, entry, () -> accounts.credentials(entry));
+    }
+
+    /** Breite des Terminal-Formulars, einmal gemessen: die Formulare des Deck sehen gleich aus (UX 23.11.). */
+    private static int terminalWidth;
+
+    @Override
+    public Dimension getPreferredSize() {
+        Dimension own = super.getPreferredSize();
+        if (isPreferredSizeSet()) {
+            return own;
+        }
+        if (terminalWidth == 0) {
+            terminalWidth = new ConnectForm(accounts, (profile, login) -> { }).getPreferredSize().width;
+        }
+        return new Dimension(Math.max(own.width, terminalWidth), own.height);
+    }
+
+    /** Zeigt im Formular, warum das Verbinden misslang. */
+    void problem(String reason) {
+        problem.setText(reason == null || reason.isBlank() ? " " : reason);
+    }
+
+    /** Eine Verbindung, die schon einmal geklappt hat: damit verbindet „Neue Verbindung“ sofort. */
+    record Working(NdvProfile profile, String account) {
+    }
+
+    /** Merkt nach dem ersten erfolgreichen Verbinden Server, Adresse, Port, Bibliothek und Proxy-Wahl. */
+    static void rememberWorking(NdvProfile profile, String account) {
+        if (account == null || account.isBlank()) {
+            return;
+        }
+        AppState.shared().put(WORKING_KEY, String.join("\t", account, profile.host(), String.valueOf(profile.port()),
+                profile.defaultLibrary() == null ? "" : profile.defaultLibrary(), String.valueOf(profile.useProxy())));
+    }
+
+    static java.util.Optional<Working> working() {
+        String stored = AppState.shared().get(WORKING_KEY);
+        if (stored == null || stored.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        String[] parts = stored.split("\t", -1);
+        try {
+            return java.util.Optional.of(new Working(new NdvProfile(parts[1], Integer.parseInt(parts[2]), parts[3],
+                    Boolean.parseBoolean(parts[4])), parts[0]));
+        } catch (RuntimeException e) {
+            return java.util.Optional.empty();
+        }
     }
 
     String problemText() {

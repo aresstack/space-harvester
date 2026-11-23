@@ -43,7 +43,7 @@ import javax.swing.SwingUtilities;
  * der gewählten Sitzung über dem gemeinsamen Statusband. Die Sitzungen gehören dem Anwendungsfall
  * {@link TerminalSessions}; Wechsel des Bereichs oder der Perspektive trennen nichts.
  */
-public final class TerminalWorkspace extends JPanel {
+public final class TerminalWorkspace extends JPanel implements DeckBars.FootTools {
 
     /**
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
@@ -73,6 +73,13 @@ public final class TerminalWorkspace extends JPanel {
     private final ComposerToggleButton newPill;
     private final CosmicClockPanel sky = new CosmicClockPanel(120);
     private final ConnectForm form;
+    /**
+     * Ruhebild, wenn die Verbindung eingerichtet ist und keine Sitzung offen: nur ein Knopf „Verbinden“, nicht jedes
+     * Mal das Formular (Angelo, 23.11.2026). Das Formular kommt beim ersten Mal, wenn es scheitert oder auf Wunsch.
+     */
+    private final JPanel idle = new JPanel(new GridBagLayout());
+    /** Das Formular statt des Ruhebilds zeigen (gewünscht oder nach einem Fehler). */
+    private boolean formWanted;
     /** Kopieren und Einfügen als Symbolknöpfe rechts in der Kopfzeile (Angelo, 23.11.2026). */
     private final com.aresstack.spaceharvester.app.ui.IconButton copy;
     private final com.aresstack.spaceharvester.app.ui.IconButton paste;
@@ -81,10 +88,12 @@ public final class TerminalWorkspace extends JPanel {
      * Schließen stehen nur hier bzw. als ✕ am Reiter (Angelo, 23.11.2026).
      */
     private final com.aresstack.spaceharvester.app.ui.IconButton more;
-    /** Höhe der Kopfzeile samt Linie: wie die Kopfzeilen der übrigen Perspektiven. */
-    static final int HEAD_HEIGHT = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.HEAD_HEIGHT;
-    /** Mindesthöhe der F-Tasten-Leiste unten: wie die Fußleiste des Space Harvesters (Knopf 22 px, Linie, Abstand). */
-    static final int FOOT_HEIGHT = 31;
+    /** Höhe der Kopfzeile samt Linie: wie alle Bereiche des Command Deck ({@link DeckBars}). */
+    static final int HEAD_HEIGHT = DeckBars.HEAD_HEIGHT;
+    /** Höhe der F-Tasten-Leiste unten: die Fußleiste des Command Deck mit der Lupe ({@link DeckBars}). */
+    static final int FOOT_HEIGHT = DeckBars.FOOT_HEIGHT;
+    /** Die F-Tasten für die Fußleiste des Command Deck, mittig neben der Lupe. */
+    private final JPanel footKeys = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout());
     /** Als Lesezeichen merken: Ziel, Anmeldung und Makro (Stern in MainframeMate). */
     private final com.aresstack.spaceharvester.app.ui.IconButton star;
     private final TerminalSettings settings;
@@ -100,11 +109,13 @@ public final class TerminalWorkspace extends JPanel {
     private final java.util.Set<Component> keyWatched = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
     private final Runnable screenChanged = () -> SwingUtilities.invokeLater(() -> {
         readLegend();
+        forgetStaleFinds();
         showAssist();
     });
     /** KI-Maskenassistent (#1151): Hinweis und Zurücknehmen links neben den Aktionen. */
-    private final JLabel assistHint = Comic.muted(" ");
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton undoAssist;
+    /** Der Hinweis der KI-Vorbereitung; er steht in der Statuszeile und am Zurücknehmen-Knopf, nie als Text in der Leiste. */
+    private String assistHint = "";
+    private final com.aresstack.spaceharvester.app.ui.IconButton undoAssist;
     private final Runnable assistChanged = () -> SwingUtilities.invokeLater(this::showAssist);
     private TerminalSession watchedSession;
     private TerminalView watchedView;
@@ -124,6 +135,16 @@ public final class TerminalWorkspace extends JPanel {
         this.bookmarks = bookmarks;
         setBackground(Comic.SURFACE);
         form = new ConnectForm(accounts, bookmarks, this::open);
+        idle.setOpaque(false);
+        JPanel idleRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
+        idleRow.setOpaque(false);
+        var connectNow = Comic.button("Verbinden", "Mit der gemerkten Verbindung verbinden (wie „Neue Verbindung“)");
+        connectNow.addActionListener(e -> newConnection());
+        var other = Comic.button("Andere Verbindung …", "Formular: anderer Server oder ein Lesezeichen");
+        other.addActionListener(e -> showForm());
+        idleRow.add(connectNow);
+        idleRow.add(other);
+        idle.add(idleRow);
 
         // Kopfzeile: Sitzungen links, „Neue Verbindung“ als letzte Pille.
         pills.setOpaque(false);
@@ -146,11 +167,9 @@ public final class TerminalWorkspace extends JPanel {
         pillGroup.add(newPill);
         pills.add(newPill);
         // Kopfzeile wie die der übrigen Perspektiven: Reiter links, Tasten mittig, Aktionen rechts (Angelo, 23.11.).
+        // Reiter und Tasten teilen sich die linke Seite der Kopfleiste; die Tasten stehen dort mittig.
         JPanel head = new JPanel(new HeadLayout());
         head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, 12, 0, 8)));
-        head.setPreferredSize(new java.awt.Dimension(0, HEAD_HEIGHT));
         head.add(pills, HeadLayout.LEFT);
         // Sondertasten wie in der Werkzeugleiste von MainframeMate: ENT, CLR, PA1–PA3, SYS.
         JPanel special = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
@@ -208,41 +227,29 @@ public final class TerminalWorkspace extends JPanel {
             }
         });
 
-        undoAssist = Comic.button("KI-Eingaben zurücknehmen",
-                "Setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt");
+        undoAssist = new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.UNDO,
+                UNDO_TIP).compact();
         undoAssist.addActionListener(e -> undoAssist());
         undoAssist.setVisible(false);
-        assistHint.setForeground(Comic.INK);
-        assistHint.setVisible(false);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
         actions.setOpaque(false);
-        for (JComponent part : new JComponent[] {assistHint, undoAssist, copy, paste, star, more}) {
+        for (JComponent part : new JComponent[] {undoAssist, copy, paste, star, more}) {
             actions.add(part);
         }
-        head.add(actions, HeadLayout.RIGHT);
+        JPanel headBar = DeckBars.head(head, actions);
 
-        // Unten nur die F-Tasten, so hoch wie die Fußleiste des Space Harvesters; der Stand steht in der Statuszeile.
-        JPanel foot = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout()) {
-            @Override
-            public java.awt.Dimension getPreferredSize() {
-                java.awt.Insets in = getInsets();
-                int bar = functionKeys.isVisible() ? functionKeys.getPreferredSize().height : 0;
-                return new java.awt.Dimension(0, Math.max(FOOT_HEIGHT, bar + in.top + in.bottom));
-            }
-        };
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, 8, 0, 8)));
-        foot.add(functionKeys);
+        // Unten nur die F-Tasten, mittig neben der Lupe in der Fußleiste des Command Deck ({@link #footTools()}); der
+        // Stand steht in der Statuszeile der App, nie hier.
+        footKeys.setOpaque(false);
+        footKeys.add(functionKeys);
 
         // Mitte: nur der Himmel mit dem Terminal bzw. dem Formular.
         JPanel stage = new JPanel(new BorderLayout());
         stage.setOpaque(false);
         stage.add(sky, BorderLayout.CENTER);
 
-        add(head, BorderLayout.NORTH);
+        add(headBar, BorderLayout.NORTH);
         add(stage, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.onReopened((lost, fresh) -> SwingUtilities.invokeLater(() -> reopened(lost, fresh)));
@@ -289,7 +296,7 @@ public final class TerminalWorkspace extends JPanel {
         if (before != null) {
             pillOf.get(before).setSelected(true);
         }
-        form.connectDirectly(reason -> select(null));
+        form.connectDirectly(reason -> showForm());
     }
 
     private void formMenu(java.awt.event.MouseEvent event) {
@@ -306,6 +313,7 @@ public final class TerminalWorkspace extends JPanel {
 
     /** Das Formular „Neue Verbindung“ auch, wenn die Verbindung eingerichtet ist (Lesezeichen, anderer Server). */
     void showForm() {
+        formWanted = true;
         select(null);
     }
 
@@ -321,6 +329,7 @@ public final class TerminalWorkspace extends JPanel {
             origins.remove(session);
         }
         form.problem(session.profile().label() + ": " + reason);
+        formWanted = true;
         select(null);
     }
 
@@ -356,8 +365,23 @@ public final class TerminalWorkspace extends JPanel {
         if (pillOf.containsKey(session)) {
             return;
         }
+        // Gezeichnetes Kreuz (nicht das Zeichen „✕“, das nicht jede Schrift hat), im Reiter selbst wie im Browser.
+        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
+                ComposerIcons.close(), "Sitzung schließen (auch Mittelklick auf den Reiter)").compact();
+        cross.addActionListener(e -> askClose(session));
         ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.profile().label(),
-                session.state().label());
+                session.state().label()) {
+            @Override
+            public void doLayout() {
+                java.awt.Dimension own = cross.getPreferredSize();
+                cross.setBounds(getWidth() - own.width - 4, (getHeight() - own.height) / 2, own.width, own.height);
+            }
+        };
+        // Der Text rückt um das Kreuz nach links; das Kreuz liegt rechts innen auf dem Reiter.
+        pill.setBorder(BorderFactory.createCompoundBorder(pill.getBorder(),
+                BorderFactory.createEmptyBorder(0, 0, 0, cross.getPreferredSize().width)));
+        pill.setLayout(null);
+        pill.add(cross);
         pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         pill.getAccessibleContext().setAccessibleName(session.profile().label());
         pill.addActionListener(e -> select(session));
@@ -369,14 +393,9 @@ public final class TerminalWorkspace extends JPanel {
                 }
             }
         });
-        // Gezeichnetes Kreuz (nicht das Zeichen „✕“, das nicht jede Schrift hat), direkt hinter dem Reiter.
-        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
-                ComposerIcons.close(), "Sitzung schließen (auch Mittelklick auf den Reiter)").compact();
-        cross.addActionListener(e -> askClose(session));
         JPanel tab = new JPanel(new BorderLayout(0, 0));
         tab.setOpaque(false);
         tab.add(pill, BorderLayout.CENTER);
-        tab.add(cross, BorderLayout.EAST);
         pillGroup.add(pill);
         pills.add(tab, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
@@ -447,7 +466,11 @@ public final class TerminalWorkspace extends JPanel {
             pill.setSelected(true);
         }
         sky.removeAll();
-        Component center = session == null ? form : session.view(JComponent.class).orElse(null);
+        boolean quiet = session == null && !formWanted && ConnectForm.isConfigured();
+        if (session != null) {
+            formWanted = false;
+        }
+        Component center = session == null ? (quiet ? idle : form) : session.view(JComponent.class).orElse(null);
         if (center != null) {
             sky.add(center);
         }
@@ -456,7 +479,7 @@ public final class TerminalWorkspace extends JPanel {
         sky.repaint();
         fitScreen();
         showState();
-        if (session == null) {
+        if (session == null && !quiet) {
             SwingUtilities.invokeLater(form::focusServer);
         } else {
             SwingUtilities.invokeLater(() -> view(TerminalView.class).ifPresent(TerminalView::focus));
@@ -487,6 +510,9 @@ public final class TerminalWorkspace extends JPanel {
             view.addScreenListener(screenChanged);
         });
         session.view(JComponent.class).filter(keyWatched::add).ifPresent(screen -> {
+            // Die Lupe der Fußleiste sucht auch im selbst gezeichneten Bild.
+            session.view(TerminalView.class).ifPresent(view -> screen.putClientProperty(
+                    com.aresstack.spaceharvester.app.ui.FindableSurface.KEY, new ScreenFind(view)));
             screen.addKeyListener(new java.awt.event.KeyAdapter() {
                 @Override
                 public void keyPressed(java.awt.event.KeyEvent event) {
@@ -545,10 +571,80 @@ public final class TerminalWorkspace extends JPanel {
         }
         view(TerminalView.class).ifPresent(view -> view.highlight(spans));
         boolean any = !spans.isEmpty();
-        assistHint.setText(any ? assistText(spans.size()) : " ");
-        assistHint.setVisible(any);
+        String hint = any ? assistText(spans.size()) : "";
+        if (!hint.equals(assistHint)) {
+            assistHint = hint;
+            if (any) {
+                note(hint, false);
+            }
+        }
+        undoAssist.setToolTipText(any ? UNDO_TIP + " (" + hint + ")" : UNDO_TIP);
         undoAssist.setVisible(any);
         undoAssist.setEnabled(any);
+    }
+
+    static final String UNDO_TIP =
+            "KI-Eingaben zurücknehmen: setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt";
+
+    /** F-Tasten neben die Lupe der gemeinsamen Fußleiste (Angelo, 23.11.2026: überall dieselbe Leiste). */
+    @Override
+    public JComponent footTools() {
+        return footKeys;
+    }
+
+    /** Ein neues Bild vom Host: Treffer der Lupe auf dem alten Bild wegnehmen, sie stünden an falscher Stelle. */
+    private void forgetStaleFinds() {
+        view(JComponent.class).map(screen -> screen.getClientProperty(
+                com.aresstack.spaceharvester.app.ui.FindableSurface.KEY)).filter(ScreenFind.class::isInstance)
+                .map(ScreenFind.class::cast).ifPresent(ScreenFind::forgetIfChanged);
+    }
+
+    /**
+     * Das Terminalbild für die Lupe: Der Text ist {@link TerminalView#text()} (Zeilen mit Zeilenumbruch), die Treffer
+     * malt die Anzeige als Pufferbereiche.
+     */
+    static final class ScreenFind implements com.aresstack.spaceharvester.app.ui.FindableSurface {
+
+        private final TerminalView view;
+        private String marked;
+
+        ScreenFind(TerminalView view) {
+            this.view = view;
+        }
+
+        @Override
+        public String findText() {
+            return view.text();
+        }
+
+        @Override
+        public void showFound(java.util.List<int[]> found, int current) {
+            String text = view.text();
+            marked = found.isEmpty() ? null : text;
+            view.markFound(spans(text, found), current);
+        }
+
+        void forgetIfChanged() {
+            if (marked != null && !marked.equals(view.text())) {
+                marked = null;
+                view.markFound(java.util.List.of(), -1);
+            }
+        }
+
+        /** Textstellen in Pufferbereiche: Jede Zeile ist {@code Spalten + 1} Zeichen lang (der Zeilenumbruch). */
+        static java.util.List<TerminalView.Span> spans(String text, java.util.List<int[]> found) {
+            int newline = text.indexOf('\n');
+            int columns = newline < 0 ? text.length() : newline;
+            java.util.List<TerminalView.Span> spans = new java.util.ArrayList<>();
+            if (columns <= 0) {
+                return spans;
+            }
+            for (int[] range : found) {
+                int start = (range[0] / (columns + 1)) * columns + range[0] % (columns + 1);
+                spans.add(new TerminalView.Span(start, range[1] - range[0]));
+            }
+            return spans;
+        }
     }
 
     static String assistText(int fields) {
@@ -736,11 +832,8 @@ public final class TerminalWorkspace extends JPanel {
     }
 
     /** ✕ oder Mittelklick: Eine laufende Sitzung wird erst nach „wirklich“ getrennt, eine beendete sofort entfernt. */
+    /** ✕ am Reiter, Mittelklick, „Schließen“: trennt und schließt in einem Schritt (Angelo, 23.11.2026). */
     void askClose(TerminalSession session) {
-        if (!session.state().ended() && !com.aresstack.spaceharvester.app.ui.Dialogs.confirm(this,
-                "Sitzung schließen", "Sitzung " + session.profile().label() + " wirklich trennen und schließen?")) {
-            return;
-        }
         closeSession(session);
     }
 
@@ -836,10 +929,10 @@ public final class TerminalWorkspace extends JPanel {
     }
 
     String assistHintText() {
-        return assistHint.isVisible() ? assistHint.getText() : "";
+        return assistHint;
     }
 
-    com.aresstack.enterpriseai.ui.comic.control.ComposerButton undoAssistButton() {
+    com.aresstack.spaceharvester.app.ui.IconButton undoAssistButton() {
         return undoAssist;
     }
 

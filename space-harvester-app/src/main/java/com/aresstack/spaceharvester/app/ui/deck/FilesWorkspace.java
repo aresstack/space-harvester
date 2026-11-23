@@ -85,7 +85,7 @@ import javax.swing.table.DefaultTableCellRenderer;
  * Logik liegen im Anwendungsfall {@link FileBrowser} bzw. {@link EditorSessions}; die Oberfläche hört nur zu (kein
  * Abfragen). Gelesen wird erst, wenn der Bereich zum ersten Mal sichtbar ist; geschrieben nur auf ausdrücklichen Wunsch.
  */
-public final class FilesWorkspace extends JPanel {
+public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
 
     /**
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
@@ -97,6 +97,23 @@ public final class FilesWorkspace extends JPanel {
     /** Die Karte dieses Bereichs in der Statuszeile der App. */
     public javax.swing.JComponent statusInfo() {
         return statusInfo;
+    }
+
+    /** Was gerade in der Statuszeile steht (für Tests und zum Vergleich). */
+    private com.aresstack.spaceharvester.app.ui.controls.StatusNote shownStatus =
+            com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(" ");
+
+    /** Zeigt den Stand in der Statuszeile der App; Fehler rot. Die untere Leiste trägt nur Aktionen. */
+    private void status(String text, boolean error) {
+        shownStatus = new com.aresstack.spaceharvester.app.ui.controls.StatusNote(text.isBlank() ? " " : text,
+                error ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR
+                        : com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.PLAIN, null, null);
+        statusInfo.show(shownStatus);
+    }
+
+    @Override
+    public JComponent footTools() {
+        return footTools;
     }
 
     static final String LOCATION_KEY = "deck.files.location";
@@ -115,6 +132,9 @@ public final class FilesWorkspace extends JPanel {
     private final SharePointAccess sharePoint;
     private final Supplier<List<SharePointSite>> sites;
     private final ServerAccounts accounts;
+    /** Nach der ersten erfolgreichen Anmeldung gespeicherte SharePoint-Zugangsdaten (die App setzt den Tresor). */
+    private volatile com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins savedLogins =
+            com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory();
     private final IconButton groupToggle = new IconButton(FilesIcons.group(), "Nach Dateiendung gruppieren");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Gruppen zuklappen");
     private final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Gruppen aufklappen");
@@ -148,13 +168,16 @@ public final class FilesWorkspace extends JPanel {
     private final JTextField name = Comic.field(24);
     private final EntryModel model = new EntryModel();
     private final JTable table = Comic.table(new JTable(model));
-    private final JLabel status = Comic.muted(" ");
     private final JPanel browserActions;
     private final JPanel documentActions;
-    private final ComposerButton open;
-    private final ComposerButton delete;
-    private final ComposerButton save;
-    private final ComposerButton reload;
+    private final javax.swing.JButton open;
+    private final javax.swing.JButton delete;
+    private final javax.swing.JButton save;
+    private final javax.swing.JButton reload;
+    /** Neben der Lupe in der Fußleiste des Command Deck: die Aktionen des gewählten Reiters. */
+    private final JPanel footTools = new JPanel(new CardLayout());
+    /** Reiter samt Kreuz je Dokument. */
+    private final Map<EditorSession, JPanel> tabOf = new LinkedHashMap<>();
     private boolean creatingFolder;
     private boolean started;
     private EditorSession selected;
@@ -227,57 +250,34 @@ public final class FilesWorkspace extends JPanel {
         browserTools.add(detailsToggle);
         browserTools.add(filterFrame);
         browserTools.add(sortButton);
-        JPanel head = new JPanel(new BorderLayout());
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
-        head.add(pills, BorderLayout.CENTER);
-        head.add(browserTools, BorderLayout.EAST);
+        JPanel head = DeckBars.head(pills, browserTools);
 
         // Durchsuchen: Pfadzeile, Namenszeile (nur beim Anlegen), Liste.
         center.setOpaque(false);
         center.add(browserCard(), BROWSER);
 
-        // Fußzeile: Status und die Aktionen des gewählten Reiters.
-        open = Comic.button("Öffnen", "Ordner öffnen bzw. Datei im Editor öffnen (Enter)");
-        open.addActionListener(e -> openSelected());
-        ComposerButton newFolder = Comic.button(FilesIcons.newFolder(), "Neuer Ordner", "Ordner anlegen");
-        newFolder.addActionListener(e -> askName(true));
-        ComposerButton newFile = Comic.button(FilesIcons.newFile(), "Neue Datei", "Leere Datei anlegen");
-        newFile.addActionListener(e -> askName(false));
-        delete = Comic.button(Glyph.TRASH, "Löschen", "Gewählte Einträge löschen (Entf)");
-        delete.addActionListener(e -> deleteSelected());
-        browserActions = Comic.row(open, newFolder, newFile, delete);
-        save = Comic.primary("Speichern", "Änderungen speichern (Strg+S)");
-        save.setIcon(FilesIcons.save());
-        save.addActionListener(e -> {
+        // Die Aktionen des gewählten Reiters stehen als Symbolknöpfe neben der Lupe in der Fußleiste des Command
+        // Deck (footTools); der Stand steht in der Statuszeile der App. Ein Dokument schließt das Kreuz am Reiter.
+        open = DeckBars.action(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.openExternal(),
+                "Öffnen: Ordner öffnen bzw. Datei im Editor öffnen (Enter)", this::openSelected);
+        var newFolder = DeckBars.action(FilesIcons.newFolder(), "Neuer Ordner", () -> askName(true));
+        var newFile = DeckBars.action(FilesIcons.newFile(), "Neue Datei", () -> askName(false));
+        delete = DeckBars.action(Glyph.TRASH, "Gewählte Einträge löschen (Entf)", this::deleteSelected);
+        browserActions = DeckBars.tools(open, newFolder, newFile, delete);
+        save = DeckBars.action(FilesIcons.save(), "Änderungen speichern (Strg+S)", () -> {
             if (selected != null) {
                 selected.save();
             }
         });
-        reload = Comic.button(Glyph.REFRESH, "Neu laden", "Datei neu laden; ungespeicherte Änderungen gehen verloren");
-        reload.addActionListener(e -> reloadSelected());
-        ComposerButton close = Comic.button("Schließen", "Dokument schließen");
-        close.addActionListener(e -> {
-            if (selected != null) {
-                closeDocument(selected);
-            }
-        });
-        documentActions = Comic.row(save, reload, close);
-        JPanel actions = new JPanel(new CardLayout());
-        actions.setOpaque(false);
-        actions.add(browserActions, BROWSER);
-        actions.add(documentActions, "document");
-        JPanel foot = new JPanel(new BorderLayout(12, 0));
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(status, BorderLayout.CENTER);
-        foot.add(actions, BorderLayout.EAST);
+        reload = DeckBars.action(Glyph.REFRESH, "Datei neu laden; ungespeicherte Änderungen gehen verloren",
+                this::reloadSelected);
+        documentActions = DeckBars.tools(save, reload);
+        footTools.setOpaque(false);
+        footTools.add(browserActions, BROWSER);
+        footTools.add(documentActions, "document");
 
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
 
         groupToggle.marked(AppState.shared().getBoolean(GROUP_KEY, false));
         collapseAll.setVisible(groupToggle.marked());
@@ -515,8 +515,7 @@ public final class FilesWorkspace extends JPanel {
                 text += " · Filter ist kein gültiger regulärer Ausdruck";
             }
         }
-        status.setText(text);
-        status.setForeground(color);
+        status(text, color == Comic.RED);
     }
 
     private void showDocumentStatus() {
@@ -534,16 +533,11 @@ public final class FilesWorkspace extends JPanel {
         }
         String charset = session.document().map(document -> " · " + document.charset()
                 + ("\r\n".equals(document.lineEnding()) ? " · CRLF" : "")).orElse("");
-        status.setText(text + charset);
-        status.setForeground(color);
+        status(text + charset, color == Comic.RED);
     }
 
     private void showActions() {
-        Component actions = browserActions.getParent();
-        if (actions != null) {
-            ((CardLayout) ((JPanel) actions).getLayout()).show((JPanel) actions,
-                    selected == null ? BROWSER : "document");
-        }
+        ((CardLayout) footTools.getLayout()).show(footTools, selected == null ? BROWSER : "document");
         int count = table.getSelectedRowCount();
         open.setEnabled(count == 1);
         delete.setEnabled(count > 0);
@@ -599,13 +593,6 @@ public final class FilesWorkspace extends JPanel {
         pill.addActionListener(e -> select(session));
         pill.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseClicked(MouseEvent event) {
-                if (SwingUtilities.isMiddleMouseButton(event)) {
-                    closeDocument(session);
-                }
-            }
-
-            @Override
             public void mousePressed(MouseEvent event) {
                 pillMenu(session, pill, event);
             }
@@ -616,7 +603,10 @@ public final class FilesWorkspace extends JPanel {
             }
         });
         pillGroup.add(pill);
-        pills.add(pill);
+        JPanel tab = DeckBars.tab(pill, "Dokument schließen (auch Mittelklick auf den Reiter)",
+                () -> closeDocument(session));
+        pills.add(tab);
+        tabOf.put(session, tab);
         pillOf.put(session, pill);
         session.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
         pills.revalidate();
@@ -651,7 +641,7 @@ public final class FilesWorkspace extends JPanel {
         cardOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(pill);
+            pills.remove(tabOf.remove(session));
             pills.revalidate();
             pills.repaint();
         }
@@ -762,16 +752,14 @@ public final class FilesWorkspace extends JPanel {
         if (SharePointPaths.isWebUrl(text)) {
             Optional<String> unc = SharePointPaths.toUncPath(text);
             if (unc.isEmpty()) {
-                status.setText("„" + text + "“ ist keine gültige SharePoint-Adresse.");
-                status.setForeground(Comic.RED);
+                status("„" + text + "“ ist keine gültige SharePoint-Adresse.", true);
                 return;
             }
             text = unc.get();
         }
         if (sharePoint.needsLogin(text)) {
             String unc = text;
-            status.setText("Melde an " + SharePointPaths.displayName(SharePointPaths.toWebUrl(unc)) + " an …");
-            status.setForeground(Comic.MUTED);
+            status("Melde an " + SharePointPaths.displayName(SharePointPaths.toWebUrl(unc)) + " an …", false);
             busy().setBusy(true);
             sharePoint.connect(unc, result -> SwingUtilities.invokeLater(() -> connected(result)));
             return;
@@ -786,13 +774,54 @@ public final class FilesWorkspace extends JPanel {
             return;
         }
         if (!result.outcome().needsCredentials()) {
-            status.setText(result.outcome().reason());
-            status.setForeground(Comic.RED);
+            status(result.outcome().reason(), true);
             return;
         }
-        String host = SharePointPaths.host(result.uncPath()).orElse("").replaceAll("(?i)@SSL", "")
-                .replaceAll("@\\d+$", "");
-        // Wie MainframeMate: erst gespeicherte Zugangsdaten (hier KeePass, Eintrag mit diesem Rechner), dann fragen.
+        trySaved(result.uncPath(), result.outcome().reason());
+    }
+
+    /** Woher gespeicherte SharePoint-Zugangsdaten kommen und wohin neue gehen; {@code null} = nur im Speicher. */
+    public void savedLogins(com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins) {
+        savedLogins = logins == null ? com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory()
+                : logins;
+    }
+
+    private static String loginHost(String unc) {
+        return SharePointPaths.host(unc).orElse("").replaceAll("(?i)@SSL", "").replaceAll("@\\d+$", "");
+    }
+
+    /** Erst die gespeicherten Zugangsdaten; passen sie nicht oder gibt es keine, weiter mit KeePass bzw. dem Dialog. */
+    private void trySaved(String unc, String reason) {
+        busy().setBusy(true);
+        com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins = savedLogins;
+        Thread.ofVirtual().name("deck-sharepoint-saved").start(() -> {
+            Optional<com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.Login> saved = Optional.empty();
+            try {
+                saved = logins.load(loginHost(unc));
+            } catch (Exception e) {
+                // Tresor nicht lesbar: weiter wie ohne Gespeichertes
+            }
+            if (saved.isEmpty()) {
+                SwingUtilities.invokeLater(() -> tryKeePass(unc, reason, ""));
+                return;
+            }
+            var login = saved.get();
+            sharePoint.connect(unc, login.user(), login.password(), result -> SwingUtilities.invokeLater(() -> {
+                busy().setBusy(browser.loading());
+                if (result.connected()) {
+                    browser.open(unc);
+                } else {
+                    tryKeePass(unc, "Gespeicherte Zugangsdaten passen nicht: " + result.outcome().reason(),
+                            login.user());
+                }
+            }));
+            java.util.Arrays.fill(login.password(), '\0');
+        });
+    }
+
+    private void tryKeePass(String unc, String reason, String user) {
+        String host = loginHost(unc);
+        // Wie MainframeMate: dann KeePass (Eintrag mit diesem Rechner), zuletzt fragen.
         Thread.ofVirtual().name("deck-sharepoint-keepass").start(() -> {
             Optional<ServerAccount> account = Optional.empty();
             try {
@@ -802,10 +831,10 @@ public final class FilesWorkspace extends JPanel {
             }
             Optional<ServerAccount> found = account;
             SwingUtilities.invokeLater(() -> {
-                if (found.isPresent() && !result.outcome().reason().startsWith("KeePass")) {
-                    loginWithKeePass(result.uncPath(), found.get());
+                if (found.isPresent() && !reason.startsWith("KeePass")) {
+                    loginWithKeePass(unc, found.get());
                 } else {
-                    askLogin(result.uncPath(), result.outcome().reason(), found.map(ServerAccount::user).orElse(""));
+                    askLogin(unc, reason, found.map(ServerAccount::user).orElse(user));
                 }
             });
         });
@@ -849,21 +878,33 @@ public final class FilesWorkspace extends JPanel {
         form.add(Comic.caption("Kennwort"));
         form.add(new InputFrame(passwordField));
         if (!Dialogs.formOverlay(this, "SharePoint-Anmeldung", form, "Anmelden")) {
-            status.setText("Anmeldung abgebrochen");
-            status.setForeground(Comic.MUTED);
+            status("Anmeldung abgebrochen", false);
             return;
         }
         char[] password = passwordField.getPassword();
         busy().setBusy(true);
-        sharePoint.connect(unc, userField.getText(), password, result -> SwingUtilities.invokeLater(() -> {
+        String entered = userField.getText();
+        com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins = savedLogins;
+        sharePoint.connect(unc, entered, password, result -> SwingUtilities.invokeLater(() -> {
             busy().setBusy(browser.loading());
             if (result.connected()) {
+                // Nach dem ersten Erfolg merken: beim nächsten Mal kein Dialog (Angelo, 23.11.).
+                Thread.ofVirtual().name("deck-sharepoint-save").start(() -> {
+                    try {
+                        logins.save(loginHost(unc), entered, password);
+                    } catch (Exception e) {
+                        SwingUtilities.invokeLater(() -> status("Zugangsdaten nicht gespeichert ("
+                                + e.getClass().getSimpleName() + ")", true));
+                    } finally {
+                        java.util.Arrays.fill(password, '\0');
+                    }
+                });
                 browser.open(unc);
             } else {
-                askLogin(unc, result.outcome().reason(), userField.getText());
+                java.util.Arrays.fill(password, '\0');
+                askLogin(unc, result.outcome().reason(), entered);
             }
         }));
-        java.util.Arrays.fill(password, '\0');
     }
 
     List<String> bookmarks() {
@@ -1144,7 +1185,7 @@ public final class FilesWorkspace extends JPanel {
     }
 
     String statusText() {
-        return status.getText();
+        return shownStatus.text();
     }
 
     EditorSession selected() {

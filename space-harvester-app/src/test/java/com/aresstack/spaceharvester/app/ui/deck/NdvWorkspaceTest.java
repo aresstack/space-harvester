@@ -60,6 +60,7 @@ class NdvWorkspaceTest {
         }
         AppState.shared().put(NdvBrowser.LIBRARY_KEY, "");
         AppState.shared().put(NdvConnectForm.LIBRARY_KEY, "");
+        AppState.shared().put(NdvConnectForm.WORKING_KEY, "");
         NdvAnalysisSettings.searchLink(NdvSearchLink.NONE);
         // Der NDV-Zwischenspeicher der Tests liegt nie im echten App-Ordner.
         if (System.getProperty(NdvAnalysisSettings.CACHE_PROPERTY) == null) {
@@ -257,6 +258,113 @@ class NdvWorkspaceTest {
         assertThat(texts(browser.foot())).doesNotContain(browser.statusText());
         SwingUtilities.invokeAndWait(() -> workspace[0].select(null));
         assertThat(workspace[0].statusLine()).isEqualTo(NdvWorkspace.NO_SESSION);
+    }
+
+    @Test
+    void afterTheFirstSuccessNewConnectionConnectsAtOnceAndTheCrossDisconnectsAndCloses() throws Exception {
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            // Ohne gemerkte Verbindung zeigt „Neue Verbindung“ das Formular.
+            workspace[0].newConnection();
+            assertThat(workspace[0].selected()).isNull();
+            NdvConnectForm form = workspace[0].form();
+            form.show(List.of(HOST));
+            form.server.setSelectedItem(HOST);
+            form.library.setText("LAGER");
+            form.submit();
+        });
+        flush();
+        NdvSession first = sessions.all().getFirst();
+        assertThat(first.state()).isEqualTo(NdvState.CONNECTED);
+        assertThat(NdvConnectForm.working()).hasValueSatisfying(working -> {
+            assertThat(working.account()).isEqualTo("Testhost NDV");
+            assertThat(working.profile().host()).isEqualTo("10.0.0.7");
+            assertThat(working.profile().port()).isEqualTo(8011);
+            assertThat(working.profile().defaultLibrary()).isEqualTo("LAGER");
+        });
+        // Die gemerkte Verbindung ist offen: dann gibt es das Formular für eine andere.
+        SwingUtilities.invokeAndWait(() -> workspace[0].newConnection());
+        assertThat(workspace[0].selected()).isNull();
+        assertThat(sessions.all()).hasSize(1);
+        // Unten keine Knöpfe „Trennen“ und „Schließen“: das ✕ am Reiter trennt und schließt ohne Rückfrage.
+        assertThat(texts((java.awt.Container) workspace[0].browser(first).foot()))
+                .doesNotContain("Trennen", "Schließen");
+        SwingUtilities.invokeAndWait(() -> workspace[0].closeSession(first));
+        flush();
+        assertThat(first.state()).isEqualTo(NdvState.DISCONNECTED);
+        assertThat(workspace[0].browser(first)).isNull();
+
+        int reads = read.size();
+        SwingUtilities.invokeAndWait(() -> workspace[0].newConnection());
+        flush();
+        NdvSession second = workspace[0].selected();
+        assertThat(second).as("sofort verbunden, ohne Formular").isNotNull();
+        assertThat(second.state()).isEqualTo(NdvState.CONNECTED);
+        assertThat(second.profile().defaultLibrary()).isEqualTo("LAGER");
+        assertThat(read).hasSize(reads + 1);
+    }
+
+    @Test
+    void aFailingRememberedConnectionReturnsToTheFormWithItsReason() throws Exception {
+        NdvConnectForm.rememberWorking(new com.aresstack.spaceharvester.deck.ndv.NdvProfile("10.0.0.7", 8011),
+                "Testhost NDV");
+        server.refuse("Verbindung abgelehnt: 10.0.0.7:8011");
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            workspace[0].newConnection();
+        });
+        flush();
+        assertThat(workspace[0].selected()).isNull();
+        assertThat(workspace[0].form().problemText()).contains("abgelehnt");
+        assertThat(workspace[0].browser(sessions.all().isEmpty() ? null : sessions.all().getFirst())).isNull();
+    }
+
+    @Test
+    void theFormIsAsWideAsTheTerminalFormSoTheServerListShowsItsText() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            NdvConnectForm form = new NdvWorkspace(sessions, accounts, editors, Runnable::run).form();
+            ConnectForm terminal = new ConnectForm(accounts, (profile, login) -> { });
+            assertThat(form.getPreferredSize().width).isEqualTo(terminal.getPreferredSize().width);
+            form.setSize(form.getPreferredSize());
+            layout(form);
+            terminal.setSize(terminal.getPreferredSize());
+            layout(terminal);
+            assertThat(form.server.getWidth()).as("Server-Liste so breit wie im Terminal")
+                    .isEqualTo(terminal.server.getWidth()).isGreaterThan(200);
+            assertThat(form.port.getWidth()).isEqualTo(terminal.port.getWidth());
+        });
+    }
+
+    private static void layout(java.awt.Container root) {
+        root.doLayout();
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof java.awt.Container container) {
+                layout(container);
+            }
+        }
+    }
+
+    @Test
+    void theHeadIsAsHighAsElsewhereAndTheActionsSitNextToTheSharedSearchBar() throws Exception {
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run));
+        java.awt.BorderLayout layout = (java.awt.BorderLayout) workspace[0].getLayout();
+        java.awt.Component head = layout.getLayoutComponent(java.awt.BorderLayout.NORTH);
+        assertThat(head.getPreferredSize().height).isEqualTo(DeckBars.HEAD_HEIGHT);
+        assertThat(layout.getLayoutComponent(java.awt.BorderLayout.SOUTH)).as("kein eigener Fuß").isNull();
+        assertThat(workspace[0]).isInstanceOf(DeckBars.FootTools.class);
+        javax.swing.JComponent tools = workspace[0].footTools();
+
+        NdvSession session = sessions.open(new com.aresstack.spaceharvester.deck.ndv.NdvProfile("10.0.0.7", 8011),
+                "Testhost NDV", () -> accounts.credentials("Testhost NDV"));
+        flush();
+        assertThat(workspace[0].selected()).isSameAs(session);
+        assertThat(workspace[0].footTools()).as("derselbe Baustein über die Laufzeit").isSameAs(tools);
+        assertThat(head.getPreferredSize().height).isEqualTo(DeckBars.HEAD_HEIGHT);
+        assertThat(texts(tools)).as("nur Icon-Aktionen, der Stand steht in der Statuszeile")
+                .doesNotContain(workspace[0].browser(session).statusText(), "Öffnen", "Speichern");
     }
 
     private static java.util.List<String> texts(java.awt.Container root) {

@@ -201,6 +201,8 @@ public final class PageDetailPanel extends JPanel {
     private final Subpages subpages = new Subpages();
     /** „Aus Unterseiten“ unter Bildern, Aussagen und Graph (Fahrplan P3); zeigt nur Vorhandenes, nie ein KI-Lauf. */
     private final SubpageSection imagesBelow = new SubpageSection(IMAGES_WORD, 8, "Bild", "Beschreibung");
+    /** „Aus Unterseiten“ unter Absätzen (Angelo 23.11.2026: „mit Unterseiten“ gilt in allen Analyse-Reitern). */
+    private final SubpageSection passagesBelow = new SubpageSection(PASSAGES, 8, "Absatz", "Anriss");
     private final SubpageSection statementsBelow = new SubpageSection(STATEMENTS_WORD, 8, "Aussage", "Beteiligte");
     private final SubpageSection graphBelow = new SubpageSection("Unterseiten", 8).badge("Knoten");
     /** Unterreiter „Analysen → Aussagen“ (#499): gespeicherte Analyse der Seite, neu nur auf Knopfdruck. */
@@ -397,6 +399,23 @@ public final class PageDetailPanel extends JPanel {
      * eines Videos der Transkript-Knopf (Angelo, 19.11.2026: eine Leiste, die je nach Ansicht wechselt).
      */
     private final JPanel footTools = new JPanel(new BorderLayout());
+    /** Die Unterreiter von „Analysen“ einer Seite mit „mit Unterseiten“ rechts, in der unteren Leiste. */
+    private final TabFoot analysisFoot;
+    /** Die Unterreiter von „Begriffe“ (Akronyme, Bezeichner, Verben, Beziehungen) neben denen von „Analysen“. */
+    private final JComponent termsKinds;
+    /** Die Unterreiter von „Erweitert“ einer Seite bzw. ohne Seite, in der unteren Leiste. */
+    private final TabFoot advancedFoot;
+    private final TabFoot wideAdvancedFoot;
+    /** Aktionen von „Analysen“ einer Seite in der Kopfzeile links vom Stern. */
+    private final JPanel analysisActions = actionRow();
+    /** Aktionen von „Erweitert“ einer Seite in der Kopfzeile links vom Stern. */
+    private final JPanel advancedActions = actionRow();
+
+    private static JPanel actionRow() {
+        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 6, 0));
+        row.setOpaque(false);
+        return row;
+    }
     /** Neben der Lupe in der Leseansicht: „Transkript kopieren“ des Podcasts der Quellenseite bzw. der Seite. */
     private final JPanel sourceFoot = footRow();
     private final JPanel pageFoot = footRow();
@@ -632,8 +651,12 @@ public final class PageDetailPanel extends JPanel {
         advancedTabs.tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(TECHNICAL, Comic.scroll(padded(technical)))
                 .tab(RAW, rawTabs);
-        // Die Aktionen stehen rechts in der Zeile der Unterreiter, nicht als eigene Knopfzeilen darüber und darunter.
-        advancedTabs.actions(refresh, saveRaw, recompute);
+        // Die Unterreiter stehen mittig in der unteren Leiste mit der Lupe (Angelo 23.11.2026); ihre Aktionen in der
+        // gemeinsamen Kopfzeile links vom Stern, solange „Erweitert“ eine Seite zeigt.
+        advancedActions.add(refresh);
+        advancedActions.add(saveRaw);
+        advancedActions.add(recompute);
+        advancedFoot = new TabFoot(advancedTabs.detachBar(), null);
         advancedTabs.select(PROPERTIES);
         advancedTabs.onSelect(name -> { });
         // Ohne Seite: dieselben Unterreiter; „Eigenschaften“ zeigt die der Quelle (oder aller Quellen),
@@ -643,6 +666,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(RAW, new JPanel());
         wideAdvanced.select(PROPERTIES);
         wideAdvanced.onSelect(name -> showDeck());
+        wideAdvancedFoot = new TabFoot(wideAdvanced.detachBar(), null);
         JPanel advanced = new JPanel(new BorderLayout(0, 8));
         advanced.setOpaque(false);
         advanced.add(advancedTabs, BorderLayout.CENTER);
@@ -653,15 +677,21 @@ public final class PageDetailPanel extends JPanel {
         statements.add(placeholder(STATEMENTS_PLACEHOLDER), BorderLayout.CENTER);
         graph.setOpaque(false);
         graph.add(placeholder(GRAPH_PLACEHOLDER), BorderLayout.CENTER);
-        analysisTabs.tab(PASSAGES, passages)
+        analysisTabs.tab(PASSAGES, withBelow(passages, passagesBelow))
                 .tab(TERMS, terms)
                 .tab(REFERENCES, references)
                 .tab(IMAGES, withBelow(images, imagesBelow))
                 .tab(STATEMENTS, withBelow(statements, statementsBelow))
                 .tab(GRAPH, withBelow(graph, graphBelow))
-                .tab(RELATIONS, analysisView)
-                // „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange „Beziehungen“ gewählt ist (BG2b).
-                .actions(storeField, subpages.box(), analysisView.proposeIcon(), analysisView.createIcon());
+                .tab(RELATIONS, analysisView);
+        // Die Unterreiter mittig, „mit Unterseiten“ rechts in der unteren Leiste mit der Lupe (Angelo 23.11.2026); die
+        // übrigen Aktionen in der Kopfzeile links vom Stern. „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange
+        // „Beziehungen“ gewählt ist (BG2b).
+        analysisActions.add(storeField);
+        analysisActions.add(analysisView.proposeIcon());
+        analysisActions.add(analysisView.createIcon());
+        analysisFoot = new TabFoot(analysisTabs.detachBar(), subpages.box());
+        termsKinds = terms.kindBar();
         storeField.onChange(this::switchStore);
         originalContent.setOpaque(false);
         fileContent.setOpaque(false);
@@ -692,7 +722,8 @@ public final class PageDetailPanel extends JPanel {
             showTabStatus();
         });
         analysisTabs.onSelect(name -> {
-            subpages.tab(!PASSAGES.equals(name));
+            // Unter „Begriffe“ dessen Unterreiter hinter einem Strich in derselben Leiste.
+            analysisFoot.secondary(TERMS.equals(name) ? termsKinds : null);
             if (RELATIONS.equals(name)) {
                 loadBelowRelations();
             }
@@ -742,15 +773,16 @@ public final class PageDetailPanel extends JPanel {
                 new com.aresstack.spaceharvester.app.event.StatusMessageEvent(text,
                         tone == Comic.BLUE ? Integer.MAX_VALUE : STATUS_MS,
                         com.aresstack.spaceharvester.app.event.Severity.INFO)));
-        breadcrumbs.onOpen(id -> load(sourceId, id, false));
-        references.onOpen(id -> load(sourceId, id, false));
+        breadcrumbs.onOpen(this::openLinked);
+        references.onOpen(this::openLinked);
         terms.onJump(this::jumpTo);
         terms.onOpen(hit -> openAt(new StandingTab.Target(hit.sourceId(), hit.pageId(), -1, -1)));
-        analysisView.below().onOpen(id -> load(sourceId, id, false));
-        imagesBelow.onOpen(id -> load(sourceId, id, false));
-        statementsBelow.onOpen(id -> load(sourceId, id, false));
+        analysisView.below().onOpen(this::openLinked);
+        imagesBelow.onOpen(this::openLinked);
+        passagesBelow.onOpen(this::openLinked);
+        statementsBelow.onOpen(this::openLinked);
         // Der Reiter „Graph“ bleibt beim Laden gewählt; die Unterseite öffnet sich also in ihrem Graphen.
-        graphBelow.onOpen(id -> load(sourceId, id, false));
+        graphBelow.onOpen(this::openLinked);
         // Eine neue oder geänderte Beziehung kann eine der Unterseiten betreffen: unten neu laden.
         analysisView.onRelationsChanged(() -> {
             belowRelationsFor = null;
@@ -1014,6 +1046,8 @@ public final class PageDetailPanel extends JPanel {
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && ADVANCED.equals(selected) && wide
                 && PROPERTIES.equals(wideAdvanced.selected()));
         readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
+        analysisActions.setVisible(PAGE.equals(pageCard) && ANALYSES.equals(selected) && !wide);
+        advancedActions.setVisible(PAGE.equals(pageCard) && ADVANCED.equals(selected) && !wide);
         // Analysen ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): der Stand der Auswahl links, mit den
         // Unterreitern „Aussagen“, „Zuerst lesen“, „Mögliche Widersprüche“ (Angelo 17.11.2026, kein eigenes Symbol).
         boolean standingShown = standingShown();
@@ -1212,6 +1246,16 @@ public final class PageDetailPanel extends JPanel {
         return belowSection(tab);
     }
 
+    /** Für Tests: die Unterreiter von „Analysen“ samt „mit Unterseiten“ in der unteren Leiste. */
+    TabFoot analysisFoot() {
+        return analysisFoot;
+    }
+
+    /** Für Tests: die Unterreiter von „Erweitert“ einer Seite in der unteren Leiste. */
+    TabFoot advancedFoot() {
+        return advancedFoot;
+    }
+
     /** Für Tests: die Checkbox „mit Unterseiten“ der Analyse-Reiter. */
     Subpages subpages() {
         return subpages;
@@ -1376,6 +1420,27 @@ public final class PageDetailPanel extends JPanel {
             context.navigator().openPage(target.sourceId(), target.pageId());
         } else {
             load(target.sourceId(), target.pageId(), false);
+        }
+    }
+
+    /** Öffnet eine verlinkte Seite derselben Quelle wie {@link #openLinked(String, String)}. */
+    private void openLinked(String id) {
+        openLinked(sourceId, id);
+    }
+
+    /**
+     * Öffnet eine Seite aus einem Link in der Ansicht (Brotkrumen, Verweise, „Aus Unterseiten“, Link im Text) über den
+     * Navigator: Der Baum links wählt sie dann mit, wie bei einem Suchtreffer (Angelo 23.11.2026). Ohne Navigator
+     * (Tests) nur laden.
+     */
+    private void openLinked(String source, String id) {
+        if (source == null || id == null) {
+            return;
+        }
+        if (context != null && context.navigator() != null) {
+            context.navigator().openPage(source, id);
+        } else {
+            load(source, id, false);
         }
     }
 
@@ -1711,8 +1776,7 @@ public final class PageDetailPanel extends JPanel {
         belowSectionFor.clear();
         BELOW_TABS.forEach(tab -> belowSectionGeneration.merge(tab, 1L, Long::sum));
         // Der Seitengraph rechnet selbst über Seite und Unterseiten (W4); vor dem Abschnitt, der sein Ergebnis zeigt. Er
-        // folgt der Checkbox, nicht below(): „Absätze“ sperrt sie nur, das soll Ansicht und „Zurück“ nicht verwerfen.
-        // Neu rechnen bei anderer Menge oder neuem Ergebnis der Nachfahren (geänderter Bestand, gleiche Menge).
+        // folgt der Checkbox und den ermittelten Nachfahren. Neu rechnen bei anderer Menge oder neuem Ergebnis der Nachfahren (geänderter Bestand, gleiche Menge).
         Subpages.Below known = subpages.checked() ? subpages.known() : null;
         boolean reload = subpages.revision() != graphSubpagesRevision;
         graphSubpagesRevision = subpages.revision();
@@ -1723,18 +1787,26 @@ public final class PageDetailPanel extends JPanel {
             terms.below(null);
             references.belowLoading(-1);
             analysisView.below().off();
+            passagesBelow.off();
             imagesBelow.off();
             statementsBelow.off();
             graphBelow.off();
             belowReferencesGeneration++;
-            tabStatus(TERMS, " ");
+            // Auch „Beziehungen“ zurücksetzen: Sonst stünde nach dem Wechsel auf eine Seite ohne Unterseiten noch die
+            // Zahl der vorigen Seite in der Statuszeile („aus dieser Seite und 420 Unterseiten“, Angelo 23.11.2026).
+            String none = subpages.checkedWithoutChildren() ? Subpages.TIP_NO_CHILDREN : " ";
+            tabStatus(TERMS, none);
+            tabStatus(RELATIONS, none);
             return;
         }
+        // Bis die Beziehungen der neuen Unterseiten geladen sind, gilt keine Zahl der vorigen.
+        tabStatus(RELATIONS, " ");
         watchLinks(runtime);
         loadBelowReferences();
         if (RELATIONS.equals(analysisTabs.selected())) {
             loadBelowRelations();
         }
+        passagesBelow.off();
         imagesBelow.off();
         statementsBelow.off();
         graphBelow.off();
@@ -1846,7 +1918,7 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Die Reiter mit einem Abschnitt „Aus Unterseiten“; unter Graph aus dem Ergebnis des Graphen selbst (W4). */
-    private static final List<String> BELOW_TABS = List.of(IMAGES, STATEMENTS, GRAPH);
+    private static final List<String> BELOW_TABS = List.of(PASSAGES, IMAGES, STATEMENTS, GRAPH);
     /** Höchstens so viele Zeilen je Abschnitt; darüber sagt die Statuszeile „die ersten“. */
     static final int BELOW_ROWS_LIMIT = 1000;
     /** Für welche Unterseiten ein Abschnitt geladen ist, je Reiter. */
@@ -1864,7 +1936,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private SubpageSection belowSection(String tab) {
-        return IMAGES.equals(tab) ? imagesBelow : STATEMENTS.equals(tab) ? statementsBelow
+        return PASSAGES.equals(tab) ? passagesBelow : IMAGES.equals(tab) ? imagesBelow
+                : STATEMENTS.equals(tab) ? statementsBelow
                 : GRAPH.equals(tab) ? graphBelow : null;
     }
 
@@ -2094,6 +2167,9 @@ public final class PageDetailPanel extends JPanel {
         if (page.isEmpty()) {
             return null;
         }
+        if (PASSAGES.equals(tab)) {
+            return belowPassages(workspace, key, node, page.get());
+        }
         if (IMAGES.equals(tab)) {
             PageImages found = workspace.images(page.get());
             if (found.state() == PageImages.State.MISSING) {
@@ -2128,6 +2204,29 @@ public final class PageDetailPanel extends JPanel {
             String features = StatementsTab.features(statement.features());
             String predicate = statement.predicateText() + (features.isEmpty() ? "" : " (" + features + ")") + stale;
             rows.add(new SubpageSection.Row(List.of(predicate, String.join(", ", parts)), node));
+        }
+        return rows;
+    }
+
+    /**
+     * Die Absätze einer Unterseite für „Aus Unterseiten“ unter „Absätze“: nur ein vorliegendes, aktuelles Ergebnis, nie
+     * eine neue Zerlegung; sonst {@code null} (zählt als „liegt noch nichts vor“). Ohne Lesetext leer.
+     */
+    static List<SubpageSection.Row> belowPassages(com.aresstack.spaceharvester.app.runtime.Workspace workspace,
+                                                  com.aresstack.spaceharvester.application.snapshot.PageKey key,
+                                                  com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode node,
+                                                  DeliveredPage page) {
+        PageText text = workspace.pageText(page.snapshot());
+        if (text == null) {
+            return List.of();
+        }
+        PagePassages found = PagePassages.read(key, workspace.enrichments(page), text);
+        if (found.state() != PagePassages.State.CURRENT) {
+            return null;
+        }
+        List<SubpageSection.Row> rows = new java.util.ArrayList<>();
+        for (PagePassages.Passage passage : found.passages()) {
+            rows.add(new SubpageSection.Row(List.of(passage.title(), PassagesTab.preview(passage)), node));
         }
         return rows;
     }
@@ -2858,7 +2957,10 @@ public final class PageDetailPanel extends JPanel {
     /** Setzt in {@link #footTools}, was zum Reiter {@code selected} gehört; nichts, wenn er keine Werkzeuge hat. */
     private void updateFootTools(String selected) {
         // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
-        JComponent shown = READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
+        JComponent shown = ANALYSES.equals(selected) && PAGE.equals(pageCard) && !wide ? analysisFoot
+                : ADVANCED.equals(selected) && wide ? wideAdvancedFoot
+                : ADVANCED.equals(selected) && PAGE.equals(pageCard) ? advancedFoot
+                : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
                 : READ.equals(selected) && videoTranscriptShown ? videoTranscript.action()
                 : READING.equals(selected) && SOURCE_CARD.equals(pageCard) ? sourceFoot
                 : READING.equals(selected) && PAGE.equals(pageCard) ? pageFoot
@@ -3459,7 +3561,7 @@ public final class PageDetailPanel extends JPanel {
             if (target.equals(pageId)) {
                 readingPane.scrollToAnchor(anchor);
             } else {
-                load(source, target, false);
+                openLinked(source, target);
                 pendingAnchor = anchor;
             }
         }, error -> {
@@ -5430,7 +5532,8 @@ public final class PageDetailPanel extends JPanel {
      * links davon die Werkzeuge der Updates (keine eigene Leiste, Angelo 17.11.2026).
      */
     JComponent headerActions() {
-        return Comic.row(sourceView.tools(), sourceChanges.tools(), sourceProperties.tools(), readingHelp,
+        return Comic.row(analysisActions, advancedActions, sourceView.tools(), sourceChanges.tools(),
+                sourceProperties.tools(), readingHelp,
                 statementsHelp,
                 standingHelp, glossaryHelp, graphHelp, star, more);
     }

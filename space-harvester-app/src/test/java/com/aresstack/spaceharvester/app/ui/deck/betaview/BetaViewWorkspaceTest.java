@@ -83,6 +83,9 @@ class BetaViewWorkspaceTest {
             SwingUtilities.invokeAndWait(() -> panel.search.table.setRowSelectionInterval(0, 0));
             await(() -> panel.documents.text.getText().contains("LAUF"), "Seite 1 im Text");
             assertThat(onEdt(panel::statusText)).contains("Geöffnet");
+            // Der Stand der gewählten Sitzung steht in der Statuszeile der App, nicht in der unteren Leiste.
+            assertThat(onEdt(() -> workspace.statusInfo().getAccessibleContext().getAccessibleName()))
+                    .contains("Geöffnet");
 
             DocumentTab current = onEdt(() -> panel.documents.current().orElseThrow());
             SwingUtilities.invokeAndWait(() -> panel.download(current));
@@ -96,6 +99,7 @@ class BetaViewWorkspaceTest {
     void theSharedKeePassAccountsLogIn() throws Exception {
         try (FakeBetaViewServer server = new FakeBetaViewServer()) {
             AtomicReference<String> asked = new AtomicReference<>();
+            AtomicReference<String> secret = new AtomicReference<>(FakeBetaViewServer.PASSWORD);
             ServerAccount account = new ServerAccount("BetaView Test", server.address().toString(),
                     FakeBetaViewServer.USER);
             // Dieselben Host-Zugänge wie Terminal, FTP und NDV (im Betrieb KeePassServerAccounts).
@@ -108,10 +112,12 @@ class BetaViewWorkspaceTest {
                 @Override
                 public ServerCredentials credentials(String entry) {
                     asked.set(entry);
-                    return new ServerCredentials(account, FakeBetaViewServer.PASSWORD.toCharArray());
+                    return new ServerCredentials(account, secret.get().toCharArray());
                 }
             };
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.CONFIGURED_KEY, (String) null);
             build(shared, new FakePrompts(folder.resolve("x")));
+            assertThat(BetaViewConnectForm.isConfigured()).as("vor dem ersten Erfolg").isFalse();
             SwingUtilities.invokeAndWait(() -> {
                 BetaViewConnectForm form = workspace.form();
                 form.login.select(BetaViewConnectForm.KEEPASS);
@@ -127,6 +133,22 @@ class BetaViewWorkspaceTest {
             BetaViewSession session = connected();
             assertThat(asked.get()).isEqualTo("BetaView Test");
             assertThat(session.profile().user()).isEqualTo(FakeBetaViewServer.USER);
+
+            // Nach dem ersten Erfolg meldet „Neue Anmeldung“ direkt an, ohne Formular.
+            await(BetaViewConnectForm::isConfigured, "Anmeldung gemerkt");
+            SwingUtilities.invokeAndWait(workspace::newLogin);
+            await(() -> workspace.sessionCount() == 2 && workspace.selected() != session
+                    && workspace.selected() != null
+                    && workspace.selected().state() == ConnectionState.CONNECTED, "zweite Anmeldung direkt");
+
+            // Scheitert die direkte Anmeldung, bleibt keine tote Sitzung; das Formular zeigt den Grund.
+            secret.set("falsch");
+            SwingUtilities.invokeAndWait(workspace::newLogin);
+            await(() -> workspace.selected() == null && !workspace.form().problemText().isBlank(),
+                    "Formular mit Grund");
+            assertThat(onEdt(workspace::sessionCount)).isEqualTo(2);
+        } finally {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.CONFIGURED_KEY, (String) null);
         }
     }
 

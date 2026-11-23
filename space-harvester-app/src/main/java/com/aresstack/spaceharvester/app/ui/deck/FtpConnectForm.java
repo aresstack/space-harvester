@@ -46,7 +46,11 @@ final class FtpConnectForm extends JPanel {
         void connect(FtpProfile profile, String entry);
     }
 
+    /** Breite des Server-Felds wie im Formular des Terminals. */
+    static final int FIELD_WIDTH = 415;
     static final String ENTRY_KEY = "deck.ftp.entry";
+    /** Die gemerkte Verbindung hat einmal geklappt: „Neue Verbindung“ verbindet dann ohne Formular. */
+    static final String CONFIGURED_KEY = "deck.ftp.configured";
     static final String HOST_KEY = "deck.ftp.host";
     static final String PORT_KEY = "deck.ftp.port";
     static final String ENCODING_KEY = "deck.ftp.encoding";
@@ -120,6 +124,9 @@ final class FtpConnectForm extends JPanel {
         JPanel fields = new JPanel(new GridBagLayout());
         fields.setOpaque(false);
         row(fields, 0, "Server", serverFrame);
+        // So breit wie im Formular des Terminals, damit die Formulare des Command Deck gleich aussehen und der Eintrag
+        // lesbar ist.
+        serverFrame.setPreferredSize(new Dimension(FIELD_WIDTH, serverFrame.getPreferredSize().height));
         row(fields, 1, "", serverState);
         advanced.setOpaque(false);
         // Zwei Spalten, damit „Verbinden“ auch bei kleinem Fenster sichtbar bleibt: links Verbindung und Übertragung,
@@ -287,7 +294,10 @@ final class FtpConnectForm extends JPanel {
 
     /** Zeigt die Einträge (für Tests auch direkt). */
     void show(List<ServerAccount> list) {
-        String wanted = selected() == null ? AppState.shared().get(ENTRY_KEY) : selected().entry();
+        show(list, selected() == null ? AppState.shared().get(ENTRY_KEY) : selected().entry());
+    }
+
+    private void show(List<ServerAccount> list, String wanted) {
         DefaultComboBoxModel<ServerAccount> items = new DefaultComboBoxModel<>();
         items.addElement(null);
         list.forEach(items::addElement);
@@ -354,17 +364,61 @@ final class FtpConnectForm extends JPanel {
         }
     }
 
-    void submit() {
+    /** Verbindet mit Server und Feldern; {@code false} mit lesbarem Grund in {@link #problemText()}. */
+    boolean submit() {
         FtpProfile profile;
         try {
             profile = profile();
         } catch (IllegalArgumentException e) {
-            problem.setText(e.getMessage());
-            return;
+            problem(e.getMessage());
+            return false;
         }
         problem.setText(" ");
         remember();
         connect.connect(profile, selected().entry());
+        return true;
+    }
+
+    /** Hat die gemerkte Verbindung schon einmal geklappt (und ist ein Eintrag gemerkt)? */
+    static boolean isConfigured() {
+        AppState state = AppState.shared();
+        return state.getBoolean(CONFIGURED_KEY, false) && !nonNull(state.get(ENTRY_KEY)).isBlank();
+    }
+
+    /** Die gemerkte Verbindung hat geklappt. */
+    static void configured() {
+        AppState.shared().put(CONFIGURED_KEY, "true");
+    }
+
+    /**
+     * „Neue Verbindung“ ohne Formular: gemerkte Werte und gemerkter KeePass-Eintrag (Liste im Hintergrund geladen).
+     * Scheitert schon das, meldet {@code failed} den Grund; das Formular zeigt ihn dann.
+     */
+    void connectDirectly(java.util.function.Consumer<String> failed) {
+        recall();
+        loaded = true;
+        String wanted = AppState.shared().get(ENTRY_KEY);
+        serverState.setText("Lade Einträge aus KeePass …");
+        serverState.setForeground(Comic.MUTED);
+        Background.run(accounts::accounts, list -> {
+            show(list, wanted);
+            if (selected() == null) {
+                problem("Der gemerkte KeePass-Eintrag „" + nonNull(wanted) + "“ fehlt");
+                failed.accept(problemText());
+            } else if (!submit()) {
+                failed.accept(problemText());
+            }
+        }, error -> {
+            serverState.setText(FtpWorkspace.describe(error));
+            serverState.setForeground(Comic.RED);
+            problem("KeePass nicht lesbar: " + FtpWorkspace.describe(error));
+            failed.accept(problemText());
+        });
+    }
+
+    /** Zeigt, warum es nicht geklappt hat (auch für eine gescheiterte Verbindung). */
+    void problem(String text) {
+        problem.setText(text == null || text.isBlank() ? " " : text);
     }
 
     String problemText() {

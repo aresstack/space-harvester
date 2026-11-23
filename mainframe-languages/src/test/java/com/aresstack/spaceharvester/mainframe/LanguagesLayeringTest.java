@@ -17,7 +17,7 @@ class LanguagesLayeringTest {
     @Test
     void parsersHaveNoUi() {
         noClasses().that().resideInAnyPackage("..mainframe.parser..", "..mainframe.model..", "..mainframe.outline..",
-                        "..mainframe.calltree..", "..mainframe.diagram..")
+                        "..mainframe.calltree..", "..mainframe.diagram..", "..mainframe.dependency..")
                 .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "java.awt..", "org.fife..",
                         "..mainframe.syntax..")
                 .check(classes);

@@ -39,6 +39,11 @@ final class BetaViewConnectForm extends JPanel {
     static final String ADDRESS_KEY = "deck.betaview.address";
     static final String LOGIN_KEY = "deck.betaview.login";
     static final String ENTRY_KEY = "deck.betaview.keepass-entry";
+    /**
+     * Die gemerkte Anmeldung hat schon einmal funktioniert. Dann meldet „Neue Anmeldung“ direkt an, das Formular kommt
+     * nur noch ohne gemerkte Zugangsdaten oder wenn es scheitert (Deck-Regel, Angelo 23.11.; wie das Terminal).
+     */
+    static final String CONFIGURED_KEY = "deck.betaview.configured";
     static final String USER_KEY = "deck.betaview.user";
     static final String KEEPASS = "KeePass";
     static final String MANUAL = "Manuell";
@@ -187,7 +192,7 @@ final class BetaViewConnectForm extends JPanel {
             }, error -> {
                 submit.setEnabled(true);
                 keePassHint.setText(" ");
-                problem.setText("KeePass: " + BetaViewSessions.describe(error));
+                failed("KeePass: " + BetaViewSessions.describe(error));
             });
             return;
         }
@@ -201,6 +206,52 @@ final class BetaViewConnectForm extends JPanel {
         }
         password.setText("");
         start(typedAddress, user.getText(), secret, Map.of(USER_KEY, user.getText().strip()));
+    }
+
+    /** Zeigt den Grund im Formular; bei einer direkten Anmeldung erfährt sie ihn, damit das Formular erscheint. */
+    void failed(String reason) {
+        problem.setText(reason);
+        java.util.function.Consumer<String> waiting = direct;
+        direct = null;
+        if (waiting != null) {
+            waiting.accept(reason);
+        }
+    }
+
+    private java.util.function.Consumer<String> direct;
+
+    /**
+     * Ob „Neue Anmeldung“ direkt anmelden darf: Die Anmeldung über einen gemerkten KeePass-Eintrag hat schon einmal
+     * funktioniert. Von Hand eingegebene Kennwörter werden nie gespeichert; dann kommt immer das Formular.
+     */
+    static boolean isConfigured() {
+        AppState state = AppState.shared();
+        return state.getBoolean(CONFIGURED_KEY, false) && KEEPASS.equals(state.get(LOGIN_KEY))
+                && !nonNull(state.get(ENTRY_KEY)).isBlank();
+    }
+
+    /** Die gemerkte Anmeldung hat funktioniert. */
+    static void configured() {
+        AppState.shared().put(CONFIGURED_KEY, "true");
+    }
+
+    /**
+     * „Neue Anmeldung“ ohne Formular: gemerkte Adresse und gemerkter KeePass-Eintrag. Scheitert schon das Lesen aus
+     * KeePass, meldet {@code failed} den Grund; das Formular zeigt ihn dann.
+     */
+    void connectDirectly(java.util.function.Consumer<String> failed) {
+        recall();
+        login.select(KEEPASS);
+        direct = failed;
+        submit();
+        if (direct != null && !submit.isEnabled()) {
+            // KeePass wird im Hintergrund gelesen; ein Fehler kommt über failed().
+            return;
+        }
+        if (direct != null && !problem.getText().isBlank()) {
+            failed(problem.getText());
+        }
+        direct = null;
     }
 
     private boolean validAddress(String text) {
@@ -220,13 +271,15 @@ final class BetaViewConnectForm extends JPanel {
             profile = new BetaViewProfile(base, userName);
         } catch (IllegalArgumentException e) {
             Arrays.fill(secret, '\0');
-            problem.setText(e.getMessage());
+            failed(e.getMessage());
             return;
         }
         java.util.Map<String, String> state = new java.util.HashMap<>(remember);
         state.put(ADDRESS_KEY, address.getText().strip());
         state.put(LOGIN_KEY, login.selected());
         AppState.shared().putAll(state);
+        // Ab hier meldet die Sitzung selbst, ob die Anmeldung gelingt.
+        direct = null;
         connect.accept(profile, secret);
     }
 

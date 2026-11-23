@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.deck.betaview;
 
+import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSession;
@@ -25,7 +26,7 @@ import javax.swing.SwingUtilities;
 
 /**
  * Eine angemeldete BetaView-Sitzung: links Suche und Treffer, rechts die Dokumente, geteilt durch den Trenner der App;
- * unten ein Statusbereich für alles, was die Sitzung tut (Fehler rot mit Grund) und „Abmelden“. Jeder Vorgang läuft
+ * abgemeldet wird über das Kreuz am Reiter der Sitzung; was die Sitzung tut (Fehler rot mit Grund), steht in der Statuszeile der App. Jeder Vorgang läuft
  * über {@link BetaViewSession} im Hintergrund; Ergebnisse kommen auf dem EDT an.
  */
 final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentPane.Actions {
@@ -35,7 +36,9 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
     final SearchPane search;
     final JSplitPane split;
     final DocumentPane documents;
-    private final JLabel status = Comic.muted(" ");
+    /** Stand der Sitzung; die Arbeitsfläche zeigt den der gewählten Sitzung in der Statuszeile der App. */
+    private StatusNote status = StatusNote.plain(" ");
+    private java.util.function.Consumer<StatusNote> onStatus = note -> { };
     private boolean tabsFetched;
 
     SessionPanel(BetaViewSession session, Prompts prompts, Runnable logout) {
@@ -65,16 +68,7 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
                 }
             }
         });
-        var signOff = Comic.button("Abmelden", "Von diesem BetaView-Server abmelden");
-        signOff.addActionListener(e -> logout.run());
-        JPanel foot = new JPanel(new BorderLayout());
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        foot.add(status, BorderLayout.CENTER);
-        foot.add(Comic.row(signOff), BorderLayout.EAST);
         add(split, BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
         stateChanged();
     }
 
@@ -323,17 +317,30 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
     // ---- Statusbereich ----
 
     void info(String text) {
-        status.setText(text);
-        status.setForeground(Comic.MUTED);
+        status(text, StatusNote.Tone.PLAIN);
     }
 
     void error(String text) {
-        status.setText(text);
-        status.setForeground(Comic.RED);
+        status(text, StatusNote.Tone.ERROR);
+    }
+
+    private void status(String text, StatusNote.Tone tone) {
+        status = new StatusNote(text == null || text.isBlank() ? " " : text, tone, null, null);
+        onStatus.accept(status);
+    }
+
+    /** Der Stand dieser Sitzung, wie er in der Statuszeile steht. */
+    StatusNote status() {
+        return status;
+    }
+
+    /** Wer jeden neuen Stand erfährt (die Arbeitsfläche, auf dem EDT). */
+    void onStatus(java.util.function.Consumer<StatusNote> listener) {
+        onStatus = listener == null ? note -> { } : listener;
     }
 
     String statusText() {
-        return status.getText();
+        return status.text();
     }
 
     private <T> void after(CompletableFuture<T> future, Consumer<T> done, String failure) {

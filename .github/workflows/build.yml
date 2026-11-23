@@ -10,7 +10,9 @@ permissions:
 
 # Ein neuer Push auf denselben PR bricht den überholten Lauf ab; main läuft immer vollständig.
 concurrency:
-  group: build-${{ github.ref }}
+  # Pushes (main, develop) bekommen je Commit eine eigene Gruppe: Bei vielen Merges wurde sonst jeder Lauf
+  # abgebrochen und kein develop-Stand je fertig geprüft (23.11.). PRs brechen ihren älteren Lauf weiter ab.
+  group: build-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'pr' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

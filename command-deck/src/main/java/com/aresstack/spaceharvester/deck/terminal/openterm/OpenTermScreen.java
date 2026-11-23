@@ -41,12 +41,17 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     private final transient java.util.concurrent.locks.Condition readyChanged = readyLock.newCondition();
     private boolean ready;
     private volatile boolean hostWrote;
+    /** Letzte Taste des Menschen (nanoTime); die automatische Anmeldung tippt danach nicht weiter. */
+    private volatile long lastUserInput = Long.MIN_VALUE;
     private volatile long lastRefresh = System.nanoTime();
     /** So lange ohne neues Zeichnen gilt ein Bild als fertig gelesen. */
     private static final long SETTLE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(150);
     private final transient IntConsumer statusListener;
     /** Von der KI ausgefüllte Felder, gelb umrandet bis zum Absenden oder Zurücknehmen (#1151). */
     private transient volatile java.util.List<Span> highlighted = java.util.List.of();
+    /** Fundstellen der Lupe und der aktuelle Treffer darunter (-1 ohne). */
+    private transient volatile java.util.List<Span> found = java.util.List.of();
+    private transient volatile int currentFound = -1;
     /** Wer die Eingaben des Menschen aufzeichnet (Makro); nie für Anmeldung oder Abspielen. */
     private final transient java.util.List<InputListener> inputListeners =
             new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -77,6 +82,12 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
         addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent event) {
+                int code = event.getKeyCode();
+                if (code != KeyEvent.VK_SHIFT && code != KeyEvent.VK_CONTROL && code != KeyEvent.VK_ALT
+                        && code != KeyEvent.VK_ALT_GRAPH && code != KeyEvent.VK_META
+                        && !(event.isControlDown() && code == KeyEvent.VK_C)) {
+                    lastUserInput = System.nanoTime();
+                }
                 if (event.isControlDown() && !event.isAltDown() && event.getKeyCode() == KeyEvent.VK_V) {
                     paste();
                     event.consume();
@@ -455,6 +466,11 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     }
 
     @Override
+    public long lastUserInput() {
+        return lastUserInput;
+    }
+
+    @Override
     public boolean keyboardLocked() {
         return terminal.isKeyboardLocked();
     }
@@ -596,12 +612,21 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     }
 
     @Override
+    public void markFound(java.util.List<Span> spans, int current) {
+        found = spans == null ? java.util.List.of() : java.util.List.copyOf(spans);
+        currentFound = current;
+        repaint();
+    }
+
+    @Override
     protected void paintComponent(java.awt.Graphics g) {
         super.paintComponent(g);
         java.util.List<Span> spans = highlighted;
+        java.util.List<Span> hits = found;
+        int current = currentFound;
         int columns = terminal.getCols();
         int rows = terminal.getRows();
-        if (spans.isEmpty() || columns <= 0 || rows <= 0 || getFont() == null) {
+        if ((spans.isEmpty() && hits.isEmpty()) || columns <= 0 || rows <= 0 || getFont() == null) {
             return;
         }
         FontMetrics metrics = getFontMetrics(getFont());
@@ -609,25 +634,47 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
         int height = metrics.getHeight();
         java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
         g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        int cells = rows * columns;
+        // Treffer der Lupe: durchscheinend hinterlegt, damit der Text lesbar bleibt; der aktuelle kräftiger.
+        for (int i = 0; i < hits.size(); i++) {
+            g2.setComposite(java.awt.AlphaComposite.SrcOver.derive(i == current ? 0.75f : 0.5f));
+            g2.setColor(i == current ? CURRENT_HIT : HIT);
+            for (java.awt.Rectangle part : rectangles(hits.get(i), columns, cells, width, height)) {
+                g2.fillRect(part.x, part.y, part.width, part.height);
+            }
+        }
+        g2.setComposite(java.awt.AlphaComposite.SrcOver);
         g2.setStroke(new java.awt.BasicStroke(2f));
         g2.setColor(ASSIST);
-        int cells = rows * columns;
         for (Span span : spans) {
-            // Je Zeile ein Rahmen; ein Feld kann über das Zeilenende laufen.
-            int position = span.start();
-            int left = span.length();
-            while (left > 0) {
-                int row = (position % cells) / columns;
-                int column = position % columns;
-                int run = Math.min(left, columns - column);
-                g2.drawRoundRect(MARGIN_X + column * width - 1, MARGIN_Y + row * height, run * width + 2,
-                        height, 6, 6);
-                left -= run;
-                position += run;
+            for (java.awt.Rectangle part : rectangles(span, columns, cells, width, height)) {
+                g2.drawRoundRect(part.x - 1, part.y, part.width + 2, part.height, 6, 6);
             }
         }
         g2.dispose();
     }
+
+    /** Je Zeile ein Rechteck; ein Bereich kann über das Zeilenende laufen. */
+    private static java.util.List<java.awt.Rectangle> rectangles(Span span, int columns, int cells, int width,
+                                                                 int height) {
+        java.util.List<java.awt.Rectangle> parts = new java.util.ArrayList<>();
+        int position = span.start();
+        int left = span.length();
+        while (left > 0) {
+            int row = (position % cells) / columns;
+            int column = position % columns;
+            int run = Math.min(left, columns - column);
+            parts.add(new java.awt.Rectangle(MARGIN_X + column * width, MARGIN_Y + row * height, run * width,
+                    height));
+            left -= run;
+            position += run;
+        }
+        return parts;
+    }
+
+    /** Treffer der Lupe wie in der übrigen App ({@code ReaderFind}): hellgelb, der aktuelle orange. */
+    private static final java.awt.Color HIT = new java.awt.Color(0xFFF59D);
+    private static final java.awt.Color CURRENT_HIT = new java.awt.Color(0xFFB74D);
 
     /** Gelb wie die Griffe der App: Hier hat die KI etwas vorbereitet. */
     private static final java.awt.Color ASSIST = new java.awt.Color(0xF2, 0xC2, 0x1B);

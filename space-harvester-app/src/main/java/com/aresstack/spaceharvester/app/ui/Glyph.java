@@ -54,7 +54,9 @@ public enum Glyph implements Icon {
      */
     OVERVIEW,
     /** „Vorwärts“ im Verlauf (Pfeil rechts), Gegenstück zu {@link #BACK}. */
-    FORWARD;
+    FORWARD,
+    /** „Zurücknehmen“: ein Bogen nach links mit Pfeilspitze, wie Rückgängig in jedem Editor. */
+    UNDO;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -268,6 +270,19 @@ public enum Glyph implements Icon {
                     head.moveTo(9, 4);
                     head.lineTo(13, 8);
                     head.lineTo(9, 12);
+                    g.draw(head);
+                }
+                case UNDO -> {
+                    Path2D arc = new Path2D.Double();
+                    arc.moveTo(4, 6.5);
+                    arc.lineTo(10, 6.5);
+                    arc.curveTo(15, 6.5, 15, 13.5, 10, 13.5);
+                    arc.lineTo(6, 13.5);
+                    g.draw(arc);
+                    Path2D head = new Path2D.Double();
+                    head.moveTo(6.5, 3.5);
+                    head.lineTo(3.5, 6.5);
+                    head.lineTo(6.5, 9.5);
                     g.draw(head);
                 }
                 case OVERVIEW -> {

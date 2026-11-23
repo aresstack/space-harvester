@@ -102,4 +102,37 @@ class CommandDeckTest {
             Thread.sleep(50);
         }
     }
+
+    /** Der Stand eines nicht gezeigten Bereichs nimmt in der Statuszeile keinen Platz (Codex zu #1200). */
+    @Test
+    void theStatusIsOnlyAsWideAsThatOfTheShownArea() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            deck = new CommandDeck();
+            ((com.aresstack.spaceharvester.app.ui.controls.StatusLabel) deck.files().statusInfo())
+                    .show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(
+                            "ein sehr langer erfundener Stand der Dateien, der viel Platz braucht"));
+            deck.show(DeckArea.FILES);
+            int files = deck.statusPanel().getPreferredSize().width;
+            deck.show(DeckArea.TERMINAL);
+            assertThat(deck.statusPanel().getPreferredSize().width)
+                    .isEqualTo(deck.terminal().statusInfo().getPreferredSize().width).isLessThan(files);
+        });
+    }
+
+    /** Die Leiste mit der Lupe wie im Space Harvester; sie sucht im gezeigten Bereich (Angelo, 23.11.2026). */
+    @Test
+    void theFootBarWithTheMagnifierSearchesTheShownArea() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            deck = new CommandDeck();
+            javax.swing.JComponent stage = (javax.swing.JComponent) deck.perspective().workspace();
+            assertThat(SwingUtilities.isDescendingFrom(deck.findBar(), stage)).isTrue();
+            assertThat(stage.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).get(
+                    javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F,
+                            java.awt.event.InputEvent.CTRL_DOWN_MASK))).isEqualTo("find");
+            for (DeckArea area : DeckArea.values()) {
+                deck.show(area);
+                assertThat(deck.findBar().isShowing() || deck.findBar().getParent() == stage).as(area.name()).isTrue();
+            }
+        });
+    }
 }

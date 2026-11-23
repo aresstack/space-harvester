@@ -5,6 +5,7 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess;
 import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewWorkspace;
+import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditors;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspective;
 import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
 import com.aresstack.spaceharvester.deck.access.ServerAccounts;
@@ -43,6 +44,11 @@ public final class CommandDeck {
     private final TerminalSessions sessions;
     private final CardLayout cards = new CardLayout();
     private final JPanel workspace = new JPanel(cards);
+    /** Die Fußleiste wie im Space Harvester: links die Lupe (Strg+F), mittig die Bedienelemente des Bereichs. */
+    private final com.aresstack.spaceharvester.app.ui.FindBar findBar =
+            new com.aresstack.spaceharvester.app.ui.FindBar(() -> areaView(this.area));
+    /** Arbeitsfläche samt Fußleiste. */
+    private final JPanel stage = new JPanel(new BorderLayout());
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
     /** Weg zum NDV-Server für Verbindungen mit „Proxy der App verwenden“; ohne App (Tests) direkt. */
@@ -69,7 +75,21 @@ public final class CommandDeck {
     private final JPanel tools = new JPanel(new BorderLayout());
     /** Links in der Statuszeile der App: der Stand des gewählten Bereichs, eine Karte je Bereich. */
     private final CardLayout statusCards = new CardLayout();
-    private final JPanel status = new JPanel(statusCards);
+    /**
+     * So breit wie der Stand des gewählten Bereichs: Ein Kartenstapel wäre so breit wie sein breitester, auch
+     * unsichtbarer Stand (etwa ein langer Pfad der Dateien) und nähme dem Stand der Aufträge daneben den Platz.
+     */
+    private final JPanel status = new JPanel(statusCards) {
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            for (java.awt.Component card : getComponents()) {
+                if (card.isVisible()) {
+                    return card.getPreferredSize();
+                }
+            }
+            return new java.awt.Dimension(0, 0);
+        }
+    };
     private final NdvWorkspace ndv;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
@@ -111,6 +131,9 @@ public final class CommandDeck {
                 });
         // Diagramm-Ansicht „Visuell“ (MainframeMate) an jedem Editor, gleich in welchem Bereich
         com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.install(editors);
+        // Beziehungen und Diagramm teilen eine Liste (Einstellungen › Diagramme › Systemfunktionen).
+        com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditors.systemFunctions(
+                () -> com.aresstack.spaceharvester.app.ui.deck.visual.SystemFunctionsStore.shared().lookup());
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), accounts);
@@ -124,6 +147,7 @@ public final class CommandDeck {
         ftp = new FtpWorkspace(ftpSessions, accounts, editors);
         tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts, editors);
+        wireNatural();
         workspace.setBackground(Comic.SURFACE);
         navigation.setOpaque(false);
         // Abstand zum Titel wie die Icon-Leiste des Space Harvesters.
@@ -158,15 +182,48 @@ public final class CommandDeck {
             status.add(info, candidate.name());
         }
         status.setOpaque(false);
+        stage.setOpaque(false);
+        stage.add(workspace, BorderLayout.CENTER);
+        stage.add(findBar, BorderLayout.SOUTH);
+        stage.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
+        stage.getActionMap().put("find", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                findBar.focus();
+            }
+        });
         show(DeckArea.TERMINAL);
         perspective = new Perspective(Perspectives.COMMAND_DECK, "Command Deck",
                 "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", true, navigation,
-                workspace, null, tools, null, null, status);
+                stage, null, tools, null, null, status);
+    }
+
+    /** Die Fußleiste mit der Lupe (für Tests). */
+    com.aresstack.spaceharvester.app.ui.FindBar findBar() {
+        return findBar;
     }
 
     /** Der Stand des gewählten Bereichs für die Statuszeile (für Tests). */
     JPanel statusPanel() {
         return status;
+    }
+
+    /**
+     * Hängt NDV in die Editoren ein (wie MainframeMate {@code openNaturalFromJcl} und das Öffnen von
+     * {@code ndv://}-Zielen): Natural aus der JCL und Doppelklicks in den Beziehungen wechseln in den NDV-Bereich und
+     * öffnen dort in der gewählten Sitzung; Aufrufhierarchie und DDM-Benutzer kommen aus deren Abhängigkeitsgraphen.
+     */
+    private void wireNatural() {
+        DocumentEditors.naturalFromJcl((stepLib, program) -> {
+            show(DeckArea.NDV);
+            ndv.openFromJcl(stepLib, program);
+        });
+        DocumentEditors.naturalOpener((library, object, line) -> {
+            show(DeckArea.NDV);
+            ndv.openNatural(library, object, line);
+        });
+        DocumentEditors.naturalRelations(new NdvNaturalRelations(ndv::analyses));
     }
 
     /** Der Proxy-Weg der App für NDV-Verbindungen, die ihn gewählt haben (Vorgabe direkt). */
@@ -319,6 +376,9 @@ public final class CommandDeck {
         }
         tools.revalidate();
         tools.repaint();
+        // Die Suche gilt dem gezeigten Bereich: Markierungen des vorigen weg, seine Bedienelemente neben die Lupe.
+        findBar.tools(areaView(next) instanceof DeckBars.FootTools with ? with.footTools() : null);
+        findBar.areaChanged();
         if (areaObservers != null) {
             areaObservers.forEach(Runnable::run);
         }
@@ -362,6 +422,11 @@ public final class CommandDeck {
     public void sharePointSites(java.util.function.Supplier<java.util.List<
             com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite>> sites) {
         sharePointSites = sites == null ? java.util.List::of : sites;
+    }
+
+    /** Wo der Bereich Dateien SharePoint-Zugangsdaten nach der ersten erfolgreichen Anmeldung speichert. */
+    public void sharePointLogins(com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins) {
+        files.savedLogins(logins);
     }
 
     /** Reicht an den gerade gesetzten Verlauf weiter (er kommt erst nach dem Bau aus der App). */
