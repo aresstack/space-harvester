@@ -25,15 +25,44 @@ import java.util.Set;
  * @param categories  Kontenkategorien, an denen die Ausnahme erkennbar ist (leer: keine)
  * @param individual  ob die Ausnahme eine nachgewiesene Einzelgenehmigung braucht (z. B. Einwilligung des BMF)
  * @param formula     wie die Frist aus dem Entstehungsjahr folgt
+ * @param validUntil  gültig bis einschließlich (belegt, z. B. Nr. 10 VO/VW-RiB: Fristausnahmen der Buchungsstellen
+ *                    9070 0000 97 und 9071 0000 96 bis Ablauf 2024); leer: unbefristet. Nach dem Ende wirkt die Regel
+ *                    nicht mehr, auch nicht für ältere Beträge; dann greift sie nur mit neuem Nachweis.
+ * @param bookingPoints Buchungsstellen (zehnstellige Buchungskonten, beginnend mit 90; nur Ziffern), an denen die Regel
+ *                    erkennbar ist (leer: keine)
+ * @param sections    Abschnitte des Buchs, an denen die Regel erkennbar ist (leer: keine)
+ * @param locator     Fundstelle in der Quelle, z. B. {@code VO/VW-RiB Nr. 10, S. 10}
  */
 public record DeadlineRule(String id, String version, String legalBasis, String wording, List<String> sources,
                            Optional<LocalDate> validFrom, String book, Kind kind, Optional<String> displaces,
-                           Set<String> categories, boolean individual, Formula formula) {
+                           Set<String> categories, boolean individual, Formula formula,
+                           Optional<LocalDate> validUntil, Set<String> bookingPoints, Set<String> sections,
+                           String locator) {
 
-    /** Grundsatz oder Ausnahme. */
+    /** Grundsatz, Ausnahme oder Verfahrenspflicht. */
     public enum Kind {
         STANDARD,
-        EXCEPTION
+        EXCEPTION,
+        /** Pflicht ohne eigene Ausgleichsfrist (etwa „im gleichen Haushaltsjahr anzuordnen“); verdrängt nichts. */
+        PROCEDURE
+    }
+
+    /** Regeltyp für die Anzeige, abgeleitet aus Art und Formel. */
+    public enum RuleType {
+        BASE_DEADLINE("Grundfrist"),
+        SPECIAL_DEADLINE("Sonderfrist"),
+        EXCEPTION("Ausnahme"),
+        PROCEDURE("Verfahrenspflicht");
+
+        private final String label;
+
+        RuleType(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
     }
 
     /** Wie die Frist folgt; nie aus dem Erlassdatum. */
@@ -47,7 +76,11 @@ public record DeadlineRule(String id, String version, String legalBasis, String 
         /** Von den Fristen ausgenommen. */
         EXEMPT("von den Fristen ausgenommen"),
         /** Wie in der nachgewiesenen Einzelgenehmigung bestimmt. */
-        AS_GRANTED("wie in der Einzelgenehmigung bestimmt");
+        AS_GRANTED("wie in der Einzelgenehmigung bestimmt"),
+        /** Ablauf des zweiten auf die Buchung folgenden Haushaltsjahres (Nr. 9.2.2.3 VO/VW-RiB). */
+        END_OF_SECOND_YEAR_AFTER_BOOKING("spätestens zum Ablauf des zweiten auf die Buchung folgenden Haushaltsjahres"),
+        /** Keine eigene Frist; die Regel beschreibt eine Pflicht oder einen Zeitpunkt (Verfahrenspflicht). */
+        NONE("keine eigene Ausgleichsfrist");
 
         private final String text;
 
@@ -73,6 +106,14 @@ public record DeadlineRule(String id, String version, String legalBasis, String 
         }
     }
 
+    /** Unbefristet, ohne Buchungsstellen, Abschnitte und Fundstelle. */
+    public DeadlineRule(String id, String version, String legalBasis, String wording, List<String> sources,
+                        Optional<LocalDate> validFrom, String book, Kind kind, Optional<String> displaces,
+                        Set<String> categories, boolean individual, Formula formula) {
+        this(id, version, legalBasis, wording, sources, validFrom, book, kind, displaces, categories, individual,
+                formula, Optional.empty(), Set.of(), Set.of(), "");
+    }
+
     public DeadlineRule {
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(version, "version");
@@ -85,12 +126,45 @@ public record DeadlineRule(String id, String version, String legalBasis, String 
         displaces = displaces == null ? Optional.empty() : displaces;
         categories = Set.copyOf(categories);
         Objects.requireNonNull(formula, "formula");
+        validUntil = validUntil == null ? Optional.empty() : validUntil;
+        bookingPoints = Set.copyOf(bookingPoints);
+        sections = Set.copyOf(sections);
+        locator = locator == null ? "" : locator;
         if (wording.isBlank() || sources.isEmpty()) {
             throw new IllegalArgumentException("Regel " + id + " ohne belegten Wortlaut oder Quelle");
         }
         if ((kind == Kind.EXCEPTION) != displaces.isPresent()) {
             throw new IllegalArgumentException("Nur eine Ausnahme verdrängt eine Regel: " + id);
         }
+    }
+
+    /** Ob die Regel nur mit nachgewiesener Einzelgenehmigung des BMF greift. */
+    public boolean approvalRequired() {
+        return individual;
+    }
+
+    /** Regeltyp: Grundfrist, Sonderfrist (eigene Frist), Ausnahme (ausgenommen oder nach Genehmigung) oder Pflicht. */
+    public RuleType type() {
+        return switch (kind) {
+            case STANDARD -> RuleType.BASE_DEADLINE;
+            case PROCEDURE -> RuleType.PROCEDURE;
+            case EXCEPTION -> formula == Formula.EXEMPT || formula == Formula.AS_GRANTED
+                    ? RuleType.EXCEPTION : RuleType.SPECIAL_DEADLINE;
+        };
+    }
+
+    /**
+     * Ob die Regel an diesem Tag gilt: nach {@link #validUntil()} nicht mehr, vor {@link #validFrom()} noch nicht;
+     * ohne belegtes Datum der Fassung offen.
+     */
+    public DeadlineAssessment.Proof validOn(LocalDate day) {
+        if (validUntil.isPresent() && day.isAfter(validUntil.get())) {
+            return DeadlineAssessment.Proof.NOT_PROVEN;
+        }
+        if (validFrom.isEmpty()) {
+            return DeadlineAssessment.Proof.OPEN;
+        }
+        return day.isBefore(validFrom.get()) ? DeadlineAssessment.Proof.NOT_PROVEN : DeadlineAssessment.Proof.PROVEN;
     }
 
     /** Verweis für ein Prüfergebnis. */
