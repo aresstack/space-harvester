@@ -57,7 +57,7 @@ public final class DiagramSettingsPanel {
         aiLabels.addActionListener(e -> AppState.shared().put(DiagramLabels.ENABLED_KEY, aiLabels.isSelected()));
         diagram.add(aiLabels, BorderLayout.NORTH);
         diagram.add(Comic.hint("Der Code des Blocks (höchstens 4000 Zeichen) geht dabei an den KI-Dienst; jede Antwort wird "
-                + "gestreamt und 15 s abgewartet, sonst bleibt die einfache Beschriftung („📦 5 Anweisungen“)."),
+                + "gestreamt und bis 30 s abgewartet (das erste Laden des Modells dauert), sonst bleibt die einfache Beschriftung („📦 5 Anweisungen“)."),
                 BorderLayout.CENTER);
 
         functions.setOpaque(false);

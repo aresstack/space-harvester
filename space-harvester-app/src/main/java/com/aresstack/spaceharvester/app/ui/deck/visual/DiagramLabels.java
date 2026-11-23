@@ -17,7 +17,7 @@ import java.util.function.Supplier;
 /**
  * KI-Kurzbeschriftung zusammengefasster Diagramm-Blöcke, wie {@code SummarizerServiceImpl} mit Stil LABEL in
  * MainframeMate: gleicher System-Prompt, gleiches Anfrageformat (STIL/MAX_ZEICHEN/KONTEXT/TEXT), gleiche Bereinigung,
- * LRU-Cache mit 1000 Einträgen, Frist 15 s je Block. Anders als dort immer gestreamt (Proxy bricht lange Antworten
+ * LRU-Cache mit 1000 Einträgen, Frist 30 s je Block (MainframeMate 15 s; das erste Laden eines Modells dauert länger). Anders als dort immer gestreamt (Proxy bricht lange Antworten
  * ohne Strom ab) und über den KI-Dienst der Einstellungen (Zeile „Zusammenfassung“: Modell und Nachdenken, sonst das
  * Chat-Modell). Eingeschaltet in Einstellungen › Command Deck › Diagramm-Ansicht; aus = keine Aufrufe.
  */
@@ -32,7 +32,7 @@ public final class DiagramLabels implements BlockLabelSummarizer {
             + "LABEL = eine Substantiv-Phrase (z.B. \"Validierung der Eingabe\"). "
             + "SENTENCE = ein Satz. "
             + "BULLETS = kurze Bullet-Liste mit \"- \" Präfix.";
-    static final long TIMEOUT_SECONDS = 15;
+    static final long TIMEOUT_SECONDS = 30;
     private static final int CACHE_SIZE = 1000;
 
     /**
