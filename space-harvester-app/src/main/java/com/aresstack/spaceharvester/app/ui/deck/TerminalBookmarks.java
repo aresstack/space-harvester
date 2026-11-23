@@ -93,10 +93,13 @@ final class TerminalBookmarks {
             for (TerminalMacro.Step step : bookmark.steps()) {
                 steps.add(Map.of("type", step.kind().name(), "value", step.value()));
             }
-            rows.add(Map.of("name", bookmark.name(), "host", profile.host(), "port", profile.port(),
+            Map<String, Object> row = new java.util.LinkedHashMap<>(Map.of("name", bookmark.name(),
+                    "host", profile.host(), "port", profile.port(),
                     "model", profile.model().name(), "tls", profile.tls(), "keepAlive", profile.keepAliveSeconds(),
                     "codePage", profile.codePage(), "entry", bookmark.entry(), "command", bookmark.command(),
                     "steps", steps));
+            row.put("proxy", profile.viaProxy());
+            rows.add(row);
         }
         state.put(KEY, JSON.writeValueAsString(rows));
         listeners.forEach(Runnable::run);
@@ -107,7 +110,7 @@ final class TerminalBookmarks {
         TerminalProfile profile = new TerminalProfile(String.valueOf(row.get("host")),
                 ((Number) row.get("port")).intValue(), TerminalModel.valueOf(String.valueOf(row.get("model"))),
                 Boolean.TRUE.equals(row.get("tls")), ((Number) row.getOrDefault("keepAlive", 0)).intValue(),
-                (String) row.get("codePage"));
+                (String) row.get("codePage"), Boolean.TRUE.equals(row.get("proxy")));
         List<TerminalMacro.Step> steps = new ArrayList<>();
         Object list = row.get("steps");
         if (list instanceof List<?> items) {

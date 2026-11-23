@@ -40,8 +40,7 @@ public final class CommandDeck {
     private final ExecutorService connecting = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("command-deck-", 0).factory());
     /** Die Aktionsverzögerung (Anmeldung, Lesezeichen-Makro) kommt live aus Einstellungen › Terminal. */
-    private final TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(), connecting,
-            new com.aresstack.spaceharvester.deck.terminal.LoginScript(() -> TerminalSettings.shared().actionDelay()));
+    private final TerminalSessions sessions;
     private final CardLayout cards = new CardLayout();
     private final JPanel workspace = new JPanel(cards);
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
@@ -92,6 +91,17 @@ public final class CommandDeck {
      * @param betaViewAccess Netzweg (Proxy, Zertifikate) der App für BetaView; Zugangsdaten kommen aus {@code accounts}
      */
     public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess) {
+        this(accounts, betaViewAccess, com.aresstack.spaceharvester.deck.terminal.TerminalTunnel.NONE);
+    }
+
+    /**
+     * @param terminalTunnel Weg durch den Proxy der App für Terminal-Verbindungen mit „Proxy verwenden“
+     */
+    public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess,
+                       com.aresstack.spaceharvester.deck.terminal.TerminalTunnel terminalTunnel) {
+        sessions = new TerminalSessions(new OpenTermConnector(terminalTunnel), connecting,
+                new com.aresstack.spaceharvester.deck.terminal.LoginScript(
+                        () -> TerminalSettings.shared().actionDelay()));
         // Das Terminal soll nicht tot bleiben: Trennt der Host, baut es sich neu auf (Einstellung „Neuaufbau“).
         sessions.autoReconnect(com.aresstack.spaceharvester.deck.terminal.TerminalSessions.Reconnect.standard(
                 () -> TerminalSettings.shared().autoReconnect()), (delay, task) -> {

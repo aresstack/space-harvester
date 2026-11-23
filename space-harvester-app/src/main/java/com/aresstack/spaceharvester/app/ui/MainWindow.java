@@ -224,7 +224,8 @@ public final class MainWindow implements AppContext.Navigator {
         // über den Netzweg der App (Proxy, Zertifikate).
         commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
-                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
+                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context),
+                new com.aresstack.spaceharvester.app.ui.deck.AppTerminalTunnel(context));
         // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
         commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
