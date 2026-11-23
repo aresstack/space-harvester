@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.application.deadlines;
 
 import java.time.DateTimeException;
 import java.time.LocalDate;
+import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -14,6 +16,9 @@ import java.util.regex.Pattern;
 public final class IdentifierNormalizer {
 
     private static final Pattern GERMAN_DATE = Pattern.compile("(\\d{1,2})\\.\\s?(\\d{1,2})\\.\\s?(\\d{4})");
+    private static final Pattern GERMAN_DATE_WORDS = Pattern.compile("(\\d{1,2})\\.\\s?(\\p{L}+)\\s+(\\d{4})");
+    private static final List<String> MONTHS = List.of("januar", "februar", "märz", "april", "mai", "juni", "juli",
+            "august", "september", "oktober", "november", "dezember");
 
     private IdentifierNormalizer() {
     }
@@ -42,7 +47,7 @@ public final class IdentifierNormalizer {
     }
 
     /**
-     * Deutsches Datum „27.07.2026“ oder „27. 7. 2026“ als ISO-Datum.
+     * Deutsches Datum „27.07.2026“, „27. 7. 2026“ oder „27. Juli 2026“ als ISO-Datum.
      *
      * @return leer, wenn es kein gültiges Datum ist
      */
@@ -51,11 +56,18 @@ public final class IdentifierNormalizer {
             return Optional.empty();
         }
         Matcher matcher = GERMAN_DATE.matcher(raw.strip());
-        if (!matcher.matches()) {
-            return Optional.empty();
+        int month;
+        if (matcher.matches()) {
+            month = Integer.parseInt(matcher.group(2));
+        } else {
+            matcher = GERMAN_DATE_WORDS.matcher(raw.strip());
+            if (!matcher.matches()) {
+                return Optional.empty();
+            }
+            month = MONTHS.indexOf(matcher.group(2).toLowerCase(Locale.ROOT)) + 1;
         }
         try {
-            return Optional.of(LocalDate.of(Integer.parseInt(matcher.group(3)), Integer.parseInt(matcher.group(2)),
+            return Optional.of(LocalDate.of(Integer.parseInt(matcher.group(3)), month,
                     Integer.parseInt(matcher.group(1))));
         } catch (DateTimeException e) {
             return Optional.empty();

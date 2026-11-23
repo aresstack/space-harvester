@@ -18,6 +18,20 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
 tasks.named('test') {
     useJUnitPlatform()
 }
+
+// Eigene Publikation, weil der Core davon abhängt und seine POM keine unveröffentlichte Projektabhängigkeit nennen
+// darf (docs/MODULES.md).
+ext.publishedArtifactId = 'space-harvester-nlp-lexicon'
+apply from: rootProject.file('gradle/publishing.gradle')
