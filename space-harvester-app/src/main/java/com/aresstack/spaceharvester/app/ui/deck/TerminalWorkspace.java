@@ -292,10 +292,11 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
 
     /**
      * Beim Wechsel ins Command Deck gleich verbinden (Angelo, 23.11.2026): Das Terminal ist das Erste, was man sieht.
-     * Nur wenn die Verbindung eingerichtet ist und keine Sitzung läuft oder gerade aufgebaut wird.
+     * Nur wenn die Verbindung eingerichtet ist und noch kein Reiter steht: Ein beendeter Reiter wartet womöglich auf
+     * seinen automatischen Neuaufbau, und den verbindet man über ihn neu, nicht daneben.
      */
     void connectOnArrival() {
-        if (!ConnectForm.isConfigured() || sessions.all().stream().anyMatch(session -> !session.state().ended())) {
+        if (!ConnectForm.isConfigured() || !sessions.all().isEmpty()) {
             return;
         }
         long now = System.nanoTime();
