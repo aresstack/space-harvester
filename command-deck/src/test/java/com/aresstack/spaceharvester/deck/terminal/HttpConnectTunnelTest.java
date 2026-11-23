@@ -52,6 +52,13 @@ class HttpConnectTunnelTest {
     }
 
     @Test
+    void ipv6AddressesAreBracketedExactlyOnce() {
+        assertThat(HttpConnectTunnel.authority("2001:db8::1")).isEqualTo("[2001:db8::1]");
+        assertThat(HttpConnectTunnel.authority("[2001:db8::1]")).isEqualTo("[2001:db8::1]");
+        assertThat(HttpConnectTunnel.authority("testhost.example")).isEqualTo("testhost.example");
+    }
+
+    @Test
     void theStatusIsReadUpToTheBlankLineOnly() throws Exception {
         InputStream in = new ByteArrayInputStream("HTTP/1.0 200 OK\r\nX: y\r\n\r\nDATEN"
                 .getBytes(StandardCharsets.US_ASCII));

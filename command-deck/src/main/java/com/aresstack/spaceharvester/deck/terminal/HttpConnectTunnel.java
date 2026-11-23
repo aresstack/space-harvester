@@ -35,7 +35,7 @@ public final class HttpConnectTunnel {
             socket.connect(new InetSocketAddress(proxyHost, proxyPort), timeoutMillis);
             socket.setSoTimeout(timeoutMillis);
             OutputStream out = socket.getOutputStream();
-            String target = (host.indexOf(':') >= 0 ? "[" + host + "]" : host) + ":" + port;
+            String target = authority(host) + ":" + port;
             out.write(("CONNECT " + target + " HTTP/1.1\r\nHost: " + target + "\r\n")
                     .getBytes(StandardCharsets.US_ASCII));
             if (user != null && !user.isBlank() && password != null) {
@@ -57,6 +57,12 @@ public final class HttpConnectTunnel {
             socket.close();
             throw e;
         }
+    }
+
+    /** IPv6-Adressen in eckigen Klammern, genau einmal. */
+    static String authority(String host) {
+        String bare = host.startsWith("[") && host.endsWith("]") ? host.substring(1, host.length() - 1) : host;
+        return bare.indexOf(':') >= 0 ? "[" + bare + "]" : bare;
     }
 
     private static void writeBasic(OutputStream out, String user, char[] password) throws IOException {

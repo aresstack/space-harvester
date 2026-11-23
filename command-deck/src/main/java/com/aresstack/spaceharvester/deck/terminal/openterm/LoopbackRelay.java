@@ -70,13 +70,17 @@ final class LoopbackRelay implements Closeable {
         }
         local.set(accepted);
         if (!accepted.getInetAddress().isLoopbackAddress() || closed.get()) {
+            // Schon abgebrochen: close() lief womöglich, bevor die Verbindung eingetragen war.
+            quietly(accepted);
             close();
             return;
         }
         Socket target = tunnel.open(host, port, timeoutMillis);
         remote.set(target);
         if (closed.get()) {
-            close();
+            // Abgebrochen, während der Tunnel entstand: diese Verbindung selbst schließen.
+            quietly(target);
+            quietly(accepted);
             return;
         }
         Thread.ofVirtual().name("terminal-relay-up").start(() -> pump(accepted, target));

@@ -38,7 +38,8 @@ public final class AppTerminalTunnel implements TerminalTunnel {
         ProxySettings proxy = AppRuntime.proxy(settings.proxy(), context.secrets());
         HttpRoute route;
         try {
-            route = ProxyRoutes.from(proxy).routeFor(URI.create("https://" + hostPart(host) + ":" + port + "/"));
+            route = ProxyRoutes.from(proxy).routeFor(URI.create("https://" + HttpConnectTunnel.authority(host) + ":"
+                    + port + "/"));
         } catch (RuntimeException e) {
             throw new IOException("Proxy-Regel nicht auswertbar: " + e.getMessage(), e);
         }
@@ -65,9 +66,5 @@ public final class AppTerminalTunnel implements TerminalTunnel {
                 Arrays.fill(password, '\0');
             }
         }
-    }
-
-    private static String hostPart(String host) {
-        return host.indexOf(':') >= 0 && !host.startsWith("[") ? "[" + host + "]" : host;
     }
 }
