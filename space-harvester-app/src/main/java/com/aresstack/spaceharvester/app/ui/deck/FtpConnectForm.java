@@ -83,8 +83,9 @@ final class FtpConnectForm extends JPanel {
             TransferOptions.TextFormat::label);
     final JComboBox<TransferOptions.Structure> structure = combo(TransferOptions.Structure.values(),
             TransferOptions.Structure::label);
-    final JComboBox<TransferOptions.TransferMode> transferMode = combo(TransferOptions.TransferMode.values(),
-            TransferOptions.TransferMode::label);
+    final JComboBox<TransferOptions.TransferMode> transferMode = combo(java.util.Arrays.stream(
+            TransferOptions.TransferMode.values()).filter(TransferOptions.TransferMode::supported)
+            .toArray(TransferOptions.TransferMode[]::new), TransferOptions.TransferMode::label);
     final PlaceholderField attempts = new PlaceholderField(4, String.valueOf(RetryPolicy.DEFAULT.maxAttempts()));
     final PlaceholderField backoff = new PlaceholderField(6, "0");
     final JCheckBox exponential = Comic.checkBox("Wartezeit jedes Mal verdoppeln");
@@ -178,7 +179,8 @@ final class FtpConnectForm extends JPanel {
         fileType.setToolTipText("TYPE: ASCII (A), EBCDIC (E), Binär (I) oder Lokal (L)");
         textFormat.setToolTipText("Formatangabe zu TYPE A/E: Standard (N), Telnet (T), Steuerzeichen (C)");
         structure.setToolTipText("STRU: Automatisch = Satzstruktur auf MVS, sonst Datei");
-        transferMode.setToolTipText("MODE: Stream (S), Block (B), Komprimiert (C)");
+        transferMode.setToolTipText("MODE: Stream (S). Block und Komprimiert bietet MainframeMate an, Commons Net kann "
+                + "sie aber nicht rahmen – die Daten kämen verfälscht an");
         attempts.setToolTipText("Wie oft ein lesender Auftrag höchstens versucht wird (1–10); Schreiben nie doppelt");
         backoff.setToolTipText("Pause vor dem nächsten Versuch in Millisekunden");
         maxBackoff.setToolTipText("Längste Pause beim Verdoppeln; leer = unbegrenzt");

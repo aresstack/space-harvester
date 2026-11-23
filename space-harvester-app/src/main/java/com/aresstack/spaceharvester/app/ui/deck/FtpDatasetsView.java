@@ -303,6 +303,8 @@ final class FtpDatasetsView extends JPanel {
                 return this;
             }
         });
+        // Im gruppierten Baum hängt die Auswahl nicht an der Tabelle: Knöpfe auch hier nachführen.
+        tree.addTreeSelectionListener(e -> enableActions());
         tree.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
@@ -468,6 +470,7 @@ final class FtpDatasetsView extends JPanel {
         }
         groupButton.setVisible(groupable);
         groupButton.marked(grouped);
+        enableActions();
         expandAll.setVisible(groupable && grouped);
         collapseAll.setVisible(groupable && grouped);
         detailsButton.marked(details);

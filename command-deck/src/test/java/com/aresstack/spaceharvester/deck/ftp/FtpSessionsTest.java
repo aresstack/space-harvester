@@ -154,4 +154,34 @@ class FtpSessionsTest {
         assertThat(names).containsEntry(1, "JESMSGLG").containsEntry(2, "JESJCL").containsEntry(3, "SYSPRINT");
         assertThat(host.logins() - before).isEqualTo(2);
     }
+
+    @Test
+    void disconnectClosesConnectionsThatAreStillProbingSpoolNames() throws Exception {
+        host.jesInterfaceLevel1();
+        java.util.concurrent.CountDownLatch gate = new java.util.concurrent.CountDownLatch(1);
+        FtpProfile parallel = host.profile().withSpoolNaming(
+                new com.aresstack.spaceharvester.deck.ftp.jes.SpoolNaming(
+                        com.aresstack.spaceharvester.deck.ftp.jes.SpoolNaming.Mode.OFF, 1, false));
+        FtpSession session = sessions.open(parallel, "Raumhafen", login("geheim"));
+        session.connect().get(10, TimeUnit.SECONDS);
+        host.stallJesRetrieve(gate);
+        try {
+            var probing = session.probeSpoolNames("JOB04700", 3);
+            assertThat(host.awaitStalledRetrieve(10)).as("der Host hängt in RETR").isTrue();
+            session.disconnect();
+            // Ohne Schließen der Nachlade-Verbindung bliebe die Abfrage hängen, bis der Host antwortet.
+            assertThat(probing).failsWithin(10, TimeUnit.SECONDS);
+        } finally {
+            gate.countDown();
+        }
+    }
+
+    @Test
+    void onlyStreamModeIsAccepted() {
+        assertThat(TransferOptions.TransferMode.BLOCK.supported()).isFalse();
+        assertThat(TransferOptions.TransferMode.STREAM.supported()).isTrue();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new TransferOptions(null, null, null,
+                TransferOptions.TransferMode.COMPRESSED)).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Stream");
+    }
 }

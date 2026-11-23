@@ -53,6 +53,8 @@ public final class FakeMvsFtpHost implements AutoCloseable {
     private final AtomicInteger logins = new AtomicInteger();
     private final AtomicInteger nextJob = new AtomicInteger(4711);
     private volatile boolean jesInterfaceLevel2 = true;
+    private volatile java.util.concurrent.CountDownLatch jesRetrieveGate;
+    private final java.util.concurrent.CountDownLatch jesRetrieveStalled = new java.util.concurrent.CountDownLatch(1);
 
     public FakeMvsFtpHost(String user, String password) throws IOException {
         this.user = user.toUpperCase(Locale.ROOT);
@@ -92,6 +94,15 @@ public final class FakeMvsFtpHost implements AutoCloseable {
     }
 
     /** Wie ein Host ohne JESINTERFACELEVEL=2: keine Spool-Liste, nur die Gesamtausgabe. */
+    /** JES-RETR antwortet erst, wenn {@code gate} aufgeht (hängender Host); {@link #awaitStalledRetrieve} meldet es. */
+    public void stallJesRetrieve(java.util.concurrent.CountDownLatch gate) {
+        jesRetrieveGate = gate;
+    }
+
+    public boolean awaitStalledRetrieve(long seconds) throws InterruptedException {
+        return jesRetrieveStalled.await(seconds, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
     public void jesInterfaceLevel1() {
         jesInterfaceLevel2 = false;
     }
@@ -401,6 +412,16 @@ public final class FakeMvsFtpHost implements AutoCloseable {
     }
 
     private void retr(Client client, String arg, PrintWriter out) throws IOException {
+        java.util.concurrent.CountDownLatch gate = jesRetrieveGate;
+        if (client.jes && gate != null) {
+            jesRetrieveStalled.countDown();
+            try {
+                gate.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
         if (client.jes) {
             int dot = arg.lastIndexOf('.');
             Job job = find(dot > 0 ? arg.substring(0, dot) : arg);

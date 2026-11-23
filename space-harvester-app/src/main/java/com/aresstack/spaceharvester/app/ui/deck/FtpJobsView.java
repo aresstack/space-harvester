@@ -683,7 +683,8 @@ final class FtpJobsView extends JPanel {
 
     private void showWhole(String text) {
         spoolTable.clearSelection();
-        setText(text, null);
+        // Nicht als JESJCL bereinigen: das würde Job-Log und Programmausgabe wegwerfen; nur Steuerzeichen weg.
+        setText(text, null, false);
         loadedSpool = null;
         wholeShown = true;
         owner.status("Gesamter Output angezeigt (" + lines(spoolText.getText()) + " Zeilen)", false);
@@ -692,7 +693,11 @@ final class FtpJobsView extends JPanel {
 
     /** Setzt Text wie MainframeMate: Steuerzeichen weg, JESJCL bereinigt, Hervorhebung nach Sprache. */
     private void setText(String raw, String ddName) {
-        spoolText.setText(SpoolText.clean(raw));
+        setText(raw, ddName, true);
+    }
+
+    private void setText(String raw, String ddName, boolean normalize) {
+        spoolText.setText(normalize ? SpoolText.clean(raw) : SpoolText.sanitize(raw));
         spoolText.setCaretPosition(0);
         spoolText.putClientProperty("ddName", ddName);
         findFrom = 0;

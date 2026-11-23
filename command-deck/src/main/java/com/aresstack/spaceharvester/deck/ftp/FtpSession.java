@@ -151,6 +151,9 @@ public final class FtpSession {
      * das Profil erlaubt (MainframeMate „Parallele Verbindungen“, Verfahren OFF und FAST mit Nachladen). Die
      * Verbindungen werden danach geschlossen; was nicht abrufbar war, fehlt in der Antwort.
      */
+    /** Die Verbindungen, die gerade DD-Namen nachladen; „Trennen“ schließt sie mit. */
+    private final java.util.Set<JesConnection> probes = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     public CompletableFuture<java.util.Map<Integer, String>> probeSpoolNames(String jobId, int count) {
         java.util.Map<Integer, String> names = new java.util.concurrent.ConcurrentHashMap<>();
         if (state().ended() || count < 1) {
@@ -161,7 +164,15 @@ public final class FtpSession {
         for (int lane = 0; lane < lanes; lane++) {
             int first = lane + 1;
             parts.add(CompletableFuture.runAsync(() -> {
-                try (JesConnection jes = openJes()) {
+                JesConnection jes;
+                try {
+                    jes = openJes();
+                } catch (Exception e) {
+                    throw new java.util.concurrent.CompletionException(e);
+                }
+                probes.add(jes);
+                try {
+                    // Trennen kann zwischen Anmelden und Eintragen gekommen sein: dann sofort aufhören.
                     for (int id = first; id <= count && !state().ended(); id += lanes) {
                         try {
                             jes.probe(jobId, id).ifPresent(file -> names.put(file.id(), file.ddName()));
@@ -171,6 +182,9 @@ public final class FtpSession {
                     }
                 } catch (Exception e) {
                     throw new java.util.concurrent.CompletionException(e);
+                } finally {
+                    probes.remove(jes);
+                    jes.close();
                 }
             }, background));
         }
@@ -199,6 +213,10 @@ public final class FtpSession {
         change(ConnectionState.DISCONNECTED, null, false);
         files.shutdown();
         jobs.shutdown();
+        // Nachlade-Verbindungen gehören keiner Leitung: einzeln schließen, das bricht auch eine hängende Abfrage ab.
+        for (JesConnection probe : List.copyOf(probes)) {
+            probe.close();
+        }
     }
 
     private <C, T> CompletableFuture<T> submit(Lane<C> lane, Task<C, T> task, boolean retry) {

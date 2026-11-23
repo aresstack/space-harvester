@@ -85,11 +85,8 @@ final class CommonsNetFiles implements FileConnection {
             case PAGE -> FTP.PAGE_STRUCTURE;
             case AUTO, RECORD, FILE -> recordStructure ? FTP.RECORD_STRUCTURE : FTP.FILE_STRUCTURE;
         });
-        ftp.setFileTransferMode(switch (transfer.transferMode()) {
-            case BLOCK -> FTP.BLOCK_TRANSFER_MODE;
-            case COMPRESSED -> FTP.COMPRESSED_TRANSFER_MODE;
-            case STREAM -> FTP.STREAM_TRANSFER_MODE;
-        });
+        // Nur Stream: TransferOptions lässt Block und Komprimiert nicht zu (Commons Net kann sie nicht rahmen).
+        ftp.setFileTransferMode(FTP.STREAM_TRANSFER_MODE);
     }
 
     private void binaryMode() throws IOException {

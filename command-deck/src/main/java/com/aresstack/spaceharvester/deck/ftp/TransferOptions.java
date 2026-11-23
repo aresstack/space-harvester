@@ -72,6 +72,15 @@ public record TransferOptions(FileType fileType, TextFormat textFormat, Structur
         public String label() {
             return label;
         }
+
+        /**
+         * Ob Commons Net diesen Modus wirklich überträgt: nur Stream. Block und Komprimiert verlangen eine eigene
+         * Rahmung bzw. Dekompression beim Lesen und Schreiben, die Commons Net nicht hat; der Host würde sie annehmen
+         * und die Daten kämen verfälscht an.
+         */
+        public boolean supported() {
+            return this == STREAM;
+        }
     }
 
     public static final TransferOptions DEFAULT = new TransferOptions(FileType.ASCII, TextFormat.DEFAULT,
@@ -82,6 +91,10 @@ public record TransferOptions(FileType fileType, TextFormat textFormat, Structur
         textFormat = Objects.requireNonNullElse(textFormat, TextFormat.DEFAULT);
         structure = Objects.requireNonNullElse(structure, Structure.AUTO);
         transferMode = Objects.requireNonNullElse(transferMode, TransferMode.STREAM);
+        if (!transferMode.supported()) {
+            throw new IllegalArgumentException("Übertragungsmodus „" + transferMode.label()
+                    + "“ wird nicht unterstützt – nur Stream (Block und Komprimiert würden die Daten verfälschen)");
+        }
     }
 
     /** Ob Text Satz für Satz übertragen wird: ausdrücklich {@code RECORD} oder automatisch auf MVS. */
