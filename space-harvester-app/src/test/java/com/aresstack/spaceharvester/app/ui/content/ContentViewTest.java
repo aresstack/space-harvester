@@ -438,20 +438,11 @@ class ContentViewTest {
                 .as("Werkzeuge der Updates in der gemeinsamen Kopfzeile").isTrue();
         assertThat(onEdt(() -> barIcons(view.detail()))).as("die Symbole der Reiterleiste bleiben überall gleich")
                 .containsExactly(bar);
-        // Hinter dem Dreieck stehen hier die Speicher-Einträge; ohne Zusammenfassung und Podcast sind sie gesperrt.
+        // Hinter dem Dreieck steht hier „Zusammenfassung speichern“; ohne Zusammenfassung gesperrt. Der Podcast steht
+        // in der Podcast-Ansicht (Angelo 23.11.2026), seine Einträge also dort.
         assertThat(onEdt(() -> view.detail().moreButton().isEnabled())).isTrue();
-        assertThat(onEdt(() -> {
-            List<String> entries = new java.util.ArrayList<>();
-            for (java.awt.Component item : view.detail().moreMenu().getComponents()) {
-                entries.add(((javax.swing.JMenuItem) item).getText() + (item.isEnabled() ? "" : " (gesperrt)"));
-            }
-            return entries;
-        })).containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)",
-                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)");
-        // Neben der Lupe steht der Platz für „Transkript kopieren“; ohne Podcast bleibt der Knopf weg.
-        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
-                view.detail().sourceView().podcast().transcriptCopy(), view.tools()))).isTrue();
-        assertThat(onEdt(() -> view.detail().sourceView().podcast().transcriptCopy().isVisible())).isFalse();
+        assertThat(onEdt(() -> menuEntries(view.detail())))
+                .containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)");
         assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
                 .isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().sourceId())).isEqualTo("handbuch");
@@ -462,6 +453,13 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).as("„Text“: die Updates").isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
+        // Podcast-Ansicht: Transkript und „Podcast neu erstellen“ hinter dem Dreieck, ohne Podcast gesperrt; neben der
+        // Lupe der Platz für „Transkript kopieren“, ohne Podcast bleibt der Knopf weg.
+        assertThat(onEdt(() -> menuEntries(view.detail()))).containsExactly(
+                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)");
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
+                view.detail().sourceChanges().podcast().transcriptCopy(), view.tools()))).isTrue();
+        assertThat(onEdt(() -> view.detail().sourceChanges().podcast().transcriptCopy().isVisible())).isFalse();
         onEdt(() -> {
             view.detail().selectTab("Eigenschaften");
             return null;
@@ -518,6 +516,14 @@ class ContentViewTest {
         List<javax.swing.AbstractButton> chips = find((java.awt.Container) chat.quickActions(),
                 javax.swing.AbstractButton.class);
         return !chips.isEmpty() && chips.stream().allMatch(javax.swing.AbstractButton::isEnabled);
+    }
+
+    private static List<String> menuEntries(PageDetailPanel detail) {
+        List<String> entries = new java.util.ArrayList<>();
+        for (java.awt.Component item : detail.moreMenu().getComponents()) {
+            entries.add(((javax.swing.JMenuItem) item).getText() + (item.isEnabled() ? "" : " (gesperrt)"));
+        }
+        return entries;
     }
 
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
