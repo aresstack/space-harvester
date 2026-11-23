@@ -65,6 +65,14 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
    („Seite zusammenfassen“ …) und die Zeile „Wissen:“ folgen demselben Bereich. Der Baum wird dafür nie verändert
    (`ChatPanel.reading`, `readingFront`, `scope`).
 
+10. **Interne Suche als Schalter** (Angelo, 23.11.2026): Ein Knopf im Composer (aufgeschlagenes Buch, „Interne
+    Suche“) gibt dem Modell das Werkzeug `wissensquellen_durchsuchen`. Es ist die globale Suche der Suchleiste über
+    alle für die KI freigegebenen Quellen, unabhängig vom Bereich; optionale Parameter sind Nachbarseiten,
+    Fachbegriffe, Synonyme (beide experimentell), Dokumentarten und Quellen. Es gibt keinen Vorab-Schritt „soll ich
+    suchen?“ wie im EAC: Das Modell entscheidet selbst, darf umformulieren und erneut suchen. Jeder Treffer darf danach
+    mit `seite_lesen` gelesen werden und kommt wie jede gelieferte Seite auf die Freigabeliste. Quellen ohne
+    KI-Freigabe werden nie durchsucht. Ist der Knopf aus, kennt das Modell das Werkzeug nicht.
+
 ## Folgen
 
 - Große Bereiche kosten keinen Kontext mehr, solange das Modell nicht liest; die Qualität hängt davon ab, dass das

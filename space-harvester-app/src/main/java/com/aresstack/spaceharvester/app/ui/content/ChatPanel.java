@@ -145,6 +145,12 @@ public final class ChatPanel extends JPanel {
     private static final java.util.prefs.Preferences PREFERENCES =
             java.util.prefs.Preferences.userNodeForPackage(ChatPanel.class);
     static final String WEB = "Websuche folgt";
+    /** Schalter „Interne Suche“ (Angelo 23.11.2026): das Modell darf die globale Suche der App nutzen. */
+    static final String APP_SEARCH_LABEL = "Interne Suche";
+    static final String APP_SEARCH_OFF = "Interne Suche einschalten: Der Assistent darf alle für die KI "
+            + "freigegebenen Wissensquellen durchsuchen, wie die Suchleiste";
+    static final String APP_SEARCH_ON = "Interne Suche ist an: Der Assistent durchsucht alle für die KI freigegebenen "
+            + "Wissensquellen (Klick: aus)";
     static final String NO_MODEL = "Kein Chat-Modell";
     static final String MODEL_TIP = "Chat-Modell aus Einstellungen › KI";
     static final String NO_SELECTION = "Links eine Wissensquelle, einen Space oder eine Seite wählen";
@@ -241,6 +247,10 @@ public final class ChatPanel extends JPanel {
     private JPanel footerWest;
     private JPanel footerEast;
     private final ComposerButton web = ComposerButton.iconButton(ChatIcons.globe(), WEB);
+    private final ComposerButton appSearch = ComposerButton.iconButton(
+            com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.openBook(), APP_SEARCH_OFF);
+    /** Ob die interne Suche an ist; gilt für die nächsten Fragen, bis man sie ausschaltet. */
+    private boolean appSearchOn;
     private final ComposerButton attach = ComposerButton.iconButton(ComposerIcons.paperclip(), ATTACH);
     private final ComposerButton mic = ComposerButton.iconButton(ComposerIcons.microphone(), DICTATE);
     private final ComposerButton discardButton = ComposerButton.iconButton(
@@ -487,6 +497,8 @@ public final class ChatPanel extends JPanel {
         model.addActionListener(e -> showModelMenu());
         effort.addActionListener(e -> showEffortMenu());
         web.setEnabled(false);
+        appSearch.getAccessibleContext().setAccessibleName(APP_SEARCH_LABEL);
+        appSearch.addActionListener(e -> appSearch(!appSearchOn));
         mic.setAccent(ResearchUiPalette.RECORDING_ORANGE);
         mic.addActionListener(e -> toggleDictation());
         discardButton.addActionListener(e -> discardDictation());
@@ -512,6 +524,8 @@ public final class ChatPanel extends JPanel {
         east.setLayout(new BoxLayout(east, BoxLayout.X_AXIS));
         east.add(Box.createHorizontalGlue());
         east.add(levelBar);
+        east.add(Box.createHorizontalStrut(4));
+        east.add(appSearch);
         east.add(Box.createHorizontalStrut(4));
         east.add(web);
         east.add(Box.createHorizontalStrut(4));
@@ -1425,6 +1439,32 @@ public final class ChatPanel extends JPanel {
         effort.setToolTipText(EFFORT_TIP + ": " + effortLevel);
         // Letzte Stufe für sehr schmale Leisten oder breite Schriften: die (noch gesperrte) Websuche weicht.
         web.setVisible(stage < 3);
+        appSearch.setVisible(stage < 3);
+    }
+
+    /** Schaltet die interne Suche: an ist der Knopf eingerastet. */
+    void appSearch(boolean on) {
+        appSearchOn = on;
+        appSearch.setEmphasized(on);
+        appSearch.setToolTipText(on ? APP_SEARCH_ON : APP_SEARCH_OFF);
+    }
+
+    boolean appSearchOn() {
+        return appSearchOn;
+    }
+
+    /** Die Wissensquellen, die die interne Suche durchsuchen darf: alle für die KI freigegebenen (ADR 0028). */
+    static Set<String> appSearchSources(AppSettings settings, AppRuntime runtime) {
+        if (runtime == null) {
+            return Set.of();
+        }
+        Set<String> ids = new java.util.TreeSet<>();
+        for (HarvestSource source : runtime.workspace().sources()) {
+            if (allowed(settings, source.id())) {
+                ids.add(source.id());
+            }
+        }
+        return ids;
     }
 
     /** Für Tests: wie knapp die Fußzeile gerade ist (0 bis 3). */
@@ -1588,6 +1628,10 @@ public final class ChatPanel extends JPanel {
             turn.releasing(releases(runtime, open));
             // R2/C1: Der Chat folgt der Suchmethode „Nachbarseiten“ der Suchoptionen, wie sie beim Senden steht.
             turn.searchingNeighbors(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
+            // Interne Suche: die globale Suche über die freigegebenen Wissensquellen, gelesen beim Aufruf.
+            if (appSearchOn) {
+                turn.appSearch(() -> appSearchSources(context.settings(), context.runtime()));
+            }
             // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
             turn.searchingGlossarySynonyms(
                     com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());

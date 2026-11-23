@@ -61,6 +61,8 @@ final class ChatTools {
     static final String READ = "seite_lesen";
     static final String SEARCH = "im_bereich_suchen";
     static final String TERM = "begriff_nachschlagen";
+    /** Nur mit dem Schalter „Interne Suche“ im Composer: die globale Suche der App über alle Wissensquellen. */
+    static final String APP_SEARCH = "wissensquellen_durchsuchen";
 
     /** So viele Einträge je Blatt der Liste. */
     static final int PAGE_SIZE = 100;
@@ -110,7 +112,10 @@ final class ChatTools {
 
     private final Workspace workspace;
     private final PageSelection scope;
-    /** Seiten außerhalb des Bereichs, die der Benutzer ausdrücklich erlaubt hat (vorbereitet, heute leer). */
+    /**
+     * Seiten außerhalb des Bereichs, die gelesen werden dürfen: die offene Seite und die Treffer von
+     * {@value #APP_SEARCH} in diesem Turn.
+     */
     private final Set<PageKey> granted;
     private final Sources sources;
     private volatile ProgressiveSearch search;
@@ -139,7 +144,8 @@ final class ChatTools {
         this.terms = workspace::termKnowledge;
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.scope = scope;
-        this.granted = Set.copyOf(granted);
+        this.granted = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        this.granted.addAll(granted);
         this.sources = Objects.requireNonNull(sources, "sources");
     }
 
@@ -161,6 +167,54 @@ final class ChatTools {
     }
 
     private boolean glossarySynonyms;
+
+    /**
+     * Schalter „Interne Suche“ (Angelo 23.11.2026): {@value #APP_SEARCH} sucht wie die globale Suche der Suchleiste in
+     * allen Wissensquellen, die {@code sources} nennt (die für die KI freigegebenen), und macht die Treffer für
+     * {@value #READ} lesbar; {@code null} schaltet das Werkzeug ab.
+     */
+    ChatTools appSearch(java.util.function.Supplier<Set<String>> sources) {
+        this.appSources = sources;
+        return this;
+    }
+
+    private java.util.function.Supplier<Set<String>> appSources;
+
+    /** Die Werkzeuge dieses Turns: die vier des Bereichs, mit „Interne Suche“ dazu {@value #APP_SEARCH}. */
+    List<AiChat.Tool> toolDefinitions() {
+        if (appSources == null) {
+            return definitions();
+        }
+        List<AiChat.Tool> all = new ArrayList<>(definitions());
+        all.add(appSearchDefinition());
+        return List.copyOf(all);
+    }
+
+    static AiChat.Tool appSearchDefinition() {
+        StringBuilder kinds = new StringBuilder();
+        for (com.aresstack.spaceharvester.application.query.DocumentKind kind
+                : com.aresstack.spaceharvester.application.query.DocumentKind.values()) {
+            kinds.append(kinds.isEmpty() ? "" : ",").append('"').append(kind.name()).append('"');
+        }
+        return new AiChat.Tool(APP_SEARCH, "Durchsucht alle Wissensquellen der App wie die globale Suche der "
+                + "Suchleiste (semantisch, wenn verfügbar), unabhängig vom gewählten Bereich, und liefert die besten "
+                + "Treffer mit Kennung, Titel und Quelle, ohne Text. Findet die erste Suche nichts Passendes, suche "
+                + "mit anderen Begriffen oder Synonymen erneut. Den Text eines Treffers mit " + READ + " holen. Alle "
+                + "Optionen sind freiwillig.",
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"text\":{\"type\":\"string\",\"description\":\"Suchbegriffe oder Frage\"},"
+                        + "\"nachbarseiten\":{\"type\":\"boolean\",\"description\":\"Auch Nachbarseiten der "
+                        + "Treffer (Eltern, Geschwister, Kinder) einbeziehen\"},"
+                        + "\"fachbegriffe\":{\"type\":\"boolean\",\"description\":\"Auch Seiten zu erkannten "
+                        + "Fachbegriffen der Anfrage einbeziehen (experimentell)\"},"
+                        + "\"synonyme\":{\"type\":\"boolean\",\"description\":\"Auch vorgeschlagene Synonyme "
+                        + "der Fachbegriffe suchen (experimentell)\"},"
+                        + "\"arten\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[" + kinds
+                        + "]},\"description\":\"Nur diese Dokumentarten; leer für alle\"},"
+                        + "\"quellen\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},"
+                        + "\"description\":\"Nur diese Wissensquellen (Kennungen); leer für alle\"}},"
+                        + "\"required\":[\"text\"]}");
+    }
 
     /** Für Tests: ein anderer Zugriff auf den Bestand. */
     ChatTools holdingsReader(HoldingsReader reader) {
@@ -209,6 +263,7 @@ final class ChatTools {
             case LIST -> "Listet Seiten";
             case READ -> "Liest eine Seite";
             case TERM -> "Schlägt einen Fachbegriff nach";
+            case APP_SEARCH -> "Durchsucht die Wissensquellen";
             default -> "Werkzeug";
         };
     }
@@ -239,6 +294,7 @@ final class ChatTools {
                 case READ -> read(arguments.path("kennung").asString(""), Math.max(0, arguments.path("versatz")
                         .asInt(0)));
                 case TERM -> term(arguments.path("begriff").asString(""));
+                case APP_SEARCH -> appSearch(arguments);
                 default -> "Unbekanntes Werkzeug.";
             };
         } catch (CancellationException e) {
@@ -718,13 +774,93 @@ final class ChatTools {
     List<KeywordSearch.Hit> hits(String query) {
         KeywordSearch.Query search = new KeywordSearch.Query(query, null, Set.of(), Set.of()).within(scope.pages())
                 .withGlossarySynonyms(glossarySynonyms);
+        return ranked(search, neighbors, false);
+    }
+
+    // ------------------------------------------------------------------ Interne Suche
+
+    /**
+     * {@value #APP_SEARCH}: dieselbe globale Suche wie die Suchleiste, über die freigegebenen Wissensquellen, ohne
+     * Vorab-Entscheidung, ob gesucht wird. Treffer werden lesbar ({@link #granted}); Text geht erst mit {@value #READ}
+     * an das Modell und wird dort freigegeben.
+     */
+    String appSearch(JsonNode arguments) {
+        if (appSources == null) {
+            return "Unbekanntes Werkzeug.";
+        }
+        String query = arguments.path("text").asString("").strip().replaceAll("\\s+", " ");
+        if (query.isEmpty()) {
+            return "Bitte Suchbegriffe angeben.";
+        }
+        if (query.length() > ChatTurn.MAX_QUERY_CHARS) {
+            query = query.substring(0, ChatTurn.MAX_QUERY_CHARS);
+        }
+        Set<String> allowed = appSources.get();
+        Set<String> wanted = strings(arguments.path("quellen"));
+        Set<String> searched = new java.util.TreeSet<>(allowed);
+        if (!wanted.isEmpty()) {
+            searched.retainAll(wanted);
+        }
+        if (searched.isEmpty()) {
+            return allowed.isEmpty() ? "Keine Wissensquelle ist für die KI freigegeben."
+                    : "Keine der genannten Wissensquellen ist für die KI freigegeben; ohne quellen sucht es in allen.";
+        }
+        Set<com.aresstack.spaceharvester.application.query.DocumentKind> kinds = new LinkedHashSet<>();
+        for (String name : strings(arguments.path("arten"))) {
+            try {
+                kinds.add(com.aresstack.spaceharvester.application.query.DocumentKind.valueOf(
+                        name.strip().toUpperCase(java.util.Locale.ROOT)));
+            } catch (IllegalArgumentException unknown) {
+                // Unbekannte Arten fallen weg; die Suche läuft mit den übrigen.
+            }
+        }
+        String single = searched.size() == 1 ? searched.iterator().next() : null;
+        KeywordSearch.Query search = new KeywordSearch.Query(query, single, single == null ? searched : Set.of(),
+                Set.of()).ofKinds(kinds).withGlossarySynonyms(arguments.path("synonyme").asBoolean(false));
+        List<KeywordSearch.Hit> hits = ranked(search, arguments.path("nachbarseiten").asBoolean(false),
+                arguments.path("fachbegriffe").asBoolean(false));
+        StringBuilder b = new StringBuilder();
+        Set<PageKey> seen = new LinkedHashSet<>();
+        for (KeywordSearch.Hit hit : hits) {
+            PageKey key = new PageKey(hit.sourceId(), hit.pageId());
+            if (!searched.contains(hit.sourceId()) || !seen.add(key)) {
+                continue;
+            }
+            granted.add(key);
+            b.append("- ").append(ref(key)).append(" | ").append(oneLine(hit.title() == null ? hit.pageId()
+                    : hit.title())).append(" | Quelle ").append(hit.sourceId()).append('\n');
+            if (seen.size() >= SEARCH_HITS) {
+                break;
+            }
+        }
+        return seen.isEmpty() ? "Keine Treffer in den Wissensquellen. Versuche andere Begriffe."
+                : b.toString().stripTrailing();
+    }
+
+    private static Set<String> strings(JsonNode node) {
+        Set<String> values = new LinkedHashSet<>();
+        if (node != null && node.isArray()) {
+            for (JsonNode item : node) {
+                String value = item.asString("").strip();
+                if (!value.isEmpty()) {
+                    values.add(value);
+                }
+            }
+        } else if (node != null && node.isString() && !node.asString("").isBlank()) {
+            values.add(node.asString("").strip());
+        }
+        return values;
+    }
+
+    /** Läuft eine progressive Suche bis zum Ende oder zur Frist und gibt die Treffer nach Rang. */
+    private List<KeywordSearch.Hit> ranked(KeywordSearch.Query search, boolean neighbors, boolean technicalTerms) {
         AtomicReference<List<ProgressiveResult.RankedHit>> latest = new AtomicReference<>(List.of());
         ProgressiveSearch running = workspace.progressiveSearch(search, new ProgressiveSearchListener() {
             @Override
             public void ranked(List<ProgressiveResult.RankedHit> ranked) {
                 latest.set(ranked);
             }
-        }, neighbors);
+        }, neighbors, technicalTerms);
         this.search = running;
         if (cancelled) {
             running.cancel();

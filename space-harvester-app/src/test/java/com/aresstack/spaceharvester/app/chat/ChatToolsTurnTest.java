@@ -87,6 +87,81 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void theInternalSearchFindsAndReadsPagesOutsideTheScopeOnlyInReleasedSources() throws Exception {
+        PageKey open = page("datenhaus");
+        PageKey other = page("nachtlauf");
+        com.aresstack.spaceharvester.application.holdings.PageSelection onlyOpen =
+                new com.aresstack.spaceharvester.application.holdings.PageSelection(
+                        com.aresstack.spaceharvester.application.snapshot.PageSet.of(
+                                java.util.Map.of(open.sourceId(), List.of(open.pageId()))),
+                        space.counts(), space.spaces(), space.complete());
+        // Der Suchindex entsteht nach dem Sync im Hintergrund: erst warten, bis die globale Suche trifft.
+        ChatTools probe = new ChatTools(workspace, onlyOpen, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+            }
+        }).appSearch(() -> java.util.Set.of("handbuch"));
+        await(() -> probe.run(new AiChat.ToolCall("p", ChatTools.APP_SEARCH, "{\"text\":\"Spool\"}"))
+                .contains(ChatTools.ref(other)) ? true : null);
+        assertThat(probe.run(new AiChat.ToolCall("q", ChatTools.APP_SEARCH, "{\"text\":\"Spool\","
+                + "\"quellen\":[\"fremd\"]}"))).startsWith("Keine der genannten Wissensquellen");
+        // Markdown-Dateien sind Text, keine Wiki-Seiten: Der Filter nach Arten greift.
+        assertThat(probe.run(new AiChat.ToolCall("r", ChatTools.APP_SEARCH, "{\"text\":\"Spool\","
+                + "\"arten\":[\"PAGE\"]}"))).startsWith("Keine Treffer");
+
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c1", ChatTools.APP_SEARCH,
+                        "{\"text\":\"Spool\",\"arten\":[\"TEXT\"]}"))),
+                (request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c2", ChatTools.READ,
+                        "{\"kennung\":\"" + ChatTools.ref(other) + "\"}"))),
+                (request, listener) -> listener.completed("Bei vollem Spool [2].")));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", onlyOpen,
+                "Datenhaus", events, Runnable::run).knowledgeByTools(open)
+                .appSearch(() -> java.util.Set.of("handbuch")).releasing(releases()).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+        AiChat.Request first = port.requests.get(0);
+        assertThat(first.tools()).extracting(AiChat.Tool::name).contains(ChatTools.APP_SEARCH);
+        assertThat(first.messages().get(0).text()).contains(ChatKnowledge.APP_SEARCH_PROMPT);
+        List<AiChat.Message> afterSearch = port.requests.get(1).messages();
+        assertThat(afterSearch.get(afterSearch.size() - 1).text()).contains(ChatTools.ref(other))
+                .contains("Quelle handbuch");
+        List<AiChat.Message> afterRead = port.requests.get(2).messages();
+        assertThat(afterRead.get(afterRead.size() - 1).text()).startsWith("Quelle [2]").contains("vollem Spool");
+        assertThat(released()).contains(other);
+    }
+
+    @Test
+    void withoutTheSwitchThereIsNoInternalSearchAndItSearchesNoBlockedSource() throws Exception {
+        ScriptedChat port = new ScriptedChat(List.of((request, listener) -> listener.completed("Gut.")));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Hallo", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(port.requests.get(0).tools()).extracting(AiChat.Tool::name).doesNotContain(ChatTools.APP_SEARCH);
+        assertThat(port.requests.get(0).messages().get(0).text()).doesNotContain(ChatKnowledge.APP_SEARCH_PROMPT);
+
+        ChatTools blocked = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+            }
+        }).appSearch(java.util.Set::of);
+        assertThat(blocked.run(new AiChat.ToolCall("x", ChatTools.APP_SEARCH, "{\"text\":\"Spool\"}")))
+                .isEqualTo("Keine Wissensquelle ist für die KI freigegeben.");
+    }
+
+    @Test
     void theOpenPageGoesAlongEvenWhenTheResolvedScopeDoesNotKnowIt() throws Exception {
         // Ein Ticket aus der Suche, das die Auflösung des Bereichs nicht kennt: es ist trotzdem das, was man sieht.
         PageKey open = page("datenhaus");

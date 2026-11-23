@@ -292,6 +292,17 @@ public final class ChatTurn {
 
     private ChatTools.TermLookup termLookup;
 
+    /**
+     * Schalter „Interne Suche“ im Composer (Angelo 23.11.2026): {@code sources} liefert die Wissensquellen, die die
+     * globale Suche des Modells durchsuchen darf (die für die KI freigegebenen); {@code null} lässt das Werkzeug weg.
+     */
+    public ChatTurn appSearch(java.util.function.Supplier<Set<String>> sources) {
+        this.appSources = sources;
+        return this;
+    }
+
+    private java.util.function.Supplier<Set<String>> appSources;
+
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
     public void start() {
         Thread worker = new Thread(this::run, "chat-turn");
@@ -451,11 +462,14 @@ public final class ChatTurn {
         if (termLookup != null) {
             running.termLookup(termLookup);
         }
+        if (appSources != null) {
+            running.appSearch(appSources);
+        }
         tools = running;
         toolset = new ChatToolset() {
             @Override
             public List<AiChat.Tool> definitions() {
-                return ChatTools.definitions();
+                return running.toolDefinitions();
             }
 
             @Override
@@ -514,7 +528,8 @@ public final class ChatTurn {
             sourcesAnnounced = true;
         }
         reportSources();
-        List<AiChat.Message> messages = conversation(ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef),
+        List<AiChat.Message> messages = conversation(ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef,
+                appSources != null),
                 question);
         round(messages, 0);
     }

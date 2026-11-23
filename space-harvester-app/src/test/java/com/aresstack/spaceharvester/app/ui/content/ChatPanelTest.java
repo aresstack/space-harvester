@@ -308,6 +308,24 @@ class ChatPanelTest {
     }
 
     @Test
+    void theInternalSearchSwitchTogglesAndIsOffAtFirst() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        boolean[] on = new boolean[3];
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            on[0] = panel.appSearchOn();
+            panel.appSearch(true);
+            on[1] = panel.appSearchOn();
+            panel.appSearch(false);
+            on[2] = panel.appSearchOn();
+        });
+        assertThat(on).containsExactly(false, true, false);
+        assertThat(ChatPanel.appSearchSources(context.settings(), null)).isEmpty();
+    }
+
+    @Test
     void theKnowledgeLineNamesTheSelectionItsPagesAndWhatIsMissing() {
         assertThat(ChatPanel.knowledgeText(null, null, true, true)).isEqualTo(ChatPanel.NO_SELECTION);
         Selection page = new Selection("wiki", "DEV", "42", "Handbuch");
