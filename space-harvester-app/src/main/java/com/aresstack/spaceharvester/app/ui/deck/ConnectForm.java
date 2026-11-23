@@ -224,8 +224,15 @@ final class ConnectForm extends JPanel {
         getAccessibleContext().setAccessibleName("Neue TN3270-Verbindung");
         // Die Liste kommt beim ersten Zeigen (nur lesen, ohne Kopplungsdialog: der steht unter Sicherheit).
         addHierarchyListener(event -> {
-            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()
-                    && !loaded) {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) == 0 || !isShowing()) {
+                return;
+            }
+            if (settingsMode) {
+                // Die Seite zeigt bei jedem Öffnen, was gerade gemerkt ist (auch nach einer Verbindung im Terminal).
+                problem.setText(" ");
+                recall();
+                load();
+            } else if (!loaded) {
                 load();
             }
         });
@@ -262,7 +269,8 @@ final class ConnectForm extends JPanel {
 
     /** Zeigt die Einträge (für Tests auch direkt). */
     void show(List<ServerAccount> list) {
-        show(list, selected() == null ? AppState.shared().get(ENTRY_KEY) : selected().entry());
+        // Die Einstellungsseite zeigt immer das Gemerkte; das Formular behält eine eben getroffene Wahl.
+        show(list, settingsMode || selected() == null ? AppState.shared().get(ENTRY_KEY) : selected().entry());
     }
 
     private void show(List<ServerAccount> list, String wanted) {
@@ -276,7 +284,9 @@ final class ConnectForm extends JPanel {
         serverChanged();
         // Für den gemerkten Eintrag gelten auch die gemerkte Adresse und der gemerkte Port.
         AppState state = AppState.shared();
-        if (selected() != null && selected().entry().equals(state.get(ENTRY_KEY))) {
+        String stored = nonNull(state.get(ENTRY_KEY));
+        if (selected() != null ? selected().entry().equals(stored) : stored.isBlank()) {
+            // Auch ohne KeePass-Eintrag: eine von Hand eingetragene Adresse samt Port.
             host.setText(nonNull(state.get(HOST_KEY)));
             port.setText(nonNull(state.get(PORT_KEY)));
         }
@@ -398,8 +408,9 @@ final class ConnectForm extends JPanel {
     /** Ob die gemerkte Verbindung eingerichtet ist und „Neue Verbindung“ direkt verbinden darf. */
     static boolean isConfigured() {
         AppState state = AppState.shared();
-        String entry = state.get(ENTRY_KEY);
-        return state.getBoolean(CONFIGURED_KEY, false) && entry != null && !entry.isBlank();
+        // Eingerichtet ist ein KeePass-Eintrag oder eine von Hand eingetragene Adresse.
+        return state.getBoolean(CONFIGURED_KEY, false)
+                && (!nonNull(state.get(ENTRY_KEY)).isBlank() || !nonNull(state.get(HOST_KEY)).isBlank());
     }
 
     /** Die gemerkte Verbindung hat funktioniert (oder wurde gespeichert). */
@@ -418,7 +429,12 @@ final class ConnectForm extends JPanel {
         serverState.setText("Lade Einträge aus KeePass …");
         Background.run(accounts::accounts, list -> {
             show(list, wanted);
-            if (selected() == null) {
+            if (selected() == null && (wanted == null || wanted.isBlank())) {
+                // Von Hand eingetragene Adresse ohne KeePass-Eintrag (show hat Adresse und Port gesetzt).
+                if (!submit()) {
+                    failed.accept(problemText());
+                }
+            } else if (selected() == null) {
                 problem("Der gemerkte KeePass-Eintrag „" + wanted + "“ fehlt");
                 failed.accept(problemText());
             } else if (!submit()) {

@@ -116,6 +116,18 @@ public final class TerminalWorkspace extends JPanel {
                 "Neue TN3270-Verbindung öffnen");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         newPill.addActionListener(e -> newConnection());
+        // Rechtsklick: das Formular trotzdem zeigen, für Lesezeichen oder einen anderen Server.
+        newPill.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent event) {
+                formMenu(event);
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent event) {
+                formMenu(event);
+            }
+        });
         pillGroup.add(newPill);
         pills.add(newPill);
         JPanel head = new JPanel(new BorderLayout());
@@ -300,6 +312,23 @@ public final class TerminalWorkspace extends JPanel {
         form.connectDirectly(reason -> select(null));
     }
 
+    private void formMenu(java.awt.event.MouseEvent event) {
+        if (!event.isPopupTrigger()) {
+            return;
+        }
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem item = new javax.swing.JMenuItem("Verbindung wählen … (Lesezeichen, anderer Server)");
+        item.setFont(Comic.regular(13f));
+        item.addActionListener(e -> showForm());
+        menu.add(item);
+        menu.show(event.getComponent(), event.getX(), event.getY());
+    }
+
+    /** Das Formular „Neue Verbindung“ auch, wenn die Verbindung eingerichtet ist (Lesezeichen, anderer Server). */
+    void showForm() {
+        select(null);
+    }
+
     /** Eine nie verbundene Sitzung ist gescheitert: Reiter weg, Formular mit dem Grund. */
     private void failedFirst(TerminalSession session) {
         firstConnect.remove(session);
@@ -378,6 +407,10 @@ public final class TerminalWorkspace extends JPanel {
         select(session);
         pills.revalidate();
         pills.repaint();
+        // Was vor dem Beobachter geschah (etwa eine sehr schnelle Abweisung), holt changed jetzt nach.
+        if (session.state() != SessionState.CONNECTING) {
+            changed(session);
+        }
     }
 
     private void changed(TerminalSession session) {
