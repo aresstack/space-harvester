@@ -79,6 +79,11 @@ public record StoredSummary(String sourceId, String updateId, String spaceKey, S
         inputPages = List.copyOf(inputPages);
     }
 
+    /** Der Platz dieser Zusammenfassung in der Ablage (ADR 0034 §7): das Update ihrer Ebene. */
+    public SummaryScope.Update scope() {
+        return SummaryScope.update(sourceId, updateId, spaceKey);
+    }
+
     /** Ohne bekannten Beginn der Spanne. */
     public StoredSummary(String sourceId, String updateId, String spaceKey, String text, List<Statement> statements,
                          String model, Instant createdAt, Instant at, int unreadableChanges, String reportSha256,
