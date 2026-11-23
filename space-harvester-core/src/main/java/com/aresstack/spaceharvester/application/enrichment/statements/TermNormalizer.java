@@ -1,7 +1,6 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
-import java.text.Normalizer;
-import java.util.Locale;
+import com.aresstack.spaceharvester.application.text.TextGrounding;
 import java.util.Set;
 
 /**
@@ -28,7 +27,6 @@ public final class TermNormalizer {
 
     private static final Set<String> DETERMINERS = Set.of("der", "die", "das", "den", "dem", "des", "ein", "eine",
             "einen", "einem", "einer", "eines", "the", "a", "an");
-    private static final String EDGE = "\"'„“”‚‘’«»()[]{}.,;:!?";
 
     private TermNormalizer() {
     }
@@ -57,19 +55,6 @@ public final class TermNormalizer {
     }
 
     private static String basic(String text) {
-        if (text == null) {
-            return "";
-        }
-        String value = Normalizer.normalize(text, Normalizer.Form.NFC).toLowerCase(Locale.ROOT)
-                .replaceAll("\\s+", " ").trim();
-        int start = 0;
-        int end = value.length();
-        while (start < end && EDGE.indexOf(value.charAt(start)) >= 0) {
-            start++;
-        }
-        while (end > start && EDGE.indexOf(value.charAt(end - 1)) >= 0) {
-            end--;
-        }
-        return value.substring(start, end).trim();
+        return TextGrounding.comparable(text);
     }
 }

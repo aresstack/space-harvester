@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
+import com.aresstack.spaceharvester.application.text.TextSpan;
+import com.aresstack.spaceharvester.application.text.GroundedText;
+
 /**
  * Ein konkretes Vorkommen einer Nominalgruppe in genau dieser Textprojektion (#108): die Wörter mit Bereich, die
  * vorgeschlagene Grundform (ungeprüft) und der Suchwert mit seinem Verfahren. Kein Begriff: zwei Erwähnungen mit
