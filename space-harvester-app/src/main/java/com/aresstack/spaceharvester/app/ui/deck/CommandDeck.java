@@ -86,6 +86,13 @@ public final class CommandDeck {
      * @param betaViewAccess Netzweg (Proxy, Zertifikate) der App für BetaView; Zugangsdaten kommen aus {@code accounts}
      */
     public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess) {
+        // Das Terminal soll nicht tot bleiben: Trennt der Host, baut es sich neu auf (Einstellung „Neuaufbau“).
+        sessions.autoReconnect(com.aresstack.spaceharvester.deck.terminal.TerminalSessions.Reconnect.standard(
+                () -> TerminalSettings.shared().autoReconnect()), (delay, task) -> {
+                    javax.swing.Timer once = new javax.swing.Timer((int) delay.toMillis(), e -> task.run());
+                    once.setRepeats(false);
+                    once.start();
+                });
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), accounts);

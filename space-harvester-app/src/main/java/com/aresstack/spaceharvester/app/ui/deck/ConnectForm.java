@@ -51,6 +51,12 @@ final class ConnectForm extends JPanel {
     static final String COMMAND_KEY = "deck.terminal.start-command";
     /** Startkommando nach der Anmeldung, wie in MainframeMate voreingestellt. */
     static final String DEFAULT_COMMAND = "a";
+    /**
+     * Keep-Alive in Sekunden, wenn das Feld leer ist: OpenTerm schickt dann bei Leerlauf ein Telnet-NOP, damit Firewall
+     * und Host die Leitung nicht kappen. MainframeMate hat 0 (aus) und verliert deshalb die Verbindung (Angelo, 23.11.).
+     * 0 im Feld schaltet es aus.
+     */
+    static final int DEFAULT_KEEP_ALIVE = 60;
 
     final JComboBox<ServerAccount> server = Comic.combo(ConnectForm::accountText);
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
@@ -59,7 +65,7 @@ final class ConnectForm extends JPanel {
     final JComboBox<TerminalModel> model = Comic.combo();
     final JCheckBox tls = Comic.checkBox("Verschlüsselt (TLS)");
     final PlaceholderField codePage = new PlaceholderField(8, TerminalProfile.DEFAULT_CODE_PAGE);
-    final PlaceholderField keepAlive = new PlaceholderField(6, "aus");
+    final PlaceholderField keepAlive = new PlaceholderField(6, String.valueOf(DEFAULT_KEEP_ALIVE));
     final PlaceholderField command = new PlaceholderField(22, "nach der Anmeldung eingeben, z. B. ein Menü");
     private final JLabel problem = new JLabel(" ");
     private final JLabel serverState = Comic.muted(" ");
@@ -271,7 +277,7 @@ final class ConnectForm extends JPanel {
         int fallback = account != null && account.port().isPresent() ? account.port().getAsInt()
                 : tls.isSelected() ? TerminalProfile.DEFAULT_TLS_PORT : TerminalProfile.DEFAULT_PORT;
         int portNumber = number(port.getText(), fallback, "Port");
-        int keepAliveSeconds = number(keepAlive.getText(), 0, "Keep-Alive");
+        int keepAliveSeconds = number(keepAlive.getText(), DEFAULT_KEEP_ALIVE, "Keep-Alive");
         return new TerminalProfile(target, portNumber, (TerminalModel) model.getSelectedItem(), tls.isSelected(),
                 keepAliveSeconds, codePage.getText());
     }

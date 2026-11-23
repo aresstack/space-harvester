@@ -246,6 +246,7 @@ public final class TerminalWorkspace extends JPanel {
         add(foot, BorderLayout.SOUTH);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        sessions.onReopened((lost, fresh) -> SwingUtilities.invokeLater(() -> reopened(lost, fresh)));
         sessions.all().forEach(this::added);
         settings.observe(() -> SwingUtilities.invokeLater(this::applySettings));
         applySettings();
@@ -279,6 +280,21 @@ public final class TerminalWorkspace extends JPanel {
         }
     }
 
+    /** Automatischer Neuaufbau: Die Nachfolgerin übernimmt Herkunft und Auswahl, der alte Reiter verschwindet. */
+    private void reopened(TerminalSession lost, TerminalSession fresh) {
+        // Nur wer die verlorene Sitzung vor sich hatte, bekommt die Nachfolgerin; sonst bleibt die Eingabe, wo sie ist.
+        TerminalSession target = selected == lost || selected == null ? fresh : selected;
+        ConnectForm.Request origin = origins.get(lost);
+        if (origin != null) {
+            origins.put(fresh, origin);
+        }
+        if (pillOf.containsKey(lost)) {
+            closeSession(lost);
+        }
+        added(fresh);
+        select(target);
+    }
+
     private void added(TerminalSession session) {
         if (pillOf.containsKey(session)) {
             return;
@@ -309,7 +325,10 @@ public final class TerminalWorkspace extends JPanel {
                 session.macro().tab();
             }
         }));
-        select(session);
+        if (session.attempt() == 0) {
+            // Ein automatischer Neuaufbau holt die Eingabe nicht von einer anderen Sitzung weg (reopened entscheidet).
+            select(session);
+        }
         pills.revalidate();
         pills.repaint();
     }
@@ -659,8 +678,9 @@ public final class TerminalWorkspace extends JPanel {
         }
         String text = session.profile().label() + " · " + session.state().label()
                 + session.failure().map(reason -> " – " + reason + hint(session, reason)).orElse("")
-                + (session.state() == SessionState.CONNECTED ? session.note().map(note -> " · " + note).orElse("")
-                        : "");
+                + session.note().filter(note -> session.state() == SessionState.CONNECTED
+                        || note.startsWith("Verbindung verloren") || note.startsWith("Kein automatischer"))
+                        .map(note -> " · " + note).orElse("");
         status.setText(text);
         status.setForeground(session.state() == SessionState.FAILED ? Comic.RED : Comic.MUTED);
     }
