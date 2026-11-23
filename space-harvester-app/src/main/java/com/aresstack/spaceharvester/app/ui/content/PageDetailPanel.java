@@ -358,6 +358,8 @@ public final class PageDetailPanel extends JPanel {
     private DeliveredPage page;
     private boolean assetsLoaded;
     private boolean readingLoaded;
+    /** Die Sprachausgabe der Leseansicht, beim ersten Gebrauch angelegt. */
+    private com.aresstack.spaceharvester.app.speech.ReadAloudBinding readAloudBinding;
     private boolean referencesLoaded;
     /** Zählt die Ladevorgänge der Verweise; ein überholter Vorgang zeigt sein Ergebnis nicht mehr. */
     private long referencesGeneration;
@@ -3291,6 +3293,7 @@ public final class PageDetailPanel extends JPanel {
         String source = sourceId;
         String id = pageId;
         DeliveredPage shown = page;
+        loadReadAloud(runtime, source, id, shown);
         Background.run(() -> runtime.workspace().cachedReadingView(source, id)
                 .map(view -> new ShownView(view, prepare(runtime, view))), cached -> {
             if (shown != page) {
@@ -3307,6 +3310,55 @@ public final class PageDetailPanel extends JPanel {
                 loadLiveReading(runtime, source, id, shown, null);
             }
         });
+    }
+
+    /**
+     * Vorlesen in der Leseansicht (Angelo 23.11.2026): der Knopf erscheint mit eingerichteter Sprachausgabe, vorgelesen
+     * wird die Textfassung der Seite, die nur mit KI-Freigabe kommt.
+     */
+    private void loadReadAloud(AppRuntime runtime, String source, String id, DeliveredPage shown) {
+        boolean available;
+        try {
+            available = runtime.workspace().pageReadAloudAvailable();
+        } catch (RuntimeException e) {
+            available = false;
+        }
+        readingPane.readAloud().bind(available ? readAloudBinding() : null);
+        if (!available) {
+            return;
+        }
+        com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
+        Background.run(() -> workspace.pageReadAloudText(source, id).orElse(""), text -> {
+            if (shown == page) {
+                // vor jedem Vorlesen erneut: eine zurückgenommene KI-Freigabe gilt sofort (ADR 0028)
+                readingPane.readAloud().speechText(text, () -> {
+                    try {
+                        return workspace.pageReadAloudText(source, id).isPresent();
+                    } catch (RuntimeException e) {
+                        return false;
+                    }
+                });
+            }
+        }, error -> {
+            // ohne Text bleibt der Knopf aus; der Tooltip nennt den Grund
+        });
+    }
+
+    /** Die eine Sprachausgabe der Leseansicht, über den Vorlese-Ablauf des Enterprise AI Client. */
+    private com.aresstack.spaceharvester.app.speech.ReadAloudBinding readAloudBinding() {
+        if (readAloudBinding == null) {
+            readAloudBinding = new com.aresstack.spaceharvester.app.speech.ReadAloudBinding(() -> {
+                AppRuntime current = context.runtime();
+                if (current == null) {
+                    throw new IllegalStateException("Der Space Harvester läuft nicht");
+                }
+                return current.workspace().pageReadAloud(
+                        new com.aresstack.spaceharvester.app.speech.JavaSoundAudioPlayback());
+            }, message -> context.events().publish(new com.aresstack.spaceharvester.app.event.StatusMessageEvent(
+                    "Vorlesen nicht möglich: " + message, STATUS_MS,
+                    com.aresstack.spaceharvester.app.event.Severity.WARN)));
+        }
+        return readAloudBinding;
     }
 
     /** Eine Leseansicht und ihre vorbereitete Darstellung. */
@@ -4549,6 +4601,11 @@ public final class PageDetailPanel extends JPanel {
                             && entry.key().pageId().equals(pageId));
             if (mine) {
                 javax.swing.SwingUtilities.invokeLater(() -> {
+                    // Vorlesen: die Freigabe hat sich geändert, das laufende endet und der Text wird neu gelesen
+                    readingPane.readAloud().stop();
+                    if (readingLoaded && page != null && context.runtime() != null) {
+                        loadReadAloud(context.runtime(), sourceId, pageId, page);
+                    }
                     imagesLoaded = false;
                     if (IMAGES.equals(selectedTab())) {
                         loadImages();

@@ -38,6 +38,17 @@ public interface PodcastSpeech {
         return 1;
     }
 
+    /**
+     * Vorlesen mit diesem Modell und dieser Stimme über den Vorlese-Ablauf des Enterprise AI Client, abgespielt über
+     * {@code playback} (Leseansicht einer Seite, Angelo 23.11.2026).
+     *
+     * @param voice die feste Stimme oder {@code null}, dann wählt der Dienst
+     * @throws IllegalStateException ohne eingerichtete Sprachausgabe
+     */
+    default ReadAloud readAloud(String model, String voice, ReadAloud.Playback playback) {
+        throw new IllegalStateException("Keine Sprachausgabe eingerichtet");
+    }
+
     /** Keine Sprachausgabe. */
     PodcastSpeech NONE = new PodcastSpeech() {
         @Override
