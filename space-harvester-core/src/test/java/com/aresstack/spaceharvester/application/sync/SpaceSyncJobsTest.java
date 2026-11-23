@@ -385,6 +385,26 @@ class SpaceSyncJobsTest {
         assertThat(store.repository.find(new PageKey("wiki", "2"))).isEmpty();
     }
 
+    /**
+     * Angelo 23.11.2026: Abgleiche standen bei 265/264, 18/17, 100/99. Eine Seite, die die Inventur nicht mehr listet
+     * (gelöscht oder gesperrt), bearbeitet der Plan trotzdem; sie zählt dann auch als gefunden, nie mehr erledigt als
+     * gefunden.
+     */
+    @Test
+    void aPageMissingFromTheInventoryCountsAsFoundSoNeverMoreIsDoneThanFound() {
+        syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+        source.remove("2");
+
+        JobStatus second = syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+
+        JobStatus done = syncs.status(second.id(), "client:a").status();
+        assertThat(done.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.progress().processed()).isEqualTo(3);
+        assertThat(done.progress().discovered()).isEqualTo(done.progress().processed());
+    }
+
     @Test
     void anAbortedInventoryFailsWithoutConfirmingAndLeavesTheCacheUntouched() {
         source.failListingAtCall(0);

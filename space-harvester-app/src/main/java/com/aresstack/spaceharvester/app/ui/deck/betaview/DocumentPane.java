@@ -50,6 +50,17 @@ final class DocumentPane extends JPanel {
 
         void info(DocumentTab document);
 
+        /** Kurzinfo aus der geöffneten Seite (ohne Serveraufruf), wie „ℹ“ in MainframeMate. */
+        void quickInfo(DocumentTab document, String headline, List<com.aresstack.spaceharvester.deck.betaview.InfoLine> lines);
+
+        void print(DocumentTab document);
+
+        void notes(DocumentTab document);
+
+        void marks(DocumentTab document);
+
+        void searchText(DocumentTab document, String query);
+
         void close(DocumentTab document);
 
         void closeAll();
@@ -93,8 +104,25 @@ final class DocumentPane extends JPanel {
     final IconButton download = tool(ComposerIcons.download(), "Herunterladen (alle Seiten, Original)");
     final IconButton downloadOptions = tool(BetaViewIcons.downloadOptions(), "Herunterladen mit Optionen …");
     final IconButton bookmark = tool(BetaViewIcons.star(), "Dokument merken");
-    final IconButton info = tool(ComposerIcons.info(), "Dokumentinformationen");
+    final IconButton print = tool(BetaViewIcons.print(), "Druckinformationen");
+    final IconButton info = tool(ComposerIcons.document(), "Dokumentinformationen (Detail)");
+    final IconButton quickInfo = tool(ComposerIcons.info(), "Kurzinfo anzeigen");
+    final IconButton notesToggle = tool(ComposerIcons.pencil(), "Notizen ein-/ausblenden");
+    final IconButton marksToggle = tool(BetaViewIcons.flag(), "Markierte Bereiche ein-/ausblenden");
+    final IconButton searchToggle = tool(ComposerIcons.magnifier(), "Volltextsuche im Dokument ein-/ausblenden");
     final IconButton close = tool(ComposerIcons.close(), "Dokument schließen (auch auf dem Server)");
+    final IconButton closeAll = tool(BetaViewIcons.closeAll(), "Alle Dokumente schließen (auch auf dem Server)");
+    static final String DRAWER_NONE = "none";
+    static final String DRAWER_NOTES = "notes";
+    static final String DRAWER_MARKS = "marks";
+    static final String DRAWER_SEARCH = "search";
+    final JTextArea notesText = drawerText();
+    final JTextArea marksText = drawerText();
+    final JTextArea searchResult = drawerText();
+    final PlaceholderField searchField = new PlaceholderField(18, "Volltextsuche im Dokument …");
+    private final CardLayout drawerCards = new CardLayout();
+    private final JPanel drawer = new JPanel(drawerCards);
+    private String activeDrawer = DRAWER_NONE;
     private Doc current;
 
     DocumentPane(Actions actions) {
@@ -120,12 +148,29 @@ final class DocumentPane extends JPanel {
         downloadOptions.addActionListener(e -> withCurrent(doc -> actions.downloadWithOptions(doc.tab)));
         bookmark.addActionListener(e -> withCurrent(doc -> actions.bookmark(doc.tab)));
         info.addActionListener(e -> withCurrent(doc -> actions.info(doc.tab)));
+        print.addActionListener(e -> withCurrent(doc -> actions.print(doc.tab)));
+        quickInfo.addActionListener(e -> withCurrent(doc -> {
+            if (doc.opened != null) {
+                actions.quickInfo(doc.tab, doc.opened.headline(), doc.opened.info());
+            }
+        }));
+        notesToggle.addActionListener(e -> toggleDrawer(DRAWER_NOTES));
+        marksToggle.addActionListener(e -> toggleDrawer(DRAWER_MARKS));
+        searchToggle.addActionListener(e -> toggleDrawer(DRAWER_SEARCH));
         close.addActionListener(e -> withCurrent(doc -> actions.close(doc.tab)));
+        closeAll.addActionListener(e -> {
+            if (!docs.isEmpty()) {
+                actions.closeAll();
+            }
+        });
+        searchField.addActionListener(e -> fireSearch());
 
-        JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+        // Reihenfolge wie die Werkzeugleiste in MainframeMate (DocumentPreviewPanel); bricht bei schmaler Breite um.
+        JPanel tools = new JPanel(new WrapLayout(FlowLayout.RIGHT, 2, 2));
         tools.setOpaque(false);
         for (JComponent part : new JComponent[] {refresh, first, previous, pageField, pageCount, next, last,
-                download, downloadOptions, bookmark, info, close}) {
+                download, downloadOptions, bookmark, print, info, quickInfo, notesToggle, marksToggle, searchToggle,
+                close, closeAll}) {
             tools.add(part);
         }
         // Zwei Zeilen: oben die Dokumente (brechen bei schmaler Breite um), darunter die Werkzeuge zum gewählten.
@@ -136,6 +181,10 @@ final class DocumentPane extends JPanel {
                 BorderFactory.createEmptyBorder(6, 10, 6, 10)));
         head.add(pillRow, BorderLayout.CENTER);
         head.add(tools, BorderLayout.SOUTH);
+        JPanel top = new JPanel(new BorderLayout());
+        top.setOpaque(false);
+        top.add(head, BorderLayout.NORTH);
+        top.add(buildDrawer(), BorderLayout.CENTER);
 
         Comic.noAutoScroll(text);
         busy = new BusyOverlay(Comic.scroll(text));
@@ -146,9 +195,139 @@ final class DocumentPane extends JPanel {
         center.setOpaque(false);
         center.add(empty, "empty");
         center.add(busy, "doc");
-        add(head, BorderLayout.NORTH);
+        add(top, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
         showCurrent();
+    }
+
+    /** Die Schublade unter den Werkzeugen: Notizen, markierte Bereiche oder Volltextsuche (wie MainframeMate). */
+    private JComponent buildDrawer() {
+        drawer.setOpaque(false);
+        drawer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(6, 10, 6, 10)));
+        JPanel none = new JPanel();
+        none.setOpaque(false);
+        drawer.add(none, DRAWER_NONE);
+        drawer.add(drawerCard("Notizen", notesText, "Notizen neu laden",
+                () -> withCurrent(doc -> actions.notes(doc.tab))), DRAWER_NOTES);
+        drawer.add(drawerCard("Markierte Bereiche", marksText, "Markierte Bereiche neu laden",
+                () -> withCurrent(doc -> actions.marks(doc.tab))), DRAWER_MARKS);
+        JPanel search = new JPanel(new BorderLayout(0, 4));
+        search.setOpaque(false);
+        search.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(searchField), BorderLayout.NORTH);
+        search.add(drawerScroll(searchResult), BorderLayout.CENTER);
+        drawer.add(search, DRAWER_SEARCH);
+        drawer.setVisible(false);
+        return drawer;
+    }
+
+    private static JComponent drawerCard(String title, JTextArea area, String refreshTip, Runnable refreshAction) {
+        IconButton reload = new IconButton(BetaViewIcons.refresh(), refreshTip).compact();
+        reload.addActionListener(e -> refreshAction.run());
+        JPanel head = new JPanel(new BorderLayout());
+        head.setOpaque(false);
+        head.add(Comic.muted(title), BorderLayout.CENTER);
+        head.add(reload, BorderLayout.EAST);
+        JPanel card = new JPanel(new BorderLayout(0, 4));
+        card.setOpaque(false);
+        card.add(head, BorderLayout.NORTH);
+        card.add(drawerScroll(area), BorderLayout.CENTER);
+        return card;
+    }
+
+    private static JComponent drawerScroll(JTextArea area) {
+        JComponent scroll = Comic.scroll(area);
+        scroll.setPreferredSize(new java.awt.Dimension(200, 96));
+        return scroll;
+    }
+
+    private static JTextArea drawerText() {
+        JTextArea area = Comic.code();
+        area.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 11));
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        Comic.noAutoScroll(area);
+        return area;
+    }
+
+    /** Öffnet oder schließt eine Schublade; Notizen und Markierungen laden beim ersten Öffnen (wie MainframeMate). */
+    void toggleDrawer(String name) {
+        if (activeDrawer.equals(name)) {
+            activeDrawer = DRAWER_NONE;
+        } else {
+            activeDrawer = name;
+            if (DRAWER_NOTES.equals(name) && notesText.getText().isEmpty()) {
+                withCurrent(doc -> actions.notes(doc.tab));
+            } else if (DRAWER_MARKS.equals(name) && marksText.getText().isEmpty()) {
+                withCurrent(doc -> actions.marks(doc.tab));
+            } else if (DRAWER_SEARCH.equals(name)) {
+                searchField.requestFocusInWindow();
+            }
+        }
+        drawerCards.show(drawer, activeDrawer);
+        drawer.setVisible(!DRAWER_NONE.equals(activeDrawer));
+        notesToggle.marked(DRAWER_NOTES.equals(activeDrawer));
+        marksToggle.marked(DRAWER_MARKS.equals(activeDrawer));
+        searchToggle.marked(DRAWER_SEARCH.equals(activeDrawer));
+        revalidate();
+        repaint();
+    }
+
+    String activeDrawer() {
+        return activeDrawer;
+    }
+
+    private void fireSearch() {
+        String query = searchField.getText().strip();
+        if (!query.isEmpty()) {
+            withCurrent(doc -> actions.searchText(doc.tab, query));
+        }
+    }
+
+    /** Notizen zum Dokument sind da (nur übernehmen, wenn es noch das gezeigte ist). */
+    void notes(DocumentTab tab, String text) {
+        if (isCurrent(tab)) {
+            notesText.setText(text);
+            notesText.setCaretPosition(0);
+        }
+    }
+
+    void marks(DocumentTab tab, String text) {
+        if (isCurrent(tab)) {
+            marksText.setText(text);
+            marksText.setCaretPosition(0);
+        }
+    }
+
+    void searchResult(DocumentTab tab, String text) {
+        if (isCurrent(tab)) {
+            searchResult.setText(text);
+            searchResult.setCaretPosition(0);
+        }
+    }
+
+    private boolean isCurrent(DocumentTab tab) {
+        return current != null && current.tab.key().equals(tab.key());
+    }
+
+    /** Ein anderes Dokument ist gewählt: die Inhalte der Schublade gehören nicht mehr dazu. */
+    private void clearDrawer() {
+        notesText.setText("");
+        marksText.setText("");
+        searchResult.setText("");
+        if (DRAWER_NOTES.equals(activeDrawer)) {
+            withCurrent(doc -> {
+                if (doc.opened != null) {
+                    actions.notes(doc.tab);
+                }
+            });
+        } else if (DRAWER_MARKS.equals(activeDrawer)) {
+            withCurrent(doc -> {
+                if (doc.opened != null) {
+                    actions.marks(doc.tab);
+                }
+            });
+        }
     }
 
     private static IconButton tool(javax.swing.Icon icon, String tooltip) {
@@ -197,6 +376,12 @@ final class DocumentPane extends JPanel {
         doc.text = "";
         select(doc, false);
         actions.page(doc.tab, 1);
+        // Eine offene Schublade füllt sich, sobald das Dokument geladen ist.
+        if (DRAWER_NOTES.equals(activeDrawer) && notesText.getText().isEmpty()) {
+            actions.notes(doc.tab);
+        } else if (DRAWER_MARKS.equals(activeDrawer) && marksText.getText().isEmpty()) {
+            actions.marks(doc.tab);
+        }
     }
 
     /** Der Text einer Seite ist da. */
@@ -243,6 +428,13 @@ final class DocumentPane extends JPanel {
             current = null;
             if (!docs.isEmpty()) {
                 select(docs.values().iterator().next(), true);
+            } else {
+                notesText.setText("");
+                marksText.setText("");
+                searchResult.setText("");
+                if (!DRAWER_NONE.equals(activeDrawer)) {
+                    toggleDrawer(activeDrawer);
+                }
             }
         }
         refreshPills();
@@ -258,6 +450,12 @@ final class DocumentPane extends JPanel {
         pills.clear();
         docs.clear();
         current = null;
+        notesText.setText("");
+        marksText.setText("");
+        searchResult.setText("");
+        if (!DRAWER_NONE.equals(activeDrawer)) {
+            toggleDrawer(activeDrawer);
+        }
         refreshPills();
         showCurrent();
     }
@@ -314,6 +512,22 @@ final class DocumentPane extends JPanel {
 
     private JPopupMenu menu(Doc doc) {
         JPopupMenu menu = new JPopupMenu();
+        // Wie das Kontextmenü eines Dokumentreiters in MainframeMate: Herunterladen, Merken, Schließen.
+        JMenuItem downloadItem = new JMenuItem("Herunterladen");
+        downloadItem.addActionListener(e -> {
+            if (doc.opened != null) {
+                actions.download(doc.tab);
+            }
+        });
+        JMenuItem bookmarkItem = new JMenuItem("Merken");
+        bookmarkItem.addActionListener(e -> {
+            if (doc.opened != null) {
+                actions.bookmark(doc.tab);
+            }
+        });
+        menu.add(downloadItem);
+        menu.add(bookmarkItem);
+        menu.addSeparator();
         JMenuItem closeOne = new JMenuItem("Schließen");
         closeOne.addActionListener(e -> actions.close(doc.tab));
         JMenuItem closeAll = new JMenuItem("Alle schließen");
@@ -325,7 +539,11 @@ final class DocumentPane extends JPanel {
 
     /** Zeigt ein Dokument; ist es noch nicht geladen und {@code load}, öffnet es die Sitzung. */
     private void select(Doc doc, boolean load) {
+        boolean switched = current != doc;
         current = doc;
+        if (switched) {
+            clearDrawer();
+        }
         ComposerToggleButton pill = pills.get(doc.tab.key());
         if (pill != null) {
             pill.setSelected(true);
@@ -368,7 +586,13 @@ final class DocumentPane extends JPanel {
         downloadOptions.setEnabled(loaded);
         bookmark.setEnabled(loaded);
         info.setEnabled(loaded);
+        print.setEnabled(loaded);
+        quickInfo.setEnabled(loaded);
+        notesToggle.setEnabled(loaded);
+        marksToggle.setEnabled(loaded);
+        searchToggle.setEnabled(loaded);
         close.setEnabled(has);
+        closeAll.setEnabled(!docs.isEmpty());
     }
 
     /** Höchstlänge des Titels in der Pille; der volle Titel steht im Tooltip. */

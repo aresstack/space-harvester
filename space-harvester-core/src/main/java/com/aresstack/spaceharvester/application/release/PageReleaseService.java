@@ -95,26 +95,10 @@ public final class PageReleaseService {
     }
 
     /**
-     * Trägt die lokal gespeicherten Seiten der Auswahl ein, mit der Wurzel der Auswahl als Knoten (ADR 0028,
-     * Abschnitt 3): so beim Senden im Chat. Was nicht lokal ist, kommt nicht auf die Liste; schon eingetragene Seiten
-     * behalten ihren ersten Eintrag. Ohne Quellenzugriff.
-     *
-     * @return die neu eingetragenen Seiten
-     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wie {@link Holdings#resolve}
-     */
-    public List<PageReleases.Entry> release(AccessContext caller, Selection selection) {
-        Instant now = clock.instant();
-        List<PageReleases.Entry> entries = new ArrayList<>();
-        for (Holdings.StoredPage page : holdings.storedPages(caller, selection)) {
-            entries.add(new PageReleases.Entry(page.key(), page.spaceKey(), page.rootPageId(), PageReleases.CHAT,
-                    now));
-        }
-        return entries.isEmpty() ? List.of() : pages.add(entries);
-    }
-
-    /**
      * Trägt genau eine lokal gespeicherte Seite ein, ohne ihre Unterseiten, mit der Seite selbst als Knoten: so, wenn
-     * der Chat sie per Werkzeug an das Modell liefert (ADR 0033). Nicht lokal oder ohne Leserecht: nichts.
+     * der Chat ihren Text an das Modell liefert (ADR 0033 Punkt 8). Das ist der einzige Weg auf die Liste: Eine ganze
+     * Auswahl (Space, Teilbaum) einzutragen gibt es nicht mehr, seit das Senden ohne Werkzeuge so ganze Spaces der KI
+     * freigab (Angelo 22.11.2026). Nicht lokal oder ohne Leserecht: nichts.
      *
      * @return der neue Eintrag, leer, wenn die Seite schon auf der Liste stand oder nicht lokal ist
      */
@@ -132,20 +116,6 @@ public final class PageReleaseService {
             }
         }
         return List.of();
-    }
-
-    /**
-     * Wie viele lokal gespeicherte Seiten der Auswahl neu auf die Liste kämen, damit der Chat es vor dem Senden nennen
-     * kann; trägt nichts ein.
-     */
-    public int newPages(AccessContext caller, Selection selection) {
-        int count = 0;
-        for (Holdings.StoredPage page : holdings.storedPages(caller, selection)) {
-            if (!pages.contains(page.key())) {
-                count++;
-            }
-        }
-        return count;
     }
 
     /** Die Gruppen der Liste, nach Quelle, Space und Knoten (der ganze Space zuerst, dann nach Titel). */

@@ -13,7 +13,6 @@ import com.aresstack.spaceharvester.deck.editor.TextSearch;
 import com.aresstack.spaceharvester.deck.editor.VersionHistory;
 import com.aresstack.spaceharvester.mainframe.outline.Outline;
 import com.aresstack.spaceharvester.mainframe.outline.SourceLanguage;
-import com.aresstack.spaceharvester.mainframe.syntax.NaturalSubroutineHighlighter;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
@@ -129,6 +128,9 @@ public final class DocumentEditor extends JPanel {
     private EditorLanguage effective = EditorLanguage.AUTO;
     private Outline outline;
     private long parseTicket;
+    /** Fasst schnelles Tippen zusammen, bevor die Natural-Blöcke neu gefärbt werden. */
+    private final javax.swing.Timer blocks;
+    private final Runnable recolor = () -> SwingUtilities.invokeLater(this::recolorBlocks);
 
     public DocumentEditor(EditorSession session) {
         super(new BorderLayout());
@@ -136,6 +138,8 @@ public final class DocumentEditor extends JPanel {
         setOpaque(true);
         setBackground(Color.WHITE);
         configure(area);
+        blocks = new javax.swing.Timer(300, e -> NaturalBlockHighlighter.apply(area));
+        blocks.setRepeats(false);
         area.setEditable(false);
         area.getAccessibleContext().setAccessibleName(session.name());
         area.getDocument().addDocumentListener(new DocumentListener() {
@@ -227,15 +231,18 @@ public final class DocumentEditor extends JPanel {
             if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) != 0) {
                 if (isDisplayable()) {
                     session.observe(observer);
+                    NaturalBlockHighlighter.observe(recolor);
                     render();
                 } else {
                     session.unobserve(observer);
                     reparse.stop();
                     refind.stop();
+                    NaturalBlockHighlighter.unobserve(recolor);
                 }
             }
         });
         session.observe(observer);
+        NaturalBlockHighlighter.observe(recolor);
         render();
     }
 
@@ -531,9 +538,9 @@ public final class DocumentEditor extends JPanel {
 
     private void showNaturalBlocks() {
         if (effective.parser().filter(l -> l == SourceLanguage.NATURAL).isPresent()) {
-            NaturalSubroutineHighlighter.apply(area);
+            NaturalBlockHighlighter.apply(area);
         } else {
-            NaturalSubroutineHighlighter.clearHighlights(area);
+            NaturalBlockHighlighter.clear(area);
         }
     }
 
@@ -707,6 +714,21 @@ public final class DocumentEditor extends JPanel {
                 diff();
             }
         }
+        // Wie SplitPreviewTab.scheduleSubroutineHighlighting in MainframeMate: nach 300 ms Ruhe neu einfärben.
+        if (natural()) {
+            blocks.restart();
+        }
+    }
+
+    private boolean natural() {
+        return SyntaxStyles.NATURAL.equals(area.getSyntaxEditingStyle());
+    }
+
+    /** Färbt die Natural-Blöcke sofort neu (etwa nach geänderten Farben in den Einstellungen). */
+    public void recolorBlocks() {
+        if (natural()) {
+            NaturalBlockHighlighter.apply(area);
+        }
     }
 
     private void render() {
@@ -745,6 +767,9 @@ public final class DocumentEditor extends JPanel {
             area.discardAllEdits();
         } finally {
             filling = false;
+        }
+        if (natural()) {
+            SwingUtilities.invokeLater(() -> NaturalBlockHighlighter.apply(area));
         }
         session.edit(area.getText());
         undo.setEnabled(false);
