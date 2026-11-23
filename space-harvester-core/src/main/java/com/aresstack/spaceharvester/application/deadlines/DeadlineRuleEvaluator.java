@@ -15,6 +15,9 @@ import com.aresstack.spaceharvester.application.extraction.ExtractedField;
 import com.aresstack.spaceharvester.application.extraction.FieldStatus;
 import com.aresstack.spaceharvester.application.extraction.Qualifier;
 
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
@@ -38,6 +41,11 @@ import java.util.regex.Pattern;
  */
 public final class DeadlineRuleEvaluator {
 
+    /** Buchungskonto im Vorschuss- oder Verwahrungsbuch: zehnstellig, beginnt mit 90 (Glossar ZRB, Buchungskonto). */
+    private static final Pattern BOOKING_ACCOUNT = Pattern.compile("90\\d{8}");
+
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+
     /** Wer Einzelgenehmigungen erteilen darf: das BMF (§ 60 Abs. 1 Satz 2 BHO, Nr. 8 Satz 5 VO/VW-RiB). */
     private static final Pattern GRANTING_AUTHORITY = Pattern.compile(
             "(?i)\\bBMF\\b|Bundesministerium\\s+der\\s+Finanzen|Bundesfinanzministerium");
@@ -46,9 +54,16 @@ public final class DeadlineRuleEvaluator {
     static final String GRANT_CLAIMED = "Genehmigung des BMF behauptet, Nachweis prüfen";
 
     private final DeadlineRuleCatalog catalog;
+    private final Clock clock;
 
     public DeadlineRuleEvaluator(DeadlineRuleCatalog catalog) {
+        this(catalog, Clock.systemDefaultZone());
+    }
+
+    /** @param clock Prüftag; eine befristete Regel ({@link DeadlineRule#validUntil()}) wirkt danach nicht mehr */
+    public DeadlineRuleEvaluator(DeadlineRuleCatalog catalog, Clock clock) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
+        this.clock = Objects.requireNonNull(clock, "clock");
     }
 
     /**
@@ -126,6 +141,9 @@ public final class DeadlineRuleEvaluator {
             missing.add("entstehungsjahr");
         }
         Set<String> categories = values(matter, DeadlineFieldKeys.ACCOUNT_CATEGORY);
+        Set<String> bookingPoints = bookingPoints(matter);
+        Set<String> sections = values(matter, DeadlineFieldKeys.SECTION);
+        LocalDate today = LocalDate.now(clock);
         List<ExtractedField> granted = individual(matter, Qualifier.GRANTED);
         List<ExtractedField> requested = individual(matter, Qualifier.REQUESTED);
 
@@ -136,8 +154,8 @@ public final class DeadlineRuleEvaluator {
                     || !rule.displaces().equals(Optional.of(standard.get().id()))) {
                 continue;
             }
-            ExceptionEvidence evidence = evidence(rule, categories, granted, requested, request.originYear(),
-                    request.issuer());
+            ExceptionEvidence evidence = evidence(rule, categories, bookingPoints, sections, granted, requested,
+                    request.originYear(), request.issuer(), today);
             if (evidence == null) {
                 continue;
             }
@@ -184,9 +202,10 @@ public final class DeadlineRuleEvaluator {
     }
 
     /** Beleg einer Ausnahme oder {@code null}, wenn das Dokument nichts auf sie hindeutet. */
-    private static ExceptionEvidence evidence(DeadlineRule rule, Set<String> categories, List<ExtractedField> granted,
+    private static ExceptionEvidence evidence(DeadlineRule rule, Set<String> categories, Set<String> bookingPoints,
+                                              Set<String> sections, List<ExtractedField> granted,
                                               List<ExtractedField> requested, Optional<Integer> originYear,
-                                              Optional<String> issuer) {
+                                              Optional<String> issuer, LocalDate today) {
         if (rule.individual()) {
             if (!granted.isEmpty()) {
                 // Der Sachverhaltsbezug folgt aus dem Abschnitt; die Rechtswirkung aus der Befugnis des Ausstellers.
@@ -203,11 +222,19 @@ public final class DeadlineRuleEvaluator {
             }
             return null;
         }
-        if (rule.categories().stream().noneMatch(categories::contains)) {
+        if (rule.categories().stream().noneMatch(categories::contains)
+                && rule.bookingPoints().stream().noneMatch(bookingPoints::contains)
+                && (rule.sections().isEmpty() || rule.sections().stream().noneMatch(sections::contains))) {
             return null;
         }
-        return new ExceptionEvidence(rule.ref(), Proof.PROVEN, effectiveness(rule, originYear), Proof.PROVEN,
-                List.of(rule.legalBasis() + ": " + rule.wording()));
+        List<String> evidence = new ArrayList<>();
+        evidence.add(rule.legalBasis() + ": " + rule.wording());
+        rule.validUntil().filter(today::isAfter).ifPresent(end -> evidence.add("Nur gültig bis "
+                + end.format(DAY)
+                + (rule.locator().isEmpty() ? "" : " (" + rule.locator() + ")")
+                + "; danach nur mit Nachweis einer neuen Ausnahme"));
+        return new ExceptionEvidence(rule.ref(), Proof.PROVEN, effectiveness(rule, originYear, today), Proof.PROVEN,
+                evidence);
     }
 
     /** Leer, wenn das BMF selbst genehmigt; sonst der Grund, warum die Rechtswirkung offen bleibt. */
@@ -231,8 +258,14 @@ public final class DeadlineRuleEvaluator {
         return issuers.size() == 1 ? Optional.of(issuers.iterator().next()) : Optional.empty();
     }
 
-    /** In Kraft zum Entstehungsjahr? Ohne belegtes Jahr oder Datum der Fassung offen, im Jahr der Fassung auch. */
-    private static Proof effectiveness(DeadlineRule rule, Optional<Integer> originYear) {
+    /**
+     * In Kraft? Abgelaufen am Prüftag ({@link DeadlineRule#validUntil()}): nicht nachgewiesen. Sonst zum Entstehungsjahr;
+     * ohne belegtes Jahr oder Datum der Fassung offen, im Jahr der Fassung auch.
+     */
+    private static Proof effectiveness(DeadlineRule rule, Optional<Integer> originYear, LocalDate today) {
+        if (rule.validUntil().filter(today::isAfter).isPresent()) {
+            return Proof.NOT_PROVEN;
+        }
         if (originYear.isEmpty() || rule.validFrom().isEmpty()) {
             return Proof.OPEN;
         }
@@ -257,6 +290,19 @@ public final class DeadlineRuleEvaluator {
             }
         }
         return values;
+    }
+
+    /**
+     * Belegte Buchungsstellen: als Buchungsstelle gelesene Werte und als Haushaltsstelle bezeichnete Buchungskonten
+     * (zehnstellig, beginnend mit 90). Eine Haushaltsstelle gehört zum Titelbuch, ein Buchungskonto 90… zum Vorschuss-
+     * oder Verwahrungsbuch (Glossar ZRB, „Unterscheide: Haushaltsstelle“).
+     */
+    static Set<String> bookingPoints(AnalysisSection matter) {
+        Set<String> points = new LinkedHashSet<>();
+        values(matter, DeadlineFieldKeys.BOOKING_POINT).forEach(v -> points.add(v.replaceAll("\\D", "")));
+        values(matter, DeadlineFieldKeys.BUDGET_ITEM).stream().map(v -> v.replaceAll("\\D", ""))
+                .filter(v -> BOOKING_ACCOUNT.matcher(v).matches()).forEach(points::add);
+        return points;
     }
 
     private static List<ExtractedField> individual(AnalysisSection matter, Qualifier qualifier) {
