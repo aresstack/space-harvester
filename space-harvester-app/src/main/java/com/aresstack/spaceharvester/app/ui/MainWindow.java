@@ -236,6 +236,13 @@ public final class MainWindow implements AppContext.Navigator {
                         com.aresstack.spaceharvester.app.ui.deck.DeckNetwork.http(context,
                                 com.aresstack.spaceharvester.app.ui.deck.EakteWorkspace::proxyWanted),
                         java.time.Duration.ofSeconds(30), eakteLog::info));
+        // ADR 0035: Dokumentanalyse der E-Akte aus dem laufenden Core, nach jedem (Neu-)Start neu angeschlossen.
+        Runnable documentAnalyses = () -> {
+            AppRuntime running = context.runtime();
+            commandDeck.documentAnalyses(running == null ? null : running.workspace().documentAnalyses());
+        };
+        documentAnalyses.run();
+        context.onChange(ignored -> documentAnalyses.run());
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());

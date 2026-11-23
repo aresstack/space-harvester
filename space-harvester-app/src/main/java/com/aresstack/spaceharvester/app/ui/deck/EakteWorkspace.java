@@ -67,6 +67,9 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
     private boolean directPending;
     private boolean autoTried;
     private EakteSession selected;
+    /** Dokumentanalyse für die Extraktion jedes Browsers (ADR 0035); ohne Analysedienst nichts. */
+    private com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider analyses =
+            com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider.NONE;
 
     /**
      * @param accounts Zugänge aus KeePass (dieselbe Kopplung wie die anderen Bereiche, aber ein eigener Eintrag)
@@ -156,6 +159,21 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         });
     }
 
+    /**
+     * Die Dokumentanalyse für die Extraktion aller vorhandenen und künftigen Browser (ADR 0035); {@code null} heißt
+     * keine. Auf dem EDT.
+     */
+    public void analyses(com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider provider) {
+        analyses = provider == null
+                ? com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider.NONE : provider;
+        browserOf.values().forEach(browser -> browser.extraction().provider(analyses));
+    }
+
+    /** Die E-Akte als Ablage der Dokumentanalyse: liest über die angemeldeten Sitzungen. */
+    public com.aresstack.spaceharvester.application.extraction.DocumentContent content() {
+        return new EakteDocumentContent(sessions);
+    }
+
     private void added(EakteSession session) {
         if (pillOf.containsKey(session)) {
             return;
@@ -176,6 +194,9 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
         EakteBrowser browser = new EakteBrowser(session, previews, previewStore);
+        if (analyses != com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider.NONE) {
+            browser.extraction().provider(analyses);
+        }
         browser.onStatus(note -> {
             if (selected == session) {
                 statusInfo.show(note);

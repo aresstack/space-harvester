@@ -65,6 +65,18 @@ class DeadlineRuleEvaluatorTest {
                 Optional.ofNullable(closure)));
     }
 
+    private static Result evaluateIssued(AnalysisSection matter, String issuer) {
+        return EVALUATOR.evaluate(new Request(DOC, matter, Optional.of(2030), State.READY, "g1", Optional.empty(),
+                Optional.ofNullable(issuer)));
+    }
+
+    private static AnalysisSection granted(String book, String quote) {
+        ExtractedField extension = new ExtractedField(DEADLINE_EXTENSION, DEADLINE_EXTENSION, "bis 30.06.2032",
+                "bis 30.06.2032", FieldStatus.EXPLICIT, ExtractionOrigin.AI, new Processor("test", "1"), true,
+                new SourceReference("", 0, 0, 0, quote.length(), quote), Qualifier.GRANTED, "", "");
+        return matter(fact(BOOK, book), extension);
+    }
+
     @Test
     void anOrdinaryAdvanceGetsOnlyAProvisionalStandardWithoutClosureOrKnowledge() {
         Result result = evaluate(matter(fact(BOOK, BOOK_ADVANCE)), 2030, State.EMPTY, null);
@@ -116,8 +128,8 @@ class DeadlineRuleEvaluatorTest {
 
     @Test
     void aGrantedExtensionDisplacesTheStandardWithItsOwnWording() {
-        Result result = evaluate(matter(fact(BOOK, BOOK_CUSTODY), field(DEADLINE_EXTENSION, "bis 30.06.2032",
-                FieldStatus.EXPLICIT, true, Qualifier.GRANTED)), 2030, State.READY, null);
+        Result result = evaluateIssued(matter(fact(BOOK, BOOK_CUSTODY), field(DEADLINE_EXTENSION, "bis 30.06.2032",
+                FieldStatus.EXPLICIT, true, Qualifier.GRANTED)), "Bundesministerium der Finanzen");
         assertThat(result.assessment()).get().isInstanceOfSatisfying(DeviationConfirmed.class, d -> {
             assertThat(d.rule().id()).isEqualTo("rib-8-bmf");
             assertThat(d.deadline().rule()).contains("bis 30.06.2032");
@@ -191,6 +203,47 @@ class DeadlineRuleEvaluatorTest {
         Result custody = evaluate(matter(fact(BOOK, BOOK_CUSTODY)), 2027, State.READY, null);
         assertThat(custody.assessment()).get().isInstanceOfSatisfying(StandardProvisional.class,
                 p -> assertThat(p.rule().id()).isEqualTo("rib-8-verwahrung"));
+    }
+
+    @Test
+    void theBmfItselfGrantsWithoutAGrantWord() {
+        assertThat(evaluateIssued(granted(BOOK_ADVANCE, "Die Frist wird bis zum 30.06.2032 verlängert."), "BMF")
+                .assessment()).get().isInstanceOfSatisfying(DeviationConfirmed.class,
+                        d -> assertThat(d.rule().id()).isEqualTo("bho-60-1-einwilligung"));
+    }
+
+    @Test
+    void anotherIssuerLeavesTheCompetenceOpen() {
+        Result result = evaluateIssued(granted(BOOK_ADVANCE, "Die Frist wird bis zum 30.06.2032 verlängert."),
+                "Bewirtschafter 0314");
+        assertThat(result.assessment()).get().isInstanceOfSatisfying(StandardProvisional.class,
+                p -> assertThat(p.candidates()).singleElement().satisfies(c -> {
+                    assertThat(c.legalEffect()).isEqualTo(Proof.OPEN);
+                    assertThat(c.evidence()).anyMatch(e -> e.startsWith("Genehmigungsbefugnis ungeklärt")
+                            && e.contains("Bewirtschafter 0314"));
+                }));
+    }
+
+    @Test
+    void aReportedBmfApprovalMustBeProven() {
+        Result result = evaluateIssued(granted(BOOK_CUSTODY,
+                "Mit Genehmigung des BMF wird die Frist bis zum 30.06.2032 verlängert."), "Bewirtschafter 0314");
+        assertThat(result.assessment()).get().isInstanceOfSatisfying(StandardProvisional.class,
+                p -> assertThat(p.candidates()).singleElement().satisfies(c -> {
+                    assertThat(c.legalEffect()).isEqualTo(Proof.OPEN);
+                    assertThat(c.evidence()).contains(DeadlineRuleEvaluator.GRANT_CLAIMED);
+                }));
+    }
+
+    @Test
+    void withoutIssuerAGrantStaysOpen() {
+        Result result = evaluate(granted(BOOK_ADVANCE, "Die Frist wird bis zum 30.06.2032 verlängert."), 2030,
+                State.READY, null);
+        assertThat(result.assessment()).get().isInstanceOfSatisfying(StandardProvisional.class,
+                p -> assertThat(p.candidates()).singleElement().satisfies(c -> {
+                    assertThat(c.legalEffect()).isEqualTo(Proof.OPEN);
+                    assertThat(c.evidence()).contains(DeadlineRuleEvaluator.ISSUER_UNPROVEN);
+                }));
     }
 
     @Test
