@@ -5,6 +5,8 @@ import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.StatusLabel;
+import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.deck.access.ServerAccounts;
 import com.aresstack.spaceharvester.deck.editor.EditorSessions;
@@ -32,18 +34,6 @@ import javax.swing.SwingUtilities;
  */
 public final class FtpWorkspace extends JPanel {
 
-    /**
-     * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
-     * ({@code StatusNote.Tone.ERROR}). Lange Texte kürzt das Label selbst, der volle Text steht im Tooltip.
-     */
-    private final com.aresstack.spaceharvester.app.ui.controls.StatusLabel statusInfo =
-            new com.aresstack.spaceharvester.app.ui.controls.StatusLabel();
-
-    /** Die Karte dieses Bereichs in der Statuszeile der App. */
-    public javax.swing.JComponent statusInfo() {
-        return statusInfo;
-    }
-
     static final String VIEW_KEY = "deck.ftp.view";
     private static final String FORM = "form";
 
@@ -59,6 +49,8 @@ public final class FtpWorkspace extends JPanel {
     private final FtpConnectForm form;
     private final SegmentedToggle toggle = new SegmentedToggle();
     private final EditorSessions editors;
+    /** Der Stand der gewählten Sitzung für die Statuszeile der App (links); leer beim Formular. */
+    private final StatusLabel status = new StatusLabel();
     private FtpSession selected;
 
     /** Mit eigenem Editor (Tests). */
@@ -117,6 +109,16 @@ public final class FtpWorkspace extends JPanel {
         select(null);
     }
 
+    /** Der Stand des FTP-Bereichs für die Statuszeile der App: Meldungen der gewählten Sitzung, Fehler rot. */
+    public JComponent statusInfo() {
+        return status;
+    }
+
+    /** Für Tests: was die Statuszeile gerade zeigt. */
+    StatusNote statusNote() {
+        return status.note();
+    }
+
     /** Der Umschalter „Datasets | JES-Jobs“ für die Titelleiste (nur im FTP-Bereich gezeigt). */
     public JComponent tools() {
         return toggle;
@@ -170,12 +172,19 @@ public final class FtpWorkspace extends JPanel {
         // Ohne Sitzung gibt es nichts umzuschalten; die Wippe bleibt sichtbar, aber gedimmt.
         toggle.button(FtpSessionView.DATASETS).setEnabled(session != null);
         toggle.button(FtpSessionView.JOBS).setEnabled(session != null);
+        viewOf.forEach((other, view) -> {
+            if (other != session) {
+                view.statusTo(null);
+            }
+        });
         if (session == null) {
+            status.show(StatusNote.plain(" "));
             cards.show(center, FORM);
             SwingUtilities.invokeLater(form::focusServer);
         } else {
             FtpSessionView view = viewOf.get(session);
             view.show(toggle.selected());
+            view.statusTo(status::show);
             cards.show(center, session.id());
         }
     }
