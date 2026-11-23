@@ -219,6 +219,7 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
             if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0) {
                 if (sky.isShowing()) {
                     sky.start();
+                    connectOnArrival();
                 } else {
                     sky.stop();
                 }
@@ -264,6 +265,18 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         add(stage, BorderLayout.CENTER);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        // Lehnt der Host die Anmeldung ab (oder bleibt es unklar): Formular mit dem, was der Host sagte; ab jetzt
+        // versucht niemand mehr automatisch mit diesem Eintrag (Angelo, 23.11.2026: sonst ist das Konto gesperrt).
+        sessions.onLogin((session, result) -> {
+            if (result.sent() && !result.accepted()) {
+                String entry = session.loginSource() == null ? null : session.loginSource().entry();
+                SwingUtilities.invokeLater(() -> {
+                    showForm();
+                    form.problem(entry == null ? "Anmeldung fehlgeschlagen: " + result.problem().orElse("")
+                            : DeckLogin.notice(entry));
+                });
+            }
+        });
         sessions.onReopened((lost, fresh) -> SwingUtilities.invokeLater(() -> reopened(lost, fresh)));
         sessions.all().forEach(this::added);
         settings.observe(() -> SwingUtilities.invokeLater(this::applySettings));
@@ -298,6 +311,26 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
      * „Neue Verbindung“: Ist die Verbindung eingerichtet, verbindet sie direkt; das Formular kommt nur beim ersten Mal
      * und wenn es scheitert (Angelo, 23.11.2026).
      */
+    /** Wann zuletzt beim Einblenden verbunden wurde; schnelles Hin- und Herschalten verbindet nicht doppelt. */
+    private long arrivedAt = Long.MIN_VALUE;
+
+    /**
+     * Beim Wechsel ins Command Deck gleich verbinden (Angelo, 23.11.2026): Das Terminal ist das Erste, was man sieht.
+     * Nur wenn die Verbindung eingerichtet ist und noch kein Reiter steht: Ein beendeter Reiter wartet womöglich auf
+     * seinen automatischen Neuaufbau, und den verbindet man über ihn neu, nicht daneben.
+     */
+    void connectOnArrival() {
+        if (!ConnectForm.isConfigured() || !sessions.all().isEmpty()) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (arrivedAt != Long.MIN_VALUE && now - arrivedAt < java.util.concurrent.TimeUnit.SECONDS.toNanos(10)) {
+            return;
+        }
+        arrivedAt = now;
+        newConnection();
+    }
+
     void newConnection() {
         if (!ConnectForm.isConfigured()) {
             select(null);
@@ -348,6 +381,12 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
     /** „Verbinden“: dieselbe Sitzung neu, die alte verschwindet aus der Liste. */
     void reconnect(TerminalSession ended) {
         if (!ended.state().ended()) {
+            return;
+        }
+        if (!sessions.mayTry(ended.loginSource())) {
+            // Sperrschutz: Mit diesem Eintrag schlug die letzte Anmeldung fehl; erst prüfen, dann im Formular verbinden.
+            showForm();
+            form.problem(DeckLogin.notice(ended.loginSource().entry()));
             return;
         }
         ConnectForm.Request origin = origins.get(ended);

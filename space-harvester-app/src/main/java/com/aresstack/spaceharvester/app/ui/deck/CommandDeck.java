@@ -123,6 +123,8 @@ public final class CommandDeck {
                 new com.aresstack.spaceharvester.deck.terminal.LoginScript(
                         () -> TerminalSettings.shared().actionDelay()));
         // Das Terminal soll nicht tot bleiben: Trennt der Host, baut es sich neu auf (Einstellung „Neuaufbau“).
+        // Schutz vor der Kontosperre: derselbe Wächter wie in allen Bereichen, je KeePass-Eintrag.
+        sessions.guard(DeckLogin.guard());
         sessions.autoReconnect(com.aresstack.spaceharvester.deck.terminal.TerminalSessions.Reconnect.standard(
                 () -> TerminalSettings.shared().autoReconnect()), (delay, task) -> {
                     javax.swing.Timer once = new javax.swing.Timer((int) delay.toMillis(), e -> task.run());

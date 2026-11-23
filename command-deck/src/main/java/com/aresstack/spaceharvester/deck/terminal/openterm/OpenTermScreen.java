@@ -522,6 +522,22 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     }
 
     @Override
+    public String screenText() {
+        return text();
+    }
+
+    @Override
+    public boolean loginMask() {
+        try {
+            short first = terminal.getNextUnprotectedField(0);
+            short second = first < 0 ? -1 : terminal.getNextUnprotectedField(first);
+            return second >= 0 && second != first && hiddenAt(second) && !hiddenAt(first);
+        } catch (RuntimeException unreadable) {
+            return true; // im Zweifel: Anmeldemaske, also nicht als Erfolg werten
+        }
+    }
+
+    @Override
     public boolean nextInputField() {
         // 1:1 wie MainframeMate: das nächste ungeschützte Feld nach der Schreibmarke; dasselbe wie das erste heißt,
         // es gibt kein zweites.

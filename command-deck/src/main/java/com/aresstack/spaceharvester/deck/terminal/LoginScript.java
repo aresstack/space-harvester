@@ -47,60 +47,96 @@ public final class LoginScript {
      */
     public Optional<String> run(TerminalKeyboard keyboard, TerminalLogin login, long since)
             throws InterruptedException {
+        return attempt(keyboard, login, since).problem();
+    }
+
+    /**
+     * Ergebnis einer Anmeldung.
+     *
+     * @param sent     ob Benutzer und Passwort an den Host gingen (nur dann zählt es als Versuch für die Kontosperre)
+     * @param accepted ob der Host die Anmeldung angenommen hat (geprüft mit {@link LoginCheck})
+     * @param problem  leer bei Erfolg, sonst der Grund (auch für ein gescheitertes Startkommando nach der Anmeldung)
+     */
+    public record Result(boolean sent, boolean accepted, Optional<String> problem) {
+
+        static Result notSent(String reason) {
+            return new Result(false, false, Optional.of(reason));
+        }
+
+        static Result rejected(String reason) {
+            return new Result(true, false, Optional.of(reason));
+        }
+
+        static Result accepted(Optional<String> problem) {
+            return new Result(true, true, problem);
+        }
+    }
+
+    /**
+     * Wie {@link #run(TerminalKeyboard, TerminalLogin, long)}, sagt aber auch, ob die Zugangsdaten abgeschickt wurden.
+     * Nach ENTER wartet sie wie MainframeMate vor dem Startkommando auf die Antwort und prüft das Bild
+     * ({@link LoginCheck}): Lehnt der Host ab oder bleibt es unklar, ist das ein Fehlschlag.
+     */
+    public Result attempt(TerminalKeyboard keyboard, TerminalLogin login, long since) throws InterruptedException {
         try (login) {
             if (!keyboard.awaitUnlocked(UNLOCK_TIMEOUT)) {
-                return Optional.of("Tastatur wurde nicht frei");
+                return Result.notSent("Tastatur wurde nicht frei");
             }
             pause();
             if (typedByHand(keyboard, since)) {
-                return Optional.of(BY_HAND);
+                return Result.notSent(BY_HAND);
             }
             keyboard.clear();
             if (!keyboard.awaitUnlocked(UNLOCK_TIMEOUT)) {
-                return Optional.of("Tastatur nach CLEAR nicht frei");
+                return Result.notSent("Tastatur nach CLEAR nicht frei");
             }
             pause();
             if (typedByHand(keyboard, since)) {
-                return Optional.of(BY_HAND);
+                return Result.notSent(BY_HAND);
             }
             if (!keyboard.firstInputField()) {
-                return Optional.of("kein Eingabefeld für den Benutzer");
+                return Result.notSent("kein Eingabefeld für den Benutzer");
             }
             if (!typed(keyboard, login.user().toCharArray())) {
-                return Optional.of("Benutzerfeld ist geschützt");
+                return Result.notSent("Benutzerfeld ist geschützt");
             }
             pause();
             if (typedByHand(keyboard, since)) {
-                return Optional.of(BY_HAND);
+                return Result.notSent(BY_HAND);
             }
             if (!keyboard.nextInputField()) {
-                return Optional.of("kein zweites Eingabefeld für das Passwort");
+                return Result.notSent("kein zweites Eingabefeld für das Passwort");
             }
             char[] password = login.copyPassword();
             try {
                 if (!typed(keyboard, password)) {
-                    return Optional.of("Passwortfeld ist geschützt");
+                    return Result.notSent("Passwortfeld ist geschützt");
                 }
             } finally {
                 Arrays.fill(password, '\0');
             }
             pause();
             keyboard.enter();
+            // Wie MainframeMate vor dem Startkommando: Antwort abwarten, dann das Bild prüfen (Sperrschutz).
+            if (!keyboard.awaitUnlocked(UNLOCK_TIMEOUT)) {
+                return Result.rejected("keine Antwort des Hosts auf die Anmeldung");
+            }
+            pause();
+            Optional<String> rejected = LoginCheck.rejected(keyboard.screenText(), keyboard.loginMask());
+            if (rejected.isPresent()) {
+                return Result.rejected(rejected.get());
+            }
             if (!login.command().isEmpty()) {
-                if (!keyboard.awaitUnlocked(UNLOCK_TIMEOUT)) {
-                    return Optional.of("Tastatur nach der Anmeldung nicht frei, Startkommando nicht gesendet");
-                }
-                pause();
                 if (typedByHand(keyboard, since)) {
-                    return Optional.of(BY_HAND);
+                    return Result.accepted(Optional.of(BY_HAND));
                 }
                 if (!typed(keyboard, login.command().toCharArray())) {
-                    return Optional.of("Startkommando: Feld an der Schreibmarke ist geschützt");
+                    return Result.accepted(Optional.of("Startkommando: Feld an der Schreibmarke ist geschützt"));
                 }
                 pause();
                 keyboard.enter();
             }
-            return Optional.empty();
+            return Result.accepted(Optional.empty());
         }
     }
 
