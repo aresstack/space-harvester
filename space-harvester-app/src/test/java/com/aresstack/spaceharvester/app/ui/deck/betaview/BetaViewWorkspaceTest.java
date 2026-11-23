@@ -115,7 +115,7 @@ class BetaViewWorkspaceTest {
                     return new ServerCredentials(account, secret.get().toCharArray());
                 }
             };
-            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.CONFIGURED_KEY, (String) null);
+            clearLoginState();
             build(shared, new FakePrompts(folder.resolve("x")));
             assertThat(BetaViewConnectForm.isConfigured()).as("vor dem ersten Erfolg").isFalse();
             SwingUtilities.invokeAndWait(() -> {
@@ -148,8 +148,132 @@ class BetaViewWorkspaceTest {
                     "Formular mit Grund");
             assertThat(onEdt(workspace::sessionCount)).isEqualTo(2);
         } finally {
-            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.CONFIGURED_KEY, (String) null);
+            clearLoginState();
         }
+    }
+
+    @Test
+    void theSharedKeePassEntryOfAnotherAreaLogsInWithoutTheForm() throws Exception {
+        try (FakeBetaViewServer server = new FakeBetaViewServer()) {
+            ServerAccount account = new ServerAccount("Host", server.address().toString(), FakeBetaViewServer.USER);
+            ServerAccounts shared = new ServerAccounts() {
+                @Override
+                public List<ServerAccount> accounts() {
+                    return List.of(account);
+                }
+
+                @Override
+                public ServerCredentials credentials(String entry) {
+                    return new ServerCredentials(account, FakeBetaViewServer.PASSWORD.toCharArray());
+                }
+            };
+            clearLoginState();
+            // Nur NDV kennt den Eintrag; BetaView nimmt denselben Host-Zugang und die gemerkte Adresse.
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put("deck.ndv.entry", "Host");
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ADDRESS_KEY,
+                    server.address().toString());
+            build(shared, new FakePrompts(folder.resolve("x")));
+            assertThat(BetaViewConnectForm.isConfigured()).isTrue();
+            SwingUtilities.invokeAndWait(workspace::newLogin);
+            connected();
+        } finally {
+            clearLoginState();
+        }
+    }
+
+    @Test
+    void aLockedKeePassEntryIsNotTriedAutomaticallyAndTheFormSaysWhy() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        ServerAccount account = new ServerAccount("Host", "https://betaview.example/", "U1");
+        ServerAccounts counting = new ServerAccounts() {
+            @Override
+            public List<ServerAccount> accounts() {
+                return List.of(account);
+            }
+
+            @Override
+            public ServerCredentials credentials(String entry) {
+                reads.incrementAndGet();
+                return new ServerCredentials(account, "falsch".toCharArray());
+            }
+        };
+        try {
+            clearLoginState();
+            // Das Terminal ist mit demselben Eintrag gescheitert: BetaView darf es nicht noch einmal versuchen.
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put("deck.terminal.entry", "Host");
+            com.aresstack.spaceharvester.app.ui.deck.DeckLogin.guard().failed("Host", "Kennwort abgelaufen");
+            build(counting, new FakePrompts(folder.resolve("x")));
+            SwingUtilities.invokeAndWait(workspace::newLogin);
+            Thread.sleep(300);
+            assertThat(reads.get()).as("kein Anmeldeversuch").isZero();
+            assertThat(onEdt(workspace::sessionCount)).isZero();
+            assertThat(onEdt(workspace::selected)).isNull();
+            assertThat(onEdt(() -> workspace.form().problemText()))
+                    .isEqualTo(com.aresstack.spaceharvester.app.ui.deck.DeckLogin.notice("Host"))
+                    .contains("Kennwort abgelaufen");
+        } finally {
+            clearLoginState();
+        }
+    }
+
+    @Test
+    void aRejectedLoginLocksTheEntryAndASuccessfulOneUnlocksIt() throws Exception {
+        try (FakeBetaViewServer server = new FakeBetaViewServer()) {
+            ServerAccount account = new ServerAccount("Host", server.address().toString(), FakeBetaViewServer.USER);
+            AtomicReference<String> password = new AtomicReference<>("falsch");
+            ServerAccounts shared = new ServerAccounts() {
+                @Override
+                public List<ServerAccount> accounts() {
+                    return List.of(account);
+                }
+
+                @Override
+                public ServerCredentials credentials(String entry) {
+                    return new ServerCredentials(account, password.get().toCharArray());
+                }
+            };
+            clearLoginState();
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put("deck.ftp.entry", "Host");
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ADDRESS_KEY,
+                    server.address().toString());
+            build(shared, new FakePrompts(folder.resolve("x")));
+            SwingUtilities.invokeAndWait(workspace::newLogin);
+            await(() -> !workspace.form().problemText().isBlank(), "Formular mit dem Grund");
+            assertThat(com.aresstack.spaceharvester.app.ui.deck.DeckLogin.guard().mayTry("Host")).isFalse();
+            assertThat(onEdt(workspace::sessionCount)).isZero();
+
+            // Der Mensch meldet im Formular an (darf er immer): Erfolg löst die Sperre.
+            password.set(FakeBetaViewServer.PASSWORD);
+            SwingUtilities.invokeAndWait(() -> {
+                BetaViewConnectForm form = workspace.form();
+                form.entry.setSelectedItem("Host");
+                form.submit();
+            });
+            connected();
+            assertThat(com.aresstack.spaceharvester.app.ui.deck.DeckLogin.guard().mayTry("Host")).isTrue();
+        } finally {
+            clearLoginState();
+        }
+    }
+
+    @Test
+    void onlyARejectionByTheServerLocksTheEntry() {
+        assertThat(BetaViewWorkspace.rejected("Anmeldung abgelehnt: Benutzer oder Kennwort falsch")).isTrue();
+        assertThat(BetaViewWorkspace.rejected("Anmeldung abgelehnt: HTTP 401")).isTrue();
+        assertThat(BetaViewWorkspace.rejected("Anmeldung abgelehnt: HTTP 403 bei login.action")).isTrue();
+        assertThat(BetaViewWorkspace.rejected("Anmeldung abgelehnt: HTTP 502")).isFalse();
+        assertThat(BetaViewWorkspace.rejected("ConnectException: Connection refused")).isFalse();
+    }
+
+    private static void clearLoginState() {
+        com.aresstack.spaceharvester.app.ui.deck.DeckLogin.guard().succeeded("Host");
+        java.util.Map<String, String> cleared = new java.util.HashMap<>();
+        for (String key : new String[] {BetaViewConnectForm.CONFIGURED_KEY, BetaViewConnectForm.ENTRY_KEY,
+                BetaViewConnectForm.LOGIN_KEY, BetaViewConnectForm.ADDRESS_KEY, "deck.terminal.entry",
+                "deck.ndv.entry", "deck.ftp.entry"}) {
+            cleared.put(key, null);
+        }
+        com.aresstack.spaceharvester.app.ui.AppState.shared().putAll(cleared);
     }
 
     @Test

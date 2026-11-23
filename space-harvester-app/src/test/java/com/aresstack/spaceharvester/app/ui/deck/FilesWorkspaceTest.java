@@ -58,7 +58,7 @@ class FilesWorkspaceTest {
         assertThat(names()).containsExactly("Berichte", "daten.json", "job.jcl", "notiz.txt");
         assertThat(workspace.pathField().getText()).isEqualTo(root.toString());
         assertThat(workspace.statusText()).isEqualTo("4 Einträge");
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString());
     }
 
     @Test
@@ -126,7 +126,7 @@ class FilesWorkspaceTest {
         flush();
 
         assertThat(session.location()).isEqualTo(root.resolve("kopie.jcl").toString());
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "kopie.jcl");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString(), "kopie.jcl");
         boolean[] shown = new boolean[1];
         SwingUtilities.invokeAndWait(() -> shown[0] = workspace.editor(session).isVisible());
         assertThat(shown[0]).isTrue();
@@ -143,7 +143,7 @@ class FilesWorkspaceTest {
         EditorSession session = workspace.selected();
         assertThat(session).isNotNull();
         assertThat(editors.all()).containsExactly(session);
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "job.jcl");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString(), "job.jcl");
         assertThat(workspace.editor(session).text()).isEqualTo("//JOB1 JOB\n");
 
         SwingUtilities.invokeAndWait(() -> workspace.editor(session).type("//* Kommentar\n"));
@@ -160,7 +160,7 @@ class FilesWorkspaceTest {
         SwingUtilities.invokeAndWait(() -> workspace.select(null));
         SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
         flush();
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "job.jcl");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString(), "job.jcl");
         assertThat(workspace.selected()).isSameAs(session);
     }
 
@@ -274,6 +274,53 @@ class FilesWorkspaceTest {
     }
 
     @Test
+    void opensMoreFolderTabsEachWithItsOwnFolderAndRemembersThem() throws Exception {
+        AppState.shared().put(FilesWorkspace.TABS_KEY, "");
+        start();
+        String top = root.getFileName().toString();
+
+        SwingUtilities.invokeAndWait(() -> workspace.newTab(root.resolve("Berichte").toString()));
+        flush();
+        assertThat(workspace.pillTitles()).containsExactly(top, "Berichte");
+        assertThat(workspace.browser().location()).contains(root.resolve("Berichte").toString());
+        assertThat(names()).isEmpty();
+        assertThat(AppState.shared().get(FilesWorkspace.TABS_KEY)).isEqualTo(root.resolve("Berichte") + "\n");
+        assertThat(AppState.shared().get(FilesWorkspace.LOCATION_KEY)).as("erster Reiter bleibt")
+                .isEqualTo(root.toString());
+
+        // Zurück zum ersten Reiter: dessen Ordner, Verlauf und Liste.
+        SwingUtilities.invokeAndWait(() -> workspace.showBrowseTab(0));
+        flush();
+        assertThat(workspace.browser().location()).contains(root.toString());
+        assertThat(names()).contains("Berichte", "job.jcl");
+
+        // Der Filter gilt für den gezeigten Reiter (Codex #1241): im zweiten Reiter filtern, der erste bleibt ganz.
+        SwingUtilities.invokeAndWait(() -> workspace.newTab(root.toString()));
+        flush();
+        SwingUtilities.invokeAndWait(() -> workspace.filterField().setText("\\.jcl$"));
+        flush();
+        assertThat(names()).containsExactly("job.jcl");
+        SwingUtilities.invokeAndWait(() -> workspace.showBrowseTab(0));
+        flush();
+        assertThat(workspace.filterField().getText()).isEmpty();
+        assertThat(names()).contains("Berichte", "daten.json", "job.jcl", "notiz.txt");
+        SwingUtilities.invokeAndWait(() -> workspace.closeBrowseTab(2));
+        flush();
+
+        // Nach Neustart sind beide Reiter wieder da; das Kreuz schließt den zweiten.
+        SwingUtilities.invokeAndWait(() -> workspace = new FilesWorkspace(
+                new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
+                new LocalDocumentStore()));
+        start();
+        assertThat(workspace.pillTitles()).containsExactly(top, "Berichte");
+        SwingUtilities.invokeAndWait(() -> workspace.closeBrowseTab(1));
+        flush();
+        assertThat(workspace.pillTitles()).containsExactly(top);
+        assertThat(AppState.shared().get(FilesWorkspace.TABS_KEY)).isEmpty();
+        assertThat(FilesWorkspace.folderName("C:\\Daten\\Berichte\\")).isEqualTo("Berichte");
+    }
+
+    @Test
     void sharePointUsesSavedLoginWithoutAsking() throws Exception {
         java.util.concurrent.CountDownLatch tried = new java.util.concurrent.CountDownLatch(1);
         AtomicReference<String> used = new AtomicReference<>();
@@ -307,6 +354,77 @@ class FilesWorkspaceTest {
 
         assertThat(tried.await(10, java.util.concurrent.TimeUnit.SECONDS)).as("gespeicherte Daten probiert").isTrue();
         assertThat(used.get()).isEqualTo("BEISPIEL\\nutzer:geheim");
+    }
+
+    @Test
+    void rejectedSavedLoginIsNotTriedAgainUntilItWorks() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.CountDownLatch rejected = new java.util.concurrent.CountDownLatch(1);
+        com.aresstack.spaceharvester.deck.files.sharepoint.WebDavLogin login =
+                new com.aresstack.spaceharvester.deck.files.sharepoint.WebDavLogin() {
+                    @Override
+                    public Outcome connect(String uncPath) {
+                        return Outcome.credentialsNeeded("Anmeldung nötig");
+                    }
+
+                    @Override
+                    public Outcome connect(String uncPath, String user, char[] password) {
+                        attempts.incrementAndGet();
+                        rejected.countDown();
+                        return Outcome.credentialsNeeded("Kennwort abgelaufen");
+                    }
+                };
+        var saved = com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory();
+        saved.save("intranet.example.org", "nutzer", "alt".toCharArray());
+        java.util.Map<String, String> stored = new java.util.concurrent.ConcurrentHashMap<>();
+        var guard = new com.aresstack.spaceharvester.deck.access.LoginGuard(
+                new com.aresstack.spaceharvester.deck.access.LoginGuard.Store() {
+                    @Override
+                    public String get(String key) {
+                        return stored.get(key);
+                    }
+
+                    @Override
+                    public void put(String key, String value) {
+                        if (value == null) {
+                            stored.remove(key);
+                        } else {
+                            stored.put(key, value);
+                        }
+                    }
+                });
+        SwingUtilities.invokeAndWait(() -> {
+            workspace = new FilesWorkspace(
+                    new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
+                    new LocalDocumentStore(), null,
+                    new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointAccess(login, NOW),
+                    List::of, com.aresstack.spaceharvester.deck.access.ServerAccounts.NONE);
+            workspace.savedLogins(saved);
+            workspace.loginGuard(guard);
+        });
+        start();
+        String unc = "\\\\intranet.example.org@SSL\\DavWWWRoot\\sites\\Raum";
+
+        SwingUtilities.invokeAndWait(() -> workspace.go(unc));
+        assertThat(rejected.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        long until = System.currentTimeMillis() + 5000;
+        while (guard.mayTry(FilesWorkspace.savedEntry("nutzer")) && System.currentTimeMillis() < until) {
+            flush();
+        }
+        assertThat(guard.failure(FilesWorkspace.savedEntry("nutzer"))).get()
+                .extracting(com.aresstack.spaceharvester.deck.access.LoginGuard.Failure::reason)
+                .isEqualTo("Kennwort abgelaufen");
+
+        // Ein weiterer Versuch (Reiterwechsel, neuer Reiter) meldet sich nicht noch einmal mit den alten Daten an.
+        SwingUtilities.invokeAndWait(() -> workspace.go(unc));
+        for (int i = 0; i < 20; i++) {
+            flush();
+            Thread.sleep(25);
+        }
+        assertThat(attempts.get()).as("kein zweiter automatischer Versuch").isEqualTo(1);
+        assertThat(stored).isNotEmpty();
+        assertThat(String.join("\n", stored.keySet()) + String.join("\n", stored.values()))
+                .as("kein Benutzername im Zustand").doesNotContainIgnoringCase("nutzer");
     }
 
     @Test
@@ -344,7 +462,7 @@ class FilesWorkspaceTest {
         SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
         flush();
 
-        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "bericht.pdf (Vorschau)");
+        assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString(), "bericht.pdf (Vorschau)");
         assertThat(workspace.editor(workspace.selected()).text()).isEqualTo("Text aus dem PDF\n");
         assertThat(workspace.selected().writable()).isFalse();
     }

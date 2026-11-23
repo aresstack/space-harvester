@@ -79,7 +79,6 @@ final class FtpDatasetsView extends JPanel {
             "Gewählte Einträge löschen (mit Rückfrage; Mehrfachauswahl mit Strg/Umschalt)";
     private final IconButton save;
     private final IconButton reloadDocument;
-    private final IconButton closeDocument;
     private final JPanel documentsHead;
     /** Rückfrage vor dem Überschreiben eines vorhandenen Members (Tests ersetzen sie). */
     java.util.function.Predicate<String> confirmOverwrite =
@@ -357,15 +356,9 @@ final class FtpDatasetsView extends JPanel {
         });
         reloadDocument = new IconButton(Glyph.REFRESH, "Member neu lesen; ungespeicherte Änderungen gehen verloren");
         reloadDocument.addActionListener(e -> reloadDocument());
-        closeDocument = new IconButton(ComposerIcons.close(), "Dokument schließen");
-        closeDocument.addActionListener(e -> {
-            if (document != null) {
-                closeDocument(document);
-            }
-        });
         actions = Comic.row(download, upload, newMember, newDataset, submit, delete);
         // Die Knöpfe des Dokuments stehen rechts über dem Editor, damit die Leiste unten auch bei 960 px passt.
-        documentsHead.add(Comic.row(reloadDocument, save, closeDocument), BorderLayout.EAST);
+        documentsHead.add(Comic.row(reloadDocument, save), BorderLayout.EAST);
         editors.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         editors.onReveal(session -> SwingUtilities.invokeLater(() -> {
             if (pillOf.containsKey(session)) {
@@ -694,18 +687,9 @@ final class FtpDatasetsView extends JPanel {
         }
         editorOf.put(session, editor);
         documents.add(editor, session.location());
-        ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.file(), session.name(), session.location());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        pill.getAccessibleContext().setAccessibleName(session.name());
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(FilesIcons.file(), session.name(), session.location(),
+                "Dokument schließen (auch Mittelklick auf den Reiter)", () -> closeDocument(session));
         pill.addActionListener(e -> showDocument(session));
-        pill.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent event) {
-                if (SwingUtilities.isMiddleMouseButton(event)) {
-                    closeDocument(session);
-                }
-            }
-        });
         documentGroup.add(pill);
         documentPills.add(pill);
         pillOf.put(session, pill);
@@ -869,7 +853,6 @@ final class FtpDatasetsView extends JPanel {
         boolean showing = document != null;
         save.setVisible(showing);
         reloadDocument.setVisible(showing);
-        closeDocument.setVisible(showing);
         if (showing) {
             EditorSession.State state = document.state();
             save.setEnabled(connected && document.dirty()

@@ -66,6 +66,59 @@ public final class TerminalSessions {
     @FunctionalInterface
     public interface LoginSource {
         TerminalLogin login() throws Exception;
+
+        /** Der KeePass-Eintrag der Zugangsdaten (Schlüssel der Sperre gegen Kontosperren); {@code null} ohne. */
+        default String entry() {
+            return null;
+        }
+
+        /** Ob der Mensch selbst im Formular „Verbinden“ gedrückt hat: Dann darf trotz Sperre versucht werden. */
+        default boolean byHand() {
+            return false;
+        }
+
+        /**
+         * Dieselbe Anmeldung ohne die Ausnahme „von Hand“: Die gilt nur für genau den einen Versuch, den der Mensch im
+         * Formular ausgelöst hat. Jeder spätere Neuaufbau fragt wieder den Wächter, sonst ginge ein abgelehntes
+         * Passwort erneut an den Host.
+         */
+        static LoginSource automatic(LoginSource source) {
+            if (source == null || !source.byHand()) {
+                return source;
+            }
+            return new LoginSource() {
+                @Override
+                public TerminalLogin login() throws Exception {
+                    return source.login();
+                }
+
+                @Override
+                public String entry() {
+                    return source.entry();
+                }
+            };
+        }
+    }
+
+    /** Schutz vor der Kontosperre: je KeePass-Eintrag kein automatischer Versuch nach einem Fehlschlag. */
+    private volatile com.aresstack.spaceharvester.deck.access.LoginGuard guard;
+    private final List<BiConsumer<TerminalSession, LoginScript.Result>> loginObservers = new CopyOnWriteArrayList<>();
+
+    /** Setzt den Wächter gegen Kontosperren (in der App der gemeinsame aller Bereiche). */
+    public void guard(com.aresstack.spaceharvester.deck.access.LoginGuard guard) {
+        this.guard = guard;
+    }
+
+    /** Meldet das Ergebnis jeder automatischen Anmeldung. */
+    public void onLogin(BiConsumer<TerminalSession, LoginScript.Result> observer) {
+        loginObservers.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    /** Ob mit dieser Anmeldung automatisch versucht werden darf (nicht von Hand, Eintrag gesperrt: nein). */
+    public boolean mayTry(LoginSource login) {
+        var current = guard;
+        return login == null || login.byHand() || login.entry() == null || current == null
+                || current.mayTry(login.entry());
     }
 
     /**
@@ -148,7 +201,10 @@ public final class TerminalSessions {
             // ersten Bild läuft und nicht erst, wenn man schon selbst tippt.
             TerminalLogin credentials = null;
             String unreadable = null;
-            if (login != null) {
+            if (login != null && !mayTry(login)) {
+                // Gesperrt (letzte Anmeldung mit diesem Eintrag fehlgeschlagen): verbinden ja, nichts tippen.
+                unreadable = "letzte Anmeldung mit „" + login.entry() + "“ fehlgeschlagen, bitte Zugangsdaten prüfen";
+            } else if (login != null) {
                 try {
                     credentials = login.login();
                 } catch (Exception e) {
@@ -209,6 +265,11 @@ public final class TerminalSessions {
     private void reconnectLater(TerminalSession lost) {
         Reconnect policy = reconnect;
         if (closing || lost.disconnectedByHand() || !policy.enabled().getAsBoolean() || policy.delays().isEmpty()) {
+            return;
+        }
+        if (!mayTry(lost.loginSource())) {
+            lost.note("Kein automatischer Neuaufbau: letzte Anmeldung mit „" + lost.loginSource().entry()
+                    + "“ fehlgeschlagen, bitte Zugangsdaten prüfen");
             return;
         }
         long since = lost.connectedSince();
@@ -275,10 +336,12 @@ public final class TerminalSessions {
         String user = login.user();
         try {
             // Tippt der Mensch ab jetzt selbst, hört die Anmeldung auf (nie dazwischentippen).
-            java.util.Optional<String> failed = loginScript.run(keyboard, login, System.nanoTime());
-            session.note(failed.map(reason -> "Automatische Anmeldung abgebrochen: " + reason)
+            LoginScript.Result result = loginScript.attempt(keyboard, login, System.nanoTime());
+            report(session, result);
+            session.note(result.problem().map(reason -> (result.sent() && !result.accepted()
+                    ? "Automatische Anmeldung fehlgeschlagen: " : "Automatische Anmeldung abgebrochen: ") + reason)
                     .orElse("Automatisch angemeldet als " + user));
-            return failed.isEmpty();
+            return result.problem().isEmpty();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             session.note("Automatische Anmeldung unterbrochen");
@@ -286,6 +349,21 @@ public final class TerminalSessions {
             session.note("Automatische Anmeldung abgebrochen: " + describe(e));
         }
         return false;
+    }
+
+    /** Meldet einen abgeschickten Versuch an den Wächter (nur ein Erfolg löst die Sperre) und an die Beobachter. */
+    private void report(TerminalSession session, LoginScript.Result result) {
+        var current = guard;
+        LoginSource source = session.loginSource();
+        String entry = source == null ? null : source.entry();
+        if (current != null && entry != null && result.sent()) {
+            if (result.accepted()) {
+                current.succeeded(entry);
+            } else {
+                current.failed(entry, result.problem().orElse("unklar"));
+            }
+        }
+        loginObservers.forEach(observer -> observer.accept(session, result));
     }
 
     /** Alle Sitzungen dieses Programmlaufs in der Reihenfolge des Öffnens, auch beendete. */

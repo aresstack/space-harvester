@@ -133,8 +133,16 @@ public final class Explorer {
     private static final int NOTICE_MS = 8000;
 
     /** Umfang aus der Auswahl: eine Quelle, ein Space oder nichts (alle). */
-    public record Scope(String sourceId, String spaceKey) {
+    /**
+     * Ein Bereich: Quelle, Space oder, mit {@code pageId}, eine Seite samt Unterseiten (Angelo, 23.11.2026);
+     * {@code pageTitle} nur für Überschriften.
+     */
+    public record Scope(String sourceId, String spaceKey, String pageId, String pageTitle) {
         public static final Scope ALL = new Scope(null, null);
+
+        public Scope(String sourceId, String spaceKey) {
+            this(sourceId, spaceKey, null, null);
+        }
     }
 
     /** Meldet jede Änderung der Auswahl als Quelle, Space oder Seite (für den Reiter „Export“); {@code null} ohne. */
@@ -1005,6 +1013,15 @@ public final class Explorer {
 
     /** Wie {@link #revealPage(PageNavigation.Position)}; den Pfad der Seite holt der Core im Hintergrund. */
     public void revealPage(String sourceId, String pageId) {
+        revealPage(sourceId, null, pageId);
+    }
+
+    /**
+     * Wie {@link #revealPage(String, String)}. Kennt die Quelle keinen Seitenbaum ({@code position} meldet
+     * {@code UNSUPPORTED}, etwa Jira: der Adapter ist keine {@code PageNavigationSource}), sucht der Baum die Seite
+     * direkt unter {@code spaceKey} (bei Jira das Projekt), lädt dabei weitere Stapel nach und wählt sie.
+     */
+    public void revealPage(String sourceId, String spaceKey, String pageId) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || sourceId == null || pageId == null) {
             return;
@@ -1015,8 +1032,20 @@ public final class Explorer {
                 reveal(position, ticket);
             }
         }, error -> {
-            // Quellen ohne Seitenbaum: nichts zu zeigen.
+            if (ticket == revealRequest && spaceKey != null && !spaceKey.isBlank()) {
+                revealFlat(sourceId, spaceKey, pageId, ticket);
+            }
         });
+    }
+
+    /** Seite direkt unter ihrem Space suchen und wählen, für Quellen ohne Pfad im Core. */
+    private void revealFlat(String sourceId, String spaceKey, String pageId, int ticket) {
+        Node source = child(top, item -> item instanceof SourceItem s && s.sourceId().equals(sourceId));
+        if (source == null) {
+            return;
+        }
+        descend(source, List.of(item -> item instanceof SpaceItem s && s.spaceKey().equals(spaceKey),
+                item -> item instanceof PageItem p && p.pageId().equals(pageId)), 0, ticket);
     }
 
     private void descend(Node node, List<java.util.function.Predicate<Item>> steps, int index, int ticket) {
@@ -1133,6 +1162,11 @@ public final class Explorer {
             selectAll();
             return;
         }
+        // Eine Seite als Bereich: im Baum aufklappen und wählen wie ein Suchtreffer.
+        if (scopes.size() == 1 && scopes.get(0).pageId() != null) {
+            revealPage(scopes.get(0).sourceId(), scopes.get(0).spaceKey(), scopes.get(0).pageId());
+            return;
+        }
         List<TreePath> paths = new ArrayList<>();
         for (Scope scope : scopes) {
             for (int i = 0; i < top.getChildCount(); i++) {
@@ -1168,7 +1202,7 @@ public final class Explorer {
                 Scope scope = switch (node.item()) {
                     case SourceItem source -> new Scope(source.sourceId(), null);
                     case SpaceItem space -> new Scope(space.sourceId(), space.spaceKey());
-                    case PageItem page -> new Scope(page.sourceId(), page.spaceKey());
+                    case PageItem page -> new Scope(page.sourceId(), page.spaceKey(), page.pageId(), page.title());
                     default -> null;
                 };
                 if (scope != null && !scopes.contains(scope)) {

@@ -24,6 +24,16 @@ public interface TerminalKeyboard {
         return Long.MIN_VALUE;
     }
 
+    /** Das ganze Bild als Text, Zeile für Zeile (für die Prüfung nach der Anmeldung); leer, wenn unbekannt. */
+    default String screenText() {
+        return "";
+    }
+
+    /** Ob das Bild eine Anmeldemaske zeigt: ein Eingabefeld, danach ein verdecktes (Passwort). */
+    default boolean loginMask() {
+        return false;
+    }
+
     /** Drückt eine Taste, die eine Eingabe an den Host schickt (ENTER, CLEAR, PA, SysReq, PF). */
     void press(AidKey key);
 

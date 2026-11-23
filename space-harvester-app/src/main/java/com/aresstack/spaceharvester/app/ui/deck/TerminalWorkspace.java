@@ -63,8 +63,6 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<TerminalSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
-    /** Reiter samt ✕ je Sitzung (das ✕ schließt, wie der Mittelklick auf den Reiter). */
-    private final Map<TerminalSession, JComponent> tabOf = new java.util.HashMap<>();
     /**
      * Sitzungen aus dem Formular oder einem Lesezeichen, die noch nie verbunden waren. Scheitern sie, bleibt kein toter
      * Reiter: Das Formular kommt mit dem Grund wieder. Der Wert sagt, ob ein Erfolg die gemerkte Verbindung einrichtet.
@@ -93,7 +91,19 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
     /** Höhe der F-Tasten-Leiste unten: die Fußleiste des Command Deck mit der Lupe ({@link DeckBars}). */
     static final int FOOT_HEIGHT = DeckBars.FOOT_HEIGHT;
     /** Die F-Tasten für die Fußleiste des Command Deck, mittig neben der Lupe. */
-    private final JPanel footKeys = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.MiddleLayout());
+    private final JPanel footKeys = new JPanel(new UnderTheScreen());
+    /** Hält die F-Tasten unter dem Terminalbild, wenn es sich verschiebt oder die Größe ändert. */
+    private final ComponentAdapter screenMoved = new ComponentAdapter() {
+        @Override
+        public void componentResized(ComponentEvent event) {
+            footKeys.revalidate();
+        }
+
+        @Override
+        public void componentMoved(ComponentEvent event) {
+            footKeys.revalidate();
+        }
+    };
     /** Als Lesezeichen merken: Ziel, Anmeldung und Makro (Stern in MainframeMate). */
     private final com.aresstack.spaceharvester.app.ui.IconButton star;
     private final TerminalSettings settings;
@@ -209,6 +219,7 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
             if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0) {
                 if (sky.isShowing()) {
                     sky.start();
+                    connectOnArrival();
                 } else {
                     sky.stop();
                 }
@@ -241,6 +252,8 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         // Unten nur die F-Tasten, mittig neben der Lupe in der Fußleiste des Command Deck ({@link #footTools()}); der
         // Stand steht in der Statuszeile der App, nie hier.
         footKeys.setOpaque(false);
+        // Die ganze Zeile rechts der Lupe, damit die Blöcke bis an die Ränder des Terminalbilds reichen.
+        footKeys.putClientProperty(com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL, Boolean.TRUE);
         footKeys.add(functionKeys);
 
         // Mitte: nur der Himmel mit dem Terminal bzw. dem Formular.
@@ -252,6 +265,18 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         add(stage, BorderLayout.CENTER);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        // Lehnt der Host die Anmeldung ab (oder bleibt es unklar): Formular mit dem, was der Host sagte; ab jetzt
+        // versucht niemand mehr automatisch mit diesem Eintrag (Angelo, 23.11.2026: sonst ist das Konto gesperrt).
+        sessions.onLogin((session, result) -> {
+            if (result.sent() && !result.accepted()) {
+                String entry = session.loginSource() == null ? null : session.loginSource().entry();
+                SwingUtilities.invokeLater(() -> {
+                    showForm();
+                    form.problem(entry == null ? "Anmeldung fehlgeschlagen: " + result.problem().orElse("")
+                            : DeckLogin.notice(entry));
+                });
+            }
+        });
         sessions.onReopened((lost, fresh) -> SwingUtilities.invokeLater(() -> reopened(lost, fresh)));
         sessions.all().forEach(this::added);
         settings.observe(() -> SwingUtilities.invokeLater(this::applySettings));
@@ -286,6 +311,26 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
      * „Neue Verbindung“: Ist die Verbindung eingerichtet, verbindet sie direkt; das Formular kommt nur beim ersten Mal
      * und wenn es scheitert (Angelo, 23.11.2026).
      */
+    /** Wann zuletzt beim Einblenden verbunden wurde; schnelles Hin- und Herschalten verbindet nicht doppelt. */
+    private long arrivedAt = Long.MIN_VALUE;
+
+    /**
+     * Beim Wechsel ins Command Deck gleich verbinden (Angelo, 23.11.2026): Das Terminal ist das Erste, was man sieht.
+     * Nur wenn die Verbindung eingerichtet ist und noch kein Reiter steht: Ein beendeter Reiter wartet womöglich auf
+     * seinen automatischen Neuaufbau, und den verbindet man über ihn neu, nicht daneben.
+     */
+    void connectOnArrival() {
+        if (!ConnectForm.isConfigured() || !sessions.all().isEmpty()) {
+            return;
+        }
+        long now = System.nanoTime();
+        if (arrivedAt != Long.MIN_VALUE && now - arrivedAt < java.util.concurrent.TimeUnit.SECONDS.toNanos(10)) {
+            return;
+        }
+        arrivedAt = now;
+        newConnection();
+    }
+
     void newConnection() {
         if (!ConnectForm.isConfigured()) {
             select(null);
@@ -338,6 +383,12 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         if (!ended.state().ended()) {
             return;
         }
+        if (!sessions.mayTry(ended.loginSource())) {
+            // Sperrschutz: Mit diesem Eintrag schlug die letzte Anmeldung fehl; erst prüfen, dann im Formular verbinden.
+            showForm();
+            form.problem(DeckLogin.notice(ended.loginSource().entry()));
+            return;
+        }
         ConnectForm.Request origin = origins.get(ended);
         closeSession(ended);
         TerminalSession fresh = sessions.reopen(ended);
@@ -365,41 +416,13 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         if (pillOf.containsKey(session)) {
             return;
         }
-        // Gezeichnetes Kreuz (nicht das Zeichen „✕“, das nicht jede Schrift hat), im Reiter selbst wie im Browser.
-        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
-                ComposerIcons.close(), "Sitzung schließen (auch Mittelklick auf den Reiter)").compact();
-        cross.addActionListener(e -> askClose(session));
-        ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.profile().label(),
-                session.state().label()) {
-            @Override
-            public void doLayout() {
-                java.awt.Dimension own = cross.getPreferredSize();
-                cross.setBounds(getWidth() - own.width - 4, (getHeight() - own.height) / 2, own.width, own.height);
-            }
-        };
-        // Der Text rückt um das Kreuz nach links; das Kreuz liegt rechts innen auf dem Reiter.
-        pill.setBorder(BorderFactory.createCompoundBorder(pill.getBorder(),
-                BorderFactory.createEmptyBorder(0, 0, 0, cross.getPreferredSize().width)));
-        pill.setLayout(null);
-        pill.add(cross);
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        pill.getAccessibleContext().setAccessibleName(session.profile().label());
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.profile().label(),
+                session.state().label(), "Trennen und schließen (auch Mittelklick auf den Reiter)",
+                () -> askClose(session));
         pill.addActionListener(e -> select(session));
-        pill.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent event) {
-                if (SwingUtilities.isMiddleMouseButton(event)) {
-                    askClose(session);
-                }
-            }
-        });
-        JPanel tab = new JPanel(new BorderLayout(0, 0));
-        tab.setOpaque(false);
-        tab.add(pill, BorderLayout.CENTER);
         pillGroup.add(pill);
-        pills.add(tab, pills.getComponentCount() - 1);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
-        tabOf.put(session, tab);
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
         // Makro-Aufzeichnung: was der Mensch an der Anzeige eingibt (verdeckte Felder meldet sie nie).
         session.view(TerminalView.class).ifPresent(view -> view.addInputListener(new TerminalView.InputListener() {
@@ -510,6 +533,7 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
             view.addScreenListener(screenChanged);
         });
         session.view(JComponent.class).filter(keyWatched::add).ifPresent(screen -> {
+            screen.addComponentListener(screenMoved);
             // Die Lupe der Fußleiste sucht auch im selbst gezeichneten Bild.
             session.view(TerminalView.class).ifPresent(view -> screen.putClientProperty(
                     com.aresstack.spaceharvester.app.ui.FindableSurface.KEY, new ScreenFind(view)));
@@ -585,6 +609,59 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
 
     static final String UNDO_TIP =
             "KI-Eingaben zurücknehmen: setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt";
+
+    /**
+     * Legt die F-Tasten genau unter das Terminalbild (Angelo, 23.11.2026): linker Block bündig mit dessen linkem Rand,
+     * rechter Block mit dem rechten, der mittlere mittig. Ohne Bild oder wenn es schmaler ist als die Tasten: mittig in
+     * ihrer Wunschbreite.
+     */
+    private final class UnderTheScreen implements java.awt.LayoutManager {
+
+        @Override
+        public void addLayoutComponent(String name, java.awt.Component comp) {
+        }
+
+        @Override
+        public void removeLayoutComponent(java.awt.Component comp) {
+        }
+
+        @Override
+        public java.awt.Dimension preferredLayoutSize(java.awt.Container parent) {
+            return functionKeys.getPreferredSize();
+        }
+
+        @Override
+        public java.awt.Dimension minimumLayoutSize(java.awt.Container parent) {
+            return new java.awt.Dimension(0, functionKeys.getPreferredSize().height);
+        }
+
+        @Override
+        public void layoutContainer(java.awt.Container parent) {
+            java.awt.Dimension wanted = functionKeys.getPreferredSize();
+            int height = Math.min(parent.getHeight(), wanted.height);
+            int y = (parent.getHeight() - height) / 2;
+            java.awt.Rectangle under = screenSpan(parent);
+            if (under != null && under.width >= wanted.width) {
+                functionKeys.setBounds(under.x, y, under.width, height);
+            } else {
+                int width = Math.min(parent.getWidth(), wanted.width);
+                functionKeys.setBounds((parent.getWidth() - width) / 2, y, width, height);
+            }
+        }
+
+        /** Waagerechte Lage des Terminalbilds in {@code parent}, auf dessen Breite beschnitten; {@code null} ohne. */
+        private java.awt.Rectangle screenSpan(java.awt.Container parent) {
+            JComponent screen = view(JComponent.class).orElse(null);
+            if (screen == null || !screen.isVisible() || screen.getWidth() <= 0 || screen.getParent() == null
+                    || SwingUtilities.getRoot(screen) != SwingUtilities.getRoot(parent)) {
+                return null;
+            }
+            java.awt.Rectangle at = SwingUtilities.convertRectangle(screen.getParent(), screen.getBounds(), parent);
+            int left = Math.max(0, at.x);
+            int right = Math.min(parent.getWidth(), at.x + at.width);
+            return right <= left ? null : new java.awt.Rectangle(left, 0, right - left, parent.getHeight());
+        }
+    }
 
     /** F-Tasten neben die Lupe der gemeinsamen Fußleiste (Angelo, 23.11.2026: überall dieselbe Leiste). */
     @Override
@@ -842,10 +919,9 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         origins.remove(session);
         firstConnect.remove(session);
         ComposerToggleButton pill = pillOf.remove(session);
-        JComponent tab = tabOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tab == null ? pill : tab);
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }

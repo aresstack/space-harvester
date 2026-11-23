@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.deck.DeckLogin;
 import com.aresstack.spaceharvester.deck.access.ServerAccounts;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSession;
 import com.aresstack.spaceharvester.deck.betaview.BetaViewSessions;
@@ -52,8 +53,6 @@ public final class BetaViewWorkspace extends JPanel {
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<BetaViewSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
-    /** Reiter samt Kreuz je Sitzung. */
-    private final Map<BetaViewSession, JPanel> tabOf = new LinkedHashMap<>();
     private final Map<BetaViewSession, SessionPanel> panelOf = new LinkedHashMap<>();
     private final ComposerToggleButton newPill;
     private final CardLayout cards = new CardLayout();
@@ -96,15 +95,36 @@ public final class BetaViewWorkspace extends JPanel {
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.all().forEach(this::added);
         select(null);
+        // Sind die Zugangsdaten schon da, meldet BetaView beim ersten Zeigen von selbst an (Angelo, 23.11.).
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()
+                    && !autoTried) {
+                autoTried = true;
+                if (pillOf.isEmpty() && BetaViewConnectForm.isConfigured()) {
+                    newLogin();
+                }
+            }
+        });
     }
 
+    /** Die automatische Anmeldung beim ersten Zeigen ist schon gelaufen. */
+    private boolean autoTried;
+
     /**
-     * „Neue Anmeldung“: Hat die gemerkte Anmeldung schon einmal funktioniert, meldet sie direkt an; das Formular kommt
-     * nur ohne gemerkte Zugangsdaten und wenn es scheitert (Deck-Regel, Angelo 23.11.).
+     * „Neue Anmeldung“ (und das erste Zeigen): Sind Zugangsdaten da (KeePass-Eintrag), meldet sie direkt an; das
+     * Formular kommt nur ohne Zugangsdaten und wenn es scheitert (Deck-Regel, Angelo 23.11.).
      */
     void newLogin() {
         if (!BetaViewConnectForm.isConfigured()) {
             select(null);
+            return;
+        }
+        // Schutz vor der Kontosperre (Angelo, 23.11.): Ist die letzte Anmeldung mit diesem KeePass-Eintrag
+        // gescheitert, egal in welchem Bereich, kein automatischer Versuch, sondern das Formular mit dem Grund.
+        String entry = BetaViewConnectForm.savedEntry();
+        if (!DeckLogin.guard().mayTry(entry)) {
+            select(null);
+            form.notice(DeckLogin.notice(entry));
             return;
         }
         BetaViewSession before = selected;
@@ -131,16 +151,16 @@ public final class BetaViewWorkspace extends JPanel {
             directPending = false;
             direct.add(session);
         }
-        ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.profile().label(),
-                session.state().label());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        pill.getAccessibleContext().setAccessibleName(session.profile().label());
+        String entry = form.takeAttemptEntry();
+        if (!entry.isEmpty() && session.state() != ConnectionState.DISCONNECTED) {
+            loggingIn.put(session, entry);
+        }
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.profile().label(),
+                session.state().label(), "Abmelden und schließen (auch Mittelklick auf den Reiter)",
+                () -> close(session));
         pill.addActionListener(e -> select(session));
         pillGroup.add(pill);
-        JPanel tab = com.aresstack.spaceharvester.app.ui.deck.DeckBars.tab(pill,
-                "Abmelden und schließen (auch Mittelklick auf den Reiter)", () -> close(session));
-        pills.add(tab, pills.getComponentCount() - 1);
-        tabOf.put(session, tab);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
         SessionPanel panel = new SessionPanel(session, prompts, () -> close(session));
         panelOf.put(session, panel);
@@ -154,6 +174,10 @@ public final class BetaViewWorkspace extends JPanel {
         select(session);
         pills.revalidate();
         pills.repaint();
+        if (session.state() != ConnectionState.CONNECTING) {
+            // Die Anmeldung war schneller als der Reiter: Ergebnis jetzt auswerten.
+            changed(session);
+        }
     }
 
     private void changed(BetaViewSession session) {
@@ -167,20 +191,40 @@ public final class BetaViewWorkspace extends JPanel {
         if (panel != null) {
             panel.stateChanged();
         }
+        String entry = loggingIn.get(session);
         if (session.state() == ConnectionState.CONNECTED) {
             direct.remove(session);
+            if (loggingIn.remove(session) != null) {
+                DeckLogin.guard().succeeded(entry);
+            }
             if (BetaViewConnectForm.KEEPASS.equals(com.aresstack.spaceharvester.app.ui.AppState.shared()
                     .get(BetaViewConnectForm.LOGIN_KEY))) {
                 // Erst nach dem ersten Erfolg gilt die gemerkte Anmeldung als eingerichtet.
                 BetaViewConnectForm.configured();
             }
-        } else if (session.state() == ConnectionState.FAILED && direct.remove(session)) {
+        } else if (session.state() == ConnectionState.FAILED && loggingIn.remove(session) != null
+                && rejected(session.failure().orElse(""))) {
+            // Der Server hat die Anmeldung abgelehnt: Eintrag sperren, überall, bis eine Anmeldung klappt.
+            DeckLogin.guard().failed(entry, session.failure().orElse("Anmeldung abgelehnt"));
+        }
+        if (session.state() == ConnectionState.FAILED && direct.remove(session)) {
             // Direkte Anmeldung gescheitert: keine tote Sitzung stehen lassen, sondern das Formular mit dem Grund.
             String reason = session.failure().orElse("Anmeldung gescheitert");
             close(session);
             select(null);
             form.failed(reason);
         }
+    }
+
+    /** Sitzungen in der Anmeldung mit einem KeePass-Eintrag, bis sie angemeldet sind oder scheitern. */
+    private final java.util.Map<BetaViewSession, String> loggingIn = new java.util.HashMap<>();
+
+    /**
+     * Ob der Grund eine Ablehnung der Anmeldung durch den Server ist (falsches oder abgelaufenes Kennwort, HTTP
+     * 401/403) und nicht ein Netz- oder Proxyfehler; nur eine Ablehnung sperrt den Eintrag.
+     */
+    static boolean rejected(String reason) {
+        return reason.startsWith("Anmeldung abgelehnt") && !reason.matches("Anmeldung abgelehnt: HTTP (?!40[13]).*");
     }
 
     /** Zeigt die Sitzung (oder mit {@code null} das Formular „Neue Anmeldung“). */
@@ -206,7 +250,7 @@ public final class BetaViewWorkspace extends JPanel {
         ComposerToggleButton pill = pillOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tabOf.remove(session));
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }

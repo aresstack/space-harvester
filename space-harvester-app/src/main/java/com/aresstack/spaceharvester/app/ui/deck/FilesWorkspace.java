@@ -124,7 +124,13 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private static final String BROWSER = "browser";
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY);
 
-    private final FileBrowser browser;
+    /** Der Browser des gezeigten Ordner-Reiters; jeder Ordner-Reiter hat seinen eigenen (Verlauf, Filter). */
+    private FileBrowser browser;
+    /** Die Ordner-Reiter, der erste immer da; weitere über „Neuer Reiter“ (wie Neue Verbindung in den anderen Bereichen). */
+    private final List<BrowseTab> browseTabs = new ArrayList<>();
+    private BrowseTab browseTab;
+    private final ComposerToggleButton newPill;
+    static final String TABS_KEY = "deck.files.tabs";
     private final EditorSessions editors;
     private final DocumentStore store;
     /** Vorschau von Dokumenten als Text (nur lesen); {@code null} ohne Vorschau. */
@@ -132,6 +138,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private final SharePointAccess sharePoint;
     private final Supplier<List<SharePointSite>> sites;
     private final ServerAccounts accounts;
+    /**
+     * Schutz vor der Kontosperre (Deck-Regel): Ein abgelehnter Login sperrt den Zugang für jeden automatischen Versuch,
+     * bis eine Anmeldung klappt. KeePass-Zugänge über ihren Eintrag, gespeicherte über {@link #savedEntry}.
+     */
+    private com.aresstack.spaceharvester.deck.access.LoginGuard guard = DeckLogin.guard();
     /** Nach der ersten erfolgreichen Anmeldung gespeicherte SharePoint-Zugangsdaten (die App setzt den Tresor). */
     private volatile com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins savedLogins =
             com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins.inMemory();
@@ -145,7 +156,6 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private TableColumn dateColumn;
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();
-    private final ComposerToggleButton browsePill;
     private final Map<EditorSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
     private final Map<EditorSession, DocumentEditor> editorOf = new LinkedHashMap<>();
     /** Fester Kartenname je Dokument – der Ort kann sich durch „Speichern unter“ ändern. */
@@ -176,8 +186,6 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private final javax.swing.JButton reload;
     /** Neben der Lupe in der Fußleiste des Command Deck: die Aktionen des gewählten Reiters. */
     private final JPanel footTools = new JPanel(new CardLayout());
-    /** Reiter samt Kreuz je Dokument. */
-    private final Map<EditorSession, JPanel> tabOf = new LinkedHashMap<>();
     private boolean creatingFolder;
     private boolean started;
     private EditorSession selected;
@@ -194,10 +202,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
      * @param sites      SharePoint-Sites für „Orte“, jeweils aktuell gelesen
      * @param accounts   Zugänge aus KeePass; passt einer zum SharePoint-Rechner, meldet er sich damit an
      */
-    public FilesWorkspace(FileBrowser browser, EditorSessions editors, DocumentStore store, DocumentStore preview,
+    public FilesWorkspace(FileBrowser first, EditorSessions editors, DocumentStore store, DocumentStore preview,
                           SharePointAccess sharePoint, Supplier<List<SharePointSite>> sites, ServerAccounts accounts) {
         super(new BorderLayout());
-        this.browser = browser;
+        // Der Parameter heißt nicht „browser“: Rückrufe im Konstruktor sollen das Feld (gezeigter Reiter) lesen.
+        this.browser = first;
         this.editors = editors;
         this.store = store;
         this.preview = preview;
@@ -208,22 +217,27 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
 
         // Kopfzeile: links die Reiter, rechts Filter und Sortierung der Liste (wie die Seitenansicht).
         pills.setOpaque(false);
-        browsePill = new ComposerToggleButton(FilesIcons.folder(), "Durchsuchen", browser.source().name());
-        browsePill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        browsePill.addActionListener(e -> select(null));
-        pillGroup.add(browsePill);
-        pills.add(browsePill);
+        // „Neuer Reiter“ als letzte Pille wie „Neue Verbindung“ in Terminal, FTP und NDV (Angelo, 23.11.).
+        newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neuer Reiter",
+                "Weiteren Ordner in einem neuen Reiter öffnen (Strg+T)");
+        newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        newPill.addActionListener(e -> newTab(null));
+        pillGroup.add(newPill);
+        pills.add(newPill);
+        browseTab = addBrowseTab(first, false);
         filter.getAccessibleContext().setAccessibleName("Filter");
         filter.setToolTipText("<html>Regulärer Ausdruck auf den Namen, ohne Groß/klein<br>Beispiel: \\.jcl$</html>");
         filterFrame = InputFrame.search(filter);
         filter.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
             public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                browseTab.filter = filter.getText();
                 browser.filter(filter.getText());
             }
 
             @Override
             public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                browseTab.filter = filter.getText();
                 browser.filter(filter.getText());
             }
 
@@ -276,6 +290,8 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         footTools.add(browserActions, BROWSER);
         footTools.add(documentActions, "document");
 
+        bind(this, KeyStroke.getKeyStroke(KeyEvent.VK_T, InputEvent.CTRL_DOWN_MASK), "deck-new-tab",
+                () -> newTab(null));
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
 
@@ -286,12 +302,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         String savedSort = AppState.shared().get(SORT_KEY);
         if (savedSort != null) {
             try {
-                browser.sort(SortMode.valueOf(savedSort));
+                first.sort(SortMode.valueOf(savedSort));
             } catch (IllegalArgumentException ignored) {
                 // Alter Wert: Standard bleibt.
             }
         }
-        browser.observe(changed -> SwingUtilities.invokeLater(this::render));
         editors.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         editors.onReveal(session -> SwingUtilities.invokeLater(() -> {
             if (pillOf.containsKey(session)) {
@@ -326,7 +341,123 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         }
         started = true;
         String last = AppState.shared().get(LOCATION_KEY);
-        browser.open(last == null || last.isBlank() ? browser.source().home() : last);
+        FileBrowser first = browseTabs.get(0).browser;
+        first.open(last == null || last.isBlank() ? first.source().home() : last);
+        String saved = AppState.shared().get(TABS_KEY);
+        if (saved != null) {
+            saved.lines().filter(line -> !line.isBlank()).forEach(location -> {
+                BrowseTab tab = addBrowseTab(first.sibling(), true);
+                tab.browser.open(location);
+            });
+        }
+    }
+
+    // ---- Ordner-Reiter ---------------------------------------------------------------------------------------------
+
+    /** Ein Ordner-Reiter: eigener Browser (Ordner, Verlauf, Filter), Beschriftung = Ordnername. */
+    private static final class BrowseTab {
+        final FileBrowser browser;
+        ComposerToggleButton pill;
+        String filter = "";
+
+        BrowseTab(FileBrowser browser) {
+            this.browser = browser;
+        }
+    }
+
+    /** Legt einen Ordner-Reiter an; der erste hat kein Kreuz, er bleibt immer. */
+    private BrowseTab addBrowseTab(FileBrowser tabBrowser, boolean closable) {
+        BrowseTab tab = new BrowseTab(tabBrowser);
+        ComposerToggleButton pill = closable
+                ? new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(FilesIcons.folder(), "Durchsuchen",
+                        tabBrowser.source().name(), "Reiter schließen (auch Mittelklick auf den Reiter)",
+                        () -> closeBrowseTab(tab))
+                : new ComposerToggleButton(FilesIcons.folder(), "Durchsuchen", tabBrowser.source().name());
+        tab.pill = pill;
+        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        pill.addActionListener(e -> showBrowseTab(tab));
+        pillGroup.add(pill);
+        pills.add(pill, browseTabs.size());
+        browseTabs.add(tab);
+        tabBrowser.observe(changed -> SwingUtilities.invokeLater(() -> {
+            titleBrowseTab(tab);
+            if (changed == browser) {
+                render();
+            }
+        }));
+        pills.revalidate();
+        pills.repaint();
+        return tab;
+    }
+
+    /** Neuer Ordner-Reiter im gezeigten (oder angegebenen) Ordner. */
+    void newTab(String location) {
+        String where = location != null ? location : browser.location().orElse(browser.source().home());
+        BrowseTab tab = addBrowseTab(browser.sibling(), true);
+        showBrowseTab(tab);
+        tab.browser.open(where);
+        saveTabs();
+    }
+
+    private void showBrowseTab(BrowseTab tab) {
+        browseTab = tab;
+        browser = tab.browser;
+        if (!filter.getText().equals(tab.filter)) {
+            filter.setText(tab.filter);
+        }
+        collapsed.clear();
+        select(null);
+        render();
+    }
+
+    private void closeBrowseTab(BrowseTab tab) {
+        int index = browseTabs.indexOf(tab);
+        if (index <= 0) {
+            return;
+        }
+        browseTabs.remove(index);
+        pillGroup.remove(tab.pill);
+        pills.remove(tab.pill);
+        pills.revalidate();
+        pills.repaint();
+        if (tab == browseTab) {
+            showBrowseTab(browseTabs.get(Math.min(index, browseTabs.size() - 1)));
+        }
+        saveTabs();
+    }
+
+    private void titleBrowseTab(BrowseTab tab) {
+        String location = tab.browser.location().orElse("");
+        String title = location.isEmpty() ? "Durchsuchen" : folderName(location);
+        if (!title.equals(tab.pill.getText())) {
+            tab.pill.setText(title);
+            tab.pill.getAccessibleContext().setAccessibleName(title);
+            pills.revalidate();
+        }
+        tab.pill.setToolTipText(location.isEmpty() ? tab.browser.source().name() : location);
+        if (tab != browseTabs.get(0)) {
+            saveTabs();
+        }
+    }
+
+    /** Letzter Teil eines Pfads (Laufwerk wie „C:\“ bleibt ganz). */
+    static String folderName(String location) {
+        String trimmed = location.replaceAll("[\\\\/]+$", "");
+        int cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+        String name = cut >= 0 ? trimmed.substring(cut + 1) : trimmed;
+        return name.isEmpty() ? location : name;
+    }
+
+    /** Merkt die weiteren Ordner-Reiter (der erste steht unter {@link #LOCATION_KEY}). */
+    private void saveTabs() {
+        if (!started) {
+            return;
+        }
+        StringBuilder lines = new StringBuilder();
+        for (BrowseTab tab : browseTabs.subList(1, browseTabs.size())) {
+            tab.browser.location().ifPresent(location -> lines.append(location).append('\n'));
+        }
+        AppState.shared().put(TABS_KEY, lines.toString());
     }
 
     private JComponent browserCard() {
@@ -434,7 +565,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         });
         bind(table, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "deck-open", this::openSelected);
         bind(table, KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "deck-delete", this::deleteSelected);
-        bind(table, KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "deck-up", browser::up);
+        bind(table, KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "deck-up", () -> browser.up());
         JComponent scroll = Comic.scroll(table);
         BusyOverlay overlay = new BusyOverlay(scroll);
         overlay.setText("Lade …");
@@ -444,10 +575,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         card.add(rows, BorderLayout.NORTH);
         card.add(overlay, BorderLayout.CENTER);
         card.putClientProperty(BusyOverlay.class, overlay);
-        bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0), "deck-refresh", browser::refresh);
-        bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK), "deck-back", browser::back);
+        bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0), "deck-refresh", () -> browser.refresh());
+        bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, InputEvent.ALT_DOWN_MASK), "deck-back",
+                () -> browser.back());
         bind(card, KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, InputEvent.ALT_DOWN_MASK), "deck-forward",
-                browser::forward);
+                () -> browser.forward());
         return card;
     }
 
@@ -461,7 +593,8 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         if (!path.isFocusOwner() && !path.getText().equals(location)) {
             path.setText(location);
         }
-        if (!location.isEmpty() && !browser.loading() && browser.failure().isEmpty()) {
+        if (!location.isEmpty() && !browser.loading() && browser.failure().isEmpty()
+                && browser == browseTabs.get(0).browser) {
             AppState.shared().put(LOCATION_KEY, location);
         }
         filter.setBackground(browser.filterValid() ? Color.WHITE : Comic.CHANGE_REMOVED);
@@ -554,7 +687,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     /** Zeigt die Liste ({@code null}) oder ein offenes Dokument. */
     void select(EditorSession session) {
         selected = session;
-        ComposerToggleButton pill = session == null ? browsePill : pillOf.get(session);
+        ComposerToggleButton pill = session == null ? browseTab.pill : pillOf.get(session);
         if (pill != null) {
             pill.setSelected(true);
         }
@@ -586,9 +719,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         String card = "doc-" + (++cardCounter);
         cardOf.put(session, card);
         center.add(editor, card);
-        ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.forName(session.name()),
-                session.store() == preview ? session.name() + " (Vorschau)" : session.name(), session.location());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(FilesIcons.forName(session.name()),
+                session.store() == preview ? session.name() + " (Vorschau)" : session.name(), session.location(),
+                "Dokument schließen (auch Mittelklick auf den Reiter)", () -> closeDocument(session));
         pill.getAccessibleContext().setAccessibleName(session.name());
         pill.addActionListener(e -> select(session));
         pill.addMouseListener(new MouseAdapter() {
@@ -603,10 +736,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             }
         });
         pillGroup.add(pill);
-        JPanel tab = DeckBars.tab(pill, "Dokument schließen (auch Mittelklick auf den Reiter)",
-                () -> closeDocument(session));
-        pills.add(tab);
-        tabOf.put(session, tab);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
         session.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
         pills.revalidate();
@@ -641,7 +771,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         cardOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tabOf.remove(session));
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }
@@ -748,6 +878,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
 
     /** Öffnet einen Pfad; SharePoint-Adressen werden zum WebDAV-Pfad und brauchen vorher eine Anmeldung. */
     void go(String target) {
+        FileBrowser tab = browser;
         String text = target == null ? "" : target.strip();
         if (SharePointPaths.isWebUrl(text)) {
             Optional<String> unc = SharePointPaths.toUncPath(text);
@@ -761,23 +892,23 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             String unc = text;
             status("Melde an " + SharePointPaths.displayName(SharePointPaths.toWebUrl(unc)) + " an …", false);
             busy().setBusy(true);
-            sharePoint.connect(unc, result -> SwingUtilities.invokeLater(() -> connected(result)));
+            sharePoint.connect(unc, result -> SwingUtilities.invokeLater(() -> connected(tab, result)));
             return;
         }
-        browser.open(text);
+        tab.open(text);
     }
 
-    private void connected(SharePointAccess.Result result) {
+    private void connected(FileBrowser tab, SharePointAccess.Result result) {
         busy().setBusy(browser.loading());
         if (result.connected()) {
-            browser.open(result.uncPath());
+            tab.open(result.uncPath());
             return;
         }
         if (!result.outcome().needsCredentials()) {
             status(result.outcome().reason(), true);
             return;
         }
-        trySaved(result.uncPath(), result.outcome().reason());
+        trySaved(tab, result.uncPath(), result.outcome().reason());
     }
 
     /** Woher gespeicherte SharePoint-Zugangsdaten kommen und wohin neue gehen; {@code null} = nur im Speicher. */
@@ -786,12 +917,39 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 : logins;
     }
 
+    /**
+     * Sperrschlüssel für gespeicherte SharePoint-Zugangsdaten: je Konto (Benutzer), denn gesperrt wird das Konto, gleich
+     * auf welcher Site. Der Wächter legt den Schlüssel im App-Zustand ab, darum nie der Name im Klartext, sondern ein
+     * kurzer SHA-256-Wert davon.
+     */
+    static String savedEntry(String user) {
+        String name = user == null ? "" : user.strip().toLowerCase(Locale.ROOT);
+        try {
+            byte[] hash = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return "SharePoint " + java.util.HexFormat.of().formatHex(hash, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Hinweis im Dialog bei gesperrtem Konto, mit lesbarem Namen (der Schlüssel ist nur ein Hash). */
+    private String lockedNotice(String user) {
+        return guard.failure(savedEntry(user)).map(failure -> "Letzte Anmeldung als „" + user + "“ fehlgeschlagen: "
+                + failure.reason() + ". Bitte Zugangsdaten prüfen.").orElse("");
+    }
+
+    /** Für Tests: ein eigener Wächter statt des gemeinsamen der App. */
+    void loginGuard(com.aresstack.spaceharvester.deck.access.LoginGuard guard) {
+        this.guard = guard;
+    }
+
     private static String loginHost(String unc) {
         return SharePointPaths.host(unc).orElse("").replaceAll("(?i)@SSL", "").replaceAll("@\\d+$", "");
     }
 
     /** Erst die gespeicherten Zugangsdaten; passen sie nicht oder gibt es keine, weiter mit KeePass bzw. dem Dialog. */
-    private void trySaved(String unc, String reason) {
+    private void trySaved(FileBrowser tab, String unc, String reason) {
         busy().setBusy(true);
         com.aresstack.spaceharvester.deck.files.sharepoint.SavedLogins logins = savedLogins;
         Thread.ofVirtual().name("deck-sharepoint-saved").start(() -> {
@@ -802,16 +960,27 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 // Tresor nicht lesbar: weiter wie ohne Gespeichertes
             }
             if (saved.isEmpty()) {
-                SwingUtilities.invokeLater(() -> tryKeePass(unc, reason, ""));
+                SwingUtilities.invokeLater(() -> tryKeePass(tab, unc, reason, ""));
                 return;
             }
             var login = saved.get();
+            String entry = savedEntry(login.user());
+            if (!guard.mayTry(entry)) {
+                // Letzter Versuch abgelehnt: nicht noch einmal automatisch, der Mensch prüft im Dialog.
+                java.util.Arrays.fill(login.password(), '\0');
+                SwingUtilities.invokeLater(() -> askLogin(tab, unc, lockedNotice(login.user()), login.user()));
+                return;
+            }
             sharePoint.connect(unc, login.user(), login.password(), result -> SwingUtilities.invokeLater(() -> {
                 busy().setBusy(browser.loading());
                 if (result.connected()) {
-                    browser.open(unc);
+                    guard.succeeded(entry);
+                    tab.open(unc);
                 } else {
-                    tryKeePass(unc, "Gespeicherte Zugangsdaten passen nicht: " + result.outcome().reason(),
+                    if (result.outcome().needsCredentials()) {
+                        guard.failed(entry, result.outcome().reason());
+                    }
+                    tryKeePass(tab, unc, "Gespeicherte Zugangsdaten passen nicht: " + result.outcome().reason(),
                             login.user());
                 }
             }));
@@ -819,7 +988,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         });
     }
 
-    private void tryKeePass(String unc, String reason, String user) {
+    private void tryKeePass(FileBrowser tab, String unc, String reason, String user) {
         String host = loginHost(unc);
         // Wie MainframeMate: dann KeePass (Eintrag mit diesem Rechner), zuletzt fragen.
         Thread.ofVirtual().name("deck-sharepoint-keepass").start(() -> {
@@ -831,16 +1000,20 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             }
             Optional<ServerAccount> found = account;
             SwingUtilities.invokeLater(() -> {
-                if (found.isPresent() && !reason.startsWith("KeePass")) {
-                    loginWithKeePass(unc, found.get());
+                if (found.isPresent() && !guard.mayTry(found.get().entry())) {
+                    askLogin(tab, unc, DeckLogin.notice(found.get().entry()), found.get().user(),
+                            found.get().entry());
+                } else if (found.isPresent() && !reason.startsWith("KeePass")) {
+                    loginWithKeePass(tab, unc, found.get());
                 } else {
-                    askLogin(unc, reason, found.map(ServerAccount::user).orElse(user));
+                    askLogin(tab, unc, reason, found.map(ServerAccount::user).orElse(user),
+                            found.map(ServerAccount::entry).orElse(null));
                 }
             });
         });
     }
 
-    private void loginWithKeePass(String unc, ServerAccount account) {
+    private void loginWithKeePass(FileBrowser tab, String unc, ServerAccount account) {
         busy().setBusy(true);
         Thread.ofVirtual().name("deck-sharepoint-login").start(() -> {
             try (ServerCredentials credentials = accounts.credentials(account.entry())) {
@@ -848,22 +1021,36 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 sharePoint.connect(unc, credentials.user(), password, result -> SwingUtilities.invokeLater(() -> {
                     busy().setBusy(browser.loading());
                     if (result.connected()) {
-                        browser.open(unc);
+                        guard.succeeded(account.entry());
+                        tab.open(unc);
                     } else {
-                        askLogin(unc, "KeePass-Eintrag „" + account.entry() + "“ passt nicht: "
-                                + result.outcome().reason(), credentials.user());
+                        if (result.outcome().needsCredentials()) {
+                            guard.failed(account.entry(), result.outcome().reason());
+                        }
+                        askLogin(tab, unc, "KeePass-Eintrag „" + account.entry() + "“ passt nicht: "
+                                + result.outcome().reason(), credentials.user(), account.entry());
                     }
                 }));
                 java.util.Arrays.fill(password, '\0');
             } catch (Exception e) {
-                SwingUtilities.invokeLater(() -> askLogin(unc, "KeePass nicht lesbar ("
+                SwingUtilities.invokeLater(() -> askLogin(tab, unc, "KeePass nicht lesbar ("
                         + e.getClass().getSimpleName() + ")", account.user()));
             }
         });
     }
 
-    /** Anmeldedialog wie {@code SharePointAuthenticator.showLoginDialog} in MainframeMate. */
-    private void askLogin(String unc, String reason, String user) {
+    private void askLogin(FileBrowser tab, String unc, String reason, String user) {
+        askLogin(tab, unc, reason, user, null);
+    }
+
+    /**
+     * Anmeldedialog wie {@code SharePointAuthenticator.showLoginDialog} in MainframeMate.
+     *
+     * @param keePassEntry der KeePass-Eintrag, dessen Ablehnung zum Dialog führte; klappt die Anmeldung mit seinem
+     *                     Benutzer, ist das Konto wieder frei und die Sperre des Eintrags fällt (sonst bliebe er für
+     *                     immer gesperrt, denn automatisch wird er nicht mehr versucht)
+     */
+    private void askLogin(FileBrowser tab, String unc, String reason, String user, String keePassEntry) {
         busy().setBusy(browser.loading());
         JTextField userField = Comic.field(24);
         userField.setText(user == null ? "" : user);
@@ -888,6 +1075,10 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         sharePoint.connect(unc, entered, password, result -> SwingUtilities.invokeLater(() -> {
             busy().setBusy(browser.loading());
             if (result.connected()) {
+                guard.succeeded(savedEntry(entered));
+                if (keePassEntry != null && user != null && entered.strip().equalsIgnoreCase(user.strip())) {
+                    guard.succeeded(keePassEntry);
+                }
                 // Nach dem ersten Erfolg merken: beim nächsten Mal kein Dialog (Angelo, 23.11.).
                 Thread.ofVirtual().name("deck-sharepoint-save").start(() -> {
                     try {
@@ -899,10 +1090,13 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                         java.util.Arrays.fill(password, '\0');
                     }
                 });
-                browser.open(unc);
+                tab.open(unc);
             } else {
                 java.util.Arrays.fill(password, '\0');
-                askLogin(unc, result.outcome().reason(), entered);
+                if (result.outcome().needsCredentials()) {
+                    guard.failed(savedEntry(entered), result.outcome().reason());
+                }
+                askLogin(tab, unc, result.outcome().reason(), entered, keePassEntry);
             }
         }));
     }
@@ -1024,6 +1218,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         if (chosen.size() == 1) {
             menu.add(item("Öffnen", this::openSelected));
             FileEntry entry = chosen.get(0);
+            if (entry.directory()) {
+                menu.add(item("In neuem Reiter öffnen", () -> newTab(entry.location())));
+            }
             if (!entry.directory() && preview != null
                     && com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(entry.name())) {
                 menu.add(item("Vorschau (Strg+Doppelklick)", this::previewSelected));
@@ -1196,9 +1393,19 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         return editorOf.get(session);
     }
 
+    /** Für Tests: zeigt den Ordner-Reiter an dieser Stelle. */
+    void showBrowseTab(int index) {
+        showBrowseTab(browseTabs.get(index));
+    }
+
+    /** Für Tests: schließt den Ordner-Reiter an dieser Stelle wie sein Kreuz. */
+    void closeBrowseTab(int index) {
+        closeBrowseTab(browseTabs.get(index));
+    }
+
     List<String> pillTitles() {
         List<String> titles = new ArrayList<>();
-        titles.add(browsePill.getText());
+        browseTabs.forEach(tab -> titles.add(tab.pill.getText()));
         pillOf.values().forEach(pill -> titles.add(pill.getText()));
         return titles;
     }

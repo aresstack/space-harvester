@@ -385,6 +385,11 @@ final class FtpConnectForm extends JPanel {
         return state.getBoolean(CONFIGURED_KEY, false) && !nonNull(state.get(ENTRY_KEY)).isBlank();
     }
 
+    /** Der gemerkte KeePass-Eintrag, leer wenn keiner. */
+    static String rememberedEntry() {
+        return nonNull(AppState.shared().get(ENTRY_KEY));
+    }
+
     /** Die gemerkte Verbindung hat geklappt. */
     static void configured() {
         AppState.shared().put(CONFIGURED_KEY, "true");

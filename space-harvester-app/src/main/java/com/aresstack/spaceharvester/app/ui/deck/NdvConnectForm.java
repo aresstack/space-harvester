@@ -282,6 +282,23 @@ final class NdvConnectForm extends JPanel {
                 profile.defaultLibrary() == null ? "" : profile.defaultLibrary(), String.valueOf(profile.useProxy())));
     }
 
+    /**
+     * Ohne erfolgreiche Verbindung: der gemerkte Server (sonst der des Terminals) aus den KeePass-Einträgen, mit
+     * Standard-Port, gemerkter Bibliothek und Proxy-Wahl; leer, wenn er fehlt oder keine Adresse oder keinen Benutzer
+     * hat (dann braucht es das Formular).
+     */
+    static java.util.Optional<Working> fromRemembered(List<ServerAccount> list) {
+        String wanted = remembered();
+        if (wanted == null || wanted.isBlank() || list == null) {
+            return java.util.Optional.empty();
+        }
+        return list.stream().filter(account -> account.entry().equals(wanted)).findFirst()
+                .filter(account -> account.host() != null && !account.host().isBlank() && !account.user().isEmpty())
+                .map(account -> new Working(new NdvProfile(account.host(), NdvProfile.DEFAULT_PORT,
+                        AppState.shared().get(LIBRARY_KEY), Boolean.parseBoolean(AppState.shared().get(PROXY_KEY))),
+                        account.entry()));
+    }
+
     static java.util.Optional<Working> working() {
         String stored = AppState.shared().get(WORKING_KEY);
         if (stored == null || stored.isBlank()) {

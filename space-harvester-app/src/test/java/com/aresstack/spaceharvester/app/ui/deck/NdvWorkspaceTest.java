@@ -61,6 +61,9 @@ class NdvWorkspaceTest {
         AppState.shared().put(NdvBrowser.LIBRARY_KEY, "");
         AppState.shared().put(NdvConnectForm.LIBRARY_KEY, "");
         AppState.shared().put(NdvConnectForm.WORKING_KEY, "");
+        AppState.shared().put(NdvConnectForm.ENTRY_KEY, "");
+        AppState.shared().put(ConnectForm.ENTRY_KEY, "");
+        DeckLogin.guard().succeeded("Testhost NDV");
         NdvAnalysisSettings.searchLink(NdvSearchLink.NONE);
         // Der NDV-Zwischenspeicher der Tests liegt nie im echten App-Ordner.
         if (System.getProperty(NdvAnalysisSettings.CACHE_PROPERTY) == null) {
@@ -306,6 +309,116 @@ class NdvWorkspaceTest {
     }
 
     @Test
+    void openingTheAreaConnectsAtOnceWithTheRememberedEntryWithoutTheForm() throws Exception {
+        AppState.shared().put(ConnectForm.ENTRY_KEY, "Testhost NDV");
+        AppState.shared().put(NdvConnectForm.LIBRARY_KEY, "LAGER");
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            workspace[0].shown();
+        });
+        flush();
+        NdvSession session = workspace[0].selected();
+        assertThat(session).as("verbunden, ohne Formular").isNotNull();
+        assertThat(session.state()).isEqualTo(NdvState.CONNECTED);
+        assertThat(session.profile().port()).isEqualTo(8011);
+        assertThat(session.profile().defaultLibrary()).isEqualTo("LAGER");
+        assertThat(NdvConnectForm.working()).isPresent();
+        SwingUtilities.invokeAndWait(() -> workspace[0].shown());
+        flush();
+        assertThat(sessions.all()).as("kein zweites Verbinden").hasSize(1);
+    }
+
+    @Test
+    void aLockedKeePassEntryIsNeverTriedAutomaticallyOnlyByHandAndASuccessUnlocksIt() throws Exception {
+        AppState.shared().put(ConnectForm.ENTRY_KEY, "Testhost NDV");
+        // Woanders im Deck (z. B. Terminal) ist die Anmeldung mit demselben Eintrag fehlgeschlagen.
+        DeckLogin.guard().failed("Testhost NDV", "Passwort abgelaufen");
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            workspace[0].shown();
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> workspace[0].newConnection());
+        flush();
+        assertThat(sessions.all()).as("kein automatischer Versuch").isEmpty();
+        assertThat(read).as("kein Passwort gelesen").isEmpty();
+        assertThat(server.connects()).isZero();
+        assertThat(workspace[0].selected()).isNull();
+        assertThat(workspace[0].form().problemText()).contains("Testhost NDV").contains("Passwort abgelaufen")
+                .contains("Zugangsdaten prüfen");
+
+        // Der Mensch drückt selbst „Verbinden“: das darf, und der Erfolg löst die Sperre.
+        SwingUtilities.invokeAndWait(() -> {
+            NdvConnectForm form = workspace[0].form();
+            form.show(List.of(HOST));
+            form.server.setSelectedItem(HOST);
+            form.submit();
+        });
+        flush();
+        assertThat(workspace[0].selected().state()).isEqualTo(NdvState.CONNECTED);
+        assertThat(DeckLogin.guard().mayTry("Testhost NDV")).isTrue();
+    }
+
+    @Test
+    void selfHealingAfterALostConnectionDoesNotTryALockedEntry() throws Exception {
+        AppState.shared().put(ConnectForm.ENTRY_KEY, "Testhost NDV");
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            workspace[0].shown();
+        });
+        flush();
+        NdvSession session = workspace[0].selected();
+        assertThat(session.state()).isEqualTo(NdvState.CONNECTED);
+        int connects = server.connects();
+        int reads = read.size();
+        // Woanders ist die Anmeldung mit demselben Eintrag fehlgeschlagen; dann reißt die Verbindung ab.
+        DeckLogin.guard().failed("Testhost NDV", "Passwort abgelaufen");
+        server.dropConnections();
+        SwingUtilities.invokeAndWait(() -> workspace[0].browser(session).refresh());
+        flush();
+        assertThat(server.connects()).as("Selbstheilen versucht den gesperrten Eintrag nicht").isEqualTo(connects);
+        assertThat(read).hasSize(reads);
+        assertThat(DeckLogin.notice("Testhost NDV")).as("der Grund bleibt der ursprüngliche")
+                .contains("Passwort abgelaufen");
+    }
+
+    @Test
+    void aLateSuccessDoesNotClearANewerRejectionOfTheSameEntry() throws Exception {
+        NdvConnectForm.rememberWorking(new com.aresstack.spaceharvester.deck.ndv.NdvProfile("10.0.0.7", 8011),
+                "Testhost NDV");
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        // Die Anmeldung klappt, die Meldung „verbunden“ wartet aber noch auf dem EDT ...
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            workspace[0].shown();
+            assertThat(sessions.all()).hasSize(1);
+            assertThat(sessions.all().getFirst().state()).isEqualTo(NdvState.CONNECTED);
+            // ... während FTP mit demselben Eintrag danach abgelehnt wird, auch in derselben Millisekunde.
+            DeckLogin.guard().failed("Testhost NDV", "Passwort abgelaufen");
+        });
+        flush();
+        assertThat(workspace[0].selected().state()).isEqualTo(NdvState.CONNECTED);
+        assertThat(DeckLogin.guard().mayTry("Testhost NDV")).as("die neuere Ablehnung bleibt").isFalse();
+        assertThat(DeckLogin.notice("Testhost NDV")).contains("Passwort abgelaufen");
+    }
+
+    @Test
+    void withoutRememberedEntryOpeningTheAreaShowsTheForm() throws Exception {
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            workspace[0].shown();
+        });
+        flush();
+        assertThat(workspace[0].selected()).isNull();
+        assertThat(sessions.all()).isEmpty();
+        assertThat(read).isEmpty();
+    }
+
+    @Test
     void aFailingRememberedConnectionReturnsToTheFormWithItsReason() throws Exception {
         NdvConnectForm.rememberWorking(new com.aresstack.spaceharvester.deck.ndv.NdvProfile("10.0.0.7", 8011),
                 "Testhost NDV");
@@ -318,6 +431,12 @@ class NdvWorkspaceTest {
         flush();
         assertThat(workspace[0].selected()).isNull();
         assertThat(workspace[0].form().problemText()).contains("abgelehnt");
+        int connects = server.connects();
+        SwingUtilities.invokeAndWait(() -> workspace[0].shown());
+        flush();
+        assertThat(server.connects()).as("nach einem Fehlschlag kein neuer Versuch beim Öffnen").isEqualTo(connects);
+        assertThat(DeckLogin.guard().mayTry("Testhost NDV")).as("Eintrag im ganzen Deck gesperrt").isFalse();
+        assertThat(workspace[0].form().problemText()).contains("Bitte Zugangsdaten prüfen");
         assertThat(workspace[0].browser(sessions.all().isEmpty() ? null : sessions.all().getFirst())).isNull();
     }
 
@@ -395,6 +514,7 @@ class NdvWorkspaceTest {
         SwingUtilities.invokeAndWait(() -> {
             NdvConnectForm form = new NdvWorkspace(sessions, accounts, editors, Runnable::run).form();
             form.show(List.of(HOST));
+            form.server.setSelectedItem(HOST);
             assertThat(form.profile().port()).isEqualTo(8011);
         });
     }

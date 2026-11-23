@@ -50,6 +50,19 @@ class LoginScriptTest {
         public void type(char[] text) {
             done.add("type:" + text.length);
         }
+
+        String screen = "";
+        boolean mask;
+
+        @Override
+        public String screenText() {
+            return screen;
+        }
+
+        @Override
+        public boolean loginMask() {
+            return mask;
+        }
     }
 
     private static TerminalLogin login() {
@@ -71,5 +84,34 @@ class LoginScriptTest {
         keys.afterClear = () -> keys.lastUser = System.nanoTime() + 1;
         assertThat(new LoginScript(Duration.ZERO).run(keys, login(), since)).contains(LoginScript.BY_HAND);
         assertThat(keys.done).as("nach der eigenen Taste wird nichts mehr getippt").containsExactly("CLEAR");
+    }
+
+    @Test
+    void aRejectedLoginStopsBeforeTheStartCommandAndNamesTheHostsLine() throws Exception {
+        Keys keys = new Keys();
+        keys.screen = "TESTSYS\n  Passwort abgelaufen - bitte neu setzen  \n";
+        LoginScript.Result result = new LoginScript(Duration.ZERO).attempt(keys, login(), System.nanoTime());
+        assertThat(result.sent()).isTrue();
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.problem()).contains("Passwort abgelaufen - bitte neu setzen");
+        assertThat(keys.done).as("kein Startkommando nach Ablehnung")
+                .containsExactly("CLEAR", "first", "type:7", "next", "type:7", "ENTER");
+    }
+
+    @Test
+    void theLoginMaskComingBackCountsAsRejected() throws Exception {
+        Keys keys = new Keys();
+        keys.mask = true;
+        LoginScript.Result result = new LoginScript(Duration.ZERO).attempt(keys, login(), System.nanoTime());
+        assertThat(result.accepted()).isFalse();
+        assertThat(result.problem()).contains("die Anmeldemaske erscheint wieder");
+    }
+
+    @Test
+    void nothingSentBeforeEnterIsNoAttempt() throws Exception {
+        Keys keys = new Keys();
+        keys.afterClear = () -> keys.lastUser = System.nanoTime() + 1;
+        LoginScript.Result result = new LoginScript(Duration.ZERO).attempt(keys, login(), System.nanoTime() - 1);
+        assertThat(result.sent()).isFalse();
     }
 }

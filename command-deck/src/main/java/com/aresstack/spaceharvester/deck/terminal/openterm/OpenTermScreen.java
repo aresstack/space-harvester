@@ -36,16 +36,8 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     private final transient Terminal terminal;
     private final TerminalModel model;
     private final transient java.util.List<Runnable> screenListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
-    /** Bereit = Tastatur frei UND das Bild danach fertig gezeichnet (Felder aufgebaut). */
-    private final transient java.util.concurrent.locks.ReentrantLock readyLock = new java.util.concurrent.locks.ReentrantLock();
-    private final transient java.util.concurrent.locks.Condition readyChanged = readyLock.newCondition();
-    private boolean ready;
-    private volatile boolean hostWrote;
     /** Letzte Taste des Menschen (nanoTime); die automatische Anmeldung tippt danach nicht weiter. */
     private volatile long lastUserInput = Long.MIN_VALUE;
-    private volatile long lastRefresh = System.nanoTime();
-    /** So lange ohne neues Zeichnen gilt ein Bild als fertig gelesen. */
-    private static final long SETTLE_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(150);
     private final transient IntConsumer statusListener;
     /** Von der KI ausgefüllte Felder, gelb umrandet bis zum Absenden oder Zurücknehmen (#1151). */
     private transient volatile java.util.List<Span> highlighted = java.util.List.of();
@@ -61,15 +53,6 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     OpenTermScreen(Terminal terminal, TerminalModel model, IntConsumer statusListener) {
         super(terminal, hiddenToolbar());
         this.terminal = terminal;
-        // Erst ein fertiges Bild vom Host macht die Tastatur wirklich bereit: OpenTerm gibt die Tastatur schon beim
-        // Lesen des Kopfs frei, die Eingabefelder stehen aber erst am Ende (refresh). Vorher verwirft es Tasten still.
-        terminal.addKbdLockListener(changed -> {
-            if (changed.isKeyboardLocked()) {
-                setReady(false);
-            } else {
-                hostWrote = true; // nur ein Bild des Hosts gibt die Tastatur frei
-            }
-        });
         this.model = model;
         this.statusListener = statusListener;
         // OpenTerm füllt nur sein Bild, nicht die ganze Fläche: durchsichtig malt der Hintergrund (Sternenhimmel)
@@ -190,36 +173,47 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
         return true;
     }
 
+    /** Beschriftungen wie TextContextMenu der App (gleichlautend, command-deck kennt die App nicht). */
+    static final String COPY = "Kopieren";
+    static final String PASTE = "Einfügen";
+    static final String SELECT_ALL = "Alles markieren";
+
     private void popup(MouseEvent event) {
         if (!event.isPopupTrigger()) {
             return;
         }
+        buildMenu().show(this, event.getX(), event.getY());
+    }
+
+    /** Das Rechtsklick-Menü des Bildes (paketweit für Tests). */
+    JPopupMenu buildMenu() {
         JPopupMenu menu = new JPopupMenu();
-        // Reihenfolge und Tastenkürzel wie im Kontextmenü von MainframeMate.
-        JMenuItem paste = new JMenuItem("Einfügen");
+        // Wie das Rechtsklick-Menü aller Textfelder der App (TextContextMenu): Kopieren, Einfügen, Trennlinie, Alles
+        // markieren; Kopieren ohne Markierung kopiert das ganze Bild wie in MainframeMate und wie das Icon.
+        JMenuItem copy = new JMenuItem(COPY);
+        copy.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_C, java.awt.event.InputEvent.CTRL_DOWN_MASK));
+        copy.addActionListener(e -> {
+            copy();
+            requestFocusInWindow();
+        });
+        JMenuItem paste = new JMenuItem(PASTE);
         paste.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_V, java.awt.event.InputEvent.CTRL_DOWN_MASK));
         paste.setEnabled(!terminal.isKeyboardLocked());
         paste.addActionListener(e -> {
             paste();
             requestFocusInWindow();
         });
-        JMenuItem copy = new JMenuItem("Kopieren");
-        copy.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_C, java.awt.event.InputEvent.CTRL_DOWN_MASK));
-        copy.addActionListener(e -> {
-            copy();
-            requestFocusInWindow();
-        });
-        JMenuItem all = new JMenuItem("Alles auswählen");
+        JMenuItem all = new JMenuItem(SELECT_ALL);
         all.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_A, java.awt.event.InputEvent.CTRL_DOWN_MASK));
         all.addActionListener(e -> {
             selectAll();
             requestFocusInWindow();
         });
-        menu.add(paste);
         menu.add(copy);
+        menu.add(paste);
         menu.addSeparator();
         menu.add(all);
-        menu.show(this, event.getX(), event.getY());
+        return menu;
     }
 
     @Override
@@ -477,56 +471,20 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
 
     @Override
     public boolean awaitUnlocked(java.time.Duration timeout) throws InterruptedException {
-        long remaining = timeout.toNanos();
-        readyLock.lock();
-        try {
-            while (true) {
-                if (ready && !terminal.isKeyboardLocked()) {
-                    // Das Bild muss auch zur Ruhe gekommen sein: Während OpenTerm einen Datenstrom liest, zeichnet es
-                    // zwischendurch (Schreibmarke), bevor die Felder stehen.
-                    long quiet = System.nanoTime() - lastRefresh;
-                    if (quiet >= SETTLE_NANOS) {
-                        return true;
-                    }
-                    if (remaining <= 0) {
-                        return false;
-                    }
-                    long wait = Math.min(remaining, SETTLE_NANOS - quiet);
-                    remaining -= wait;
-                    readyChanged.awaitNanos(wait);
-                    continue;
-                }
-                if (remaining <= 0) {
-                    return false;
-                }
-                remaining = readyChanged.awaitNanos(remaining);
+        // 1:1 wie waitForKeyboardUnlock in MainframeMate (TerminalConnectionTab): alle 100 ms nachsehen.
+        long deadline = System.currentTimeMillis() + timeout.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            if (!terminal.isKeyboardLocked()) {
+                return true;
             }
-        } finally {
-            readyLock.unlock();
+            Thread.sleep(100);
         }
-    }
-
-    private void setReady(boolean value) {
-        readyLock.lock();
-        try {
-            ready = value;
-            readyChanged.signalAll();
-        } finally {
-            readyLock.unlock();
-        }
+        return !terminal.isKeyboardLocked();
     }
 
     @Override
     public void press(AidKey key) {
-        if (key == AidKey.CLEAR) {
-            // OpenTerm schickt CLEAR erst und löscht danach das Bild. Antwortet der Host schneller, löscht es sein neues
-            // Bild mit (dann stehen Felder ohne Zeichen da). Der Parser liest Antworten nur mit seinem eigenen Monitor;
-            // ihn halten wir, bis das Löschen durch ist. Kurz und ohne Warten auf den Host, daher hier synchronized.
-            synchronized (terminal.getStreamParser()) {
-                terminal.Fkey(aid(key));
-            }
-            return;
-        }
+        // Wie MainframeMate: die Taste direkt an OpenTerm (term.Fkey), auch CLEAR.
         terminal.Fkey(aid(key));
     }
 
@@ -548,10 +506,6 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
         super.refresh();
         if (screenListeners == null) {
             return; // Aufruf aus dem Konstruktor der Oberklasse
-        }
-        lastRefresh = System.nanoTime();
-        if (hostWrote && !terminal.isKeyboardLocked()) {
-            setReady(true);
         }
         for (Runnable listener : screenListeners) {
             listener.run();
@@ -579,12 +533,29 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     }
 
     @Override
+    public String screenText() {
+        return text();
+    }
+
+    @Override
+    public boolean loginMask() {
+        try {
+            short first = terminal.getNextUnprotectedField(0);
+            short second = first < 0 ? -1 : terminal.getNextUnprotectedField(first);
+            return second >= 0 && second != first && hiddenAt(second) && !hiddenAt(first);
+        } catch (RuntimeException unreadable) {
+            return true; // im Zweifel: Anmeldemaske, also nicht als Erfolg werten
+        }
+    }
+
+    @Override
     public boolean nextInputField() {
+        // 1:1 wie MainframeMate: das nächste ungeschützte Feld nach der Schreibmarke; dasselbe wie das erste heißt,
+        // es gibt kein zweites.
         int cursor = terminal.getCursorPosition();
         short first = terminal.getNextUnprotectedField(0);
         short field = terminal.getNextUnprotectedField(cursor);
-        // Läuft die Suche zum ersten Feld zurück, gibt es kein weiteres (wie in MainframeMate geprüft).
-        if (field < 0 || field == first || field <= cursor - 1 && field == first) {
+        if (field < 0 || field == first) {
             return false;
         }
         terminal.setCursorPosition(field);

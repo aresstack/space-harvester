@@ -42,15 +42,13 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<FtpSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
     private final Map<FtpSession, FtpSessionView> viewOf = new LinkedHashMap<>();
-    /** Reiter samt ✕ je Sitzung: das ✕ trennt und schließt in einem Schritt (Angelo, 23.11.2026). */
-    private final Map<FtpSession, JComponent> tabOf = new java.util.HashMap<>();
     /**
      * Sitzungen, die noch nie verbunden waren. Scheitern sie, bleibt kein toter Reiter: Das Formular kommt mit dem
      * Grund wieder. Klappt es, verbindet „Neue Verbindung“ künftig ohne Formular.
      */
     private final java.util.Set<FtpSession> firstConnect = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    /** Beim ersten Zeigen des Bereichs ohne Sitzung wird die gemerkte Verbindung aufgebaut. */
-    private boolean autoTried;
+    /** Ein Verbinden mit der gemerkten Verbindung läuft (KeePass wird gelesen), noch ohne Reiter. */
+    private boolean directPending;
     private final ComposerToggleButton newPill;
     private final CardLayout cards = new CardLayout();
     /** Neben der Lupe in der Fußleiste des Command Deck: die Aktionen der gewählten Sitzung. */
@@ -127,19 +125,33 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         add(head, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
 
-        sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        sessions.onOpened(session -> {
+            // Vor dem ersten Anmelden: Jede abgelehnte Anmeldung dieser Sitzung (Datasets, JES, DD-Namen) sperrt den
+            // KeePass-Eintrag in allen Bereichen; nur ein Erfolg löst die Sperre wieder.
+            session.onLoginRefused(reason -> DeckLogin.guard().failed(session.label(), reason));
+            // Erfolge auf demselben Faden wie die Ablehnungen, in echter Reihenfolge (nicht verspätet über die
+            // Oberfläche): Ein älterer Erfolg löscht keine neuere Sperre.
+            session.onLoginAccepted(() -> DeckLogin.guard().succeeded(session.label()));
+            SwingUtilities.invokeLater(() -> added(session));
+        });
         sessions.all().forEach(this::added);
         select(null);
         // Wer einmal erfolgreich verbunden war, bekommt beim Öffnen des Bereichs direkt seine Verbindung.
         addHierarchyListener(event -> {
-            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()
-                    && !autoTried) {
-                autoTried = true;
-                if (pillOf.isEmpty() && FtpConnectForm.isConfigured()) {
-                    newConnection();
-                }
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                shown();
             }
         });
+    }
+
+    /**
+     * Der Bereich wird gezeigt: Ohne Sitzung baut er die gemerkte Verbindung sofort auf, jedes Mal (Angelo, 23.11.2026).
+     * So klappt es auch, wenn KeePass beim vorigen Zeigen noch nicht bereit war.
+     */
+    void shown() {
+        if (pillOf.isEmpty() && !directPending && FtpConnectForm.isConfigured()) {
+            newConnection();
+        }
     }
 
     /**
@@ -151,11 +163,23 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
             select(null);
             return;
         }
+        // Schutz vor der Kontosperre: Ist die letzte Anmeldung mit diesem KeePass-Eintrag gescheitert (hier oder in
+        // einem anderen Bereich), versucht nur noch der Mensch im Formular (Angelo, 23.11.2026).
+        String entry = FtpConnectForm.rememberedEntry();
+        if (!DeckLogin.guard().mayTry(entry)) {
+            form.problem(DeckLogin.notice(entry));
+            select(null);
+            return;
+        }
         status.show(StatusNote.plain("Verbinde mit der gemerkten Verbindung …"));
         if (selected != null) {
             pillOf.get(selected).setSelected(true);
         }
-        form.connectDirectly(reason -> select(null));
+        directPending = true;
+        form.connectDirectly(reason -> {
+            directPending = false;
+            select(null);
+        });
     }
 
     /** Das Formular auch, wenn die Verbindung eingerichtet ist (anderer Server, andere Einstellungen). */
@@ -196,7 +220,8 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     }
 
     private void connect(FtpProfile profile, String entry) {
-        FtpSession session = sessions.open(profile, entry, () -> accounts.credentials(entry));
+        directPending = false;
+        FtpSession session = sessions.open(profile, entry, guarded(entry));
         if (session.state() == ConnectionState.CONNECTED) {
             FtpConnectForm.configured();
         } else if (session.state() == ConnectionState.FAILED) {
@@ -208,22 +233,33 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         }
     }
 
+    /**
+     * Die Zugangsdaten einer Sitzung hinter dem Anmelde-Wächter (Angelo, 23.11.2026): Die erste Anmeldung ist schon
+     * geprüft (Formular von Hand oder gemerkte Verbindung nach {@code mayTry}). Jede weitere – Neuaufbau nach Abriss,
+     * erste JES-Verbindung, DD-Namen nachladen, „Erneut verbinden“ – liest das Passwort nur, wenn der KeePass-Eintrag
+     * nirgends gesperrt ist; sonst scheitert sie mit dem Grund, ohne den Host zu fragen.
+     */
+    private FtpSession.CredentialSource guarded(String entry) {
+        java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        return () -> {
+            if (!first.getAndSet(false) && !DeckLogin.guard().mayTry(entry)) {
+                throw new IllegalStateException(DeckLogin.notice(entry));
+            }
+            return accounts.credentials(entry);
+        };
+    }
+
     private void added(FtpSession session) {
         // Schon wieder geschlossen (etwa eine sofort gescheiterte erste Verbindung)? Dann kein Reiter.
         if (pillOf.containsKey(session) || !sessions.all().contains(session)) {
             return;
         }
-        ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.label(),
-                session.state().label());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        pill.getAccessibleContext().setAccessibleName(session.label());
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.label(), session.state().label(),
+                "Trennen und schließen (auch Mittelklick auf den Reiter)", () -> closeTab(session));
         pill.addActionListener(e -> select(session));
-        JPanel tab = DeckBars.tab(pill, "Trennen und schließen (auch Mittelklick auf den Reiter)",
-                () -> closeTab(session));
         pillGroup.add(pill);
-        pills.add(tab, pills.getComponentCount() - 1);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
-        tabOf.put(session, tab);
         FtpSessionView view = new FtpSessionView(session,
                 () -> toggle.select(FtpSessionView.JOBS), editors);
         view.show(toggle.selected());
@@ -310,10 +346,9 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         sessions.close(session);
         ComposerToggleButton pill = pillOf.remove(session);
         FtpSessionView view = viewOf.remove(session);
-        JComponent tab = tabOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tab == null ? pill : tab);
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }

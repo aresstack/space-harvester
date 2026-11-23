@@ -344,25 +344,49 @@ final class ConnectForm extends JPanel {
         if (account == null || !autoLogin.isSelected()) {
             return null;
         }
-        return loginFor(account.entry(), command.getText());
+        return loginFor(account.entry(), command.getText(), !automatic);
     }
 
     /** Anmeldung über einen KeePass-Eintrag; das Passwort wird erst beim Aufruf gelesen und danach gelöscht. */
     TerminalSessions.LoginSource loginFor(String entry, String startCommand) {
+        return loginFor(entry, startCommand, false);
+    }
+
+    /**
+     * Wie {@link #loginFor(String, String)}; {@code byHand}, wenn der Mensch selbst „Verbinden“ gedrückt hat: Dann darf
+     * trotz Sperre nach einem Fehlschlag versucht werden.
+     */
+    TerminalSessions.LoginSource loginFor(String entry, String startCommand, boolean byHand) {
         if (entry == null || entry.isBlank()) {
             return null;
         }
-        return () -> {
-            try (ServerCredentials credentials = accounts.credentials(entry)) {
-                char[] password = credentials.copyPassword();
-                try {
-                    return new TerminalLogin(credentials.user(), password, startCommand);
-                } finally {
-                    Arrays.fill(password, '\0');
+        return new TerminalSessions.LoginSource() {
+            @Override
+            public TerminalLogin login() throws Exception {
+                try (ServerCredentials credentials = accounts.credentials(entry)) {
+                    char[] password = credentials.copyPassword();
+                    try {
+                        return new TerminalLogin(credentials.user(), password, startCommand);
+                    } finally {
+                        Arrays.fill(password, '\0');
+                    }
                 }
+            }
+
+            @Override
+            public String entry() {
+                return entry;
+            }
+
+            @Override
+            public boolean byHand() {
+                return byHand;
             }
         };
     }
+
+    /** Während „Neue Verbindung“ mit gemerkten Daten verbindet: kein Druck des Menschen auf „Verbinden“. */
+    private boolean automatic;
 
     private static int number(String text, int fallback, String name) {
         String trimmed = text == null ? "" : text.trim();
@@ -373,6 +397,21 @@ final class ConnectForm extends JPanel {
             return Integer.parseInt(trimmed);
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(name + " muss eine Zahl sein, nicht „" + trimmed + "“");
+        }
+    }
+
+    /** Wie {@link #submit()}, aber ohne dass der Mensch gedrückt hat (gemerkte Verbindung, Sperrschutz gilt). */
+    private boolean submitAutomatically() {
+        String entry = selected() == null ? null : selected().entry();
+        if (entry != null && autoLogin.isSelected() && !DeckLogin.guard().mayTry(entry)) {
+            problem(DeckLogin.notice(entry));
+            return false;
+        }
+        automatic = true;
+        try {
+            return submit();
+        } finally {
+            automatic = false;
         }
     }
 
@@ -433,13 +472,13 @@ final class ConnectForm extends JPanel {
             show(list, wanted);
             if (selected() == null && (wanted == null || wanted.isBlank())) {
                 // Von Hand eingetragene Adresse ohne KeePass-Eintrag (show hat Adresse und Port gesetzt).
-                if (!submit()) {
+                if (!submitAutomatically()) {
                     failed.accept(problemText());
                 }
             } else if (selected() == null) {
                 problem("Der gemerkte KeePass-Eintrag „" + wanted + "“ fehlt");
                 failed.accept(problemText());
-            } else if (!submit()) {
+            } else if (!submitAutomatically()) {
                 failed.accept(problemText());
             }
         }, error -> {
@@ -472,6 +511,11 @@ final class ConnectForm extends JPanel {
     /** Öffnet das gewählte Lesezeichen wie in MainframeMate: verbinden, anmelden, Makro abspielen. */
     void openBookmark() {
         if (!(bookmark.getSelectedItem() instanceof TerminalBookmarks.Bookmark chosen)) {
+            return;
+        }
+        if (chosen.entry() != null && !chosen.entry().isBlank() && !DeckLogin.guard().mayTry(chosen.entry())) {
+            // Sperrschutz: kein automatischer Versuch mit einem Eintrag, dessen letzte Anmeldung fehlschlug.
+            problem(DeckLogin.notice(chosen.entry()));
             return;
         }
         problem.setText(" ");

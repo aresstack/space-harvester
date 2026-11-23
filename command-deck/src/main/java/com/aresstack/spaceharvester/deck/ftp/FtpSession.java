@@ -92,6 +92,11 @@ public final class FtpSession {
         return mvs;
     }
 
+    private volatile boolean loginRefused;
+    /** Wer hören will, dass der Host eine Anmeldung abgelehnt hat, auf welcher Verbindung auch immer. */
+    private final List<Consumer<String>> refusalObservers = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final List<Runnable> acceptObservers = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     public ConnectionState state() {
         stateLock.lock();
         try {
@@ -99,6 +104,51 @@ public final class FtpSession {
         } finally {
             stateLock.unlock();
         }
+    }
+
+    /** Ist die Sitzung gescheitert, weil der Host die Anmeldung abgelehnt hat (nicht wegen Netz oder Zeitlimit)? */
+    public boolean loginRefused() {
+        return loginRefused && state() == ConnectionState.FAILED;
+    }
+
+    /**
+     * Meldet jede abgelehnte Anmeldung dieser Sitzung mit lesbarem Grund: Dataset-Verbindung, JES-Verbindung und die
+     * Verbindungen zum Nachladen der DD-Namen (Schutz vor der Kontosperre).
+     */
+    public void onLoginRefused(Consumer<String> observer) {
+        refusalObservers.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    /**
+     * Meldet jede gelungene Anmeldung dieser Sitzung, auf dem Faden der Anmeldung und damit in der echten Reihenfolge
+     * zu den Ablehnungen ({@link #onLoginRefused}): Ein älterer Erfolg kann eine neuere Ablehnung nicht überholen.
+     */
+    public void onLoginAccepted(Runnable observer) {
+        acceptObservers.add(Objects.requireNonNull(observer, "observer"));
+    }
+
+    private <T> T accepted(T connection) {
+        acceptObservers.forEach(Runnable::run);
+        return connection;
+    }
+
+    /** Meldet eine Anmelde-Ablehnung weiter und wirft den Fehler unverändert. */
+    private Exception refused(Exception error) {
+        if (refusal(error)) {
+            loginRefused = true;
+            String reason = describe(error);
+            refusalObservers.forEach(observer -> observer.accept(reason));
+        }
+        return error;
+    }
+
+    private static boolean refusal(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause() == cause ? null : cause.getCause()) {
+            if (cause instanceof LoginRefusedException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public Optional<String> failure() {
@@ -201,7 +251,9 @@ public final class FtpSession {
         try (ServerCredentials login = credentials.open()) {
             char[] password = login.copyPassword();
             try {
-                return connector.jes(profile, login.user(), password);
+                return accepted(connector.jes(profile, login.user(), password));
+            } catch (Exception e) {
+                throw refused(e);
             } finally {
                 Arrays.fill(password, '\0');
             }
@@ -340,6 +392,7 @@ public final class FtpSession {
                 current = open();
             } catch (Exception e) {
                 if (primary) {
+                    loginRefused = refusal(e);
                     change(ConnectionState.FAILED, describe(e), false);
                 }
                 throw e;
@@ -350,6 +403,7 @@ public final class FtpSession {
             }
             connection = current;
             if (primary) {
+                loginRefused = false;
                 change(ConnectionState.CONNECTED, null, false);
             }
             return current;
@@ -359,7 +413,12 @@ public final class FtpSession {
             try (ServerCredentials login = credentials.open()) {
                 char[] password = login.copyPassword();
                 try {
-                    C opened = opener.open(profile, login.user(), password);
+                    C opened;
+                    try {
+                        opened = accepted(opener.open(profile, login.user(), password));
+                    } catch (Exception e) {
+                        throw refused(e);
+                    }
                     user = login.user();
                     if (opened instanceof FileConnection fileConnection) {
                         mvs = fileConnection.mvs();

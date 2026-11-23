@@ -63,9 +63,47 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     private final NdvConnectForm form;
     private final EditorSessions editors;
     private NdvSession selected;
+    /** Der zuletzt dem Sperrschutz gemeldete Zustand je Sitzung (jeder Übergang wird genau einmal gemeldet). */
+    private final Map<NdvSession, NdvState> reported = new java.util.HashMap<>();
+    /** Die bewachte Anmeldung je Sitzung (auch für das Selbstheilen nach einem Verbindungsabriss). */
+    private final Map<NdvSession, GuardedLogin> logins = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Beobachter je Sitzung, beim Entfernen wieder abgemeldet. */
+    private final Map<NdvSession, java.util.function.Consumer<NdvSession>> observers = new java.util.HashMap<>();
+    /** Läuft gerade das Suchen des gemerkten Eintrags (Hintergrund)? Dann startet kein zweites. */
+    private boolean discovering;
+
+    /**
+     * Anmeldung über einen KeePass-Eintrag, bewacht vom Sperrschutz des Deck: Ohne Zutun des Menschen (erstes
+     * automatisches Verbinden, Selbstheilen) wird ein gesperrter Eintrag nicht versucht; was der Mensch auslöst
+     * (Formular, „Neu verbinden“), darf einmal. Merkt sich, ob das Passwort wirklich gesendet wurde.
+     */
+    private static final class GuardedLogin implements NdvSessions.LoginSource {
+        private final String entry;
+        private final NdvSessions.LoginSource source;
+        private final java.util.concurrent.atomic.AtomicBoolean manual;
+        private final java.util.concurrent.atomic.AtomicBoolean sent = new java.util.concurrent.atomic.AtomicBoolean();
+        /** Wann das Passwort zuletzt gesendet wurde; ein Erfolg löst nur ältere Sperren. */
+        private volatile java.time.Instant attemptAt = java.time.Instant.EPOCH;
+
+        GuardedLogin(String entry, NdvSessions.LoginSource source, boolean manual) {
+            this.entry = entry;
+            this.source = source;
+            this.manual = new java.util.concurrent.atomic.AtomicBoolean(manual);
+        }
+
+        @Override
+        public com.aresstack.spaceharvester.deck.access.ServerCredentials read() throws Exception {
+            if (!manual.getAndSet(false) && !DeckLogin.guard().mayTry(entry)) {
+                throw new java.io.IOException(DeckLogin.notice(entry));
+            }
+            // Der Guard speichert Millisekunden; abgeschnitten zählt eine Ablehnung in derselben ms als neuer.
+            attemptAt = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+            com.aresstack.spaceharvester.deck.access.ServerCredentials credentials = source.read();
+            sent.set(true);
+            return credentials;
+        }
+    }
     private final ServerAccounts accounts;
-    /** Reiter samt ✕ je Sitzung. */
-    private final Map<NdvSession, JPanel> tabOf = new LinkedHashMap<>();
     /** Sitzungen, die noch nie verbunden waren: ihr erster Erfolg wird gemerkt, ihr Fehlschlag zeigt das Formular. */
     private final java.util.Set<NdvSession> fresh = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Analysen der offenen Sitzungen, die gewählte zuerst; gelesen auch abseits des EDT (Beziehungen im Editor). */
@@ -85,7 +123,10 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         getAccessibleContext().setAccessibleName("NDV");
         this.accounts = accounts;
         form = new NdvConnectForm(accounts, (profile, account, login) -> {
-            NdvSession opened = sessions.open(profile, account, login);
+            // Der Mensch hat „Verbinden“ gedrückt: das darf auch mit gesperrtem Eintrag.
+            GuardedLogin guarded = new GuardedLogin(account, login, true);
+            NdvSession opened = sessions.open(profile, account, guarded);
+            logins.put(opened, guarded);
             fresh.add(opened);
         });
 
@@ -122,6 +163,22 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         if (pillOf.isEmpty()) {
             select(null);
         }
+        // Beim Öffnen des Bereichs ohne Sitzung gleich verbinden, wenn Zugangsdaten da sind (Angelo 23.11.).
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                shown();
+            }
+        });
+    }
+
+    /**
+     * Der Bereich wird gezeigt: ohne offene Sitzung automatisch verbinden. Ist der KeePass-Eintrag nach einem
+     * Fehlschlag gesperrt (irgendwo im Deck), wird nicht versucht, sondern das Formular zeigt den Grund.
+     */
+    void shown() {
+        if (pillOf.isEmpty() && fresh.isEmpty() && !discovering) {
+            newConnection();
+        }
     }
 
     private void added(NdvSession session) {
@@ -135,19 +192,22 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         center.add(browser, key);
         tools.add(browser.tools(), key);
         foot.add(browser.foot(), key);
-        ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.label(),
-                session.state().label());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        pill.getAccessibleContext().setAccessibleName(session.label());
+        // Das ✕ im Reiter trennt und schließt in einem Schritt (Angelo 23.11.).
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.label(), session.state().label(),
+                "Trennen und schließen (auch Mittelklick auf den Reiter)", () -> closeSession(session));
         pill.addActionListener(e -> select(session));
-        // Das ✕ trennt und schließt in einem Schritt (Angelo 23.11.).
-        JPanel tab = DeckBars.tab(pill, "Trennen und schließen (auch Mittelklick auf den Reiter)",
-                () -> closeSession(session));
         pillGroup.add(pill);
-        pills.add(tab, pills.getComponentCount() - 1);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
-        tabOf.put(session, tab);
-        session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
+        java.util.function.Consumer<NdvSession> observer = changed -> SwingUtilities.invokeLater(() -> changed(changed));
+        observers.put(session, observer);
+        session.observe(observer);
+        browser.beforeReconnect(() -> {
+            GuardedLogin login = logins.get(session);
+            if (login != null) {
+                login.manual.set(true);
+            }
+        });
         browser.onLibraryChanged(() -> changed(session));
         browser.onStatusChanged(() -> {
             if (selected == session) {
@@ -164,6 +224,10 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     }
 
     private void changed(NdvSession session) {
+        if (!browsers.containsKey(session)) {
+            return; // schon entfernt: eine nachgereichte Meldung (etwa „getrennt“) zählt nicht mehr
+        }
+        report(session);
         if (fresh.contains(session)) {
             if (session.state() == NdvState.CONNECTED) {
                 fresh.remove(session);
@@ -224,6 +288,72 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
      */
     void newConnection() {
         java.util.Optional<NdvConnectForm.Working> working = NdvConnectForm.working();
+        if (working.isPresent()) {
+            connectOrForm(working);
+            return;
+        }
+        // Noch nie verbunden: der gemerkte KeePass-Eintrag (auch der des Terminals) reicht, wenn er Adresse und
+        // Benutzer hat. Die Einträge kommen im Hintergrund.
+        select(null);
+        if (discovering) {
+            return;
+        }
+        discovering = true;
+        background.execute(() -> {
+            java.util.List<com.aresstack.spaceharvester.deck.access.ServerAccount> list;
+            try {
+                list = accounts.accounts();
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> discovering = false);
+                return; // das Formular lädt selbst und zeigt den Grund
+            }
+            java.util.Optional<NdvConnectForm.Working> remembered = NdvConnectForm.fromRemembered(list);
+            SwingUtilities.invokeLater(() -> {
+                discovering = false;
+                if (remembered.isPresent() && selected == null && fresh.isEmpty()) {
+                    connectOrForm(remembered);
+                }
+            });
+        });
+    }
+
+    /**
+     * Meldet dem Sperrschutz des Deck jeden Übergang (Angelo 23.11.: Schutz vor der Kontosperre, je KeePass-Eintrag):
+     * Verbunden löst die Sperre des Eintrags, ein Fehlschlag setzt sie. Dass ein Fehlschlag am Netz statt am Passwort
+     * lag, ist hier nicht zu unterscheiden; gesperrt wird trotzdem, lieber einmal zu vorsichtig als ein gesperrtes
+     * Konto. Der Mensch kann im Formular jederzeit selbst verbinden.
+     */
+    private void report(NdvSession session) {
+        NdvState now = session.state();
+        if (reported.get(session) == now) {
+            return;
+        }
+        reported.put(session, now);
+        GuardedLogin login = logins.get(session);
+        if (now == NdvState.CONNECTED) {
+            if (login != null) {
+                login.sent.set(false);
+            }
+            // Gemeldet wird erst auf dem EDT, also verspätet: Eine Ablehnung desselben Eintrags, die NACH diesem
+            // Anmeldeversuch kam (etwa von FTP), ist neuer als der Erfolg und bleibt stehen.
+            java.time.Instant attempt = login == null ? null : login.attemptAt;
+            boolean newerRejection = attempt != null && DeckLogin.guard().failure(session.account())
+                    .map(failure -> !failure.at().isBefore(attempt)).orElse(false);
+            if (!newerRejection) {
+                DeckLogin.guard().succeeded(session.account());
+            }
+        } else if (now == NdvState.FAILED && (login == null || login.sent.getAndSet(false))) {
+            // Nur wenn das Passwort wirklich gesendet wurde; ein vom Sperrschutz verhinderter Versuch zählt nicht.
+            DeckLogin.guard().failed(session.account(),
+                    NdvBrowser.oneLine(session.failure().orElse("Anmeldung fehlgeschlagen")));
+        }
+    }
+
+    /**
+     * Verbindet von selbst mit den gemerkten Daten. Ist diese Verbindung schon offen, zeigt es das Formular für eine
+     * andere; ist der Eintrag nach einem Fehlschlag gesperrt, das Formular mit dem Grund, ohne Versuch.
+     */
+    private void connectOrForm(java.util.Optional<NdvConnectForm.Working> working) {
         if (working.isEmpty() || pillOf.keySet().stream().anyMatch(open -> open.profile().host()
                 .equalsIgnoreCase(working.get().profile().host()) && open.profile().port() == working.get().profile()
                 .port())) {
@@ -231,7 +361,14 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
             return;
         }
         String entry = working.get().account();
-        NdvSession opened = sessions.open(working.get().profile(), entry, () -> accounts.credentials(entry));
+        if (!DeckLogin.guard().mayTry(entry)) {
+            select(null);
+            form.problem(DeckLogin.notice(entry));
+            return;
+        }
+        GuardedLogin guarded = new GuardedLogin(entry, () -> accounts.credentials(entry), false);
+        NdvSession opened = sessions.open(working.get().profile(), entry, guarded);
+        logins.put(opened, guarded);
         fresh.add(opened);
         if (pillOf.containsKey(opened)) {
             changed(opened);
@@ -241,6 +378,12 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     /** Nimmt eine Sitzung ohne Rückfrage weg: trennen, Dokumente schließen, Reiter entfernen. */
     private void discard(NdvSession session) {
         fresh.remove(session);
+        reported.remove(session);
+        logins.remove(session);
+        java.util.function.Consumer<NdvSession> observer = observers.remove(session);
+        if (observer != null) {
+            session.unobserve(observer);
+        }
         sessions.close(session);
         NdvBrowser browser = browsers.remove(session);
         refreshAnalyses();
@@ -251,10 +394,9 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
             foot.remove(browser.foot());
         }
         ComposerToggleButton pill = pillOf.remove(session);
-        JPanel tab = tabOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tab != null ? tab : pill);
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }
