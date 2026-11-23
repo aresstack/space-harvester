@@ -123,7 +123,7 @@ public final class ExtractionView extends JPanel {
         table.setDefaultRenderer(Object.class, new Renderer());
         table.getAccessibleContext().setAccessibleName("Extrahierte Informationen");
         table.getInputMap(JComponent.WHEN_FOCUSED).put(
-                KeyStroke.getKeyStroke(KeyEvent.VK_C, Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx()), "copyValue");
+                KeyStroke.getKeyStroke(KeyEvent.VK_C, TextContextMenu.shortcutMask()), "copyValue");
         table.getActionMap().put("copyValue", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
