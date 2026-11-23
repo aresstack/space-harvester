@@ -109,4 +109,17 @@ class MainframeMateFeaturesTest {
                     .extracting(SpoolFile::ddName).containsExactly("JESMSGLG", "SPOOL#2", "SPOOL#3");
         }
     }
+
+    @Test
+    void connectionsAlwaysGoDirectWithoutAnyProxy() throws Exception {
+        try (com.aresstack.spaceharvester.deck.ftp.FakeMvsFtpHost host
+                = com.aresstack.spaceharvester.deck.ftp.FakeMvsFtpHost.sample()) {
+            org.apache.commons.net.ftp.FTPClient ftp = Clients.connect(host.profile(), "KKR", "geheim".toCharArray());
+            try {
+                org.assertj.core.api.Assertions.assertThat(ftp.getProxy()).isSameAs(java.net.Proxy.NO_PROXY);
+            } finally {
+                Clients.close(ftp);
+            }
+        }
+    }
 }
