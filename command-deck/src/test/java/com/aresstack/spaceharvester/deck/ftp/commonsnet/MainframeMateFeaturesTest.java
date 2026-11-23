@@ -111,14 +111,23 @@ class MainframeMateFeaturesTest {
     }
 
     @Test
-    void connectionsAlwaysGoDirectWithoutAnyProxy() throws Exception {
+    void withoutProxyConnectionsGoDirectAndByDefaultFollowTheSystem() throws Exception {
         try (com.aresstack.spaceharvester.deck.ftp.FakeMvsFtpHost host
                 = com.aresstack.spaceharvester.deck.ftp.FakeMvsFtpHost.sample()) {
-            org.apache.commons.net.ftp.FTPClient ftp = Clients.connect(host.profile(), "KKR", "geheim".toCharArray());
+            org.apache.commons.net.ftp.FTPClient standard = Clients.connect(host.profile(), "KKR",
+                    "geheim".toCharArray());
             try {
-                org.assertj.core.api.Assertions.assertThat(ftp.getProxy()).isSameAs(java.net.Proxy.NO_PROXY);
+                org.assertj.core.api.Assertions.assertThat(host.profile().useProxy()).isTrue();
+                org.assertj.core.api.Assertions.assertThat(standard.getProxy()).as("Vorgabe wie bisher").isNull();
             } finally {
-                Clients.close(ftp);
+                Clients.close(standard);
+            }
+            org.apache.commons.net.ftp.FTPClient direct = Clients.connect(host.profile().withUseProxy(false), "KKR",
+                    "geheim".toCharArray());
+            try {
+                org.assertj.core.api.Assertions.assertThat(direct.getProxy()).isSameAs(java.net.Proxy.NO_PROXY);
+            } finally {
+                Clients.close(direct);
             }
         }
     }

@@ -68,6 +68,7 @@ final class FtpConnectForm extends JPanel {
     static final String SPOOL_MODE_KEY = "deck.ftp.spool.mode";
     static final String SPOOL_CONNECTIONS_KEY = "deck.ftp.spool.connections";
     static final String SPOOL_PROBE_KEY = "deck.ftp.spool.probe";
+    static final String PROXY_KEY = "deck.ftp.proxy";
 
     final JComboBox<ServerAccount> server = new JComboBox<>();
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
@@ -77,6 +78,7 @@ final class FtpConnectForm extends JPanel {
     final PlaceholderField controlTimeout = new PlaceholderField(6, "wie oben");
     final PlaceholderField dataTimeout = new PlaceholderField(6, "wie oben");
     final PlaceholderField startHlq = new PlaceholderField(12, "Anmeldename");
+    final JCheckBox useProxy = Comic.checkBox("Proxy verwenden");
     final JComboBox<TransferOptions.FileType> fileType = combo(TransferOptions.FileType.values(),
             TransferOptions.FileType::label);
     final JComboBox<TransferOptions.TextFormat> textFormat = combo(TransferOptions.TextFormat.values(),
@@ -146,11 +148,12 @@ final class FtpConnectForm extends JPanel {
         row(left, 4, "Antworten (s)", controlTimeout);
         row(left, 5, "Daten (s)", dataTimeout);
         row(left, 6, "Start-HLQ", startHlq);
-        section(left, 7, "Übertragung");
-        row(left, 8, "Datei-Typ", fileType);
-        row(left, 9, "Textformat", textFormat);
-        row(left, 10, "Struktur", structure);
-        row(left, 11, "Modus", transferMode);
+        row(left, 7, "", useProxy);
+        section(left, 8, "Übertragung");
+        row(left, 9, "Datei-Typ", fileType);
+        row(left, 10, "Textformat", textFormat);
+        row(left, 11, "Struktur", structure);
+        row(left, 12, "Modus", transferMode);
         section(right, 0, "Wiederholung lesender Aufträge");
         row(right, 1, "Versuche", attempts);
         row(right, 2, "Wartezeit (ms)", backoff);
@@ -192,6 +195,9 @@ final class FtpConnectForm extends JPanel {
         onConnection.setOpaque(false);
         exponential.setOpaque(false);
         spoolProbe.setOpaque(false);
+        useProxy.setOpaque(false);
+        useProxy.setToolTipText("An (Vorgabe): Proxy-Einstellungen von Java/System wie bisher; aus: immer direkt zum "
+                + "Host, auch an einem SOCKS-Proxy vorbei");
         advanced.setVisible(false);
         advancedToggle.setFont(Comic.regular(12.5f));
         advancedToggle.setForeground(Comic.BLUE);
@@ -346,7 +352,7 @@ final class FtpConnectForm extends JPanel {
         return new FtpProfile(target, number(port.getText(), FtpProfile.DEFAULT_PORT, "Port"), encoding.getText(),
                 connectSeconds, number(controlTimeout.getText(), connectSeconds, "Zeitlimit Antworten"),
                 number(dataTimeout.getText(), connectSeconds, "Zeitlimit Daten"), transfer, retry, startHlq.getText(),
-                naming);
+                naming, useProxy.isSelected());
     }
 
     private static int number(String text, int fallback, String name) {
@@ -407,6 +413,7 @@ final class FtpConnectForm extends JPanel {
         values.put(SPOOL_MODE_KEY, ((Enum<?>) spoolMode.getSelectedItem()).name());
         values.put(SPOOL_CONNECTIONS_KEY, spoolConnections.getText().trim());
         values.put(SPOOL_PROBE_KEY, String.valueOf(spoolProbe.isSelected()));
+        values.put(PROXY_KEY, String.valueOf(useProxy.isSelected()));
         AppState.shared().putAll(values);
     }
 
@@ -436,6 +443,7 @@ final class FtpConnectForm extends JPanel {
         select(spoolMode, SpoolNaming.Mode.class, state.get(SPOOL_MODE_KEY), SpoolNaming.DEFAULT.mode());
         spoolConnections.setText(nonNull(state.get(SPOOL_CONNECTIONS_KEY)));
         spoolProbe.setSelected(flag(state.get(SPOOL_PROBE_KEY), SpoolNaming.DEFAULT.backgroundProbe()));
+        useProxy.setSelected(flag(state.get(PROXY_KEY), true));
     }
 
     private static <E extends Enum<E>> void select(JComboBox<E> box, Class<E> type, String name, E fallback) {
