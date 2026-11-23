@@ -39,6 +39,9 @@ class FilesWorkspaceTest {
         Files.writeString(root.resolve("daten.json"), "{\"a\": 1}\n");
         AppState.shared().put(FilesWorkspace.LOCATION_KEY, root.toString());
         AppState.shared().put(FilesWorkspace.SORT_KEY, "NAME_ASC");
+        AppState.shared().put(FilesWorkspace.GROUP_KEY, false);
+        AppState.shared().put(FilesWorkspace.DETAILS_KEY, true);
+        AppState.shared().put(FilesWorkspace.BOOKMARKS_KEY, "");
         editors = new EditorSessions(NOW);
         SwingUtilities.invokeAndWait(() -> workspace = new FilesWorkspace(
                 new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
@@ -106,6 +109,27 @@ class FilesWorkspaceTest {
 
         assertThat(workspace.nameRowShown()).isTrue();
         assertThat(workspace.statusText()).startsWith("Der Name darf keines dieser Zeichen enthalten");
+    }
+
+    @Test
+    void aDocumentSavedUnderANewNameKeepsItsTab() throws Exception {
+        start();
+        int row = names().indexOf("job.jcl");
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
+        flush();
+        EditorSession session = workspace.selected();
+
+        session.saveAs(root.resolve("kopie.jcl").toString());
+        flush();
+        SwingUtilities.invokeAndWait(() -> workspace.select(null));
+        SwingUtilities.invokeAndWait(() -> workspace.select(session));
+        flush();
+
+        assertThat(session.location()).isEqualTo(root.resolve("kopie.jcl").toString());
+        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "kopie.jcl");
+        boolean[] shown = new boolean[1];
+        SwingUtilities.invokeAndWait(() -> shown[0] = workspace.editor(session).isVisible());
+        assertThat(shown[0]).isTrue();
     }
 
     @Test
@@ -202,6 +226,103 @@ class FilesWorkspaceTest {
             assertThat(deck.get().editors().all()).isEmpty();
         });
         deck.get().shutdown();
+    }
+
+    @Test
+    void groupsByExtensionAndCollapsesGroups() throws Exception {
+        start();
+        SwingUtilities.invokeAndWait(() -> workspace.group(true, true));
+        flush();
+
+        assertThat(labels()).containsExactly("Ordner (1)", "Berichte", "JCL (1)", "job.jcl", "JSON (1)",
+                "daten.json", "TXT (1)", "notiz.txt");
+
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(2));
+        flush();
+        assertThat(labels()).containsExactly("Ordner (1)", "Berichte", "JCL (1)", "JSON (1)", "daten.json",
+                "TXT (1)", "notiz.txt");
+        assertThat(workspace.browser().location()).contains(root.toString());
+        SwingUtilities.invokeAndWait(() -> workspace.group(false, true));
+        flush();
+        assertThat(names()).containsExactly("Berichte", "daten.json", "job.jcl", "notiz.txt");
+    }
+
+    @Test
+    void hidesDetailsAndKeepsBookmarks() throws Exception {
+        start();
+        SwingUtilities.invokeAndWait(() -> workspace.detailsShown(false));
+        assertThat(workspace.columnCount()).isEqualTo(1);
+        SwingUtilities.invokeAndWait(() -> workspace.detailsShown(true));
+        assertThat(workspace.columnCount()).isEqualTo(3);
+
+        SwingUtilities.invokeAndWait(() -> workspace.toggleBookmark(root.toString()));
+        assertThat(workspace.bookmarks()).containsExactly(root.toString());
+        SwingUtilities.invokeAndWait(() -> workspace.toggleBookmark(root.toString()));
+        assertThat(workspace.bookmarks()).isEmpty();
+    }
+
+    @Test
+    void sharePointAddressNeedsWindows() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse(System.getProperty("os.name", "").toLowerCase().contains("win"));
+        start();
+
+        SwingUtilities.invokeAndWait(() -> workspace.go("https://intranet.example.org/sites/Raum"));
+        flush();
+
+        assertThat(workspace.statusText()).startsWith("SharePoint über WebDAV geht nur unter Windows");
+        assertThat(workspace.browser().location()).contains(root.toString());
+    }
+
+    @Test
+    void opensDocumentsAsReadOnlyPreview() throws Exception {
+        Files.writeString(root.resolve("bericht.pdf"), "kein echtes PDF");
+        com.aresstack.spaceharvester.deck.editor.DocumentStore preview =
+                new com.aresstack.spaceharvester.deck.editor.DocumentStore() {
+                    @Override
+                    public com.aresstack.spaceharvester.deck.editor.EditorDocument load(String location) {
+                        return new com.aresstack.spaceharvester.deck.editor.EditorDocument(location, "bericht.pdf",
+                                "Text aus dem PDF\n", "UTF-8", "\n", "x");
+                    }
+
+                    @Override
+                    public com.aresstack.spaceharvester.deck.editor.SaveResult save(
+                            com.aresstack.spaceharvester.deck.editor.EditorDocument loaded, String text,
+                            boolean overwrite) {
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public boolean writable() {
+                        return false;
+                    }
+                };
+        SwingUtilities.invokeAndWait(() -> workspace = new FilesWorkspace(
+                new FileBrowser(new LocalFileSource(FileSystems.getDefault(), root, List.of()), NOW), editors,
+                new LocalDocumentStore(), preview,
+                new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointAccess(
+                        new com.aresstack.spaceharvester.deck.files.sharepoint.windows.NetUseLogin(), NOW),
+                List::of, com.aresstack.spaceharvester.deck.access.ServerAccounts.NONE));
+        start();
+        int row = names().indexOf("bericht.pdf");
+
+        SwingUtilities.invokeAndWait(() -> workspace.openRow(row));
+        flush();
+
+        assertThat(workspace.pillTitles()).containsExactly("Durchsuchen", "bericht.pdf (Vorschau)");
+        assertThat(workspace.editor(workspace.selected()).text()).isEqualTo("Text aus dem PDF\n");
+        assertThat(workspace.selected().writable()).isFalse();
+    }
+
+    private List<String> labels() throws Exception {
+        AtomicReference<List<String>> labels = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            java.util.ArrayList<String> list = new java.util.ArrayList<>();
+            for (int row = 0; row < workspace.table().getRowCount(); row++) {
+                list.add(workspace.rowLabel(row));
+            }
+            labels.set(list);
+        });
+        return labels.get();
     }
 
     private void start() throws Exception {
