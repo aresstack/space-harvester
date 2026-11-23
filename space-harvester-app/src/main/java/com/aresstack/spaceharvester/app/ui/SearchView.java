@@ -819,8 +819,10 @@ public final class SearchView implements View {
         repeat.setEnabled(true);
         pinned.clear();
         int id = ++titleRequest;
-        Set<String> sources = chosenSources();
+        // Global ist chosenSources() leer (Anfrage über alle); die Titelsuche fragt jede durchsuchte Quelle einzeln.
+        Set<String> sources = searchedSources();
         Set<String> spaces = chosenSpaces();
+        List<Explorer.Scope> area = searchedScopes;
         List<String> issueAddresses = issueAddresses(text);
         Background.run(() -> {
             // Ein Vorgangsschlüssel (HAVDBAR-86012) ist bei Jira eine Adresse unter …/browse/KEY (Angelo, 23.11.2026).
@@ -828,13 +830,15 @@ public final class SearchView implements View {
             for (String address : issueAddresses) {
                 try {
                     runtime.workspace().resolveAddress(address).matches().stream().map(Hit::of)
-                            .filter(hit -> sources.contains(hit.sourceId()) && !tickets.contains(hit))
+                            .filter(hit -> inArea(area, hit) && sources.contains(hit.sourceId())
+                                    && !tickets.contains(hit))
                             .forEach(tickets::add);
                 } catch (RuntimeException e) {
                     // Nicht erreichbar: dann eben ohne Ticket oben; die Suche selbst meldet Fehler.
                 }
             }
-            return tickets.isEmpty() ? java.util.Map.entry(PinnedHits.TITLES, titleHits(runtime, sources, spaces, text))
+            return tickets.isEmpty() ? java.util.Map.entry(PinnedHits.TITLES, titleHits(runtime, sources, spaces, text)
+                    .stream().filter(hit -> inArea(area, hit)).toList())
                     : java.util.Map.entry(PinnedHits.TICKET, (List<Hit>) tickets);
         }, found -> {
             if (id == titleRequest) {
@@ -866,24 +870,48 @@ public final class SearchView implements View {
         return List.copyOf(addresses);
     }
 
+    /**
+     * Ob ein Treffer im Bereich liegt: alles bei leerem Bereich, sonst eine gewählte Quelle ganz oder ihr gewählter
+     * Space (bei gemischter Auswahl hat die Anfrage nur eine Space-Liste für alle Quellen).
+     */
+    static boolean inArea(List<Explorer.Scope> area, Hit hit) {
+        return area == null || area.isEmpty() || area.stream().anyMatch(scope -> scope.sourceId().equals(hit.sourceId())
+                && (scope.spaceKey() == null || scope.spaceKey().equals(hit.spaceKey())));
+    }
+
     /** Höchstens so viele Titeltreffer stehen oben. */
     static final int MAX_TITLE_HITS = 5;
 
     private static List<Hit> titleHits(AppRuntime runtime, Set<String> sources, Set<String> spaces, String text) {
         List<Hit> hits = new ArrayList<>();
         for (String source : sources) {
-            try {
-                for (HarvestSource.PageNode page : runtime.workspace().findByTitle(source, spaces, text, 20).pages()) {
-                    if (similarTitle(page.title(), text)) {
-                        hits.add(new Hit(source, page.pageId(), page.title(), page.partitionKey(), "", null));
+            // Die Titelsuche der Quellen sucht Teilzeichenfolgen: für Tippfehler und Satzzeichen auch das längste Wort.
+            for (String term : titleTerms(text)) {
+                try {
+                    for (HarvestSource.PageNode page : runtime.workspace().findByTitle(source, spaces, term, 20)
+                            .pages()) {
+                        Hit hit = new Hit(source, page.pageId(), page.title(), page.partitionKey(), "", null);
+                        if (similarTitle(page.title(), text) && hits.stream().noneMatch(known
+                                -> known.sourceId().equals(source) && known.pageId().equals(page.pageId()))) {
+                            hits.add(hit);
+                        }
                     }
+                } catch (RuntimeException e) {
+                    // Ohne Titelsuche der Quelle bleibt der Bereich leer; die Suche selbst meldet Fehler.
                 }
-            } catch (RuntimeException e) {
-                // Ohne Titelsuche der Quelle bleibt der Bereich leer; die Suche selbst meldet Fehler.
             }
         }
         hits.sort(java.util.Comparator.comparingInt(hit -> titleDistance(hit.title(), text)));
         return hits.size() > MAX_TITLE_HITS ? List.copyOf(hits.subList(0, MAX_TITLE_HITS)) : hits;
+    }
+
+    /** Die Anfragen an die Titelsuche: der Text und, wenn er mehrere Wörter hat, sein längstes Wort. */
+    static List<String> titleTerms(String text) {
+        String trimmed = text.trim();
+        String longest = java.util.Arrays.stream(normalTitle(trimmed).split(" "))
+                .max(java.util.Comparator.comparingInt(String::length)).orElse("");
+        return longest.length() >= 4 && !longest.equalsIgnoreCase(trimmed) ? List.of(trimmed, longest)
+                : List.of(trimmed);
     }
 
     /** Titel ohne Groß-/Kleinschreibung, Satzzeichen und mehrfache Leerzeichen. */

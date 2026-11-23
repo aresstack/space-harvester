@@ -26,6 +26,19 @@ class SearchHeadingTest {
     }
 
     @Test
+    void titleTermsAddTheLongestWordAndAreaKeepsSpaces() {
+        assertThat(SearchView.titleTerms("Ausgangsvalidirung IAR")).containsExactly("Ausgangsvalidirung IAR",
+                "ausgangsvalidirung");
+        assertThat(SearchView.titleTerms("Betrieb")).containsExactly("Betrieb");
+        SearchView.Hit inX = new SearchView.Hit("b", "1", "T", "X", "", null);
+        SearchView.Hit inY = new SearchView.Hit("b", "2", "T", "Y", "", null);
+        List<Explorer.Scope> area = List.of(new Explorer.Scope("a", null), new Explorer.Scope("b", "X"));
+        assertThat(SearchView.inArea(area, inX)).isTrue();
+        assertThat(SearchView.inArea(area, inY)).isFalse();
+        assertThat(SearchView.inArea(List.of(), inY)).isTrue();
+    }
+
+    @Test
     void pinnedHitsShowSelectAndOpen() throws Exception {
         List<String> selected = new ArrayList<>();
         List<String> opened = new ArrayList<>();
