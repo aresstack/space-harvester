@@ -92,6 +92,8 @@ public final class FtpSession {
         return mvs;
     }
 
+    private volatile boolean loginRefused;
+
     public ConnectionState state() {
         stateLock.lock();
         try {
@@ -99,6 +101,20 @@ public final class FtpSession {
         } finally {
             stateLock.unlock();
         }
+    }
+
+    /** Ist die Sitzung gescheitert, weil der Host die Anmeldung abgelehnt hat (nicht wegen Netz oder Zeitlimit)? */
+    public boolean loginRefused() {
+        return loginRefused && state() == ConnectionState.FAILED;
+    }
+
+    private static boolean refusal(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause() == cause ? null : cause.getCause()) {
+            if (cause instanceof LoginRefusedException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public Optional<String> failure() {
@@ -340,6 +356,7 @@ public final class FtpSession {
                 current = open();
             } catch (Exception e) {
                 if (primary) {
+                    loginRefused = refusal(e);
                     change(ConnectionState.FAILED, describe(e), false);
                 }
                 throw e;

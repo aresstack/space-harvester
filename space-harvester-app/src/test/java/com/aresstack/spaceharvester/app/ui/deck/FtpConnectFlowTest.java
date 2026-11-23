@@ -36,6 +36,7 @@ class FtpConnectFlowTest {
             deck = null;
         }
         KEYS.forEach(key -> AppState.shared().put(key, (String) null));
+        DeckLogin.guard().succeeded("Raumhafen");
     }
 
     private static ServerAccounts accounts(String host) {
@@ -102,6 +103,62 @@ class FtpConnectFlowTest {
                 assertThat(deck.ftpSessions().all()).isEmpty();
                 assertThat(deck.ftp().selected()).isNull();
             });
+        }
+    }
+
+    @Test
+    void showingTheAreaWithoutSessionConnectsAtOnceEveryTime() throws Exception {
+        try (FakeMvsFtpHost host = FakeMvsFtpHost.sample()) {
+            AppState state = AppState.shared();
+            state.put(FtpConnectForm.ENTRY_KEY, "Raumhafen");
+            state.put(FtpConnectForm.PORT_KEY, String.valueOf(host.port()));
+            state.put(FtpConnectForm.CONFIGURED_KEY, "true");
+            SwingUtilities.invokeAndWait(() -> {
+                deck = new CommandDeck(accounts(host.host()));
+                deck.ftp().shown();
+                deck.ftp().shown();
+            });
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            waitFor(() -> onEdt(() -> deck.ftp().selected() != null
+                    && deck.ftp().selected().state() == ConnectionState.CONNECTED), until);
+            assertThat(deck.ftpSessions().all()).as("zweimal gezeigt, eine Verbindung").hasSize(1);
+            FtpSession session = deck.ftpSessions().all().get(0);
+            SwingUtilities.invokeAndWait(() -> {
+                deck.ftp().shown();
+                assertThat(deck.ftpSessions().all()).as("mit Sitzung nichts Neues").containsExactly(session);
+                deck.ftp().closeTab(session);
+                deck.ftp().shown();
+            });
+            waitFor(() -> onEdt(() -> deck.ftp().selected() != null && deck.ftp().selected() != session), until);
+        }
+    }
+
+    @Test
+    void aRefusedLoginLocksTheEntryAndNoAutomaticAttemptFollows() throws Exception {
+        try (FakeMvsFtpHost host = new FakeMvsFtpHost("KKR", "abgelaufen")) {
+            AppState state = AppState.shared();
+            state.put(FtpConnectForm.ENTRY_KEY, "Raumhafen");
+            state.put(FtpConnectForm.PORT_KEY, String.valueOf(host.port()));
+            state.put(FtpConnectForm.CONFIGURED_KEY, "true");
+            SwingUtilities.invokeAndWait(() -> {
+                deck = new CommandDeck(accounts(host.host()));
+                deck.ftp().shown();
+            });
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            waitFor(() -> !DeckLogin.guard().mayTry("Raumhafen"), until);
+            waitFor(() -> onEdt(() -> deck.ftpSessions().all().isEmpty()), until);
+            long logins = host.commands().stream().filter(line -> line.startsWith("PASS")).count();
+            assertThat(logins).as("abgelehnte Anmeldung nicht wiederholt").isEqualTo(1);
+            SwingUtilities.invokeAndWait(() -> {
+                // Bereichswechsel und „Neue Verbindung“ versuchen es nicht noch einmal, das Formular nennt den Grund.
+                deck.ftp().shown();
+                deck.ftp().newConnection();
+                assertThat(deck.ftpSessions().all()).isEmpty();
+                assertThat(deck.ftp().selected()).isNull();
+                assertThat(deck.ftp().form().problemText()).startsWith("Letzte Anmeldung mit „Raumhafen“ fehlgeschlagen");
+            });
+            Thread.sleep(300);
+            assertThat(host.commands().stream().filter(line -> line.startsWith("PASS")).count()).isEqualTo(1);
         }
     }
 

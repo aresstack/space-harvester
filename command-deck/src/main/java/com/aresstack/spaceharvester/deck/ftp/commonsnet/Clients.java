@@ -36,8 +36,8 @@ final class Clients {
             }
             ftp.setSoTimeout(profile.controlTimeoutSeconds() * 1000);
             if (!ftp.login(user, new String(password))) {
-                throw new FtpReplyException("Anmeldung als " + user + " abgelehnt: " + reply(ftp),
-                        ftp.getReplyCode());
+                throw new com.aresstack.spaceharvester.deck.ftp.LoginRefusedException(
+                        "Anmeldung als " + user + " abgelehnt: " + reply(ftp), ftp.getReplyCode());
             }
             ftp.enterLocalPassiveMode();
             ftp.setFileType(FTP.ASCII_FILE_TYPE);
