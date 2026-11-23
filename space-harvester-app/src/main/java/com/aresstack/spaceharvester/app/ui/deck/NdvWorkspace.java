@@ -63,8 +63,8 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     private final NdvConnectForm form;
     private final EditorSessions editors;
     private NdvSession selected;
-    /** Ob seit dem letzten Erfolg schon automatisch verbunden wurde; ein Fehlschlag wiederholt sich so nicht. */
-    private boolean autoTried;
+    /** Der zuletzt dem Sperrschutz gemeldete Zustand je Sitzung (jeder Übergang wird genau einmal gemeldet). */
+    private final Map<NdvSession, NdvState> reported = new java.util.HashMap<>();
     private final ServerAccounts accounts;
     /** Sitzungen, die noch nie verbunden waren: ihr erster Erfolg wird gemerkt, ihr Fehlschlag zeigt das Formular. */
     private final java.util.Set<NdvSession> fresh = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -130,10 +130,12 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         });
     }
 
-    /** Der Bereich wird gezeigt: ohne offene Sitzung einmal automatisch verbinden (nach einem Fehlschlag nicht). */
+    /**
+     * Der Bereich wird gezeigt: ohne offene Sitzung automatisch verbinden. Ist der KeePass-Eintrag nach einem
+     * Fehlschlag gesperrt (irgendwo im Deck), wird nicht versucht, sondern das Formular zeigt den Grund.
+     */
     void shown() {
-        if (pillOf.isEmpty() && !autoTried) {
-            autoTried = true;
+        if (pillOf.isEmpty()) {
             newConnection();
         }
     }
@@ -173,15 +175,14 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     }
 
     private void changed(NdvSession session) {
+        report(session);
         if (fresh.contains(session)) {
             if (session.state() == NdvState.CONNECTED) {
                 fresh.remove(session);
-                autoTried = false;
                 NdvConnectForm.rememberWorking(session.profile(), session.account());
             } else if (session.state() == NdvState.FAILED && pillOf.containsKey(session)) {
-                // Erstes Verbinden misslungen: zurück ins Formular, mit Grund; beim nächsten Öffnen nicht von selbst.
+                // Erstes Verbinden misslungen: zurück ins Formular, mit Grund.
                 fresh.remove(session);
-                autoTried = true;
                 String reason = NdvBrowser.oneLine(session.failure().orElse("Verbindung fehlgeschlagen"));
                 discard(session);
                 select(null);
@@ -258,7 +259,30 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         });
     }
 
-    /** Verbindet mit den gemerkten Daten; ist diese Verbindung schon offen, zeigt es das Formular für eine andere. */
+    /**
+     * Meldet dem Sperrschutz des Deck jeden Übergang (Angelo 23.11.: Schutz vor der Kontosperre, je KeePass-Eintrag):
+     * Verbunden löst die Sperre des Eintrags, ein Fehlschlag setzt sie. Dass ein Fehlschlag am Netz statt am Passwort
+     * lag, ist hier nicht zu unterscheiden; gesperrt wird trotzdem, lieber einmal zu vorsichtig als ein gesperrtes
+     * Konto. Der Mensch kann im Formular jederzeit selbst verbinden.
+     */
+    private void report(NdvSession session) {
+        NdvState now = session.state();
+        if (reported.get(session) == now) {
+            return;
+        }
+        reported.put(session, now);
+        if (now == NdvState.CONNECTED) {
+            DeckLogin.guard().succeeded(session.account());
+        } else if (now == NdvState.FAILED) {
+            DeckLogin.guard().failed(session.account(),
+                    NdvBrowser.oneLine(session.failure().orElse("Anmeldung fehlgeschlagen")));
+        }
+    }
+
+    /**
+     * Verbindet von selbst mit den gemerkten Daten. Ist diese Verbindung schon offen, zeigt es das Formular für eine
+     * andere; ist der Eintrag nach einem Fehlschlag gesperrt, das Formular mit dem Grund, ohne Versuch.
+     */
     private void connectOrForm(java.util.Optional<NdvConnectForm.Working> working) {
         if (working.isEmpty() || pillOf.keySet().stream().anyMatch(open -> open.profile().host()
                 .equalsIgnoreCase(working.get().profile().host()) && open.profile().port() == working.get().profile()
@@ -267,6 +291,11 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
             return;
         }
         String entry = working.get().account();
+        if (!DeckLogin.guard().mayTry(entry)) {
+            select(null);
+            form.problem(DeckLogin.notice(entry));
+            return;
+        }
         NdvSession opened = sessions.open(working.get().profile(), entry, () -> accounts.credentials(entry));
         fresh.add(opened);
         if (pillOf.containsKey(opened)) {
@@ -277,6 +306,7 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     /** Nimmt eine Sitzung ohne Rückfrage weg: trennen, Dokumente schließen, Reiter entfernen. */
     private void discard(NdvSession session) {
         fresh.remove(session);
+        reported.remove(session);
         sessions.close(session);
         NdvBrowser browser = browsers.remove(session);
         refreshAnalyses();
