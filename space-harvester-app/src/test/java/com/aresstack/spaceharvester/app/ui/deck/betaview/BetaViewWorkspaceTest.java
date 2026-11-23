@@ -83,6 +83,9 @@ class BetaViewWorkspaceTest {
             SwingUtilities.invokeAndWait(() -> panel.search.table.setRowSelectionInterval(0, 0));
             await(() -> panel.documents.text.getText().contains("LAUF"), "Seite 1 im Text");
             assertThat(onEdt(panel::statusText)).contains("Geöffnet");
+            // Der Stand der gewählten Sitzung steht in der Statuszeile der App, nicht in der unteren Leiste.
+            assertThat(onEdt(() -> workspace.statusInfo().getAccessibleContext().getAccessibleName()))
+                    .contains("Geöffnet");
 
             DocumentTab current = onEdt(() -> panel.documents.current().orElseThrow());
             SwingUtilities.invokeAndWait(() -> panel.download(current));

@@ -88,7 +88,16 @@ final class StatusLine extends JPanel {
             }, BorderLayout.WEST);
         } else {
             // FlowLayout statt BoxLayout: Es fragt die (von der Breite abhängigen) Größen jedes Mal neu ab.
-            JPanel left = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+            JPanel left = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0)) {
+                /** FlowLayout setzt die Zeile oben an; hier sitzt jedes Teil senkrecht mittig in der Statuszeile. */
+                @Override
+                public void doLayout() {
+                    super.doLayout();
+                    for (java.awt.Component part : getComponents()) {
+                        part.setLocation(part.getX(), Math.max(0, (getHeight() - part.getHeight()) / 2));
+                    }
+                }
+            };
             left.setOpaque(false);
             Capped alertCap = alert == null ? null : new Capped(alert, LEAD_SHARE);
             Capped westCap = new Capped(west, 0.4);
@@ -145,6 +154,20 @@ final class StatusLine extends JPanel {
         model.addChangeListener(e -> update());
         model.addPropertyChangeListener("indeterminate", e -> update());
         update();
+    }
+
+    /**
+     * Feste Höhe der Zeile samt Linie: so hoch wie mit dem höchsten Stand eines Bereichs (Zurück und Vor der
+     * Leseansicht). Zeigt ein Bereich oder eine Perspektive keinen eigenen Stand, bliebe die Zeile sonst niedriger
+     * und alle Leisten darüber sprängen beim Wechsel (Angelo, 23.11.2026: einheitliche Höhen).
+     */
+    static final int HEIGHT = 31;
+
+    @Override
+    public java.awt.Dimension getPreferredSize() {
+        java.awt.Dimension size = super.getPreferredSize();
+        size.height = Math.max(size.height, HEIGHT);
+        return size;
     }
 
     /**
