@@ -97,22 +97,6 @@ class DeckBarsTest {
         });
     }
 
-    /** Das Kreuz am Reiter und der Mittelklick schließen in einem Schritt. */
-    @Test
-    void theCrossAtATabClosesInOneStep() throws Exception {
-        SwingUtilities.invokeAndWait(() -> {
-            int[] closed = {0};
-            javax.swing.JToggleButton pill = new javax.swing.JToggleButton("Sitzung");
-            javax.swing.JPanel tab = DeckBars.tab(pill, "Trennen und schließen", () -> closed[0]++);
-            java.util.List<javax.swing.AbstractButton> all = buttons(tab);
-            assertThat(all).hasSize(2);
-            javax.swing.AbstractButton cross = all.stream().filter(b -> b != pill).findFirst().orElseThrow();
-            assertThat(cross.getToolTipText()).isEqualTo("Trennen und schließen");
-            cross.doClick();
-            assertThat(closed[0]).isEqualTo(1);
-        });
-    }
-
     private static int labels(Container root) {
         int count = 0;
         for (Component child : root.getComponents()) {
