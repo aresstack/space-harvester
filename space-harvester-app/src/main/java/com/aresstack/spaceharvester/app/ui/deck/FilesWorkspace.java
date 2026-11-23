@@ -176,8 +176,6 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private final javax.swing.JButton reload;
     /** Neben der Lupe in der Fußleiste des Command Deck: die Aktionen des gewählten Reiters. */
     private final JPanel footTools = new JPanel(new CardLayout());
-    /** Reiter samt Kreuz je Dokument. */
-    private final Map<EditorSession, JPanel> tabOf = new LinkedHashMap<>();
     private boolean creatingFolder;
     private boolean started;
     private EditorSession selected;
@@ -586,9 +584,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         String card = "doc-" + (++cardCounter);
         cardOf.put(session, card);
         center.add(editor, card);
-        ComposerToggleButton pill = new ComposerToggleButton(FilesIcons.forName(session.name()),
-                session.store() == preview ? session.name() + " (Vorschau)" : session.name(), session.location());
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(FilesIcons.forName(session.name()),
+                session.store() == preview ? session.name() + " (Vorschau)" : session.name(), session.location(),
+                "Dokument schließen (auch Mittelklick auf den Reiter)", () -> closeDocument(session));
         pill.getAccessibleContext().setAccessibleName(session.name());
         pill.addActionListener(e -> select(session));
         pill.addMouseListener(new MouseAdapter() {
@@ -603,10 +601,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             }
         });
         pillGroup.add(pill);
-        JPanel tab = DeckBars.tab(pill, "Dokument schließen (auch Mittelklick auf den Reiter)",
-                () -> closeDocument(session));
-        pills.add(tab);
-        tabOf.put(session, tab);
+        pills.add(pill);
         pillOf.put(session, pill);
         session.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
         pills.revalidate();
@@ -641,7 +636,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         cardOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tabOf.remove(session));
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }

@@ -63,8 +63,6 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
     private final JPanel pills = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final ButtonGroup pillGroup = new ButtonGroup();
     private final Map<TerminalSession, ComposerToggleButton> pillOf = new LinkedHashMap<>();
-    /** Reiter samt ✕ je Sitzung (das ✕ schließt, wie der Mittelklick auf den Reiter). */
-    private final Map<TerminalSession, JComponent> tabOf = new java.util.HashMap<>();
     /**
      * Sitzungen aus dem Formular oder einem Lesezeichen, die noch nie verbunden waren. Scheitern sie, bleibt kein toter
      * Reiter: Das Formular kommt mit dem Grund wieder. Der Wert sagt, ob ein Erfolg die gemerkte Verbindung einrichtet.
@@ -379,41 +377,13 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         if (pillOf.containsKey(session)) {
             return;
         }
-        // Gezeichnetes Kreuz (nicht das Zeichen „✕“, das nicht jede Schrift hat), im Reiter selbst wie im Browser.
-        com.aresstack.spaceharvester.app.ui.IconButton cross = new com.aresstack.spaceharvester.app.ui.IconButton(
-                ComposerIcons.close(), "Sitzung schließen (auch Mittelklick auf den Reiter)").compact();
-        cross.addActionListener(e -> askClose(session));
-        ComposerToggleButton pill = new ComposerToggleButton(dot(session.state()), session.profile().label(),
-                session.state().label()) {
-            @Override
-            public void doLayout() {
-                java.awt.Dimension own = cross.getPreferredSize();
-                cross.setBounds(getWidth() - own.width - 4, (getHeight() - own.height) / 2, own.width, own.height);
-            }
-        };
-        // Der Text rückt um das Kreuz nach links; das Kreuz liegt rechts innen auf dem Reiter.
-        pill.setBorder(BorderFactory.createCompoundBorder(pill.getBorder(),
-                BorderFactory.createEmptyBorder(0, 0, 0, cross.getPreferredSize().width)));
-        pill.setLayout(null);
-        pill.add(cross);
-        pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        pill.getAccessibleContext().setAccessibleName(session.profile().label());
+        ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.profile().label(),
+                session.state().label(), "Trennen und schließen (auch Mittelklick auf den Reiter)",
+                () -> askClose(session));
         pill.addActionListener(e -> select(session));
-        pill.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent event) {
-                if (SwingUtilities.isMiddleMouseButton(event)) {
-                    askClose(session);
-                }
-            }
-        });
-        JPanel tab = new JPanel(new BorderLayout(0, 0));
-        tab.setOpaque(false);
-        tab.add(pill, BorderLayout.CENTER);
         pillGroup.add(pill);
-        pills.add(tab, pills.getComponentCount() - 1);
+        pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
-        tabOf.put(session, tab);
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
         // Makro-Aufzeichnung: was der Mensch an der Anzeige eingibt (verdeckte Felder meldet sie nie).
         session.view(TerminalView.class).ifPresent(view -> view.addInputListener(new TerminalView.InputListener() {
@@ -910,10 +880,9 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         origins.remove(session);
         firstConnect.remove(session);
         ComposerToggleButton pill = pillOf.remove(session);
-        JComponent tab = tabOf.remove(session);
         if (pill != null) {
             pillGroup.remove(pill);
-            pills.remove(tab == null ? pill : tab);
+            pills.remove(pill);
             pills.revalidate();
             pills.repaint();
         }
