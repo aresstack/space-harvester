@@ -145,9 +145,9 @@ class NdvAnalysisTest {
         NaturalDependencyGraph graph = analysis.build("LAGER");
         assertThat(graph.getPassiveXRefs("LAGERN01")).extracting(NaturalDependencyGraph.CallerInfo::getCallerName)
                 .containsExactly("LAGER002");
-        // Wie in MainframeMate erkennt der Parser USING nur in eigener Zeile (LOCAL USING …), nicht in
-        // „DEFINE DATA LOCAL USING …“ auf einer Zeile wie im Schein-Server.
-        assertThat(graph.getPassiveXRefs("LAGERL01")).isEmpty();
+        // „DEFINE DATA LOCAL USING …“ auf einer Zeile (Schein-Server) wird erkannt, anders als in MainframeMate.
+        assertThat(graph.getPassiveXRefs("LAGERL01")).extracting(NaturalDependencyGraph.CallerInfo::getCallerName)
+                .containsExactly("LAGER001");
         NdvObject lager002 = objects.stream().filter(o -> o.displayName().equals("LAGER002")).findFirst().orElseThrow();
         analysis.saved(lager002, "* geändert\nEND");
         assertThat(analysis.graph("LAGER").orElseThrow().getPassiveXRefs("LAGERN01")).isEmpty();
@@ -155,6 +155,24 @@ class NdvAnalysisTest {
         analysis.clear("LAGER");
         assertThat(analysis.graph("LAGER")).isEmpty();
         assertThat(new NdvSourceCache("10.0.0.7:8011", new FileNdvSourceStore(folder), rules).size("LAGER")).isZero();
+    }
+
+    @Test
+    void dataAreasOnTheDefineDataLineAreFound() {
+        NaturalDependencyService service = new NaturalDependencyService();
+        assertThat(usings(service, "DEFINE DATA LOCAL USING LAGERL01\nEND-DEFINE\nEND"))
+                .containsExactly("LAGERL01");
+        assertThat(usings(service, "DEFINE DATA PARAMETER USING KASSEP01 LOCAL USING KASSEL01\n1 #X (A1)\n"
+                + "END-DEFINE\nEND")).containsExactly("KASSEP01", "KASSEL01");
+        assertThat(usings(service, "define data local using lagerl02 end-define\nCALLNAT 'LAGERN01'\nEND"))
+                .containsExactly("lagerl02");
+        assertThat(usings(service, "DEFINE DATA LOCAL\n1 #X (A1)\nEND-DEFINE\nEND")).isEmpty();
+    }
+
+    private static List<String> usings(NaturalDependencyService service, String source) {
+        return service.analyze(source, "TEST").getGrouped()
+                .getOrDefault(NaturalDependencyService.DependencyKind.USING, List.of()).stream()
+                .map(NaturalDependencyService.Dependency::getTargetName).toList();
     }
 
     @Test

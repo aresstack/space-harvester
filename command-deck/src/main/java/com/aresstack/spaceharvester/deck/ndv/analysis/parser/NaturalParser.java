@@ -46,6 +46,15 @@ public class NaturalParser {
     private static final Pattern END_DEFINE = Pattern.compile(
             "^\\s*END-DEFINE\\b", Pattern.CASE_INSENSITIVE);
 
+    // Bereiche hinter „DEFINE DATA“ auf derselben Zeile: LOCAL [USING x] PARAMETER [USING y] …
+    private static final Pattern INLINE_SCOPE = Pattern.compile(
+            "\\b(LOCAL|PARAMETER|GLOBAL|INDEPENDENT)\\b(?:\\s+USING\\s+([A-Za-z0-9_#@$&-]+))?",
+            Pattern.CASE_INSENSITIVE);
+
+    // END-DEFINE am Ende derselben Zeile
+    private static final Pattern END_DEFINE_INLINE = Pattern.compile(
+            "\\bEND-DEFINE\\b", Pattern.CASE_INSENSITIVE);
+
     // Variable definition: level name (format) [INIT<...>]
     // e.g.: 01 #COUNTER (N5)    or    02 #NAME  (A30) INIT<''>
     private static final Pattern DATA_VAR = Pattern.compile(
@@ -178,6 +187,28 @@ public class NaturalParser {
 
     // ── Parse ───────────────────────────────────────────────────────
 
+    /** Legt einen Datenbereich (LOCAL/PARAMETER/GLOBAL/INDEPENDENT) mit optionalem USING an. */
+    private static JclElement scope(JclOutlineModel model, JclElement defineDataBlock, String name, String using,
+            int lineNum, String text) {
+        String scopeName = name.toUpperCase();
+        JclElementType scopeType;
+        switch (scopeName) {
+            case "PARAMETER":    scopeType = JclElementType.NAT_PARAMETER; break;
+            case "GLOBAL":       scopeType = JclElementType.NAT_GLOBAL; break;
+            case "INDEPENDENT":  scopeType = JclElementType.NAT_INDEPENDENT; break;
+            default:             scopeType = JclElementType.NAT_LOCAL; break;
+        }
+        JclElement scope = new JclElement(scopeType, scopeName, lineNum, text);
+        if (using != null) {
+            scope.addParameter("USING", using);
+        }
+        model.addElement(scope);
+        if (defineDataBlock != null) {
+            defineDataBlock.addChild(scope);
+        }
+        return scope;
+    }
+
     /**
      * Parse Natural content and return outline model.
      */
@@ -239,6 +270,20 @@ public class NaturalParser {
                 model.addElement(dd);
                 defineDataBlock = dd;
                 inDefineData = true;
+                currentScope = null;
+                currentLevel01 = null;
+                // Verbesserung gegenüber MainframeMate: „DEFINE DATA LOCAL USING X“ auf einer Zeile (auch mehrere
+                // Bereiche wie „DEFINE DATA PARAMETER USING P LOCAL USING L“) wird wie die eigene Zeile erkannt.
+                String rest = trimmed.substring(m.end());
+                Matcher scopes = INLINE_SCOPE.matcher(rest);
+                while (scopes.find()) {
+                    currentScope = scope(model, defineDataBlock, scopes.group(1), scopes.group(2), lineNum, trimmed);
+                }
+                if (END_DEFINE_INLINE.matcher(rest).find()) {
+                    inDefineData = false;
+                    defineDataBlock = null;
+                    currentScope = null;
+                }
                 continue;
             }
 
@@ -247,25 +292,7 @@ public class NaturalParser {
                 // ── Data scope: LOCAL / PARAMETER / GLOBAL / INDEPENDENT ─
                 m = DATA_SCOPE.matcher(trimmed);
                 if (m.find()) {
-                    String scopeName = m.group(1).toUpperCase();
-                    JclElementType scopeType;
-                    switch (scopeName) {
-                        case "LOCAL":        scopeType = JclElementType.NAT_LOCAL; break;
-                        case "PARAMETER":    scopeType = JclElementType.NAT_PARAMETER; break;
-                        case "GLOBAL":       scopeType = JclElementType.NAT_GLOBAL; break;
-                        case "INDEPENDENT":  scopeType = JclElementType.NAT_INDEPENDENT; break;
-                        default:             scopeType = JclElementType.NAT_LOCAL; break;
-                    }
-                    String using = m.group(2);
-                    JclElement scope = new JclElement(scopeType, scopeName, lineNum, trimmed);
-                    if (using != null) {
-                        scope.addParameter("USING", using);
-                    }
-                    model.addElement(scope);
-                    if (defineDataBlock != null) {
-                        defineDataBlock.addChild(scope);
-                    }
-                    currentScope = scope;
+                    currentScope = scope(model, defineDataBlock, m.group(1), m.group(2), lineNum, trimmed);
                     currentLevel01 = null;
                     continue;
                 }
