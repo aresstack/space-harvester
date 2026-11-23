@@ -124,4 +124,23 @@ class TerminalSessionsTest {
         assertThat(first.state()).isEqualTo(SessionState.DISCONNECTED);
         assertThat(second.id()).isEqualTo("terminal-2");
     }
+
+    @Test
+    void reopenUsesTheSameTargetLoginAndMacro() {
+        TerminalSessions sessions = sessions(false);
+        TerminalSessions.LoginSource login = () -> {
+            throw new IllegalStateException("nicht gekoppelt");
+        };
+        List<TerminalMacro.Step> steps = List.of(TerminalMacro.Step.aid(AidKey.PF3));
+        TerminalSession first = sessions.open(TerminalProfile.of("host.example", 23), login, steps);
+        first.disconnect();
+
+        TerminalSession second = sessions.reopen(first);
+
+        assertThat(second).isNotSameAs(first);
+        assertThat(second.profile()).isEqualTo(first.profile());
+        assertThat(second.loginSource()).isSameAs(login);
+        assertThat(second.replay()).isEqualTo(steps);
+        assertThat(created).hasSize(2);
+    }
 }

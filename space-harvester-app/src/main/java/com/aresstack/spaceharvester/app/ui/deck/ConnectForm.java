@@ -62,13 +62,34 @@ final class ConnectForm extends JPanel {
     private final JLabel advancedToggle = new JLabel();
     private final ServerAccounts accounts;
     private ServerAccount shownAccount;
-    private final BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect;
+    private final java.util.function.Consumer<Request> connect;
     private boolean loaded;
+    /** Terminal-Lesezeichen (MainframeMate): Ziel, KeePass-Eintrag, Makro. Nur sichtbar, wenn es welche gibt. */
+    private final TerminalBookmarks bookmarks;
+    final JComboBox<TerminalBookmarks.Bookmark> bookmark = new JComboBox<>();
+    private final JPanel bookmarkRow = new JPanel(new BorderLayout(6, 0));
+
+    /**
+     * Was „Verbinden“ (oder ein Lesezeichen) öffnet: Ziel, Anmeldung, dazu woher sie kam (für ein späteres
+     * Lesezeichen) und das abzuspielende Makro.
+     *
+     * @param entry   KeePass-Eintrag der Anmeldung, leer ohne automatische Anmeldung
+     * @param command Startkommando nach der Anmeldung
+     */
+    record Request(TerminalProfile profile, TerminalSessions.LoginSource login, String entry, String command,
+                   List<com.aresstack.spaceharvester.deck.terminal.TerminalMacro.Step> steps) {
+    }
 
     ConnectForm(ServerAccounts accounts, BiConsumer<TerminalProfile, TerminalSessions.LoginSource> connect) {
+        this(accounts, new TerminalBookmarks(AppState.shared()),
+                request -> connect.accept(request.profile(), request.login()));
+    }
+
+    ConnectForm(ServerAccounts accounts, TerminalBookmarks bookmarks, java.util.function.Consumer<Request> connect) {
         super(new BorderLayout());
         this.accounts = accounts;
         this.connect = connect;
+        this.bookmarks = bookmarks;
         setOpaque(false);
         server.setRenderer(new javax.swing.DefaultListCellRenderer() {
             @Override
@@ -127,10 +148,35 @@ final class ConnectForm extends JPanel {
         host.addActionListener(e -> submit());
         port.addActionListener(e -> submit());
 
+        // Lesezeichen: wählen und öffnen (verbindet, meldet an, spielt das Makro ab) oder entfernen.
+        bookmark.setFont(Comic.regular(13f));
+        var openBookmark = Comic.button("Öffnen", "Lesezeichen öffnen: verbinden, anmelden, Makro abspielen");
+        openBookmark.addActionListener(e -> openBookmark());
+        IconButton dropBookmark = new IconButton(Glyph.TRASH, "Lesezeichen entfernen");
+        dropBookmark.addActionListener(e -> dropBookmark());
+        InputFrame bookmarkFrame = new InputFrame(bookmark);
+        bookmarkFrame.addButton(dropBookmark);
+        JLabel bookmarkLabel = Comic.text("Lesezeichen");
+        bookmarkLabel.setPreferredSize(new Dimension(110, bookmarkLabel.getPreferredSize().height));
+        bookmarkRow.setOpaque(false);
+        bookmarkRow.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
+        bookmarkRow.add(bookmarkLabel, BorderLayout.WEST);
+        bookmarkRow.add(bookmarkFrame, BorderLayout.CENTER);
+        bookmarkRow.add(openBookmark, BorderLayout.EAST);
+        bookmarks.observe(() -> {
+            if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+                showBookmarks();
+            } else {
+                javax.swing.SwingUtilities.invokeLater(this::showBookmarks);
+            }
+        });
+        showBookmarks();
+
         JPanel body = new JPanel();
         body.setOpaque(false);
         body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
-        for (JComponent part : new JComponent[] {fields, advancedToggle, advanced, problem, Comic.row(button)}) {
+        for (JComponent part : new JComponent[] {fields, advancedToggle, advanced, problem, Comic.row(button),
+                bookmarkRow}) {
             part.setAlignmentX(LEFT_ALIGNMENT);
             body.add(part);
         }
@@ -241,8 +287,14 @@ final class ConnectForm extends JPanel {
         if (account == null || !autoLogin.isSelected()) {
             return null;
         }
-        String entry = account.entry();
-        String startCommand = command.getText();
+        return loginFor(account.entry(), command.getText());
+    }
+
+    /** Anmeldung über einen KeePass-Eintrag; das Passwort wird erst beim Aufruf gelesen und danach gelöscht. */
+    TerminalSessions.LoginSource loginFor(String entry, String startCommand) {
+        if (entry == null || entry.isBlank()) {
+            return null;
+        }
         return () -> {
             try (ServerCredentials credentials = accounts.credentials(entry)) {
                 char[] password = credentials.copyPassword();
@@ -277,7 +329,44 @@ final class ConnectForm extends JPanel {
         }
         problem.setText(" ");
         remember();
-        connect.accept(profile, login());
+        TerminalSessions.LoginSource login = login();
+        connect.accept(new Request(profile, login, login == null ? "" : selected().entry(), command.getText().trim(),
+                List.of()));
+    }
+
+    private void showBookmarks() {
+        Object wanted = bookmark.getSelectedItem();
+        List<TerminalBookmarks.Bookmark> list = bookmarks.all();
+        DefaultComboBoxModel<TerminalBookmarks.Bookmark> items = new DefaultComboBoxModel<>();
+        list.forEach(items::addElement);
+        bookmark.setModel(items);
+        list.stream().filter(candidate -> wanted instanceof TerminalBookmarks.Bookmark old
+                && old.name().equals(candidate.name())).findFirst().ifPresent(bookmark::setSelectedItem);
+        bookmarkRow.setVisible(!list.isEmpty());
+        revalidate();
+        repaint();
+    }
+
+    /** Öffnet das gewählte Lesezeichen wie in MainframeMate: verbinden, anmelden, Makro abspielen. */
+    void openBookmark() {
+        if (!(bookmark.getSelectedItem() instanceof TerminalBookmarks.Bookmark chosen)) {
+            return;
+        }
+        problem.setText(" ");
+        connect.accept(new Request(chosen.profile(), loginFor(chosen.entry(), chosen.command()), chosen.entry(),
+                chosen.command(), chosen.steps()));
+    }
+
+    private void dropBookmark() {
+        if (bookmark.getSelectedItem() instanceof TerminalBookmarks.Bookmark chosen
+                && com.aresstack.spaceharvester.app.ui.Dialogs.confirm(this, "Lesezeichen entfernen",
+                "Lesezeichen „" + chosen.name() + "“ wirklich entfernen?")) {
+            bookmarks.remove(chosen.name());
+        }
+    }
+
+    boolean bookmarksShown() {
+        return bookmarkRow.isVisible();
     }
 
     String problemText() {

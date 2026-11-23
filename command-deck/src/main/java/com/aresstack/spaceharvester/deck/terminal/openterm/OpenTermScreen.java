@@ -47,6 +47,11 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     private final transient IntConsumer statusListener;
     /** Von der KI ausgefüllte Felder, gelb umrandet bis zum Absenden oder Zurücknehmen (#1151). */
     private transient volatile java.util.List<Span> highlighted = java.util.List.of();
+    /** Wer die Eingaben des Menschen aufzeichnet (Makro); nie für Anmeldung oder Abspielen. */
+    private final transient java.util.List<InputListener> inputListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** Ob die Taste, deren Zeichen gleich kommt, in einem verdeckten Feld (Passwort) gedrückt wurde. */
+    private boolean hiddenAtPress;
 
     OpenTermScreen(Terminal terminal, TerminalModel model, IntConsumer statusListener) {
         super(terminal, hiddenToolbar());
@@ -81,6 +86,27 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
                 } else if (moveCursor(event.getKeyCode())) {
                     refresh();
                     event.consume();
+                } else {
+                    // Aufzeichnung wie in MainframeMate: F-Tasten und Enter als AID (OpenTerm schickt sie selbst).
+                    hiddenAtPress = hiddenAt(terminal.getCursorPosition());
+                    int number = functionKey(event);
+                    if (!terminal.isKeyboardLocked()) {
+                        if (number > 0) {
+                            fireAid(AidKey.pf(number));
+                        } else if (event.getKeyCode() == KeyEvent.VK_ENTER) {
+                            fireAid(AidKey.ENTER);
+                        }
+                    }
+                }
+            }
+
+            @Override
+            public void keyTyped(KeyEvent event) {
+                char c = event.getKeyChar();
+                if (c != KeyEvent.CHAR_UNDEFINED && !Character.isISOControl(c)
+                        && !(event.isControlDown() && !event.isAltDown())
+                        && !hiddenAtPress) {
+                    fireTyped(String.valueOf(c));
                 }
             }
         });
@@ -94,6 +120,18 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
             @Override
             public void mouseReleased(MouseEvent event) {
                 popup(event);
+            }
+
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                // Klick auf einen Menüpunkt wählt ihn aus (autoEnterIfMenuItem in MainframeMate); kurz warten, bis
+                // OpenTerm die Schreibmarke an die Klickstelle gesetzt hat.
+                if (event.getButton() != MouseEvent.BUTTON1 || event.getClickCount() != 1) {
+                    return;
+                }
+                javax.swing.Timer autoEnter = new javax.swing.Timer(50, e -> autoEnterIfMenuItem());
+                autoEnter.setRepeats(false);
+                autoEnter.start();
             }
         });
         getAccessibleContext().setAccessibleName("TN3270-Terminal");
@@ -142,15 +180,28 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
             return;
         }
         JPopupMenu menu = new JPopupMenu();
-        JMenuItem copy = new JMenuItem("Kopieren (Strg+C)");
-        copy.addActionListener(e -> copy());
-        JMenuItem paste = new JMenuItem("Einfügen (Strg+V)");
+        // Reihenfolge und Tastenkürzel wie im Kontextmenü von MainframeMate.
+        JMenuItem paste = new JMenuItem("Einfügen");
+        paste.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_V, java.awt.event.InputEvent.CTRL_DOWN_MASK));
         paste.setEnabled(!terminal.isKeyboardLocked());
-        paste.addActionListener(e -> paste());
+        paste.addActionListener(e -> {
+            paste();
+            requestFocusInWindow();
+        });
+        JMenuItem copy = new JMenuItem("Kopieren");
+        copy.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_C, java.awt.event.InputEvent.CTRL_DOWN_MASK));
+        copy.addActionListener(e -> {
+            copy();
+            requestFocusInWindow();
+        });
         JMenuItem all = new JMenuItem("Alles auswählen");
-        all.addActionListener(e -> selectAll());
-        menu.add(copy);
+        all.setAccelerator(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_A, java.awt.event.InputEvent.CTRL_DOWN_MASK));
+        all.addActionListener(e -> {
+            selectAll();
+            requestFocusInWindow();
+        });
         menu.add(paste);
+        menu.add(copy);
         menu.addSeparator();
         menu.add(all);
         menu.show(this, event.getX(), event.getY());
@@ -200,9 +251,13 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
                 return;
             }
             String text = flatten((String) clipboard.getData(DataFlavor.stringFlavor));
+            boolean hidden = hiddenAt(terminal.getCursorPosition());
             var input = terminal.getCharHandler();
             for (int i = 0; i < text.length(); i++) {
                 input.type(text.charAt(i));
+            }
+            if (!hidden) {
+                fireTyped(text);
             }
             refresh();
         } catch (Exception e) {
@@ -213,6 +268,145 @@ final class OpenTermScreen extends JTerminalScreen implements TerminalView, Term
     /** 3270-Felder sind einzeilig: Umbrüche und Tabulatoren werden Leerzeichen. */
     static String flatten(String text) {
         return text == null ? "" : text.replace("\r\n", " ").replace('\r', ' ').replace('\n', ' ').replace('\t', ' ');
+    }
+
+    /** F1–F24 einer echten Taste, sonst 0 (fkeyNumberFromEvent in MainframeMate). */
+    static int functionKey(KeyEvent event) {
+        int code = event.getKeyCode();
+        if (code >= KeyEvent.VK_F1 && code <= KeyEvent.VK_F12) {
+            return code - KeyEvent.VK_F1 + 1;
+        }
+        if (code >= KeyEvent.VK_F13 && code <= KeyEvent.VK_F24) {
+            return code - KeyEvent.VK_F13 + 13;
+        }
+        return 0;
+    }
+
+    /** Ob an dieser Stelle ein verdecktes Feld (Passwort) steht; im Zweifel ja, dann wird nichts aufgezeichnet. */
+    boolean hiddenAt(int position) {
+        try {
+            com.ascert.open.term.core.TermField field = terminal.getField(position);
+            if (field == null) {
+                return false;
+            }
+            com.ascert.open.term.core.TermChar attribute = field.getFAChar();
+            return attribute != null && attribute.isHidden();
+        } catch (RuntimeException unreadable) {
+            return true;
+        }
+    }
+
+    private void fireTyped(String text) {
+        for (InputListener listener : inputListeners) {
+            listener.typed(text);
+        }
+    }
+
+    private void fireAid(AidKey key) {
+        for (InputListener listener : inputListeners) {
+            listener.aid(key);
+        }
+    }
+
+    @Override
+    public void addInputListener(InputListener listener) {
+        inputListeners.add(listener);
+    }
+
+    @Override
+    public void removeInputListener(InputListener listener) {
+        inputListeners.remove(listener);
+    }
+
+    // ── Klick auf Menüpunkt (autoEnterIfMenuItem aus MainframeMate) ─────────────
+
+    /**
+     * Steht die Schreibmarke nach einem Klick auf einem auswählbaren Menüpunkt – einem <b>geschützten</b> Feld mit
+     * sichtbarem Text –, schickt sie ENTER. Zeilen 0–1 (Aktionsleiste) immer; darunter, wenn das Feld wie ein
+     * CUA-Menüpunkt hervorgehoben ist (invers, hell, unterstrichen) oder die Zeile wie ein umrahmter Pulldown-Eintrag
+     * mit Nummer aussieht ({@code | 3  Save |}); die untersten 3 Zeilen (Befehl, Meldung, PF-Legende) nie.
+     *
+     * @return ob ENTER geschickt wurde
+     */
+    boolean autoEnterIfMenuItem() {
+        if (terminal.isKeyboardLocked()) {
+            return false;
+        }
+        int columns = terminal.getCols();
+        int rows = terminal.getRows();
+        if (columns <= 0 || rows <= 0) {
+            return false;
+        }
+        int cursor = terminal.getCursorPosition();
+        int row = cursor / columns;
+        if (row >= rows - 3) {
+            return false;
+        }
+        try {
+            com.ascert.open.term.core.TermField field = terminal.getField(cursor);
+            if (field == null || !field.isProtected()) {
+                return false;
+            }
+            int begin = field.getBeginBA() + 1; // Attributbyte überspringen
+            int length = field.getEndBA() - begin + 1;
+            if (length <= 0 || length > columns) {
+                return false;
+            }
+            String text = terminal.getCharString(begin, length);
+            if (text == null || text.isBlank()) {
+                return false;
+            }
+            if (row <= 1 || hasMenuStyle(field) || looksLikePulldownLine(terminal.getCharString(row * columns,
+                    columns))) {
+                terminal.Fkey(aid(AidKey.ENTER));
+                fireAid(AidKey.ENTER);
+                return true;
+            }
+        } catch (RuntimeException unreadable) {
+            // Feld nicht lesbar: nichts schicken
+        }
+        return false;
+    }
+
+    /** Eine Zeile wie {@code | 3  Save |}: mindestens zwei Rahmenzeichen, dazwischen zuerst eine Ziffer. */
+    static boolean looksLikePulldownLine(String line) {
+        if (line == null || line.isEmpty()) {
+            return false;
+        }
+        int first = -1;
+        int last = -1;
+        for (int i = 0; i < line.length(); i++) {
+            if (isBorder(line.charAt(i))) {
+                if (first < 0) {
+                    first = i;
+                }
+                last = i;
+            }
+        }
+        if (first < 0 || last - first < 2) {
+            return false;
+        }
+        String between = line.substring(first + 1, last).trim();
+        return !between.isEmpty() && Character.isDigit(between.charAt(0));
+    }
+
+    static boolean isBorder(char c) {
+        return c == '|' || c == '│' || c == '┃' || c == '║' || c == '¦';
+    }
+
+    /** Invers, hell oder unterstrichen wie ein CUA-Menüpunkt (fieldHasMenuStyle in MainframeMate). */
+    private static boolean hasMenuStyle(com.ascert.open.term.core.TermField field) {
+        com.ascert.open.term.core.TermChar[] chars = field.getChars();
+        if (chars != null) {
+            for (com.ascert.open.term.core.TermChar c : chars) {
+                if (c == null || c.isStartField()) {
+                    continue;
+                }
+                return c.isReverse() || c.isAltIntensity() || c.isUnderscore();
+            }
+        }
+        com.ascert.open.term.core.TermChar attribute = field.getFAChar();
+        return attribute != null && (attribute.isReverse() || attribute.isAltIntensity());
     }
 
     @Override
