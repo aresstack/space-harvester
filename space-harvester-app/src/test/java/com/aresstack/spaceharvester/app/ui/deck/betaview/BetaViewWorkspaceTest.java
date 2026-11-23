@@ -115,7 +115,7 @@ class BetaViewWorkspaceTest {
             SwingUtilities.invokeAndWait(() -> {
                 BetaViewConnectForm form = workspace.form();
                 form.login.select(BetaViewConnectForm.KEEPASS);
-                form.address.setText("");
+                form.address.setText(server.address().toString());
                 form.loadEntries();
             });
             await(() -> workspace.form().entry.getItemCount() == 1, "Eintrag aus den gemeinsamen Zugängen");
@@ -137,6 +137,22 @@ class BetaViewWorkspaceTest {
         DocumentTab longTitle = new DocumentTab("D1", "F1", "L1", "Sehr langer Titel eines Tagesabschlusses im Lauf",
                 "21.11.2026 06:12", "", false);
         assertThat(DocumentPane.shortLabel(longTitle)).hasSizeLessThanOrEqualTo(DocumentPane.MAX_PILL).endsWith("…");
+    }
+
+    @Test
+    void theFirstLoginFormShowsTheMainframeMateAddress() throws Exception {
+        String before = com.aresstack.spaceharvester.app.ui.AppState.shared().get(BetaViewConnectForm.ADDRESS_KEY);
+        try {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ADDRESS_KEY, (String) null);
+            build(ServerAccounts.NONE, new FakePrompts(folder.resolve("x.txt")));
+            assertThat(onEdt(() -> workspace.form().address.getText()))
+                    .isEqualTo(com.aresstack.spaceharvester.deck.betaview.BetaViewProfile.DEFAULT_ADDRESS)
+                    .isEqualTo("https://webenabler.zivit.iv.bfinv.de/betaview/");
+            assertThat(onEdt(() -> workspace.form().address.placeholder()))
+                    .isEqualTo(com.aresstack.spaceharvester.deck.betaview.BetaViewProfile.DEFAULT_ADDRESS);
+        } finally {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ADDRESS_KEY, before);
+        }
     }
 
     private void build(ServerAccounts accounts, Prompts prompts) throws Exception {
