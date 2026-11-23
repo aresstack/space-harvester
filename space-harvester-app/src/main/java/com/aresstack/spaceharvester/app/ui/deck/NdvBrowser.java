@@ -23,6 +23,9 @@ import com.aresstack.spaceharvester.deck.ndv.NdvSession;
 import com.aresstack.spaceharvester.deck.ndv.NdvSessions;
 import com.aresstack.spaceharvester.deck.ndv.NdvState;
 import com.aresstack.spaceharvester.deck.ndv.NdvTypeGroups;
+import com.aresstack.spaceharvester.deck.ndv.analysis.NdvAccessRules;
+import com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis;
+import com.aresstack.spaceharvester.deck.ndv.analysis.NdvSourceCache;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
@@ -143,6 +146,33 @@ final class NdvBrowser extends JPanel {
     private final ComposerButton close = Comic.button("Schließen", "Getrennte Sitzung aus der Liste nehmen");
     private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
     private final JPanel foot = new JPanel(new BorderLayout());
+    /** Zwischenspeicher, Abhängigkeiten und Sperrliste dieses Servers (wie NdvSourceCacheService in MainframeMate). */
+    private final NdvAnalysis analysis;
+    private final NdvAccessRules rules = NdvAnalysisSettings.rules();
+    private final IconButton hideBlockedToggle = new IconButton(Glyph.LOCK, "Gesperrte ausblenden (Sperrliste)");
+    private final IconButton relationsToggle = new IconButton(Glyph.NEIGHBOURS,
+            "Beziehungen des geöffneten Objekts: Aufrufe, Aufrufer, Daten");
+    private final IconButton indexToggle = new IconButton(Glyph.PULSE,
+            "Index-Leiste: Zwischenspeicher, Sperrliste, Suche im Quelltext");
+    private final NdvIndexPanel indexPanel;
+    private final NdvRelationsPanel relationsPanel;
+    /** Objekt zu jedem geöffneten Dokument (Ort im Editor → Objekt). */
+    private final Map<String, NdvObject> objectOf = new LinkedHashMap<>();
+    /** Zeile, zu der nach dem Laden gesprungen wird (Ort im Editor → Zeile). */
+    private final Map<String, Integer> pendingLine = new LinkedHashMap<>();
+    private final Runnable rulesChanged = () -> SwingUtilities.invokeLater(this::rulesChanged);
+    private final Runnable analysisChanged = () -> SwingUtilities.invokeLater(this::analysisChanged);
+    /** Rückfrage (in Tests ersetzbar). */
+    java.util.function.BiPredicate<String, String> confirm = (title, question) -> Dialogs.confirm(this, title,
+            question);
+    /** Frage nach der NDV-Bibliothek zu einer STEPLIB (in Tests ersetzbar); {@code null} = abgebrochen. */
+    java.util.function.BiFunction<String, String, String> askLibrary = this::askLibrary;
+    private boolean hideBlocked;
+    private boolean indexVisible;
+    private boolean relationsVisible;
+    private String lastPrefetch = "";
+    /** Je Bibliothek die Regeln, mit denen der Graph zuletzt gebaut wurde. */
+    private final Map<String, Integer> builtWith = new java.util.concurrent.ConcurrentHashMap<>();
     /** Zählt Auflistungen; eine überholte hört bei der nächsten Seite auf. */
     private final AtomicInteger listing = new AtomicInteger();
     private String library;
@@ -173,6 +203,22 @@ final class NdvBrowser extends JPanel {
         showDetails = state.showDetails();
         linkWithEditor = state.linkWithEditor();
         hiddenTypes.addAll(state.hiddenTypes());
+        hideBlocked = state.hideBlacklisted();
+        indexVisible = state.indexVisible();
+        relationsVisible = state.relationsVisible();
+        analysis = NdvAnalysisSettings.analysis(session.profile().label());
+        indexPanel = new NdvIndexPanel(this::openHit);
+        relationsPanel = new NdvRelationsPanel(new NdvRelationsPanel.Navigator() {
+            @Override
+            public void site(String object, int line) {
+                openByName(object, line);
+            }
+
+            @Override
+            public void target(String object) {
+                openByName(object, 0);
+            }
+        });
 
         // Links: Bibliotheken mit Filter im Feld (✕ leert).
         libraryList.setFont(Comic.regular(13f));
@@ -250,13 +296,19 @@ final class NdvBrowser extends JPanel {
         objectTable.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
                 .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "ndv-open");
         objectTable.getActionMap().put("ndv-open", action(this::openSelected));
-        objectTable.getSelectionModel().addListSelectionListener(event -> showState());
+        objectTable.getSelectionModel().addListSelectionListener(event -> {
+            showState();
+            updateFilterState();
+        });
         objectTree = new NdvObjectTree(state.expandedTypes(), state::expandedTypes);
         objectTree.details(showDetails);
         objectTree.addMouseListener(tableMouse);
         objectTree.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "ndv-open");
         objectTree.getActionMap().put("ndv-open", action(this::openSelected));
-        objectTree.addTreeSelectionListener(event -> showState());
+        objectTree.addTreeSelectionListener(event -> {
+            showState();
+            updateFilterState();
+        });
         installKeys(objectTable, objectTable::getRowCount, objectTable::getSelectedRow,
                 row -> objectTable.setRowSelectionInterval(row, row),
                 row -> objectTable.scrollRectToVisible(objectTable.getCellRect(row, 0, true)));
@@ -328,6 +380,8 @@ final class NdvBrowser extends JPanel {
         sourcePanel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
         sourcePanel.add(heading, BorderLayout.NORTH);
         sourcePanel.add(sourceStage, BorderLayout.CENTER);
+        sourcePanel.add(relationsPanel, BorderLayout.EAST);
+        relationsPanel.setVisible(relationsVisible);
 
         right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, objectPanel, sourcePanel);
         right.setResizeWeight(0.4);
@@ -341,6 +395,8 @@ final class NdvBrowser extends JPanel {
         split.setBorder(BorderFactory.createEmptyBorder());
         ComicDivider.install(split);
         add(split, BorderLayout.CENTER);
+        add(indexPanel, BorderLayout.EAST);
+        indexPanel.setVisible(indexVisible);
 
         // Kopfzeile rechts: Namensfilter (✕ im Feld), Arten, Namens-Ausdruck, Ansicht, Details, Verknüpfen, Neu laden.
         Comic.style(objectFilter);
@@ -375,6 +431,36 @@ final class NdvBrowser extends JPanel {
         linkToggle.marked(linkWithEditor);
         expandAll.addActionListener(e -> objectTree.expandAll());
         collapseAll.addActionListener(e -> objectTree.collapseAll());
+        hideBlockedToggle.addActionListener(e -> {
+            hideBlocked = !hideBlocked;
+            state.hideBlacklisted(hideBlocked);
+            hideBlockedToggle.marked(hideBlocked);
+            filterObjects();
+            filterLibraries();
+        });
+        hideBlockedToggle.marked(hideBlocked);
+        relationsToggle.addActionListener(e -> {
+            relationsVisible = !relationsVisible;
+            state.relationsVisible(relationsVisible);
+            relationsToggle.marked(relationsVisible);
+            relationsPanel.setVisible(relationsVisible);
+            revalidate();
+            repaint();
+        });
+        relationsToggle.marked(relationsVisible);
+        indexToggle.addActionListener(e -> showIndex(!indexVisible));
+        indexToggle.marked(indexVisible);
+        indexPanel.cacheSelection.addActionListener(e -> cacheSelectedOrAll());
+        indexPanel.cancel.addActionListener(e -> {
+            if (library != null) {
+                analysis.cache().cancel(library);
+            }
+        });
+        indexPanel.clearCache.addActionListener(e -> clearCache());
+        indexPanel.whitelist.addActionListener(e -> rules.whitelist(selectedPaths()));
+        indexPanel.blacklist.addActionListener(e -> rules.blacklist(selectedPaths()));
+        indexPanel.removeFilter.addActionListener(e -> rules.remove(selectedPaths()));
+        indexPanel.search.getDocument().addDocumentListener(changes(this::searchSource));
         IconButton refresh = new IconButton(Glyph.REFRESH, "Bibliotheken und Objekte neu vom Server laden");
         refresh.addActionListener(e -> refresh());
         tools.setOpaque(false);
@@ -388,6 +474,9 @@ final class NdvBrowser extends JPanel {
         tools.add(collapseAll);
         tools.add(detailsToggle);
         tools.add(linkToggle);
+        tools.add(hideBlockedToggle);
+        tools.add(relationsToggle);
+        tools.add(indexToggle);
         tools.add(refresh);
 
         // Fuß: Zustand links, Aktionen rechts.
@@ -407,10 +496,25 @@ final class NdvBrowser extends JPanel {
         updateFilterButtons();
         updatePath();
         session.observe(changed -> SwingUtilities.invokeLater(this::stateChanged));
+        // Beobachtet werden Sperrliste und Analyse nur, solange der Bereich sichtbar ist (wie removeChangeListener).
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) != 0) {
+                if (isDisplayable()) {
+                    watch();
+                } else {
+                    unwatch();
+                }
+            }
+        });
+        watch();
         stateChanged();
-        // Wie flashActiveFilterButtons in MainframeMate: ein aktiver Artenfilter blinkt beim Öffnen kurz auf.
+        updateIndex();
+        // Wie flashActiveFilterButtons in MainframeMate: aktive Arten- und Sperrfilter blinken beim Öffnen kurz auf.
         if (!hiddenTypes.isEmpty()) {
             flash(typeFilter);
+        }
+        if (hideBlocked) {
+            flash(hideBlockedToggle);
         }
     }
 
@@ -547,6 +651,8 @@ final class NdvBrowser extends JPanel {
             note(objects.getRowCount() == 0 ? "Keine Objekte in " + current
                     : objects.getRowCount() + " Objekte in " + current, false);
             openPending();
+            // Wie in MainframeMate: nach dem Auflisten Abhängigkeiten aufbauen und Quelltexte vorab laden.
+            startAnalysis(current, List.copyOf(objects.rows), false);
         }, error -> {
             if (listing.get() != generation) {
                 return;
@@ -614,6 +720,7 @@ final class NdvBrowser extends JPanel {
 
     private void updatePath() {
         libraryChanged.run();
+        updateIndex();
         pathField.setText(session.profile().label() + (library != null ? "/" + library : ""));
         backButton.setEnabled(history.canBack() || library != null);
         forwardButton.setEnabled(history.canForward());
@@ -635,7 +742,9 @@ final class NdvBrowser extends JPanel {
         NdvBookmark probe = new NdvBookmark(library, wanted);
         for (NdvObject object : objects.rows) {
             if (object.displayName().equalsIgnoreCase(probe.objectName())) {
-                open(object);
+                int line = pendingLineByName;
+                pendingLineByName = 0;
+                openAt(object, line);
                 return;
             }
         }
@@ -719,6 +828,7 @@ final class NdvBrowser extends JPanel {
             return;
         }
         String location = store.register(object);
+        objectOf.put(location, object);
         boolean known = editors.find(store, location).isPresent();
         EditorSession opened = editors.open(store, location, NdvDocumentStore.name(object));
         shown = object;
@@ -847,12 +957,26 @@ final class NdvBrowser extends JPanel {
         if (changed.revision() != announcedRevision && docState == EditorSession.State.READY) {
             announcedRevision = changed.revision();
             String text = changed.text().orElse("");
+            // In den Zwischenspeicher nur der Stand des Servers (geladen oder gespeichert), nie ungespeicherter Text.
+            loaded(changed, changed.document().map(com.aresstack.spaceharvester.deck.editor.EditorDocument::text)
+                    .orElse(""));
             note(text.isEmpty() ? "Leerer Quelltext: " + changed.location() : "Geöffnet: " + changed.location(),
                     text.isEmpty());
         } else if (docState == EditorSession.State.READY && changed.note().isPresent()) {
             String message = changed.note().get();
             note(message.equals("Gespeichert") ? "Gespeichert: " + changed.location() : message,
                     !message.equals("Gespeichert"));
+            if (message.equals("Gespeichert") && objectOf.containsKey(changed.location())) {
+                // Wie onSourceSaved: Zwischenspeicher und Abhängigkeiten nachführen.
+                NdvObject saved = objectOf.get(changed.location());
+                String text = changed.document().map(com.aresstack.spaceharvester.deck.editor.EditorDocument::text)
+                        .orElse("");
+                work(() -> {
+                    analysis.saved(saved, text);
+                    return Boolean.TRUE;
+                }, ok -> showRelations(), error -> note("Abhängigkeiten nicht nachgeführt: "
+                        + ConnectForm.describe(error), true));
+            }
         } else if (docState == EditorSession.State.CONFLICT) {
             // Den Grund und „Überschreiben“ zeigt der Hinweis im Editor; die Statuszeile sagt nur das Ergebnis.
             note("Nicht gespeichert: " + changed.location() + " wurde auf dem Server geändert", true);
@@ -892,6 +1016,388 @@ final class NdvBrowser extends JPanel {
                 return;
             }
         }
+    }
+
+    /**
+     * Ob eine Bibliothek begehbar ist: erlaubt, oder bei „Alles sperren“ nicht selbst gesperrt und mit freigegebenen
+     * Objekten darin (die Objekte prüft danach jedes einzeln).
+     */
+    boolean libraryAccessible(String lib) {
+        String path = NdvAccessRules.path(lib, "");
+        return rules.isAllowed(path) || !rules.isBlacklisted(path) && rules.hasWhitelistedDescendants(path);
+    }
+
+    // ---- Analyse: Zwischenspeicher, Abhängigkeiten, Sperrliste (wie NdvSourceCacheService in MainframeMate) ------
+
+    private void watch() {
+        rules.unobserve(rulesChanged);
+        analysis.unobserve(analysisChanged);
+        analysis.cache().unobserve(analysisChanged);
+        rules.observe(rulesChanged);
+        analysis.observe(analysisChanged);
+        analysis.cache().observe(analysisChanged);
+    }
+
+    private void unwatch() {
+        rules.unobserve(rulesChanged);
+        analysis.unobserve(analysisChanged);
+        analysis.cache().unobserve(analysisChanged);
+    }
+
+    /** Die Analyse dieses Servers (für Tests). */
+    NdvAnalysis analysis() {
+        return analysis;
+    }
+
+    /**
+     * Baut aus dem Zwischenspeicher sofort den Graphen und lädt dann im Hintergrund nach, was fehlt oder sich
+     * geändert hat (nur Erlaubtes); danach wird der Graph neu gebaut. Mit {@code explicit} auch ohne Änderung der
+     * Sperrliste erneut.
+     */
+    private void startAnalysis(String lib, List<NdvObject> listed, boolean explicit) {
+        if (lib == null || listed.isEmpty()) {
+            return;
+        }
+        // Mit Größe und Datum jedes Objekts: Ein auf dem Server geänderter Quelltext ändert meist weder Anzahl noch
+        // Regeln, muss nach „Neu laden“ aber neu geprüft werden.
+        String key = lib + "|" + rules.snapshot().hashCode() + "|" + listed.stream()
+                .map(o -> o.displayName() + ":" + o.sourceSize() + ":" + o.changed()).toList().hashCode();
+        if (!explicit && key.equals(lastPrefetch) && analysis.graph(lib).isPresent()) {
+            return;
+        }
+        lastPrefetch = key;
+        List<NdvObject> allowed = listed.stream()
+                .filter(o -> rules.isAllowed(NdvAccessRules.path(lib, o.displayName()))).toList();
+        work(() -> {
+            if (analysis.cache().size(lib) > 0) {
+                analysis.build(lib);
+            }
+            return Boolean.TRUE;
+        }, ok -> showRelations(), error -> { });
+        work(() -> analysis.cache().prefetch(session, lib, allowed, new NdvSourceCache.PrefetchListener() {
+            @Override
+            public void progress(int current, int total, String name) {
+                SwingUtilities.invokeLater(() -> {
+                    indexPanel.progress(current, total);
+                    updateIndex();
+                });
+            }
+
+            @Override
+            public void complete(NdvSourceCache.PrefetchResult result) {
+                // Nach „Cache leeren“ nichts neu bauen; nach geänderten Regeln auch ohne Neues (Gesperrtes fällt heraus).
+                int rulesNow = rules.snapshot().hashCode();
+                if (analysis.cache().size(lib) > 0 && (result.loaded() > 0 || analysis.graph(lib).isEmpty()
+                        || !Integer.valueOf(rulesNow).equals(builtWith.get(lib)))) {
+                    analysis.build(lib);
+                    builtWith.put(lib, rulesNow);
+                }
+            }
+        }), result -> {
+            indexPanel.done();
+            updateIndex();
+            showRelations();
+            if (!result.failed().isEmpty()) {
+                // Jeder Fehler mit Grund: das erste Objekt mit Grund, die übrigen gezählt.
+                Map.Entry<String, String> first = result.failed().entrySet().iterator().next();
+                note(result.failed().size() + " Quelltexte nicht zwischengespeichert, z. B. " + first.getKey() + ": "
+                        + first.getValue(), true);
+            }
+        }, error -> {
+            indexPanel.done();
+            updateIndex();
+            note("Zwischenspeichern fehlgeschlagen: " + ConnectForm.describe(error), true);
+        });
+    }
+
+    /**
+     * „Auswahl zwischenspeichern“ wie {@code indexSelectedOrAll}: auf Objektebene die gewählten oder alle sichtbaren
+     * Objekte, in der Bibliotheksliste die gewählten oder alle sichtbaren Bibliotheken.
+     */
+    void cacheSelectedOrAll() {
+        showIndex(true);
+        if (library == null) {
+            List<String> libs = libraryList.getSelectedValuesList().isEmpty() ? visibleLibraries()
+                    : List.copyOf(libraryList.getSelectedValuesList());
+            indexPanel.place(session.profile().label(), libs.size() == 1 ? "Bibliothek: " + libs.getFirst()
+                    : libs.size() + " Bibliotheken");
+            for (String lib : libs) {
+                if (!libraryAccessible(lib)) {
+                    continue;
+                }
+                work(() -> {
+                    List<NdvObject> listed = new ArrayList<>();
+                    session.objects(lib, "*", (page, total) -> {
+                        listed.addAll(page);
+                        return true;
+                    });
+                    return listed;
+                }, listed -> startAnalysis(lib, listed, true), error -> note("Objekte nicht lesbar in " + lib + ": "
+                        + ConnectForm.describe(error), true));
+            }
+            return;
+        }
+        List<NdvObject> chosen = selectedObjects();
+        if (chosen.isEmpty()) {
+            chosen = visibleObjectList();
+        }
+        indexPanel.place(session.profile().label() + "/" + library, chosen.size() + " Objekte");
+        startAnalysis(library, chosen, true);
+    }
+
+    /** „Cache leeren“ wie in MainframeMate, mit Rückfrage. */
+    void clearCache() {
+        if (library == null) {
+            note("Keine Bibliothek ausgewählt", true);
+            return;
+        }
+        String lib = library;
+        if (!confirm.test("Cache leeren", "Zwischengespeicherte Quelltexte, Suche und Abhängigkeiten von " + lib
+                + " wirklich verwerfen? Sie werden beim nächsten Öffnen neu geladen.")) {
+            return;
+        }
+        work(() -> {
+            analysis.clear(lib);
+            return Boolean.TRUE;
+        }, ok -> {
+            lastPrefetch = "";
+            note("Cache für " + lib + " geleert", false);
+            updateIndex();
+            showRelations();
+        }, error -> note("Cache nicht geleert: " + ConnectForm.describe(error), true));
+    }
+
+    private void showIndex(boolean visible) {
+        indexVisible = visible;
+        state.indexVisible(visible);
+        indexToggle.marked(visible);
+        indexPanel.setVisible(visible);
+        updateIndex();
+        revalidate();
+        repaint();
+    }
+
+    /** Pfade der Auswahl für die Sperrliste; ohne Auswahl die Bibliothek (wie {@code getSelectedPrefixedPaths}). */
+    List<String> selectedPaths() {
+        List<String> paths = new ArrayList<>();
+        if (library == null) {
+            libraryList.getSelectedValuesList().forEach(lib -> paths.add(NdvAccessRules.path(lib, "")));
+            return paths;
+        }
+        selectedObjects().forEach(o -> paths.add(NdvAccessRules.path(o.library(), o.displayName())));
+        if (paths.isEmpty()) {
+            paths.add(NdvAccessRules.path(library, ""));
+        }
+        return paths;
+    }
+
+    private void rulesChanged() {
+        filterObjects();
+        filterLibraries();
+        updateFilterState();
+        // Wie securityChangeListener: geänderte Regeln lösen das Vorabladen erneut aus.
+        if (library != null && !objectsLoading() && !objects.rows.isEmpty()) {
+            startAnalysis(library, List.copyOf(objects.rows), false);
+        }
+    }
+
+    private void analysisChanged() {
+        updateIndex();
+    }
+
+    private void updateFilterState() {
+        List<String> paths = selectedPaths();
+        if (paths.isEmpty()) {
+            indexPanel.filter("-");
+        } else if (paths.size() == 1) {
+            indexPanel.filter(rules.describe(paths.getFirst()));
+        } else {
+            long blocked = paths.stream().filter(p -> !rules.isAllowed(p)).count();
+            indexPanel.filter(paths.size() + " gewählt, " + blocked + " gesperrt");
+        }
+    }
+
+    /** Zustand des Zwischenspeichers wie {@code computeNdvCacheStatus}. */
+    private void updateIndex() {
+        if (indexPanel == null) {
+            return;
+        }
+        String when = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern(
+                "dd.MM.yyyy HH:mm"));
+        if (library == null) {
+            indexPanel.place(session.profile().label(), "Bibliotheksliste");
+            int total = analysis.cache().totalSize();
+            indexPanel.status(total > 0 ? new NdvIndexPanel.Status("Zwischengespeichert", Comic.GREEN,
+                    total + " Quelltexte", when) : new NdvIndexPanel.Status("Nicht zwischengespeichert", Comic.MUTED,
+                    "-", "-"));
+        } else {
+            indexPanel.place(session.profile().label() + "/" + library, objects.getRowCount() + " Objekte");
+            int cached = analysis.cache().size(library);
+            int total = (int) objects.rows.stream().filter(NdvSourceCache::naturalSource).count();
+            if (analysis.cache().prefetching(library)) {
+                indexPanel.status(new NdvIndexPanel.Status("Wird zwischengespeichert …", Comic.BLUE,
+                        cached + " / " + total, "-"));
+            } else if (cached > 0) {
+                String graph = analysis.graph(library).map(g -> ", " + g.getKnownSources().size() + " analysiert")
+                        .orElse("");
+                indexPanel.status(new NdvIndexPanel.Status("Zwischengespeichert", Comic.GREEN,
+                        cached + " / " + total + graph, when));
+            } else {
+                indexPanel.status(new NdvIndexPanel.Status("Nicht zwischengespeichert", Comic.MUTED,
+                        "0 / " + total, "-"));
+            }
+        }
+        updateFilterState();
+    }
+
+    private static final int SEARCH_LIMIT = 200;
+
+    private void searchSource() {
+        String needle = indexPanel.search.getText();
+        String lib = library;
+        if (lib == null) {
+            indexPanel.hits(List.of(), needle, SEARCH_LIMIT);
+            return;
+        }
+        indexPanel.hits(analysis.cache().search(lib, needle, SEARCH_LIMIT), needle, SEARCH_LIMIT);
+    }
+
+    private void openHit(NdvSourceCache.Hit hit) {
+        openByName(hit.name(), hit.line(), hit.library());
+    }
+
+    /** Beziehungen des geöffneten Objekts neu zeigen. */
+    private void showRelations() {
+        if (shown == null) {
+            relationsPanel.show(null, java.util.Optional.empty(), null);
+            return;
+        }
+        String text = document != null ? document.text().orElse("") : "";
+        relationsPanel.show(shown.displayName(), analysis.graph(shown.library()),
+                analysis.analyze(text, shown.displayName()));
+    }
+
+    /** Nach dem Laden: zwischenspeichern, Beziehungen zeigen, vorgemerkte Zeile anspringen. */
+    private void loaded(EditorSession changed, String text) {
+        NdvObject object = objectOf.get(changed.location());
+        if (object != null && !text.isEmpty()) {
+            analysis.cache().put(object, text);
+        }
+        showRelations();
+        Integer line = pendingLine.remove(changed.location());
+        DocumentEditor editor = editorOf.get(changed);
+        if (line != null && editor != null) {
+            SwingUtilities.invokeLater(() -> editor.goToLine(line));
+        }
+    }
+
+    /**
+     * Öffnet ein Objekt nach Namen, wie {@code openNdvDependencyTarget}: erst in der eigenen Bibliothek, sonst über
+     * die Suchreihenfolge; mit Zeile springt der Editor dorthin.
+     */
+    void openByName(String name, int line) {
+        openByName(name, line, null);
+    }
+
+    private void openByName(String name, int line, String inLibrary) {
+        String wanted = name.toUpperCase(Locale.ROOT);
+        String lib = inLibrary != null ? inLibrary : library;
+        if (lib != null && lib.equals(library)) {
+            for (NdvObject object : objects.rows) {
+                if (object.displayName().equalsIgnoreCase(wanted)) {
+                    openAt(object, line);
+                    return;
+                }
+            }
+        }
+        java.util.Optional<String> target = inLibrary != null ? java.util.Optional.of(inLibrary)
+                : NdvAnalysisSettings.resolver().resolve(wanted, library, session.profile().defaultLibrary(),
+                analysis.cache());
+        if (target.isEmpty() || target.get().equals(library)) {
+            note("„" + wanted + "“ nicht gefunden – Suchreihenfolge unter Einstellungen › NDV", true);
+            return;
+        }
+        pendingLineByName = line;
+        openLibraryAndObject(target.get(), wanted);
+    }
+
+    /** Zeile für ein Objekt, das erst nach dem Laden einer anderen Bibliothek geöffnet wird. */
+    private int pendingLineByName;
+
+    private void openAt(NdvObject object, int line) {
+        String location = store.register(object);
+        DocumentEditor existing = editors.find(store, location).map(editorOf::get).orElse(null);
+        if (line > 0) {
+            pendingLine.put(location, line);
+        }
+        open(object);
+        EditorSession opened = editors.find(store, location).orElse(null);
+        if (existing != null && opened != null && opened.state() == EditorSession.State.READY && line > 0
+                && opened.dirty()) {
+            pendingLine.remove(location);
+            existing.goToLine(line);
+        }
+    }
+
+    /**
+     * Öffnet ein Natural-Programm aus der JCL über die STEPLIB-Zuordnung (wie {@code openNaturalFromJcl}): fehlt die
+     * Zuordnung, gilt die Suchreihenfolge, sonst wird einmal gefragt und die Antwort gemerkt.
+     */
+    void openFromJcl(String stepLib, String program) {
+        var resolver = NdvAnalysisSettings.resolver();
+        String lib = resolver.forStepLib(stepLib).orElse(null);
+        if (lib == null && !resolver.searchOrder().isEmpty()) {
+            lib = resolver.resolve(program, null, session.profile().defaultLibrary(), analysis.cache()).orElse(null);
+        }
+        if (lib == null) {
+            String answer = askLibrary.apply(stepLib, com.aresstack.spaceharvester.deck.ndv.analysis
+                    .NdvLibraryResolver.suggest(stepLib));
+            if (answer == null || answer.isBlank()) {
+                return;
+            }
+            lib = answer.trim().toUpperCase(Locale.ROOT);
+            if (stepLib != null && !stepLib.isBlank()) {
+                NdvAnalysisSettings.stepLibs(resolver.withStepLib(stepLib, lib).stepLibs());
+            }
+        }
+        openLibraryAndObject(lib, program.toUpperCase(Locale.ROOT));
+    }
+
+    private String askLibrary(String stepLib, String suggestion) {
+        PlaceholderField field = new PlaceholderField(16, suggestion);
+        Comic.style(field);
+        field.setText(suggestion);
+        JPanel body = new JPanel(new BorderLayout(0, 6));
+        body.setOpaque(false);
+        body.add(Comic.wrapped("In der JCL wird die STEPLIB „" + stepLib + "“ verwendet. Welche NDV-Bibliothek "
+                + "entspricht ihr? Die Zuordnung wird gemerkt (Einstellungen › NDV).", Comic.TEXT, 12.5f),
+                BorderLayout.NORTH);
+        body.add(new InputFrame(field), BorderLayout.CENTER);
+        return Dialogs.formOverlay(this, "Natural-Bibliothek zuordnen", body, "Übernehmen") ? field.getText() : null;
+    }
+
+    private List<NdvObject> visibleObjectList() {
+        List<NdvObject> list = new ArrayList<>();
+        for (int i = 0; i < objectTable.getRowCount(); i++) {
+            list.add(objects.at(objectTable.convertRowIndexToModel(i)));
+        }
+        return list;
+    }
+
+    NdvIndexPanel indexPanel() {
+        return indexPanel;
+    }
+
+    NdvRelationsPanel relationsPanel() {
+        return relationsPanel;
+    }
+
+    IconButton hideBlockedToggle() {
+        return hideBlockedToggle;
+    }
+
+    IconButton indexToggle() {
+        return indexToggle;
     }
 
     // ---- Auswahl, Kontextmenü, Tastatur ----------------------------------------------------------------------------
@@ -969,6 +1475,22 @@ final class NdvBrowser extends JPanel {
         JMenuItem none = new JMenuItem("Nichts auswählen");
         none.addActionListener(e -> selectNone());
         menu.add(none);
+        menu.addSeparator();
+        int selectedCount = selectedObjects().size();
+        JMenuItem cache = new JMenuItem(selectedCount == 0 ? "Alles zwischenspeichern"
+                : "Auswahl zwischenspeichern (" + selectedCount + ")");
+        cache.addActionListener(e -> cacheSelectedOrAll());
+        menu.add(cache);
+        menu.addSeparator();
+        JMenuItem block = new JMenuItem("Sperren");
+        block.addActionListener(e -> rules.blacklist(selectedPaths()));
+        menu.add(block);
+        JMenuItem allow = new JMenuItem("Freigeben");
+        allow.addActionListener(e -> rules.whitelist(selectedPaths()));
+        menu.add(allow);
+        JMenuItem unfilter = new JMenuItem("Filter entfernen");
+        unfilter.addActionListener(e -> rules.remove(selectedPaths()));
+        menu.add(unfilter);
         return menu;
     }
 
@@ -1242,7 +1764,9 @@ final class NdvBrowser extends JPanel {
         String selected = libraryList.getSelectedValue();
         libraries.clear();
         allLibraries.stream().filter(name -> pattern.matcher(name).find())
-                .filter(name -> library != null || nameFilter.matches(name)).forEach(libraries::addElement);
+                .filter(name -> library != null || nameFilter.matches(name))
+                .filter(name -> !hideBlocked || libraryAccessible(name))
+                .forEach(libraries::addElement);
         if (selected != null && libraries.contains(selected)) {
             libraryList.setSelectedValue(selected, false);
         }
@@ -1251,6 +1775,7 @@ final class NdvBrowser extends JPanel {
     /** Ob ein Objekt durch Text-, Arten- und Namensfilter kommt (wie {@code applyFilter}). */
     private boolean visible(NdvObject object, Pattern pattern) {
         return !hiddenTypes.contains(object.type().id()) && nameFilter.matches(object.displayName())
+                && (!hideBlocked || rules.isAllowed(NdvAccessRules.path(object.library(), object.displayName())))
                 && (pattern.matcher(object.displayName()).find() || pattern.matcher(object.type().label()).find()
                 || pattern.matcher(object.user()).find());
     }
