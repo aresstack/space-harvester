@@ -1417,6 +1417,11 @@ final class NdvBrowser extends JPanel {
         openByName(name, line, null);
     }
 
+    /** Öffnet ein Objekt einer bestimmten Bibliothek ({@code null} = Suchreihenfolge) und springt zur Zeile. */
+    void openInLibrary(String library, String name, int line) {
+        openByName(name, line, library == null || library.isBlank() ? null : library.trim().toUpperCase(Locale.ROOT));
+    }
+
     private void openByName(String name, int line, String inLibrary) {
         String wanted = name.toUpperCase(Locale.ROOT);
         String lib = inLibrary != null ? inLibrary : library;

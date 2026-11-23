@@ -16,6 +16,7 @@ import java.awt.CardLayout;
 import java.awt.FlowLayout;
 import java.awt.GridBagLayout;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import javax.swing.BorderFactory;
@@ -63,6 +64,8 @@ public final class NdvWorkspace extends JPanel {
     private final NdvConnectForm form;
     private final EditorSessions editors;
     private NdvSession selected;
+    /** Analysen der offenen Sitzungen, die gewählte zuerst; gelesen auch abseits des EDT (Beziehungen im Editor). */
+    private volatile List<com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis> analyses = List.of();
 
     /** @param editors der gemeinsame Editor des Command Deck; NDV öffnet seine Quelltexte darin */
     public NdvWorkspace(NdvSessions sessions, ServerAccounts accounts, EditorSessions editors) {
@@ -128,6 +131,7 @@ public final class NdvWorkspace extends JPanel {
         }
         NdvBrowser browser = new NdvBrowser(session, sessions, editors, background, () -> closeSession(session));
         browsers.put(session, browser);
+        refreshAnalyses();
         String key = session.id();
         center.add(browser, key);
         tools.add(browser.tools(), key);
@@ -167,6 +171,7 @@ public final class NdvWorkspace extends JPanel {
     /** Zeigt die Sitzung (oder mit {@code null} das Formular „Neue Verbindung“). */
     void select(NdvSession session) {
         selected = session;
+        refreshAnalyses();
         ComposerToggleButton pill = session == null ? newPill : pillOf.get(session);
         if (pill != null) {
             pill.setSelected(true);
@@ -190,6 +195,7 @@ public final class NdvWorkspace extends JPanel {
         }
         sessions.close(session);
         NdvBrowser browser = browsers.remove(session);
+        refreshAnalyses();
         if (browser != null) {
             browser.closeDocuments();
             center.remove(browser);
@@ -211,6 +217,61 @@ public final class NdvWorkspace extends JPanel {
         NdvBrowser browser = selected == null ? null : browsers.get(selected);
         statusInfo.show(browser == null ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(NO_SESSION)
                 : browser.statusNote());
+    }
+
+    private void refreshAnalyses() {
+        List<com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis> list = new java.util.ArrayList<>();
+        NdvBrowser first = selected == null ? null : browsers.get(selected);
+        if (first != null) {
+            list.add(first.analysis());
+        }
+        for (NdvBrowser browser : browsers.values()) {
+            if (browser != first) {
+                list.add(browser.analysis());
+            }
+        }
+        analyses = List.copyOf(list);
+    }
+
+    /** Die Analysen der offenen Sitzungen, die gewählte zuerst (für die Natural-Beziehungen im Editor). */
+    List<com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis> analyses() {
+        return analyses;
+    }
+
+    /**
+     * Natural-Programm aus der JCL ({@code STACK=(LOGON steplib;programm)}) in der gewählten Sitzung öffnen, wie
+     * {@code MainFrame.openNaturalFromJcl}. Ohne Sitzung sagt die Statuszeile, dass erst verbunden werden muss.
+     *
+     * @return ob eine Sitzung das Öffnen übernommen hat
+     */
+    boolean openFromJcl(String stepLib, String program) {
+        NdvBrowser browser = selectedBrowser();
+        if (browser == null) {
+            statusInfo.show(warning("„" + program + "“ aus der JCL: zuerst mit NDV verbinden"));
+            return false;
+        }
+        browser.openFromJcl(stepLib, program);
+        return true;
+    }
+
+    /** Ein Natural-Objekt ({@code ndv://LIB/OBJEKT}) in der gewählten Sitzung öffnen und zur Zeile springen. */
+    boolean openNatural(String library, String object, int line) {
+        NdvBrowser browser = selectedBrowser();
+        if (browser == null) {
+            statusInfo.show(warning("„" + object + "“: zuerst mit NDV verbinden"));
+            return false;
+        }
+        browser.openInLibrary(library, object, line);
+        return true;
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.controls.StatusNote warning(String text) {
+        return new com.aresstack.spaceharvester.app.ui.controls.StatusNote(text,
+                com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.WARNING, null, null);
+    }
+
+    private NdvBrowser selectedBrowser() {
+        return selected == null ? null : browsers.get(selected);
     }
 
     /** Für Tests: der Text in der Statuszeile. */
