@@ -257,4 +257,108 @@ class TerminalSessionsTest {
         scheduled.remove(0).run();
         assertThat(sessions.all().get(0).state()).isEqualTo(SessionState.CONNECTED);
     }
+
+    /** Anmeldung über den KeePass-Eintrag „Testhost“, automatisch (nicht von Hand). */
+    private static TerminalSessions.LoginSource automaticLogin(int[] reads) {
+        return new TerminalSessions.LoginSource() {
+            @Override
+            public TerminalLogin login() {
+                reads[0]++;
+                return new TerminalLogin("TESTUSR", "geheim1".toCharArray(), "");
+            }
+
+            @Override
+            public String entry() {
+                return "Testhost";
+            }
+        };
+    }
+
+    @Test
+    void aBlockedEntryIsNeitherReadNorTypedAutomatically() {
+        TerminalSessions sessions = sessions(false);
+        var guard = new com.aresstack.spaceharvester.deck.access.LoginGuard(
+                com.aresstack.spaceharvester.deck.access.LoginGuard.Store.memory());
+        guard.failed("Testhost", "Passwort abgelaufen");
+        sessions.guard(guard);
+        int[] reads = new int[1];
+
+        TerminalSession session = sessions.open(TerminalProfile.of("host.example", 23), automaticLogin(reads));
+
+        assertThat(reads[0]).as("Passwort nicht einmal gelesen").isZero();
+        assertThat(session.note()).hasValueSatisfying(note -> assertThat(note).contains("fehlgeschlagen"));
+        assertThat(sessions.mayTry(automaticLogin(reads))).isFalse();
+        guard.succeeded("Testhost");
+        assertThat(sessions.mayTry(automaticLogin(reads))).isTrue();
+    }
+
+    /** Verbindung mit Tastatur, deren Bild nach der Anmeldung eine Ablehnung zeigt. */
+    static final class RejectingConnection implements TerminalConnection, TerminalKeyboard {
+        final TerminalConnection.Listener listener;
+
+        RejectingConnection(TerminalConnection.Listener listener) {
+            this.listener = listener;
+        }
+
+        @Override
+        public void connect() {
+            listener.connected();
+        }
+
+        @Override
+        public void disconnect() {
+        }
+
+        @Override
+        public <T> Optional<T> view(Class<T> type) {
+            return type.isInstance(this) ? Optional.of(type.cast(this)) : Optional.empty();
+        }
+
+        @Override
+        public boolean awaitUnlocked(java.time.Duration timeout) {
+            return true;
+        }
+
+        @Override
+        public void press(AidKey key) {
+        }
+
+        @Override
+        public boolean firstInputField() {
+            return true;
+        }
+
+        @Override
+        public boolean nextInputField() {
+            return true;
+        }
+
+        @Override
+        public void type(char[] text) {
+        }
+
+        @Override
+        public String screenText() {
+            return "LOGON\nKennwort ungueltig\n";
+        }
+    }
+
+    @Test
+    void aRejectedLoginBlocksTheEntryForEveryFurtherAutomaticTry() {
+        TerminalSessions sessions = new TerminalSessions((profile, listener) -> new RejectingConnection(listener), Runnable::run,
+                new LoginScript(java.time.Duration.ZERO));
+        var guard = new com.aresstack.spaceharvester.deck.access.LoginGuard(
+                com.aresstack.spaceharvester.deck.access.LoginGuard.Store.memory());
+        sessions.guard(guard);
+        List<LoginScript.Result> results = new ArrayList<>();
+        sessions.onLogin((session, result) -> results.add(result));
+
+        sessions.open(TerminalProfile.of("host.example", 23), automaticLogin(new int[1]));
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).accepted()).isFalse();
+        assertThat(guard.mayTry("Testhost")).isFalse();
+        assertThat(guard.failure("Testhost")).hasValueSatisfying(
+                failure -> assertThat(failure.reason()).isEqualTo("Kennwort ungueltig"));
+    }
 }

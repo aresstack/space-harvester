@@ -265,6 +265,18 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         add(stage, BorderLayout.CENTER);
 
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
+        // Lehnt der Host die Anmeldung ab (oder bleibt es unklar): Formular mit dem, was der Host sagte; ab jetzt
+        // versucht niemand mehr automatisch mit diesem Eintrag (Angelo, 23.11.2026: sonst ist das Konto gesperrt).
+        sessions.onLogin((session, result) -> {
+            if (result.sent() && !result.accepted()) {
+                String entry = session.loginSource() == null ? null : session.loginSource().entry();
+                SwingUtilities.invokeLater(() -> {
+                    showForm();
+                    form.problem(entry == null ? "Anmeldung fehlgeschlagen: " + result.problem().orElse("")
+                            : DeckLogin.notice(entry));
+                });
+            }
+        });
         sessions.onReopened((lost, fresh) -> SwingUtilities.invokeLater(() -> reopened(lost, fresh)));
         sessions.all().forEach(this::added);
         settings.observe(() -> SwingUtilities.invokeLater(this::applySettings));
@@ -369,6 +381,12 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
     /** „Verbinden“: dieselbe Sitzung neu, die alte verschwindet aus der Liste. */
     void reconnect(TerminalSession ended) {
         if (!ended.state().ended()) {
+            return;
+        }
+        if (!sessions.mayTry(ended.loginSource())) {
+            // Sperrschutz: Mit diesem Eintrag schlug die letzte Anmeldung fehl; erst prüfen, dann im Formular verbinden.
+            showForm();
+            form.problem(DeckLogin.notice(ended.loginSource().entry()));
             return;
         }
         ConnectForm.Request origin = origins.get(ended);

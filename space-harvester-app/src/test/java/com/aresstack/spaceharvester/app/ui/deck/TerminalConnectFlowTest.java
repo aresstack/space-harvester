@@ -169,6 +169,32 @@ class TerminalConnectFlowTest {
     }
 
     @Test
+    void aBlockedEntryIsNotTriedAutomaticallyButTheFormShowsWhy() throws Exception {
+        try (FakeTn3270Host host = new FakeTn3270Host(List.of(
+                new FakeTn3270Host.Line(1, 2, "WILLKOMMEN", false)), "Cp273")) {
+            configured();
+            AppState.shared().put(ConnectForm.AUTO_LOGIN_KEY, "true");
+            DeckLogin.guard().failed("Testhost", "Kennwort ungültig");
+            try {
+                SwingUtilities.invokeAndWait(() -> {
+                    deck = new CommandDeck(accounts(host.port()));
+                    deck.terminal().connectOnArrival();
+                });
+                long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                waitFor(() -> deck.terminal().form().problemText().contains("fehlgeschlagen"), until);
+                SwingUtilities.invokeAndWait(() -> {
+                    assertThat(deck.sessions().all()).as("kein Versuch mit gesperrtem Eintrag").isEmpty();
+                    assertThat(deck.terminal().form().getParent()).as("das Formular steht").isNotNull();
+                    assertThat(deck.terminal().form().problemText()).contains("Testhost", "Kennwort ungültig",
+                            "Bitte Zugangsdaten prüfen");
+                });
+            } finally {
+                DeckLogin.guard().succeeded("Testhost");
+            }
+        }
+    }
+
+    @Test
     void arrivingWithoutAConfiguredConnectionDoesNothing() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             deck = new CommandDeck();
