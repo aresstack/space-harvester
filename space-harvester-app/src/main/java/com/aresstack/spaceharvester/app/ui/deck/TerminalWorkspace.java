@@ -110,8 +110,9 @@ public final class TerminalWorkspace extends JPanel {
         showAssist();
     });
     /** KI-Maskenassistent (#1151): Hinweis und Zurücknehmen links neben den Aktionen. */
-    private final JLabel assistHint = Comic.muted(" ");
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton undoAssist;
+    /** Der Hinweis der KI-Vorbereitung; er steht in der Statuszeile und am Zurücknehmen-Knopf, nie als Text in der Leiste. */
+    private String assistHint = "";
+    private final com.aresstack.spaceharvester.app.ui.IconButton undoAssist;
     private final Runnable assistChanged = () -> SwingUtilities.invokeLater(this::showAssist);
     private TerminalSession watchedSession;
     private TerminalView watchedView;
@@ -223,15 +224,13 @@ public final class TerminalWorkspace extends JPanel {
             }
         });
 
-        undoAssist = Comic.button("KI-Eingaben zurücknehmen",
-                "Setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt");
+        undoAssist = new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.UNDO,
+                UNDO_TIP).compact();
         undoAssist.addActionListener(e -> undoAssist());
         undoAssist.setVisible(false);
-        assistHint.setForeground(Comic.INK);
-        assistHint.setVisible(false);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
         actions.setOpaque(false);
-        for (JComponent part : new JComponent[] {assistHint, undoAssist, copy, paste, star, more}) {
+        for (JComponent part : new JComponent[] {undoAssist, copy, paste, star, more}) {
             actions.add(part);
         }
         JPanel headBar = DeckBars.head(head, actions);
@@ -569,11 +568,20 @@ public final class TerminalWorkspace extends JPanel {
         }
         view(TerminalView.class).ifPresent(view -> view.highlight(spans));
         boolean any = !spans.isEmpty();
-        assistHint.setText(any ? assistText(spans.size()) : " ");
-        assistHint.setVisible(any);
+        String hint = any ? assistText(spans.size()) : "";
+        if (!hint.equals(assistHint)) {
+            assistHint = hint;
+            if (any) {
+                note(hint, false);
+            }
+        }
+        undoAssist.setToolTipText(any ? UNDO_TIP + " (" + hint + ")" : UNDO_TIP);
         undoAssist.setVisible(any);
         undoAssist.setEnabled(any);
     }
+
+    static final String UNDO_TIP =
+            "KI-Eingaben zurücknehmen: setzt die Felder zurück, die die KI ausgefüllt hat; was du selbst geändert hast, bleibt";
 
     static String assistText(int fields) {
         return (fields == 1 ? "KI hat 1 Feld" : "KI hat " + fields + " Felder")
@@ -857,10 +865,10 @@ public final class TerminalWorkspace extends JPanel {
     }
 
     String assistHintText() {
-        return assistHint.isVisible() ? assistHint.getText() : "";
+        return assistHint;
     }
 
-    com.aresstack.enterpriseai.ui.comic.control.ComposerButton undoAssistButton() {
+    com.aresstack.spaceharvester.app.ui.IconButton undoAssistButton() {
         return undoAssist;
     }
 
