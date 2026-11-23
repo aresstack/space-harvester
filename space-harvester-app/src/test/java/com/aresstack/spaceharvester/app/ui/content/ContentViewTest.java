@@ -79,7 +79,7 @@ class ContentViewTest {
         Files.createDirectories(Path.of(directory));
         PageDetailPanel detail = view.detail();
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             detail.tabs().select("Analysen");
             return null;
         });
@@ -273,7 +273,7 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.export().isVisible())).isTrue();
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
         assertThat(onEdt(() -> detail.export().selection().sourceId())).isEqualTo("handbuch");
@@ -290,7 +290,7 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.showsAllSources(List.of("handbuch")))).as("andere Quellenliste").isFalse();
         assertThat(onEdt(view::crumbs)).isEqualTo(ContentView.ALL_SOURCES);
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
         assertThat(onEdt(() -> detail.sourceProperties().showsAll())).isFalse();
@@ -337,18 +337,18 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.overviewGraph().tools().isVisible())).isFalse();
         // Der gewählte Reiter bleibt beim Wechsel der Auswahl.
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("notizen", null, null, "notizen"));
+            view.selection(new ExportPanel.Selection.Node("notizen", null, null, "notizen"));
             return null;
         });
         assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Aussagen");
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
         assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
         // Eine Seite links: „Analysen“ zeigt wieder die Analysen der Seite.
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", "DH", "p1", "Seite"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", "DH", "p1", "Seite"));
             return null;
         });
         assertThat(onEdt(() -> detail.showsStanding())).isFalse();
@@ -417,7 +417,7 @@ class ContentViewTest {
 
         // Die Seite selbst gewählt (etwa beim Aufdecken im Baum): sie bleibt stehen.
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", space, pageId, "handbuch 0"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", space, pageId, "handbuch 0"));
             return null;
         });
         assertThat(onEdt(() -> view.detail().shownPage())).isNotNull();
@@ -425,7 +425,7 @@ class ContentViewTest {
         // Die Wurzel derselben Quelle gewählt: Die Seitenreiter zeigen nicht mehr die vorige Seite, Export folgt.
         javax.swing.Icon[] bar = onEdt(() -> barIcons(view.detail()));
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
         assertThat(onEdt(() -> view.detail().shownPage())).as("keine Seite mehr in den Reitern").isNull();
@@ -494,7 +494,7 @@ class ContentViewTest {
         });
         await(() -> view.detail().shownPage() != null);
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", space, null, space));
+            view.selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
             return null;
         });
         assertThat(onEdt(() -> view.detail().shownPage())).isNull();
@@ -534,7 +534,7 @@ class ContentViewTest {
         // Überschrift, „Chat: ‹Name› ▾“ samt Neuer Chat, Chat löschen und Einklappen steht im Kopf der Leiste.
         ChatSidebar sidebar = onEdt(view::chatSidebar);
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
         assertThat(onEdt(() -> sidebar.chat() == chat && view.chatSidebar() == sidebar
@@ -562,13 +562,13 @@ class ContentViewTest {
         await(() -> chipsEnabled(chat));
         // Bei einer Seite: nur die Seite, die Seite samt Unterseiten, Was ist neu – nie die Eltern.
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", space("handbuch"), "p1", "Seite 1"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", space("handbuch"), "p1", "Seite 1"));
             return null;
         });
         assertThat(onEdt(() -> chipLabels(chat))).containsExactly(ChatPanel.SUMMARIZE_PAGE,
                 ChatPanel.SUMMARIZE_SUBTREE, ChatPanel.WHATS_NEW);
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", null, null, "handbuch"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
         await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
@@ -747,8 +747,8 @@ class ContentViewTest {
         });
         await(() -> shown(detail, page));
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("notizen", notizen, null, "notizen"));
-            view.selection(new ExportPanel.Selection("notizen", null, null, "notizen"));
+            view.selection(new ExportPanel.Selection.Node("notizen", notizen, null, "notizen"));
+            view.selection(new ExportPanel.Selection.Node("notizen", null, null, "notizen"));
             return null;
         });
         assertThat(onEdt(() -> detail.showsLevel("notizen", null))).isTrue();
@@ -765,7 +765,7 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isTrue();
         // Der Baum wählt die Seite wieder: die Auswahl kommt an der Mitte an, ohne die gezeigte Seite zu leeren.
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", handbuch, page, "handbuch 0"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", handbuch, page, "handbuch 0"));
             return null;
         });
         assertThat(onEdt(() -> shown(detail, page))).isTrue();
@@ -781,7 +781,7 @@ class ContentViewTest {
         String other = context.runtime().workspace().liveMetadata("handbuch", handbuch, null, 10).entries().get(1)
                 .page().pageId();
         onEdt(() -> {
-            view.selection(new ExportPanel.Selection("handbuch", handbuch, other, "handbuch 1"));
+            view.selection(new ExportPanel.Selection.Node("handbuch", handbuch, other, "handbuch 1"));
             view.openPage("handbuch", other);
             return null;
         });
