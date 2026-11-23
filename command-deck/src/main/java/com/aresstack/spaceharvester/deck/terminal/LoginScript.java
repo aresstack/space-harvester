@@ -15,10 +15,21 @@ public final class LoginScript {
     public static final Duration DEFAULT_DELAY = Duration.ofMillis(1000);
     static final Duration UNLOCK_TIMEOUT = Duration.ofSeconds(10);
 
-    private final Duration delay;
+    private final java.util.function.Supplier<Duration> delay;
 
     public LoginScript(Duration delay) {
-        this.delay = delay;
+        this(() -> delay);
+    }
+
+    /** Mit einer Verzögerung, die sich zur Laufzeit ändern kann (Einstellungen › Terminal › Aktionsverzögerung). */
+    public LoginScript(java.util.function.Supplier<Duration> delay) {
+        this.delay = java.util.Objects.requireNonNull(delay, "delay");
+    }
+
+    /** Die aktuelle Aktionsverzögerung; auch das Abspielen von Makros wartet so lange. */
+    public Duration delay() {
+        Duration current = delay.get();
+        return current == null || current.isNegative() ? Duration.ZERO : current;
     }
 
     /**
@@ -83,8 +94,9 @@ public final class LoginScript {
     }
 
     private void pause() throws InterruptedException {
-        if (!delay.isZero()) {
-            Thread.sleep(delay);
+        Duration current = delay();
+        if (!current.isZero()) {
+            Thread.sleep(current);
         }
     }
 }

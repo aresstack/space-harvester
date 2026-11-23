@@ -148,7 +148,9 @@ class SearchHitLoadsTest {
         assertThat(tickets.values()).allMatch(ticket -> ticket.done().getNow(false));
     }
 
-    @Test
+    // Wiederholt: Das Abbrechen trifft den Start des Teils in wechselnder Reihenfolge; ohne den Fix scheiterte etwa
+    // jeder 200. Lauf (roter Core-Build 23.11.2026).
+    @org.junit.jupiter.api.RepeatedTest(50)
     void cancellingFromTheHitListCancelsTheGroupAndWithdrawsItsTickets() throws Exception {
         Map<PageKey, AcquisitionScheduler.Ticket> tickets = tickets("1", "2");
         loads.offer("stapel-1", APP, tickets);

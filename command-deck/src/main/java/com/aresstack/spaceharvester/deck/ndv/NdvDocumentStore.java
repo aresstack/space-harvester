@@ -28,6 +28,17 @@ public final class NdvDocumentStore implements DocumentStore {
         this.session = Objects.requireNonNull(session, "session");
     }
 
+    /**
+     * Kennung für den lokalen Verlauf: Host, Port und Benutzer, damit gleiche Pfade auf verschiedenen Servern oder
+     * Konten nicht im selben Verlauf landen.
+     */
+    @Override
+    public String id() {
+        String user = session.user();
+        return "ndv:" + session.profile().host().toLowerCase(java.util.Locale.ROOT) + ":" + session.profile().port()
+                + ":" + (user == null ? "" : user.toUpperCase(java.util.Locale.ROOT));
+    }
+
     public NdvSession session() {
         return session;
     }
@@ -49,6 +60,30 @@ public final class NdvDocumentStore implements DocumentStore {
         NdvObject object = object(location);
         String text = read(object, "Laden");
         return document(location, object, text);
+    }
+
+    /** Objekte mit Quelltext und diesem Namen in der Bibliothek von {@code location} (Pfad {@code LIB/NAME.EXT}). */
+    @Override
+    public java.util.List<String> siblings(String location, String name) throws DocumentException {
+        if (location == null || name == null || name.isBlank() || !location.contains("/")) {
+            return java.util.List.of();
+        }
+        String library = location.substring(0, location.indexOf('/'));
+        String wanted = name.trim();
+        java.util.List<String> found = new java.util.ArrayList<>();
+        try {
+            session.objects(library, wanted, (page, total) -> {
+                for (NdvObject object : page) {
+                    if (object.source() && object.displayName().equalsIgnoreCase(wanted)) {
+                        found.add(register(object));
+                    }
+                }
+                return true;
+            });
+        } catch (IOException e) {
+            throw new DocumentException("Suche in " + library + " gescheitert: " + NdvSessions.describe(e), e);
+        }
+        return found;
     }
 
     @Override

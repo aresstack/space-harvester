@@ -22,6 +22,17 @@ public final class FtpDocumentStore implements DocumentStore {
         this.session = Objects.requireNonNull(session, "session");
     }
 
+    /**
+     * Kennung für den lokalen Verlauf: Host, Port und Benutzer, damit gleiche Pfade auf verschiedenen Servern oder
+     * Konten nicht im selben Verlauf landen.
+     */
+    @Override
+    public String id() {
+        String user = session.user();
+        return "ftp:" + session.profile().host().toLowerCase(java.util.Locale.ROOT) + ":" + session.profile().port()
+                + ":" + (user == null ? "" : user.toUpperCase(java.util.Locale.ROOT));
+    }
+
     public FtpSession session() {
         return session;
     }
@@ -30,6 +41,31 @@ public final class FtpDocumentStore implements DocumentStore {
     public EditorDocument load(String location) throws DocumentException {
         RemoteFile file = await(session.files(files -> files.read(location)), "Lesen von " + location);
         return document(file);
+    }
+
+    /** Auf MVS dasselbe PDS mit anderem Member, sonst dieselbe Datei im selben Ordner. */
+    @Override
+    public java.util.List<String> siblings(String location, String name) {
+        return siblingPaths(location, name);
+    }
+
+    static java.util.List<String> siblingPaths(String location, String name) {
+        if (location == null || name == null || name.isBlank()) {
+            return java.util.List.of();
+        }
+        String member = name.trim();
+        String unquoted = MvsPath.unquote(location);
+        int open = unquoted.indexOf('(');
+        if (open > 0 && unquoted.endsWith(")")) {
+            String dataset = unquoted.substring(0, open);
+            String sibling = dataset + "(" + member.toUpperCase(java.util.Locale.ROOT) + ")";
+            return java.util.List.of(location.startsWith("'") ? "'" + sibling + "'" : sibling);
+        }
+        int slash = unquoted.lastIndexOf('/');
+        if (slash >= 0) {
+            return java.util.List.of(unquoted.substring(0, slash + 1) + member);
+        }
+        return java.util.List.of();
     }
 
     @Override

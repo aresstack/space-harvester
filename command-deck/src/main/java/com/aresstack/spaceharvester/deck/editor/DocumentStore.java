@@ -14,4 +14,36 @@ public interface DocumentStore {
      * Fingerabdruck {@code loaded.hash()} hat, sonst {@link SaveResult.Conflict}; mit {@code overwrite} immer.
      */
     SaveResult save(EditorDocument loaded, String text, boolean overwrite) throws DocumentException;
+
+    /** Kennung der Ablage für den Verlauf (lokale Versionen je Ablage und Adresse). */
+    default String id() {
+        return getClass().getName();
+    }
+
+    /** {@code false} für reine Ansichten (z. B. Vorschau eines PDF als Text): dann kein Bearbeiten und Speichern. */
+    default boolean writable() {
+        return true;
+    }
+
+    /** Ob „Speichern unter …“ an eine andere Adresse dieser Ablage geht (in MainframeMate nur lokal). */
+    default boolean canSaveAs() {
+        return false;
+    }
+
+    /**
+     * Schreibt {@code text} mit Zeichensatz und Zeilenende von {@code loaded} nach {@code target} (eine vorhandene
+     * Datei wird ersetzt; Rückfragen stellt die Oberfläche) und gibt den neuen Stand zurück.
+     */
+    default EditorDocument saveAs(EditorDocument loaded, String text, String target) throws DocumentException {
+        throw new DocumentException("„Speichern unter“ geht hier nicht.");
+    }
+
+    /**
+     * Adressen in dieser Ablage, unter denen ein Objekt namens {@code name} neben {@code location} liegen kann (gleicher
+     * Ordner, gleiche Bibliothek, gleiches PDS), für die Diagramm-Ansicht: Aufrufziele der Mindmap auflösen und per
+     * Doppelklick öffnen (MainframeMate: Suchreihenfolge der Bibliotheken). Darf blockieren; ohne Treffer leer.
+     */
+    default java.util.List<String> siblings(String location, String name) throws DocumentException {
+        return java.util.List.of();
+    }
 }

@@ -112,16 +112,63 @@ class MainWindowPerspectiveTest {
             assertThat(window.split().isLeftCollapsed()).isTrue();
             perspectives.select(Perspectives.COMMAND_DECK);
             assertThat(window.commandDeck().sessions().all()).as("Wechsel verbindet nicht").isEmpty();
+            // Der Stand des Deck-Bereichs steht links in der Statuszeile der App, je Bereich eine Karte.
+            assertThat(window.viewStatus().isVisible()).isTrue();
+            assertThat(visible(window.viewStatus())).isSameAs(window.commandDeck().perspective().status());
+            JComponent deckStatus = window.commandDeck().perspective().status();
+            assertThat(deckStatus.getComponentCount())
+                    .isEqualTo(com.aresstack.spaceharvester.app.ui.deck.DeckArea.values().length);
+            Component terminalStatus = visible(deckStatus);
+            assertThat(terminalStatus).isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.StatusLabel.class);
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.FTP);
+            assertThat(visible(deckStatus)).isNotSameAs(terminalStatus)
+                    .isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.StatusLabel.class);
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.TERMINAL);
             assertThat(SwingUtilities.isDescendingFrom(window.commandDeck().perspective().navigation(),
                     window.windowBar())).isTrue();
             perspectives.select(Perspectives.MISSION_CONTROL);
             assertThat(window.commandDeck().perspective().navigation().isShowing()).isFalse();
+            assertThat(window.viewStatus().isVisible()).as("ohne eigenen Stand").isFalse();
             perspectives.select(Perspectives.PROVING_GROUND);
             assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Proving Ground");
             assertThat(visible(window.stage())).isInstanceOf(Starfield.class);
             perspectives.select(Perspectives.HARVESTER);
             assertThat(window.split().isLeftCollapsed()).isTrue();
             assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+            window.toggleDrawer();
+
+            // Einstellungen aus dem Command Deck: Die Perspektive bleibt, „Zurück“ führt ins Command Deck (Angelo, 23.11.).
+            perspectives.select(Perspectives.COMMAND_DECK);
+            window.show(AppContext.Section.SETTINGS);
+            assertThat(perspectives.isCurrent(Perspectives.COMMAND_DECK)).as("kein Sprung zum Space Harvester").isTrue();
+            assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Command Deck");
+            assertThat(window.settingsOverPerspective()).isTrue();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SETTINGS);
+            assertThat(visible(window.stage())).isNotSameAs(window.commandDeck().perspective().workspace());
+            assertThat(window.split().isLeftCollapsed()).as("Leiste der Einstellungen offen").isFalse();
+            window.settings().back.doClick();
+            assertThat(perspectives.isCurrent(Perspectives.COMMAND_DECK)).isTrue();
+            assertThat(window.settingsOverPerspective()).isFalse();
+            assertThat(visible(window.stage())).isSameAs(window.commandDeck().perspective().workspace());
+            assertThat(window.split().isLeftCollapsed()).as("das Deck hat keine linke Leiste").isTrue();
+            // Ein Knopf der Deck-Navigation schließt die Einstellungen ebenso.
+            window.show(AppContext.Section.SETTINGS);
+            ((javax.swing.AbstractButton) window.commandDeck().perspective().navigation().getComponent(1)).doClick();
+            assertThat(window.settingsOverPerspective()).isFalse();
+            assertThat(visible(window.stage())).isSameAs(window.commandDeck().perspective().workspace());
+            // Direkt in eine andere Perspektive gewechselt: Ein zugeklappter Explorer bleibt zu.
+            perspectives.select(Perspectives.HARVESTER);
+            window.toggleDrawer();
+            assertThat(window.split().isLeftCollapsed()).isTrue();
+            perspectives.select(Perspectives.COMMAND_DECK);
+            window.show(AppContext.Section.SETTINGS);
+            perspectives.select(Perspectives.MISSION_CONTROL);
+            assertThat(window.settingsOverPerspective()).isFalse();
+            // Zurück im Space Harvester steht der Bereich von vorher, nicht die Einstellungen.
+            perspectives.select(Perspectives.HARVESTER);
+            assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
+            assertThat(window.split().isLeftCollapsed()).as("Explorer bleibt zu").isTrue();
+            // Gemerkten Zustand zurückstellen: Die Tests teilen sich den App-Zustand.
             window.toggleDrawer();
         });
     }

@@ -54,7 +54,9 @@ jobs:
     timeout-minutes: 45
     concurrency:
       group: release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || ((github.ref == 'refs/heads/main' && (inputs.tag == '' || inputs.tag == null)) && 'latest' || 'versioned') }}
-      cancel-in-progress: ${{ github.ref_type == 'branch' && (github.ref != 'refs/heads/main' || inputs.tag == '' || inputs.tag == null) }}
+      # develop (Angelo 23.11.): nie abbrechen, sonst wird bei vielen Merges kein Snapshot fertig. Der laufende Bau
+      # endet, danach folgt nur der neueste wartende Stand (GitHub hält je Gruppe höchstens einen wartenden Lauf).
+      cancel-in-progress: ${{ github.ref_type == 'branch' && github.ref != 'refs/heads/develop' && (github.ref != 'refs/heads/main' || inputs.tag == '' || inputs.tag == null) }}
     outputs:
       mode: ${{ steps.version.outputs.mode }}
       tag: ${{ steps.version.outputs.tag }}

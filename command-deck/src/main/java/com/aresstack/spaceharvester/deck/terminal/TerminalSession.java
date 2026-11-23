@@ -23,6 +23,18 @@ public final class TerminalSession {
     private String note;
     /** Der KI-Maskenassistent dieser Sitzung (#1151); er sieht nur den Port {@link TerminalMask}. */
     private final MaskAssistant assistant = new MaskAssistant(this, () -> view(TerminalMask.class));
+    /** Was der Mensch eingibt, als Makro für Lesezeichen (läuft immer, wie in MainframeMate). */
+    private final TerminalMacro macro = new TerminalMacro();
+    /** Woher die Anmeldung kam (liest erst beim Aufruf, hält kein Geheimnis) – für „Neu verbinden“. */
+    private volatile TerminalSessions.LoginSource loginSource;
+    /** Das Makro, das nach dem Verbinden abgespielt wurde (Lesezeichen) – für „Neu verbinden“. */
+    private volatile List<TerminalMacro.Step> replay = List.of();
+    /** Der wievielte automatische Neuaufbau diese Sitzung ist; 0 für eine von Hand geöffnete. */
+    private volatile int attempt;
+    /** Seit wann die Sitzung verbunden ist (Millisekunden), 0 solange nie verbunden. */
+    private volatile long connectedSince;
+    /** Von Hand getrennt: Ein automatischer Neuaufbau ist damit abgesagt. */
+    private volatile boolean disconnectedByHand;
 
     TerminalSession(String id, TerminalProfile profile) {
         this.id = Objects.requireNonNull(id, "id");
@@ -97,6 +109,45 @@ public final class TerminalSession {
         return assistant;
     }
 
+    /** Die Aufzeichnung der Eingaben dieser Sitzung (Verlauf, Lesezeichen). */
+    public TerminalMacro macro() {
+        return macro;
+    }
+
+    /** Die Anmeldung, mit der die Sitzung geöffnet wurde; {@code null} ohne automatische Anmeldung. */
+    public TerminalSessions.LoginSource loginSource() {
+        return loginSource;
+    }
+
+    /** Das nach dem Verbinden abgespielte Makro (leer ohne Lesezeichen). */
+    public List<TerminalMacro.Step> replay() {
+        return replay;
+    }
+
+    /** Der wievielte automatische Neuaufbau diese Sitzung ist; 0 für eine von Hand geöffnete. */
+    public int attempt() {
+        return attempt;
+    }
+
+    void attempt(int number) {
+        attempt = number;
+    }
+
+    /** Seit wann die Sitzung verbunden ist (Millisekunden seit 1970), 0 solange nie verbunden. */
+    long connectedSince() {
+        return connectedSince;
+    }
+
+    /** Ob die Sitzung von Hand getrennt wurde (dann baut sie sich nie selbst neu auf). */
+    public boolean disconnectedByHand() {
+        return disconnectedByHand;
+    }
+
+    void origin(TerminalSessions.LoginSource login, List<TerminalMacro.Step> steps) {
+        loginSource = login;
+        replay = steps == null ? List.of() : List.copyOf(steps);
+    }
+
     /** Meldet künftige Zustandswechsel. */
     public void observe(Consumer<TerminalSession> observer) {
         observers.add(Objects.requireNonNull(observer, "observer"));
@@ -117,6 +168,7 @@ public final class TerminalSession {
 
     /** Trennt die Sitzung; eine schon beendete bleibt, wie sie ist. */
     public void disconnect() {
+        disconnectedByHand = true;
         TerminalConnection current;
         lock.lock();
         try {
@@ -138,6 +190,9 @@ public final class TerminalSession {
                 return;
             }
             state = next;
+            if (next == SessionState.CONNECTED && connectedSince == 0) {
+                connectedSince = System.currentTimeMillis();
+            }
             failure = next == SessionState.FAILED ? reason : null;
         } finally {
             lock.unlock();

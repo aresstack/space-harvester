@@ -89,6 +89,8 @@ public final class PagePodcasts {
     private final Jobs jobs;
     private final PodcastProduction production;
     private final Pages pages;
+    private final PodcastSpeech speech;
+    private final PodcastVoices voices;
     private final LongSupplier clock;
     private final Object starting = new Object();
     private final Map<String, Remembered> remembered = new ConcurrentHashMap<>();
@@ -113,6 +115,47 @@ public final class PagePodcasts {
         this.pages = Objects.requireNonNull(pages, "pages");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.production = new PodcastProduction(model, speech, store, voices, parallel, waits);
+        this.speech = Objects.requireNonNull(speech, "speech");
+        this.voices = Objects.requireNonNull(voices, "voices");
+    }
+
+    /**
+     * Der Text, den die Leseansicht einer Seite vorliest (Angelo 23.11.2026): die kanonische Textfassung der Seite wie
+     * im Enterprise AI Client ({@code KnowledgeDocument.text()}), nie die Darstellung. Nur für Seiten, die der
+     * Aufrufer lesen darf, die lokal liegen und an einen KI-Dienst dürfen (ADR 0028), denn die Sprachausgabe ist ein
+     * KI-Dienst; sonst leer. Liest, nie auf dem EDT.
+     */
+    public Optional<String> readAloudText(AccessContext caller, String sourceId, String pageId) {
+        return pages.page(caller, sourceId, pageId).map(page -> page.text().text()).filter(text -> !text.isBlank());
+    }
+
+    /** Ob ein Dienst mit Sprachausgabe eingerichtet ist (ohne zu fragen, auch auf dem EDT). */
+    public boolean readAloudAvailable() {
+        return speech.available();
+    }
+
+    /**
+     * Vorlesen über die Sprachausgabe mit demselben Modell und derselben Stimme wie der Podcast: das bevorzugte
+     * TTS-Modell des Dienstes ({@link PodcastVoices#ranked}) mit der Stimme des Gastgebers. Fragt den Dienst, nie auf
+     * dem EDT.
+     *
+     * @throws IllegalStateException ohne Sprachausgabe oder ohne TTS-Modell beim Dienst
+     */
+    public ReadAloud readAloud(ReadAloud.Playback playback) {
+        Objects.requireNonNull(playback, "playback");
+        if (!speech.available()) {
+            throw new IllegalStateException("Keine Sprachausgabe eingerichtet");
+        }
+        List<String> models = voices.ranked(speech.models());
+        if (models.isEmpty()) {
+            throw new IllegalStateException("Der KI-Dienst bietet kein Sprachmodell (TTS) an");
+        }
+        String model = models.get(0);
+        return speech.readAloud(model, voices.pair(model).host(), playback);
+    }
+
+    /** Eine Stelle im Text der Seite ({@link PageText#text()}), {@code [start, end)}. */
+    public record Span(int start, int end) {
     }
 
     /** Der Schlüssel des Podcasts einer Seite für diesen Aufrufer; ohne Lesen, also auch auf dem EDT. */
@@ -166,6 +209,36 @@ public final class PagePodcasts {
      */
     public Optional<String> transcript(AccessContext caller, String sourceId, String pageId) {
         return podcast(caller, sourceId, pageId).flatMap(podcast -> production.transcript(podcast.key()));
+    }
+
+    /**
+     * Wovon Thema {@code topic} erzählt, als Stellen im Text der Seite: Die Leseansicht markiert sie gelb, solange das
+     * Thema läuft, und stellt das Bild des Themas daneben (Angelo 23.11.2026). Das sind die Teile der Seite, die das
+     * Thema erzählt (Unterseiten haben hier keine Stelle), bei Einstieg und Abschluss der Anfang der Seite, den der
+     * Überblick zitiert. Leer ohne Plan oder ohne lesbare Seite. Liest Seite und Datei, nie auf dem EDT.
+     */
+    public List<Span> focus(AccessContext caller, String sourceId, String pageId, int topic) {
+        Optional<PodcastPlan> plan = production.store().plan(key(caller, sourceId, pageId));
+        if (plan.isEmpty() || topic < 0 || topic >= plan.get().topics().size()) {
+            return List.of();
+        }
+        Optional<Page> page = pages.page(caller, sourceId, pageId);
+        if (page.isEmpty()) {
+            return List.of();
+        }
+        List<Part> parts = parts(page.get(), MAX_SECTIONS);
+        List<Integer> stories = plan.get().topics().get(topic).stories();
+        if (stories.isEmpty() && !parts.isEmpty()) {
+            stories = List.of(1);
+        }
+        List<Span> spans = new ArrayList<>();
+        for (int story : stories) {
+            if (story >= 1 && story <= parts.size()) {
+                Part part = parts.get(story - 1);
+                spans.add(new Span(part.start(), part.end()));
+            }
+        }
+        return List.copyOf(spans);
     }
 
     /**
@@ -289,36 +362,92 @@ public final class PagePodcasts {
     }
 
     /**
+     * Ein Teil der Seite selbst: Einleitung, Hauptabschnitt (mit seinen Unterabschnitten) oder, ohne Überschriften, ein
+     * Stück aus ganzen Absätzen. {@code start} und {@code end} sind Zeichenpositionen im Text der Seite
+     * ({@link PageText#text()}), wie ihn der Lesetext zeigt.
+     */
+    record Part(String title, int start, int end, String place) {
+    }
+
+    /**
+     * Die Teile der Seite in Lesereihenfolge; ab dem {@code max}-ten Hauptabschnitt (bzw. Stück) hängt der Rest am
+     * letzten.
+     */
+    static List<Part> parts(Page page, int max) {
+        List<Part> parts = new ArrayList<>();
+        String here = "auf der Seite „" + page.title() + "“";
+        PageText text = page.text();
+        String all = text.text();
+        List<PageText.Section> sections = text.sections();
+        if (sections.isEmpty()) {
+            List<int[]> chunks = chunks(all);
+            for (int i = 0; i < chunks.size() && i < max; i++) {
+                int end = i == max - 1 ? all.length() : chunks.get(i)[1];
+                parts.add(new Part(chunks.size() == 1 ? page.title() : page.title() + " (" + (i + 1) + ")",
+                        chunks.get(i)[0], end, here));
+            }
+            return parts;
+        }
+        int top = sections.stream().mapToInt(PageText.Section::level).min().orElse(1);
+        List<PageText.Section> main = sections.stream().filter(section -> section.level() == top).toList();
+        // Bis zur ersten Hauptüberschrift: Unterabschnitte davor gehören zur Einleitung.
+        int introEnd = Math.min(main.get(0).start(), all.length());
+        if (!all.substring(0, introEnd).isBlank()) {
+            parts.add(new Part("Einleitung", 0, introEnd, here));
+        }
+        for (int i = 0; i < main.size(); i++) {
+            PageText.Section section = main.get(i);
+            boolean rest = i == max - 1;
+            int end = rest || i == main.size() - 1 ? all.length() : main.get(i + 1).start();
+            parts.add(new Part(section.heading(), Math.min(section.start(), all.length()), end,
+                    "im Abschnitt „" + section.heading() + "“"));
+            if (rest) {
+                break;
+            }
+        }
+        return parts;
+    }
+
+    /** Stücke aus ganzen Absätzen mit höchstens {@link #SECTION_CHARS} Zeichen, als {@code [start, end)}. */
+    private static List<int[]> chunks(String text) {
+        List<int[]> chunks = new ArrayList<>();
+        java.util.regex.Matcher lines = java.util.regex.Pattern.compile("[^\\n]+").matcher(text);
+        int start = -1;
+        int end = -1;
+        int length = 0;
+        while (lines.find()) {
+            if (lines.group().isBlank()) {
+                continue;
+            }
+            int lineLength = lines.group().strip().length();
+            if (start >= 0 && length > 0 && length + lineLength > SECTION_CHARS) {
+                chunks.add(new int[]{start, end});
+                start = -1;
+                length = 0;
+            }
+            if (start < 0) {
+                start = lines.start();
+            }
+            end = lines.end();
+            length += lineLength + (length > 0 ? 1 : 0);
+        }
+        if (start >= 0) {
+            chunks.add(new int[]{start, end});
+        }
+        return chunks;
+    }
+
+    /**
      * Das Material: je Hauptabschnitt der Seite ein Teil (mit seinen Unterabschnitten), davor die Einleitung, danach je
      * Unterseite ein Teil mit dem Anfang ihres Texts und, kurz, ihren eigenen Unterseiten. Tabellen aus stumpfen Zahlen
-     * fallen weg.
+     * fallen weg. Meldung n (ab 1) bis zur Zahl der Teile ist Teil n−1 der Seite ({@link #parts}).
      */
     static PodcastWriter.Material material(Page page, List<Subpage> subpages, List<String> ancestors) {
         List<PodcastWriter.Story> stories = new ArrayList<>();
-        String here = "auf der Seite „" + page.title() + "“";
-        PageText text = page.text();
-        List<PageText.Section> sections = text.sections();
-        if (sections.isEmpty()) {
-            addChunks(stories, page.title(), PodcastTables.prune(text.text()), here, page.pageId());
-        } else {
-            int top = sections.stream().mapToInt(PageText.Section::level).min().orElse(1);
-            List<PageText.Section> main = sections.stream().filter(section -> section.level() == top).toList();
-            // Bis zur ersten Hauptüberschrift: Unterabschnitte davor gehören zur Einleitung.
-            String intro = text.text().substring(0, Math.min(main.get(0).start(), text.text().length()));
-            if (!intro.isBlank()) {
-                stories.add(story("Einleitung", intro, here, page.pageId(), SECTION_CHARS));
-            }
-            for (int i = 0; i < main.size(); i++) {
-                PageText.Section section = main.get(i);
-                boolean rest = i == MAX_SECTIONS - 1;
-                int end = rest || i == main.size() - 1 ? text.text().length() : main.get(i + 1).start();
-                String body = text.text().substring(section.start(), end);
-                stories.add(story(section.heading(), body, "im Abschnitt „" + section.heading() + "“",
-                        page.pageId(), SECTION_CHARS));
-                if (rest) {
-                    break;
-                }
-            }
+        String all = page.text().text();
+        for (Part part : parts(page, MAX_SECTIONS)) {
+            stories.add(story(part.title(), all.substring(part.start(), part.end()), part.place(), page.pageId(),
+                    SECTION_CHARS));
         }
         for (Subpage subpage : subpages) {
             Page child = subpage.page();
@@ -349,7 +478,7 @@ public final class PagePodcasts {
             overview.append(" Unterseiten: ").append(String.join(", ", subpages.stream()
                     .map(subpage -> "„" + subpage.page().title() + "“").toList())).append('.');
         }
-        String start = PodcastWriter.flat(PodcastTables.prune(text.text()));
+        String start = PodcastWriter.flat(PodcastTables.prune(all));
         if (!start.isBlank()) {
             overview.append(" Anfang der Seite: ").append(PodcastWriter.cut(start, 600));
         }
@@ -360,33 +489,6 @@ public final class PagePodcasts {
     private static PodcastWriter.Story story(String title, String body, String place, String pageId, int limit) {
         return new PodcastWriter.Story(title, PodcastWriter.cut(PodcastTables.prune(body).strip(), limit),
                 List.of(place), List.of(pageId));
-    }
-
-    /** Eine Seite ohne Überschriften: in Teile an Absatzgrenzen. */
-    private static void addChunks(List<PodcastWriter.Story> stories, String title, String text, String place,
-                                  String pageId) {
-        List<String> chunks = new ArrayList<>();
-        StringBuilder chunk = new StringBuilder();
-        for (String paragraph : text.split("\\n\\s*\\n|\\n")) {
-            if (paragraph.isBlank()) {
-                continue;
-            }
-            if (chunk.length() > 0 && chunk.length() + paragraph.length() > SECTION_CHARS) {
-                chunks.add(chunk.toString());
-                chunk.setLength(0);
-            }
-            if (chunk.length() > 0) {
-                chunk.append('\n');
-            }
-            chunk.append(paragraph.strip());
-        }
-        if (chunk.length() > 0) {
-            chunks.add(chunk.toString());
-        }
-        for (int i = 0; i < Math.min(chunks.size(), MAX_SECTIONS); i++) {
-            stories.add(new PodcastWriter.Story(chunks.size() == 1 ? title : title + " (" + (i + 1) + ")",
-                    PodcastWriter.cut(chunks.get(i), SECTION_CHARS), List.of(place), List.of(pageId)));
-        }
     }
 
     /** Die Fassung des Materials: ändert sich der Inhalt, ändert sie sich. */

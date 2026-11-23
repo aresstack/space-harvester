@@ -1,0 +1,2344 @@
+package com.aresstack.spaceharvester.mainframe.diagram;
+
+import java.util.function.Supplier;
+
+import com.aresstack.spaceharvester.mainframe.model.JclElement;
+import com.aresstack.spaceharvester.mainframe.model.JclElementType;
+import com.aresstack.spaceharvester.mainframe.model.JclOutlineModel;
+import com.aresstack.spaceharvester.mainframe.calltree.CallTreeNode;
+
+import java.util.*;
+
+/**
+ * Converts a parsed {@link JclOutlineModel} (JCL / COBOL / Natural) into
+ * Mermaid diagram code in various diagram types.
+ * <p>
+ * Supported diagram types:
+ * <ul>
+ *   <li><b>STRUCTURE</b> — flowchart showing structural hierarchy</li>
+ *   <li><b>FLOWCHART</b> — flowchart focusing on control flow: branches, loops, and external calls</li>
+ *   <li><b>SEQUENCE</b> — sequence diagram showing execution/call flow</li>
+ *   <li><b>MINDMAP</b> — mind-map for quick overview of code structure</li>
+ * </ul>
+ */
+public final class OutlineToMermaidConverter {
+
+    private OutlineToMermaidConverter() {}
+
+    // IBM Blue styling for system function nodes in Mermaid diagrams
+    private static final String SYSFUNC_STYLE = "fill:#0530AD,color:#fff,stroke:#002D9C,stroke-width:2px";
+
+    /**
+     * Bekannte Systemfunktionen (IDCAMS, SORT, …) für die blaue Hervorhebung. In MainframeMate kamen sie aus
+     * {@code system_functions.json}; hier liefert sie die App über {@link #systemFunctions(Supplier)}, Vorgabe ist die
+     * Standardliste aus MainframeMate ({@link SystemFunctions#DEFAULT_NAMES}).
+     */
+    private static volatile Supplier<Set<String>> systemFunctions = () -> SystemFunctions.DEFAULT_NAMES;
+
+    /** Kurzbeschreibung eines Blocks per KI (in MainframeMate der SummarizerService); ohne Eintrag das heuristische Label. */
+    private static volatile BlockLabelSummarizer blockLabelSummarizer;
+
+    /** Woher die Namen der Systemfunktionen kommen (Großbuchstaben). */
+    public static void systemFunctions(Supplier<Set<String>> source) {
+        systemFunctions = source == null ? () -> SystemFunctions.DEFAULT_NAMES : source;
+    }
+
+    /** Setzt den Dienst, der Block-Labels inhaltlich zusammenfasst; {@code null} schaltet das ab. */
+    public static void blockLabelSummarizer(BlockLabelSummarizer summarizer) {
+        blockLabelSummarizer = summarizer;
+    }
+
+    private static Set<String> loadSystemFunctionNames() {
+        try {
+            Set<String> names = systemFunctions.get();
+            return names == null ? Collections.<String>emptySet() : names;
+        } catch (RuntimeException e) {
+            return Collections.emptySet();
+        }
+    }
+
+    /**
+     * Diagram types that can be generated from an outline model.
+     */
+    public enum DiagramType {
+        /** Flowchart showing structural hierarchy (JOB→STEP→DD, Divisions, Subroutines). */
+        STRUCTURE("\uD83C\uDFD7", "Struktur"),   // 🏗
+        /** Flowchart focusing on control flow: branches, loops, and external calls. */
+        FLOWCHART("\uD83D\uDD00", "Ablauf"),       // 🔀
+        /** Sequence diagram showing execution / call flow. */
+        SEQUENCE("\u21C4", "Sequenz"),              // ⇄
+        /** Mind-map for quick bird's-eye overview. */
+        MINDMAP("\uD83E\uDDE0", "Mindmap"),        // 🧠
+        /** ER diagram for DDM / database schema visualisation. */
+        ER_DIAGRAM("\uD83D\uDDC4", "ER-Diagramm"); // 🗄
+
+        private final String icon;
+        private final String label;
+
+        DiagramType(String icon, String label) {
+            this.icon = icon;
+            this.label = label;
+        }
+
+        public String getIcon() { return icon; }
+        public String getLabel() { return label; }
+    }
+
+    /**
+     * Convert an outline model to Mermaid code using the default STRUCTURE type.
+     */
+    public static String convert(JclOutlineModel model) {
+        return convert(model, DiagramType.STRUCTURE);
+    }
+
+    /**
+     * Convert an outline model to Mermaid code for the given diagram type.
+     *
+     * @param model the parsed outline
+     * @param type  desired diagram type
+     * @return Mermaid source code, or {@code null} if the model is empty
+     */
+    public static String convert(JclOutlineModel model, DiagramType type) {
+        return convert(model, type, null);
+    }
+
+    /**
+     * Convert an outline model to Mermaid code for the given diagram type,
+     * optionally with a recursive call tree for MINDMAP enrichment.
+     *
+     * @param model    the parsed outline
+     * @param type     desired diagram type
+     * @param callTree recursive call tree (from CodeAnalyticsService), or null
+     * @return Mermaid source code, or {@code null} if the model is empty
+     */
+    public static String convert(JclOutlineModel model, DiagramType type, CallTreeNode callTree) {
+        return convert(model, type, callTree, null);
+    }
+
+    /**
+     * Convert an outline model to Mermaid code for the given diagram type,
+     * optionally with a recursive call tree for MINDMAP enrichment
+     * and a list of DDM definitions for ER_DIAGRAM generation.
+     *
+     * @param model    the parsed outline
+     * @param type     desired diagram type
+     * @param callTree recursive call tree (from CodeAnalyticsService), or null
+     * @param ddmDefs  list of DDM definitions for ER diagram, or null
+     * @return Mermaid source code, or {@code null} if the model is empty
+     */
+    public static String convert(JclOutlineModel model, DiagramType type,
+                                 CallTreeNode callTree,
+                                 List<com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition> ddmDefs) {
+        return convert(model, type, callTree, ddmDefs, false);
+    }
+
+    /**
+     * Convert an outline model to Mermaid code for the given diagram type.
+     * <p>
+     * When {@code collapsed} is {@code true}, only a high-level summary diagram
+     * is generated: top-level structural elements are shown as simple boxes;
+     * children (DD statements, data items, sub-statements) are omitted or
+     * summarised as counts.  This produces a tiny diagram that renders almost
+     * instantly, even for very large source files.
+     *
+     * @param model     the parsed outline
+     * @param type      desired diagram type
+     * @param callTree  recursive call tree (from CodeAnalyticsService), or null
+     * @param ddmDefs   list of DDM definitions for ER diagram, or null
+     * @param collapsed if {@code true}, generate a collapsed/summary diagram
+     * @return Mermaid source code, or {@code null} if the model is empty
+     */
+    public static String convert(JclOutlineModel model, DiagramType type,
+                                 CallTreeNode callTree,
+                                 List<com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition> ddmDefs,
+                                 boolean collapsed) {
+        if (model == null || model.isEmpty()) return null;
+        if (type == null) type = DiagramType.STRUCTURE;
+
+        Set<String> sysFuncs = loadSystemFunctionNames();
+
+        if (collapsed) {
+            switch (type) {
+                case FLOWCHART:   return convertFlowchartCollapsed(model, sysFuncs);
+                case SEQUENCE:    return convertSequenceCollapsed(model, sysFuncs);
+                case MINDMAP:     return convertMindmapCollapsed(model, sysFuncs);
+                case ER_DIAGRAM:  return convertErDiagram(model, ddmDefs); // ER is already compact
+                case STRUCTURE:
+                default:          return convertStructureCollapsed(model, sysFuncs);
+            }
+        }
+
+        switch (type) {
+            case FLOWCHART:   return convertFlowchart(model, sysFuncs);
+            case SEQUENCE:    return convertSequence(model, sysFuncs);
+            case MINDMAP:     return convertMindmap(model, callTree, sysFuncs);
+            case ER_DIAGRAM:  return convertErDiagram(model, ddmDefs);
+            case STRUCTURE:
+            default:          return convertStructure(model, sysFuncs);
+        }
+    }
+
+    /**
+     * Convert a single DDM definition into a Mermaid ER diagram.
+     * Convenience method for .NSD files opened directly.
+     */
+    public static String convertDdmToErDiagram(
+            com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition ddm) {
+        if (ddm == null || ddm.getFields().isEmpty()) return null;
+        return convertDdmDefsToErDiagram(Collections.singletonList(ddm), null);
+    }
+
+    /**
+     * Convert multiple DDM definitions into a Mermaid ER diagram
+     * with relationships derived from a Natural program's VIEW references.
+     */
+    public static String convertDdmDefsToErDiagram(
+            List<com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition> ddmDefs,
+            JclOutlineModel programModel) {
+        if (ddmDefs == null || ddmDefs.isEmpty()) return null;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("erDiagram\n");
+
+        // Generate entities
+        for (com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition ddm : ddmDefs) {
+            String entityName = sanitizeEntityName(ddm.getName());
+            sb.append("    ").append(entityName).append(" {\n");
+            for (com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmField field : ddm.getFields()) {
+                // Skip group headers without format (PE/MU groups shown as comments)
+                if (field.isGroup() && !field.isPeriodicGroup() && !field.isMultipleValue()) {
+                    continue;
+                }
+                String attrType = field.getFormatSpec();
+                String attrName = sanitizeAttrName(field.getLongName());
+                String keyLabel = field.getKeyLabel(ddm.getDefaultSequence());
+                sb.append("        ").append(attrType)
+                        .append(" ").append(attrName);
+                if (!keyLabel.isEmpty()) {
+                    sb.append(" ").append(keyLabel);
+                }
+                if (field.isPeriodicGroup()) {
+                    sb.append(" \"PE-Gruppe\"");
+                } else if (field.isMultipleValue()) {
+                    sb.append(" \"MU-Feld\"");
+                } else if (field.isDescriptor() && keyLabel.isEmpty()) {
+                    sb.append(" \"Deskriptor\"");
+                }
+                sb.append("\n");
+            }
+            sb.append("    }\n\n");
+        }
+
+        // Generate relationships from VIEW references in program model
+        if (programModel != null && ddmDefs.size() > 1) {
+            // Derive relationships: DDMs accessed in the same program are related
+            // Use VIEW OF references to create relationships
+            List<String> ddmNames = new ArrayList<String>();
+            for (com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition d : ddmDefs) {
+                ddmNames.add(d.getName().toUpperCase());
+            }
+
+            // Find VIEW/DB access references in the program
+            Map<String, List<String>> viewToAccess = new LinkedHashMap<String, List<String>>();
+            for (JclElement elem : programModel.getElements()) {
+                if (elem.getType() == JclElementType.NAT_DATA_VIEW) {
+                    String ddmRef = elem.getParameter("OF");
+                    if (ddmRef != null) {
+                        viewToAccess.put(elem.getName().toUpperCase(),
+                                Collections.singletonList(ddmRef.toUpperCase()));
+                    }
+                }
+            }
+
+            // Create relationships between DDMs that share a program context
+            Set<String> emittedRels = new HashSet<String>();
+            for (int i = 0; i < ddmNames.size(); i++) {
+                for (int j = i + 1; j < ddmNames.size(); j++) {
+                    String a = sanitizeEntityName(ddmNames.get(i));
+                    String b = sanitizeEntityName(ddmNames.get(j));
+                    String relKey = a + "-" + b;
+                    if (!emittedRels.contains(relKey)) {
+                        sb.append("    ").append(a)
+                                .append(" }o--o{ ").append(b)
+                                .append(" : \"gemeinsam genutzt\"\n");
+                        emittedRels.add(relKey);
+                    }
+                }
+            }
+
+            // Also add DB access relationships (READ/FIND on a DDM view)
+            for (JclElement elem : programModel.getElements()) {
+                JclElementType et = elem.getType();
+                if (et == JclElementType.NAT_READ || et == JclElementType.NAT_FIND
+                        || et == JclElementType.NAT_HISTOGRAM || et == JclElementType.NAT_GET
+                        || et == JclElementType.NAT_STORE || et == JclElementType.NAT_UPDATE
+                        || et == JclElementType.NAT_DELETE) {
+                    String file = elem.getParameter("FILE");
+                    if (file != null) {
+                        String upper = file.toUpperCase();
+                        // Match file reference to a VIEW, then to a DDM
+                        for (Map.Entry<String, List<String>> entry : viewToAccess.entrySet()) {
+                            if (entry.getKey().equals(upper)) {
+                                for (String ddmRef : entry.getValue()) {
+                                    if (ddmNames.contains(ddmRef)) {
+                                        // This creates a "reads from" note in comments
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        String result = sb.toString().trim();
+        return result.length() > "erDiagram".length() + 2 ? result : null;
+    }
+
+    /** Check if a name is a known system function. */
+    private static boolean isSysFunc(String name, Set<String> sysFuncs) {
+        return name != null && sysFuncs.contains(name.toUpperCase());
+    }
+
+    /** Append a Mermaid style directive for system function nodes (IBM Blue). */
+    private static void styleSysFunc(StringBuilder sb, String nodeId) {
+        sb.append("    style ").append(nodeId).append(" ").append(SYSFUNC_STYLE).append("\n");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  STRUCTURE (existing flowchart)
+    // ═══════════════════════════════════════════════════════════
+
+    private static String convertStructure(JclOutlineModel model, Set<String> sysFuncs) {
+        switch (model.getLanguage()) {
+            case JCL:     return convertJcl(model, sysFuncs);
+            case COBOL:   return convertCobol(model, sysFuncs);
+            case NATURAL: return convertNatural(model, sysFuncs);
+            default:      return convertJcl(model, sysFuncs);
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  JCL
+    // ══════════════════════════════════════════════════════════
+
+    private static String convertJcl(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+
+        List<JclElement> jobs = model.getJobs();
+        List<JclElement> steps = model.getSteps();
+
+        // Group elements by parent (JOB → children)
+        if (jobs.isEmpty() && steps.isEmpty()) {
+            // Flat list: just show all elements sequentially
+            return convertFlatList(model, "JCL");
+        }
+
+        String prevStepId = null;
+
+        // If there's a JOB card, start with it
+        for (JclElement job : jobs) {
+            String jobId = safeId("JOB_" + job.getName(), usedIds);
+            sb.append("    ").append(jobId).append("([\"").append(esc(job.getName())).append("\"])\n");
+            prevStepId = jobId;
+        }
+
+        // EXEC steps
+        for (JclElement step : steps) {
+            String pgm = step.getParameter("PGM");
+            String proc = step.getParameter("PROC");
+            String label = step.getName() != null ? step.getName() : "(unnamed)";
+            String detail = pgm != null ? "PGM=" + pgm : (proc != null ? "PROC=" + proc : "");
+
+            String stepId = safeId("STEP_" + label, usedIds);
+            sb.append("    ").append(stepId).append("[\"").append(esc(label));
+            if (!detail.isEmpty()) {
+                sb.append("\\n").append(esc(detail));
+            }
+            sb.append("\"]\n");
+
+            // Style system function steps with IBM Blue
+            if (isSysFunc(pgm, sysFuncs)) {
+                styleSysFunc(sb, stepId);
+            }
+
+            if (prevStepId != null) {
+                sb.append("    ").append(prevStepId).append(" --> ").append(stepId).append("\n");
+            }
+
+            // DD statements as children of step
+            for (JclElement child : step.getChildren()) {
+                if (child.getType() == JclElementType.DD) {
+                    String dsn = child.getParameter("DSN");
+                    String ddLabel = child.getName() != null ? child.getName() : "DD";
+                    String ddId = safeId("DD_" + stepId + "_" + ddLabel, usedIds);
+
+                    sb.append("    ").append(ddId).append("[(\"").append(esc(ddLabel));
+                    if (dsn != null) {
+                        sb.append("\\n").append(esc(truncate(dsn, 25)));
+                    }
+                    sb.append("\")]\n");
+                    sb.append("    ").append(stepId).append(" --> ").append(ddId).append("\n");
+                }
+            }
+
+            prevStepId = stepId;
+        }
+
+        return sb.toString();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  COBOL
+    // ══════════════════════════════════════════════════════════
+
+    private static String convertCobol(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+
+        // Program ID
+        List<JclElement> all = model.getElements();
+        String programId = null;
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.PROGRAM_ID) {
+                programId = e.getName();
+                break;
+            }
+        }
+
+        String rootId = safeId("PROG", usedIds);
+        sb.append("    ").append(rootId).append("([\"").append(esc(programId != null ? programId : "PROGRAM"))
+                .append("\"])\n");
+
+        // Divisions as main blocks
+        for (JclElement div : model.getDivisions()) {
+            String divId = safeId("DIV_" + div.getName(), usedIds);
+            sb.append("    ").append(divId).append("[\"").append(esc(div.getName())).append("\"]\n");
+            sb.append("    ").append(rootId).append(" --> ").append(divId).append("\n");
+        }
+
+        // Sections and Paragraphs in Procedure Division
+        List<JclElement> paragraphs = model.getParagraphs();
+        String prevParaId = null;
+        for (JclElement para : paragraphs) {
+            String paraId = safeId("PARA_" + para.getName(), usedIds);
+            sb.append("    ").append(paraId).append("[\"").append(esc(para.getName())).append("\"]\n");
+
+            if (prevParaId != null) {
+                sb.append("    ").append(prevParaId).append(" --> ").append(paraId).append("\n");
+            } else {
+                // Link first paragraph to Procedure Division
+                sb.append("    ").append(rootId).append(" --> ").append(paraId).append("\n");
+            }
+            prevParaId = paraId;
+        }
+
+        // PERFORM / CALL edges
+        for (JclElement e : all) {
+            String target = e.getParameter("TARGET");
+            if (target == null) continue;
+            String sourceParent = findParentParagraph(e, all);
+
+            if (e.getType() == JclElementType.PERFORM_STMT) {
+                String fromId = sourceParent != null ? findIdForName("PARA_" + sourceParent, usedIds) : rootId;
+                String toId = findIdForName("PARA_" + target, usedIds);
+                if (fromId != null && toId != null) {
+                    sb.append("    ").append(fromId).append(" -.->|PERFORM| ").append(toId).append("\n");
+                }
+            } else if (e.getType() == JclElementType.CALL_STMT) {
+                String callId = safeId("CALL_" + target, usedIds);
+                sb.append("    ").append(callId).append(">\"").append(esc(target)).append("\"]\n");
+                if (isSysFunc(target, sysFuncs)) {
+                    styleSysFunc(sb, callId);
+                }
+                String fromId = sourceParent != null ? findIdForName("PARA_" + sourceParent, usedIds) : rootId;
+                if (fromId != null) {
+                    sb.append("    ").append(fromId).append(" ==>|CALL| ").append(callId).append("\n");
+                }
+            }
+        }
+
+        return sb.toString();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  Natural
+    // ══════════════════════════════════════════════════════════
+
+    private static String convertNatural(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+        List<JclElement> all = model.getElements();
+
+        // Program/Subprogram root
+        String progName = model.getSourceName() != null ? model.getSourceName() : "PROGRAM";
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.NAT_PROGRAM
+                    || e.getType() == JclElementType.NAT_SUBPROGRAM
+                    || e.getType() == JclElementType.NAT_FUNCTION) {
+                if (e.getName() != null) progName = e.getName();
+                break;
+            }
+        }
+
+        String rootId = safeId("PROG", usedIds);
+        sb.append("    ").append(rootId).append("([\"").append(esc(progName)).append("\"])\n");
+
+        // DEFINE DATA block
+        boolean hasData = false;
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.NAT_DEFINE_DATA) {
+                hasData = true;
+                break;
+            }
+        }
+        if (hasData) {
+            String dataId = safeId("DATA", usedIds);
+            sb.append("    ").append(dataId).append("[\"DEFINE DATA\"]\n");
+            sb.append("    ").append(rootId).append(" --> ").append(dataId).append("\n");
+
+            // LOCAL / PARAMETER / GLOBAL blocks
+            for (JclElement e : all) {
+                if (e.getType() == JclElementType.NAT_LOCAL
+                        || e.getType() == JclElementType.NAT_PARAMETER
+                        || e.getType() == JclElementType.NAT_GLOBAL
+                        || e.getType() == JclElementType.NAT_INDEPENDENT) {
+                    String blockId = safeId("DATA_" + e.getType().getDisplayName(), usedIds);
+                    sb.append("    ").append(blockId).append("[\"")
+                            .append(esc(e.getType().getDisplayName())).append("\"]\n");
+                    sb.append("    ").append(dataId).append(" --> ").append(blockId).append("\n");
+                }
+            }
+        }
+
+        // Inline subroutines
+        for (JclElement sub : model.getSubroutines()) {
+            String subId = safeId("SUB_" + sub.getName(), usedIds);
+            sb.append("    ").append(subId).append("{{\"").append(esc(sub.getName())).append("\"}}\n");
+            sb.append("    ").append(rootId).append(" --> ").append(subId).append("\n");
+        }
+
+        // External calls (CALLNAT, CALL, FETCH)
+        for (JclElement call : model.getNaturalCalls()) {
+            String target = call.getParameter("TARGET");
+            if (target == null) target = call.getName();
+            if (target == null) continue;
+
+            String edgeLabel = call.getType().getDisplayName();
+
+            // Knoten nur beim ersten Verweis anlegen (vorher prüfen, dann die ID reservieren); weitere Verweise auf
+            // dasselbe Ziel nutzen dieselbe ID
+            String callId = normalizeId("EXT_" + target);
+            if (!usedIds.contains(callId)) {
+                callId = safeId("EXT_" + target, usedIds);
+                sb.append("    ").append(callId).append(">\"").append(esc(target)).append("\"]\n");
+                if (isSysFunc(target, sysFuncs)) {
+                    styleSysFunc(sb, callId);
+                }
+            }
+            sb.append("    ").append(rootId).append(" -.->|").append(edgeLabel).append("| ")
+                    .append(callId).append("\n");
+        }
+
+        // DB operations
+        for (JclElement db : model.getNaturalDbOps()) {
+            String file = db.getParameter("FILE");
+            if (file == null) file = db.getName();
+            if (file == null) continue;
+
+            String op = db.getType().getDisplayName();
+
+            String dbId = normalizeId("DB_" + file);
+            if (!usedIds.contains(dbId)) {
+                dbId = safeId("DB_" + file, usedIds);
+                sb.append("    ").append(dbId).append("[(\"").append(esc(file)).append("\")]\n");
+            }
+            sb.append("    ").append(rootId).append(" ==>|").append(op).append("| ")
+                    .append(dbId).append("\n");
+        }
+
+        return sb.toString();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  Fallback: flat list
+    // ══════════════════════════════════════════════════════════
+
+    private static String convertFlatList(JclOutlineModel model, String header) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+
+        String prevId = null;
+        for (JclElement e : model.getElements()) {
+            String label = e.getName() != null ? e.getName() : e.getType().getDisplayName();
+            String id = safeId(e.getType().name() + "_" + label, usedIds);
+            sb.append("    ").append(id).append("[\"").append(esc(label)).append("\"]\n");
+            if (prevId != null) {
+                sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+            }
+            prevId = id;
+        }
+        return sb.toString();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  FLOWCHART (control flow: branches, loops, external calls)
+    // ═══════════════════════════════════════════════════════════
+
+    private static String convertFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
+        switch (model.getLanguage()) {
+            case JCL:     return convertJclFlowchart(model, sysFuncs);
+            case COBOL:   return convertCobolFlowchart(model, sysFuncs);
+            case NATURAL: return convertNaturalFlowchart(model, sysFuncs);
+            default:      return convertJclFlowchart(model, sysFuncs);
+        }
+    }
+
+    private static String convertJclFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+        List<JclElement> all = model.getElements();
+        List<JclElement> steps = model.getSteps();
+
+        // Start node
+        String startId = safeId("START", usedIds);
+        sb.append("    ").append(startId).append("([\"START\"])\n");
+
+        String prevId = startId;
+
+        // Check for IF/ELSE/ENDIF conditional blocks
+        boolean hasConditionals = false;
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.IF) { hasConditionals = true; break; }
+        }
+
+        if (hasConditionals) {
+            // Build flow with conditionals
+            prevId = buildJclConditionalFlow(sb, all, steps, usedIds, startId);
+        } else {
+            // Linear step flow
+            for (JclElement step : steps) {
+                String label = step.getName() != null ? step.getName() : "(Step)";
+                String pgm = step.getParameter("PGM");
+                String proc = step.getParameter("PROC");
+                String stepId = safeId("STEP_" + label, usedIds);
+
+                sb.append("    ").append(stepId).append("[\"").append(esc(label));
+                if (pgm != null) sb.append("\\nPGM=").append(esc(pgm));
+                else if (proc != null) sb.append("\\nPROC=").append(esc(proc));
+                sb.append("\"]\n");
+
+                // Style system function steps with IBM Blue
+                if (isSysFunc(pgm, sysFuncs)) {
+                    styleSysFunc(sb, stepId);
+                }
+
+                sb.append("    ").append(prevId).append(" --> ").append(stepId).append("\n");
+
+                // Highlight PROC calls as external (different shape + style)
+                if (proc != null) {
+                    String extId = safeId("EXT_" + proc, usedIds);
+                    sb.append("    ").append(extId).append(">\"").append(esc(proc))
+                            .append("\\n(externe Prozedur)\"]\n");
+                    sb.append("    ").append(stepId).append(" -.->|PROC| ").append(extId).append("\n");
+                    sb.append("    style ").append(extId).append(" fill:#ffe0b2,stroke:#e65100,stroke-width:2px\n");
+                }
+
+                prevId = stepId;
+            }
+        }
+
+        // End node
+        String endId = safeId("END", usedIds);
+        sb.append("    ").append(endId).append("([\"ENDE\"])\n");
+        sb.append("    ").append(prevId).append(" --> ").append(endId).append("\n");
+
+        return sb.toString();
+    }
+
+    /**
+     * Build JCL flow with IF/ELSE/ENDIF conditional branches.
+     * Returns the ID of the last node in the flow.
+     */
+    private static String buildJclConditionalFlow(StringBuilder sb, List<JclElement> all,
+                                                   List<JclElement> steps,
+                                                   Set<String> usedIds, String startId) {
+        String prevId = startId;
+        int stepIdx = 0;
+
+        for (int i = 0; i < all.size(); i++) {
+            JclElement e = all.get(i);
+
+            if (e.getType() == JclElementType.IF) {
+                // Decision diamond
+                String condId = safeId("IF_" + (i + 1), usedIds);
+                String condLabel = e.getName() != null ? e.getName() : "Bedingung";
+                sb.append("    ").append(condId).append("{\"").append(esc(condLabel)).append("\"}\n");
+                sb.append("    ").append(prevId).append(" --> ").append(condId).append("\n");
+
+                // Find matching ELSE/ENDIF
+                String trueBranch = condId;
+                String falseBranch = null;
+                String mergeId = safeId("MERGE_" + (i + 1), usedIds);
+
+                // Grenzen dieses IF (verschachtelte IF/ENDIF mitgezählt): eigenes ELSE und passendes ENDIF
+                int elseAt = -1;
+                int endAt = all.size() - 1;
+                int depth = 0;
+                for (int j = i + 1; j < all.size(); j++) {
+                    JclElementType t = all.get(j).getType();
+                    if (t == JclElementType.IF) {
+                        depth++;
+                    } else if (t == JclElementType.ENDIF) {
+                        if (depth == 0) {
+                            endAt = j;
+                            break;
+                        }
+                        depth--;
+                    } else if (t == JclElementType.ELSE && depth == 0 && elseAt < 0) {
+                        elseAt = j;
+                    }
+                }
+                if (elseAt >= 0) {
+                    falseBranch = condId;
+                }
+
+                // Steps between IF and ELSE/ENDIF → true branch
+                String trueEnd = trueBranch;
+                for (int j = i + 1; j < (elseAt >= 0 ? elseAt : endAt); j++) {
+                    JclElement next = all.get(j);
+                    if (next.getType() == JclElementType.EXEC && stepIdx < steps.size()) {
+                        JclElement step = steps.get(stepIdx++);
+                        String label = step.getName() != null ? step.getName() : "(Step)";
+                        String stepId = safeId("STEP_" + label, usedIds);
+                        sb.append("    ").append(stepId).append("[\"").append(esc(label)).append("\"]\n");
+                        sb.append("    ").append(trueEnd).append(" -->|Ja| ").append(stepId).append("\n");
+                        trueEnd = stepId;
+                    }
+                }
+                sb.append("    ").append(trueEnd).append(" --> ").append(mergeId).append("\n");
+
+                // ELSE branch
+                if (falseBranch != null) {
+                    String falseEnd = condId;
+                    for (int j = elseAt + 1; j < endAt; j++) {
+                        JclElement next = all.get(j);
+                        if (next.getType() == JclElementType.EXEC && stepIdx < steps.size()) {
+                            JclElement step = steps.get(stepIdx++);
+                            String label = step.getName() != null ? step.getName() : "(Step)";
+                            String stepId = safeId("STEP_" + label, usedIds);
+                            sb.append("    ").append(stepId).append("[\"").append(esc(label)).append("\"]\n");
+                            sb.append("    ").append(falseEnd).append(" -->|Nein| ").append(stepId).append("\n");
+                            falseEnd = stepId;
+                        }
+                    }
+                    sb.append("    ").append(falseEnd).append(" --> ").append(mergeId).append("\n");
+                } else {
+                    sb.append("    ").append(condId).append(" -->|Nein| ").append(mergeId).append("\n");
+                }
+
+                sb.append("    ").append(mergeId).append("(( ))\n"); // merge point (circle)
+                prevId = mergeId;
+                // Die Schritte im IF-Block sind verbraucht: hinter dem passenden ENDIF weiter, sonst zählten sie
+                // noch einmal als unbedingte Schritte
+                i = endAt;
+
+            } else if (e.getType() == JclElementType.EXEC) {
+                // Regular step (not inside IF)
+                if (stepIdx < steps.size()) {
+                    JclElement step = steps.get(stepIdx++);
+                    String label = step.getName() != null ? step.getName() : "(Step)";
+                    String stepId = safeId("STEP_" + label, usedIds);
+                    sb.append("    ").append(stepId).append("[\"").append(esc(label)).append("\"]\n");
+                    sb.append("    ").append(prevId).append(" --> ").append(stepId).append("\n");
+                    prevId = stepId;
+                }
+            }
+        }
+
+        return prevId;
+    }
+
+    private static String convertCobolFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+        List<JclElement> all = model.getElements();
+
+        // Program root
+        String progName = "PROGRAM";
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.PROGRAM_ID && e.getName() != null) {
+                progName = e.getName();
+                break;
+            }
+        }
+        String startId = safeId("START", usedIds);
+        sb.append("    ").append(startId).append("([\"").append(esc(progName)).append("\"])\n");
+
+        // Paragraphs as main flow
+        String prevId = startId;
+        for (JclElement para : model.getParagraphs()) {
+            String paraId = safeId("PARA_" + para.getName(), usedIds);
+            sb.append("    ").append(paraId).append("[\"").append(esc(para.getName())).append("\"]\n");
+            sb.append("    ").append(prevId).append(" --> ").append(paraId).append("\n");
+            prevId = paraId;
+        }
+
+        // PERFORM edges (loops / internal calls)
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.PERFORM_STMT) {
+                String target = e.getParameter("TARGET");
+                if (target == null) continue;
+                String sourceParent = findParentParagraph(e, all);
+                String fromId = sourceParent != null ? findIdForName("PARA_" + sourceParent, usedIds) : startId;
+                String toId = findIdForName("PARA_" + target, usedIds);
+                if (fromId != null && toId != null) {
+                    sb.append("    ").append(fromId).append(" -.->|PERFORM| ").append(toId).append("\n");
+                }
+            }
+        }
+
+        // CALL edges (external programs — highlighted)
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.CALL_STMT) {
+                String target = e.getParameter("TARGET");
+                if (target == null) continue;
+                String sourceParent = findParentParagraph(e, all);
+                String fromId = sourceParent != null ? findIdForName("PARA_" + sourceParent, usedIds) : startId;
+
+                String extId = safeId("EXT_" + target, usedIds);
+                sb.append("    ").append(extId).append(">\"").append(esc(target))
+                        .append("\\n(externes Programm)\"]\n");
+                // System functions → IBM Blue; others → orange highlight
+                if (isSysFunc(target, sysFuncs)) {
+                    styleSysFunc(sb, extId);
+                } else {
+                    sb.append("    style ").append(extId).append(" fill:#ffe0b2,stroke:#e65100,stroke-width:2px\n");
+                }
+                if (fromId != null) {
+                    sb.append("    ").append(fromId).append(" ==>|CALL| ").append(extId).append("\n");
+                }
+            }
+        }
+
+        // End node
+        String endId = safeId("END", usedIds);
+        sb.append("    ").append(endId).append("([\"STOP RUN\"])\n");
+        sb.append("    ").append(prevId).append(" --> ").append(endId).append("\n");
+
+        return sb.toString();
+    }
+
+    private static String convertNaturalFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+        List<JclElement> all = model.getElements();
+
+        // Program name
+        String progName = model.getSourceName() != null ? model.getSourceName() : "PROGRAM";
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.NAT_PROGRAM
+                    || e.getType() == JclElementType.NAT_SUBPROGRAM
+                    || e.getType() == JclElementType.NAT_FUNCTION) {
+                if (e.getName() != null) progName = e.getName();
+                break;
+            }
+        }
+        String startId = safeId("START", usedIds);
+        sb.append("    ").append(startId).append("([\"").append(esc(progName)).append("\"])\n");
+
+        String prevId = startId;
+
+        // Walk through elements and build control flow
+        for (JclElement e : all) {
+            JclElementType t = e.getType();
+
+            // ── Branches (IF, DECIDE) ──
+            if (t == JclElementType.NAT_IF_BLOCK || t == JclElementType.NAT_DECIDE) {
+                String condLabel = e.getName() != null ? e.getName() : t.getDisplayName();
+                String condId = safeId("COND_" + condLabel, usedIds);
+                sb.append("    ").append(condId).append("{\"").append(esc(condLabel)).append("\"}\n");
+                sb.append("    ").append(prevId).append(" --> ").append(condId).append("\n");
+                prevId = condId;
+            }
+            // ── Loops (FOR, REPEAT, READ, FIND, HISTOGRAM) ──
+            else if (t == JclElementType.NAT_FOR || t == JclElementType.NAT_REPEAT) {
+                String loopLabel = e.getName() != null ? e.getName() : t.getDisplayName();
+                String loopId = safeId("LOOP_" + loopLabel, usedIds);
+                sb.append("    ").append(loopId).append("{{\"").append(esc(loopLabel)).append("\"}}\n");
+                sb.append("    ").append(prevId).append(" --> ").append(loopId).append("\n");
+                // Self-loop arrow to indicate repetition
+                sb.append("    ").append(loopId).append(" -.-> ").append(loopId).append("\n");
+                prevId = loopId;
+            }
+            // ── DB loops (READ/FIND/HISTOGRAM — highlighted as data access loops) ──
+            else if (t == JclElementType.NAT_READ || t == JclElementType.NAT_FIND
+                    || t == JclElementType.NAT_HISTOGRAM) {
+                String file = e.getParameter("FILE");
+                String loopLabel = t.getDisplayName() + (file != null ? " " + file : "");
+                String loopId = safeId("DBLOOP_" + loopLabel, usedIds);
+                sb.append("    ").append(loopId).append("[(\"").append(esc(loopLabel)).append("\")]\n");
+                sb.append("    ").append(prevId).append(" --> ").append(loopId).append("\n");
+                sb.append("    style ").append(loopId).append(" fill:#e3f2fd,stroke:#1565c0,stroke-width:2px\n");
+                prevId = loopId;
+            }
+            // ── External calls (CALLNAT, CALL, FETCH — prominently highlighted) ──
+            else if (t == JclElementType.NAT_CALLNAT || t == JclElementType.NAT_CALL
+                    || t == JclElementType.NAT_FETCH) {
+                String target = e.getParameter("TARGET");
+                if (target == null) target = e.getName();
+                if (target == null) continue;
+                String extId = safeId("EXT_" + target, usedIds);
+                sb.append("    ").append(extId).append(">\"").append(esc(target))
+                        .append("\\n(").append(esc(t.getDisplayName())).append(")\"]\n");
+                sb.append("    ").append(prevId).append(" ==>|").append(t.getDisplayName())
+                        .append("| ").append(extId).append("\n");
+                // System functions → IBM Blue; others → orange highlight
+                if (isSysFunc(target, sysFuncs)) {
+                    styleSysFunc(sb, extId);
+                } else {
+                    sb.append("    style ").append(extId).append(" fill:#ffe0b2,stroke:#e65100,stroke-width:2px\n");
+                }
+                // Don't change prevId — external call returns and flow continues
+            }
+            // ── Inline PERFORM (internal subroutine calls) ──
+            else if (t == JclElementType.NAT_PERFORM) {
+                String target = e.getParameter("TARGET");
+                if (target == null) target = e.getName();
+                if (target == null) continue;
+                String perfTarget = findIdForName("SUB_" + target, usedIds);
+                if (perfTarget == null) {
+                    perfTarget = safeId("SUB_" + target, usedIds);
+                    sb.append("    ").append(perfTarget).append("{{\"").append(esc(target)).append("\"}}\n");
+                }
+                sb.append("    ").append(prevId).append(" -.->|PERFORM| ").append(perfTarget).append("\n");
+            }
+            // ── Inline subroutine definitions ──
+            else if (t == JclElementType.NAT_INLINE_SUBROUTINE || t == JclElementType.NAT_SUBROUTINE) {
+                String subId = safeId("SUB_" + e.getName(), usedIds);
+                sb.append("    ").append(subId).append("{{\"").append(esc(e.getName())).append("\"}}\n");
+                sb.append("    ").append(prevId).append(" --> ").append(subId).append("\n");
+                prevId = subId;
+            }
+            // ── Error handling ──
+            else if (t == JclElementType.NAT_ON_ERROR) {
+                String errId = safeId("ONERR", usedIds);
+                sb.append("    ").append(errId).append("{\"ON ERROR\"}\n");
+                sb.append("    ").append(prevId).append(" --> ").append(errId).append("\n");
+                sb.append("    style ").append(errId).append(" fill:#ffcdd2,stroke:#c62828,stroke-width:2px\n");
+                prevId = errId;
+            }
+        }
+
+        // End node
+        String endId = safeId("END", usedIds);
+        sb.append("    ").append(endId).append("([\"END\"])\n");
+        sb.append("    ").append(prevId).append(" --> ").append(endId).append("\n");
+
+        return sb.toString();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  SEQUENCE diagram
+    // ═══════════════════════════════════════════════════════════
+
+    private static String convertSequence(JclOutlineModel model, Set<String> sysFuncs) {
+        switch (model.getLanguage()) {
+            case JCL:     return convertJclSequence(model, sysFuncs);
+            case COBOL:   return convertCobolSequence(model, sysFuncs);
+            case NATURAL: return convertNaturalSequence(model, sysFuncs);
+            default:      return convertJclSequence(model, sysFuncs);
+        }
+    }
+
+    private static String convertJclSequence(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("sequenceDiagram\n");
+        List<JclElement> jobs = model.getJobs();
+        List<JclElement> steps = model.getSteps();
+
+        // Participant: JOB
+        String jobName = "JOB";
+        if (!jobs.isEmpty()) {
+            jobName = jobs.get(0).getName() != null ? jobs.get(0).getName() : "JOB";
+            sb.append("    participant ").append(safeParticipant(jobName)).append("\n");
+        }
+
+        // Participant for each EXEC step
+        Set<String> declared = new LinkedHashSet<String>();
+        for (JclElement step : steps) {
+            String name = step.getName() != null ? step.getName() : "STEP";
+            String safe = safeParticipant(name);
+            if (declared.add(safe)) {
+                sb.append("    participant ").append(safe);
+                String pgm = step.getParameter("PGM");
+                if (pgm != null) {
+                    sb.append(" as ").append(safe).append("[PGM=").append(pgm).append("]");
+                }
+                sb.append("\n");
+            }
+        }
+
+        // Arrows: JOB → each step in order
+        String prev = safeParticipant(jobName);
+        for (JclElement step : steps) {
+            String name = step.getName() != null ? step.getName() : "STEP";
+            String safe = safeParticipant(name);
+            String pgm = step.getParameter("PGM");
+            String proc = step.getParameter("PROC");
+            String detail = pgm != null ? "EXEC PGM=" + pgm : (proc != null ? "EXEC PROC=" + proc : "EXEC");
+            sb.append("    ").append(prev).append("->>").append(safe).append(": ").append(detail).append("\n");
+
+            // System function note
+            if (isSysFunc(pgm, sysFuncs)) {
+                sb.append("    Note right of ").append(safe).append(": \uD83D\uDCD6 Systemfunktion\n");
+            }
+
+            // DD statements as notes
+            List<String> dds = new ArrayList<String>();
+            for (JclElement child : step.getChildren()) {
+                if (child.getType() == JclElementType.DD && child.getName() != null) {
+                    dds.add(child.getName());
+                }
+            }
+            if (!dds.isEmpty()) {
+                sb.append("    Note right of ").append(safe).append(": DD: ")
+                        .append(truncate(join(dds, ", "), 30)).append("\n");
+            }
+            prev = safe;
+        }
+
+        return sb.toString();
+    }
+
+    private static String convertCobolSequence(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("sequenceDiagram\n");
+        List<JclElement> all = model.getElements();
+
+        // Find program ID
+        String progName = "PROGRAM";
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.PROGRAM_ID && e.getName() != null) {
+                progName = e.getName();
+                break;
+            }
+        }
+        sb.append("    participant ").append(safeParticipant(progName)).append("\n");
+
+        // Declare paragraphs as participants
+        List<JclElement> paras = model.getParagraphs();
+        Set<String> declared = new LinkedHashSet<String>();
+        for (JclElement p : paras) {
+            String safe = safeParticipant(p.getName());
+            if (declared.add(safe)) {
+                sb.append("    participant ").append(safe).append("\n");
+            }
+        }
+
+        // Main flow: program → first paragraph → next → ...
+        String prev = safeParticipant(progName);
+        for (JclElement p : paras) {
+            String safe = safeParticipant(p.getName());
+            sb.append("    ").append(prev).append("->>").append(safe).append(": ").append("Abschnitt").append("\n");
+            prev = safe;
+        }
+
+        // PERFORM / CALL as dashed arrows
+        for (JclElement e : all) {
+            String target = e.getParameter("TARGET");
+            if (target == null) continue;
+            String sourceParent = findParentParagraph(e, all);
+            String from = sourceParent != null ? safeParticipant(sourceParent) : safeParticipant(progName);
+
+            if (e.getType() == JclElementType.PERFORM_STMT) {
+                String to = safeParticipant(target);
+                sb.append("    ").append(from).append("-->>").append(to).append(": PERFORM\n");
+            } else if (e.getType() == JclElementType.CALL_STMT) {
+                String to = safeParticipant(target);
+                if (declared.add(to)) {
+                    sb.append("    participant ").append(to).append("\n");
+                }
+                sb.append("    ").append(from).append("->>").append(to).append(": CALL\n");
+            }
+        }
+
+        return sb.toString();
+    }
+
+    private static String convertNaturalSequence(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("sequenceDiagram\n");
+        List<JclElement> all = model.getElements();
+
+        // Program name
+        String progName = model.getSourceName() != null ? model.getSourceName() : "PROGRAM";
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.NAT_PROGRAM
+                    || e.getType() == JclElementType.NAT_SUBPROGRAM
+                    || e.getType() == JclElementType.NAT_FUNCTION) {
+                if (e.getName() != null) progName = e.getName();
+                break;
+            }
+        }
+        sb.append("    participant ").append(safeParticipant(progName)).append("\n");
+
+        Set<String> declared = new LinkedHashSet<String>();
+
+        // Subroutines as participants
+        for (JclElement sub : model.getSubroutines()) {
+            String safe = safeParticipant(sub.getName());
+            if (declared.add(safe)) {
+                sb.append("    participant ").append(safe).append("\n");
+            }
+        }
+
+        // External calls
+        for (JclElement call : model.getNaturalCalls()) {
+            String target = call.getParameter("TARGET");
+            if (target == null) target = call.getName();
+            if (target == null) continue;
+            String safe = safeParticipant(target);
+            if (declared.add(safe)) {
+                sb.append("    participant ").append(safe).append("\n");
+            }
+            String label = call.getType().getDisplayName();
+            sb.append("    ").append(safeParticipant(progName))
+                    .append("->>").append(safe).append(": ").append(label).append("\n");
+        }
+
+        // DB operations
+        for (JclElement db : model.getNaturalDbOps()) {
+            String file = db.getParameter("FILE");
+            if (file == null) file = db.getName();
+            if (file == null) continue;
+            String safe = safeParticipant("DB_" + file);
+            if (declared.add(safe)) {
+                sb.append("    participant ").append(safe).append(" as ").append(file).append("\n");
+            }
+            String op = db.getType().getDisplayName();
+            sb.append("    ").append(safeParticipant(progName))
+                    .append("->>").append(safe).append(": ").append(op).append("\n");
+        }
+
+        return sb.toString();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  MINDMAP
+    // ═══════════════════════════════════════════════════════════
+
+    private static String convertMindmap(JclOutlineModel model, CallTreeNode callTree, Set<String> sysFuncs) {
+        switch (model.getLanguage()) {
+            case JCL:     return convertJclMindmap(model, callTree, sysFuncs);
+            case COBOL:   return convertCobolMindmap(model, callTree, sysFuncs);
+            case NATURAL: return convertNaturalMindmap(model, callTree, sysFuncs);
+            default:      return convertJclMindmap(model, callTree, sysFuncs);
+        }
+    }
+
+    private static String convertJclMindmap(JclOutlineModel model, CallTreeNode callTree, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("mindmap\n");
+        List<JclElement> jobs = model.getJobs();
+
+        // Root node = file / job name
+        String rootName = "JCL";
+        if (!jobs.isEmpty() && jobs.get(0).getName() != null) {
+            rootName = jobs.get(0).getName();
+        }
+        sb.append("  root((").append(escMm(rootName)).append("))\n");
+
+        if (callTree != null && !callTree.getChildren().isEmpty()) {
+            // Each external call is a direct branch of root, recursively resolved
+            appendCallTreeChildren(sb, callTree, 4, sysFuncs);
+        } else {
+            // Fallback: external targets from steps (PGM/PROC)
+            Set<String> seen = new LinkedHashSet<String>();
+            for (JclElement step : model.getSteps()) {
+                String pgm = step.getParameter("PGM");
+                String proc = step.getParameter("PROC");
+                String target = pgm != null ? pgm : proc;
+                if (target != null && seen.add(target.toUpperCase())) {
+                    String lbl = isSysFunc(target, sysFuncs) ? "\uD83C\uDFE2 " + escMm(target) : escMm(target);
+                    sb.append("    ").append(lbl).append("\n");
+                }
+            }
+        }
+
+        return sb.toString();
+    }
+
+    private static String convertCobolMindmap(JclOutlineModel model, CallTreeNode callTree, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("mindmap\n");
+        List<JclElement> all = model.getElements();
+
+        // Root = program ID
+        String progName = "COBOL";
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.PROGRAM_ID && e.getName() != null) {
+                progName = e.getName();
+                break;
+            }
+        }
+        sb.append("  root((").append(escMm(progName)).append("))\n");
+
+        if (callTree != null && !callTree.getChildren().isEmpty()) {
+            appendCallTreeChildren(sb, callTree, 4, sysFuncs);
+        } else {
+            // Fallback: flat external call targets
+            Set<String> seen = new LinkedHashSet<String>();
+            for (JclElement e : all) {
+                if (e.getType() == JclElementType.CALL_STMT) {
+                    String target = e.getParameter("TARGET");
+                    if (target != null && seen.add(target.toUpperCase())) {
+                        String lbl = isSysFunc(target, sysFuncs) ? "\uD83C\uDFE2 " + escMm(target) : escMm(target);
+                        sb.append("    ").append(lbl).append("\n");
+                    }
+                }
+            }
+        }
+
+        return sb.toString();
+    }
+
+    private static String convertNaturalMindmap(JclOutlineModel model, CallTreeNode callTree, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("mindmap\n");
+        List<JclElement> all = model.getElements();
+
+        // Root = program name
+        String progName = model.getSourceName() != null ? model.getSourceName() : "Natural";
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.NAT_PROGRAM
+                    || e.getType() == JclElementType.NAT_SUBPROGRAM
+                    || e.getType() == JclElementType.NAT_FUNCTION) {
+                if (e.getName() != null) progName = e.getName();
+                break;
+            }
+        }
+        sb.append("  root((").append(escMm(progName)).append("))\n");
+
+        if (callTree != null && !callTree.getChildren().isEmpty()) {
+            appendCallTreeChildren(sb, callTree, 4, sysFuncs);
+        } else {
+            // Fallback: flat external call targets
+            Set<String> seen = new LinkedHashSet<String>();
+            for (JclElement call : model.getNaturalCalls()) {
+                String target = call.getParameter("TARGET");
+                if (target == null) target = call.getName();
+                if (target != null && seen.add(target.toUpperCase())) {
+                    String lbl = isSysFunc(target, sysFuncs) ? "\uD83C\uDFE2 " + escMm(target) : escMm(target);
+                    sb.append("    ").append(lbl).append("\n");
+                }
+            }
+        }
+
+        return sb.toString();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  Call Tree → Mindmap helper
+    // ══════════════════════════════════════════════════════════
+
+    /**
+     * Recursively append call tree children as mindmap indentation levels.
+     * Each child represents an external call to another file; its children
+     * are that file's own external calls — forming a pure call graph.
+     * System functions are prefixed with 🏢.
+     *
+     * @param sb         output builder
+     * @param parent     parent call tree node
+     * @param baseIndent starting indentation (number of spaces)
+     * @param sysFuncs   set of known system function names (uppercase)
+     */
+    private static void appendCallTreeChildren(StringBuilder sb, CallTreeNode parent,
+                                                int baseIndent, Set<String> sysFuncs) {
+        int maxIndent = 20;
+        String indent = spaces(Math.min(baseIndent, maxIndent));
+
+        for (CallTreeNode child : parent.getChildren()) {
+            String name = child.getName();
+            String label = escMm(name);
+            // Prefix system functions with 🏢
+            if (isSysFunc(name, sysFuncs)) {
+                label = "\uD83C\uDFE2 " + label;
+            }
+            if (child.isRecursive()) {
+                label = label + " \uD83D\uDD04"; // 🔄
+            }
+            sb.append(indent).append(label).append("\n");
+
+            // Recurse: show external calls of that file as sub-branches
+            if (!child.isRecursive() && !child.getChildren().isEmpty()) {
+                appendCallTreeChildren(sb, child, baseIndent + 2, sysFuncs);
+            }
+        }
+    }
+
+    private static String spaces(int n) {
+        StringBuilder sb = new StringBuilder(n);
+        for (int i = 0; i < n; i++) sb.append(' ');
+        return sb.toString();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //  Helpers
+    // ══════════════════════════════════════════════════════════
+
+    /** Make a Mermaid-safe ID (alphanumeric + underscore). */
+    private static String safeId(String base, Set<String> usedIds) {
+        String normalized = normalizeId(base);
+        String id = normalized;
+        int counter = 2;
+        while (usedIds.contains(id)) {
+            id = normalized + "_" + counter++;
+        }
+        usedIds.add(id);
+        return id;
+    }
+
+    private static String normalizeId(String s) {
+        if (s == null) return "X";
+        return s.replaceAll("[^a-zA-Z0-9_]", "_").replaceAll("_+", "_");
+    }
+
+    /** Lookup an already-created ID by prefix match. */
+    private static String findIdForName(String prefix, Set<String> usedIds) {
+        String normalized = normalizeId(prefix);
+        if (usedIds.contains(normalized)) return normalized;
+        // Try numbered variants
+        for (int i = 2; i < 100; i++) {
+            String cand = normalized + "_" + i;
+            if (usedIds.contains(cand)) return cand;
+        }
+        return null;
+    }
+
+    /** Find the enclosing paragraph name for a PERFORM/CALL element. */
+    private static String findParentParagraph(JclElement target, List<JclElement> all) {
+        int targetLine = target.getLineNumber();
+        String best = null;
+        int bestLine = -1;
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.PARAGRAPH
+                    && e.getLineNumber() <= targetLine
+                    && e.getLineNumber() > bestLine) {
+                best = e.getName();
+                bestLine = e.getLineNumber();
+            }
+        }
+        return best;
+    }
+
+    /** Escape text for Mermaid labels. */
+    private static String esc(String s) {
+        if (s == null) return "";
+        return s.replace("\"", "#quot;").replace("\n", "\\n");
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) return "";
+        return s.length() > max ? s.substring(0, max - 3) + "..." : s;
+    }
+
+    /** Make a sequence-diagram-safe participant name (no spaces, no special chars). */
+    private static String safeParticipant(String name) {
+        if (name == null) return "X";
+        return name.replaceAll("[^a-zA-Z0-9_]", "_").replaceAll("_+", "_");
+    }
+
+    /** Escape text for Mermaid mindmap nodes (no parentheses or special chars). */
+    private static String escMm(String s) {
+        if (s == null) return "?";
+        return s.replace("(", "").replace(")", "").replace("[", "").replace("]", "")
+                .replace("{", "").replace("}", "").replace("\"", "").replace("\n", " ");
+    }
+
+    /** Join a list of strings with a separator (Java 8 compatible). */
+    private static String join(List<String> items, String sep) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < items.size(); i++) {
+            if (i > 0) sb.append(sep);
+            sb.append(items.get(i));
+        }
+        return sb.toString();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  ER DIAGRAM
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Ergänzt das ER-Diagramm der aufgelösten DDMs um Platzhalter für VIEW-OF-Verweise, deren DDM nicht aufzulösen war
+     * (sonst verschwänden sie, sobald irgendein anderes DDM gefunden wird), samt „gemeinsam genutzt“-Beziehung.
+     */
+    private static String withUnresolvedViews(String rendered,
+            List<com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition> ddmDefs,
+            JclOutlineModel model) {
+        if (rendered == null || model == null) {
+            return rendered;
+        }
+        Set<String> resolved = new LinkedHashSet<String>();
+        for (com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition d : ddmDefs) {
+            if (d.getName() != null) {
+                resolved.add(d.getName().toUpperCase());
+            }
+        }
+        Map<String, List<String>> missing = new LinkedHashMap<String, List<String>>();
+        for (JclElement elem : model.getElements()) {
+            if (elem.getType() != JclElementType.NAT_DATA_VIEW) {
+                continue;
+            }
+            String ddmRef = elem.getParameter("OF");
+            if (ddmRef == null || ddmRef.isEmpty() || resolved.contains(ddmRef.toUpperCase())) {
+                continue;
+            }
+            List<String> views = missing.get(ddmRef.toUpperCase());
+            if (views == null) {
+                views = new ArrayList<String>();
+                missing.put(ddmRef.toUpperCase(), views);
+            }
+            if (elem.getName() != null && !elem.getName().isEmpty()) {
+                views.add(elem.getName().toUpperCase());
+            }
+        }
+        if (missing.isEmpty()) {
+            return rendered;
+        }
+        StringBuilder sb = new StringBuilder(rendered);
+        if (sb.length() > 0 && sb.charAt(sb.length() - 1) != '\n') {
+            sb.append('\n');
+        }
+        for (Map.Entry<String, List<String>> entry : missing.entrySet()) {
+            String entity = sanitizeEntityName(entry.getKey());
+            sb.append("    ").append(entity).append(" {\n");
+            for (String view : entry.getValue()) {
+                sb.append("        string ").append(sanitizeAttrName(view)).append(" \"VIEW\"\n");
+            }
+            sb.append("    }\n\n");
+            for (String other : resolved) {
+                sb.append("    ").append(sanitizeEntityName(other)).append(" }o--o{ ").append(entity)
+                        .append(" : \"gemeinsam genutzt\"\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Convert an outline model (Natural) to an ER diagram by extracting VIEW references
+     * and rendering available DDM definitions as entities.
+     * If ddmDefs are provided, render them. Otherwise extract VIEW OF references and
+     * produce a simple entity-relationship skeleton.
+     */
+    private static String convertErDiagram(JclOutlineModel model,
+                                            List<com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition> ddmDefs) {
+        // If we have resolved DDM definitions, render them
+        if (ddmDefs != null && !ddmDefs.isEmpty()) {
+            return withUnresolvedViews(convertDdmDefsToErDiagram(ddmDefs, model), ddmDefs, model);
+        }
+
+        // Fallback: extract VIEW OF references from the Natural program
+        // and generate a skeleton ER diagram with entity names only
+        if (model.getLanguage() != JclOutlineModel.Language.NATURAL) return null;
+
+        List<String> ddmNames = new ArrayList<String>();
+        Map<String, List<String>> viewToDdm = new LinkedHashMap<String, List<String>>();
+
+        for (JclElement elem : model.getElements()) {
+            if (elem.getType() == JclElementType.NAT_DATA_VIEW) {
+                String ddmRef = elem.getParameter("OF");
+                String viewName = elem.getName();
+                if (ddmRef != null && !ddmRef.isEmpty()) {
+                    String upper = ddmRef.toUpperCase();
+                    if (!ddmNames.contains(upper)) {
+                        ddmNames.add(upper);
+                    }
+                    List<String> views = viewToDdm.get(upper);
+                    if (views == null) {
+                        views = new ArrayList<String>();
+                        viewToDdm.put(upper, views);
+                    }
+                    if (viewName != null && !viewName.isEmpty()) {
+                        views.add(viewName.toUpperCase());
+                    }
+                }
+            }
+        }
+
+        if (ddmNames.isEmpty()) return null;
+
+        // Also collect DB access references (READ/FIND with view as FILE parameter)
+        Map<String, Set<String>> ddmOperations = new LinkedHashMap<String, Set<String>>();
+        for (JclElement elem : model.getElements()) {
+            JclElementType et = elem.getType();
+            String opName = null;
+            if (et == JclElementType.NAT_READ) opName = "READ";
+            else if (et == JclElementType.NAT_FIND) opName = "FIND";
+            else if (et == JclElementType.NAT_HISTOGRAM) opName = "HISTOGRAM";
+            else if (et == JclElementType.NAT_GET) opName = "GET";
+            else if (et == JclElementType.NAT_STORE) opName = "STORE";
+            else if (et == JclElementType.NAT_UPDATE) opName = "UPDATE";
+            else if (et == JclElementType.NAT_DELETE) opName = "DELETE";
+            if (opName != null) {
+                String file = elem.getParameter("FILE");
+                if (file != null) {
+                    String upper = file.toUpperCase();
+                    // Resolve view name to DDM name
+                    for (Map.Entry<String, List<String>> entry : viewToDdm.entrySet()) {
+                        if (entry.getValue().contains(upper) || entry.getKey().equals(upper)) {
+                            Set<String> ops = ddmOperations.get(entry.getKey());
+                            if (ops == null) {
+                                ops = new LinkedHashSet<String>();
+                                ddmOperations.put(entry.getKey(), ops);
+                            }
+                            ops.add(opName);
+                        }
+                    }
+                }
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("erDiagram\n");
+
+        // Render entities as placeholders (no field details — DDM source not available)
+        for (String ddmName : ddmNames) {
+            String entity = sanitizeEntityName(ddmName);
+            sb.append("    ").append(entity).append(" {\n");
+            // Show views that reference this DDM
+            List<String> views = viewToDdm.get(ddmName);
+            if (views != null) {
+                for (String view : views) {
+                    sb.append("        string ").append(sanitizeAttrName(view)).append(" \"VIEW\"\n");
+                }
+            }
+            // Show DB operations performed on this DDM
+            Set<String> ops = ddmOperations.get(ddmName);
+            if (ops != null) {
+                for (String op : ops) {
+                    sb.append("        string ").append(op).append(" \"DB-Op\"\n");
+                }
+            }
+            sb.append("    }\n\n");
+        }
+
+        // Relationships: if multiple DDMs are referenced, show co-usage
+        if (ddmNames.size() > 1) {
+            Set<String> emitted = new HashSet<String>();
+            for (int i = 0; i < ddmNames.size(); i++) {
+                for (int j = i + 1; j < ddmNames.size(); j++) {
+                    String a = sanitizeEntityName(ddmNames.get(i));
+                    String b = sanitizeEntityName(ddmNames.get(j));
+                    String key = a + "|" + b;
+                    if (!emitted.contains(key)) {
+                        sb.append("    ").append(a).append(" }o--o{ ").append(b)
+                                .append(" : \"").append(esc(model.getSourceName())).append("\"\n");
+                        emitted.add(key);
+                    }
+                }
+            }
+        }
+
+        return sb.toString().trim();
+    }
+
+    /** Make a Mermaid ER entity name safe (no dashes, no spaces). */
+    private static String sanitizeEntityName(String name) {
+        if (name == null) return "UNKNOWN";
+        // Mermaid ER allows underscores but not dashes in entity names
+        return name.replaceAll("[^a-zA-Z0-9]", "_").replaceAll("_+", "_");
+    }
+
+    /** Make a Mermaid ER attribute name safe. */
+    private static String sanitizeAttrName(String name) {
+        if (name == null) return "unknown";
+        return name.replaceAll("[^a-zA-Z0-9_]", "_").replaceAll("_+", "_");
+    }
+
+    // =========================================================
+    //  COLLAPSED CONVERTERS - summary-only diagrams for large files
+    // =========================================================
+
+    private static String convertStructureCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
+        switch (model.getLanguage()) {
+            case JCL:     return convertJclCollapsed(model, sysFuncs);
+            case COBOL:   return convertCobolCollapsed(model, sysFuncs);
+            case NATURAL: return convertNaturalCollapsed(model, sysFuncs);
+            default:      return convertJclCollapsed(model, sysFuncs);
+        }
+    }
+
+    private static String convertJclCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+        List<JclElement> jobs = model.getJobs();
+        List<JclElement> steps = model.getSteps();
+        if (jobs.isEmpty() && steps.isEmpty()) {
+            String rootId = safeId("ROOT", usedIds);
+            sb.append("    ").append(rootId).append("([\"JCL\\n")
+              .append(model.getElementCount()).append(" Elemente\"])\n");
+            return sb.toString();
+        }
+        String prevId = null;
+        for (JclElement job : jobs) {
+            String jobId = safeId("JOB_" + job.getName(), usedIds);
+            sb.append("    ").append(jobId).append("([\"").append(esc(job.getName())).append("\"])\n");
+            prevId = jobId;
+        }
+        for (JclElement step : steps) {
+            String pgm = step.getParameter("PGM");
+            String proc = step.getParameter("PROC");
+            String label = step.getName() != null ? step.getName() : "(Step)";
+            String detail = pgm != null ? "PGM=" + pgm : (proc != null ? "PROC=" + proc : "");
+            int ddCount = 0;
+            for (JclElement child : step.getChildren()) {
+                if (child.getType() == JclElementType.DD) ddCount++;
+            }
+            String stepId = safeId("STEP_" + label, usedIds);
+            sb.append("    ").append(stepId).append("[\"").append(esc(label));
+            if (!detail.isEmpty()) sb.append("\\n").append(esc(detail));
+            if (ddCount > 0) sb.append("\\n\uD83D\uDCC1 ").append(ddCount).append(" DD");
+            sb.append("\"]\n");
+            if (isSysFunc(pgm, sysFuncs)) styleSysFunc(sb, stepId);
+            if (prevId != null) sb.append("    ").append(prevId).append(" --> ").append(stepId).append("\n");
+            prevId = stepId;
+        }
+        return sb.toString();
+    }
+
+    private static String convertCobolCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+        List<JclElement> all = model.getElements();
+        String programId = null;
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.PROGRAM_ID) { programId = e.getName(); break; }
+        }
+        String rootId = safeId("PROG", usedIds);
+        sb.append("    ").append(rootId).append("([\"")
+          .append(esc(programId != null ? programId : "PROGRAM")).append("\"])\n");
+        for (JclElement div : model.getDivisions()) {
+            String divId = safeId("DIV_" + div.getName(), usedIds);
+            sb.append("    ").append(divId).append("[\"").append(esc(div.getName())).append("\"]\n");
+            sb.append("    ").append(rootId).append(" --> ").append(divId).append("\n");
+        }
+        int paraCount = model.getParagraphs().size();
+        int dataCount = model.getDataItems().size();
+        int callCount = 0, performCount = 0;
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.CALL_STMT) callCount++;
+            if (e.getType() == JclElementType.PERFORM_STMT) performCount++;
+        }
+        if (paraCount > 0) {
+            String id = safeId("PARAS", usedIds);
+            sb.append("    ").append(id).append("[\"").append(paraCount).append(" Paragraphen\"]\n");
+            sb.append("    ").append(rootId).append(" --> ").append(id).append("\n");
+        }
+        if (dataCount > 0) {
+            String id = safeId("DATA", usedIds);
+            sb.append("    ").append(id).append("[\"").append(dataCount).append(" Datenfelder\"]\n");
+            sb.append("    ").append(rootId).append(" --> ").append(id).append("\n");
+        }
+        if (callCount > 0) {
+            String id = safeId("CALLS", usedIds);
+            sb.append("    ").append(id).append(">\"").append(callCount).append(" CALL\"]\n");
+            sb.append("    ").append(rootId).append(" -.-> ").append(id).append("\n");
+        }
+        if (performCount > 0) {
+            String id = safeId("PERFS", usedIds);
+            sb.append("    ").append(id).append(">\"").append(performCount).append(" PERFORM\"]\n");
+            sb.append("    ").append(rootId).append(" -.-> ").append(id).append("\n");
+        }
+        return sb.toString();
+    }
+
+    private static String convertNaturalCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+        List<JclElement> all = model.getElements();
+        String progName = model.getSourceName() != null ? model.getSourceName() : "PROGRAM";
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.NAT_PROGRAM || e.getType() == JclElementType.NAT_SUBPROGRAM
+                    || e.getType() == JclElementType.NAT_FUNCTION) {
+                if (e.getName() != null) progName = e.getName();
+                break;
+            }
+        }
+        String rootId = safeId("PROG", usedIds);
+        sb.append("    ").append(rootId).append("([\"").append(esc(progName)).append("\"])\n");
+
+        // DEFINE DATA block
+        boolean hasData = false;
+        List<String> dataBlocks = new ArrayList<String>();
+        for (JclElement e : all) {
+            if (e.getType() == JclElementType.NAT_DEFINE_DATA) hasData = true;
+            if (e.getType() == JclElementType.NAT_LOCAL) dataBlocks.add("LOCAL");
+            if (e.getType() == JclElementType.NAT_PARAMETER) dataBlocks.add("PARAMETER");
+            if (e.getType() == JclElementType.NAT_GLOBAL) dataBlocks.add("GLOBAL");
+            if (e.getType() == JclElementType.NAT_INDEPENDENT) dataBlocks.add("INDEPENDENT");
+        }
+        if (hasData) {
+            String dataId = safeId("DATA", usedIds);
+            String blockInfo = dataBlocks.isEmpty() ? "" : "\\n(" + join(dataBlocks, ", ") + ")";
+            sb.append("    ").append(dataId).append("[\"DEFINE DATA").append(blockInfo).append("\"]\n");
+            sb.append("    ").append(rootId).append(" --> ").append(dataId).append("\n");
+        }
+
+        // Subroutines — show individual names (max 8), then count for rest
+        List<JclElement> subs = model.getSubroutines();
+        if (!subs.isEmpty()) {
+            if (subs.size() <= 8) {
+                for (JclElement sub : subs) {
+                    String subId = safeId("SUB_" + sub.getName(), usedIds);
+                    sb.append("    ").append(subId).append("{{\"")
+                      .append(esc(sub.getName())).append("\"}}\n");
+                    sb.append("    ").append(rootId).append(" --> ").append(subId).append("\n");
+                }
+            } else {
+                // Show first 5 + count for rest
+                for (int i = 0; i < 5; i++) {
+                    String subId = safeId("SUB_" + subs.get(i).getName(), usedIds);
+                    sb.append("    ").append(subId).append("{{\"")
+                      .append(esc(subs.get(i).getName())).append("\"}}\n");
+                    sb.append("    ").append(rootId).append(" --> ").append(subId).append("\n");
+                }
+                String moreId = safeId("SUBS_MORE", usedIds);
+                sb.append("    ").append(moreId).append("{{\"...")
+                  .append(subs.size() - 5).append(" weitere\"}}\n");
+                sb.append("    ").append(rootId).append(" --> ").append(moreId).append("\n");
+            }
+        }
+
+        // External calls — show unique targets with call type
+        List<JclElement> calls = model.getNaturalCalls();
+        if (!calls.isEmpty()) {
+            // Collect unique external targets (CALLNAT, CALL, FETCH — not PERFORMs)
+            Set<String> extTargets = new LinkedHashSet<String>();
+            for (JclElement c : calls) {
+                JclElementType ct = c.getType();
+                if (ct == JclElementType.NAT_CALLNAT || ct == JclElementType.NAT_CALL
+                        || ct == JclElementType.NAT_FETCH) {
+                    String target = c.getParameter("TARGET");
+                    if (target == null) target = c.getName();
+                    if (target != null) extTargets.add(target);
+                }
+            }
+            // Show external targets individually (max 6)
+            int shown = 0;
+            for (String target : extTargets) {
+                if (shown >= 6) {
+                    String moreId = safeId("EXT_MORE", usedIds);
+                    sb.append("    ").append(moreId).append(">\"...")
+                      .append(extTargets.size() - 6).append(" weitere\"]\n");
+                    sb.append("    ").append(rootId).append(" -.-> ").append(moreId).append("\n");
+                    break;
+                }
+                String callId = safeId("EXT_" + target, usedIds);
+                sb.append("    ").append(callId).append(">\"").append(esc(target)).append("\"]\n");
+                sb.append("    ").append(rootId).append(" -.-> ").append(callId).append("\n");
+                if (isSysFunc(target, sysFuncs)) styleSysFunc(sb, callId);
+                shown++;
+            }
+            // Show frequent PERFORM summary
+            Map<String, Integer> performFreq = analyzePerformFrequency(all);
+            Set<String> frequentTargets = findFrequentTargets(performFreq, FREQ_THRESHOLD);
+            if (!frequentTargets.isEmpty()) {
+                StringBuilder perfLabel = new StringBuilder("\uD83D\uDCE6 H\u00E4ufige PERFORMs\\n");
+                int i = 0;
+                for (String ft : frequentTargets) {
+                    if (i > 0) perfLabel.append("\\n");
+                    Integer cnt = performFreq.get(ft);
+                    perfLabel.append(ft).append(" \u00D7").append(cnt != null ? cnt : "?");
+                    if (++i >= 4) {
+                        if (frequentTargets.size() > 4) perfLabel.append("\\n...");
+                        break;
+                    }
+                }
+                String perfId = safeId("FREQ_PERF", usedIds);
+                sb.append("    ").append(perfId).append("[\"").append(perfLabel).append("\"]\n");
+                sb.append("    ").append(rootId).append(" --> ").append(perfId).append("\n");
+                sb.append("    style ").append(perfId)
+                  .append(" fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5\n");
+            }
+        }
+
+        // DB operations — show unique files
+        List<JclElement> dbOps = model.getNaturalDbOps();
+        if (!dbOps.isEmpty()) {
+            Set<String> dbFiles = new LinkedHashSet<String>();
+            for (JclElement db : dbOps) {
+                String file = db.getParameter("FILE");
+                if (file == null) file = db.getName();
+                if (file != null) dbFiles.add(file);
+            }
+            if (dbFiles.size() <= 4) {
+                for (String file : dbFiles) {
+                    String dbId = safeId("DB_" + file, usedIds);
+                    sb.append("    ").append(dbId).append("[(\"").append(esc(file)).append("\")]\n");
+                    sb.append("    ").append(rootId).append(" ==> ").append(dbId).append("\n");
+                }
+            } else {
+                String dbId = safeId("DB", usedIds);
+                sb.append("    ").append(dbId).append("[(\"").append(dbOps.size())
+                  .append(" DB-Operationen\\n(")
+                  .append(dbFiles.size()).append(" Dateien)\")]\n");
+                sb.append("    ").append(rootId).append(" ==> ").append(dbId).append("\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    // ─── Heuristic collapsing helpers ─────────────────────────────
+
+    /** Minimum number of calls for a PERFORM target to be considered "frequent". */
+    private static final int FREQ_THRESHOLD = 3;
+
+    /**
+     * Analyse PERFORM target frequencies across all elements.
+     * Returns a map of uppercase target name → call count.
+     */
+    private static Map<String, Integer> analyzePerformFrequency(List<JclElement> elements) {
+        Map<String, Integer> freq = new LinkedHashMap<String, Integer>();
+        for (JclElement e : elements) {
+            String target = getPerformTarget(e);
+            if (target != null) {
+                String key = target.toUpperCase();
+                Integer count = freq.get(key);
+                freq.put(key, count != null ? count + 1 : 1);
+            }
+        }
+        return freq;
+    }
+
+    /**
+     * Return the set of PERFORM targets that are called at least {@code threshold} times.
+     */
+    private static Set<String> findFrequentTargets(Map<String, Integer> freq, int threshold) {
+        Set<String> result = new HashSet<String>();
+        for (Map.Entry<String, Integer> entry : freq.entrySet()) {
+            if (entry.getValue() >= threshold) {
+                result.add(entry.getKey());
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Get the PERFORM target name from a PERFORM element, or {@code null}
+     * if the element is not a PERFORM.
+     */
+    private static String getPerformTarget(JclElement e) {
+        JclElementType t = e.getType();
+        if (t == JclElementType.NAT_PERFORM || t == JclElementType.PERFORM_STMT) {
+            String target = e.getParameter("TARGET");
+            if (target == null) target = e.getName();
+            return target;
+        }
+        return null;
+    }
+
+    /**
+     * Whether the element represents a control-flow structure that should
+     * always be shown as a separate node in the collapsed flowchart.
+     */
+    private static boolean isStructuralFlowElement(JclElement e) {
+        JclElementType t = e.getType();
+        return t == JclElementType.NAT_IF_BLOCK
+                || t == JclElementType.NAT_DECIDE
+                || t == JclElementType.NAT_FOR
+                || t == JclElementType.NAT_REPEAT
+                || t == JclElementType.NAT_ON_ERROR
+                || t == JclElementType.NAT_INLINE_SUBROUTINE
+                || t == JclElementType.NAT_SUBROUTINE
+                || t == JclElementType.NAT_READ
+                || t == JclElementType.NAT_FIND
+                || t == JclElementType.NAT_HISTOGRAM
+                || t == JclElementType.IF
+                || t == JclElementType.PARAGRAPH
+                || t == JclElementType.EXEC;
+    }
+
+    /**
+     * Whether the element is "important" and should be shown as a side-branch
+     * node even in collapsed mode (external calls, infrequent PERFORMs).
+     */
+    private static boolean isImportantFlowElement(JclElement e, Set<String> frequentTargets) {
+        JclElementType t = e.getType();
+        // External calls always important
+        if (t == JclElementType.NAT_CALLNAT || t == JclElementType.NAT_CALL
+                || t == JclElementType.NAT_FETCH || t == JclElementType.CALL_STMT) return true;
+        // Infrequent PERFORMs
+        String target = getPerformTarget(e);
+        if (target != null && !frequentTargets.contains(target.toUpperCase())) return true;
+        return false;
+    }
+
+    /**
+     * Whether the element should be completely skipped in the collapsed flowchart
+     * (data definitions, program headers, END markers, comments, etc.).
+     */
+    private static boolean isSkippedInCollapsedFlow(JclElement e) {
+        JclElementType t = e.getType();
+        // Natural headers & data
+        if (t == JclElementType.NAT_PROGRAM || t == JclElementType.NAT_SUBPROGRAM
+                || t == JclElementType.NAT_FUNCTION
+                || t == JclElementType.NAT_DEFINE_DATA || t == JclElementType.NAT_LOCAL
+                || t == JclElementType.NAT_PARAMETER || t == JclElementType.NAT_GLOBAL
+                || t == JclElementType.NAT_INDEPENDENT
+                || t == JclElementType.NAT_DATA_VIEW || t == JclElementType.NAT_DATA_VAR
+                || t == JclElementType.NAT_DATA_REDEFINE || t == JclElementType.NAT_DATA_CONST
+                || t == JclElementType.NAT_END
+                || t == JclElementType.NAT_MAP || t == JclElementType.NAT_HELPROUTINE) return true;
+        // COBOL headers & data
+        if (t == JclElementType.PROGRAM_ID || t == JclElementType.DIVISION
+                || t == JclElementType.SECTION
+                || t == JclElementType.WORKING_STORAGE || t == JclElementType.LINKAGE_SECTION
+                || t == JclElementType.FILE_SECTION || t == JclElementType.FILE_DESCRIPTOR
+                || t == JclElementType.SCREEN_SECTION || t == JclElementType.PROCEDURE_DIVISION
+                || t == JclElementType.DATA_ITEM || t == JclElementType.LEVEL_01
+                || t == JclElementType.LEVEL_77 || t == JclElementType.LEVEL_88
+                || t == JclElementType.COPY_STMT) return true;
+        // JCL structural markers handled elsewhere
+        if (t == JclElementType.JOB || t == JclElementType.ELSE || t == JclElementType.ENDIF
+                || t == JclElementType.PROC || t == JclElementType.PEND
+                || t == JclElementType.SET || t == JclElementType.JCLLIB
+                || t == JclElementType.OUTPUT) return true;
+        // Comments & DDM
+        if (t == JclElementType.COMMENT || t.isDdm()) return true;
+        return false;
+    }
+
+    /**
+     * Emit a single structural or important element as a Mermaid flowchart node.
+     *
+     * @return the new prevId for the main flow (unchanged for side-branch elements)
+     */
+    private static String emitCollapsedFlowElement(StringBuilder sb, JclElement e,
+                                                    Set<String> usedIds, String prevId,
+                                                    Set<String> sysFuncs) {
+        JclElementType t = e.getType();
+
+        // ── Branches: IF, DECIDE → diamond ──
+        if (t == JclElementType.NAT_IF_BLOCK || t == JclElementType.NAT_DECIDE
+                || t == JclElementType.IF) {
+            String label = e.getName() != null ? e.getName() : t.getDisplayName();
+            String id = safeId("COND_" + label, usedIds);
+            sb.append("    ").append(id).append("{\"").append(esc(truncate(label, 50))).append("\"}\n");
+            sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+            return id;
+        }
+
+        // ── Loops: FOR, REPEAT → hexagon with self-loop ──
+        if (t == JclElementType.NAT_FOR || t == JclElementType.NAT_REPEAT) {
+            String label = e.getName() != null ? e.getName() : t.getDisplayName();
+            String id = safeId("LOOP_" + label, usedIds);
+            sb.append("    ").append(id).append("{{\"").append(esc(truncate(label, 50))).append("\"}}\n");
+            sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+            sb.append("    ").append(id).append(" -.-> ").append(id).append("\n");
+            return id;
+        }
+
+        // ── DB loops: READ, FIND, HISTOGRAM → cylinder ──
+        if (t == JclElementType.NAT_READ || t == JclElementType.NAT_FIND
+                || t == JclElementType.NAT_HISTOGRAM) {
+            String file = e.getParameter("FILE");
+            String label = t.getDisplayName() + (file != null ? " " + file : "");
+            String id = safeId("DB_" + label, usedIds);
+            sb.append("    ").append(id).append("[(\"").append(esc(label)).append("\")]\n");
+            sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+            sb.append("    style ").append(id).append(" fill:#e3f2fd,stroke:#1565c0,stroke-width:2px\n");
+            return id;
+        }
+
+        // ── External calls → asymmetric shape (side branch, prevId unchanged) ──
+        if (t == JclElementType.NAT_CALLNAT || t == JclElementType.NAT_CALL
+                || t == JclElementType.NAT_FETCH || t == JclElementType.CALL_STMT) {
+            String target = e.getParameter("TARGET");
+            if (target == null) target = e.getName();
+            if (target == null) return prevId;
+            String id = safeId("EXT_" + target, usedIds);
+            sb.append("    ").append(id).append(">\"").append(esc(target))
+              .append("\\n(").append(esc(t.getDisplayName())).append(")\"]\n");
+            sb.append("    ").append(prevId).append(" ==>|").append(t.getDisplayName())
+              .append("| ").append(id).append("\n");
+            if (isSysFunc(target, sysFuncs)) {
+                styleSysFunc(sb, id);
+            } else {
+                sb.append("    style ").append(id).append(" fill:#ffe0b2,stroke:#e65100,stroke-width:2px\n");
+            }
+            return prevId; // external call returns, main flow continues
+        }
+
+        // ── Subroutine definitions → hexagon ──
+        if (t == JclElementType.NAT_INLINE_SUBROUTINE || t == JclElementType.NAT_SUBROUTINE) {
+            String id = safeId("SUB_" + e.getName(), usedIds);
+            sb.append("    ").append(id).append("{{\"").append(esc(e.getName())).append("\"}}\n");
+            sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+            return id;
+        }
+
+        // ── ON ERROR → styled diamond ──
+        if (t == JclElementType.NAT_ON_ERROR) {
+            String id = safeId("ONERR", usedIds);
+            sb.append("    ").append(id).append("{\"ON ERROR\"}\n");
+            sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+            sb.append("    style ").append(id).append(" fill:#ffcdd2,stroke:#c62828,stroke-width:2px\n");
+            return id;
+        }
+
+        // ── Infrequent PERFORM → dashed arrow (side branch, prevId unchanged) ──
+        if (t == JclElementType.NAT_PERFORM || t == JclElementType.PERFORM_STMT) {
+            String target = getPerformTarget(e);
+            if (target == null) return prevId;
+            String perfTarget = findIdForName("SUB_" + target, usedIds);
+            if (perfTarget == null) {
+                perfTarget = safeId("SUB_" + target, usedIds);
+                sb.append("    ").append(perfTarget).append("{{\"").append(esc(target)).append("\"}}\n");
+            }
+            sb.append("    ").append(prevId).append(" -.->|PERFORM| ").append(perfTarget).append("\n");
+            return prevId; // PERFORM returns, main flow continues
+        }
+
+        // ── COBOL paragraph → box ──
+        if (t == JclElementType.PARAGRAPH) {
+            String id = safeId("PARA_" + e.getName(), usedIds);
+            sb.append("    ").append(id).append("[\"").append(esc(e.getName())).append("\"]\n");
+            sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+            return id;
+        }
+
+        // ── JCL EXEC step → box with PGM/PROC detail ──
+        if (t == JclElementType.EXEC) {
+            String label = e.getName() != null ? e.getName() : "(Step)";
+            String pgm = e.getParameter("PGM");
+            String proc = e.getParameter("PROC");
+            String id = safeId("STEP_" + label, usedIds);
+            sb.append("    ").append(id).append("[\"").append(esc(label));
+            if (pgm != null) sb.append("\\nPGM=").append(esc(pgm));
+            else if (proc != null) sb.append("\\nPROC=").append(esc(proc));
+            sb.append("\"]\n");
+            if (isSysFunc(pgm, sysFuncs)) styleSysFunc(sb, id);
+            sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+            return id;
+        }
+
+        // ── Default: box ──
+        String label = e.getName() != null ? e.getName() : t.getDisplayName();
+        String id = safeId("N_" + label, usedIds);
+        sb.append("    ").append(id).append("[\"").append(esc(label)).append("\"]\n");
+        sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+        return id;
+    }
+
+    /**
+     * Emit a collapsed "📦" summary node for a run of detail elements.
+     * <p>
+     * The node label lists which frequent subroutines are called within,
+     * how many times, and the total number of collapsed statements.
+     * A Mermaid comment is added with raw-text hints for future AI summarisation.
+     *
+     * @return the ID of the emitted node (becomes the new prevId)
+     */
+    private static String emitCollapsedDetailBlock(StringBuilder sb,
+                                                    List<JclElement> details,
+                                                    Set<String> frequentTargets,
+                                                    Set<String> usedIds,
+                                                    String prevId) {
+        if (details.isEmpty()) return prevId;
+
+        // Collect frequent subroutine calls in this block
+        Map<String, Integer> localFreqCalls = new LinkedHashMap<String, Integer>();
+        for (JclElement e : details) {
+            String target = getPerformTarget(e);
+            if (target != null) {
+                String key = target.toUpperCase();
+                if (frequentTargets.contains(key)) {
+                    Integer c = localFreqCalls.get(key);
+                    localFreqCalls.put(key, c != null ? c + 1 : 1);
+                }
+            }
+        }
+
+        // Build label
+        StringBuilder label = new StringBuilder();
+        label.append("\uD83D\uDCE6 "); // 📦
+        label.append(details.size());
+        label.append(details.size() == 1 ? " Anweisung" : " Anweisungen");
+
+        if (!localFreqCalls.isEmpty()) {
+            label.append("\\n");
+            List<String> parts = new ArrayList<String>();
+            for (Map.Entry<String, Integer> entry : localFreqCalls.entrySet()) {
+                if (entry.getValue() > 1) {
+                    parts.add(entry.getKey() + " \u00D7" + entry.getValue());
+                } else {
+                    parts.add(entry.getKey());
+                }
+            }
+            // Limit to first 3 frequent calls to keep label readable
+            int shown = Math.min(parts.size(), 3);
+            for (int i = 0; i < shown; i++) {
+                if (i > 0) label.append("\\n");
+                label.append(parts.get(i));
+            }
+            if (parts.size() > shown) {
+                label.append("\\n+").append(parts.size() - shown).append(" weitere");
+            }
+        }
+
+        // ── AI-Summarizer (optional) ────────────────────────────────
+        // Wenn ein dedizierter Summarizer aktiv ist UND die UML-Zusammenfassung
+        // freigeschaltet ist, ersetzen wir das heuristische Label durch eine
+        // inhaltliche Kurzbeschreibung. Schlägt der Aufruf fehl (Timeout, Service
+        // nicht erreichbar), liefert SummarizerService den Fallback (=heuristisches
+        // Label) zurück, sodass das Diagramm immer rendert.
+        String finalLabel = trySummarizeDetails(details, label.toString());
+
+        String id = safeId("BLOCK", usedIds);
+        sb.append("    ").append(id).append("[\"").append(finalLabel).append("\"]\n");
+        sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+        sb.append("    style ").append(id)
+          .append(" fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5\n");
+
+        // AI summarisation hook: raw text of collapsed elements as Mermaid comment
+        sb.append("    %% AI-SUMMARY-HINT: ");
+        int hintLen = 0;
+        for (JclElement e : details) {
+            if (e.getRawText() != null && hintLen < 400) {
+                String raw = e.getRawText().replace("\n", " ").replace("\r", "").trim();
+                if (raw.length() > 80) raw = raw.substring(0, 80);
+                sb.append(raw).append("; ");
+                hintLen += raw.length();
+            }
+        }
+        sb.append("\n");
+
+        return id;
+    }
+
+    // ─── Collapsed flowchart (heuristic-based) ───────────────────
+
+    /**
+     * Generate a collapsed flowchart that preserves the structural flow
+     * of the program in document order.
+     * <p>
+     * Strategy:
+     * <ol>
+     *   <li>Analyse PERFORM target frequencies — targets called ≥{@value #FREQ_THRESHOLD}
+     *       times are considered "frequent" (detail noise).</li>
+     *   <li>Walk elements in order, classifying each as
+     *       <em>structural</em> (IF, FOR, REPEAT, DB-loops, subroutines),
+     *       <em>important</em> (external calls, infrequent PERFORMs),
+     *       or <em>detail</em> (frequent PERFORMs, I/O, INCLUDEs).</li>
+     *   <li>Consecutive detail elements between structural/important ones are
+     *       collapsed into a single "📦" summary node that lists
+     *       which frequent subroutines are called.</li>
+     *   <li>A Mermaid comment with raw text is added for future AI summarisation.</li>
+     * </ol>
+     */
+    private static String convertFlowchartCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("flowchart TD\n");
+        Set<String> usedIds = new HashSet<String>();
+        List<JclElement> all = model.getElements();
+
+        // Determine program name
+        String progName = model.getSourceName() != null ? model.getSourceName() : "PROGRAMM";
+        for (JclElement e : all) {
+            JclElementType t = e.getType();
+            if (t == JclElementType.NAT_PROGRAM || t == JclElementType.NAT_SUBPROGRAM
+                    || t == JclElementType.NAT_FUNCTION || t == JclElementType.PROGRAM_ID
+                    || t == JclElementType.JOB) {
+                if (e.getName() != null) { progName = e.getName(); break; }
+            }
+        }
+
+        // Phase 1 — Frequency analysis
+        Map<String, Integer> performFreq = analyzePerformFrequency(all);
+        Set<String> frequentTargets = findFrequentTargets(performFreq, FREQ_THRESHOLD);
+
+        // Start node
+        String startId = safeId("START", usedIds);
+        sb.append("    ").append(startId).append("([\"").append(esc(progName)).append("\"])\n");
+
+        // Frequency legend (if any frequent targets found)
+        if (!frequentTargets.isEmpty()) {
+            sb.append("    %% H\u00E4ufige Subroutines (");
+            boolean first = true;
+            for (String ft : frequentTargets) {
+                if (!first) sb.append(", ");
+                Integer cnt = performFreq.get(ft);
+                sb.append(ft).append(" \u00D7").append(cnt != null ? cnt : "?");
+                first = false;
+            }
+            sb.append(") — in \u201E\uD83D\uDCE6\u201C-Bl\u00F6cken zusammengefasst\n");
+        }
+
+        String prevId = startId;
+        List<JclElement> detailBuffer = new ArrayList<JclElement>();
+
+        // Phase 2 — Walk elements, classify, and build collapsed flow
+        for (JclElement e : all) {
+            if (isSkippedInCollapsedFlow(e)) continue;
+
+            if (isStructuralFlowElement(e) || isImportantFlowElement(e, frequentTargets)) {
+                // Flush buffered detail elements as collapsed block
+                if (!detailBuffer.isEmpty()) {
+                    prevId = emitCollapsedDetailBlock(sb, detailBuffer,
+                            frequentTargets, usedIds, prevId);
+                    detailBuffer.clear();
+                }
+                // Emit the structural / important element
+                prevId = emitCollapsedFlowElement(sb, e, usedIds, prevId, sysFuncs);
+            } else {
+                // Everything else goes into the detail buffer
+                detailBuffer.add(e);
+            }
+        }
+
+        // Flush remaining detail buffer
+        if (!detailBuffer.isEmpty()) {
+            prevId = emitCollapsedDetailBlock(sb, detailBuffer,
+                    frequentTargets, usedIds, prevId);
+        }
+
+        // End node
+        String endId = safeId("END", usedIds);
+        sb.append("    ").append(endId).append("([\"END\"])\n");
+        sb.append("    ").append(prevId).append(" --> ").append(endId).append("\n");
+
+        return sb.toString();
+    }
+
+    private static String convertSequenceCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("sequenceDiagram\n");
+        String progName = model.getSourceName() != null ? model.getSourceName() : "PROGRAMM";
+        sb.append("    participant ").append(safeParticipant(progName)).append("\n");
+        Set<String> extTargets = new LinkedHashSet<String>();
+        Set<String> dbTargets = new LinkedHashSet<String>();
+        for (JclElement e : model.getElements()) {
+            JclElementType t = e.getType();
+            if (t == JclElementType.NAT_CALLNAT || t == JclElementType.NAT_CALL
+                    || t == JclElementType.NAT_FETCH || t == JclElementType.CALL_STMT) {
+                String target = e.getParameter("TARGET");
+                if (target == null) target = e.getName();
+                if (target != null) extTargets.add(target);
+            }
+            if (t == JclElementType.NAT_READ || t == JclElementType.NAT_FIND
+                    || t == JclElementType.NAT_HISTOGRAM || t == JclElementType.NAT_STORE
+                    || t == JclElementType.NAT_UPDATE || t == JclElementType.NAT_DELETE
+                    || t == JclElementType.NAT_GET) {
+                String file = e.getParameter("FILE");
+                if (file == null) file = e.getName();
+                if (file != null) dbTargets.add(file);
+            }
+        }
+        for (String target : extTargets) {
+            sb.append("    participant ").append(safeParticipant(target)).append("\n");
+        }
+        for (String db : dbTargets) {
+            sb.append("    participant ").append(safeParticipant("DB_" + db))
+              .append(" as ").append(db).append("\n");
+        }
+        for (String target : extTargets) {
+            sb.append("    ").append(safeParticipant(progName)).append("->>")
+              .append(safeParticipant(target)).append(": Aufruf\n");
+        }
+        for (String db : dbTargets) {
+            sb.append("    ").append(safeParticipant(progName)).append("->>")
+              .append(safeParticipant("DB_" + db)).append(": DB-Zugriff\n");
+        }
+        return sb.toString();
+    }
+
+    private static String convertMindmapCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
+        StringBuilder sb = new StringBuilder("mindmap\n");
+        String progName = model.getSourceName() != null ? model.getSourceName() : "Programm";
+        for (JclElement e : model.getElements()) {
+            JclElementType t = e.getType();
+            if (t == JclElementType.NAT_PROGRAM || t == JclElementType.NAT_SUBPROGRAM
+                    || t == JclElementType.NAT_FUNCTION || t == JclElementType.PROGRAM_ID) {
+                if (e.getName() != null) { progName = e.getName(); break; }
+            }
+        }
+        sb.append("  root((").append(escMm(progName)).append("))\n");
+        List<JclElement> subs = model.getSubroutines();
+        List<JclElement> calls = model.getNaturalCalls();
+        List<JclElement> dbOps = model.getNaturalDbOps();
+        List<JclElement> paras = model.getParagraphs();
+        if (!subs.isEmpty()) sb.append("    ").append(subs.size()).append(" Unterprogramme\n");
+        if (!calls.isEmpty()) sb.append("    ").append(calls.size()).append(" externe Aufrufe\n");
+        if (!dbOps.isEmpty()) sb.append("    ").append(dbOps.size()).append(" DB-Operationen\n");
+        if (!paras.isEmpty()) sb.append("    ").append(paras.size()).append(" Paragraphen\n");
+        List<JclElement> steps = model.getSteps();
+        if (!steps.isEmpty()) sb.append("    ").append(steps.size()).append(" Steps\n");
+        return sb.toString();
+    }
+
+    /**
+     * Estimate the diagram complexity from an outline model.
+     * Returns {@code true} if the model is likely to produce a diagram
+     * large enough to trigger tiled rendering.
+     */
+    public static boolean shouldCollapse(JclOutlineModel model) {
+        if (model == null) return false;
+        return model.getElementCount() > COLLAPSE_THRESHOLD;
+    }
+
+    /** Element count threshold above which diagrams are generated in collapsed mode. */
+    static final int COLLAPSE_THRESHOLD = 30;
+
+    // ─── Summarizer integration ──────────────────────────────────
+
+    /**
+     * Versucht, ein heuristisch erzeugtes Block-Label durch eine inhaltliche
+     * Kurzzusammenfassung des darin gesammelten Codes zu ersetzen.
+     *
+     * <p>Strategie:
+     * <ol>
+     *   <li>Sammelt rohen Code aus den {@code details}-Elementen (max. 2&nbsp;KB).</li>
+     *   <li>Ruft synchron {@link SummarizerService#summarize(String, SummarizeOptions)}
+     *       mit Stil <b>LABEL</b> und einem Fallback auf das heuristische Label auf.</li>
+     *   <li>Greift nur dann ein, wenn ein dedizierter Summarizer aktiv ist UND
+     *       die UML-Zusammenfassung in den Einstellungen freigeschaltet ist —
+     *       sonst sofort heuristisches Label zurück (keine HTTP-Calls).</li>
+     * </ol>
+     *
+     * @param details          gesammelte Detail-Elemente des Blocks
+     * @param heuristicLabel   heuristisch berechnetes Label („📦 5 Anweisungen\\nABC ×3")
+     * @return AI-Label (falls erfolgreich), sonst das heuristische Label
+     */
+    private static String trySummarizeDetails(List<JclElement> details, String heuristicLabel) {
+        if (details == null || details.isEmpty()) return heuristicLabel;
+        try {
+            BlockLabelSummarizer svc = blockLabelSummarizer;
+            if (svc == null) return heuristicLabel;
+            // Nur wenn freigeschaltet (MainframeMate: dedizierter Summarizer UND UML-Zusammenfassung aktiv) — sonst
+            // keine KI-Aufrufe aus der Render-Pipeline.
+            if (!svc.enabled()) return heuristicLabel;
+
+            StringBuilder raw = new StringBuilder(2048);
+            int budget = 2048;
+            for (JclElement e : details) {
+                String t = e != null ? e.getRawText() : null;
+                if (t == null) continue;
+                String line = t.replace("\r", "").trim();
+                if (line.isEmpty()) continue;
+                if (line.length() > 200) line = line.substring(0, 200);
+                if (raw.length() + line.length() + 1 > budget) break;
+                raw.append(line).append('\n');
+            }
+            if (raw.length() == 0) return heuristicLabel;
+
+            String summary = svc.summarize(raw.toString(), 60,
+                    "Mainframe-Code-Block (JCL/COBOL/Natural) — beschreibe in 1 Substantiv-Phrase, was dieser Block tut.");
+            if (summary == null || summary.trim().isEmpty()) return heuristicLabel;
+            String trimmed = summary.trim();
+            if (trimmed.equals(heuristicLabel)) return heuristicLabel;
+            // Mermaid-Label-Escaping: Anführungszeichen + Newlines neutralisieren.
+            trimmed = trimmed.replace("\"", "'").replace("\r", " ").replace("\n", "\\n");
+            // Zähler-Präfix beibehalten, damit der visuelle „📦 N"-Cue erhalten bleibt.
+            return "\uD83D\uDCE6 " + details.size() + ": " + trimmed;
+        } catch (Throwable t) {
+            // Niemals die Diagramm-Generierung wegen eines AI-Glitches abbrechen.
+            return heuristicLabel;
+        }
+    }
+
+}

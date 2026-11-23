@@ -111,6 +111,8 @@ public final class MainWindow implements AppContext.Navigator {
     static final String CHAT_UNREAD_TOOLTIP = "Chat (Strg+J) · neue Antwort";
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
+    /** Karte des Stands einer Perspektive in der Statuszeile (Präfix vor der Kennung). */
+    private static final String PERSPECTIVE_STATUS = "perspective:";
     private JobStatusLine jobStatus;
     private final JLabel status = Comic.muted(" ");
     /** ✕ hinter dem Stand der App: ein Ergebnis (etwa eines Exports) bleibt stehen, bis es der Benutzer wegklickt. */
@@ -156,6 +158,12 @@ public final class MainWindow implements AppContext.Navigator {
     private Explorer.Remembered searchSelection;
     /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
     private AppContext.Section beforeSettings = AppContext.Section.CONTENT;
+    /**
+     * Die Perspektive, aus der die Einstellungen geöffnet wurden, solange sie über ihr stehen; {@code null} sonst. Die
+     * Einstellungen gehören allen Perspektiven: Wer sie aus dem Command Deck öffnet, bleibt im Command Deck (Angelo,
+     * 23.11.2026), und „Zurück“ führt dorthin zurück.
+     */
+    private Perspective settingsOver;
     /** Tooltips der freien Flächen der Fensterleiste: Der Doppelklick ersetzt den fehlenden Vergrößern-Knopf. */
     static final String MAXIMIZE_TOOLTIP = "Doppelklick: Vollbild";
     static final String RESTORE_TOOLTIP = "Doppelklick: Verkleinern";
@@ -216,17 +224,46 @@ public final class MainWindow implements AppContext.Navigator {
         // über den Netzweg der App (Proxy, Zertifikate).
         commandDeck = new com.aresstack.spaceharvester.app.ui.deck.CommandDeck(
                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
-                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context));
+                com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context),
+                new com.aresstack.spaceharvester.app.ui.deck.AppTerminalTunnel(context));
+        // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
+        commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());
+        // Verlauf des Editors (Vergleich mit früheren Versionen) unter <Benutzer>/.space-harvester/history.
+        commandDeck.history(new com.aresstack.spaceharvester.deck.editor.local.LocalVersionHistory(
+                com.aresstack.spaceharvester.app.settings.AppSettingsLoader.defaultHome().resolve("history")));
+        // SharePoint-Sites für „Orte“: die SharePoint-Quellen der Einstellungen (Titel und Adresse).
+        commandDeck.sharePointSites(() -> context.settings() == null ? java.util.List.of()
+                : context.settings().sources().stream()
+                .filter(entry -> "sharepoint".equalsIgnoreCase(entry.config().type())
+                        && entry.config().baseUrl() != null)
+                .map(entry -> new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite(
+                        entry.config().title(), entry.config().baseUrl().toString()))
+                .toList());
+        // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
+        com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
+        // Diagramm-Ansicht „Visuell“: KI-Kurzbeschriftung über das Modell der Zeile „Zusammenfassung“ (sonst das
+        // Chat-Modell), gestreamt; Systemfunktionen aus Einstellungen › Diagramme.
+        com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.connect(() -> {
+            var runtime = context.runtime();
+            var settings = context.settings();
+            if (runtime == null || settings == null || settings.ai() == null) {
+                return null;
+            }
+            var use = settings.ai().summary();
+            String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
+            return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
+                    runtime.workspace().aiChat(), model, use == null ? null : use.thinking());
+        });
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
-        settings.onLeave(() -> show(beforeSettings));
+        settings.onLeave(this::leaveSettings);
         explorer = new Explorer(context);
         // Die Auswahl links ist der Bereich der Suche, aber nur, solange die Suche zu sehen ist. Was man woanders
         // anklickt (etwa einen Treffer), ändert ihn nicht; zurück in der Suche gilt die gemerkte Auswahl
@@ -500,6 +537,10 @@ public final class MainWindow implements AppContext.Navigator {
         sideDeck.add(chatSidebar, SIDE_CHAT);
         sideDeck.add(activities.component(), SIDE_JOBS);
         chatSidebar.chat().onAnswer(this::chatAnswered);
+        // Command Deck: anderer Reiter, anderer Hinweis und andere Vorschläge im Chat.
+        if (commandDeck != null) {
+            commandDeck.onAreaChanged(chatSidebar.chat()::toolScopeChanged);
+        }
         // Ein Quellen-Link soll die Seite zeigen: die große Ansicht wird wieder zur Leiste.
         chatSidebar.chat().onSourceOpened(() -> {
             if (chatLarge) {
@@ -517,10 +558,21 @@ public final class MainWindow implements AppContext.Navigator {
         perspectives.add(Perspectives.missionControl());
         for (Perspective perspective : perspectives.all()) {
             stage.add(perspective.workspace(), perspective.id());
+            if (perspective.status() != null) {
+                // Der Stand der Perspektive steht in derselben Statuszeile wie der der Harvester-Bereiche.
+                perspective.status().setOpaque(false);
+                viewStatus.add(perspective.status(), PERSPECTIVE_STATUS + perspective.id());
+            }
         }
         harvesterNavigation = icons;
         navigationSlot.add(icons, BorderLayout.CENTER);
         perspectives.onChange(this::perspectiveChanged);
+        // Ein Knopf der eigenen Navigation schließt Einstellungen, die über der Perspektive stehen.
+        for (Perspective perspective : perspectives.all()) {
+            if (perspective.navigation() != null && !Perspectives.HARVESTER.equals(perspective.id())) {
+                leaveSettingsOn(perspective.navigation());
+            }
+        }
         chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, stage, sideDeck);
         chatSplit.setBorder(null);
         chatSplit.setBackground(Comic.SURFACE);
@@ -853,6 +905,15 @@ public final class MainWindow implements AppContext.Navigator {
      */
     private void perspectiveChanged(Perspective next) {
         boolean harvester = Perspectives.HARVESTER.equals(next.id());
+        if (settingsOver != null) {
+            // Gewechselt, während die Einstellungen über einer Perspektive standen: Sie gehen mit zu.
+            settingsOver = null;
+            current = beforeSettings;
+            if (next.drawer() == null) {
+                // Ihre Leiste geht zu, ohne den gemerkten Zustand des Space Harvesters zu überschreiben.
+                split.collapseLeft();
+            }
+        }
         navigationSlot.removeAll();
         if (next.navigation() != null) {
             navigationSlot.add(next.navigation(), BorderLayout.CENTER);
@@ -868,11 +929,20 @@ public final class MainWindow implements AppContext.Navigator {
         // Die Suchleiste gehört zum Space Harvester; für die anderen Perspektiven ist keine Suche festgelegt.
         searchSlot.setVisible(harvester);
         // Ein Chat für alle Perspektiven; die Werkzeuge kommen je Frage aus der aktiven Perspektive (#1151).
-        if (chatSidebar != null) chatSidebar.chat().toolScope(Perspectives.COMMAND_DECK.equals(next.id()) ? commandDeck::chatScope : null);
+        if (chatSidebar != null) {
+            boolean deck = Perspectives.COMMAND_DECK.equals(next.id());
+            chatSidebar.chat().toolScope(deck ? commandDeck::chatScope : null, deck ? commandDeck::chatHints : null);
+        }
         stageCards.show(stage, next.id());
         if (!harvester) {
             // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.
-            viewStatus.setVisible(false);
+            // Eine Perspektive mit eigenem Stand zeigt ihn an derselben Stelle.
+            if (next.status() != null) {
+                viewStatusCards.show(viewStatus, PERSPECTIVE_STATUS + next.id());
+                viewStatus.setVisible(true);
+            } else {
+                viewStatus.setVisible(false);
+            }
             jobStatus.navigationVisible(false);
         }
         if (next.drawer() == null) {
@@ -938,10 +1008,19 @@ public final class MainWindow implements AppContext.Navigator {
     /** Zeigt den Bereich, ohne die große Chat-Ansicht zu verlassen (Auswahl im Explorer). */
     private void showSection(AppContext.Section section) {
         // Ein Bereich des Space Harvesters (auch über einen Link im Chat) führt in dessen Perspektive zurück; die Aufträge
-        // stehen in der globalen Seitenleiste und lassen die Perspektive, wie sie ist.
+        // stehen in der globalen Seitenleiste und lassen die Perspektive, wie sie ist. Die Einstellungen gehören allen
+        // Perspektiven und öffnen über der aktuellen.
+        boolean settingsSection = section == AppContext.Section.SETTINGS || section == AppContext.Section.STATUS;
         if (perspectives != null && section != AppContext.Section.ACTIVITIES
                 && !perspectives.isCurrent(Perspectives.HARVESTER)) {
-            perspectives.select(Perspectives.HARVESTER);
+            if (settingsSection) {
+                if (settingsOver == null && current != AppContext.Section.SETTINGS) {
+                    beforeSettings = current;
+                }
+                settingsOver = perspectives.current();
+            } else {
+                perspectives.select(Perspectives.HARVESTER);
+            }
         }
         if (section == AppContext.Section.STATUS) {
             show(AppContext.Section.SETTINGS);
@@ -955,7 +1034,7 @@ public final class MainWindow implements AppContext.Navigator {
         }
         cards.show(deck, section.name());
         boolean changed = section != current;
-        if (changed && current != AppContext.Section.SETTINGS) {
+        if (changed && current != AppContext.Section.SETTINGS && settingsOver == null) {
             beforeSettings = current;
         }
         if (changed && current == AppContext.Section.SEARCH) {
@@ -999,6 +1078,48 @@ public final class MainWindow implements AppContext.Navigator {
         if (changed) {
             findBar.areaChanged();
         }
+        if (settingsOver != null && section == AppContext.Section.SETTINGS) {
+            // Über der Perspektive: deren Navigation und Titel bleiben, die Mitte zeigt die Einstellungen.
+            stageCards.show(stage, Perspectives.HARVESTER);
+            viewStatus.setVisible(false);
+            jobStatus.navigationVisible(false);
+        }
+    }
+
+    /** „Zurück“ der Einstellungen: dorthin, woher sie kamen, auch in eine andere Perspektive. */
+    private void leaveSettings() {
+        if (settingsOver == null) {
+            show(beforeSettings);
+            return;
+        }
+        Perspective back = settingsOver;
+        settingsOver = null;
+        current = beforeSettings;
+        if (back.drawer() == null) {
+            // Die Leiste der Einstellungen geht zu, ohne den gemerkten Zustand des Space Harvesters zu ändern.
+            split.collapseLeft();
+        }
+        perspectiveChanged(back);
+    }
+
+    /** Hängt an jeden Knopf der Navigation: Einstellungen über der Perspektive schließen. */
+    private void leaveSettingsOn(java.awt.Container navigation) {
+        for (java.awt.Component child : navigation.getComponents()) {
+            if (child instanceof javax.swing.AbstractButton button) {
+                button.addActionListener(e -> {
+                    if (settingsOver != null) {
+                        leaveSettings();
+                    }
+                });
+            } else if (child instanceof java.awt.Container container) {
+                leaveSettingsOn(container);
+            }
+        }
+    }
+
+    /** Ob die Einstellungen gerade über einer anderen Perspektive stehen (für Tests). */
+    boolean settingsOverPerspective() {
+        return settingsOver != null;
     }
 
     @Override

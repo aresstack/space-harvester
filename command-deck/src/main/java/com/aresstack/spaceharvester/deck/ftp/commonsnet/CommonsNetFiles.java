@@ -1,6 +1,9 @@
 package com.aresstack.spaceharvester.deck.ftp.commonsnet;
 
+import com.aresstack.spaceharvester.deck.ftp.DatasetAttributes;
 import com.aresstack.spaceharvester.deck.ftp.FileConnection;
+import com.aresstack.spaceharvester.deck.ftp.MvsListing;
+import com.aresstack.spaceharvester.deck.ftp.TransferOptions;
 import com.aresstack.spaceharvester.deck.ftp.FtpProfile;
 import com.aresstack.spaceharvester.deck.ftp.FtpReplyException;
 import com.aresstack.spaceharvester.deck.ftp.MvsPath;
@@ -35,11 +38,15 @@ final class CommonsNetFiles implements FileConnection {
     private final boolean mvs;
     private final String systemType;
     private final boolean recordStructure;
+    private final TransferOptions transfer;
+    private final String startHlq;
 
     CommonsNetFiles(FtpProfile profile, String user, char[] password) throws IOException {
         this.ftp = Clients.connect(profile, user, password);
         this.charset = profile.charset();
         this.user = user;
+        this.transfer = profile.transfer();
+        this.startHlq = profile.startHlq();
         try {
             String system = ftp.getSystemType();
             this.systemType = system == null ? "" : system.trim();
@@ -49,7 +56,7 @@ final class CommonsNetFiles implements FileConnection {
             } else if (systemType.toUpperCase(Locale.ROOT).contains("WIN32NT")) {
                 ftp.configure(new FTPClientConfig(FTPClientConfig.SYST_NT));
             }
-            this.recordStructure = mvs;
+            this.recordStructure = transfer.recordStructure(mvs);
             textMode();
         } catch (IOException | RuntimeException e) {
             Clients.close(ftp);
@@ -57,9 +64,28 @@ final class CommonsNetFiles implements FileConnection {
         }
     }
 
+    /** Übertragungsart laut Profil, wie {@code applyTransferSettings} in MainframeMate. */
     private void textMode() throws IOException {
-        ftp.setFileType(FTP.ASCII_FILE_TYPE);
-        ftp.setFileStructure(recordStructure ? FTP.RECORD_STRUCTURE : FTP.FILE_STRUCTURE);
+        int type = switch (transfer.fileType()) {
+            case ASCII -> FTP.ASCII_FILE_TYPE;
+            case EBCDIC -> FTP.EBCDIC_FILE_TYPE;
+            case BINARY -> FTP.BINARY_FILE_TYPE;
+            case LOCAL -> FTP.LOCAL_FILE_TYPE;
+        };
+        if (transfer.textFormat() == TransferOptions.TextFormat.DEFAULT) {
+            ftp.setFileType(type);
+        } else {
+            ftp.setFileType(type, switch (transfer.textFormat()) {
+                case TELNET -> FTP.TELNET_TEXT_FORMAT;
+                case CARRIAGE_CONTROL -> FTP.CARRIAGE_CONTROL_TEXT_FORMAT;
+                default -> FTP.NON_PRINT_TEXT_FORMAT;
+            });
+        }
+        ftp.setFileStructure(switch (transfer.structure()) {
+            case PAGE -> FTP.PAGE_STRUCTURE;
+            case AUTO, RECORD, FILE -> recordStructure ? FTP.RECORD_STRUCTURE : FTP.FILE_STRUCTURE;
+        });
+        // Nur Stream: TransferOptions lässt Block und Komprimiert nicht zu (Commons Net kann sie nicht rahmen).
         ftp.setFileTransferMode(FTP.STREAM_TRANSFER_MODE);
     }
 
@@ -81,8 +107,8 @@ final class CommonsNetFiles implements FileConnection {
     @Override
     public String home() {
         if (mvs) {
-            // Wie MainframeMate (ftpUseLoginAsHlq): der Anmeldename ist der HLQ.
-            return MvsPath.absolute(user.toUpperCase(Locale.ROOT));
+            // Wie MainframeMate: „Login-Namen als HLQ verwenden“, sonst der eingestellte HLQ.
+            return MvsPath.absolute(startHlq.isEmpty() ? user.toUpperCase(Locale.ROOT) : startHlq);
         }
         try {
             String pwd = ftp.printWorkingDirectory();
@@ -95,6 +121,62 @@ final class CommonsNetFiles implements FileConnection {
     @Override
     public List<RemoteEntry> list(String path) throws IOException {
         return mvs ? listMvs(MvsPath.absolute(path)) : listUnix(unixPath(path));
+    }
+
+    @Override
+    public List<RemoteEntry> list(String path, boolean details) throws IOException {
+        List<RemoteEntry> entries = list(path);
+        return details && mvs ? withDetails(MvsPath.absolute(path), entries) : entries;
+    }
+
+    /**
+     * Ergänzt RECFM, LRECL, Dsorg und Datum der Datasets ({@code LIST 'X.*'}) und Zeilen, Datum und Benutzer der
+     * Members ({@code LIST 'X'}). Was der Host nicht liefert, bleibt leer; die Liste selbst ändert sich nicht.
+     */
+    private List<RemoteEntry> withDetails(String resolved, List<RemoteEntry> entries) {
+        String unquoted = MvsPath.unquote(resolved).toUpperCase(Locale.ROOT);
+        java.util.Map<String, MvsListing.Line> datasets = new java.util.HashMap<>();
+        java.util.Map<String, MvsListing.Line> members = new java.util.HashMap<>();
+        if (entries.stream().anyMatch(entry -> !MvsPath.isMember(entry.path()))) {
+            for (String raw : rawList("'" + unquoted + ".*'")) {
+                MvsListing.dataset(raw).ifPresent(line -> datasets.put(line.name(), line));
+            }
+        }
+        if (entries.stream().anyMatch(entry -> MvsPath.isMember(entry.path()))) {
+            for (String raw : rawList("'" + unquoted + "'")) {
+                MvsListing.member(raw).ifPresent(line -> members.put(line.name(), line));
+            }
+        }
+        List<RemoteEntry> result = new ArrayList<>(entries.size());
+        for (RemoteEntry entry : entries) {
+            MvsListing.Line line;
+            if (MvsPath.isMember(entry.path())) {
+                line = members.get(MvsPath.splitMember(entry.path())[1].toUpperCase(Locale.ROOT));
+            } else {
+                // Eine bloße Qualifier-Stufe steht nicht in der Liste und bleibt ohne Angaben.
+                line = datasets.get(MvsPath.unquote(entry.path()).toUpperCase(Locale.ROOT));
+            }
+            result.add(line == null ? entry : entry.withDetails(line.details(), -1, line.modified()));
+        }
+        return result;
+    }
+
+    /** Die rohen Zeilen von {@code LIST}; leer, wenn der Host ablehnt. */
+    private List<String> rawList(String argument) {
+        List<String> lines = new ArrayList<>();
+        try {
+            FTPFile[] files = ftp.listFiles(argument);
+            if (files != null) {
+                for (FTPFile file : files) {
+                    if (file != null && file.getRawListing() != null) {
+                        lines.add(file.getRawListing());
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+            // Details sind Beiwerk; die Liste steht auch ohne sie.
+        }
+        return lines;
     }
 
     private List<RemoteEntry> listUnix(String path) throws IOException {
@@ -363,6 +445,28 @@ final class CommonsNetFiles implements FileConnection {
     public void createDirectory(String path) throws IOException {
         String resolved = mvs ? MvsPath.absolute(path) : unixPath(path);
         if (!ftp.makeDirectory(resolved)) {
+            throw new FtpReplyException("Anlegen abgelehnt: " + resolved + " – " + Clients.reply(ftp),
+                    ftp.getReplyCode());
+        }
+    }
+
+    @Override
+    public void createDataset(String path, DatasetAttributes attributes) throws IOException {
+        if (!mvs) {
+            createDirectory(path);
+            return;
+        }
+        String resolved = MvsPath.absolute(path);
+        if (!ftp.sendSiteCommand(attributes.siteCommand())) {
+            throw new FtpReplyException("Anlageparameter abgelehnt (" + attributes.siteCommand() + "): "
+                    + Clients.reply(ftp), ftp.getReplyCode());
+        }
+        if (attributes.organization() == DatasetAttributes.Organization.PO) {
+            if (!ftp.makeDirectory(resolved)) {
+                throw new FtpReplyException("Anlegen abgelehnt: " + resolved + " – " + Clients.reply(ftp),
+                        ftp.getReplyCode());
+            }
+        } else if (!ftp.storeFile(resolved, new ByteArrayInputStream(new byte[0]))) {
             throw new FtpReplyException("Anlegen abgelehnt: " + resolved + " – " + Clients.reply(ftp),
                     ftp.getReplyCode());
         }

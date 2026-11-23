@@ -1,7 +1,9 @@
 package com.aresstack.spaceharvester.deck.ftp.jes;
 
+import com.aresstack.spaceharvester.deck.ftp.FtpReplyException;
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Port: eine FTP-Verbindung im JES-Modus ({@code SITE FILETYPE=JES}). Getrennt von der Dataset-Verbindung, weil der
@@ -18,6 +20,18 @@ public interface JesConnection extends AutoCloseable {
     List<SpoolFile> spoolFiles(String jobId) throws IOException;
 
     String spool(String jobId, int spoolId) throws IOException;
+
+    /**
+     * Ruft eine Spool-Datei einzeln ab und erkennt ihren DD-Namen aus der Antwort des Hosts oder dem Inhalt
+     * (Verfahren „PROBE“ aus MainframeMate). Leer, wenn es sie nicht gibt.
+     */
+    default Optional<SpoolFile> probe(String jobId, int spoolId) throws IOException {
+        try {
+            return Optional.of(JesListing.probed(spoolId, "", spool(jobId, spoolId)));
+        } catch (FtpReplyException missing) {
+            return Optional.empty();
+        }
+    }
 
     /** Die gesamte Ausgabe am Stück ({@code jobId.x}). */
     String allSpool(String jobId) throws IOException;

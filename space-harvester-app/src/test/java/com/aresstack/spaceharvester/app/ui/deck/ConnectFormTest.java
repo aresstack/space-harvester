@@ -33,6 +33,35 @@ class ConnectFormTest {
         }
     };
 
+    /**
+     * Auswahllisten und Kontrollkästchen des Formulars sind die der App, nicht die von Swing (Angelo, 23.11.2026):
+     * Comic-Auswahlliste mit ihrem Renderer, Kästchen mit dem Comic-Haken.
+     */
+    @Test
+    void dropdownsAndCheckBoxesAreTheControlsOfTheApp() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            ConnectForm form = new ConnectForm(accounts, (profile, source) -> { });
+            form.show(List.of(HOST_A, HOST_B));
+            for (javax.swing.JComboBox<?> combo : List.of(form.server, form.model)) {
+                assertThat(combo.getUI())
+                        .isInstanceOf(com.aresstack.enterpriseai.ui.comic.control.ComicComboBoxUI.class);
+                assertThat(combo.getRenderer().getClass().getName()).doesNotContain("DefaultListCellRenderer");
+            }
+            for (javax.swing.JCheckBox box : List.of(form.autoLogin, form.tls)) {
+                assertThat(box.getIcon())
+                        .isInstanceOf(com.aresstack.enterpriseai.ui.comic.paint.ResearchCheckIcon.class);
+            }
+            assertThat(form.model.getItemCount())
+                    .isEqualTo(com.aresstack.spaceharvester.deck.terminal.TerminalModel.values().length);
+            // Der Eintrag zeigt Namen und Benutzer, „nichts gewählt“ die Aufforderung.
+            assertThat(ConnectForm.accountText(HOST_A)).isEqualTo(HOST_A + " · TESTUSR");
+            assertThat(ConnectForm.accountText(null)).isEqualTo("KeePass-Eintrag wählen …");
+            javax.swing.JLabel cell = (javax.swing.JLabel) form.server.getRenderer().getListCellRendererComponent(
+                    new javax.swing.JList<>(), HOST_A, 0, false, false);
+            assertThat(cell.getText()).isEqualTo(HOST_A + " · TESTUSR");
+        });
+    }
+
     @Test
     void addressPortAndLoginComeFromTheEntry() throws Exception {
         AtomicReference<TerminalProfile> opened = new AtomicReference<>();
@@ -88,5 +117,56 @@ class ConnectFormTest {
         });
         assertThat(login.get()).isNull();
         assertThat(read).isEmpty();
+    }
+
+    @Test
+    void anOldRememberedPortDoesNotComeBack() throws Exception {
+        var state = com.aresstack.spaceharvester.app.ui.AppState.shared();
+        state.put(ConnectForm.PORT_KEY, (String) null);
+        state.put(ConnectForm.TLS_KEY, (String) null);
+        // So merkte es eine ältere Fassung: Port 23 ohne TLS.
+        state.put("deck.terminal.port", "23");
+        state.put("deck.terminal.tls", "false");
+        state.put(ConnectForm.ENTRY_KEY, HOST_B.entry());
+        SwingUtilities.invokeAndWait(() -> {
+            ConnectForm form = new ConnectForm(accounts, (profile, source) -> { });
+            form.show(List.of(HOST_A, HOST_B));
+            assertThat(form.selectedEntryForTest()).isEqualTo(HOST_B.entry());
+            assertThat(form.port.getText()).isEmpty();
+            assertThat(form.tls.isSelected()).isTrue();
+            form.host.setText("10.0.0.9");
+            assertThat(form.profile().port()).isEqualTo(992);
+        });
+        state.put(ConnectForm.ENTRY_KEY, (String) null);
+        state.put("deck.terminal.port", (String) null);
+        state.put("deck.terminal.tls", (String) null);
+    }
+
+    @Test
+    void defaultsAreThoseOfMainframeMate() throws Exception {
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.TLS_KEY, (String) null);
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.COMMAND_KEY, (String) null);
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(ConnectForm.PROXY_KEY, (String) null);
+        SwingUtilities.invokeAndWait(() -> {
+            ConnectForm form = new ConnectForm(accounts, (profile, source) -> { });
+            // MainframeMate: tn3270Port 992, tn3270Tls true, tn3270AutoCommandText „a“.
+            assertThat(form.tls.isSelected()).isTrue();
+            assertThat(form.tls.isShowing() || form.tls.getParent() != null).isTrue();
+            assertThat(form.command.getText()).isEqualTo("a");
+            form.host.setText("10.0.0.9");
+            form.port.setText("");
+            assertThat(form.profile().port()).isEqualTo(992);
+            assertThat(form.profile().tls()).isTrue();
+            // Wie bisher direkt; „Proxy verwenden“ wählt man selbst (Angelo, 23.11.).
+            assertThat(form.proxy.isSelected()).isFalse();
+            assertThat(form.profile().viaProxy()).isFalse();
+            form.proxy.setSelected(true);
+            assertThat(form.profile().viaProxy()).isTrue();
+            // Abweichung mit Absicht: Keep-Alive an (60 s), damit die Leitung bei Leerlauf nicht gekappt wird.
+            form.keepAlive.setText("");
+            assertThat(form.profile().keepAliveSeconds()).isEqualTo(60);
+            form.keepAlive.setText("0");
+            assertThat(form.profile().keepAliveSeconds()).isZero();
+        });
     }
 }

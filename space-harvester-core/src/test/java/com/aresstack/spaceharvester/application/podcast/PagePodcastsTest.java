@@ -1,9 +1,23 @@
 package com.aresstack.spaceharvester.application.podcast;
 
+import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -12,6 +26,81 @@ class PagePodcastsTest {
 
     private static PagePodcasts.Page page(String id, String title, String text, PageText.Section... sections) {
         return new PagePodcasts.Page(id, title, "DEMO", new PageText("test/v1", text, List.of(sections)));
+    }
+
+    @TempDir
+    Path root;
+
+    @Test
+    void theReadingViewReadsThePageTextOnlyWithAiReleaseAndWithTheVoiceOfThePodcast() {
+        String text = "Wozu es den Nachtlauf gibt.\nAblauf\nErst Prüfung, dann Start.";
+        List<String[]> opened = new ArrayList<>();
+        PodcastSpeech speech = new PodcastSpeech() {
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public List<String> models() {
+                return List.of("tts-unbekannt", "orpheus-3b-german");
+            }
+
+            @Override
+            public List<byte[]> speak(String model, String voice, String text, boolean sentences) throws IOException {
+                throw new IOException("nicht gebraucht");
+            }
+
+            @Override
+            public ReadAloud readAloud(String model, String voice, ReadAloud.Playback playback) {
+                opened.add(new String[]{model, voice});
+                return null;
+            }
+        };
+        PagePodcasts.Pages pages = new PagePodcasts.Pages() {
+            @Override
+            public Optional<PagePodcasts.Page> page(AccessContext caller, String sourceId, String pageId) {
+                // nur Seite 1 darf an einen KI-Dienst (ADR 0028)
+                return pageId.equals("1") ? Optional.of(PagePodcastsTest.page("1", "Nachtlauf Nordlicht", text)) : Optional.empty();
+            }
+
+            @Override
+            public List<String> children(AccessContext caller, String sourceId, String pageId) {
+                return List.of();
+            }
+
+            @Override
+            public List<String> ancestors(AccessContext caller, String sourceId, String pageId) {
+                return List.of();
+            }
+        };
+        Clock clock = Clock.fixed(Instant.parse("2026-11-23T01:00:00Z"), ZoneOffset.UTC);
+        PagePodcasts podcasts = new PagePodcasts(new Jobs(new InMemoryJobStore(), Runnable::run,
+                new JobLimits(1, 5, Duration.ofHours(1)), clock), StepModel.NONE, speech,
+                new PodcastStore(root.resolve("podcasts")), PodcastVoices.bundled(), pages, () -> 2);
+        AccessContext caller = AccessContext.technicalClient("app");
+
+        assertThat(podcasts.readAloudText(caller, "wiki", "1")).contains(text);
+        assertThat(podcasts.readAloudText(caller, "wiki", "2")).as("ohne KI-Freigabe nichts").isEmpty();
+        assertThat(podcasts.readAloudAvailable()).isTrue();
+
+        podcasts.readAloud(new ReadAloud.Playback() {
+            @Override
+            public void play(byte[] wav) {
+            }
+
+            @Override
+            public void finish() {
+            }
+
+            @Override
+            public void stop() {
+            }
+        });
+
+        // dasselbe Modell und dieselbe Stimme wie der Gastgeber des Podcasts
+        assertThat(opened).singleElement().satisfies(choice -> assertThat(choice)
+                .containsExactly("orpheus-3b-german", "Jana"));
     }
 
     @Test
@@ -40,6 +129,36 @@ class PagePodcastsTest {
         assertThat(material.pageIds()).containsExactly("1", "2", "3");
         assertThat(material.overview()).contains("„Nachtlauf Nordlicht“", "Space DEMO", "Handbuch › Betrieb",
                 "Unterseiten: „Eskalation“");
+    }
+
+    @Test
+    void eachPartKnowsWhereItStandsInThePageTextForTheMarking() {
+        String text = "Wozu es den Nachtlauf gibt.\nAblauf\nErst Prüfung, dann Start.\nStörungen\nBereitschaft anrufen.";
+        int ablauf = text.indexOf("Ablauf");
+        int stoerungen = text.indexOf("Störungen");
+        PagePodcasts.Page root = page("1", "Nachtlauf Nordlicht", text,
+                new PageText.Section("Ablauf", 2, ablauf, stoerungen),
+                new PageText.Section("Störungen", 2, stoerungen, text.length()));
+
+        List<PagePodcasts.Part> parts = PagePodcasts.parts(root, PagePodcasts.MAX_SECTIONS);
+
+        assertThat(parts).extracting(PagePodcasts.Part::title).containsExactly("Einleitung", "Ablauf", "Störungen");
+        assertThat(parts).extracting(part -> text.substring(part.start(), part.end()).strip()).containsExactly(
+                "Wozu es den Nachtlauf gibt.", "Ablauf\nErst Prüfung, dann Start.", "Störungen\nBereitschaft anrufen.");
+        // Meldung n des Materials ist Teil n−1: dieselbe Reihenfolge, dieselben Titel
+        assertThat(PagePodcasts.material(root, List.of(), List.of()).stories()).extracting(PodcastWriter.Story::title)
+                .containsExactly("Einleitung", "Ablauf", "Störungen");
+    }
+
+    @Test
+    void aPageWithoutHeadingsKnowsWhereEachPieceStands() {
+        String paragraph = "Ein Absatz über die Testumgebung. ".repeat(60).strip();
+        String text = paragraph + "\n" + paragraph + "\n" + paragraph;
+
+        List<PagePodcasts.Part> parts = PagePodcasts.parts(page("1", "Testumgebung", text), PagePodcasts.MAX_SECTIONS);
+
+        assertThat(parts).hasSize(3);
+        assertThat(parts).allSatisfy(part -> assertThat(text.substring(part.start(), part.end())).isEqualTo(paragraph));
     }
 
     @Test

@@ -3401,6 +3401,25 @@ public final class Workspace {
         return harvester.pagePodcasts().available();
     }
 
+    /**
+     * Der Text, den die Leseansicht einer Seite vorliest (Angelo 23.11.2026); leer ohne Leserecht, ohne lokalen Stand
+     * oder ohne KI-Freigabe (ADR 0028). Liest, nie auf dem EDT.
+     */
+    public java.util.Optional<String> pageReadAloudText(String sourceId, String pageId) {
+        return harvester.pagePodcasts().readAloudText(caller, sourceId, pageId);
+    }
+
+    /** Ob ein Dienst mit Sprachausgabe eingerichtet ist (auch auf dem EDT). */
+    public boolean pageReadAloudAvailable() {
+        return harvester.pagePodcasts().readAloudAvailable();
+    }
+
+    /** Vorlesen über die Sprachausgabe mit Modell und Stimme des Podcasts. Fragt den Dienst, nie auf dem EDT. */
+    public com.aresstack.spaceharvester.application.podcast.ReadAloud pageReadAloud(
+            com.aresstack.spaceharvester.application.podcast.ReadAloud.Playback playback) {
+        return harvester.pagePodcasts().readAloud(playback);
+    }
+
     /** Der Schlüssel des Erklär-Podcasts einer Seite, ohne zu lesen (auch auf dem EDT). */
     public String pagePodcastKey(String sourceId, String pageId) {
         return com.aresstack.spaceharvester.application.podcast.PagePodcasts.key(caller, sourceId, pageId);
@@ -3424,6 +3443,15 @@ public final class Workspace {
     /** Der gesprochene Text des Erklär-Podcasts einer Seite, soweit geschrieben. Liest Dateien, nie auf dem EDT. */
     public java.util.Optional<String> pagePodcastTranscript(String sourceId, String pageId) {
         return harvester.pagePodcasts().transcript(caller, sourceId, pageId);
+    }
+
+    /**
+     * Wovon ein Thema des Erklär-Podcasts erzählt, als Stellen im Lesetext der Seite (für Markierung und Bild). Liest
+     * Seite und Datei, nie auf dem EDT.
+     */
+    public java.util.List<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span> pagePodcastFocus(
+            String sourceId, String pageId, int topic) {
+        return harvester.pagePodcasts().focus(caller, sourceId, pageId, topic);
     }
 
     /** Startet den Erklär-Podcast einer Seite oder setzt ihn fort. */

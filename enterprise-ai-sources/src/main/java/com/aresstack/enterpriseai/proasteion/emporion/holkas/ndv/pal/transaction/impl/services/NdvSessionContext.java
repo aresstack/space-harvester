@@ -55,10 +55,15 @@ public class NdvSessionContext {
     // ── Verbindungsparameter ──
     private String rechnerAdresse = "";
     private String portNummer = "";
+    /** Weg zum NDV-Server; Vorgabe direkt. */
+    private java.net.Proxy proxy = java.net.Proxy.NO_PROXY;
 
     // ══════════════════════════════════════════════════════════════
     //  Zugriff auf Pal
     // ══════════════════════════════════════════════════════════════
+
+    public java.net.Proxy getProxy() { return proxy; }
+    public void setProxy(java.net.Proxy proxy) { this.proxy = proxy == null ? java.net.Proxy.NO_PROXY : proxy; }
 
     public Ndv getPal() { return ndv; }
     public void setPal(Ndv ndv) { this.ndv = ndv; }

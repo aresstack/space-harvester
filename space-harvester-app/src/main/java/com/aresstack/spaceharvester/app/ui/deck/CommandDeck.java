@@ -39,17 +39,27 @@ public final class CommandDeck {
 
     private final ExecutorService connecting = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("command-deck-", 0).factory());
-    private final TerminalSessions sessions = new TerminalSessions(new OpenTermConnector(), connecting);
+    /** Die Aktionsverzögerung (Anmeldung, Lesezeichen-Makro) kommt live aus Einstellungen › Terminal. */
+    private final TerminalSessions sessions;
     private final CardLayout cards = new CardLayout();
     private final JPanel workspace = new JPanel(cards);
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     private final Map<DeckArea, ComposerToggleButton> buttons = new EnumMap<>(DeckArea.class);
-    private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(), connecting);
+    /** Weg zum NDV-Server für Verbindungen mit „Proxy der App verwenden“; ohne App (Tests) direkt. */
+    private volatile PalNdvConnector.Route ndvRoute = profile -> java.net.Proxy.NO_PROXY;
+    private final NdvSessions ndvSessions = new NdvSessions(new PalNdvConnector(profile -> ndvRoute.to(profile)),
+            connecting);
     private final TerminalWorkspace terminal;
     private final BetaViewWorkspace betaView;
     /** Gemeinsamer Editor aller Bereiche (Dateien, NDV, später FTP); die Dokumente überleben jeden Wechsel. */
     private final com.aresstack.spaceharvester.deck.editor.EditorSessions editors =
-            new com.aresstack.spaceharvester.deck.editor.EditorSessions(connecting);
+            new com.aresstack.spaceharvester.deck.editor.EditorSessions(connecting, new HistoryDelegate());
+    /** Lokaler Verlauf des Editors (Vergleich mit früheren Versionen); ohne Ort keiner (Tests). */
+    private volatile com.aresstack.spaceharvester.deck.editor.VersionHistory history =
+            com.aresstack.spaceharvester.deck.editor.VersionHistory.NONE;
+    /** SharePoint-Sites für „Orte“ im Bereich Dateien (aus den Quellen der Einstellungen). */
+    private volatile java.util.function.Supplier<java.util.List<
+            com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite>> sharePointSites = java.util.List::of;
     private final FilesWorkspace files;
     /** Freigegebene Ordner aus Einstellungen › Dateizugriff, als Orte im Bereich Dateien. */
     private volatile java.util.function.Supplier<java.util.List<java.nio.file.Path>> sharedFolders = java.util.List::of;
@@ -57,6 +67,9 @@ public final class CommandDeck {
     private final FtpWorkspace ftp;
     /** Oben rechts in der Titelleiste: die Bedienelemente des gewählten Bereichs (FTP: Datasets | JES-Jobs). */
     private final JPanel tools = new JPanel(new BorderLayout());
+    /** Links in der Statuszeile der App: der Stand des gewählten Bereichs, eine Karte je Bereich. */
+    private final CardLayout statusCards = new CardLayout();
+    private final JPanel status = new JPanel(statusCards);
     private final NdvWorkspace ndv;
     private final Perspective perspective;
     private DeckArea area = DeckArea.TERMINAL;
@@ -78,12 +91,36 @@ public final class CommandDeck {
      * @param betaViewAccess Netzweg (Proxy, Zertifikate) der App für BetaView; Zugangsdaten kommen aus {@code accounts}
      */
     public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess) {
+        this(accounts, betaViewAccess, com.aresstack.spaceharvester.deck.terminal.TerminalTunnel.NONE);
+    }
+
+    /**
+     * @param terminalTunnel Weg durch den Proxy der App für Terminal-Verbindungen mit „Proxy verwenden“
+     */
+    public CommandDeck(ServerAccounts accounts, BetaViewAccess betaViewAccess,
+                       com.aresstack.spaceharvester.deck.terminal.TerminalTunnel terminalTunnel) {
+        sessions = new TerminalSessions(new OpenTermConnector(terminalTunnel), connecting,
+                new com.aresstack.spaceharvester.deck.terminal.LoginScript(
+                        () -> TerminalSettings.shared().actionDelay()));
+        // Das Terminal soll nicht tot bleiben: Trennt der Host, baut es sich neu auf (Einstellung „Neuaufbau“).
+        sessions.autoReconnect(com.aresstack.spaceharvester.deck.terminal.TerminalSessions.Reconnect.standard(
+                () -> TerminalSettings.shared().autoReconnect()), (delay, task) -> {
+                    javax.swing.Timer once = new javax.swing.Timer((int) delay.toMillis(), e -> task.run());
+                    once.setRepeats(false);
+                    once.start();
+                });
+        // Diagramm-Ansicht „Visuell“ (MainframeMate) an jedem Editor, gleich in welchem Bereich
+        com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.install(editors);
         terminal = new TerminalWorkspace(sessions, accounts);
         betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
                 connecting), accounts);
         files = new FilesWorkspace(new com.aresstack.spaceharvester.deck.files.FileBrowser(
                 new com.aresstack.spaceharvester.deck.files.local.LocalFileSource(() -> sharedFolders.get()),
-                connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore());
+                connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore(),
+                new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore(),
+                new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointAccess(
+                        new com.aresstack.spaceharvester.deck.files.sharepoint.windows.NetUseLogin(), connecting),
+                () -> sharePointSites.get(), accounts);
         ftp = new FtpWorkspace(ftpSessions, accounts, editors);
         tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts, editors);
@@ -109,11 +146,32 @@ public final class CommandDeck {
                 case NDV -> ndv;
                 default -> placeholder(candidate);
             }, candidate.name());
+            javax.swing.JComponent info = switch (candidate) {
+                case TERMINAL -> terminal.statusInfo();
+                case BETAVIEW -> betaView.statusInfo();
+                case FILES -> files.statusInfo();
+                case FTP -> ftp.statusInfo();
+                case NDV -> ndv.statusInfo();
+                default -> new JPanel();
+            };
+            info.setOpaque(false);
+            status.add(info, candidate.name());
         }
+        status.setOpaque(false);
         show(DeckArea.TERMINAL);
-        perspective = Perspective.of(Perspectives.COMMAND_DECK, "Command Deck",
+        perspective = new Perspective(Perspectives.COMMAND_DECK, "Command Deck",
                 "Interaktiv mit Host-Systemen arbeiten: Terminal, FTP, NDV, BetaView, Dateien", true, navigation,
-                workspace, null, tools);
+                workspace, null, tools, null, null, status);
+    }
+
+    /** Der Stand des gewählten Bereichs für die Statuszeile (für Tests). */
+    JPanel statusPanel() {
+        return status;
+    }
+
+    /** Der Proxy-Weg der App für NDV-Verbindungen, die ihn gewählt haben (Vorgabe direkt). */
+    public void ndvRoute(PalNdvConnector.Route route) {
+        ndvRoute = route == null ? profile -> java.net.Proxy.NO_PROXY : route;
     }
 
     public Perspective perspective() {
@@ -121,19 +179,124 @@ public final class CommandDeck {
     }
 
     /**
-     * Was der globale Chat in dieser Perspektive bekommt (#1151): die Werkzeuge des Maskenassistenten für die gerade
-     * gewählte Terminal-Sitzung – Maske lesen, Felder lokal ausfüllen, Schreibmarke bewegen, nie abschicken. Beim
-     * Senden ausgewertet; ohne Sitzung sagen die Werkzeuge das dem Modell.
+     * Was der globale Chat in dieser Perspektive bekommt (#1151, ADR 0033): die Werkzeuge des gerade gewählten
+     * Bereichs. Terminal: der Maskenassistent (Maske lesen, Felder lokal ausfüllen, nie abschicken). FTP, NDV,
+     * BetaView, Dateien: die aktuelle Ansicht geht mit, dazu Ansicht und Texte lesen, im Bereich Dateien auch Ordner
+     * auflisten und Dateien lesen (PDF, Word … über die Dokumentvorschau). Beim Senden ausgewertet, auf dem EDT.
      */
     public com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope chatScope() {
-        com.aresstack.spaceharvester.deck.terminal.TerminalSession session = terminal.selected();
-        String area = "Command Deck › Terminal" + (session == null ? " (keine Sitzung gewählt)"
-                : " " + session.profile().label());
-        String key = "command-deck/terminal" + (session == null ? "" : "/" + session.profile().label());
-        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(area, key,
-                new com.aresstack.spaceharvester.app.chat.TerminalChatTools(session, terminal::selected),
-                com.aresstack.spaceharvester.app.chat.TerminalChatTools.systemMessage(area));
+        DeckArea sent = area;
+        if (sent == DeckArea.TERMINAL) {
+            com.aresstack.spaceharvester.deck.terminal.TerminalSession session = terminal.selected();
+            String where = "Command Deck › Terminal" + (session == null ? " (keine Sitzung gewählt)"
+                    : " " + session.profile().label());
+            String key = "command-deck/terminal" + (session == null ? "" : "/" + session.profile().label());
+            return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(where, key,
+                    new com.aresstack.spaceharvester.app.chat.TerminalChatTools(session, terminal::selected),
+                    com.aresstack.spaceharvester.app.chat.TerminalChatTools.systemMessage(where));
+        }
+        JComponent shown = areaView(sent);
+        com.aresstack.spaceharvester.app.chat.ChatToolset extra = null;
+        String listing = "";
+        java.util.List<String> rules = java.util.List.of();
+        String where = "Command Deck › " + sent.title();
+        String key = "command-deck/" + sent.name().toLowerCase(java.util.Locale.ROOT);
+        if (sent == DeckArea.FTP) {
+            extra = new com.aresstack.spaceharvester.app.chat.FtpChatTools(ftp.selected(), ftp::selected);
+            rules = com.aresstack.spaceharvester.app.chat.FtpChatTools.rules();
+        } else if (sent == DeckArea.NDV) {
+            extra = new com.aresstack.spaceharvester.app.chat.NdvChatTools(ndv.selected(), ndv::selected);
+            rules = com.aresstack.spaceharvester.app.chat.NdvChatTools.rules();
+        } else if (sent == DeckArea.FILES) {
+            String folder = files.browser().location().orElse(null);
+            extra = new com.aresstack.spaceharvester.app.chat.FilesChatTools(files.browser().source(), folder,
+                    files.textStore(), files.previewStore(),
+                    com.aresstack.spaceharvester.app.deck.DocumentPreviewStore::isDocument);
+            var filesTools = (com.aresstack.spaceharvester.app.chat.FilesChatTools) extra;
+            rules = com.aresstack.spaceharvester.app.chat.FilesChatTools.rules();
+            // Die Tabelle zeigt Ordner nur am Symbol; die Liste sagt es dem Modell ausdrücklich.
+            listing = filesTools.overview();
+            if (folder != null) {
+                where += " (Ordner " + folder + ")";
+                key += "/" + folder;
+            }
+        }
+        com.aresstack.spaceharvester.app.chat.DeckChatTools tools =
+                new com.aresstack.spaceharvester.app.chat.DeckChatTools(() -> shown, () -> area == sent, extra);
+        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(where, key, tools,
+                com.aresstack.spaceharvester.app.chat.DeckChatTools.systemMessage(where, about(sent), rules,
+                        tools.snapshot() + (listing.isEmpty() ? ""
+                                : "\n\nInhalt des offenen Ordners:\n" + listing)));
     }
+
+    /** Hinweis über dem Eingabefeld und Vorschläge (Chips) für den gewählten Bereich. */
+    public com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints chatHints() {
+        return chatHints(area);
+    }
+
+    static com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints chatHints(DeckArea shown) {
+        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints(switch (shown) {
+            case TERMINAL -> "Command Deck: Der Chat liest die Terminal-Maske und füllt Felder aus – abschicken kannst "
+                    + "nur du.";
+            case FTP -> "Command Deck › FTP: Der Chat sieht die Ansicht, liest Datasets, Members und Spools – ändern "
+                    + "kannst nur du.";
+            case NDV -> "Command Deck › NDV: Der Chat sieht die Ansicht, sucht Objekte und liest Quelltexte – ändern "
+                    + "kannst nur du.";
+            case BETAVIEW -> "Command Deck › BetaView: Der Chat sieht Trefferliste und offenes Dokument und erklärt "
+                    + "sie.";
+            case FILES -> "Command Deck › Dateien: Der Chat sieht den offenen Ordner und liest Dateien darin, auch "
+                    + "PDF, Word und Excel – ändern kannst nur du.";
+        }, switch (shown) {
+            case TERMINAL -> java.util.List.of(action("Maske erklären", "Erkläre mir die aktuelle Maske."));
+            case FTP -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
+                    action("Offenes zusammenfassen", "Fasse das offene Member bzw. den offenen Spool zusammen."));
+            case NDV -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
+                    action("Quelltext erklären", "Erkläre mir den offenen Quelltext: Zweck, Ablauf, Aufrufe."));
+            case BETAVIEW -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
+                    action("Dokument zusammenfassen", "Fasse das offene Dokument zusammen."));
+            case FILES -> java.util.List.of(action("Ordner zusammenfassen",
+                            "Fasse zusammen, was in diesem Ordner liegt und worum es in den Dateien geht."),
+                    action("Auswahl zusammenfassen", "Fasse die ausgewählte Datei zusammen."));
+        });
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.content.ChatPanel.QuickAction action(String label,
+                                                                                         String question) {
+        return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.QuickAction(label, question, question);
+    }
+
+    /** Ein, zwei Sätze für die Systemnachricht: was man im Bereich tut. */
+    private static String about(DeckArea shown) {
+        return switch (shown) {
+            case FTP -> "Dort sieht er MVS-Datasets und Members eines z/OS-Hosts per FTP oder JES-Jobs mit Spool; "
+                    + "offene Members und Spools stehen als Text im Editor.";
+            case NDV -> "Dort sieht er Bibliotheken und Objekte eines Natural Development Servers; offene Objekte "
+                    + "stehen als Natural-Quelltext im Editor.";
+            case BETAVIEW -> "Dort sucht er Belege und Listen auf einem BetaView-Dokumentserver; Trefferliste und "
+                    + "geöffnete Dokumente stehen in der Ansicht.";
+            case FILES -> "Dort sieht er einen Ordner seiner Festplatte oder eines Netzlaufwerks; offene Dateien stehen "
+                    + "als Text im Editor.";
+            case TERMINAL -> "Dort arbeitet er in einer TN3270-Sitzung.";
+        };
+    }
+
+    /** Die Oberfläche eines Bereichs, wie sie in der Mitte steht. */
+    private JComponent areaView(DeckArea shown) {
+        return switch (shown) {
+            case TERMINAL -> terminal;
+            case FTP -> ftp;
+            case NDV -> ndv;
+            case BETAVIEW -> betaView;
+            case FILES -> files;
+        };
+    }
+
+    /** Meldet jeden Wechsel des Bereichs (der Chat passt Hinweis und Vorschläge an). */
+    public void onAreaChanged(Runnable observer) {
+        areaObservers.add(observer);
+    }
+
+    private final java.util.List<Runnable> areaObservers = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public TerminalSessions sessions() {
         return sessions;
@@ -149,12 +312,16 @@ public final class CommandDeck {
         area = next;
         buttons.get(next).setSelected(true);
         cards.show(workspace, next.name());
+        statusCards.show(status, next.name());
         tools.removeAll();
         if (next == DeckArea.FTP) {
             tools.add(ftp.tools(), BorderLayout.CENTER);
         }
         tools.revalidate();
         tools.repaint();
+        if (areaObservers != null) {
+            areaObservers.forEach(Runnable::run);
+        }
     }
 
     public DeckArea area() {
@@ -184,6 +351,35 @@ public final class CommandDeck {
     /** Woher der Bereich Dateien die freigegebenen Ordner (Einstellungen › Dateizugriff) als Orte nimmt. */
     public void sharedFolders(java.util.function.Supplier<java.util.List<java.nio.file.Path>> folders) {
         sharedFolders = folders == null ? java.util.List::of : folders;
+    }
+
+    /** Wo der Editor frühere Versionen aufbewahrt (Vergleich); ohne Aufruf kein Verlauf. */
+    public void history(com.aresstack.spaceharvester.deck.editor.VersionHistory versions) {
+        history = versions == null ? com.aresstack.spaceharvester.deck.editor.VersionHistory.NONE : versions;
+    }
+
+    /** Woher der Bereich Dateien die SharePoint-Sites für „Orte“ nimmt. */
+    public void sharePointSites(java.util.function.Supplier<java.util.List<
+            com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite>> sites) {
+        sharePointSites = sites == null ? java.util.List::of : sites;
+    }
+
+    /** Reicht an den gerade gesetzten Verlauf weiter (er kommt erst nach dem Bau aus der App). */
+    private final class HistoryDelegate implements com.aresstack.spaceharvester.deck.editor.VersionHistory {
+        @Override
+        public void record(String store, String location, String text, String label) {
+            history.record(store, location, text, label);
+        }
+
+        @Override
+        public java.util.List<Version> versions(String store, String location) {
+            return history.versions(store, location);
+        }
+
+        @Override
+        public java.util.Optional<String> content(String store, String location, String id) {
+            return history.content(store, location, id);
+        }
     }
 
     FilesWorkspace files() {

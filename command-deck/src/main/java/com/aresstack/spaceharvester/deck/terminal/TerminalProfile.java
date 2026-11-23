@@ -13,9 +13,10 @@ import java.util.Objects;
  * @param tls              verschlüsselt verbinden
  * @param keepAliveSeconds Abstand der Keep-Alive-Pakete, 0 für keine
  * @param codePage         EBCDIC-Codepage, etwa {@code Cp273} (deutsch) oder {@code Cp037} (US)
+ * @param viaProxy         über den Proxy der App tunneln (HTTP CONNECT); aus = direkt wie bisher
  */
 public record TerminalProfile(String host, int port, TerminalModel model, boolean tls, int keepAliveSeconds,
-                              String codePage) {
+                              String codePage, boolean viaProxy) {
 
     public static final int DEFAULT_PORT = 23;
     public static final int DEFAULT_TLS_PORT = 992;
@@ -38,6 +39,12 @@ public record TerminalProfile(String host, int port, TerminalModel model, boolea
         if (!Charset.isSupported(codePage)) {
             throw new IllegalArgumentException("Unbekannte Codepage: " + codePage);
         }
+    }
+
+    /** Direkt, ohne Proxy (das bisherige Verhalten). */
+    public TerminalProfile(String host, int port, TerminalModel model, boolean tls, int keepAliveSeconds,
+                           String codePage) {
+        this(host, port, model, tls, keepAliveSeconds, codePage, false);
     }
 
     /** Ein Profil mit den üblichen Vorgaben: Modell 2, ohne TLS, ohne Keep-Alive, Cp273. */

@@ -1,0 +1,189 @@
+package com.aresstack.spaceharvester.app.chat;
+
+import com.aresstack.spaceharvester.ai.AiChat;
+import java.awt.Component;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * Die Werkzeuge des Chats für einen Bereich des Command Deck (FTP, NDV, BetaView, Dateien): allgemein für jeden
+ * Bereich die aktuelle Ansicht lesen ({@value #VIEW}) und einen ihrer Texte ganz lesen ({@value #TEXT}, etwa den
+ * Quelltext im Editor oder einen Spool), dazu die Werkzeuge des Bereichs selbst ({@code extra}). Nur lesen: Ändern,
+ * Speichern, Abschicken oder Löschen gibt es hier nicht.
+ *
+ * <p>Gebunden an den Bereich, der beim Senden gewählt war: Hat der Benutzer inzwischen gewechselt, lehnen die
+ * Werkzeuge ab. Ins Protokoll gehen nur Werkzeug und Grund, nie Inhalte.
+ */
+public final class DeckChatTools implements ChatToolset {
+
+    public static final String VIEW = "ansicht_lesen";
+    public static final String TEXT = "text_lesen";
+
+    /** So viele Zeichen liefert ein Aufruf von {@value #TEXT} höchstens. */
+    static final int TEXT_CHARS = 12_000;
+    /** So viel der Ansicht geht schon mit der Systemnachricht mit („Was ich sehe, sieht der Bot“). */
+    static final int SYSTEM_VIEW_CHARS = 8_000;
+    static final int SYSTEM_BLOCK_CHARS = 2_000;
+    /** So viel der Ansicht liefert {@value #VIEW}. */
+    static final int VIEW_CHARS = 30_000;
+    static final int VIEW_BLOCK_CHARS = 4_000;
+
+    static final String SWITCHED = "Der Benutzer hat inzwischen einen anderen Bereich gewählt; die Frage galt dem "
+            + "vorigen. Er soll sie dort neu stellen.";
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final System.Logger LOG = System.getLogger(DeckChatTools.class.getName());
+
+    private final Supplier<Component> view;
+    private final BooleanSupplier stillShown;
+    private final ChatToolset extra;
+    /** Die Texte der zuletzt gelesenen Ansicht, damit {@value #TEXT} dieselbe Nummerierung trifft. */
+    private volatile List<ScreenText.Block> blocks;
+
+    /**
+     * @param view       die Oberfläche des Bereichs, wie sie gerade angezeigt wird
+     * @param stillShown ob der beim Senden gewählte Bereich noch gewählt ist
+     * @param extra      die Werkzeuge des Bereichs selbst, {@code null} ohne
+     */
+    public DeckChatTools(Supplier<Component> view, BooleanSupplier stillShown, ChatToolset extra) {
+        this.view = view;
+        this.stillShown = stillShown == null ? () -> true : stillShown;
+        this.extra = extra;
+    }
+
+    /** Liest die Ansicht jetzt (beim Senden), für die Systemnachricht; merkt sich ihre Texte für {@value #TEXT}. */
+    public String snapshot() {
+        ScreenText screen = ScreenText.capture(view.get());
+        blocks = screen.blocks();
+        return screen.isEmpty() ? "(leer)" : screen.format(SYSTEM_VIEW_CHARS, SYSTEM_BLOCK_CHARS);
+    }
+
+    /**
+     * Die Systemnachricht: wer der Assistent ist, welcher Bereich, was der Benutzer gerade sieht, und was die
+     * Werkzeuge können.
+     *
+     * @param area      der Bereich in Worten, etwa „Command Deck › Dateien“
+     * @param about     ein, zwei Sätze, was man in diesem Bereich tut
+     * @param rules     weitere Regeln des Bereichs, je eine Zeile, oder leer
+     * @param shownView die Ansicht beim Senden ({@link #snapshot()})
+     */
+    public static String systemMessage(String area, String about, List<String> rules, String shownView) {
+        StringBuilder b = new StringBuilder();
+        b.append("Du bist der Assistent im Command Deck von Space Harvester. Der Benutzer arbeitet gerade im ")
+                .append(area).append(". ").append(about).append('\n');
+        b.append("- Unten steht, was der Benutzer in diesem Moment sieht. Beantworte Fragen dazu (\"was ist das\", "
+                + "\"erkläre\", \"fasse zusammen\") zuerst daraus.\n");
+        b.append("- Mit ").append(VIEW).append(" liest du die Ansicht neu und ausführlicher, mit ").append(TEXT)
+                .append(" einen ihrer Texte (Editor, Spool, Dokument) ganz, abschnittsweise.\n");
+        for (String rule : rules) {
+            b.append("- ").append(rule).append('\n');
+        }
+        b.append("- Du kannst nur lesen: nichts ändern, speichern, löschen, abschicken oder ausführen. Sag dem "
+                + "Benutzer, was er selbst tun kann.\n");
+        b.append("- Lehnt ein Werkzeug ab, nenne den Grund und schlage den nächsten Schritt vor.\n");
+        b.append("Antworte auf Deutsch, kurz und konkret.\n\n");
+        b.append("Aktuelle Ansicht (").append(area).append("):\n").append(shownView);
+        return b.toString();
+    }
+
+    @Override
+    public List<AiChat.Tool> definitions() {
+        List<AiChat.Tool> tools = new ArrayList<>();
+        tools.add(new AiChat.Tool(VIEW, "Liest, was der Benutzer im Bereich gerade sieht: Beschriftungen, Felder, "
+                + "Tabellen und Listen mit Auswahl (*), aufgeklappte Bäume und den Anfang jedes Textes (Editor, "
+                + "Spool, Dokument) mit Nummer.", "{\"type\":\"object\",\"properties\":{}}"));
+        tools.add(new AiChat.Tool(TEXT, "Liest einen Text der aktuellen Ansicht ganz, höchstens " + TEXT_CHARS
+                + " Zeichen je Aufruf; mit ab liest du weiter.", "{\"type\":\"object\",\"properties\":{"
+                        + "\"nr\":{\"type\":\"integer\",\"description\":\"Nummer des Textes aus der Ansicht, "
+                        + "Vorgabe 1\"},"
+                        + "\"ab\":{\"type\":\"integer\",\"description\":\"ab diesem Zeichen, Vorgabe 0\"}}}"));
+        if (extra != null) {
+            tools.addAll(extra.definitions());
+        }
+        return tools;
+    }
+
+    @Override
+    public String describe(AiChat.ToolCall call) {
+        return switch (call.name()) {
+            case VIEW -> "Liest die Ansicht";
+            case TEXT -> "Liest den Text";
+            default -> extra == null ? "Werkzeug" : extra.describe(call);
+        };
+    }
+
+    @Override
+    public String run(AiChat.ToolCall call) {
+        if (!stillShown.getAsBoolean()) {
+            return SWITCHED;
+        }
+        try {
+            return switch (call.name()) {
+                case VIEW -> view();
+                case TEXT -> text(arguments(call));
+                default -> extra == null ? "Unbekanntes Werkzeug." : extra.run(call);
+            };
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Deck-Chat: " + call.name() + " gescheitert: "
+                    + e.getClass().getSimpleName());
+            return "Das Werkzeug ist gescheitert (" + e.getClass().getSimpleName() + ").";
+        }
+    }
+
+    @Override
+    public void cancel() {
+        if (extra != null) {
+            extra.cancel();
+        }
+    }
+
+    private String view() {
+        ScreenText screen = ScreenText.capture(view.get());
+        blocks = screen.blocks();
+        return screen.isEmpty() ? "Die Ansicht ist leer." : screen.format(VIEW_CHARS, VIEW_BLOCK_CHARS);
+    }
+
+    private String text(JsonNode arguments) {
+        List<ScreenText.Block> known = blocks;
+        if (known == null) {
+            view();
+            known = blocks;
+        }
+        if (known.isEmpty()) {
+            return "In der Ansicht ist kein Text (Editor, Spool, Dokument) offen.";
+        }
+        int nr = arguments.path("nr").asInt(1);
+        if (nr < 1 || nr > known.size()) {
+            return "Abgelehnt: nr muss zwischen 1 und " + known.size() + " liegen.";
+        }
+        ScreenText.Block block = known.get(nr - 1);
+        return page(block.name().isEmpty() ? "Text " + nr : block.name(), block.text(), arguments.path("ab").asInt(0));
+    }
+
+    /** Ein Abschnitt eines langen Textes mit Angabe, wo es weitergeht. */
+    static String page(String name, String text, int from) {
+        int start = Math.max(0, Math.min(from, text.length()));
+        int end = Math.min(text.length(), start + TEXT_CHARS);
+        StringBuilder b = new StringBuilder(name).append(" (Zeichen ").append(start).append('–').append(end)
+                .append(" von ").append(text.length()).append("):\n").append(text, start, end);
+        if (end < text.length()) {
+            b.append("\n… weiter mit ab=").append(end);
+        }
+        return b.toString();
+    }
+
+    static JsonNode arguments(AiChat.ToolCall call) {
+        try {
+            JsonNode node = call.argumentsJson() == null || call.argumentsJson().isBlank() ? null
+                    : JSON.readTree(call.argumentsJson());
+            return node != null && node.isObject() ? node : JSON.createObjectNode();
+        } catch (JacksonException e) {
+            return JSON.createObjectNode();
+        }
+    }
+}
