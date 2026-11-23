@@ -1142,6 +1142,7 @@ final class SourceForm {
             }
         });
         form.root.setPreferredSize(form.preferredSize());
+        Dialogs.present(dialog, new Dimension(560, 420));
     }
 
     /** Belegt eine neue Quelle vor: Art, Felder des Typs und (falls angegeben) Zugangsdaten aus diesem KeePass-Eintrag. */

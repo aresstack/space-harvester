@@ -162,8 +162,11 @@ final class NdvSourceRules implements NdvSearchLink {
         if (partitions.isEmpty()) {
             throw new IllegalStateException("Die Quelle „" + sourceId + "“ hat nichts zum Abgleichen");
         }
+        // Ausdrücklich indexieren heißt Quelltexte laden (FULL); ein Nachholen (SYNC_CACHE) würde neue Objekte nur
+        // katalogisieren, ihr Text käme nie in die Suche.
         for (Partition partition : partitions) {
-            runtime.workspace().catchUp(sourceId, partition.key());
+            runtime.workspace().startSync(sourceId, partition.key(),
+                    com.aresstack.spaceharvester.application.sync.SyncMode.FULL);
         }
         return "Indexieren gestartet: Abgleich der Quelle „" + sourceId + "“ (siehe Aufträge)";
     }
