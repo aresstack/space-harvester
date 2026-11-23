@@ -434,7 +434,10 @@ public final class ChatTurn {
      * Antwort oder Werkzeugaufrufen. Jede Runde prüft den Abbruch; die letzte Runde geht ohne Werkzeuge.
      */
     private void runWithTools() {
-        ChatTools running = new ChatTools(workspace, scope, Set.of(), new ChatTools.Sources() {
+        // Was ich sehe, sieht der Bot (Angelo 23.11.2026): Die offene Seite gehört immer dazu, auch wenn die Auflösung
+        // des Bereichs sie nicht kennt (etwa ein Ticket aus der Suche, das im Bestandsbaum fehlt).
+        Set<PageKey> granted = openPage == null ? Set.of() : Set.of(openPage);
+        ChatTools running = new ChatTools(workspace, scope, granted, new ChatTools.Sources() {
             @Override
             public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
                 return ChatTurn.this.cite(excerpt, key);
