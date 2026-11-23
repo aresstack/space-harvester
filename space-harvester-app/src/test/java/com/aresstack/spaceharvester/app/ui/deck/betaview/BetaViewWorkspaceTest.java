@@ -139,6 +139,20 @@ class BetaViewWorkspaceTest {
         assertThat(DocumentPane.shortLabel(longTitle)).hasSizeLessThanOrEqualTo(DocumentPane.MAX_PILL).endsWith("…");
     }
 
+    @Test
+    void theFirstLoginFormShowsTheMainframeMateAddress() throws Exception {
+        String before = com.aresstack.spaceharvester.app.ui.AppState.shared().get(BetaViewConnectForm.ADDRESS_KEY);
+        try {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ADDRESS_KEY, (String) null);
+            build(ServerAccounts.NONE, new FakePrompts(folder.resolve("x.txt")));
+            assertThat(onEdt(() -> workspace.form().address.getText()))
+                    .isEqualTo(com.aresstack.spaceharvester.deck.betaview.BetaViewProfile.DEFAULT_ADDRESS)
+                    .isEqualTo("https://webenabler.zivit.iv.bfinv.de/betaview/");
+        } finally {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ADDRESS_KEY, before);
+        }
+    }
+
     private void build(ServerAccounts accounts, Prompts prompts) throws Exception {
         SwingUtilities.invokeAndWait(() -> workspace = new BetaViewWorkspace(new BetaViewSessions(
                 new HttpBetaViewServer(BetaViewAccess.direct().http()), background), accounts, prompts));
