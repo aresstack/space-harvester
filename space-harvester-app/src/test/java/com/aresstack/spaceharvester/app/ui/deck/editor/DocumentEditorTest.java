@@ -125,6 +125,17 @@ class DocumentEditorTest {
         assertThat(on(editor::compareInfo)).isEqualTo("1 Unterschied");
     }
 
+    /** Codex-Befund #1180/#1185: höchstens einmal angemeldet, sonst hielte sich ein geschlossener Editor fest. */
+    @Test
+    void theBlockColourObserverIsRegisteredOnlyOnce() throws Exception {
+        int before = NaturalBlockHighlighter.observers();
+        DocumentEditor editor = open("notiz.txt", "erfundener Text");
+        assertThat(NaturalBlockHighlighter.observers()).isEqualTo(before + 1);
+        // „Sichtbar geworden“ meldet erneut an, das darf nicht doppeln.
+        SwingUtilities.invokeAndWait(editor::watch);
+        assertThat(NaturalBlockHighlighter.observers()).isEqualTo(before + 1);
+    }
+
     private DocumentEditor open(String name, String text) throws Exception {
         Path file = Files.writeString(root.resolve(name), text);
         EditorSession session = sessions.open(new LocalDocumentStore(), file.toString(), name);

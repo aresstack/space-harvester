@@ -353,6 +353,85 @@ class NdvWorkspaceTest {
         assertThat(server.writes()).isEmpty();
     }
 
+    /** Codex-Befunde aus #1180: Filter des angemeldeten Benutzers, Verlauf ab der Bibliotheksliste, Lesezeichen. */
+    @Test
+    void slowConnectionsKeepFilterHistoryAndBookmarksRight() throws Exception {
+        // Gemerkter Bibliotheksfilter des Benutzers PILOT: nur „KA…“.
+        com.aresstack.spaceharvester.deck.ndv.NdvNameFilter saved = new com.aresstack.spaceharvester.deck.ndv.NdvNameFilter();
+        saved.toggle("KA", true);
+        new NdvNavigatorState().saveFilter(saved, "10.0.0.7", "PILOT", NdvNavigatorState.SCOPE_LIBRARIES);
+        List<Runnable> connecting = new java.util.ArrayList<>();
+        List<Runnable> listing = new java.util.ArrayList<>();
+        NdvSessions slow = new NdvSessions(server, connecting::add);
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(slow, accounts, editors, listing::add);
+            NdvConnectForm form = workspace[0].form();
+            form.show(List.of(HOST));
+            form.server.setSelectedItem(HOST);
+            form.library.setText("");
+            form.submit();
+        });
+        flush();
+        NdvBrowser browser = workspace[0].browser(slow.all().getFirst());
+        assertThat(slow.all().getFirst().user()).as("noch nicht angemeldet").isEmpty();
+        drain(connecting, listing);
+        assertThat(browser.visibleLibraries()).as("Filter des angemeldeten Benutzers").containsExactly("KASSE");
+        new NdvNavigatorState().saveFilter(new com.aresstack.spaceharvester.deck.ndv.NdvNameFilter(), "10.0.0.7",
+                "PILOT", NdvNavigatorState.SCOPE_LIBRARIES);
+
+        // Lesezeichen in KASSE, aber vor dem Laden schon LAGER gewählt: in LAGER öffnet sich nichts, auch wenn es
+        // dort ein gleichnamiges Objekt gibt.
+        server.add("LAGER", "KASSE001", FakeNdvServer.PROGRAM, "* gleichnamig, erfunden\nEND");
+        SwingUtilities.invokeAndWait(() -> {
+            browser.openBookmark(new com.aresstack.spaceharvester.deck.ndv.NdvBookmark("KASSE", "KASSE001.NSP"));
+            browser.openLibrary("LAGER");
+        });
+        drain(connecting, listing);
+        assertThat(browser.library()).isEqualTo("LAGER");
+        assertThat(browser.shown()).as("das Lesezeichen gehörte zu KASSE").isNull();
+    }
+
+    @Test
+    void theDefaultLibraryLeavesTheLibraryListInTheHistory() throws Exception {
+        NdvWorkspace[] workspace = new NdvWorkspace[1];
+        SwingUtilities.invokeAndWait(() -> {
+            workspace[0] = new NdvWorkspace(sessions, accounts, editors, Runnable::run);
+            NdvConnectForm form = workspace[0].form();
+            form.show(List.of(HOST));
+            form.server.setSelectedItem(HOST);
+            form.library.setText("LAGER");
+            form.submit();
+        });
+        flush();
+        flush();
+        NdvBrowser browser = workspace[0].browser(sessions.all().getFirst());
+        assertThat(browser.library()).isEqualTo("LAGER");
+        SwingUtilities.invokeAndWait(browser::navigateBack);
+        flush();
+        assertThat(browser.library()).as("zurück zur Bibliotheksliste").isNull();
+        SwingUtilities.invokeAndWait(browser::navigateForward);
+        flush();
+        assertThat(browser.library()).as("vor wieder zur Bibliothek").isEqualTo("LAGER");
+    }
+
+    /** Führt wartende Hintergrundarbeit und die Antworten auf dem EDT aus, bis nichts mehr ansteht. */
+    private static void drain(List<Runnable> first, List<Runnable> second) throws Exception {
+        for (int round = 0; round < 50; round++) {
+            flush();
+            List<Runnable> work = new java.util.ArrayList<>(first);
+            first.clear();
+            work.addAll(second);
+            second.clear();
+            if (work.isEmpty()) {
+                flush();
+                return;
+            }
+            work.forEach(Runnable::run);
+        }
+        throw new AssertionError("Hintergrundarbeit endet nicht");
+    }
+
     @Test
     void openingTheDeckConnectsNothing() throws Exception {
         CommandDeck[] deck = new CommandDeck[1];
