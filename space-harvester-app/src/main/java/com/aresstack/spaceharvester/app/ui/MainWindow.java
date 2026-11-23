@@ -156,6 +156,12 @@ public final class MainWindow implements AppContext.Navigator {
     private Explorer.Remembered searchSelection;
     /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
     private AppContext.Section beforeSettings = AppContext.Section.CONTENT;
+    /**
+     * Die Perspektive, aus der die Einstellungen geöffnet wurden, solange sie über ihr stehen; {@code null} sonst. Die
+     * Einstellungen gehören allen Perspektiven: Wer sie aus dem Command Deck öffnet, bleibt im Command Deck (Angelo,
+     * 23.11.2026), und „Zurück“ führt dorthin zurück.
+     */
+    private Perspective settingsOver;
     /** Tooltips der freien Flächen der Fensterleiste: Der Doppelklick ersetzt den fehlenden Vergrößern-Knopf. */
     static final String MAXIMIZE_TOOLTIP = "Doppelklick: Vollbild";
     static final String RESTORE_TOOLTIP = "Doppelklick: Verkleinern";
@@ -237,7 +243,7 @@ public final class MainWindow implements AppContext.Navigator {
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
-        settings.onLeave(() -> show(beforeSettings));
+        settings.onLeave(this::leaveSettings);
         explorer = new Explorer(context);
         // Die Auswahl links ist der Bereich der Suche, aber nur, solange die Suche zu sehen ist. Was man woanders
         // anklickt (etwa einen Treffer), ändert ihn nicht; zurück in der Suche gilt die gemerkte Auswahl
@@ -532,6 +538,12 @@ public final class MainWindow implements AppContext.Navigator {
         harvesterNavigation = icons;
         navigationSlot.add(icons, BorderLayout.CENTER);
         perspectives.onChange(this::perspectiveChanged);
+        // Ein Knopf der eigenen Navigation schließt Einstellungen, die über der Perspektive stehen.
+        for (Perspective perspective : perspectives.all()) {
+            if (perspective.navigation() != null && !Perspectives.HARVESTER.equals(perspective.id())) {
+                leaveSettingsOn(perspective.navigation());
+            }
+        }
         chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, stage, sideDeck);
         chatSplit.setBorder(null);
         chatSplit.setBackground(Comic.SURFACE);
@@ -864,6 +876,15 @@ public final class MainWindow implements AppContext.Navigator {
      */
     private void perspectiveChanged(Perspective next) {
         boolean harvester = Perspectives.HARVESTER.equals(next.id());
+        if (settingsOver != null) {
+            // Gewechselt, während die Einstellungen über einer Perspektive standen: Sie gehen mit zu.
+            settingsOver = null;
+            current = beforeSettings;
+            if (next.drawer() == null) {
+                // Ihre Leiste geht zu, ohne den gemerkten Zustand des Space Harvesters zu überschreiben.
+                split.collapseLeft();
+            }
+        }
         navigationSlot.removeAll();
         if (next.navigation() != null) {
             navigationSlot.add(next.navigation(), BorderLayout.CENTER);
@@ -949,10 +970,19 @@ public final class MainWindow implements AppContext.Navigator {
     /** Zeigt den Bereich, ohne die große Chat-Ansicht zu verlassen (Auswahl im Explorer). */
     private void showSection(AppContext.Section section) {
         // Ein Bereich des Space Harvesters (auch über einen Link im Chat) führt in dessen Perspektive zurück; die Aufträge
-        // stehen in der globalen Seitenleiste und lassen die Perspektive, wie sie ist.
+        // stehen in der globalen Seitenleiste und lassen die Perspektive, wie sie ist. Die Einstellungen gehören allen
+        // Perspektiven und öffnen über der aktuellen.
+        boolean settingsSection = section == AppContext.Section.SETTINGS || section == AppContext.Section.STATUS;
         if (perspectives != null && section != AppContext.Section.ACTIVITIES
                 && !perspectives.isCurrent(Perspectives.HARVESTER)) {
-            perspectives.select(Perspectives.HARVESTER);
+            if (settingsSection) {
+                if (settingsOver == null && current != AppContext.Section.SETTINGS) {
+                    beforeSettings = current;
+                }
+                settingsOver = perspectives.current();
+            } else {
+                perspectives.select(Perspectives.HARVESTER);
+            }
         }
         if (section == AppContext.Section.STATUS) {
             show(AppContext.Section.SETTINGS);
@@ -966,7 +996,7 @@ public final class MainWindow implements AppContext.Navigator {
         }
         cards.show(deck, section.name());
         boolean changed = section != current;
-        if (changed && current != AppContext.Section.SETTINGS) {
+        if (changed && current != AppContext.Section.SETTINGS && settingsOver == null) {
             beforeSettings = current;
         }
         if (changed && current == AppContext.Section.SEARCH) {
@@ -1010,6 +1040,48 @@ public final class MainWindow implements AppContext.Navigator {
         if (changed) {
             findBar.areaChanged();
         }
+        if (settingsOver != null && section == AppContext.Section.SETTINGS) {
+            // Über der Perspektive: deren Navigation und Titel bleiben, die Mitte zeigt die Einstellungen.
+            stageCards.show(stage, Perspectives.HARVESTER);
+            viewStatus.setVisible(false);
+            jobStatus.navigationVisible(false);
+        }
+    }
+
+    /** „Zurück“ der Einstellungen: dorthin, woher sie kamen, auch in eine andere Perspektive. */
+    private void leaveSettings() {
+        if (settingsOver == null) {
+            show(beforeSettings);
+            return;
+        }
+        Perspective back = settingsOver;
+        settingsOver = null;
+        current = beforeSettings;
+        if (back.drawer() == null) {
+            // Die Leiste der Einstellungen geht zu, ohne den gemerkten Zustand des Space Harvesters zu ändern.
+            split.collapseLeft();
+        }
+        perspectiveChanged(back);
+    }
+
+    /** Hängt an jeden Knopf der Navigation: Einstellungen über der Perspektive schließen. */
+    private void leaveSettingsOn(java.awt.Container navigation) {
+        for (java.awt.Component child : navigation.getComponents()) {
+            if (child instanceof javax.swing.AbstractButton button) {
+                button.addActionListener(e -> {
+                    if (settingsOver != null) {
+                        leaveSettings();
+                    }
+                });
+            } else if (child instanceof java.awt.Container container) {
+                leaveSettingsOn(container);
+            }
+        }
+    }
+
+    /** Ob die Einstellungen gerade über einer anderen Perspektive stehen (für Tests). */
+    boolean settingsOverPerspective() {
+        return settingsOver != null;
     }
 
     @Override
