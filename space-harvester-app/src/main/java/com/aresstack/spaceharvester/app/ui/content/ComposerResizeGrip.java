@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.Comic;
 
 import javax.swing.JComponent;
@@ -31,7 +32,7 @@ final class ComposerResizeGrip extends JComponent {
 
     ComposerResizeGrip(IntSupplier currentHeight, IntConsumer resized, Runnable finished) {
         setOpaque(false);
-        setCursor(Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR));
         setToolTipText("Ziehen: Normalgröße des Eingabefelds festlegen");
         MouseAdapter drag = new MouseAdapter() {
             @Override

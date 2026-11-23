@@ -579,7 +579,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         }
         try {
             if (uncommitted > 0) {
-                writer.commit();
+                TragicWriters.commitOnClose(writer, "Volltextindex");
             }
         } catch (IOException e) {
             throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
@@ -587,7 +587,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
             closed = true;
             try {
                 searchers.close();
-            } catch (IOException ignored) {
+            } catch (IOException | org.apache.lucene.store.AlreadyClosedException ignored) {
                 // Der Writer wird trotzdem geschlossen.
             }
             closeQuietly(writer, directory);

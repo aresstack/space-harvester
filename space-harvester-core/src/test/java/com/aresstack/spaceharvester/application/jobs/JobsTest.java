@@ -760,6 +760,34 @@ class JobsTest {
     }
 
     @Test
+    void aFailingSaveDuringCloseStillEndsAllOtherJobs() {
+        // Roter develop-Build 22.11.2026: Hatte ein unterbrochener Thread den Writer der Auftragsablage geschlossen,
+        // brach close() beim ersten Ablegen ab; die übrigen Aufträge, Zeitgeber und Meldungen blieben offen.
+        AtomicBoolean failNext = new AtomicBoolean();
+        InMemoryJobStore failing = new InMemoryJobStore() {
+            @Override
+            public void save(JobStatus status) {
+                if (failNext.compareAndSet(true, false)) {
+                    throw new IllegalStateException("Writer geschlossen");
+                }
+                super.save(status);
+            }
+        };
+        Jobs jobs = new Jobs(failing, executor, new JobLimits(1, 5, Duration.ofHours(1)), clock);
+        JobStatus running = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a",
+                JobTask.blocking(context -> { }));
+        JobStatus first = jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
+        JobStatus second = jobs.submit(JobType.EXPORT, "confluence", "C", "client-a", JobTask.blocking(context -> { }));
+        failNext.set(true);
+
+        jobs.close();
+
+        assertThat(failing.find(second.id()).orElseThrow().state()).isEqualTo(JobState.CANCELLED);
+        assertThat(failing.find(running.id()).orElseThrow().cancelRequested()).isTrue();
+        assertThat(failing.find(first.id())).isPresent();
+    }
+
+    @Test
     void closeCancelsQueuedJobsRequestsCancelOfRunningOnesAndRejectsNewOnes() {
         Jobs jobs = jobs(1, 5);
         FakePageReader reader = new FakePageReader(2);

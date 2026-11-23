@@ -39,7 +39,7 @@ public final class HelpButton extends JButton {
         setContentAreaFilled(false);
         setBorderPainted(false);
         setOpaque(false);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setRolloverEnabled(true);
         PopupHover.clearOnClose(popup, this);
         addActionListener(e -> popup.showAt(this, 0, getHeight()));
