@@ -1,6 +1,6 @@
 # ADR 0034: Favoriten-Ordner als eigene Sammlungen
 
-- Status: **Entwurf** (23.11.2026), zur Prüfung bei Architekt und UX-Manager. Vorgaben Angelos bindend, der Rest ist
+- Status: **Entwurf** (23.11.2026), UX-Manager abgenommen (23.11.), Architekt prüft. Vorgaben Angelos bindend, der Rest ist
   Vorschlag.
 - Bezüge: [ADR 0027](0027-beobachter-statt-abfragen.md) (kein Polling), [ADR 0028](0028-ki-freigabe-je-seite.md)
   (KI-Freigabe), [ADR 0029](0029-auswahl-und-ausgabe-aus-dem-bestand.md) (Auswahl), ADR 0030/0031
@@ -28,9 +28,12 @@
   `toggle(favorite, folderId)`. Eine flache Datei wird beim Lesen zur obersten Ebene, nichts geht verloren.
 - Es bleibt **eine** Klasse `Favorites`; die flache Liste entfällt, `all()` liefert die Favoriten in Baumreihenfolge
   (heutige Aufrufer wie Stern im Baum und Vorfahren-Merker bleiben unberührt).
-- Anzeige: Die Favoritenansicht im Explorer (Stern unten rechts) wird ein Baum mit Drag and Drop, Kontextmenü
-  „Neuer Ordner“, „Umbenennen“, „Entfernen“, Entf-Taste, Filter mit ✕, Verhalten wie `FavoritesPanel` des EAC. Neuer
-  Stern landet im gewählten Ordner, sonst oben. Zeichen und Spalten wie im Seitenbaum (Ordnersymbol, Stern rechts).
+- Anzeige (UX-Manager): Die Favoritenansicht im Explorer (Stern unten rechts) wird ein Baum mit **demselben
+  Baum-Baustein und Renderer wie der Seitenbaum**, kein zweiter. „Neuer Ordner“ als Symbolknopf mit Tooltip in der
+  Leiste und im Kontextmenü; Umbenennen direkt im Baum (F2), kein Dialog; Verschieben per Drag and Drop mit deutlicher
+  Einfügemarke und ohne Maus über „Verschieben nach …“; Entf entfernt. „Wirklich …?“ Ja/Nein nur bei einem Ordner mit
+  Inhalt. Filter mit ✕ im Feld. Neuer Stern landet im gewählten Ordner, sonst oben.
+- Ordner wählen ist eine Auswahl wie im Seitenbaum: Mitte und rechts folgen, Titel in der Tab-Zeile.
 
 ### 2. Ordner als Auswahl (ADR 0029)
 - Die Auswahl `ExportPanel.Selection` bekommt eine dritte Art neben Knoten und global: **Sammlung** (Ordner-ID, Titel,
@@ -44,8 +47,10 @@
   gebildet (Beobachter, ADR 0027).
 
 ### 3. Chat
+- Eine Regel überall: Ein Seiten-Favorit zählt wie die Auswahl dieser Seite im Baum (samt Unterseiten), in Chat,
+  Zusammenfassung und Podcast gleich.
 - Ordner gewählt = Bereich ist die Sammlung, wie bei einem Space nach ADR 0033: kein Seitentext automatisch, nur die
-  Bereichszeile; `seiten_auflisten` ohne Knoten nennt die Favoriten des Ordners (Unterordner als Knoten),
+  Bereichszeile (Ordnername und Seitenzahl); `seiten_auflisten` ohne Knoten nennt die Favoriten des Ordners (Unterordner als Knoten),
   `seite_lesen`/`im_bereich_suchen` sind auf die Wurzeln begrenzt. Interne Suche und Websuche bleiben aus, bis der
   Benutzer sie einschaltet. KI-Freigabe wie bisher je gelieferter Seite (`releasePageOrThrow`), nie ganze Spaces,
   auch wenn ein Space-Favorit im Ordner liegt.
@@ -58,15 +63,19 @@
   Ausgabeform (`zusammenfassung`, `themen`) bleiben eine Implementierung; nur die Anweisung und die Eingabe je Seite
   unterscheiden sich. Streaming wie bisher.
 - Ablage im Core je Schlüssel der Ebene: heute (Quelle, Update, Space), neu (Sammlung = Ordner-ID, Fingerabdruck der
-  Wurzeln). Ändern sich Wurzeln oder Seiteninhalte, gilt die Zusammenfassung als veraltet („neu erstellen“), wie beim
-  offenen Update.
+  Wurzeln). Ändern sich Wurzeln oder Seiteninhalte, gilt die Zusammenfassung als veraltet, wie beim offenen Update.
+  **Eine Änderung am Ordner startet nie von selbst einen KI-Lauf**, sie markiert nur „veraltet“; neu erstellt wird über
+  den Symbolknopf „Zusammenfassen“. Leerer Ordner: Hinweis, kein Modellaufruf.
+- Der Lauf ist ein Auftrag in der rechten Seitenleiste (x/y), BusyOverlay mit Esc-Kreis, Teilergebnisse sofort;
+  Meldungen in die Statuszeile.
 - Oberfläche: Die Darstellung der Zusammenfassung (Themen, Seiten gelb, Bild rechts) wird aus `SourceUpdatesView` als
   Baustein herausgelöst und von Quellenseite und Ordner gemeinsam genutzt; die Wolkenleiste der Updates gibt es beim
   Ordner (vorerst) nicht. Fehlt die Zusammenfassung, erstellt das Chat-Modell sie beim Öffnen wie bei Updates;
   „Zusammenfassen“ erstellt sie neu.
 - Podcast: `UpdatePodcasts` erzeugt den Podcast aus einer Zusammenfassung; der Schlüssel wird auf die Ebene
   verallgemeinert, die Produktion bleibt dieselbe. Die Podcast-Ansicht (Kopfhörer) zeigt ihn wie bei Quelle/Space.
-- KI-Freigabe: Ins Modell gehen nur Seiten mit `AiRelease.mayProcess`; andere nur als Zahl („nicht lesbar“), wie heute.
+- KI-Freigabe: Ins Modell gehen nur Seiten mit `AiRelease.mayProcess`; andere nur als Zahl, sichtbar als „x von y
+  Seiten nicht für KI freigegeben“. Ein Space-Favorit gibt nie den ganzen Space frei.
 
 ### 5. Analysen und übrige Reiter
 - Ein Ordner ist eine Seite ohne eigenen Inhalt, seine Favoriten (und Unterordner) sind ihre Unterseiten. Die
@@ -75,7 +84,8 @@
   Abschnitt „Aus Unterseiten“.
 - Checkbox „mit Unterseiten“ (nie gesperrt): **aus** = die Favoriten direkt im Ordner, je nur die Seite selbst;
   **an** = rekursiv alle Unterordner und je Seiten-Favorit auch seine echten Unterseiten (gleiche Bedeutung wie bei
-  einer Seite). Space- und Quellen-Favoriten gehen in beiden Stellungen ganz ein.
+  einer Seite). Space- und Quellen-Favoriten gehen in beiden Stellungen ganz ein. Am Ordner steht sie standardmäßig
+  **an** (der oberste Ordner enthält alles darunter).
 - Reiter, die eine einzelne Seite voraussetzen (Bilder, Eigenschaften einer Seite), zeigen die Sammlung wie bei einem
   Space.
 
@@ -92,8 +102,6 @@
 
 ## Offene Punkte
 
-- Checkbox-Semantik am Ordner (Abschnitt 5): Vorschlag „aus = direkte Favoriten, an = alles rekursiv inkl. echter
-  Unterseiten“. Alternative: „aus = direkte Favoriten samt ihrer Unterseiten“.
-- Ein Seiten-Favorit im Chat-Bereich zählt mit Unterseiten (wie die Auswahl im Baum heute). Passt das zu „nur die
-  Quellen, die dort sind“?
+- Angelo kann den beiden Annahmen widersprechen: Checkbox-Semantik am Ordner (Abschnitt 5) und Seiten-Favorit samt
+  Unterseiten (Abschnitt 3). UX-Manager hat beide abgenommen.
 - Updates (Wolkenleiste) für einen Ordner: Ausschnitt der Updates auf die Seiten der Sammlung; nicht in dieser Runde.
