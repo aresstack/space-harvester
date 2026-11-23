@@ -239,6 +239,26 @@ class NdvWorkspaceTest {
         flush();
         assertThat(session.state()).isEqualTo(NdvState.FAILED);
         assertThat(browser.statusText()).contains("Fehler").contains("abgelehnt");
+        // Angelo 23.11.: Der Stand steht in der Statuszeile der App, rot; der Fuß trägt nur Aktionen.
+        assertThat(workspace[0].statusLine()).contains("Fehler").contains("abgelehnt");
+        assertThat(browser.statusNote().tone())
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.StatusNote.Tone.ERROR);
+        assertThat(texts(browser.foot())).doesNotContain(browser.statusText());
+        SwingUtilities.invokeAndWait(() -> workspace[0].select(null));
+        assertThat(workspace[0].statusLine()).isEqualTo(NdvWorkspace.NO_SESSION);
+    }
+
+    private static java.util.List<String> texts(java.awt.Container root) {
+        java.util.List<String> found = new java.util.ArrayList<>();
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof javax.swing.JLabel label && label.getText() != null) {
+                found.add(label.getText());
+            }
+            if (child instanceof java.awt.Container container) {
+                found.addAll(texts(container));
+            }
+        }
+        return found;
     }
 
     /** Angelo 23.11.: Die Meldung lief in der Statuszeile ohne Trenner zusammen („…:2700Mögliche Ursachen:•“). */
