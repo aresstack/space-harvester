@@ -24,8 +24,8 @@ dependencies {
     implementation 'org.apache.xmlgraphics:batik-bridge:1.17'
     implementation 'org.apache.xmlgraphics:batik-transcoder:1.17'
     implementation 'org.apache.xmlgraphics:batik-codec:1.17'
-    // ANTLR wie in MainframeMate und mermaid-java (4.9.3): ein Laufzeit-Stand, sonst lesen ältere Parser ihr ATN nicht
-    antlr libs.antlr.tool
+    // ANTLR in derselben Fassung wie mainframe-languages (eine Laufzeit im Klassenpfad; die Parser erzeugt der Build neu)
+    antlr libs.antlr
     implementation libs.antlr.runtime
 
     testImplementation platform(libs.junit.bom)
@@ -43,7 +43,7 @@ tasks.named('generateGrammarSource') {
 // Das antlr-Plugin hängt das Werkzeug sonst an api/compileClasspath an; zur Laufzeit genügt antlr4-runtime
 configurations {
     api {
-        setExtendsFrom(extendsFrom.findAll { it != configurations.antlr })
+        extendsFrom = extendsFrom.findAll { it != configurations.antlr }
     }
 }
 

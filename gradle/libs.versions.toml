@@ -11,6 +11,8 @@ openterm = "1.7.2"
 # Gemeinsamer Editor des Command Deck (Dateien, später FTP/NDV): Syntaxhervorhebung wie in MainframeMate, dort 3.3.3
 # wegen Java 8; hier die aktuelle Fassung (BSD-3, reines Java, ohne weitere Abhängigkeiten)
 rsyntaxtextarea = "4.0.1"
+# Parser für JCL (Grammatik aus MainframeMate) im Modul mainframe-languages; dort 4.9.3 wegen Java 8, hier die aktuelle
+antlr = "4.13.2"
 # Spring Cloud Azure 7.4.x baut gegen Spring Boot 4.1 (spring-cloud-azure-autoconfigure 7.4.0 → Boot 4.1.0)
 springCloudAzure = "7.4.0"
 # Spring Cloud 2025.1 (Boot 4.0): für Boot 4.1 gibt es nur Meilensteine; nur der Config-Client, geprüft in ConfigServerImportTest
@@ -61,10 +63,8 @@ junit4 = "4.13.2"
 flexmark = "0.62.2"
 # Mermaid und SVG offline als Bild (GraalJS 21.2 wie win-proxy-java, Batik), wie im Enterprise AI Client
 mermaidJava = "0.2.0-beta.2"
-# Diagramm-Ansicht „Visuell“ im Command Deck (mermaid-renderer, Kopie aus MainframeMate): GraalJS wie drawio-java,
-# ANTLR wie MainframeMate und mermaid-java (4.9.3, nicht anheben: Parser ab 4.10 haben ein anderes ATN-Format)
+# Diagramm-Ansicht „Visuell“ im Command Deck (mermaid-renderer, Kopie aus MainframeMate): GraalJS wie drawio-java
 graalJs = "21.3.20.0.3"
-antlr = "4.9.3"
 poi = "5.5.1"
 # Desktop-App (#103): YAML-Konfiguration ohne Spring, dieselbe Fassung wie über Spring Boot 4.1
 snakeyaml = "2.4"
@@ -75,6 +75,8 @@ zxing = "3.5.3"
 [libraries]
 openterm = { module = "com.ascert.open:openterm", version.ref = "openterm" }
 rsyntaxtextarea = { module = "com.fifesoft:rsyntaxtextarea", version.ref = "rsyntaxtextarea" }
+antlr = { module = "org.antlr:antlr4", version.ref = "antlr" }
+antlr-runtime = { module = "org.antlr:antlr4-runtime", version.ref = "antlr" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
 jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -118,8 +120,6 @@ flexmark = { module = "com.vladsch.flexmark:flexmark", version.ref = "flexmark" 
 mermaid-java = { module = "com.aresstack:mermaid-java", version.ref = "mermaidJava" }
 graal-sdk = { module = "org.graalvm.sdk:graal-sdk", version.ref = "graalJs" }
 graal-js = { module = "org.graalvm.js:js", version.ref = "graalJs" }
-antlr-tool = { module = "org.antlr:antlr4", version.ref = "antlr" }
-antlr-runtime = { module = "org.antlr:antlr4-runtime", version.ref = "antlr" }
 flexmark-ext-tables = { module = "com.vladsch.flexmark:flexmark-ext-tables", version.ref = "flexmark" }
 flexmark-ext-autolink = { module = "com.vladsch.flexmark:flexmark-ext-autolink", version.ref = "flexmark" }
 flexmark-ext-gfm-strikethrough = { module = "com.vladsch.flexmark:flexmark-ext-gfm-strikethrough", version.ref = "flexmark" }
