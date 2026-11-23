@@ -216,6 +216,14 @@ public final class ChatPanel extends JPanel {
     private Subscription jobSubscription;
     private AppRuntime jobsSubscribed;
     private final JPanel transcript = new JPanel();
+    /** Vorlesen der Antworten mit dem Knopf des Lesebereichs (Angelo 23.11.2026). */
+    private final ChatReadAloud readAloud = new ChatReadAloud(transcript);
+    /** Liefert die eine Sprachausgabe der App; {@code null} = keine eingerichtet. */
+    private java.util.function.Supplier<com.aresstack.spaceharvester.app.speech.ReadAloudBinding> readAloudBindings =
+            () -> null;
+    /** Die Vorlese-Knöpfe der großen Ansicht: der des Chats steht auf derselben Höhe wie der gerade sichtbare. */
+    private final List<JComponent> orbAnchors = new ArrayList<>();
+    private JLayeredPane transcriptLayers;
     private final JLabel emptyNote = Comic.muted(EMPTY_TRANSCRIPT);
     private final JScrollPane transcriptScroll;
     private final BubblePalette bubbles = BubblePalette.windowsPhoneInspired();
@@ -360,7 +368,33 @@ public final class ChatPanel extends JPanel {
         transcriptScroll = Comic.scroll(transcriptHolder);
         transcriptScroll.setBorder(BorderFactory.createEmptyBorder());
         transcriptScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        add(transcriptScroll, BorderLayout.CENTER);
+        // Der Vorlese-Knopf liegt über dem Verlauf, wo er im Lesebereich liegt: gleicher Abstand vom rechten Rand
+        // (neben der Bildlaufleiste), gleiche Höhe (Angelo 23.11.2026).
+        transcriptLayers = new JLayeredPane() {
+            @Override
+            public void doLayout() {
+                layoutTranscript();
+            }
+
+            @Override
+            public Dimension getPreferredSize() {
+                return transcriptScroll.getPreferredSize();
+            }
+
+            @Override
+            public Dimension getMinimumSize() {
+                return transcriptScroll.getMinimumSize();
+            }
+        };
+        transcriptLayers.add(transcriptScroll, JLayeredPane.DEFAULT_LAYER);
+        transcriptLayers.add(readAloud.orb(), JLayeredPane.MODAL_LAYER);
+        transcriptScroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                transcriptLayers.doLayout(); // Bildlaufleiste kommt oder geht: der Knopf bleibt links daneben
+            }
+        });
+        add(transcriptLayers, BorderLayout.CENTER);
 
         composer = buildComposer();
         JPanel knowledgeRow = new JPanel(new BorderLayout(8, 0));
@@ -384,6 +418,7 @@ public final class ChatPanel extends JPanel {
 
         context.onChange(ignored -> {
             showModel();
+            bindReadAloud();
             refresh();
         });
         showModel();
@@ -1666,6 +1701,7 @@ public final class ChatPanel extends JPanel {
             boolean shown = !detached;
             finish(ChatRecord.Message.assistant(full, false, System.currentTimeMillis(), sources), " ");
             if (shown) {
+                readAloud.answered(bubble); // bei aktivem Vorlesen gleich vorlesen (wie im EAC)
                 answerObserver.run();
             }
         }
@@ -1685,6 +1721,9 @@ public final class ChatPanel extends JPanel {
         @Override
         public void cancelled(String partial) {
             show(partial.isEmpty() ? CANCELLED : partial + "\n\n" + CANCELLED);
+            if (!partial.isEmpty() && !detached) {
+                readAloud.answer(bubble);
+            }
             finish(partial.isEmpty() ? null
                     : ChatRecord.Message.assistant(partial, true, System.currentTimeMillis(), sources), CANCELLED);
         }
@@ -1777,9 +1816,10 @@ public final class ChatPanel extends JPanel {
         view.setMarkdown(markdown);
         AssistantMarkdownBubble bubble = new AssistantMarkdownBubble(BubbleSide.LEFT, bubbles, ASSISTANT, view);
         BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
-        row.setAlignmentX(LEFT_ALIGNMENT);
+        OrbClearance clearance = new OrbClearance(row, readAloud.orb());
+        clearance.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
-        transcript.add(row);
+        transcript.add(clearance);
         answeringSources = new SourceLinks(this::openSource);
         answeringSources.setAlignmentX(LEFT_ALIGNMENT);
         transcript.add(answeringSources);
@@ -1821,6 +1861,7 @@ public final class ChatPanel extends JPanel {
         chat = record;
         home = folder;
         ChatRecord.Message asked = null;
+        readAloud.clear();
         transcript.removeAll();
         transcript.add(emptyNote);
         emptyNote.setVisible(true);
@@ -1831,8 +1872,10 @@ public final class ChatPanel extends JPanel {
                 addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du",
                         message.text());
             } else {
-                addAnswer(message.cancelled() ? message.text() + "\n\n" + CANCELLED : message.text());
+                AssistantMarkdownBubble answer = addAnswer(message.cancelled()
+                        ? message.text() + "\n\n" + CANCELLED : message.text());
                 answeringSources.show(message.sources());
+                readAloud.answer(answer);
             }
         }
         transcript.revalidate();
@@ -2218,10 +2261,179 @@ public final class ChatPanel extends JPanel {
         return editor;
     }
 
+    /** Das Vorlesen des Chats (für Tests). */
+    ChatReadAloud readAloud() {
+        return readAloud;
+    }
+
+    /**
+     * Schließt die Sprachausgabe der App an (dieselbe wie im Lesebereich, damit immer nur eine Stimme spricht); der
+     * Knopf erscheint, sobald ein Dienst mit Sprachausgabe eingerichtet ist.
+     */
+    public void useReadAloud(
+            java.util.function.Supplier<com.aresstack.spaceharvester.app.speech.ReadAloudBinding> bindings) {
+        readAloudBindings = bindings == null ? () -> null : bindings;
+        bindReadAloud();
+    }
+
+    /** Knopf an oder aus, je nachdem, ob gerade eine Sprachausgabe eingerichtet ist. */
+    private void bindReadAloud() {
+        AppRuntime runtime = context.runtime();
+        boolean available;
+        try {
+            available = runtime != null && runtime.workspace().pageReadAloudAvailable();
+        } catch (RuntimeException e) {
+            available = false;
+        }
+        readAloud.bind(available ? readAloudBindings.get() : null);
+        if (transcriptLayers != null) {
+            transcriptLayers.revalidate();
+            transcriptLayers.repaint();
+        }
+    }
+
+    /**
+     * Die Vorlese-Knöpfe der großen Ansicht (Leseansicht, Podcast): steht einer davon sichtbar, liegt der Knopf des
+     * Chats auf genau seiner Höhe, sonst auf der Höhe, die er dort hätte.
+     */
+    public void alignReadAloudWith(JComponent... anchors) {
+        for (JComponent anchor : anchors) {
+            if (anchor == null || orbAnchors.contains(anchor)) {
+                continue;
+            }
+            orbAnchors.add(anchor);
+            anchor.addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentMoved(java.awt.event.ComponentEvent event) {
+                    relayoutOrb();
+                }
+
+                @Override
+                public void componentShown(java.awt.event.ComponentEvent event) {
+                    relayoutOrb();
+                }
+
+                @Override
+                public void componentHidden(java.awt.event.ComponentEvent event) {
+                    relayoutOrb();
+                }
+            });
+            anchor.addHierarchyBoundsListener(new java.awt.event.HierarchyBoundsAdapter() {
+                @Override
+                public void ancestorMoved(java.awt.event.HierarchyEvent event) {
+                    relayoutOrb();
+                }
+
+                @Override
+                public void ancestorResized(java.awt.event.HierarchyEvent event) {
+                    relayoutOrb();
+                }
+            });
+            anchor.addHierarchyListener(event -> {
+                if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) {
+                    relayoutOrb();
+                }
+            });
+        }
+        relayoutOrb();
+    }
+
+    private void relayoutOrb() {
+        if (transcriptLayers != null) {
+            transcriptLayers.doLayout();
+            transcriptLayers.repaint();
+        }
+    }
+
+    /**
+     * Ohne sichtbaren Knopf in der großen Ansicht: Oberkante des Knopfs über dem Verlauf. Gemessen im Hauptfenster
+     * (Leseansicht neben der Seitenleiste, 23.11.2026): so weit steht der Knopf der Leseansicht unter der Oberkante des
+     * Verlaufs.
+     */
+    static final int ORB_TOP = 45;
+
+    private void layoutTranscript() {
+        int width = transcriptLayers.getWidth();
+        int height = transcriptLayers.getHeight();
+        transcriptScroll.setBounds(0, 0, width, height);
+        javax.swing.JScrollBar bar = transcriptScroll.getVerticalScrollBar();
+        int barWidth = bar.isVisible() ? bar.getWidth() : 0;
+        int size = com.aresstack.spaceharvester.app.ui.controls.PodcastOrb.SIZE;
+        readAloud.orb().setBounds(width - barWidth - NavigableDocumentPage.ORB_INSET - size, orbTop(size, height),
+                size, size);
+    }
+
+    /** Die Höhe des sichtbaren Knopfs der großen Ansicht, umgerechnet auf den Verlauf; sonst {@link #ORB_TOP}. */
+    private int orbTop(int size, int height) {
+        if (transcriptLayers.isShowing()) {
+            for (JComponent anchor : orbAnchors) {
+                if (anchor.isShowing() && anchor.getParent() != null) {
+                    int top = SwingUtilities.convertPoint(anchor.getParent(), anchor.getLocation(), transcriptLayers).y;
+                    if (top >= 0 && top + size <= height) {
+                        return top;
+                    }
+                }
+            }
+        }
+        return Math.max(0, Math.min(ORB_TOP, height - size));
+    }
+
+    /**
+     * Hält eine Antwortblase vom Vorlese-Knopf fern (Angelo 23.11.2026: er überlagert nur die rechtsbündige Frage,
+     * nie die eingerückte Antwort): Ist der Knopf zu sehen, rückt die Zeile rechts so weit ein, dass zwischen Blase
+     * und rechtem Rand Platz für den Knopf bleibt. Die Blase nimmt 92 % der Zeile abzüglich 14 px Rand je Seite
+     * ({@code BubbleRowGeometry}).
+     */
+    static final class OrbClearance extends JPanel {
+
+        private final JComponent orb;
+
+        OrbClearance(BubbleMessageRow row, JComponent orb) {
+            super(new BorderLayout());
+            this.orb = orb;
+            setOpaque(false);
+            add(row, BorderLayout.CENTER);
+        }
+
+        /** Wie viel rechts frei bleiben muss: Knopf, sein Abstand zum Rand und etwas Luft. */
+        static int needed() {
+            return com.aresstack.spaceharvester.app.ui.controls.PodcastOrb.SIZE + NavigableDocumentPage.ORB_INSET + 6;
+        }
+
+        /** Der Einzug rechts bei dieser Breite, damit die Blase {@link #needed()} vom Rand bleibt. */
+        static int inset(int width) {
+            int inset = 0;
+            while (inset < width / 2 && gap(width - inset) + inset < needed()) {
+                inset++;
+            }
+            return inset;
+        }
+
+        /** Abstand der Blase vom rechten Rand einer Zeile dieser Breite. */
+        private static int gap(int rowWidth) {
+            int bubble = Math.max(120, (int) Math.floor((rowWidth - 28) * 0.92d));
+            return rowWidth - 14 - bubble;
+        }
+
+        @Override
+        public java.awt.Insets getInsets() {
+            return new java.awt.Insets(0, 0, 0, orb.isVisible() ? inset(getWidth()) : 0);
+        }
+
+        @Override
+        public Dimension getMaximumSize() {
+            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+
+        BubbleMessageRow row() {
+            return (BubbleMessageRow) getComponent(0);
+        }
+    }
+
     int bubbles() {
         int count = 0;
         for (Component row : transcript.getComponents()) {
-            if (row instanceof BubbleMessageRow) {
+            if (row instanceof BubbleMessageRow || row instanceof OrbClearance) {
                 count++;
             }
         }
