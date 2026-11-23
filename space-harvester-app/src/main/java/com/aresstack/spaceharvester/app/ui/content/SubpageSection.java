@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
@@ -121,7 +122,7 @@ final class SubpageSection extends JPanel {
         add(busy, BorderLayout.CENTER);
         table.getColumnModel().getColumn(columns.length).setCellRenderer(origins);
         javax.swing.ToolTipManager.sharedInstance().registerComponent(table);
-        table.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(table, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {

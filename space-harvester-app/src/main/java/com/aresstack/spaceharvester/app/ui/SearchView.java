@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.runtime.SearchMethods;
@@ -380,7 +381,7 @@ public final class SearchView implements View {
             @Override
             public void mouseMoved(MouseEvent e) {
                 boolean mark = onMark(e);
-                table.setCursor(mark ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                Cursors.set(table, mark ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
                         : java.awt.Cursor.getDefaultCursor());
                 // Bei einem Nachbarn nennt der Tooltip der Marke die Ausgangsseite (UX-Manager 21.11.2026).
                 String tip = mark ? model.rows.get(table.convertRowIndexToModel(table.rowAtPoint(e.getPoint())))

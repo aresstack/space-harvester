@@ -74,7 +74,7 @@ public final class TextWithPicture extends JPanel {
         ruler.setVisible(false);
         setOpaque(false);
         picture.setBorder(BorderFactory.createLineBorder(Comic.INK, 1));
-        picture.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(picture, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         picture.setToolTipText(OPEN_TIP);
         picture.getAccessibleContext().setAccessibleName(OPEN_TIP);
         picture.setName("text-with-picture.picture");

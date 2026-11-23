@@ -83,6 +83,7 @@ public sealed interface JobLifecycleState {
             case RUNNING -> status.cancelRequested() ? stopping(status)
                     : status.stage() == JobStage.PREPARING ? new Preparing(failures)
                     : status.stage() == JobStage.PREPARED ? new Prepared()
+                    : status.stage() == JobStage.OFFLINE ? new AwaitingNetwork(resumable, failures || background)
                     : new Running(resumable, failures);
             case PAUSED -> new Paused(status.pauseReason(), failures || background);
             case COMPLETED -> status.incomplete() || status.progress().failed() > 0
@@ -140,6 +141,22 @@ public sealed interface JobLifecycleState {
      * @param retryable ob schon etwas gescheitert ist und die Art es gezielt nachladen kann; „Nur Fehler neu versuchen“
      *                  hält den Durchgang dann an und startet ihn sofort neu ({@link Jobs#requestRetryFailed})
      */
+    /**
+     * Läuft, wartet aber auf die Netzverbindung ({@link JobStage#OFFLINE}, Angelo 22.11.2026): kein Fehler, er macht
+     * von selbst weiter, sobald das Netz zurück ist. Dieselben Aktionen wie {@link Running}.
+     */
+    record AwaitingNetwork(boolean resumable, boolean retryable) implements JobLifecycleState {
+        @Override
+        public String key() {
+            return "AWAITING_NETWORK";
+        }
+
+        @Override
+        public List<JobAction> actions() {
+            return new Running(resumable, retryable).actions();
+        }
+    }
+
     record Running(boolean resumable, boolean retryable) implements JobLifecycleState {
 
         public Running(boolean resumable) {

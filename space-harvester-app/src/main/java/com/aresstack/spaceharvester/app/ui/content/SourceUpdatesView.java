@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -2137,7 +2138,7 @@ final class SourceUpdatesView extends JPanel {
         };
         // Die Textfelder fangen Mausklicks selbst ab; der Klick gilt auf Zeile und Texten gleich.
         for (Component part : parts) {
-            part.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(part, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             part.addMouseListener(click);
             if (part instanceof JComponent component) {
                 component.setToolTipText(tip);

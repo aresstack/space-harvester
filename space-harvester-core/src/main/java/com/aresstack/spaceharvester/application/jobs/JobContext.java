@@ -75,6 +75,14 @@ public interface JobContext {
     }
 
     /**
+     * Steht als „Wartet auf Netzverbindung“ ({@link JobStage#OFFLINE}), solange {@code waiting}: Der Auftrag läuft
+     * weiter und wartet selbst, bis das Netz zurück ist ({@code NetworkState}), statt Elemente scheitern zu lassen.
+     * Ohne Wirkung außerhalb eines laufenden Auftrags und während eines Download-Abschnitts.
+     */
+    default void awaitingNetwork(boolean waiting) {
+    }
+
+    /**
      * Hält den eigenen Auftrag an, statt die übrigen Seiten oder Dateien als Fehler zu zählen, etwa wenn die Anmeldung
      * fehlt oder die Quelle nicht erreichbar ist. Der Auftrag endet als {@link JobState#PAUSED} mit {@code reason};
      * was er geladen hat, bleibt, und Fortsetzen macht dort weiter.

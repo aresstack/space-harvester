@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.ui.controls.MessagePlate;
 import com.aresstack.spaceharvester.app.ui.controls.PopupHover;
 import com.aresstack.enterpriseai.ui.comic.control.ComicOverlayPanel;
@@ -5074,7 +5075,7 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void renderDetails() {
-        title.setCursor(page != null || !details().isEmpty()
+        Cursors.set(title, page != null || !details().isEmpty()
                 ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR) : null);
     }
 

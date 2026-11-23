@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.signin.SignInRequest;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
@@ -87,7 +88,7 @@ final class SignInNotice extends JPanel {
         setVisible(false);
         label.setFont(plain);
         label.setForeground(Comic.RED);
-        label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(label, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         label.setToolTipText(TOOLTIP);
         label.addMouseListener(new MouseAdapter() {
             @Override

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
+import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.vladsch.flexmark.ext.tables.TableBlock;
 import com.vladsch.flexmark.ext.tables.TableCell;
 import com.vladsch.flexmark.ext.tables.TableRow;
@@ -237,7 +238,7 @@ final class MarkdownTablePanel extends CappedScrollPane implements SelectableTex
         MouseAdapter links = new MouseAdapter() {
             @Override
             public void mouseMoved(MouseEvent event) {
-                table.setCursor(linkAt(table, event.getPoint()) == null
+                Cursors.set(table, linkAt(table, event.getPoint()) == null
                         ? Cursor.getDefaultCursor()
                         : Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             }

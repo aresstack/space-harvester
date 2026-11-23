@@ -208,7 +208,7 @@ public final class LucenePageReleases implements PageReleases, AutoCloseable {
         }
         closed = true;
         try {
-            writer.rollback();
+            TragicWriters.rollbackOnClose(writer, "Liste freigegebener Seiten");
         } catch (IOException e) {
             throw new PageCacheException("Liste der freigegebenen Seiten " + path + " kann nicht geschlossen werden",
                     e);
