@@ -1393,7 +1393,12 @@ final class SourceUpdatesView extends JPanel {
         boolean topical = summary.statements().stream().anyMatch(statement -> statement.title() != null);
         if (summary.text() != null && !summary.text().isBlank() && (topical || summary.statements().isEmpty())) {
             reportBody.add(Box.createVerticalStrut(6));
-            add(reportBody, Comic.wrapped(summary.text(), Comic.TEXT, 13.5f));
+            WrappedText overview = Comic.wrapped(summary.text(), Comic.TEXT, 13.5f);
+            overview.setName("summary-overview");
+            add(reportBody, overview);
+            // Einstieg und Abschluss des Podcasts erzählen diesen Überblick: dann ist er gelb (Angelo 23.11.2026).
+            topicParts.put(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW,
+                    new ArrayList<>(List.of(overview)));
         }
         Map<String, List<ReportedPage>> bySpace = new java.util.LinkedHashMap<>();
         found.pages().forEach(page -> bySpace.computeIfAbsent(page.spaceKey(), ignored -> new ArrayList<>())
@@ -1572,6 +1577,25 @@ final class SourceUpdatesView extends JPanel {
             part.setBackground(background);
             part.repaint();
         });
+    }
+
+    /** Für Tests: wo die gelb markierten Teile im sichtbaren Ausschnitt stehen (y relativ zum Ausschnitt). */
+    List<java.awt.Rectangle> markedInView() {
+        List<java.awt.Rectangle> found = new ArrayList<>();
+        javax.swing.JViewport port = reportScroll instanceof javax.swing.JScrollPane pane ? pane.getViewport() : null;
+        for (Integer number : followed) {
+            for (JComponent part : topicParts.getOrDefault(number, List.of())) {
+                java.awt.Rectangle at = SwingUtilities.convertRectangle(part.getParent(), part.getBounds(), report);
+                at.translate(0, port == null ? 0 : -port.getViewPosition().y);
+                found.add(at);
+            }
+        }
+        return found;
+    }
+
+    /** Für Tests: die Höhe des sichtbaren Ausschnitts. */
+    int viewHeight() {
+        return reportScroll instanceof javax.swing.JScrollPane pane ? pane.getViewport().getExtentSize().height : 0;
     }
 
     /** Gelb markierte Teile (für Tests). */

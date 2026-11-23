@@ -55,7 +55,16 @@ public final class TerminalSessions {
      * einer gescheiterten Anmeldung offen, man meldet sich dann von Hand an.
      */
     public TerminalSession open(TerminalProfile profile, LoginSource login) {
+        return open(profile, login, List.of());
+    }
+
+    /**
+     * Wie {@link #open(TerminalProfile, LoginSource)}; danach spielt die Sitzung {@code replay} ab (Lesezeichen mit
+     * aufgezeichnetem Makro, wie in MainframeMate). Das Ergebnis steht als Hinweis in der Sitzung.
+     */
+    public TerminalSession open(TerminalProfile profile, LoginSource login, List<TerminalMacro.Step> replay) {
         TerminalSession session = new TerminalSession("terminal-" + counter.incrementAndGet(), profile);
+        session.origin(login, replay);
         TerminalConnection connection;
         try {
             connection = connector.create(profile, new TerminalConnection.Listener() {
@@ -86,37 +95,78 @@ public final class TerminalSessions {
                 session.change(SessionState.FAILED, describe(e));
                 return;
             }
+            boolean loggedIn = true;
             if (login != null && session.state() == SessionState.CONNECTED) {
-                logIn(session, connection, login);
+                loggedIn = logIn(session, connection, login);
+            }
+            if (loggedIn && !session.replay().isEmpty() && session.state() == SessionState.CONNECTED) {
+                play(session, connection, login != null);
             }
         });
         return session;
     }
 
-    private void logIn(TerminalSession session, TerminalConnection connection, LoginSource source) {
+    /**
+     * Öffnet eine beendete Sitzung neu: dasselbe Ziel, dieselbe Anmeldung (frisch aus KeePass gelesen), dasselbe Makro
+     * (Knopf „Verbinden“ in MainframeMate). Die alte Sitzung bleibt, wie sie ist; die Oberfläche nimmt sie heraus.
+     */
+    public TerminalSession reopen(TerminalSession ended) {
+        return open(ended.profile(), ended.loginSource(), ended.replay());
+    }
+
+    private void play(TerminalSession session, TerminalConnection connection, boolean afterLogin) {
+        TerminalKeyboard keyboard = connection.view(TerminalKeyboard.class).orElse(null);
+        if (keyboard == null) {
+            session.note("Makro nicht abspielbar: Terminal ohne Tastatursteuerung");
+            return;
+        }
+        String before = afterLogin ? session.note().map(note -> note + " · ").orElse("") : "";
+        session.note(before + "Spiele Makro ab …");
+        try {
+            if (!keyboard.awaitUnlocked(LoginScript.UNLOCK_TIMEOUT)) {
+                session.note(before + "Makro nicht abgespielt: Tastatur nicht frei");
+                return;
+            }
+            Thread.sleep(loginScript.delay());
+            session.note(before + new MacroPlayer(loginScript::delay).play(keyboard, session.replay())
+                    .map(reason -> "Makro abgebrochen: " + reason)
+                    .orElse("Makro abgespielt (" + session.replay().size() + " Schritte)"));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            session.note(before + "Makro unterbrochen");
+        } catch (RuntimeException e) {
+            session.note(before + "Makro abgebrochen: " + describe(e));
+        }
+    }
+
+    /** @return ob die Anmeldung durchlief (nur dann wird ein Makro abgespielt, wie in MainframeMate) */
+    private boolean logIn(TerminalSession session, TerminalConnection connection, LoginSource source) {
         TerminalKeyboard keyboard = connection.view(TerminalKeyboard.class).orElse(null);
         if (keyboard == null) {
             session.note("Automatische Anmeldung nicht möglich: Terminal ohne Tastatursteuerung");
-            return;
+            return false;
         }
         TerminalLogin login;
         try {
             login = source.login();
         } catch (Exception e) {
             session.note("Automatische Anmeldung: Zugangsdaten nicht lesbar – " + describe(e));
-            return;
+            return false;
         }
         session.note("Melde automatisch an …");
+        String user = login.user();
         try {
-            session.note(loginScript.run(keyboard, login)
-                    .map(reason -> "Automatische Anmeldung abgebrochen: " + reason)
-                    .orElse("Automatisch angemeldet als " + login.user()));
+            java.util.Optional<String> failed = loginScript.run(keyboard, login);
+            session.note(failed.map(reason -> "Automatische Anmeldung abgebrochen: " + reason)
+                    .orElse("Automatisch angemeldet als " + user));
+            return failed.isEmpty();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             session.note("Automatische Anmeldung unterbrochen");
         } catch (RuntimeException e) {
             session.note("Automatische Anmeldung abgebrochen: " + describe(e));
         }
+        return false;
     }
 
     /** Alle Sitzungen dieses Programmlaufs in der Reihenfolge des Öffnens, auch beendete. */

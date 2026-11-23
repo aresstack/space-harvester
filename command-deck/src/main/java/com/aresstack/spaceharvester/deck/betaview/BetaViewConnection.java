@@ -54,4 +54,16 @@ public interface BetaViewConnection {
 
     /** Schließt alle Reiter des Dokumentbrowsers auf dem Server. */
     void closeAll() throws IOException;
+
+    /** Die Notizen zum zuletzt geöffneten Dokument als Text ({@code document.notes.list.action}). */
+    String notes() throws IOException;
+
+    /** Die markierten Bereiche (Hold/Hide) des zuletzt geöffneten Dokuments ({@code holdhide.list.action}). */
+    String markedRanges() throws IOException;
+
+    /** Volltextsuche im zuletzt geöffneten Dokument ({@code document.search.action}); das Ergebnis als Text. */
+    String searchText(String query) throws IOException;
+
+    /** Die Druckinformationen des zuletzt geöffneten Dokuments ({@code printDialog.action}). */
+    String printInfo() throws IOException;
 }

@@ -1147,7 +1147,10 @@ public final class RemoteAi {
             case UNAVAILABLE, RATE_LIMITED, PROVIDER_ERROR -> AiServiceException.Reason.UNREACHABLE;
             case REJECTED, INVALID_RESPONSE -> AiServiceException.Reason.INVALID_RESPONSE;
         };
-        return new AiServiceException(reason, "Embedding-Dienst: " + e.kind());
+        // Die Ursache bleibt in der Kette (Angelo 22.11.2026: „Was soll Unavailable bedeuten?“): Die Diagnose nennt so
+        // die Netz-Ausnahme (etwa ConnectException) oder den HTTP-Status aus der Meldung des Adapters. Ihre Texte
+        // erscheinen nur als Befunde, nie wörtlich (FailureDiagnosis).
+        return new AiServiceException(reason, "Embedding-Dienst: " + e.kind(), e);
     }
 
     /** Nur Art und Status: Die Meldung des Adapters kann gekürzte Serverantworten enthalten, die die Frage zitieren. */

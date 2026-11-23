@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.deck.betaview.Bookmark;
+import com.aresstack.spaceharvester.deck.betaview.FilterPatterns;
 import com.aresstack.spaceharvester.deck.betaview.ResultTable;
 import com.aresstack.spaceharvester.deck.betaview.SavedSearch;
 import com.aresstack.spaceharvester.deck.betaview.SearchFilter;
@@ -77,15 +78,15 @@ final class SearchPane extends JPanel {
     final JComboBox<SearchFilter.Period.Unit> unit = Comic.combo();
     final PlaceholderField from = new PlaceholderField(9, "TT.MM.JJJJ");
     final PlaceholderField to = new PlaceholderField(9, "TT.MM.JJJJ");
-    final PlaceholderField form = wildcard();
-    final PlaceholderField extension = wildcard();
-    final PlaceholderField report = wildcard();
-    final PlaceholderField jobName = wildcard();
-    final PlaceholderField folder = wildcard();
-    final PlaceholderField tab = wildcard();
+    final PatternFields.ChoiceField form = new PatternFields.ChoiceField(FilterPatterns.FORMS, true);
+    final PatternFields.ExtensionField extension = new PatternFields.ExtensionField();
+    final PatternFields.ReportField report = new PatternFields.ReportField();
+    final PatternFields.ChoiceField jobName = new PatternFields.ChoiceField(FilterPatterns.JOB_NAMES, false);
+    final PatternFields.ChoiceField folder = new PatternFields.ChoiceField(FilterPatterns.WILDCARD, true);
+    final PatternFields.ChoiceField tab = new PatternFields.ChoiceField(FilterPatterns.WILDCARD, true);
     final PlaceholderField title = new PlaceholderField(16, "leer: alle");
     final JCheckBox exactTitle = Comic.checkBox("Exakter Titel");
-    final PlaceholderField recipient = wildcard();
+    final PatternFields.ChoiceField recipient = new PatternFields.ChoiceField(FilterPatterns.WILDCARD, true);
     final JComboBox<Choice> online = yesNo();
     final JComboBox<Choice> note = yesNo();
     final JComboBox<Choice> read = yesNo();
@@ -196,8 +197,10 @@ final class SearchPane extends JPanel {
         add(split, BorderLayout.CENTER);
         showCount();
         recall();
-        for (PlaceholderField field : List.of(favorite, locale, amount, from, to, form, extension, report, jobName,
-                folder, tab, title, recipient)) {
+        for (PlaceholderField field : List.of(favorite, locale, amount, from, to, title, form.custom, extension.bkNumber,
+                extension.bkSuffix, extension.bankNumber, extension.bankSuffix, extension.bewFb, extension.bewLb,
+                extension.custom, report.kDigits, report.bewirt, report.custom, jobName.custom, folder.custom,
+                tab.custom, recipient.custom)) {
             field.addActionListener(e -> search());
         }
     }
@@ -324,8 +327,8 @@ final class SearchPane extends JPanel {
         SearchFilter.Period chosen = new SearchFilter.Period(mode, number, (SearchFilter.Period.Unit)
                 unit.getSelectedItem(), from.getText(), to.getText());
         return new SearchFilter(favorite.getText(), locale.getText().isBlank() ? "de" : locale.getText(), chosen,
-                form.getText(), extension.getText(), report.getText(), jobName.getText(), folder.getText(),
-                tab.getText(), title.getText(), exactTitle.isSelected(), recipient.getText(),
+                form.value(), extension.value(), report.value(), jobName.value(), folder.value(),
+                tab.value(), title.getText(), exactTitle.isSelected(), recipient.value(),
                 new SearchFilter.Status(value(online), value(note), value(read), value(archive), value(process),
                         value(delete), value(listState), value(reload)));
     }
@@ -398,6 +401,7 @@ final class SearchPane extends JPanel {
     private void remember() {
         Map<String, String> values = new java.util.LinkedHashMap<>();
         fields().forEach((name, field) -> values.put(KEY + name, field.getText().strip()));
+        patterns().forEach((name, field) -> values.put(KEY + name, field.value()));
         values.put(KEY + "period", ((SearchFilter.Period.Mode) period.getSelectedItem()).name());
         values.put(KEY + "unit", ((SearchFilter.Period.Unit) unit.getSelectedItem()).name());
         values.put(KEY + "exact-title", String.valueOf(exactTitle.isSelected()));
@@ -406,9 +410,19 @@ final class SearchPane extends JPanel {
 
     private void recall() {
         AppState state = AppState.shared();
+        // Ohne gespeicherte Auswahl die Vorgaben von MainframeMate (BetaViewAppProperties).
+        Map<String, String> defaults = Map.of("favorite", FilterPatterns.DEFAULT_FAVORITE,
+                "locale", FilterPatterns.DEFAULT_LOCALE, "amount", String.valueOf(FilterPatterns.DEFAULT_DAYS_BACK));
         fields().forEach((name, field) -> {
             String value = state.get(KEY + name);
-            field.setText(value == null ? "" : value);
+            field.setText(value == null ? defaults.getOrDefault(name, "") : value);
+        });
+        Map<String, String> patternDefaults = Map.of("form", FilterPatterns.DEFAULT_FORM,
+                "extension", FilterPatterns.DEFAULT_EXTENSION, "report", FilterPatterns.DEFAULT_REPORT,
+                "job-name", FilterPatterns.DEFAULT_JOB_NAME);
+        patterns().forEach((name, field) -> {
+            String value = state.get(KEY + name);
+            field.apply(value == null ? patternDefaults.getOrDefault(name, "*") : value);
         });
         for (SearchFilter.Period.Mode mode : SearchFilter.Period.Mode.values()) {
             if (mode.name().equals(state.get(KEY + "period"))) {
@@ -431,19 +445,20 @@ final class SearchPane extends JPanel {
         fields.put("amount", amount);
         fields.put("from", from);
         fields.put("to", to);
+        fields.put("title", title);
+        return fields;
+    }
+
+    private Map<String, PatternFields.Field> patterns() {
+        Map<String, PatternFields.Field> fields = new java.util.LinkedHashMap<>();
         fields.put("form", form);
         fields.put("extension", extension);
         fields.put("report", report);
         fields.put("job-name", jobName);
         fields.put("folder", folder);
         fields.put("tab", tab);
-        fields.put("title", title);
         fields.put("recipient", recipient);
         return fields;
-    }
-
-    private static PlaceholderField wildcard() {
-        return new PlaceholderField(12, "* (alle)");
     }
 
     /** Ein Eintrag einer Auswahlliste: Wert für den Server, Text für die Anzeige. */

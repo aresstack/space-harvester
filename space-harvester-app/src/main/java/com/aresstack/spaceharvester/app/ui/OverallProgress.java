@@ -46,7 +46,7 @@ import java.util.function.Function;
  * (wartend, laufend, angehalten). Fertige zählen darin voll, bis keiner mehr offen ist; dann zeigt die Statuszeile das
  * Ende, und der nächste Auftrag beginnt einen neuen Durchgang bei 0 %.
  *
- * <p>Nur die Aufträge zählen, nicht der Hintergrund (Angelo 23.11.2026, {@link JobType#background()}, derselbe Schnitt
+ * <p>Nur die Aufträge zählen, nicht der Hintergrund (Angelo 23.11.2026, Workspace#inBackgroundTab, derselbe Schnitt
  * wie die Reiter der Liste): Hintergrundaufträge laufen nachrangig und oft lange, etwa die KI-Anreicherung oder eine
  * Füllung, die nach einem Netzabbruch auf ihre Wartezeit wartet; sie würden Anteil und Restzeit der eigenen Aufträge
  * auf Stunden aufblähen.
@@ -116,7 +116,8 @@ final class OverallProgress {
      * Durchgang. Vor {@link #event} und {@link #estimate} aufrufen, einmal je Abruf.
      */
     void observe(List<JobStatus> all, Instant now, Function<JobType, Duration> averages) {
-        List<JobStatus> jobs = all.stream().filter(job -> !job.type().background()).toList();
+        List<JobStatus> jobs = all.stream()
+                .filter(job -> !com.aresstack.spaceharvester.app.runtime.Workspace.inBackgroundTab(job)).toList();
         Set<String> ids = new HashSet<>();
         Map<JobType, double[]> sums = new EnumMap<>(JobType.class);
         for (JobStatus job : jobs) {

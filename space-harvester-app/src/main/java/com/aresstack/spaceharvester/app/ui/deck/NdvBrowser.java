@@ -3,61 +3,79 @@ package com.aresstack.spaceharvester.app.ui.deck;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Glyph;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
+import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
 import com.aresstack.spaceharvester.deck.editor.EditorSession;
 import com.aresstack.spaceharvester.deck.editor.EditorSessions;
+import com.aresstack.spaceharvester.deck.ndv.NdvBookmark;
 import com.aresstack.spaceharvester.deck.ndv.NdvDocumentStore;
+import com.aresstack.spaceharvester.deck.ndv.NdvHistory;
+import com.aresstack.spaceharvester.deck.ndv.NdvNameFilter;
 import com.aresstack.spaceharvester.deck.ndv.NdvObject;
-import com.aresstack.spaceharvester.deck.ndv.NdvObjectType;
 import com.aresstack.spaceharvester.deck.ndv.NdvSession;
 import com.aresstack.spaceharvester.deck.ndv.NdvSessions;
 import com.aresstack.spaceharvester.deck.ndv.NdvState;
+import com.aresstack.spaceharvester.deck.ndv.NdvTypeGroups;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
-import java.util.TreeSet;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import javax.swing.BorderFactory;
-import javax.swing.DefaultComboBoxModel;
+import javax.swing.BoxLayout;
 import javax.swing.DefaultListModel;
-import javax.swing.JComboBox;
+import javax.swing.JCheckBox;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenu;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
+import javax.swing.RowSorter;
+import javax.swing.ScrollPaneConstants;
+import javax.swing.SortOrder;
 import javax.swing.SwingUtilities;
 import javax.swing.table.AbstractTableModel;
+import javax.swing.table.TableColumn;
 import javax.swing.table.TableRowSorter;
 
 /**
- * Was eine NDV-Sitzung zeigt, wie der NDV-Reiter in MainframeMate ({@code NdvConnectionTab}): links die Bibliotheken
- * mit Filter, rechts die Objekte der gewählten Bibliothek (Name, Art, Größe, Geändert, Benutzer), Seite für Seite
- * sofort sichtbar, darunter der Quelltext des geöffneten Objekts. Oben rechts in der Kopfzeile ({@link #tools()})
- * Namensfilter, Art und Neu laden; unten ({@link #foot()}) Zustand und Aktionen der Sitzung.
+ * Eine NDV-Sitzung im Command Deck, mit allen Funktionen des NDV-Reiters aus MainframeMate ({@code NdvConnectionTab}):
+ * links die Bibliotheken, rechts oben Pfadleiste mit Zurück/Vorwärts und Lesezeichen, darunter die Objekte als Liste
+ * oder nach Art gruppiert (Natural Navigator), unten der Quelltext im gemeinsamen Editor mit den Angaben des Servers.
+ * Oben rechts ({@link #tools()}) Namensfilter, Arten, Namens-Ausdruck, Ansicht, Details und Neu laden; unten
+ * ({@link #foot()}) Zustand und Aktionen der Sitzung.
  *
  * <p>Auflisten und Öffnen schreiben nichts auf den Server. Der Quelltext erscheint unten im gemeinsamen Editor des
  * Command Deck ({@link NdvDocumentStore}); auf den Server geschrieben wird nur mit „Speichern“ (Strg+S), und nur, wenn
@@ -67,12 +85,16 @@ import javax.swing.table.TableRowSorter;
 final class NdvBrowser extends JPanel {
 
     static final String LIBRARY_KEY = "deck.ndv.library";
-    static final String ALL_TYPES = "Alle Arten";
     private static final String HINT = "hint";
+    private static final String LIST = "Liste";
+    private static final String GROUPED = "Nach Art";
+    /** Spalten, die „Details“ zeigt (wie die Detailzeile in MainframeMate). */
+    private static final int[] DETAIL_COLUMNS = {5, 6, 7};
 
     private final NdvSession session;
     private final NdvSessions sessions;
     private final Executor background;
+    private final NdvNavigatorState state = new NdvNavigatorState();
     private final DefaultListModel<String> libraries = new DefaultListModel<>();
     private final List<String> allLibraries = new ArrayList<>();
     private final JList<String> libraryList = new JList<>(libraries);
@@ -80,8 +102,28 @@ final class NdvBrowser extends JPanel {
     private final ObjectModel objects = new ObjectModel();
     private final JTable objectTable = Comic.table(new JTable(objects));
     private final TableRowSorter<ObjectModel> sorter = new TableRowSorter<>(objects);
+    private final List<TableColumn> detailColumns = new ArrayList<>();
+    private final NdvObjectTree objectTree;
+    private final CardLayout viewCards = new CardLayout();
+    private final JPanel views = new JPanel(viewCards);
     private final PlaceholderField objectFilter = new PlaceholderField(12, "Objekt filtern, * erlaubt");
-    private final JComboBox<Object> typeFilter = Comic.combo();
+    private final IconButton typeFilter = new IconButton(Glyph.FILTER, "Arten ein- und ausblenden");
+    private final ComposerButton nameFilterButton = Comic.button(".*",
+            "Namens-Ausdruck: nur passende Objekte zeigen, je Bibliothek gemerkt");
+    private final SegmentedToggle viewToggle = new SegmentedToggle();
+    private final IconButton detailsToggle = new IconButton(Glyph.TABLE, "Details zeigen (Modus, DBID, FNR)");
+    private final IconButton linkToggle = new IconButton(Glyph.CROSSHAIR,
+            "Mit Editor verknüpfen: das geöffnete Objekt in der Liste markieren");
+    private final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Gruppen aufklappen");
+    private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Gruppen zuklappen");
+    private final IconButton backButton = new IconButton(Glyph.BACK, "Zurück (Pfeil links in der Liste)");
+    private final IconButton forwardButton = new IconButton(Glyph.FORWARD, "Vorwärts (Pfeil rechts in der Liste)");
+    private final PlaceholderField pathField = new PlaceholderField(20, "host:port/BIBLIOTHEK");
+    private final IconButton bookmarkStar = new IconButton(Glyph.STAR, "Lesezeichen für diese Bibliothek");
+    private final IconButton bookmarkMenu = new IconButton(Glyph.MORE, "Lesezeichen");
+    private final NdvNameFilter nameFilter = new NdvNameFilter();
+    private final Set<Integer> hiddenTypes = new LinkedHashSet<>();
+    private final NdvHistory history = new NdvHistory();
     private final EditorSessions editors;
     private final NdvDocumentStore store;
     private final CardLayout sourceCards = new CardLayout();
@@ -89,6 +131,7 @@ final class NdvBrowser extends JPanel {
     private final Map<EditorSession, DocumentEditor> editorOf = new LinkedHashMap<>();
     private final JSplitPane right;
     private final JLabel sourceTitle = Comic.caption("Quelltext – Objekt doppelt anklicken");
+    private final JLabel sourceDetails = Comic.muted(" ");
     private final BusyOverlay libraryBusy;
     private final BusyOverlay objectBusy;
     private final JLabel status = Comic.muted(" ");
@@ -104,11 +147,17 @@ final class NdvBrowser extends JPanel {
     private final AtomicInteger listing = new AtomicInteger();
     private String library;
     private NdvObject shown;
+    /** Objekt, das nach dem Laden der Bibliothek geöffnet wird (Lesezeichen, wie {@code pendingObjectName}). */
+    private String pendingObject;
     /** Das Dokument, das unten im Editor steht. */
     private EditorSession document;
     private long announcedRevision;
     private boolean everConnected;
+    private boolean groupByType;
+    private boolean showDetails;
+    private boolean linkWithEditor;
     private String note = "";
+    private Runnable libraryChanged = () -> { };
     private boolean noteIsError;
 
     NdvBrowser(NdvSession session, NdvSessions sessions, EditorSessions editors, Executor background,
@@ -120,6 +169,10 @@ final class NdvBrowser extends JPanel {
         this.sessions = sessions;
         this.background = background;
         setBackground(Comic.SURFACE);
+        groupByType = state.groupByType();
+        showDetails = state.showDetails();
+        linkWithEditor = state.linkWithEditor();
+        hiddenTypes.addAll(state.hiddenTypes());
 
         // Links: Bibliotheken mit Filter im Feld (✕ leert).
         libraryList.setFont(Comic.regular(13f));
@@ -144,59 +197,139 @@ final class NdvBrowser extends JPanel {
         left.add(libraryBusy, BorderLayout.CENTER);
         left.setMinimumSize(new Dimension(150, 0));
 
-        // Rechts oben: Objekte; Spalten sortierbar, Doppelklick oder Eingabe öffnet.
+        // Rechts oben: Objekte als Liste (sortierbar, Mehrfachauswahl) oder nach Art gruppiert.
         objectTable.setRowSorter(sorter);
+        objectTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         objectTable.getAccessibleContext().setAccessibleName("Objekte");
-        objectTable.getColumnModel().getColumn(0).setPreferredWidth(170);
-        objectTable.getColumnModel().getColumn(1).setPreferredWidth(150);
-        objectTable.getColumnModel().getColumn(2).setPreferredWidth(60);
-        objectTable.getColumnModel().getColumn(3).setPreferredWidth(130);
-        objectTable.getColumnModel().getColumn(4).setPreferredWidth(80);
-        // Größe rechtsbündig mit Abstand zur nächsten Spalte; sortiert wird nach der Zahl.
-        javax.swing.table.DefaultTableCellRenderer size = new javax.swing.table.DefaultTableCellRenderer();
-        size.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
-        size.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 24));
-        objectTable.getColumnModel().getColumn(2).setCellRenderer((table, value, selected, focus, row, column) -> {
-            JLabel label = (JLabel) size.getTableCellRendererComponent(table, value, selected, false, row, column);
-            label.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 24));
-            return label;
+        int[] widths = {170, 150, 60, 130, 80, 90, 50, 50};
+        for (int i = 0; i < widths.length; i++) {
+            objectTable.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
+        }
+        // Zahlen rechtsbündig mit Abstand zur nächsten Spalte; sortiert wird nach der Zahl.
+        javax.swing.table.DefaultTableCellRenderer number = new javax.swing.table.DefaultTableCellRenderer();
+        number.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+        for (int column : new int[] {2, 6, 7}) {
+            objectTable.getColumnModel().getColumn(column).setCellRenderer((table, value, selected, focus, row, col) -> {
+                JLabel label = (JLabel) number.getTableCellRendererComponent(table,
+                        value instanceof Integer n && n <= 0 ? "" : value, selected, false, row, col);
+                label.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 24));
+                return label;
+            });
+        }
+        for (int column : DETAIL_COLUMNS) {
+            detailColumns.add(objectTable.getColumnModel().getColumn(column));
+        }
+        restoreSort();
+        sorter.addRowSorterListener(event -> {
+            if (event.getType() == javax.swing.event.RowSorterEvent.Type.SORT_ORDER_CHANGED) {
+                saveSort();
+                if (groupByType) {
+                    filterObjects();
+                }
+            }
         });
-        objectTable.addMouseListener(new MouseAdapter() {
+        MouseAdapter tableMouse = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
                 if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event)) {
                     openSelected();
                 }
             }
-        });
+
+            @Override
+            public void mousePressed(MouseEvent event) {
+                popup(event);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent event) {
+                popup(event);
+            }
+        };
+        objectTable.addMouseListener(tableMouse);
         objectTable.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
                 .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "ndv-open");
-        objectTable.getActionMap().put("ndv-open", new javax.swing.AbstractAction() {
-            @Override
-            public void actionPerformed(java.awt.event.ActionEvent e) {
-                openSelected();
-            }
-        });
+        objectTable.getActionMap().put("ndv-open", action(this::openSelected));
         objectTable.getSelectionModel().addListSelectionListener(event -> showState());
-        objectBusy = new BusyOverlay(Comic.scroll(objectTable));
+        objectTree = new NdvObjectTree(state.expandedTypes(), state::expandedTypes);
+        objectTree.details(showDetails);
+        objectTree.addMouseListener(tableMouse);
+        objectTree.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "ndv-open");
+        objectTree.getActionMap().put("ndv-open", action(this::openSelected));
+        objectTree.addTreeSelectionListener(event -> showState());
+        installKeys(objectTable, objectTable::getRowCount, objectTable::getSelectedRow,
+                row -> objectTable.setRowSelectionInterval(row, row),
+                row -> objectTable.scrollRectToVisible(objectTable.getCellRect(row, 0, true)));
+        installKeys(objectTree, objectTree::getRowCount, () -> {
+            int[] rows = objectTree.getSelectionRows();
+            return rows == null || rows.length == 0 ? -1 : rows[0];
+        }, objectTree::setSelectionRow, objectTree::scrollRowToVisible);
+        installLibraryKeys();
+        views.setOpaque(false);
+        views.add(Comic.scroll(objectTable), LIST);
+        views.add(Comic.scroll(objectTree), GROUPED);
+        objectBusy = new BusyOverlay(views);
         objectBusy.onCancel(() -> {
             listing.incrementAndGet();
             objectBusy.setBusy(false);
             note(objects.getRowCount() + " Objekte in " + library + " (abgebrochen, unvollständig)", false);
         });
 
-        // Rechts unten: Quelltext im gemeinsamen Editor; vor dem ersten Öffnen nur der Hinweis darüber.
+        // Pfadleiste über den Objekten: Zurück, Vorwärts, Pfad mit „Öffnen“ im Feld, Lesezeichen.
+        Comic.style(pathField);
+        pathField.getAccessibleContext().setAccessibleName("Pfad");
+        pathField.addActionListener(e -> navigateToPath());
+        pathField.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent event) {
+                // Wie ListKeyboardNavigation.installFieldNavigation: Pfeil runter = erste Zeile, hoch = letzte.
+                int count = rowCount();
+                if (count == 0) {
+                    return;
+                }
+                if (event.getKeyCode() == KeyEvent.VK_DOWN || event.getKeyCode() == KeyEvent.VK_UP) {
+                    selectRow(event.getKeyCode() == KeyEvent.VK_DOWN ? 0 : count - 1);
+                    activeView().requestFocusInWindow();
+                    event.consume();
+                }
+            }
+        });
+        InputFrame pathFrame = new InputFrame(pathField);
+        javax.swing.JButton go = pathFrame.addButton(InputFrame.flatButton("Öffnen", "Pfad öffnen (Eingabe)"));
+        go.addActionListener(e -> navigateToPath());
+        backButton.addActionListener(e -> navigateBack());
+        forwardButton.addActionListener(e -> navigateForward());
+        bookmarkStar.addActionListener(e -> toggleLibraryBookmark());
+        bookmarkMenu.addActionListener(e -> bookmarkMenu().show(bookmarkMenu, 0, bookmarkMenu.getHeight()));
+        JPanel pathBar = new JPanel(new BorderLayout(4, 0));
+        pathBar.setOpaque(false);
+        pathBar.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
+        pathBar.add(Comic.row(backButton, forwardButton), BorderLayout.WEST);
+        pathBar.add(pathFrame, BorderLayout.CENTER);
+        pathBar.add(Comic.row(bookmarkStar, bookmarkMenu), BorderLayout.EAST);
+        JPanel objectPanel = new JPanel(new BorderLayout());
+        objectPanel.setOpaque(false);
+        objectPanel.add(pathBar, BorderLayout.NORTH);
+        objectPanel.add(objectBusy, BorderLayout.CENTER);
+
+        // Rechts unten: Quelltext im gemeinsamen Editor, darüber die Angaben des Servers (wie der Kopf in NaturalONE).
         sourceStage.setOpaque(false);
         JPanel empty = new JPanel();
         empty.setOpaque(false);
         sourceStage.add(empty, HINT);
+        JPanel heading = new JPanel();
+        heading.setLayout(new BoxLayout(heading, BoxLayout.Y_AXIS));
+        heading.setOpaque(false);
+        heading.add(sourceTitle);
+        heading.add(sourceDetails);
+        sourceDetails.setVisible(false);
         JPanel sourcePanel = new JPanel(new BorderLayout(0, 4));
         sourcePanel.setOpaque(false);
         sourcePanel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
-        sourcePanel.add(sourceTitle, BorderLayout.NORTH);
+        sourcePanel.add(heading, BorderLayout.NORTH);
         sourcePanel.add(sourceStage, BorderLayout.CENTER);
 
-        right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, objectBusy, sourcePanel);
+        right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, objectPanel, sourcePanel);
         right.setResizeWeight(0.4);
         right.setOpaque(false);
         right.setBorder(BorderFactory.createEmptyBorder(8, 6, 8, 12));
@@ -209,28 +342,52 @@ final class NdvBrowser extends JPanel {
         ComicDivider.install(split);
         add(split, BorderLayout.CENTER);
 
-        // Kopfzeile rechts: Namensfilter (✕ im Feld), Art, Neu laden.
+        // Kopfzeile rechts: Namensfilter (✕ im Feld), Arten, Namens-Ausdruck, Ansicht, Details, Verknüpfen, Neu laden.
         Comic.style(objectFilter);
         objectFilter.getDocument().addDocumentListener(changes(this::filterObjects));
-        typeFilter.setModel(new DefaultComboBoxModel<>(new Object[] {ALL_TYPES}));
-        typeFilter.setToolTipText("Nur Objekte dieser Art zeigen");
-        typeFilter.setRenderer(new javax.swing.DefaultListCellRenderer() {
-            @Override
-            public java.awt.Component getListCellRendererComponent(JList<?> list, Object value, int index,
-                                                                   boolean selected, boolean focus) {
-                super.getListCellRendererComponent(list, value, index, selected, focus);
-                setText(value instanceof NdvObjectType type ? type.label() : String.valueOf(value));
-                return this;
+        typeFilter.addActionListener(e -> typeMenu().show(typeFilter, 0, typeFilter.getHeight()));
+        nameFilterButton.addActionListener(e -> nameFilterMenu().show(nameFilterButton, 0,
+                nameFilterButton.getHeight()));
+        nameFilter.observe(() -> {
+            state.saveFilter(nameFilter, session.profile().host(), session.user(), scope());
+            filterObjects();
+        });
+        viewToggle.segment(LIST).segment(GROUPED);
+        viewToggle.select(groupByType ? GROUPED : LIST);
+        viewToggle.onSelect(name -> {
+            groupByType = GROUPED.equals(name);
+            state.groupByType(groupByType);
+            filterObjects();
+        });
+        detailsToggle.addActionListener(e -> {
+            showDetails = !showDetails;
+            state.showDetails(showDetails);
+            applyDetails();
+        });
+        linkToggle.addActionListener(e -> {
+            linkWithEditor = !linkWithEditor;
+            state.linkWithEditor(linkWithEditor);
+            linkToggle.marked(linkWithEditor);
+            if (linkWithEditor && shown != null) {
+                selectShown();
             }
         });
-        typeFilter.addActionListener(e -> filterObjects());
+        linkToggle.marked(linkWithEditor);
+        expandAll.addActionListener(e -> objectTree.expandAll());
+        collapseAll.addActionListener(e -> objectTree.collapseAll());
         IconButton refresh = new IconButton(Glyph.REFRESH, "Bibliotheken und Objekte neu vom Server laden");
         refresh.addActionListener(e -> refresh());
         tools.setOpaque(false);
         InputFrame filterFrame = InputFrame.search(objectFilter);
-        filterFrame.setPreferredSize(new Dimension(220, filterFrame.getPreferredSize().height));
+        filterFrame.setPreferredSize(new Dimension(200, filterFrame.getPreferredSize().height));
         tools.add(filterFrame);
         tools.add(typeFilter);
+        tools.add(nameFilterButton);
+        tools.add(viewToggle);
+        tools.add(expandAll);
+        tools.add(collapseAll);
+        tools.add(detailsToggle);
+        tools.add(linkToggle);
         tools.add(refresh);
 
         // Fuß: Zustand links, Aktionen rechts.
@@ -245,8 +402,16 @@ final class NdvBrowser extends JPanel {
         foot.add(status, BorderLayout.CENTER);
         foot.add(Comic.row(open, save, reconnect, disconnect, close), BorderLayout.EAST);
 
+        state.restoreFilter(nameFilter, session.profile().host(), session.user(), scope());
+        applyDetails();
+        updateFilterButtons();
+        updatePath();
         session.observe(changed -> SwingUtilities.invokeLater(this::stateChanged));
         stateChanged();
+        // Wie flashActiveFilterButtons in MainframeMate: ein aktiver Artenfilter blinkt beim Öffnen kurz auf.
+        if (!hiddenTypes.isEmpty()) {
+            flash(typeFilter);
+        }
     }
 
     JComponent tools() {
@@ -266,6 +431,12 @@ final class NdvBrowser extends JPanel {
         return store;
     }
 
+    /** Für den Reiter: {@code NDV: user@host:port – BIBLIOTHEK} wie der Tooltip in MainframeMate. */
+    String tooltip() {
+        return "NDV: " + (session.user().isEmpty() ? "" : session.user() + "@") + session.profile().label()
+                + (library != null ? " – " + library : "");
+    }
+
     private void stateChanged() {
         if (session.state() == NdvState.CONNECTED && !everConnected) {
             everConnected = true;
@@ -274,13 +445,16 @@ final class NdvBrowser extends JPanel {
         showState();
     }
 
+    // ---- Navigation ------------------------------------------------------------------------------------------------
+
     /** Bibliotheken neu und, wenn eine gewählt ist, ihre Objekte. */
     void refresh() {
+        pendingObject = null;
         String current = library;
         library = null;
         loadLibraries();
         if (current != null) {
-            openLibrary(current);
+            openLibraryInternal(current);
         }
     }
 
@@ -293,10 +467,19 @@ final class NdvBrowser extends JPanel {
             allLibraries.clear();
             allLibraries.addAll(list);
             filterLibraries();
-            note(list.size() + " Bibliotheken", false);
-            String wanted = library != null ? library : AppState.shared().get(LIBRARY_KEY);
-            if (wanted != null && allLibraries.contains(wanted)) {
-                libraryList.setSelectedValue(wanted, true);
+            note(list.isEmpty() ? "Keine Bibliotheken gefunden" : list.size() + " Bibliotheken", list.isEmpty());
+            if (library == null && history.canBack() == false && libraryList.getSelectedValue() == null) {
+                // Erst die Standard-Bibliothek des Formulars, sonst die zuletzt geöffnete.
+                String preferred = session.profile().defaultLibrary();
+                String wanted = !preferred.isEmpty() ? preferred : AppState.shared().get(LIBRARY_KEY);
+                if (wanted != null && allLibraries.contains(wanted)) {
+                    libraryList.setSelectedValue(wanted, true);
+                } else if (wanted != null && wanted.equals(preferred) && !preferred.isEmpty()) {
+                    openLibrary(preferred);
+                } else {
+                    history.add("");
+                    updatePath();
+                }
             }
         }, error -> {
             libraryBusy.setBusy(false);
@@ -304,20 +487,41 @@ final class NdvBrowser extends JPanel {
         });
     }
 
-    /** Listet die Objekte einer Bibliothek; jede Seite erscheint sofort, Abbrechen lässt sie stehen. */
+    /** Öffnet eine Bibliothek und merkt sie im Verlauf. */
     void openLibrary(String name) {
-        library = name;
-        AppState.shared().put(LIBRARY_KEY, name);
-        if (!name.equals(libraryList.getSelectedValue())) {
-            libraryList.setSelectedValue(name, true);
+        openLibraryInternal(name);
+        history.add(library);
+        updatePath();
+    }
+
+    /** Öffnet eine Bibliothek und danach ein Objekt darin (Lesezeichen, {@code navigateToLibraryAndOpen}). */
+    void openLibraryAndObject(String name, String objectName) {
+        pendingObject = objectName;
+        openLibrary(name);
+    }
+
+    /** Listet die Objekte einer Bibliothek; jede Seite erscheint sofort, Abbrechen lässt sie stehen. */
+    private void openLibraryInternal(String name) {
+        library = name.toUpperCase(Locale.ROOT);
+        AppState.shared().put(LIBRARY_KEY, library);
+        if (!library.equals(libraryList.getSelectedValue())) {
+            if (libraries.contains(library)) {
+                libraryList.setSelectedValue(library, true);
+            } else {
+                libraryList.clearSelection();
+            }
         }
+        state.restoreFilter(nameFilter, session.profile().host(), session.user(), scope());
+        updateFilterButtons();
         int generation = listing.incrementAndGet();
         objects.clear();
-        typeFilter.setModel(new DefaultComboBoxModel<>(new Object[] {ALL_TYPES}));
-        objectBusy.setText("Lade Objekte aus " + name + " …");
+        filterObjects();
+        String current = library;
+        objectBusy.setText("Lade Objekte aus " + current + " …");
         objectBusy.setBusy(true);
-        note("Lade Objekte aus " + name + " …", false);
-        work(() -> session.objects(name, "*", (page, total) -> {
+        note("Lade Objekte aus " + current + " …", false);
+        updatePath();
+        work(() -> session.objects(current, "*", (page, total) -> {
             if (listing.get() != generation) {
                 return false;
             }
@@ -329,9 +533,9 @@ final class NdvBrowser extends JPanel {
                         objects.clear();
                     }
                     objects.add(copy);
-                    updateTypes();
-                    objectBusy.setText(objects.getRowCount() + " Objekte aus " + name + " …");
-                    note("Lade Objekte aus " + name + " … " + objects.getRowCount(), false);
+                    filterObjects();
+                    objectBusy.setText(objects.getRowCount() + " Objekte aus " + current + " …");
+                    note(objects.getRowCount() + " Objekte in " + current + " (laden …)", false);
                 }
             });
             return true;
@@ -340,7 +544,9 @@ final class NdvBrowser extends JPanel {
                 return;
             }
             objectBusy.setBusy(false);
-            note(count == 0 ? "Keine Objekte in " + name : objects.getRowCount() + " Objekte in " + name, false);
+            note(objects.getRowCount() == 0 ? "Keine Objekte in " + current
+                    : objects.getRowCount() + " Objekte in " + current, false);
+            openPending();
         }, error -> {
             if (listing.get() != generation) {
                 return;
@@ -351,16 +557,163 @@ final class NdvBrowser extends JPanel {
         });
     }
 
+    /** Zeigt wieder die Bibliotheksliste (Eintrag „host:port“ im Verlauf). */
+    private void showLibraries() {
+        listing.incrementAndGet();
+        library = null;
+        libraryList.clearSelection();
+        objects.clear();
+        objectBusy.setBusy(false);
+        state.restoreFilter(nameFilter, session.profile().host(), session.user(), scope());
+        updateFilterButtons();
+        filterObjects();
+        note(allLibraries.size() + " Bibliotheken", false);
+        updatePath();
+        libraryList.requestFocusInWindow();
+    }
+
+    /** Pfadleiste wie {@code navigateToPath}: leer oder {@code host:port} = Bibliotheken, sonst die Bibliothek. */
+    void navigateToPath() {
+        String wanted = session.profile().libraryFromPath(pathField.getText());
+        if (wanted.isEmpty()) {
+            showLibraries();
+            history.add("");
+        } else {
+            openLibrary(wanted);
+        }
+        updatePath();
+    }
+
+    void navigateBack() {
+        history.back().ifPresentOrElse(this::go, () -> {
+            if (library != null) {
+                showLibraries();
+                history.add("");
+            }
+        });
+        updatePath();
+    }
+
+    void navigateForward() {
+        history.forward().ifPresent(this::go);
+        updatePath();
+    }
+
+    private void go(String entry) {
+        if (entry.isEmpty()) {
+            showLibraries();
+        } else {
+            openLibraryInternal(entry);
+        }
+    }
+
+    /** Meldet einen Wechsel der Bibliothek (Tooltip der Sitzung). */
+    void onLibraryChanged(Runnable listener) {
+        libraryChanged = Objects.requireNonNull(listener, "listener");
+    }
+
+    private void updatePath() {
+        libraryChanged.run();
+        pathField.setText(session.profile().label() + (library != null ? "/" + library : ""));
+        backButton.setEnabled(history.canBack() || library != null);
+        forwardButton.setEnabled(history.canForward());
+        boolean marked = library != null && state.bookmarks(session.profile().host())
+                .contains(new NdvBookmark(library, ""));
+        bookmarkStar.setIcon(marked ? Glyph.STAR_FILLED : Glyph.STAR);
+        bookmarkStar.setEnabled(library != null);
+        bookmarkStar.setToolTipText(marked ? "Lesezeichen für " + library + " entfernen"
+                : "Lesezeichen für " + (library != null ? library : "diese Bibliothek") + " setzen");
+    }
+
+    /** Nach dem Laden das vorgemerkte Objekt öffnen (wie {@code autoOpenPendingObject}). */
+    private void openPending() {
+        String wanted = pendingObject;
+        pendingObject = null;
+        if (wanted == null || wanted.isEmpty()) {
+            return;
+        }
+        NdvBookmark probe = new NdvBookmark(library, wanted);
+        for (NdvObject object : objects.rows) {
+            if (object.displayName().equalsIgnoreCase(probe.objectName())) {
+                open(object);
+                return;
+            }
+        }
+        note("Lesezeichen nicht gefunden: " + library + "/" + wanted, true);
+    }
+
+    // ---- Lesezeichen -----------------------------------------------------------------------------------------------
+
+    private void toggleLibraryBookmark() {
+        if (library == null) {
+            return;
+        }
+        toggleBookmark(new NdvBookmark(library, ""));
+    }
+
+    private void toggleBookmark(NdvBookmark bookmark) {
+        List<NdvBookmark> all = new ArrayList<>(state.bookmarks(session.profile().host()));
+        if (!all.remove(bookmark)) {
+            all.add(bookmark);
+        }
+        state.bookmarks(session.profile().host(), all);
+        updatePath();
+    }
+
+    /** Lesezeichen dieses Servers: öffnen oder entfernen; das geöffnete Objekt merken. */
+    JPopupMenu bookmarkMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        if (shown != null) {
+            NdvBookmark current = NdvBookmark.of(shown);
+            boolean known = state.bookmarks(session.profile().host()).contains(current);
+            JMenuItem item = new JMenuItem((known ? "Lesezeichen entfernen: " : "Lesezeichen setzen: ")
+                    + current.label());
+            item.addActionListener(e -> toggleBookmark(current));
+            menu.add(item);
+            menu.addSeparator();
+        }
+        List<NdvBookmark> all = state.bookmarks(session.profile().host());
+        if (all.isEmpty()) {
+            JMenuItem none = new JMenuItem("Keine Lesezeichen – Stern neben dem Pfad setzt eins");
+            none.setEnabled(false);
+            menu.add(none);
+        }
+        for (NdvBookmark bookmark : all) {
+            JMenu entry = new JMenu(bookmark.label());
+            JMenuItem go = new JMenuItem("Öffnen");
+            go.addActionListener(e -> openBookmark(bookmark));
+            JMenuItem remove = new JMenuItem("Entfernen");
+            remove.addActionListener(e -> toggleBookmark(bookmark));
+            entry.add(go);
+            entry.add(remove);
+            menu.add(entry);
+        }
+        return menu;
+    }
+
+    void openBookmark(NdvBookmark bookmark) {
+        if (bookmark.object().isEmpty()) {
+            pendingObject = null;
+            openLibrary(bookmark.library());
+        } else {
+            openLibraryAndObject(bookmark.library(), bookmark.object());
+        }
+    }
+
+    // ---- Öffnen und Editor -----------------------------------------------------------------------------------------
+
     /**
      * Öffnet den Quelltext des gewählten Objekts unten im gemeinsamen Editor; schreibt nichts. Ist er schon offen und
      * unverändert, wird er neu vom Server gelesen; ungespeicherte Änderungen bleiben stehen.
      */
     void openSelected() {
-        int row = objectTable.getSelectedRow();
-        if (row < 0) {
-            return;
+        NdvObject object = leadObject();
+        if (object != null) {
+            open(object);
         }
-        NdvObject object = objects.at(objectTable.convertRowIndexToModel(row));
+    }
+
+    private void open(NdvObject object) {
         if (!object.source()) {
             note("„" + object.displayName() + "“ hat keinen Quelltext (Art: " + object.type().name() + ")", true);
             return;
@@ -373,6 +726,9 @@ final class NdvBrowser extends JPanel {
         if (known && !opened.dirty() && opened.state() != EditorSession.State.LOADING
                 && opened.state() != EditorSession.State.SAVING) {
             opened.load();
+        }
+        if (linkWithEditor) {
+            selectShown();
         }
     }
 
@@ -388,7 +744,7 @@ final class NdvBrowser extends JPanel {
         if (editor == null) {
             if (editorOf.isEmpty()) {
                 // Mit dem ersten Quelltext bekommt der Editor den größeren Teil; die Liste bleibt sichtbar.
-                right.setDividerLocation(0.35);
+                right.setDividerLocation(0.4);
             }
             editor = new DocumentEditor(opened);
             editorOf.put(opened, editor);
@@ -402,17 +758,85 @@ final class NdvBrowser extends JPanel {
         if (opened.state() == EditorSession.State.LOADING) {
             note("Lade Quelltext: " + opened.location() + " …", false);
         }
+        showDetailsOf(shown);
         documentChanged(opened);
+    }
+
+    /**
+     * Die Angaben des Servers über dem Editor, wie der Kopf in MainframeMate ({@code createNdvMetadataBanner}):
+     * Bibliothek, Art (Modus) [Kind], DBID/FNR, Benutzer, Datum, Codepage; darunter GP, Zugriff und Größe.
+     */
+    static String[] metadata(NdvObject object) {
+        String sep = "  |  ";
+        StringBuilder first = new StringBuilder("Library: ").append(object.library()).append(sep)
+                .append(object.type().name());
+        NdvObject.Details details = object.details();
+        if (!details.mode().isEmpty()) {
+            first.append(" (").append(details.mode()).append(")");
+        }
+        if (!details.kind().isEmpty() && !"SOURCE".equalsIgnoreCase(details.kind())) {
+            first.append(" [").append(details.kind()).append("]");
+        }
+        int dbid = object.location().databaseId();
+        int fnr = object.location().fileNumber();
+        if (dbid > 0 || fnr > 0) {
+            first.append(sep);
+            if (dbid > 0) {
+                first.append("DBID: ").append(dbid);
+            }
+            if (fnr > 0) {
+                first.append(dbid > 0 ? "  " : "").append("FNR: ").append(fnr);
+            }
+        }
+        if (!object.user().isEmpty()) {
+            first.append(sep).append("User: ").append(object.user());
+        }
+        if (!object.changed().isEmpty()) {
+            first.append(sep).append(object.changed());
+        }
+        if (!details.codePage().isEmpty()) {
+            first.append(sep).append("CP: ").append(details.codePage());
+        }
+        List<String> second = new ArrayList<>();
+        if (!details.gpUser().isEmpty()) {
+            second.add("GP-User: " + details.gpUser());
+        }
+        if (!details.gpDate().isEmpty()) {
+            second.add("GP-Datum: " + details.gpDate());
+        }
+        if (!details.accessDate().isEmpty()) {
+            second.add("Zugriff: " + details.accessDate());
+        }
+        if (object.sourceSize() > 0) {
+            second.add("Größe: " + object.sourceSize() + " Bytes");
+        }
+        return new String[] {first.toString(), String.join(sep, second)};
+    }
+
+    private void showDetailsOf(NdvObject object) {
+        if (object == null) {
+            sourceDetails.setVisible(false);
+            return;
+        }
+        String[] lines = metadata(object);
+        sourceDetails.setText(lines[1].isEmpty() ? lines[0] : "<html>" + escape(lines[0]) + "<br>"
+                + escape(lines[1]) + "</html>");
+        sourceDetails.setToolTipText(lines[0] + (lines[1].isEmpty() ? "" : " – " + lines[1]));
+        sourceDetails.setVisible(true);
+    }
+
+    private static String escape(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private void documentChanged(EditorSession changed) {
         if (changed != document) {
             return;
         }
-        EditorSession.State state = changed.state();
+        EditorSession.State docState = changed.state();
         String title = changed.location();
-        if (state == EditorSession.State.LOADING || state == EditorSession.State.SAVING) {
-            title += " · " + state.label() + " …";
+        if (docState == EditorSession.State.LOADING || docState == EditorSession.State.SAVING) {
+            title += " · " + docState.label() + " …";
         } else {
             title += changed.text().map(text -> " · " + lines(text)).orElse("");
             if (changed.dirty()) {
@@ -420,19 +844,19 @@ final class NdvBrowser extends JPanel {
             }
         }
         sourceTitle.setText(title);
-        if (changed.revision() != announcedRevision && state == EditorSession.State.READY) {
+        if (changed.revision() != announcedRevision && docState == EditorSession.State.READY) {
             announcedRevision = changed.revision();
             String text = changed.text().orElse("");
             note(text.isEmpty() ? "Leerer Quelltext: " + changed.location() : "Geöffnet: " + changed.location(),
-                    false);
-        } else if (state == EditorSession.State.READY && changed.note().isPresent()) {
+                    text.isEmpty());
+        } else if (docState == EditorSession.State.READY && changed.note().isPresent()) {
             String message = changed.note().get();
             note(message.equals("Gespeichert") ? "Gespeichert: " + changed.location() : message,
                     !message.equals("Gespeichert"));
-        } else if (state == EditorSession.State.CONFLICT) {
+        } else if (docState == EditorSession.State.CONFLICT) {
             // Den Grund und „Überschreiben“ zeigt der Hinweis im Editor; die Statuszeile sagt nur das Ergebnis.
             note("Nicht gespeichert: " + changed.location() + " wurde auf dem Server geändert", true);
-        } else if (state == EditorSession.State.FAILED) {
+        } else if (docState == EditorSession.State.FAILED) {
             note("Quelltext nicht lesbar: " + changed.location(), true);
         }
         showState();
@@ -453,45 +877,490 @@ final class NdvBrowser extends JPanel {
         editors.all().stream().filter(doc -> doc.store() == store).forEach(editors::close);
     }
 
+    private void selectShown() {
+        if (shown == null) {
+            return;
+        }
+        if (groupByType) {
+            objectTree.select(shown);
+            return;
+        }
+        for (int i = 0; i < objectTable.getRowCount(); i++) {
+            if (objects.at(objectTable.convertRowIndexToModel(i)).equals(shown)) {
+                objectTable.setRowSelectionInterval(i, i);
+                objectTable.scrollRectToVisible(objectTable.getCellRect(i, 0, true));
+                return;
+            }
+        }
+    }
+
+    // ---- Auswahl, Kontextmenü, Tastatur ----------------------------------------------------------------------------
+
+    private JComponent activeView() {
+        return groupByType ? objectTree : objectTable;
+    }
+
+    private int rowCount() {
+        return groupByType ? objectTree.getRowCount() : objectTable.getRowCount();
+    }
+
+    private void selectRow(int row) {
+        if (groupByType) {
+            objectTree.setSelectionRow(row);
+            objectTree.scrollRowToVisible(row);
+        } else {
+            objectTable.setRowSelectionInterval(row, row);
+            objectTable.scrollRectToVisible(objectTable.getCellRect(row, 0, true));
+        }
+    }
+
+    /** Die gewählten Objekte der aktiven Ansicht; eine gewählte Gruppe zählt mit allen Objekten. */
+    List<NdvObject> selectedObjects() {
+        if (groupByType) {
+            return objectTree.selectedObjects();
+        }
+        List<NdvObject> result = new ArrayList<>();
+        for (int row : objectTable.getSelectedRows()) {
+            result.add(objects.at(objectTable.convertRowIndexToModel(row)));
+        }
+        return result;
+    }
+
+    private NdvObject leadObject() {
+        if (groupByType) {
+            return objectTree.leadObject();
+        }
+        int row = objectTable.getSelectionModel().getLeadSelectionIndex();
+        if (row < 0 || !objectTable.isRowSelected(row)) {
+            row = objectTable.getSelectedRow();
+        }
+        return row < 0 ? null : objects.at(objectTable.convertRowIndexToModel(row));
+    }
+
+    /** Rechtsklick wie in MainframeMate: nicht gewählte Zeile wählen, dann Öffnen, Alles/Nichts auswählen. */
+    private void popup(MouseEvent event) {
+        if (!event.isPopupTrigger()) {
+            return;
+        }
+        if (event.getComponent() == objectTable) {
+            int row = objectTable.rowAtPoint(event.getPoint());
+            if (row >= 0 && !objectTable.isRowSelected(row)) {
+                objectTable.setRowSelectionInterval(row, row);
+            }
+        } else {
+            int row = objectTree.getRowForLocation(event.getX(), event.getY());
+            if (row >= 0 && !objectTree.isRowSelected(row)) {
+                objectTree.setSelectionRow(row);
+            }
+        }
+        contextMenu().show(event.getComponent(), event.getX(), event.getY());
+    }
+
+    JPopupMenu contextMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem openItem = new JMenuItem("Öffnen");
+        openItem.setEnabled(leadObject() != null);
+        openItem.addActionListener(e -> openSelected());
+        menu.add(openItem);
+        menu.addSeparator();
+        JMenuItem all = new JMenuItem("Alles auswählen");
+        all.addActionListener(e -> selectAll());
+        menu.add(all);
+        JMenuItem none = new JMenuItem("Nichts auswählen");
+        none.addActionListener(e -> selectNone());
+        menu.add(none);
+        return menu;
+    }
+
+    void selectAll() {
+        if (groupByType) {
+            objectTree.setSelectionInterval(0, objectTree.getRowCount() - 1);
+        } else if (objectTable.getRowCount() > 0) {
+            objectTable.setRowSelectionInterval(0, objectTable.getRowCount() - 1);
+        }
+    }
+
+    void selectNone() {
+        if (groupByType) {
+            objectTree.clearSelection();
+        } else {
+            objectTable.clearSelection();
+        }
+    }
+
+    /**
+     * Tastatur wie {@code ListKeyboardNavigation} in MainframeMate: Pfeil links zurück, rechts vorwärts, oben an der
+     * ersten Zeile weiter zur letzten und unten an der letzten weiter zur ersten.
+     */
+    private void installKeys(JComponent view, java.util.function.IntSupplier count,
+                             java.util.function.IntSupplier selected, java.util.function.IntConsumer select,
+                             java.util.function.IntConsumer scroll) {
+        view.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent event) {
+                int size = count.getAsInt();
+                switch (event.getKeyCode()) {
+                    case KeyEvent.VK_LEFT -> {
+                        if (view == objectTable || !(view instanceof NdvObjectTree)) {
+                            navigateBack();
+                            event.consume();
+                        }
+                    }
+                    case KeyEvent.VK_RIGHT -> {
+                        if (view == objectTable) {
+                            navigateForward();
+                            event.consume();
+                        }
+                    }
+                    case KeyEvent.VK_UP -> {
+                        if (size > 0 && selected.getAsInt() == 0) {
+                            select.accept(size - 1);
+                            scroll.accept(size - 1);
+                            event.consume();
+                        }
+                    }
+                    case KeyEvent.VK_DOWN -> {
+                        if (size > 0 && selected.getAsInt() == size - 1) {
+                            select.accept(0);
+                            scroll.accept(0);
+                            event.consume();
+                        }
+                    }
+                    default -> {
+                        // Übrige Tasten wie gewohnt.
+                    }
+                }
+            }
+        });
+    }
+
+    /** Bibliotheksliste: Eingabe oder Pfeil rechts springt in die Objekte, oben/unten im Kreis. */
+    private void installLibraryKeys() {
+        libraryList.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent event) {
+                int size = libraries.size();
+                if (size == 0) {
+                    return;
+                }
+                switch (event.getKeyCode()) {
+                    case KeyEvent.VK_ENTER, KeyEvent.VK_RIGHT -> {
+                        if (libraryList.getSelectedValue() != null) {
+                            if (!libraryList.getSelectedValue().equals(library)) {
+                                openLibrary(libraryList.getSelectedValue());
+                            }
+                            activeView().requestFocusInWindow();
+                            event.consume();
+                        }
+                    }
+                    case KeyEvent.VK_UP -> {
+                        if (libraryList.getSelectedIndex() == 0) {
+                            libraryList.setSelectedIndex(size - 1);
+                            libraryList.ensureIndexIsVisible(size - 1);
+                            event.consume();
+                        }
+                    }
+                    case KeyEvent.VK_DOWN -> {
+                        if (libraryList.getSelectedIndex() == size - 1) {
+                            libraryList.setSelectedIndex(0);
+                            libraryList.ensureIndexIsVisible(0);
+                            event.consume();
+                        }
+                    }
+                    default -> {
+                        // Übrige Tasten wie gewohnt.
+                    }
+                }
+            }
+        });
+        Comic.style(libraryFilter);
+        libraryFilter.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent event) {
+                int size = libraries.size();
+                if (size > 0 && (event.getKeyCode() == KeyEvent.VK_DOWN || event.getKeyCode() == KeyEvent.VK_UP)) {
+                    int index = event.getKeyCode() == KeyEvent.VK_DOWN ? 0 : size - 1;
+                    libraryList.setSelectedIndex(index);
+                    libraryList.ensureIndexIsVisible(index);
+                    libraryList.requestFocusInWindow();
+                    event.consume();
+                }
+            }
+        });
+        objectFilter.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent event) {
+                int size = rowCount();
+                if (size > 0 && (event.getKeyCode() == KeyEvent.VK_DOWN || event.getKeyCode() == KeyEvent.VK_UP)) {
+                    selectRow(event.getKeyCode() == KeyEvent.VK_DOWN ? 0 : size - 1);
+                    activeView().requestFocusInWindow();
+                    event.consume();
+                }
+            }
+        });
+    }
+
+    // ---- Filter, Ansicht, Sortierung -------------------------------------------------------------------------------
+
+    /** Bereich des Namensfilters: die Bibliothek oder die Bibliotheksliste (wie {@code currentScope}). */
+    private String scope() {
+        return library == null ? NdvNavigatorState.SCOPE_LIBRARIES : library;
+    }
+
+    /** Artenfilter wie {@code createTypeFilterMenu}: Alle anzeigen, Auswahl umkehren, Häkchen je Art. */
+    JPopupMenu typeMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem all = new JMenuItem("Alle anzeigen");
+        all.addActionListener(e -> setHiddenTypes(Set.of()));
+        menu.add(all);
+        JMenuItem invert = new JMenuItem("Auswahl umkehren");
+        invert.addActionListener(e -> {
+            Set<Integer> inverted = new LinkedHashSet<>(NdvTypeGroups.ORDER);
+            inverted.removeAll(hiddenTypes);
+            setHiddenTypes(inverted);
+        });
+        menu.add(invert);
+        menu.addSeparator();
+        for (int typeId : NdvTypeGroups.ORDER) {
+            JCheckBoxMenuItem item = new JCheckBoxMenuItem(NdvTypeGroups.groupName(typeId),
+                    !hiddenTypes.contains(typeId));
+            item.addActionListener(e -> hideType(typeId, !item.isSelected()));
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    void hideType(int typeId, boolean hidden) {
+        Set<Integer> next = new LinkedHashSet<>(hiddenTypes);
+        if (hidden) {
+            next.add(typeId);
+        } else {
+            next.remove(typeId);
+        }
+        setHiddenTypes(next);
+    }
+
+    private void setHiddenTypes(Set<Integer> types) {
+        hiddenTypes.clear();
+        hiddenTypes.addAll(types);
+        state.hiddenTypes(hiddenTypes);
+        updateFilterButtons();
+        filterObjects();
+    }
+
+    /**
+     * Namens-Ausdruck wie {@code RegexNameFilter.buildPopupMenu}: aktueller Ausdruck, bearbeiten, zurücksetzen,
+     * darunter die Präfixe (erste drei Buchstaben) zum Ankreuzen; das Menü bleibt beim Ankreuzen offen.
+     */
+    JPopupMenu nameFilterMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem info = new JMenuItem(nameFilter.regex().isEmpty() ? "(kein Ausdruck aktiv)"
+                : "Aktuell: " + nameFilter.regex() + (nameFilter.invalid() ? " – ungültig, filtert nichts" : ""));
+        info.setEnabled(false);
+        menu.add(info);
+        menu.addSeparator();
+        JMenuItem edit = new JMenuItem("Ausdruck bearbeiten …");
+        edit.addActionListener(e -> editNameFilter());
+        menu.add(edit);
+        JMenuItem reset = new JMenuItem("Filter zurücksetzen");
+        reset.setEnabled(!nameFilter.regex().isEmpty());
+        reset.addActionListener(e -> nameFilter.clear());
+        menu.add(reset);
+        menu.addSeparator();
+        List<String> names = new ArrayList<>();
+        if (library == null) {
+            names.addAll(allLibraries);
+        } else {
+            objects.rows.forEach(object -> names.add(object.displayName()));
+        }
+        java.util.SortedSet<String> candidates = NdvNameFilter.candidates(names);
+        if (candidates.isEmpty()) {
+            JMenuItem empty = new JMenuItem("(keine Einträge verfügbar)");
+            empty.setEnabled(false);
+            menu.add(empty);
+            return menu;
+        }
+        JMenuItem header = new JMenuItem("Präfixe (erste 3 Buchstaben) ankreuzen:");
+        header.setEnabled(false);
+        menu.add(header);
+        JPanel list = new JPanel();
+        list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+        list.setBackground(javax.swing.UIManager.getColor("MenuItem.background"));
+        for (String prefix : candidates) {
+            JCheckBox box = new JCheckBox(prefix, nameFilter.prefixes().contains(prefix));
+            box.setOpaque(false);
+            box.setFocusable(false);
+            box.setBorder(BorderFactory.createEmptyBorder(1, 6, 1, 6));
+            box.addActionListener(e -> nameFilter.toggle(prefix, box.isSelected()));
+            list.add(box);
+        }
+        JScrollPane scroll = new JScrollPane(list, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        Dimension natural = list.getPreferredSize();
+        scroll.setPreferredSize(new Dimension(Math.max(natural.width + 24, 140), Math.min(natural.height + 4, 360)));
+        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        menu.add(scroll);
+        return menu;
+    }
+
+    private void editNameFilter() {
+        PlaceholderField field = new PlaceholderField(28, "z. B. ^LAG|^KAS");
+        Comic.style(field);
+        field.setText(nameFilter.regex());
+        JPanel body = new JPanel(new BorderLayout(0, 6));
+        body.setOpaque(false);
+        body.add(Comic.wrapped("Regulärer Ausdruck für die Objektnamen dieser Bibliothek, ohne Rücksicht auf Groß- und "
+                + "Kleinschreibung.", Comic.TEXT, 12.5f), BorderLayout.NORTH);
+        body.add(new InputFrame(field), BorderLayout.CENTER);
+        if (Dialogs.formOverlay(this, "Namens-Ausdruck", body, "Übernehmen")) {
+            nameFilter.manual(field.getText());
+        }
+    }
+
+    /** Ausdruck setzen ohne Dialog (für Tests und die Pfadleiste). */
+    void nameFilter(String regex) {
+        nameFilter.manual(regex);
+    }
+
+    void namePrefix(String prefix, boolean selected) {
+        nameFilter.toggle(prefix, selected);
+    }
+
+    private void updateFilterButtons() {
+        typeFilter.marked(!hiddenTypes.isEmpty());
+        typeFilter.setToolTipText(hiddenTypes.isEmpty() ? "Arten ein- und ausblenden"
+                : hiddenTypes.size() + " Arten ausgeblendet – ein- und ausblenden");
+        boolean active = nameFilter.active();
+        nameFilterButton.setText(active ? ".*•" : ".*");
+        nameFilterButton.setToolTipText(active ? "Namens-Ausdruck aktiv: " + nameFilter.regex()
+                : "Namens-Ausdruck: nur passende Objekte zeigen, je Bibliothek gemerkt");
+    }
+
     private void filterLibraries() {
         Pattern pattern = glob(libraryFilter.getText());
         String selected = libraryList.getSelectedValue();
         libraries.clear();
-        allLibraries.stream().filter(name -> pattern.matcher(name).find()).forEach(libraries::addElement);
+        allLibraries.stream().filter(name -> pattern.matcher(name).find())
+                .filter(name -> library != null || nameFilter.matches(name)).forEach(libraries::addElement);
         if (selected != null && libraries.contains(selected)) {
             libraryList.setSelectedValue(selected, false);
         }
     }
 
+    /** Ob ein Objekt durch Text-, Arten- und Namensfilter kommt (wie {@code applyFilter}). */
+    private boolean visible(NdvObject object, Pattern pattern) {
+        return !hiddenTypes.contains(object.type().id()) && nameFilter.matches(object.displayName())
+                && (pattern.matcher(object.displayName()).find() || pattern.matcher(object.type().label()).find()
+                || pattern.matcher(object.user()).find());
+    }
+
     private void filterObjects() {
         Pattern pattern = glob(objectFilter.getText());
-        Object type = typeFilter.getSelectedItem();
         sorter.setRowFilter(new RowFilter<>() {
             @Override
             public boolean include(Entry<? extends ObjectModel, ? extends Integer> entry) {
-                NdvObject object = objects.at(entry.getIdentifier());
-                return pattern.matcher(object.displayName()).find()
-                        && (!(type instanceof NdvObjectType wanted) || wanted.equals(object.type()));
+                return visible(objects.at(entry.getIdentifier()), pattern);
             }
         });
+        if (library == null) {
+            filterLibraries();
+        }
+        if (groupByType) {
+            List<NdvObject> visible = new ArrayList<>(objects.rows.stream()
+                    .filter(object -> visible(object, pattern)).toList());
+            visible.sort(sortComparator());
+            objectTree.show(visible);
+        }
+        viewCards.show(views, groupByType ? GROUPED : LIST);
+        expandAll.setVisible(groupByType);
+        collapseAll.setVisible(groupByType);
         showState();
     }
 
-    private void updateTypes() {
-        TreeSet<NdvObjectType> types = new TreeSet<>(Comparator.comparing(NdvObjectType::name));
-        for (int i = 0; i < objects.getRowCount(); i++) {
-            types.add(objects.at(i).type());
+    /** Die Sortierung der Liste gilt auch innerhalb der Gruppen. */
+    private Comparator<NdvObject> sortComparator() {
+        List<? extends RowSorter.SortKey> keys = sorter.getSortKeys();
+        if (keys.isEmpty() || keys.getFirst().getSortOrder() == SortOrder.UNSORTED) {
+            return NdvObjectTree.byName();
         }
-        if (types.size() + 1 == typeFilter.getItemCount()) {
-            return;
+        RowSorter.SortKey key = keys.getFirst();
+        int column = key.getColumn();
+        @SuppressWarnings("unchecked")
+        Comparator<Object> values = (Comparator<Object>) sorter.getComparator(column);
+        Comparator<NdvObject> comparator = (a, b) -> values.compare(objects.valueOf(a, column),
+                objects.valueOf(b, column));
+        comparator = comparator.thenComparing(NdvObjectTree.byName());
+        return key.getSortOrder() == SortOrder.DESCENDING ? comparator.reversed() : comparator;
+    }
+
+    private void restoreSort() {
+        String saved = state.sort();
+        int colon = saved.indexOf(':');
+        if (colon > 0) {
+            try {
+                int column = Integer.parseInt(saved.substring(0, colon));
+                SortOrder order = SortOrder.valueOf(saved.substring(colon + 1));
+                if (column >= 0 && column < objects.getColumnCount()) {
+                    sorter.setSortKeys(List.of(new RowSorter.SortKey(column, order)));
+                    return;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // Alter oder kaputter Wert: Vorgabe.
+            }
         }
-        Object selected = typeFilter.getSelectedItem();
-        DefaultComboBoxModel<Object> model = new DefaultComboBoxModel<>();
-        model.addElement(ALL_TYPES);
-        types.forEach(model::addElement);
-        model.setSelectedItem(selected != null && (selected == ALL_TYPES || types.contains(selected)) ? selected
-                : ALL_TYPES);
-        typeFilter.setModel(model);
+        sorter.setSortKeys(List.of(new RowSorter.SortKey(0, SortOrder.ASCENDING)));
+    }
+
+    private void saveSort() {
+        List<? extends RowSorter.SortKey> keys = sorter.getSortKeys();
+        state.sort(keys.isEmpty() ? "" : keys.getFirst().getColumn() + ":" + keys.getFirst().getSortOrder().name());
+    }
+
+    /** Sortiert wie über einen Klick auf den Spaltenkopf (für Tests). */
+    void sortBy(int column, SortOrder order) {
+        sorter.setSortKeys(List.of(new RowSorter.SortKey(column, order)));
+    }
+
+    private void applyDetails() {
+        detailsToggle.marked(showDetails);
+        javax.swing.table.TableColumnModel columns = objectTable.getColumnModel();
+        for (TableColumn column : detailColumns) {
+            boolean present = false;
+            for (int i = 0; i < columns.getColumnCount(); i++) {
+                present |= columns.getColumn(i) == column;
+            }
+            if (showDetails && !present) {
+                columns.addColumn(column);
+            } else if (!showDetails && present) {
+                columns.removeColumn(column);
+            }
+        }
+        objectTree.details(showDetails);
+    }
+
+    /** Blinkt dreimal gelb hinter einem Knopf (Erinnerung an einen aktiven Filter). */
+    private static void flash(JComponent button) {
+        Color original = button.getBackground();
+        boolean opaque = button.isOpaque();
+        int[] count = {0};
+        javax.swing.Timer timer = new javax.swing.Timer(250, null);
+        timer.addActionListener(e -> {
+            if (count[0] >= 6) {
+                button.setBackground(original);
+                button.setOpaque(opaque);
+                button.repaint();
+                timer.stop();
+                return;
+            }
+            boolean on = count[0] % 2 == 0;
+            button.setOpaque(on || opaque);
+            button.setBackground(on ? Comic.YELLOW : original);
+            button.repaint();
+            count[0]++;
+        });
+        timer.setInitialDelay(500);
+        timer.start();
     }
 
     /** Teil eines Namens; {@code *} steht für beliebig viel, ohne Rücksicht auf Groß- und Kleinschreibung. */
@@ -510,25 +1379,29 @@ final class NdvBrowser extends JPanel {
     }
 
     void showState() {
-        NdvState state = session.state();
-        boolean connected = state == NdvState.CONNECTED;
-        open.setEnabled(connected && objectTable.getSelectedRow() >= 0);
+        NdvState current = session.state();
+        boolean connected = current == NdvState.CONNECTED;
+        open.setEnabled(connected && leadObject() != null);
         EditorSession.State documentState = document == null ? null : document.state();
         save.setEnabled(connected && document != null && document.dirty()
                 && (documentState == EditorSession.State.READY || documentState == EditorSession.State.CONFLICT));
-        reconnect.setEnabled(state == NdvState.FAILED || state == NdvState.DISCONNECTED);
-        disconnect.setEnabled(state == NdvState.CONNECTED || state == NdvState.CONNECTING);
-        close.setEnabled(state == NdvState.FAILED || state == NdvState.DISCONNECTED);
+        reconnect.setEnabled(current == NdvState.FAILED || current == NdvState.DISCONNECTED);
+        disconnect.setEnabled(current == NdvState.CONNECTED || current == NdvState.CONNECTING);
+        close.setEnabled(current == NdvState.FAILED || current == NdvState.DISCONNECTED);
         String head = session.profile().label() + (session.user().isEmpty() ? "" : " · " + session.user()) + " · "
-                + state.label();
-        String text = switch (state) {
+                + current.label();
+        String filtered = "";
+        if (library != null && !groupByType && objectTable.getRowCount() != objects.getRowCount()) {
+            filtered = " · " + objectTable.getRowCount() + " passen zum Filter";
+        }
+        String text = switch (current) {
             case FAILED -> head + session.failure().map(reason -> " – " + reason).orElse("");
-            case CONNECTED -> note.isEmpty() ? head : head + " · " + note;
+            case CONNECTED -> note.isEmpty() ? head : head + " · " + note + filtered;
             default -> head;
         };
         status.setText(text);
         status.setToolTipText(text);
-        status.setForeground(state == NdvState.FAILED || connected && noteIsError ? Comic.RED : Comic.MUTED);
+        status.setForeground(current == NdvState.FAILED || connected && noteIsError ? Comic.RED : Comic.MUTED);
     }
 
     private <T> void work(java.util.concurrent.Callable<T> task, java.util.function.Consumer<T> done,
@@ -541,6 +1414,15 @@ final class NdvBrowser extends JPanel {
                 SwingUtilities.invokeLater(() -> failed.accept(e));
             }
         });
+    }
+
+    private static javax.swing.AbstractAction action(Runnable run) {
+        return new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                run.run();
+            }
+        };
     }
 
     private static javax.swing.event.DocumentListener changes(Runnable action) {
@@ -584,6 +1466,15 @@ final class NdvBrowser extends JPanel {
     }
 
     void selectObject(String name) {
+        if (groupByType) {
+            for (NdvObject object : objects.rows) {
+                if (object.displayName().equals(name)) {
+                    objectTree.select(object);
+                    return;
+                }
+            }
+            throw new IllegalArgumentException(name);
+        }
         for (int i = 0; i < objectTable.getRowCount(); i++) {
             if (objects.at(objectTable.convertRowIndexToModel(i)).displayName().equals(name)) {
                 objectTable.setRowSelectionInterval(i, i);
@@ -626,18 +1517,55 @@ final class NdvBrowser extends JPanel {
         return libraryFilter;
     }
 
-    JComboBox<Object> typeFilter() {
+    PlaceholderField pathField() {
+        return pathField;
+    }
+
+    String sourceDetailsText() {
+        return sourceDetails.isVisible() ? sourceDetails.getText() : "";
+    }
+
+    NdvObjectTree tree() {
+        return objectTree;
+    }
+
+    SegmentedToggle viewToggle() {
+        return viewToggle;
+    }
+
+    IconButton detailsToggle() {
+        return detailsToggle;
+    }
+
+    IconButton typeFilterButton() {
         return typeFilter;
+    }
+
+    IconButton bookmarkStar() {
+        return bookmarkStar;
+    }
+
+    boolean canBack() {
+        return backButton.isEnabled();
+    }
+
+    boolean canForward() {
+        return forwardButton.isEnabled();
+    }
+
+    int visibleColumns() {
+        return objectTable.getColumnCount();
     }
 
     boolean objectsLoading() {
         return objectBusy.isBusy();
     }
 
-    /** Die Objekte als Tabelle: Name, Art, Größe, Geändert, Benutzer. */
+    /** Die Objekte als Tabelle: Name, Art, Größe, Geändert, Benutzer und mit Details Modus, DBID, FNR. */
     static final class ObjectModel extends AbstractTableModel {
 
-        private static final String[] COLUMNS = {"Name", "Art", "Größe", "Geändert", "Benutzer"};
+        private static final String[] COLUMNS = {"Name", "Art", "Größe", "Geändert", "Benutzer", "Modus", "DBID",
+                "FNR"};
         private final List<NdvObject> rows = new ArrayList<>();
 
         void clear() {
@@ -678,18 +1606,24 @@ final class NdvBrowser extends JPanel {
 
         @Override
         public Class<?> getColumnClass(int column) {
-            return column == 2 ? Integer.class : String.class;
+            return column == 2 || column == 6 || column == 7 ? Integer.class : String.class;
         }
 
         @Override
         public Object getValueAt(int row, int column) {
-            NdvObject object = rows.get(row);
+            return valueOf(rows.get(row), column);
+        }
+
+        Object valueOf(NdvObject object, int column) {
             return switch (column) {
                 case 0 -> object.displayName();
                 case 1 -> object.type().label();
                 case 2 -> object.sourceSize();
                 case 3 -> object.changed();
-                default -> object.user().toUpperCase(Locale.ROOT);
+                case 4 -> object.user().toUpperCase(Locale.ROOT);
+                case 5 -> object.details().mode();
+                case 6 -> object.location().databaseId();
+                default -> object.location().fileNumber();
             };
         }
     }

@@ -175,4 +175,86 @@ final class FilesIcons {
             }
         };
     }
+
+    /** Dateiarten für die Kennfarbe des Symbols (wie die Endungs-Symbole in MainframeMate). */
+    enum Kind {
+        MAINFRAME(new Color(0x1F7A8C), "jcl", "proc", "prc", "cntl", "cbl", "cob", "cobol", "cpy", "nat", "nsp",
+                "nsn", "nss", "nsh", "nsc", "nsl", "nsa", "nsg", "nsm", "nsd", "ns3", "ns4", "ns5", "ns6", "ns7",
+                "ns8", "asm", "rexx"),
+        CODE(new Color(0x2F6DB5), "java", "kt", "groovy", "gradle", "py", "js", "ts", "c", "h", "cpp", "cs", "go",
+                "rb", "php", "sql", "sh", "bat", "cmd", "ps1", "json", "xml", "xsd", "yaml", "yml", "html", "htm",
+                "css", "properties", "ini"),
+        PDF(new Color(0xC62828), "pdf"),
+        WORD(new Color(0x2B579A), "doc", "docx", "odt", "rtf"),
+        TABLE(new Color(0x217346), "xls", "xlsx", "ods", "csv"),
+        SLIDES(new Color(0xD24726), "ppt", "pptx", "odp"),
+        MAIL(new Color(0x7B5EA7), "msg", "eml"),
+        IMAGE(new Color(0x8E44AD), "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "tif", "tiff"),
+        ARCHIVE(new Color(0x8D6E63), "zip", "jar", "7z", "rar", "gz", "tar"),
+        TEXT(null, "txt", "log", "md");
+
+        private final Color color;
+        private final java.util.Set<String> extensions;
+
+        Kind(Color color, String... extensions) {
+            this.color = color;
+            this.extensions = java.util.Set.of(extensions);
+        }
+
+        static Kind of(String name) {
+            int dot = name == null ? -1 : name.lastIndexOf('.');
+            String extension = dot > 0 ? name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT) : "";
+            for (Kind kind : values()) {
+                if (kind.extensions.contains(extension)) {
+                    return kind;
+                }
+            }
+            return TEXT;
+        }
+    }
+
+    private static final java.util.Map<Kind, Icon> TYPED = new java.util.EnumMap<>(Kind.class);
+
+    /** Blatt mit farbigem Band unten für die Dateiart; Text ohne Band. */
+    static Icon forName(String name) {
+        Kind kind = Kind.of(name);
+        return TYPED.computeIfAbsent(kind, k -> k.color == null ? file() : new Icon() {
+            private final Icon paper = file();
+
+            @Override
+            public void paintIcon(Component c, Graphics g, int x, int y) {
+                paper.paintIcon(c, g, x, y);
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(k.color);
+                g2.fillRoundRect(x + 1, y + 9, 10, 6, 2, 2);
+                g2.dispose();
+            }
+
+            @Override
+            public int getIconWidth() {
+                return 16;
+            }
+
+            @Override
+            public int getIconHeight() {
+                return 16;
+            }
+        });
+    }
+
+    /** Nach Endung gruppieren: drei Ordnerreiter übereinander. */
+    static com.aresstack.enterpriseai.ui.comic.paint.StrokeIcon group() {
+        return new com.aresstack.enterpriseai.ui.comic.paint.StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawRect(1, 2, 5, 3);
+                g2.drawLine(8, 4, 15, 4);
+                g2.drawRect(3, 7, 5, 3);
+                g2.drawLine(10, 9, 15, 9);
+                g2.drawRect(3, 12, 5, 3);
+                g2.drawLine(10, 14, 15, 14);
+            }
+        };
+    }
 }

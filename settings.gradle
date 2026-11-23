@@ -50,6 +50,8 @@ include 'comic-controls'
 // Eigenständige Swing-Desktop-App auf der Core-Bibliothek, ohne REST und ohne Spring-Kontext (#103).
 // Command Deck (#1142): interaktive Host-Sitzungen (TN3270), nur für die Desktop-App.
 include 'command-deck'
+// Parser und Hervorhebung für JCL, COBOL und Natural aus MainframeMate (Gliederung, TokenMaker), eigenes Modul (#1142)
+include 'mainframe-languages'
 // Diagramm-Ansicht „Visuell“ im Command Deck: Mermaid-Renderer aus MainframeMate (GraalJS, Batik), nur für die Desktop-App
 include 'mermaid-renderer'
 include 'space-harvester-app'

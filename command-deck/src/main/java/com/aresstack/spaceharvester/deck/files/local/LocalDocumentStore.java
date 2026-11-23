@@ -69,6 +69,23 @@ public final class LocalDocumentStore implements DocumentStore {
                 loaded.lineEnding(), DocumentHash.of(bytes)));
     }
 
+    @Override
+    public boolean canSaveAs() {
+        return true;
+    }
+
+    @Override
+    public EditorDocument saveAs(EditorDocument loaded, String text, String target) throws DocumentException {
+        Path path = target(fileSystem.getPath(target));
+        if (Files.isDirectory(path)) {
+            throw new DocumentException("Das ist ein Ordner.");
+        }
+        byte[] bytes = TextDecoding.encode(text, loaded.charset(), loaded.lineEnding());
+        write(path, bytes);
+        return new EditorDocument(path.toString(), name(path), text, loaded.charset(), loaded.lineEnding(),
+                DocumentHash.of(bytes));
+    }
+
     private static Path target(Path path) throws DocumentException {
         if (!Files.isSymbolicLink(path)) {
             return path;

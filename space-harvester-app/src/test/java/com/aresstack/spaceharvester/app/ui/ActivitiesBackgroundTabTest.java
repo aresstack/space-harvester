@@ -62,12 +62,12 @@ class ActivitiesBackgroundTabTest {
 
         assertThat(ActivitiesView.visible(jobs, false)).extracting(JobStatus::id).containsExactly("s1", "e1");
         List<JobStatus> background = ActivitiesView.visible(jobs, true);
-        assertThat(background).extracting(JobStatus::id).containsExactly(ActivitiesView.GROUP_PREFIX + "g1",
-                ActivitiesView.GROUP_PREFIX + "g2", "b1", "b2", "b3");
+        // „Bilder beschreiben“ hat nur einen Teil: keine Klammer, die Zeile steht für sich, nach Alter einsortiert.
+        assertThat(background).extracting(JobStatus::id).containsExactly(ActivitiesView.GROUP_PREFIX + "g1", "b3",
+                "b1", "b2");
         // Sortiert wie Exporte mit Bildern: jede Gruppe mit ihren Unteraufträgen darunter.
         assertThat(ActivitiesView.grouped(background, java.util.Set.of())).extracting(JobStatus::id)
-                .containsExactly(ActivitiesView.GROUP_PREFIX + "g1", "b1", "b2", ActivitiesView.GROUP_PREFIX + "g2",
-                        "b3");
+                .containsExactly(ActivitiesView.GROUP_PREFIX + "g1", "b1", "b2", "b3");
     }
 
     @Test
@@ -80,9 +80,52 @@ class ActivitiesBackgroundTabTest {
         assertThat(neighbours.state()).isEqualTo(JobState.RUNNING);
         assertThat(neighbours.progress()).isEqualTo(new JobProgress(20, 5, 5, 0));
         assertThat(neighbours.lifecycle().actions()).contains(JobAction.PAUSE, JobAction.CANCEL);
-        JobStatus images = rows.get(1);
-        assertThat(images.state()).isEqualTo(JobState.COMPLETED);
-        assertThat(images.finishedAt()).isNull();
+        // Die Gruppe „Bilder beschreiben“ hat nur einen Teil und darum keine eigene Zeile.
+        assertThat(rows).hasSize(1);
+    }
+
+    /**
+     * Angelo 22.11.2026: „Hintergrundfüllung“ sagte nicht, was passiert, und aufgeklappt stand darunter wieder nur
+     * „Hintergrundfüllung“. Ein einzelner Teil steht ohne Klammer und heißt nach dem, was er tut; neueste zuerst.
+     */
+    @Test
+    void aSinglePartStandsWithoutABracketAndSaysWhatItDoes() {
+        Map<String, String> fill = Map.of(BackgroundJobs.GROUP, "g-fill", BackgroundJobs.TITLE, "Hintergrundfüllung",
+                BackgroundJobs.KIND, "fill");
+        Map<String, String> older = Map.of(BackgroundJobs.GROUP, "g-old", BackgroundJobs.TITLE, "Hintergrundfüllung",
+                BackgroundJobs.KIND, "fill");
+        List<JobStatus> jobs = List.of(
+                job("f1", JobType.BACKGROUND, "OMEGA", JobState.RUNNING, fill, 5, new JobProgress(9, 3, 3, 0)),
+                job("f0", JobType.BACKGROUND, "SIGMA", JobState.COMPLETED, older, 1, new JobProgress(2, 2, 2, 0)),
+                job("b1", JobType.BACKGROUND, "ALPHA", JobState.RUNNING, group("g1", "Nachbarseiten laden"), 3,
+                        new JobProgress(20, 5, 5, 0)),
+                job("b2", JobType.BACKGROUND, "BETA", JobState.QUEUED, group("g1", "Nachbarseiten laden"), 3,
+                        JobProgress.NONE));
+
+        List<JobStatus> shown = ActivitiesView.grouped(ActivitiesView.visible(jobs, true), java.util.Set.of());
+
+        assertThat(shown).extracting(JobStatus::id).containsExactly("f1", ActivitiesView.GROUP_PREFIX + "g1", "b1",
+                "b2", "f0");
+        assertThat(shown.get(0)).satisfies(row -> {
+            assertThat(ActivitiesView.groupRow(row)).isFalse();
+            assertThat(Texts.type(row)).isEqualTo("Fehlende und veraltete Seiten laden");
+        });
+        assertThat(Texts.type(shown.get(1))).isEqualTo("Nachbarseiten laden");
+    }
+
+    /** Unter der Klammer einer gemischten Gruppe nennt jede Zeile ihre Stufe, die Klammer das Ziel. */
+    @Test
+    void underAMixedBracketEachRowNamesItsStep() {
+        Map<String, String> statements = Map.of(BackgroundJobs.GROUP, "g-w5", BackgroundJobs.TITLE, "Wissensgraph",
+                BackgroundJobs.KIND, "statements", BackgroundJobs.STEP_TITLE, "Aussagenanalyse");
+        Map<String, String> closing = Map.of(BackgroundJobs.GROUP, "g-w5", BackgroundJobs.TITLE, "Wissensgraph",
+                BackgroundJobs.KIND, "knowledge-graph", BackgroundJobs.STEP_TITLE, "Wissensgraph");
+        List<JobStatus> shown = ActivitiesView.grouped(ActivitiesView.visible(List.of(
+                job("k1", JobType.BACKGROUND, "DEV", JobState.RUNNING, statements, 1, new JobProgress(12, 4, 4, 0)),
+                job("k2", JobType.BACKGROUND, "DEV", JobState.QUEUED, closing, 1, JobProgress.NONE)), true),
+                java.util.Set.of());
+
+        assertThat(shown).extracting(Texts::type).containsExactly("Wissensgraph", "Aussagenanalyse", "Wissensgraph");
     }
 
     /**
@@ -196,7 +239,8 @@ class ActivitiesBackgroundTabTest {
 
                 view.tabs.select(ActivitiesView.BACKGROUND_TAB);
                 assertThat(view.backgroundTab()).isTrue();
-                assertThat(view.rowsForTest()).hasSize(5);
+                // Die Gruppe mit b1 und b2; „Bilder beschreiben“ hat nur einen Teil und darum keine Klammer.
+                assertThat(view.rowsForTest()).hasSize(4);
                 assertThat(view.pauseAll.getToolTipText()).contains("Hintergrundaufträge");
                 view.tabs.select(ActivitiesView.JOBS_TAB);
             });

@@ -290,9 +290,9 @@ class ChatToolsTurnTest {
     }
 
     @Test
-    void theOpenPageAndTheSearchHitsWithExcerptAreReleasedButNotTheRest() throws Exception {
+    void onlyTheOpenPageIsReleasedASearchReleasesNothingAndSendsNoPageText() throws Exception {
         PageKey open = page("datenhaus");
-        // Der Suchindex entsteht nach dem Sync im Hintergrund: erst warten, bis die Suche Auszüge liefert.
+        // Der Suchindex entsteht nach dem Sync im Hintergrund: erst warten, bis die Suche Treffer liefert.
         ChatTools probe = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
             @Override
             public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
@@ -303,7 +303,7 @@ class ChatToolsTurnTest {
             public void delivered(String spaceKey, PageKey key) {
             }
         });
-        await(() -> probe.search("Spool").lines().anyMatch(line -> line.split(" \\| ").length >= 3) ? true : null);
+        await(() -> probe.search("Spool").lines().anyMatch(line -> line.startsWith("- ")) ? true : null);
         ScriptedChat port = new ScriptedChat(List.of(
                 (request, listener) -> listener.toolCalls("", List.of(
                         new AiChat.ToolCall("c1", ChatTools.SEARCH, "{\"text\":\"Spool\"}"))),
@@ -316,15 +316,11 @@ class ChatToolsTurnTest {
 
         List<AiChat.Message> messages = port.requests.get(1).messages();
         String hits = messages.get(messages.size() - 1).text();
-        java.util.Set<PageKey> expected = new java.util.HashSet<>();
-        expected.add(open);
-        for (String line : hits.split("\n")) {
-            if (line.startsWith("- ") && line.split(" \\| ").length >= 3) {
-                expected.add(ChatTools.parse(line.substring(2, line.indexOf(" | "))));
-            }
-        }
-        assertThat(expected).as("Suche lieferte Auszüge").hasSizeGreaterThan(1);
-        assertThat(released()).containsExactlyInAnyOrderElementsOf(expected);
+        // Angelo 22.11.2026: „Die Suche zählt dafür ja nicht.“ Nur Kennung und Titel, kein Seitentext, keine Freigabe.
+        assertThat(hits.lines().filter(line -> line.startsWith("- ")).toList()).isNotEmpty()
+                .allSatisfy(line -> assertThat(line.split(" \\| ")).hasSize(2));
+        assertThat(hits).doesNotContain("vollem Spool").doesNotContain("Ablage der Ausgaben");
+        assertThat(released()).containsExactly(open);
     }
 
     @Test
@@ -504,10 +500,6 @@ class ChatToolsTurnTest {
                         throw new IllegalStateException("Freigabeliste nicht schreibbar");
                     }
 
-                    @Override
-                    public int selection() {
-                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
-                    }
                 }).termLookup((query, scope, delivery, cancelled) -> {
                     answer.pages().forEach(page -> delivery.delivered(page.spaceKey(), page.key()));
                     return answer;
@@ -561,10 +553,6 @@ class ChatToolsTurnTest {
                         return workspace.releasePageForChat(spaceKey, key).size();
                     }
 
-                    @Override
-                    public int selection() {
-                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
-                    }
                 }).termLookup((query, scope, delivery, cancelled) -> {
                     TermKnowledge.Answer answer = found(read, spaceKey);
                     answer.pages().forEach(page -> delivery.delivered(page.spaceKey(), page.key()));
@@ -583,65 +571,25 @@ class ChatToolsTurnTest {
     }
 
     @Test
-    void aFailedReleaseKeepsTheSearchExcerptFromTheModel() throws Exception {
+    void aSearchNeverTouchesTheListOfReleasedPages() throws Exception {
         ChatTools probe = tools(new ArrayList<>());
-        await(() -> probe.search("Spool").lines().anyMatch(line -> line.split(" \\| ").length >= 3) ? true : null);
-        List<String> reasons = new CopyOnWriteArrayList<>();
-        java.util.function.Consumer<String> before = ChatTools.diagnosis;
-        ChatTools.diagnosis = reasons::add;
-        try {
-            ChatTools failing = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
-                @Override
-                public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
-                    return 1;
-                }
+        await(() -> probe.search("Spool").lines().anyMatch(line -> line.startsWith("- ")) ? true : null);
+        ChatTools failing = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
 
-                @Override
-                public void delivered(String spaceKey, PageKey key) {
-                    throw new IllegalStateException("Freigabeliste nicht schreibbar");
-                }
-            });
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+                throw new AssertionError("eine Suche trägt nie ein");
+            }
+        });
 
-            String hits = failing.search("Spool");
+        String hits = failing.search("Spool");
 
-            assertThat(hits).contains("(Auszug nicht freigegeben: IllegalStateException)")
-                    .doesNotContain("vollem Spool").doesNotContain("Ablage der Ausgaben");
-            assertThat(reasons).isNotEmpty().allSatisfy(reason -> assertThat(reason)
-                    .isEqualTo("Chat-Werkzeug " + ChatTools.SEARCH + ": Freigabe gescheitert: IllegalStateException"));
-        } finally {
-            ChatTools.diagnosis = before;
-        }
-    }
-
-    @Test
-    void inTheTurnAFailedReleaseKeepsTheSearchExcerptFromTheModel() throws Exception {
-        ChatTools probe = tools(new ArrayList<>());
-        await(() -> probe.search("Spool").lines().anyMatch(line -> line.split(" \\| ").length >= 3) ? true : null);
-        ScriptedChat port = new ScriptedChat(List.of(
-                (request, listener) -> listener.toolCalls("", List.of(
-                        new AiChat.ToolCall("c1", ChatTools.SEARCH, "{\"text\":\"Spool\"}"))),
-                (request, listener) -> listener.completed("Fertig.")));
-        Events events = new Events();
-
-        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist ein Spool?", space, "Handbuch", events,
-                Runnable::run).knowledgeByTools(null).releasing(new ChatTurn.Releases() {
-                    @Override
-                    public int page(String spaceKey, PageKey key) {
-                        throw new IllegalStateException("Freigabeliste nicht schreibbar");
-                    }
-
-                    @Override
-                    public int selection() {
-                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
-                    }
-                }).start();
-        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
-
-        List<AiChat.Message> messages = port.requests.get(1).messages();
-        assertThat(messages.get(messages.size() - 1).text())
-                .contains("(Auszug nicht freigegeben: IllegalStateException)")
-                .doesNotContain("vollem Spool").doesNotContain("Ablage der Ausgaben");
-        assertThat(released()).isEmpty();
+        assertThat(hits).contains("- ").doesNotContain("vollem Spool").doesNotContain("Ablage der Ausgaben")
+                .doesNotContain("nicht freigegeben");
     }
 
     @Test
@@ -657,10 +605,6 @@ class ChatToolsTurnTest {
                         throw new IllegalStateException("Freigabeliste nicht schreibbar");
                     }
 
-                    @Override
-                    public int selection() {
-                        throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
-                    }
                 }).start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
 
@@ -866,10 +810,6 @@ class ChatToolsTurnTest {
                 return workspace.releasePageForChat(spaceKey, key).size();
             }
 
-            @Override
-            public int selection() {
-                throw new AssertionError("mit Werkzeugen nie die ganze Auswahl");
-            }
         };
     }
 

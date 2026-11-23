@@ -378,6 +378,47 @@ final class BetaViewHtml {
         return lines;
     }
 
+    /**
+     * Notizen wie {@code BetaViewDocumentTab.loadNotes} in MainframeMate: die Texte aus {@code .we_note_text},
+     * {@code .el_note_content} oder {@code textarea}; ohne solche „Keine Notizen vorhanden.“, wenn der Server 0 zählt,
+     * sonst der ganze Text der Antwort.
+     */
+    static String notes(String html) {
+        Document doc = Jsoup.parse(html == null ? "" : html);
+        StringBuilder text = new StringBuilder();
+        for (Element note : doc.select(".we_note_text, .el_note_content, textarea")) {
+            String t = note.text().trim();
+            if (!t.isEmpty()) {
+                text.append(t).append("\n\n");
+            }
+        }
+        if (text.length() == 0) {
+            Element container = doc.selectFirst("#we_id_doc_notes_container_content");
+            text.append("0".equals(container != null ? container.attr("data-counttotal") : "0")
+                    ? "Keine Notizen vorhanden." : doc.text());
+        }
+        return text.toString().trim();
+    }
+
+    /** Markierte Bereiche wie MainframeMate: die Hold/Hide-Konfiguration, sonst „Keine markierten Bereiche.“. */
+    static String markedRanges(String json) {
+        String body = json == null ? "" : json;
+        return body.contains("\"holdLineIndex\"") ? "Hold/Hide-Konfiguration:\n" + body
+                : "Keine markierten Bereiche.";
+    }
+
+    /** Der sichtbare Text einer HTML-Antwort (Ergebnis der Volltextsuche). */
+    static String plainText(String html) {
+        return Jsoup.parse(html == null ? "" : html).text();
+    }
+
+    /** Druckinformationen: der Text von {@code .modal-body}, ohne ihn die ganze Antwort (wie MainframeMate). */
+    static String printInfo(String html) {
+        String body = html == null ? "" : html;
+        String text = Jsoup.parse(body).select(".modal-body").text();
+        return text.isEmpty() ? body : text;
+    }
+
     /** Vorschlag für ein Lesezeichen ({@code #we_id_bookmark_name}, {@code #we_id_bookmark_desc}). */
     static NameAndDescription bookmarkProposal(String html) {
         Document doc = Jsoup.parse(html == null ? "" : html);

@@ -144,6 +144,7 @@ public final class MainWindow implements AppContext.Navigator {
     private SignInNotice signInNotice;
     /** „Proxy-Skript seit … nicht erneuert“ daneben, solange das Erneuern des PAC-Skripts scheitert. */
     private ProxyNotice proxyNotice;
+    private NetworkNotice networkNotice;
     /** Suche im sichtbaren Bereich, über der Statuszeile und nur unter der Arbeitsfläche. */
     private final FindBar findBar;
     /** Platz der Zeitleiste über der Suchleiste ({@code TimelineEvent}). */
@@ -219,6 +220,17 @@ public final class MainWindow implements AppContext.Navigator {
         // Freigegebene Ordner (Einstellungen › Dateizugriff) als Orte im Bereich Dateien, jeweils aktuell gelesen.
         commandDeck.sharedFolders(() -> context.settings() == null ? java.util.List.of()
                 : context.settings().localFiles().roots());
+        // Verlauf des Editors (Vergleich mit früheren Versionen) unter <Benutzer>/.space-harvester/history.
+        commandDeck.history(new com.aresstack.spaceharvester.deck.editor.local.LocalVersionHistory(
+                com.aresstack.spaceharvester.app.settings.AppSettingsLoader.defaultHome().resolve("history")));
+        // SharePoint-Sites für „Orte“: die SharePoint-Quellen der Einstellungen (Titel und Adresse).
+        commandDeck.sharePointSites(() -> context.settings() == null ? java.util.List.of()
+                : context.settings().sources().stream()
+                .filter(entry -> "sharepoint".equalsIgnoreCase(entry.config().type())
+                        && entry.config().baseUrl() != null)
+                .map(entry -> new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointSite(
+                        entry.config().title(), entry.config().baseUrl().toString()))
+                .toList());
         statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
@@ -591,12 +603,14 @@ public final class MainWindow implements AppContext.Navigator {
         });
         // Scheitert das Erneuern des Proxy-Skripts, steht es daneben; der Klick zeigt den Grund (Angelo 16.11.2026).
         proxyNotice = new ProxyNotice(context);
+        // Ohne Netz steht es daneben, bis es zurück ist (Angelo 22.11.2026).
+        networkNotice = new NetworkNotice(context);
         JPanel statusBox = new JPanel(new BorderLayout(4, 0));
         statusBox.setOpaque(false);
         statusBox.add(status, BorderLayout.CENTER);
         statusBox.add(statusClose, BorderLayout.EAST);
         statusClose.setVisible(false);
-        statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, proxyNotice), viewStatus,
+        statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, networkNotice, proxyNotice), viewStatus,
                 statusBox, jobStatus, new CopyrightLink());
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());

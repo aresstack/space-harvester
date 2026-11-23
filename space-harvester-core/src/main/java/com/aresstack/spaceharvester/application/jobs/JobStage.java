@@ -16,5 +16,10 @@ public enum JobStage {
     /** Vorbereitet; wartet auf einen Download-Platz und belegt keinen Platz. */
     PREPARED,
     /** Lädt; belegt einen Download-Platz. */
-    DOWNLOADING
+    DOWNLOADING,
+    /**
+     * Läuft, wartet aber auf die Netzverbindung ({@link JobContext#awaitingNetwork}, Angelo 22.11.2026): Ein Netzfehler
+     * lässt nichts scheitern; der Auftrag macht im selben Eintrag weiter, sobald das Netz zurück ist. Für jede Art.
+     */
+    OFFLINE
 }

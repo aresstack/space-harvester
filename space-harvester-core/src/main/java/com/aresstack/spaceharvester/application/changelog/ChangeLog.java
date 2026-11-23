@@ -704,6 +704,8 @@ public final class ChangeLog implements AutoCloseable {
                     children[i] = null;
                 }
             }
+            // Teile, die der Oberauftrag selbst gerechnet hat: Sie zählt er beim Rechnen, nicht noch einmal als Unterauftrag.
+            java.util.Set<Integer> byParent = java.util.concurrent.ConcurrentHashMap.newKeySet();
             try (AutoCloseable ignored = context.whenStopRequested(() -> cancelAll(children))) {
                 Instant waitingSince = runtime.clock().instant();
                 java.util.Set<Integer> counted = new java.util.HashSet<>();
@@ -717,8 +719,8 @@ public final class ChangeLog implements AutoCloseable {
                             break;
                         }
                         if (results.get(i).isDone()) {
-                            if (children[i] != null && counted.add(i)) {
-                                context.processed(1);
+                            if (children[i] != null && !byParent.contains(i) && counted.add(i)) {
+                                stepDone(jobs, children[i], context);
                             }
                             continue;
                         }
@@ -752,6 +754,7 @@ public final class ChangeLog implements AutoCloseable {
                     if (takeOver != null) {
                         int index = takeOver;
                         if (claimed.get(index).compareAndSet(false, true)) {
+                            byParent.add(index);
                             if (children[index] != null) {
                                 try {
                                     jobs.cancelIfWaiting(children[index], owner, "vom Oberauftrag übernommen");
@@ -846,8 +849,24 @@ public final class ChangeLog implements AutoCloseable {
         }
 
         /**
-         * Der Unterauftrag, der Ausgelassenes und Unvollständiges auch dem Oberauftrag meldet: Sonst stünde
-         * „Zusammenfassen“ als vollständig da, obwohl ein Teil eine Seite verlor (wie ohne Unteraufträge).
+         * Ein Unterauftrag ist fertig: ein Schritt des Oberauftrags erledigt; hat der Teil Seiten verloren, ist der
+         * Schritt gescheitert. Der Oberauftrag zählt Schritte (Teile und Zusammenführen), seine Unteraufträge Anfragen
+         * und Seiten; vorher kamen deren verlorene Seiten als Fehlschläge beim Oberauftrag an und zogen sich von seinen
+         * Schritten ab, aufgeklappt waren die Teile fertig, der Oberauftrag stand bei 23/43 (Angelo 23.11.2026).
+         */
+        private static void stepDone(Jobs jobs, String childId,
+                                     com.aresstack.spaceharvester.application.jobs.JobContext context) {
+            context.processed(1);
+            JobStatus child = status(jobs, childId);
+            if (child != null && child.progress().failed() > 0) {
+                context.failed(1);
+            }
+        }
+
+        /**
+         * Der Unterauftrag, der Unvollständiges und seine Meldungen auch dem Oberauftrag meldet: Sonst stünde
+         * „Zusammenfassen“ als vollständig da, obwohl ein Teil eine Seite verlor (wie ohne Unteraufträge). Seine
+         * Fehlschläge zählen in Seiten und bleiben bei ihm; der Oberauftrag zählt den Schritt ({@link #stepDone}).
          */
         private static com.aresstack.spaceharvester.application.jobs.JobContext reporting(
                 com.aresstack.spaceharvester.application.jobs.JobContext child,
@@ -856,8 +875,7 @@ public final class ChangeLog implements AutoCloseable {
                     com.aresstack.spaceharvester.application.jobs.JobContext.class.getClassLoader(),
                     new Class<?>[] {com.aresstack.spaceharvester.application.jobs.JobContext.class},
                     (proxy, method, args) -> {
-                        if (method.getName().equals("failed") || method.getName().equals("incomplete")
-                                || method.getName().equals("record")) {
+                        if (method.getName().equals("incomplete") || method.getName().equals("record")) {
                             method.invoke(parent, args);
                         }
                         try {

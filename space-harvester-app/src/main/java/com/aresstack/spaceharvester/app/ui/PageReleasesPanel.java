@@ -33,9 +33,10 @@ import java.util.function.Function;
 public final class PageReleasesPanel {
 
     static final String HEADING = "Für KI freigegebene Seiten";
-    static final String EMPTY = "Noch keine Seite freigegeben. Der Chat gibt beim Senden die links gewählten Seiten "
-            + "frei, auch ohne Haken an der Quelle; sie stehen dann hier.";
-    static final String REMOVE_TOOLTIP = "Freigabe entfernen; die KI-Ergebnisse dieser Seiten werden gelöscht";
+    static final String EMPTY = "Noch keine Seite freigegeben. Der Chat gibt jede Seite frei, deren Text er an das "
+            + "Modell schickt, auch ohne Haken an der Quelle; sie steht dann hier.";
+    static final String REMOVE_TOOLTIP = "Freigabe entfernen; ist die Quelle nicht freigegeben, werden die "
+            + "KI-Ergebnisse dieser Seiten gelöscht";
     static final String REMOVE_CHECKED = "Angehakte entfernen";
     static final String WHOLE_SPACE = "ganzer Space";
     static final int CHECK = 0;
@@ -60,6 +61,14 @@ public final class PageReleasesPanel {
         /** Anzeigename einer Quelle, oder ihre ID. */
         String sourceTitle(String sourceId);
 
+        /**
+         * Ob die Quelle als Ganzes für den KI-Dienst freigegeben ist ({@code ai.external-processing-sources}): Dann
+         * behält eine Seite ihre KI-Ergebnisse, auch wenn ihr Eintrag hier entfällt.
+         */
+        default boolean sourceReleased(String sourceId) {
+            return false;
+        }
+
         static Access of(AppContext context, AppRuntime runtime) {
             Workspace workspace = runtime.workspace();
             return new Access() {
@@ -76,6 +85,12 @@ public final class PageReleasesPanel {
                 @Override
                 public Subscription subscribe(Consumer<PageReleases.Change> listener) {
                     return workspace.subscribePageReleases(listener);
+                }
+
+                @Override
+                public boolean sourceReleased(String sourceId) {
+                    AppSettings settings = context.settings();
+                    return settings != null && settings.ai().externalProcessingSources().contains(sourceId);
                 }
 
                 @Override
@@ -291,10 +306,12 @@ public final class PageReleasesPanel {
         if (groups.isEmpty() || runtime == null) {
             return;
         }
-        if (!confirmation.confirm(root, question(groups))) {
+        Access current = access.apply(runtime);
+        java.util.function.Predicate<String> released = current::sourceReleased;
+        if (!confirmation.confirm(root, question(groups, released))) {
             return;
         }
-        Access current = access.apply(runtime);
+        int lost = lostPages(groups, released);
         feedback.working("Freigabe wird entfernt …");
         Background.run(() -> {
             int pages = 0;
@@ -303,19 +320,42 @@ public final class PageReleasesPanel {
             }
             return pages;
         }, pages -> {
-            feedback.success("Freigabe von " + Texts.count(pages, "Seite", "Seiten")
-                    + " entfernt; die KI-Ergebnisse werden gelöscht");
+            feedback.success("Freigabe von " + Texts.count(pages, "Seite", "Seiten") + " entfernt"
+                    + (lost == 0 ? "; die KI-Ergebnisse bleiben, die Quelle ist freigegeben"
+                    : "; die KI-Ergebnisse von " + Texts.count(lost, "Seite", "Seiten") + " werden gelöscht"));
             refresh();
         }, feedback::problem);
     }
 
-    /** „Die Freigabe von 12 Seiten (Space DEV, Handbuch samt Unterseiten) wirklich entfernen? …“ */
+    /** Wie {@link #question(List, java.util.function.Predicate)}, ohne freigegebene Quelle. */
     static String question(List<Group> groups) {
+        return question(groups, sourceId -> false);
+    }
+
+    /**
+     * „Die Freigabe von 12 Seiten (Space DEV, Handbuch samt Unterseiten) wirklich entfernen? …“ und ehrlich, was mit
+     * den KI-Ergebnissen geschieht (Angelo 22.11.2026): Gelöscht wird nur, was danach nicht mehr freigegeben ist; Seiten
+     * einer freigegebenen Quelle behalten ihre Ergebnisse (der Core rechnet nur Seiten außerhalb freigegebener Quellen
+     * neu, {@code AiRelease#outsideReleasedSources}).
+     *
+     * @param released ob eine Quelle als Ganzes freigegeben ist
+     */
+    static String question(List<Group> groups, java.util.function.Predicate<String> released) {
         int pages = groups.stream().mapToInt(Group::count).sum();
+        int lost = lostPages(groups, released);
         String where = groups.size() == 1 ? " (Space " + groups.get(0).spaceKey() + ", " + nodeText(groups.get(0)) + ")"
                 : " in " + groups.size() + " Gruppen";
-        return "Die Freigabe von " + Texts.count(pages, "Seite", "Seiten") + where
-                + " wirklich entfernen? Die KI-Ergebnisse dieser Seiten werden gelöscht.";
+        String results = lost == 0
+                ? " Die Quelle ist für den KI-Dienst freigegeben; die KI-Ergebnisse bleiben."
+                : lost == pages ? " Die KI-Ergebnisse dieser Seiten werden gelöscht."
+                : " Die KI-Ergebnisse von " + Texts.count(lost, "Seite", "Seiten") + " werden gelöscht; die übrigen "
+                        + "gehören zu freigegebenen Quellen und behalten sie.";
+        return "Die Freigabe von " + Texts.count(pages, "Seite", "Seiten") + where + " wirklich entfernen?" + results;
+    }
+
+    /** Wie viele Seiten der Gruppen nach dem Entfernen nicht mehr freigegeben sind. */
+    static int lostPages(List<Group> groups, java.util.function.Predicate<String> released) {
+        return groups.stream().filter(group -> !released.test(group.sourceId())).mapToInt(Group::count).sum();
     }
 
     // ------------------------------------------------------------------ für Tests
