@@ -116,7 +116,7 @@ class ChatPanelTest {
             assertThat(panel[0].knowledge()).isEqualTo(ChatPanel.NO_SELECTION);
             assertThat(panel[0].chat().isEmpty()).isTrue();
             // Der Space zeigt seinen zuletzt geänderten Chat samt Verlauf.
-            panel[0].selection(new Selection("handbuch", space, null, "Handbuch"));
+            panel[0].selection(new Selection.Node("handbuch", space, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
             assertThat(panel[0].chatName()).isEqualTo(earlier.id());
             assertThat(panel[0].bubbles()).isEqualTo(5);
@@ -155,7 +155,7 @@ class ChatPanelTest {
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
             // Die ganze Quelle ist ein anderer Bereich: der offene Chat bleibt stehen (Angelo, 21.11.2026), nur der
             // Bereich der nächsten Frage wandert.
-            panel[0].selection(new Selection("handbuch", null, null, "Handbuch"));
+            panel[0].selection(new Selection.Node("handbuch", null, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
             assertThat(panel[0].bubbles()).isEqualTo(5);
             assertThat(panel[0].knowledge()).startsWith("Wissen: Handbuch · alle Spaces");
@@ -166,7 +166,7 @@ class ChatPanelTest {
             ((javax.swing.JMenuItem) panel[0].chatMenuItems().get(1)).doClick();
             assertThat(panel[0].chat().id()).isEqualTo(other.id());
             assertThat(panel[0].areaMarks()).isEmpty();
-            panel[0].selection(new Selection("handbuch", space, null, "Handbuch"));
+            panel[0].selection(new Selection.Node("handbuch", space, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(other.id());
             assertThat(menuTexts(panel[0])).containsExactly(ChatPanel.CHATS_HERE, "    Zugriffsrechte", "—",
                     ChatPanel.CHATS_ELSEWHERE, "✓ " + other.id());
@@ -175,7 +175,7 @@ class ChatPanelTest {
                     ((java.awt.Container) panel[0].headerActions()).getComponent(0);
             fresh.doClick();
             assertThat(panel[0].chat().isEmpty()).isTrue();
-            panel[0].selection(new Selection("handbuch", null, null, "Handbuch"));
+            panel[0].selection(new Selection.Node("handbuch", null, null, "Handbuch"));
             assertThat(panel[0].chat().isEmpty()).as("kein gespeicherter Chat springt mehr herein").isTrue();
             assertThat(panel[0].bubbles()).isZero();
             assertThat(panel[0].chatName()).isEqualTo(panel[0].chat().id());
@@ -266,9 +266,9 @@ class ChatPanelTest {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
-        Selection source = new Selection("tickets", null, null, "Tickets");
-        Selection ticket = new Selection("tickets", "PRJ", "PRJ-7", "PRJ-7 Nachtlauf bricht ab");
-        Selection space = new Selection("tickets", "PRJ", null, "PRJ");
+        Selection source = new Selection.Node("tickets", null, null, "Tickets");
+        Selection ticket = new Selection.Node("tickets", "PRJ", "PRJ-7", "PRJ-7 Nachtlauf bricht ab");
+        Selection space = new Selection.Node("tickets", "PRJ", null, "PRJ");
         Selection[] seen = new Selection[7];
         String[] quick = new String[1];
         int[] graphUpdates = new int[3];
@@ -413,21 +413,21 @@ class ChatPanelTest {
     @Test
     void theKnowledgeLineNamesTheSelectionItsPagesAndWhatIsMissing() {
         assertThat(ChatPanel.knowledgeText(null, null, true, true)).isEqualTo(ChatPanel.NO_SELECTION);
-        Selection page = new Selection("wiki", "DEV", "42", "Handbuch");
+        Selection page = new Selection.Node("wiki", "DEV", "42", "Handbuch");
         assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(120, 120, 0, 0), true, true))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 120 Seiten");
         assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(120, 80, 0, 0), true, true))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 120 Seiten · 40 davon nicht geladen");
         assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(1, 1, 0, 0), true, true))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 1 Seite");
-        Selection space = new Selection("wiki", "DEV", null, "Entwicklung");
+        Selection space = new Selection.Node("wiki", "DEV", null, "Entwicklung");
         assertThat(ChatPanel.knowledgeText(space, HoldingCounts.ZERO, true, true))
                 .isEqualTo("Wissen: Space Entwicklung · " + ChatPanel.NOT_LOADED);
         assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(3, 3, 0, 0), false, true))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 3 Seiten · " + ExportPanel.INCOMPLETE);
         assertThat(ChatPanel.knowledgeText(space, null, true, true))
                 .isEqualTo("Wissen: Space Entwicklung · " + ChatPanel.NOT_LOADED);
-        Selection source = new Selection("wiki", null, null, "Beta");
+        Selection source = new Selection.Node("wiki", null, null, "Beta");
         // Der Chat ist die Ausnahme der KI-Freigabe (Angelo, 13.11.2026): genannt, nicht gesperrt.
         assertThat(ChatPanel.knowledgeText(source, new HoldingCounts(2010, 176, 8, 0), true, false))
                 .isEqualTo("Wissen: Beta · alle Spaces · 2010 Seiten · 1826 davon nicht geladen · "

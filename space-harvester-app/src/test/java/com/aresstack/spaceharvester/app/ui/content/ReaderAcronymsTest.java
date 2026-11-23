@@ -246,7 +246,7 @@ class ReaderAcronymsTest {
         sync(workspace, "wiki");
         sync(workspace, "zweites");
 
-        SelectionTerms wiki = new SelectionTerms(context.runtime(), new ExportPanel.Selection("wiki", null, null,
+        SelectionTerms wiki = new SelectionTerms(context.runtime(), new ExportPanel.Selection.Node("wiki", null, null,
                 "Wiki"));
         // startSync gleicht mit SYNC_CACHE ab: neue Seiten sind nur katalogisiert; erst das Lesen lädt und analysiert.
         PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));

@@ -1,0 +1,174 @@
+package com.aresstack.spaceharvester.deck.eakte.http;
+
+import com.aresstack.spaceharvester.deck.eakte.EakteProfile;
+import com.aresstack.spaceharvester.deck.http.CookieJar;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.Consumer;
+
+/**
+ * Die HTTP-Ebene einer E-Akte-Sitzung: Weiterleitungen nie automatisch (jede wird geprüft, ob sie zur E-Akte oder zu
+ * einem Anmeldedienst geht), Cookies nach RFC 6265 ({@link CookieJar}, auch aus WebDAV-Antworten), und ein
+ * Protokoll ohne Werte: nur Methode, Host, Pfad, Namen der Parameter und Namen der Cookies.
+ */
+final class SsoHttp {
+
+    static final String USER_AGENT = "Mozilla/5.0 (compatible; SpaceHarvester-CommandDeck)";
+
+    /** Eine Antwort; der Text wird nur bei Bedarf gelesen. */
+    record Response(URI uri, int status, String location, String contentType, byte[] body) {
+
+        boolean redirect() {
+            return (status == 301 || status == 302 || status == 303 || status == 307 || status == 308)
+                    && location != null;
+        }
+
+        URI next() {
+            return uri.resolve(location.trim().replace(" ", "%20"));
+        }
+
+        String text() {
+            return new String(body, StandardCharsets.UTF_8);
+        }
+
+        boolean html() {
+            return contentType.toLowerCase(Locale.ROOT).contains("html");
+        }
+
+        boolean json() {
+            return contentType.toLowerCase(Locale.ROOT).contains("json");
+        }
+    }
+
+    private final HttpClient client;
+    private final EakteProfile profile;
+    private final Duration timeout;
+    private final Consumer<String> trace;
+    private final CookieJar cookies = new CookieJar();
+
+    SsoHttp(HttpClient client, EakteProfile profile, Duration timeout, Consumer<String> trace) {
+        this.client = client;
+        this.profile = profile;
+        this.timeout = timeout;
+        this.trace = trace;
+    }
+
+    EakteProfile profile() {
+        return profile;
+    }
+
+    CookieJar cookies() {
+        return cookies;
+    }
+
+    void trace(String line) {
+        trace.accept(line);
+    }
+
+    Response get(URI target) throws IOException {
+        return send("GET", target, Map.of(), null);
+    }
+
+    Response postForm(URI target, String body) throws IOException {
+        return send("POST", target, Map.of("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"),
+                body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    Response postJson(URI target, String json) throws IOException {
+        return send("POST", target, Map.of("Content-Type", "application/json; charset=UTF-8",
+                "Accept", "application/json", "Accept-API-Version", "resource=2.0, protocol=1.0"),
+                json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Sendet genau eine Anfrage, ohne Weiterleitungen zu folgen. Ziele außerhalb der E-Akte und der Anmeldedienste
+     * werden nie angefragt.
+     */
+    Response send(String method, URI target, Map<String, String> headers, byte[] body) throws IOException {
+        if (!profile.allows(target)) {
+            throw new IOException("Weiterleitung zu einem fremden Server abgelehnt: " + host(target));
+        }
+        HttpRequest.Builder request = HttpRequest.newBuilder(target).timeout(timeout)
+                .header("User-Agent", USER_AGENT);
+        if (!headers.containsKey("Accept")) {
+            request.header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7");
+        }
+        headers.forEach(request::header);
+        String cookieLine = cookies.header(target);
+        if (!cookieLine.isEmpty()) {
+            request.header("Cookie", cookieLine);
+        }
+        request.method(method, body == null ? HttpRequest.BodyPublishers.noBody()
+                : HttpRequest.BodyPublishers.ofByteArray(body));
+        HttpResponse<byte[]> response;
+        try {
+            response = client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Unterbrochen", e);
+        } catch (java.io.UncheckedIOException e) {
+            // Die Proxy-Regel der App meldet „kein Netzweg“ so (nie still direkt verbinden).
+            throw e.getCause();
+        }
+        List<String> setCookies = response.headers().allValues("Set-Cookie");
+        cookies.store(target, setCookies);
+        Response result = new Response(target, response.statusCode(),
+                response.headers().firstValue("Location").orElse(null),
+                response.headers().firstValue("Content-Type").orElse(""),
+                response.body() == null ? new byte[0] : response.body());
+        trace.accept(method + " " + safe(target) + " → HTTP " + result.status()
+                + (setCookies.isEmpty() ? "" : " | setzt " + cookieNames(setCookies))
+                + (result.redirect() ? " | weiter zu " + safe(result.next()) : ""));
+        return result;
+    }
+
+    /** Host, Pfad und nur die Namen der Parameter, nie ihre Werte (dort stehen SAML-Daten und Codes). */
+    static String safe(URI uri) {
+        if (uri == null) {
+            return "?";
+        }
+        StringBuilder text = new StringBuilder();
+        text.append(uri.getScheme()).append("://").append(uri.getRawAuthority())
+                .append(uri.getRawPath() == null ? "" : uri.getRawPath());
+        String query = uri.getRawQuery();
+        if (query != null && !query.isEmpty()) {
+            List<String> names = new ArrayList<>();
+            for (String part : query.split("&")) {
+                int eq = part.indexOf('=');
+                names.add(eq < 0 ? part : part.substring(0, eq));
+            }
+            text.append(" [Parameter: ").append(String.join(", ", names)).append(']');
+        }
+        return text.toString();
+    }
+
+    static String host(URI uri) {
+        return uri == null || uri.getHost() == null ? "?" : uri.getHost();
+    }
+
+    private static String cookieNames(List<String> setCookies) {
+        List<String> names = new ArrayList<>();
+        for (String header : setCookies) {
+            int eq = header.indexOf('=');
+            String name = (eq < 0 ? header : header.substring(0, eq)).trim();
+            String lower = header.toLowerCase(Locale.ROOT);
+            int path = lower.indexOf("path=");
+            String scope = "";
+            if (path >= 0) {
+                int end = header.indexOf(';', path);
+                scope = " (Pfad " + header.substring(path + 5, end < 0 ? header.length() : end).trim() + ")";
+            }
+            names.add(name + scope);
+        }
+        return String.join(", ", names);
+    }
+}

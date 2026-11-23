@@ -162,11 +162,11 @@ public final class Explorer {
         for (TreePath path : paths == null ? new TreePath[0] : paths) {
             if (path.getLastPathComponent() instanceof Node node) {
                 var selection = switch (node.item()) {
-                    case SourceItem source -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                    case SourceItem source -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
                             source.sourceId(), null, null, source.title());
-                    case SpaceItem space -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                    case SpaceItem space -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
                             space.sourceId(), space.spaceKey(), null, space.name());
-                    case PageItem page -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection(
+                    case PageItem page -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
                             page.sourceId(), page.spaceKey(), page.pageId(), page.title());
                     default -> null;
                 };

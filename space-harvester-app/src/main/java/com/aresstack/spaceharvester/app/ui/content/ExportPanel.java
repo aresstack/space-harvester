@@ -70,84 +70,204 @@ import java.util.function.Consumer;
 public final class ExportPanel extends JPanel {
 
     /**
-     * Die Auswahl links im Explorer: Quelle, Space oder Seite (samt Unterseiten); {@code title} für die Überschrift.
-     * Ohne Quelle ({@link #ALL}) ist es die globale Auswahl über alle Wissensquellen (Angelo, 16.11.2026): die
-     * Überschrift „Wissensquellen“ im Explorer ist gewählt.
+     * Die Auswahl links im Explorer (ADR 0029, ADR 0034 §3), versiegelt: ein Knoten des Baums ({@link Node}: Quelle,
+     * Space oder Seite samt Unterseiten), die globale Auswahl über alle Wissensquellen ({@link All}, Angelo 16.11.2026:
+     * die Überschrift „Wissensquellen“ ist gewählt) oder eine Sammlung ({@link Collection}: ein Favoriten-Ordner).
+     * {@link #toCore} verpackt nur {@link #roots}; „global“ heißt {@link All}, nie „ohne Quelle“, damit eine Sammlung
+     * nicht als „Alle Wissensquellen“ gilt.
+     *
+     * <p>{@link #sourceId}, {@link #spaceKey} und {@link #pageId} gibt es nur für einen {@link Node}; {@link All} und
+     * {@link Collection} liefern dort {@code null}. Stellen, die eine Sammlung annehmen, gehen über {@link #roots}.
      */
-    public record Selection(String sourceId, String spaceKey, String pageId, String title) {
+    public sealed interface Selection permits Selection.Node, Selection.All, Selection.Collection {
 
         /** Alle Wissensquellen: die Überschrift des Explorers ist gewählt, kein Knoten im Baum. */
-        public static final Selection ALL = new Selection(null, null, null, "Alle Wissensquellen");
+        Selection ALL = new All();
+
+        /** Ein Knoten aus Quelle, Space und Seite; ohne Quelle die globale Auswahl {@link #ALL}. */
+        static Selection of(String sourceId, String spaceKey, String pageId, String title) {
+            return sourceId == null ? ALL : new Node(sourceId, spaceKey, pageId, title);
+        }
+
+        /** Die Überschrift; {@code null} bei einem Schlüssel ({@link #normalized}). */
+        String title();
+
+        /** Quelle eines {@link Node}, sonst {@code null}. */
+        default String sourceId() {
+            return null;
+        }
+
+        /** Space eines {@link Node}, sonst {@code null}. */
+        default String spaceKey() {
+            return null;
+        }
+
+        /** Seite eines {@link Node}, sonst {@code null}. */
+        default String pageId() {
+            return null;
+        }
 
         /** Ob dies die globale Auswahl über alle Wissensquellen ist. */
-        public boolean global() {
-            return sourceId == null;
+        default boolean global() {
+            return this instanceof All;
         }
 
-        boolean page() {
-            return pageId != null;
+        /** Ob dies eine Seite samt Unterseiten ist. */
+        default boolean page() {
+            return false;
         }
 
-        boolean space() {
-            return spaceKey != null && pageId == null;
+        /** Ob dies ein ganzer Space ist. */
+        default boolean space() {
+            return false;
         }
 
         /**
-         * Dieselbe Auswahl für den Core (ADR 0029): Quelle, Space oder Seite samt allen Unterseiten; die globale
-         * Auswahl als eine Wurzel je Wissensquelle der Laufzeit.
+         * Die Wurzeln für den Core (ADR 0029): Quelle, Space oder Seite samt allen Unterseiten; die globale Auswahl
+         * als eine Wurzel je Wissensquelle der Laufzeit; eine Sammlung mit ihren aufgelösten Wurzeln.
          */
-        public com.aresstack.spaceharvester.application.holdings.Selection toCore(AppRuntime runtime) {
-            if (global()) {
-                return new com.aresstack.spaceharvester.application.holdings.Selection(
-                        runtime.workspace().sources().stream().map(source ->
-                                com.aresstack.spaceharvester.application.holdings.Selection.Root.source(source.id()))
-                                .toList());
-            }
-            com.aresstack.spaceharvester.application.holdings.Selection.Root root = pageId != null
-                    ? com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree(sourceId, spaceKey, pageId)
-                    : spaceKey != null
-                    ? com.aresstack.spaceharvester.application.holdings.Selection.Root.space(sourceId, spaceKey)
-                    : com.aresstack.spaceharvester.application.holdings.Selection.Root.source(sourceId);
-            return com.aresstack.spaceharvester.application.holdings.Selection.of(root);
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots(AppRuntime runtime);
+
+        /** Dieselbe Auswahl für den Core: nur {@link #roots} verpackt. */
+        default com.aresstack.spaceharvester.application.holdings.Selection toCore(AppRuntime runtime) {
+            return new com.aresstack.spaceharvester.application.holdings.Selection(roots(runtime));
         }
 
         /**
          * Ob ein Download zu dieser Auswahl gehört: für Space und Seite genau derselbe Space und dieselbe Startseite
          * (oder keine); für eine Quelle jeder ihrer Spaces, für „Wissensquellen“ jeder Space jeder Quelle.
          */
-        boolean matches(JobStatus job) {
+        default boolean matches(JobStatus job) {
             return job.type() == JobType.EXPORT && covers(job);
         }
 
         /** Ob ein Auftrag „Datei erzeugen“ zu dieser Auswahl gehört (wie {@link #matches}). */
-        boolean matchesConversion(JobStatus job) {
+        default boolean matchesConversion(JobStatus job) {
             return job.type() == JobType.CONVERSION && covers(job);
         }
 
         /** Ob der Auftrag in dieser Auswahl liegt: Quelle und „Wissensquellen“ decken alle ihre Spaces ab. */
-        boolean covers(JobStatus job) {
-            if (global()) {
-                return job.sourceId() != null;
-            }
-            if (spaceKey == null) {
-                return sourceId.equals(job.sourceId());
-            }
-            return same(job);
-        }
-
-        private boolean same(JobStatus job) {
-            return Objects.equals(job.sourceId(), sourceId) && Objects.equals(job.partitionKey(), spaceKey)
-                    && Objects.equals(job.rootPageId(), pageId);
-        }
+        boolean covers(JobStatus job);
 
         /** Dieselbe Auswahl ohne Überschrift, als Schlüssel; die Überschrift kann je Aufruf anders lauten. */
-        Selection normalized() {
-            return title == null ? this : new Selection(sourceId, spaceKey, pageId, null);
-        }
+        Selection normalized();
 
         /** Der Space eines Auftrags als Auswahl (Schlüssel ohne Überschrift). */
         static Selection ofJob(JobStatus job) {
-            return new Selection(job.sourceId(), job.partitionKey(), job.rootPageId(), null);
+            return of(job.sourceId(), job.partitionKey(), job.rootPageId(), null);
+        }
+
+        /** Ob der Auftrag unter einer Wurzel liegt: eine Quelle deckt alle ihre Spaces ab, sonst genau dieselbe. */
+        private static boolean covers(com.aresstack.spaceharvester.application.holdings.Selection.Root root,
+                                      JobStatus job) {
+            if (root.spaceKey() == null) {
+                return root.sourceId().equals(job.sourceId());
+            }
+            return Objects.equals(job.sourceId(), root.sourceId())
+                    && Objects.equals(job.partitionKey(), root.spaceKey())
+                    && Objects.equals(job.rootPageId(), root.pageId());
+        }
+
+        /** Ein Knoten im Baum: Quelle, Space oder Seite samt Unterseiten; {@code title} für die Überschrift. */
+        record Node(String sourceId, String spaceKey, String pageId, String title) implements Selection {
+
+            public Node {
+                Objects.requireNonNull(sourceId, "sourceId");
+            }
+
+            @Override
+            public boolean page() {
+                return pageId != null;
+            }
+
+            @Override
+            public boolean space() {
+                return spaceKey != null && pageId == null;
+            }
+
+            /** Die eine Wurzel dieses Knotens. */
+            public com.aresstack.spaceharvester.application.holdings.Selection.Root root() {
+                return new com.aresstack.spaceharvester.application.holdings.Selection.Root(sourceId, spaceKey,
+                        pageId);
+            }
+
+            @Override
+            public List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots(AppRuntime runtime) {
+                return List.of(root());
+            }
+
+            @Override
+            public boolean covers(JobStatus job) {
+                return Selection.covers(root(), job);
+            }
+
+            @Override
+            public Selection normalized() {
+                return title == null ? this : new Node(sourceId, spaceKey, pageId, null);
+            }
+        }
+
+        /** Alle Wissensquellen: eine Wurzel je Quelle der Laufzeit. */
+        record All() implements Selection {
+
+            @Override
+            public String title() {
+                return "Alle Wissensquellen";
+            }
+
+            @Override
+            public List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots(AppRuntime runtime) {
+                return runtime.workspace().sources().stream()
+                        .map(source -> com.aresstack.spaceharvester.application.holdings.Selection.Root.source(
+                                source.id()))
+                        .toList();
+            }
+
+            @Override
+            public boolean covers(JobStatus job) {
+                return job.sourceId() != null;
+            }
+
+            @Override
+            public Selection normalized() {
+                return this;
+            }
+        }
+
+        /**
+         * Eine Sammlung (ADR 0034): ein Favoriten-Ordner mit den Wurzeln seiner Favoriten. Die aufgelösten Wurzeln
+         * stehen in {@code equals}, damit eine Änderung am Ordner ab der nächsten Frage gilt; {@code withSubfolders}
+         * ist der Zustand der Checkbox „mit Unterseiten“ (aus = direkte Favoriten, an = samt Unterordnern), nach dem
+         * die App {@code roots} aufgelöst hat. Ordner-ID und Titel sind nur Beschriftung der App.
+         *
+         * @param folderId       der Ordner
+         * @param title          Überschrift (Ordnername) oder {@code null} als Schlüssel
+         * @param roots          die aufgelösten Wurzeln, je Favorit eine (Seite samt Unterseiten, Space oder Quelle)
+         * @param withSubfolders ob die Unterordner rekursiv mitzählen
+         */
+        record Collection(String folderId, String title,
+                          List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots,
+                          boolean withSubfolders) implements Selection {
+
+            public Collection {
+                Objects.requireNonNull(folderId, "folderId");
+                roots = List.copyOf(roots);
+            }
+
+            @Override
+            public List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots(AppRuntime runtime) {
+                return roots;
+            }
+
+            @Override
+            public boolean covers(JobStatus job) {
+                return roots.stream().anyMatch(root -> Selection.covers(root, job));
+            }
+
+            @Override
+            public Selection normalized() {
+                return title == null ? this : new Collection(folderId, null, roots, withSubfolders);
+            }
         }
     }
 
@@ -564,7 +684,7 @@ public final class ExportPanel extends JPanel {
                 String prefix = selection.global()
                         ? (source.title() == null || source.title().isBlank() ? source.id() : source.title()) : null;
                 for (Partition space : runtime.workspace().spaces(source.id())) {
-                    Selection whole = new Selection(source.id(), space.key(), null, null);
+                    Selection whole = new Selection.Node(source.id(), space.key(), null, null);
                     JobStatus newest = newest(jobs, whole, preferred.get(whole));
                     ExportDatasetInfo dataset = newest == null ? null
                             : runtime.workspace().exportDataset(newest.id()).orElse(null);

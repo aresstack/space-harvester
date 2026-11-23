@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.deck.betaview.http;
+package com.aresstack.spaceharvester.deck.http;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
