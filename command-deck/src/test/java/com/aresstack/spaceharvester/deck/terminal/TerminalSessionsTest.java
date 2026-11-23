@@ -217,11 +217,44 @@ class TerminalSessionsTest {
         assertThat(scheduled).as("nie verbunden: der Dialog ist dran, nicht der Neuaufbau").isEmpty();
 
         nextFailure = null;
+        // Von Hand getrennt, während ein Neuaufbau-Versuch noch verband: kein weiterer Versuch.
+        TerminalSession lostOne = sessions.open(TerminalProfile.of("host.example", 992));
+        created.get(created.size() - 1).listener.closed(null);
+        lostOne.disconnect();
+        int pending = scheduled.size();
+        scheduled.remove(pending - 1).run();
+        assertThat(sessions.all()).as("abgesagt").contains(lostOne);
+
         TerminalSession closedWhileWaiting = sessions.open(TerminalProfile.of("host.example", 992));
         created.get(created.size() - 1).listener.closed(null);
         sessions.close(closedWhileWaiting);
         int before = created.size();
         scheduled.remove(0).run();
         assertThat(created).as("geschlossen, während der Versuch wartete").hasSize(before);
+    }
+
+    @Test
+    void aFailedCreationDuringReconnectStillUsesTheRemainingAttempts() {
+        boolean[] failCreate = {false};
+        TerminalSessions sessions = new TerminalSessions((profile, listener) -> {
+            if (failCreate[0]) {
+                throw new IllegalStateException("Codepage belegt");
+            }
+            FakeConnection connection = new FakeConnection(listener);
+            created.add(connection);
+            return connection;
+        }, Runnable::run);
+        sessions.autoReconnect(TerminalSessions.Reconnect.standard(() -> true), (delay, task) -> {
+            delays.add(delay);
+            scheduled.add(task);
+        });
+        sessions.open(TerminalProfile.of("host.example", 992));
+        created.get(0).listener.closed(null);
+        failCreate[0] = true;
+        scheduled.remove(0).run();
+        assertThat(delays).containsExactly(java.time.Duration.ofSeconds(2), java.time.Duration.ofSeconds(10));
+        failCreate[0] = false;
+        scheduled.remove(0).run();
+        assertThat(sessions.all().get(0).state()).isEqualTo(SessionState.CONNECTED);
     }
 }

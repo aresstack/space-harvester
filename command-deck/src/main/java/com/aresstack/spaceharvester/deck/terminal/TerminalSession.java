@@ -33,6 +33,8 @@ public final class TerminalSession {
     private volatile int attempt;
     /** Seit wann die Sitzung verbunden ist (Millisekunden), 0 solange nie verbunden. */
     private volatile long connectedSince;
+    /** Von Hand getrennt: Ein automatischer Neuaufbau ist damit abgesagt. */
+    private volatile boolean disconnectedByHand;
 
     TerminalSession(String id, TerminalProfile profile) {
         this.id = Objects.requireNonNull(id, "id");
@@ -136,6 +138,11 @@ public final class TerminalSession {
         return connectedSince;
     }
 
+    /** Ob die Sitzung von Hand getrennt wurde (dann baut sie sich nie selbst neu auf). */
+    public boolean disconnectedByHand() {
+        return disconnectedByHand;
+    }
+
     void origin(TerminalSessions.LoginSource login, List<TerminalMacro.Step> steps) {
         loginSource = login;
         replay = steps == null ? List.of() : List.copyOf(steps);
@@ -161,6 +168,7 @@ public final class TerminalSession {
 
     /** Trennt die Sitzung; eine schon beendete bleibt, wie sie ist. */
     public void disconnect() {
+        disconnectedByHand = true;
         TerminalConnection current;
         lock.lock();
         try {

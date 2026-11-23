@@ -282,7 +282,8 @@ public final class TerminalWorkspace extends JPanel {
 
     /** Automatischer Neuaufbau: Die Nachfolgerin übernimmt Herkunft und Auswahl, der alte Reiter verschwindet. */
     private void reopened(TerminalSession lost, TerminalSession fresh) {
-        boolean wasSelected = selected == lost || selected == fresh;
+        // Nur wer die verlorene Sitzung vor sich hatte, bekommt die Nachfolgerin; sonst bleibt die Eingabe, wo sie ist.
+        TerminalSession target = selected == lost || selected == null ? fresh : selected;
         ConnectForm.Request origin = origins.get(lost);
         if (origin != null) {
             origins.put(fresh, origin);
@@ -290,10 +291,8 @@ public final class TerminalWorkspace extends JPanel {
         if (pillOf.containsKey(lost)) {
             closeSession(lost);
         }
-        if (wasSelected || selected == null) {
-            added(fresh);
-            select(fresh);
-        }
+        added(fresh);
+        select(target);
     }
 
     private void added(TerminalSession session) {
@@ -326,7 +325,10 @@ public final class TerminalWorkspace extends JPanel {
                 session.macro().tab();
             }
         }));
-        select(session);
+        if (session.attempt() == 0) {
+            // Ein automatischer Neuaufbau holt die Eingabe nicht von einer anderen Sitzung weg (reopened entscheidet).
+            select(session);
+        }
         pills.revalidate();
         pills.repaint();
     }

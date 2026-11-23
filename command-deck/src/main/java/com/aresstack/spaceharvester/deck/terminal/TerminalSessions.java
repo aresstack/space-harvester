@@ -134,6 +134,10 @@ public final class TerminalSessions {
             sessions.add(session);
             openedObservers.forEach(observer -> observer.accept(session));
             session.change(SessionState.FAILED, describe(e));
+            if (attempt > 0) {
+                // Auch ein gescheitertes Anlegen (etwa Codepage belegt) verbraucht nur diesen Versuch.
+                reconnectLater(session);
+            }
             return session;
         }
         session.attach(connection);
@@ -188,7 +192,7 @@ public final class TerminalSessions {
     /** Plant den nächsten Versuch für eine verlorene Sitzung; der Grund steht als Hinweis in ihr. */
     private void reconnectLater(TerminalSession lost) {
         Reconnect policy = reconnect;
-        if (closing || !policy.enabled().getAsBoolean() || policy.delays().isEmpty()) {
+        if (closing || lost.disconnectedByHand() || !policy.enabled().getAsBoolean() || policy.delays().isEmpty()) {
             return;
         }
         long since = lost.connectedSince();
@@ -203,7 +207,8 @@ public final class TerminalSessions {
         lost.note("Verbindung verloren · neuer Versuch in " + delay.toSeconds() + " s (" + next + "/" + limit + ")");
         scheduler.schedule(delay, () -> {
             // Von Hand geschlossen oder schon neu verbunden: nichts mehr tun.
-            if (closing || !sessions.contains(lost) || !policy.enabled().getAsBoolean()) {
+            if (closing || lost.disconnectedByHand() || !sessions.contains(lost)
+                    || !policy.enabled().getAsBoolean()) {
                 return;
             }
             sessions.remove(lost);
