@@ -63,6 +63,8 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     private final NdvConnectForm form;
     private final EditorSessions editors;
     private NdvSession selected;
+    /** Ob seit dem letzten Erfolg schon automatisch verbunden wurde; ein Fehlschlag wiederholt sich so nicht. */
+    private boolean autoTried;
     private final ServerAccounts accounts;
     /** Sitzungen, die noch nie verbunden waren: ihr erster Erfolg wird gemerkt, ihr Fehlschlag zeigt das Formular. */
     private final java.util.Set<NdvSession> fresh = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -120,6 +122,20 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         if (pillOf.isEmpty()) {
             select(null);
         }
+        // Beim Öffnen des Bereichs ohne Sitzung gleich verbinden, wenn Zugangsdaten da sind (Angelo 23.11.).
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                shown();
+            }
+        });
+    }
+
+    /** Der Bereich wird gezeigt: ohne offene Sitzung einmal automatisch verbinden (nach einem Fehlschlag nicht). */
+    void shown() {
+        if (pillOf.isEmpty() && !autoTried) {
+            autoTried = true;
+            newConnection();
+        }
     }
 
     private void added(NdvSession session) {
@@ -160,10 +176,12 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         if (fresh.contains(session)) {
             if (session.state() == NdvState.CONNECTED) {
                 fresh.remove(session);
+                autoTried = false;
                 NdvConnectForm.rememberWorking(session.profile(), session.account());
             } else if (session.state() == NdvState.FAILED && pillOf.containsKey(session)) {
-                // Erstes Verbinden misslungen: zurück ins Formular, mit Grund.
+                // Erstes Verbinden misslungen: zurück ins Formular, mit Grund; beim nächsten Öffnen nicht von selbst.
                 fresh.remove(session);
+                autoTried = true;
                 String reason = NdvBrowser.oneLine(session.failure().orElse("Verbindung fehlgeschlagen"));
                 discard(session);
                 select(null);
@@ -217,6 +235,31 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
      */
     void newConnection() {
         java.util.Optional<NdvConnectForm.Working> working = NdvConnectForm.working();
+        if (working.isPresent()) {
+            connectOrForm(working);
+            return;
+        }
+        // Noch nie verbunden: der gemerkte KeePass-Eintrag (auch der des Terminals) reicht, wenn er Adresse und
+        // Benutzer hat. Die Einträge kommen im Hintergrund.
+        select(null);
+        background.execute(() -> {
+            java.util.List<com.aresstack.spaceharvester.deck.access.ServerAccount> list;
+            try {
+                list = accounts.accounts();
+            } catch (Exception e) {
+                return; // das Formular lädt selbst und zeigt den Grund
+            }
+            java.util.Optional<NdvConnectForm.Working> remembered = NdvConnectForm.fromRemembered(list);
+            SwingUtilities.invokeLater(() -> {
+                if (remembered.isPresent() && selected == null) {
+                    connectOrForm(remembered);
+                }
+            });
+        });
+    }
+
+    /** Verbindet mit den gemerkten Daten; ist diese Verbindung schon offen, zeigt es das Formular für eine andere. */
+    private void connectOrForm(java.util.Optional<NdvConnectForm.Working> working) {
         if (working.isEmpty() || pillOf.keySet().stream().anyMatch(open -> open.profile().host()
                 .equalsIgnoreCase(working.get().profile().host()) && open.profile().port() == working.get().profile()
                 .port())) {
