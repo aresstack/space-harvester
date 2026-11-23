@@ -21,9 +21,10 @@ import java.io.IOException;
  * nächsten {@link #begin()}: ein Stück, dessen Wiedergabe erst nach dem Stopp beginnen wollte, erklingt nicht mehr
  * (sonst spräche nach einem Modellwechsel noch ein Absatz der alten Stimme neben der neuen).
  *
- * <p>Unverändert aus dem Enterprise AI Client ({@code proasteion/exedra/speech/JavaSoundAudioPlayback}); nur die
- * Schnittstelle ist die {@link ReadAloud.Playback} des Core statt {@code AudioPlayback} (Angelo 23.11.2026: „du musst
- * die funktionierende Logik aus dem Enterprise Client kopieren“).
+ * <p>Aus dem Enterprise AI Client ({@code proasteion/exedra/speech/JavaSoundAudioPlayback}) kopiert (Angelo 23.11.2026:
+ * „du musst die funktionierende Logik aus dem Enterprise Client kopieren“); die Schnittstelle ist die
+ * {@link ReadAloud.Playback} des Core statt {@code AudioPlayback}. Einzige Abweichung: eine Pause mitten im Stück
+ * verliert kein Audio mehr ({@link #writeFully}), denn eine angehaltene Leitung nimmt Schreibaufträge nur teilweise an.
  *
  * <p>Pause stops the line without flushing it, so {@link #resume()} continues at the same sample; a write blocks
  * while the line is paused. 16-bit PCM goes through {@link PcmTimeStretch} at the current {@link #setRate rate}
@@ -48,6 +49,7 @@ public final class JavaSoundAudioPlayback implements ReadAloud.Playback {
         synchronized (lock) {
             stopped = false;
             paused = false;
+            lock.notifyAll();
         }
     }
 
@@ -68,6 +70,7 @@ public final class JavaSoundAudioPlayback implements ReadAloud.Playback {
     public void resume() {
         synchronized (lock) {
             paused = false;
+            lock.notifyAll();
             if (!stopped) {
                 if (line != null) {
                     line.start();
@@ -109,7 +112,7 @@ public final class JavaSoundAudioPlayback implements ReadAloud.Playback {
                 if (isStopped()) {
                     return;
                 }
-                target.write(buffer, 0, read); // blockiert nur, solange der Puffer der Leitung voll ist
+                writeFully(target, buffer, read);
             }
         } finally {
             audio.close();
@@ -189,7 +192,45 @@ public final class JavaSoundAudioPlayback implements ReadAloud.Playback {
             bytes[2 * i] = (byte) (bigEndian ? value >> 8 : value);
             bytes[2 * i + 1] = (byte) (bigEndian ? value : value >> 8);
         }
-        target.write(bytes, 0, bytes.length); // blocks while the line buffer is full or the line is paused
+        writeFully(target, bytes, bytes.length);
+    }
+
+    /**
+     * Schreibt alle Bytes in die Leitung. Eine angehaltene Leitung nimmt nur einen Teil oder nichts an
+     * ({@code SourceDataLine.write} kehrt dann früh zurück); der Rest wartet hier auf das Fortsetzen, statt verloren zu
+     * gehen, während das Lesen weiterliefe. Abweichung vom Upstream, dort ging bei Pause mitten im Stück Audio verloren.
+     */
+    private void writeFully(SourceDataLine target, byte[] bytes, int length) {
+        int written = 0;
+        while (written < length) {
+            if (!awaitPlaying()) {
+                return; // gestoppt
+            }
+            int count = target.write(bytes, written, length - written);
+            written += Math.max(0, count);
+            if (count <= 0) {
+                synchronized (lock) {
+                    if (!paused && !stopped) {
+                        return; // die Leitung nimmt nichts mehr an (geschlossen)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Wartet, solange angehalten ist; {@code false}, wenn gestoppt wurde. */
+    private boolean awaitPlaying() {
+        synchronized (lock) {
+            while (paused && !stopped) {
+                try {
+                    lock.wait();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            return !stopped;
+        }
     }
 
     /** Die offene Leitung, wenn das Format passt; sonst wird die alte ausgespielt und eine neue geöffnet. */
@@ -230,6 +271,9 @@ public final class JavaSoundAudioPlayback implements ReadAloud.Playback {
 
     @Override
     public void finish() {
+        // Angehalten am Ende des Texts: der Rest in der Leitung klingt erst nach dem Fortsetzen aus, statt verworfen zu
+        // werden (Abweichung vom Upstream)
+        awaitPlaying();
         SourceDataLine current;
         boolean drain;
         synchronized (lock) {
@@ -260,6 +304,7 @@ public final class JavaSoundAudioPlayback implements ReadAloud.Playback {
         synchronized (lock) {
             stopped = true;
             paused = false;
+            lock.notifyAll();
             if (line != null) {
                 line.stop();
                 line.flush();

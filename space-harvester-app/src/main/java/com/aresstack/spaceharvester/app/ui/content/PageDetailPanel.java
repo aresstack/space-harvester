@@ -3294,9 +3294,17 @@ public final class PageDetailPanel extends JPanel {
         if (!available) {
             return;
         }
-        Background.run(() -> runtime.workspace().pageReadAloudText(source, id).orElse(""), text -> {
+        com.aresstack.spaceharvester.app.runtime.Workspace workspace = runtime.workspace();
+        Background.run(() -> workspace.pageReadAloudText(source, id).orElse(""), text -> {
             if (shown == page) {
-                readingPane.readAloud().speechText(text);
+                // vor jedem Vorlesen erneut: eine zurückgenommene KI-Freigabe gilt sofort (ADR 0028)
+                readingPane.readAloud().speechText(text, () -> {
+                    try {
+                        return workspace.pageReadAloudText(source, id).isPresent();
+                    } catch (RuntimeException e) {
+                        return false;
+                    }
+                });
             }
         }, error -> {
             // ohne Text bleibt der Knopf aus; der Tooltip nennt den Grund
@@ -4560,6 +4568,11 @@ public final class PageDetailPanel extends JPanel {
                             && entry.key().pageId().equals(pageId));
             if (mine) {
                 javax.swing.SwingUtilities.invokeLater(() -> {
+                    // Vorlesen: die Freigabe hat sich geändert, das laufende endet und der Text wird neu gelesen
+                    readingPane.readAloud().stop();
+                    if (readingLoaded && page != null && context.runtime() != null) {
+                        loadReadAloud(context.runtime(), sourceId, pageId, page);
+                    }
                     imagesLoaded = false;
                     if (IMAGES.equals(selectedTab())) {
                         loadImages();

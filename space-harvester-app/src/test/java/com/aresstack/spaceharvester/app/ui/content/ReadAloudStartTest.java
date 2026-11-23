@@ -27,6 +27,25 @@ class ReadAloudStartTest {
     }
 
     @Test
+    void aHeadingThatIsAlsoInTheTableOfContentsReadsOnFromTheHeadingInTheText() {
+        // Angelo 23.11.2026: „sonst liest er nachher das ganze Inhaltsverzeichnis“
+        String spoken = "Inhalt\nAblauf\nStörungen\nAblauf\nErst prüfen.\nStörungen\nBereitschaft anrufen.";
+        String shown = "Inhalt\nAblauf\nStörungen\nAblauf\nErst prüfen.\nStörungen\nBereitschaft anrufen.";
+        int heading = shown.lastIndexOf("Störungen");
+
+        int at = ReadAloudStart.find(spoken, "Störungen\n", 2, ReadAloudStart.place(shown, heading, "Störungen\n"));
+
+        assertEquals("Störungen\nBereitschaft anrufen.", spoken.substring(at));
+        // ohne Angabe zur Stelle wie im Upstream das erste Vorkommen
+        assertEquals(spoken.indexOf("Störungen"), ReadAloudStart.find(spoken, "Störungen\n", 2));
+        // zeigt die Anzeige das Verzeichnis nicht, zählt die Lage: die Überschrift steht weit unten
+        int alone = "Ablauf\nErst prüfen.\n".length();
+        String withoutContents = "Ablauf\nErst prüfen.\nStörungen\nBereitschaft anrufen.";
+        at = ReadAloudStart.find(spoken, "Störungen", 2, ReadAloudStart.place(withoutContents, alone, "Störungen"));
+        assertEquals("Störungen\nBereitschaft anrufen.", spoken.substring(at));
+    }
+
+    @Test
     void whitespaceImagesAndUnknownTextAreNoHit() {
         assertEquals(-1, ReadAloudStart.find(SPOKEN, "Erster  Absatz", 7), "Leerzeichen zwischen Wörtern");
         assertEquals(-1, ReadAloudStart.find(SPOKEN, "   \n", 1), "Leerraum");

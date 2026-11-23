@@ -23,6 +23,52 @@ final class ReadAloudStart {
      * @return der Index in {@code spoken}, ab dem vorgelesen wird, oder -1
      */
     static int find(String spoken, String paragraph, int offset) {
+        return find(spoken, paragraph, offset, null);
+    }
+
+    /**
+     * Wo der angeklickte Absatz in der Anzeige steht, wenn sein Text mehrmals vorkommt (etwa eine Überschrift auch im
+     * Inhaltsverzeichnis).
+     *
+     * @param occurrence der wievielte gleichlautende Absatz der Anzeige es ist, ab 0
+     * @param total      wie oft er in der Anzeige vorkommt
+     * @param share      wie weit er in der Anzeige steht, 0 am Anfang, 1 am Ende
+     */
+    record Place(int occurrence, int total, double share) {
+    }
+
+    /**
+     * Die Stelle des angeklickten Absatzes in der Anzeige: der wievielte gleichlautende er ist und wie weit vorn er
+     * steht.
+     *
+     * @param shown          der ganze angezeigte Text
+     * @param paragraphStart wo der angeklickte Absatz darin beginnt
+     * @param paragraph      der angeklickte Absatz
+     */
+    static Place place(String shown, int paragraphStart, String paragraph) {
+        String needle = Collapsed.of(paragraph).text.trim();
+        if (needle.isEmpty()) {
+            return null;
+        }
+        String before = Collapsed.of(shown.substring(0, Math.max(0, Math.min(paragraphStart, shown.length())))).text;
+        return new Place(count(before, needle), count(Collapsed.of(shown).text, needle),
+                shown.isEmpty() ? 0 : (double) paragraphStart / shown.length());
+    }
+
+    private static int count(String text, String needle) {
+        int count = 0;
+        for (int at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + 1)) {
+            count++;
+        }
+        return count;
+    }
+
+    /**
+     * Wie {@link #find(String, String, int)}; kommt der Absatz im vorlesbaren Text mehrmals vor, nimmt es dasselbe
+     * Vorkommen wie in der Anzeige (gleich viele) oder sonst das, das anteilig am nächsten an der Klickstelle steht.
+     * Ohne das begann ein Doppelklick auf eine Überschrift, die auch im Inhaltsverzeichnis steht, beim Verzeichnis.
+     */
+    static int find(String spoken, String paragraph, int offset, Place place) {
         if (spoken == null || paragraph == null || offset < 0 || offset > paragraph.length()) {
             return -1;
         }
@@ -35,7 +81,7 @@ final class ReadAloudStart {
         int local = shown.collapsedIndex(word);
         String needle = shown.text.trim();
         int lead = shown.text.indexOf(needle);
-        int at = needle.isEmpty() ? -1 : text.text.indexOf(needle);
+        int at = needle.isEmpty() ? -1 : pick(text.text, needle, place);
         if (at >= 0) {
             return text.original(at + local - lead);
         }
@@ -43,8 +89,27 @@ final class ReadAloudStart {
         if (tail.length() > TAIL_PROBE) {
             tail = tail.substring(0, TAIL_PROBE).trim();
         }
-        at = tail.isEmpty() ? -1 : text.text.indexOf(tail);
+        at = tail.isEmpty() ? -1 : pick(text.text, tail, place);
         return at < 0 ? -1 : text.original(at);
+    }
+
+    /** Das passende Vorkommen von {@code needle} in {@code text}; ohne Angabe zur Stelle das erste. */
+    private static int pick(String text, String needle, Place place) {
+        java.util.List<Integer> found = new java.util.ArrayList<>();
+        for (int at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + 1)) {
+            found.add(at);
+        }
+        if (found.isEmpty()) {
+            return -1;
+        }
+        if (place == null || found.size() == 1) {
+            return found.get(0);
+        }
+        if (found.size() == place.total() && place.occurrence() < found.size()) {
+            return found.get(place.occurrence());
+        }
+        double wanted = place.share() * text.length();
+        return found.stream().min(java.util.Comparator.comparingDouble(at -> Math.abs(at - wanted))).orElseThrow();
     }
 
     /** Anfang des Worts an {@code offset}; -1, wenn dort (und direkt davor) kein Buchstabe und keine Ziffer steht. */

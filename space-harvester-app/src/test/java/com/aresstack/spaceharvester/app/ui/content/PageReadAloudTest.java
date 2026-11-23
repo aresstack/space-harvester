@@ -63,6 +63,19 @@ class PageReadAloudTest {
             assertThat(fake.spoken.get(1)).isEqualTo("Bereitschaft anrufen.");
             assertThat(reading.speaking()).isTrue();
 
+            // die Überschrift „Störungen“ im Text, nicht die im Inhaltsverzeichnis
+            int heading = TEXT.indexOf("\nStörungen\nBei") + 3;
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    Rectangle at = pane.modelToView2D(heading).getBounds();
+                    restarted[0] = reading.readFrom(new Point(at.x, at.y + at.height / 2));
+                } catch (javax.swing.text.BadLocationException e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+            assertThat(fake.await(3)).isTrue();
+            assertThat(fake.spoken.get(2)).isEqualTo("Störungen\nBei Störungen die Bereitschaft anrufen.");
+
             // eine andere Seite beendet das Vorlesen
             SwingUtilities.invokeAndWait(() -> reading.speechText("Eine andere Seite."));
             assertThat(reading.speaking()).isFalse();

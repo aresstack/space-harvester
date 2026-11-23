@@ -45,6 +45,8 @@ final class PageReadAloud {
     private ReadAloudBinding binding;
     /** Der vorlesbare Text der gezeigten Seite; leer ohne. */
     private String speechText = "";
+    /** Ob die gezeigte Seite noch vorgelesen werden darf; gefragt auf dem Lese-Thread. */
+    private java.util.function.BooleanSupplier allowed = () -> true;
     /** Ob gerade vorgelesen wird (auch angehalten). */
     private boolean speaking;
     /** Ob das Vorlesen angehalten ist (Stelle bleibt, der Knopf setzt dort fort). */
@@ -91,11 +93,20 @@ final class PageReadAloud {
 
     /** Der vorlesbare Text der gezeigten Seite; ein anderer Text (andere Seite) beendet das Vorlesen. */
     void speechText(String spoken) {
+        speechText(spoken, () -> true);
+    }
+
+    /**
+     * Wie {@link #speechText(String)}; {@code allowed} fragt vor jedem Vorlesen (nicht auf dem EDT), ob die Seite noch
+     * an einen KI-Dienst darf (ADR 0028: eine zurückgenommene Freigabe gilt sofort).
+     */
+    void speechText(String spoken, java.util.function.BooleanSupplier allowed) {
         String next = spoken == null ? "" : spoken;
         if (!next.equals(speechText)) {
             stop();
         }
         speechText = next;
+        this.allowed = Objects.requireNonNull(allowed, "allowed");
         style();
     }
 
@@ -142,12 +153,26 @@ final class PageReadAloud {
         } catch (BadLocationException e) {
             return false;
         }
-        int start = ReadAloudStart.find(speechText, paragraph, position - element.getStartOffset());
+        int start = ReadAloudStart.find(speechText, paragraph, position - element.getStartOffset(),
+                place(element.getStartOffset(), paragraph));
         if (start < 0) {
             return false;
         }
         speak(speechText.substring(start));
         return true;
+    }
+
+    /**
+     * Wo der angeklickte Absatz in der Anzeige steht: eine Überschrift, die auch im Inhaltsverzeichnis steht, liest dann
+     * ab der Überschrift im Text weiter, nicht ab dem Verzeichnis.
+     */
+    private ReadAloudStart.Place place(int paragraphStart, String paragraph) {
+        try {
+            return ReadAloudStart.place(text.getDocument().getText(0, text.getDocument().getLength()), paragraphStart,
+                    paragraph);
+        } catch (BadLocationException e) {
+            return null;
+        }
     }
 
     /** Liest {@code spoken} vor; ein laufendes Vorlesen endet vorher (dieselbe Sprachausgabe). */
@@ -157,7 +182,7 @@ final class PageReadAloud {
         speaking = true;
         paused = false;
         style();
-        binding.speak(spoken, () -> {
+        binding.speak(spoken, allowed, () -> {
             if (run == mine) {
                 run = null;
                 speaking = false;

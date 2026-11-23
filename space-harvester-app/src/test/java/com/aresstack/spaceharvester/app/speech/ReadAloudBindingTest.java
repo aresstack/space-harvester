@@ -36,6 +36,53 @@ class ReadAloudBindingTest {
     }
 
     @Test
+    void aPageWhoseAiReleaseWasWithdrawnIsNotSentToTheSpeechService() throws Exception {
+        FakeReadAloud fake = new FakeReadAloud();
+        List<String> failures = new ArrayList<>();
+        ReadAloudBinding binding = new ReadAloudBinding(() -> fake, failures::add);
+        CountDownLatch finished = new CountDownLatch(1);
+        try {
+            binding.speak("Geheimer Absatz über Nordlicht.", () -> false, finished::countDown);
+            assertThat(finished.await(5, TimeUnit.SECONDS)).isTrue();
+            SwingUtilities.invokeAndWait(() -> { });
+            assertThat(fake.spoken).isEmpty();
+            assertThat(failures).containsExactly(ReadAloudBinding.NOT_ALLOWED);
+        } finally {
+            binding.close();
+        }
+    }
+
+    @Test
+    void pausedWhileTheServiceWasStillStartingBeginsOnlyOnResume() throws Exception {
+        FakeReadAloud fake = new FakeReadAloud();
+        CountDownLatch asked = new CountDownLatch(1);
+        CountDownLatch answer = new CountDownLatch(1);
+        ReadAloudBinding binding = new ReadAloudBinding(() -> {
+            asked.countDown();
+            try {
+                answer.await(5, TimeUnit.SECONDS); // der Dienst nennt seine Modelle
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return fake;
+        }, message -> { });
+        try {
+            binding.speak("Ein Absatz.", () -> { });
+            assertThat(asked.await(5, TimeUnit.SECONDS)).isTrue();
+            binding.pause();
+            answer.countDown();
+            Thread.sleep(200);
+            assertThat(fake.spoken).as("angehalten: noch nichts gesprochen").isEmpty();
+            assertThat(binding.isPaused()).isTrue();
+
+            binding.resume();
+            assertThat(fake.await(1)).isTrue();
+        } finally {
+            binding.close();
+        }
+    }
+
+    @Test
     void aMissingSpeechServiceGoesToTheStatusLine() throws Exception {
         List<String> failures = new ArrayList<>();
         ReadAloudBinding binding = new ReadAloudBinding(() -> {

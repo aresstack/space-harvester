@@ -35,10 +35,11 @@ public final class ReadAloudBinding {
     });
     /** Jede Ausgabe und jedes Stopp zählt hoch; eine wartende Ausgabe mit alter Nummer spricht nicht mehr. */
     private final AtomicLong generation = new AtomicLong();
-    /** Der Vorlese-Ablauf, sobald er entstanden ist. */
+    /** Der Vorlese-Ablauf des laufenden Vorlesens, sobald er spricht; {@code null} davor. */
     private volatile ReadAloud service;
-    /** Pausiert, bevor der Ablauf da war: er beginnt angehalten. */
+    /** Angehalten, bevor der Ablauf des laufenden Vorlesens da war: er beginnt erst beim Fortsetzen. */
     private volatile boolean pausedEarly;
+    private final Object pauseLock = new Object();
     /** Die laufende oder wartende Ausgabe; {@link #speak}, {@link #stop()} und {@link #close()} brechen sie ab. */
     private Read active;
 
@@ -56,11 +57,22 @@ public final class ReadAloudBinding {
      * dass die Ausgabe vorbei ist (fertig gesprochen, fehlgeschlagen, gestoppt oder abgelöst).
      */
     public void speak(String text, Runnable finished) {
+        speak(text, () -> true, finished);
+    }
+
+    /**
+     * Wie {@link #speak(String, Runnable)}; {@code allowed} wird auf dem Lese-Thread unmittelbar vor dem Vorlesen
+     * gefragt (etwa ob die Seite noch an einen KI-Dienst darf, ADR 0028). Sagt es nein, wird nichts gesprochen und der
+     * Grund geht an die Statuszeile.
+     */
+    public void speak(String text, java.util.function.BooleanSupplier allowed, Runnable finished) {
+        Objects.requireNonNull(allowed, "allowed");
         ReadAloud current = service;
+        service = null; // ein Anhalten vor dem Start gilt dem neuen Vorlesen, nicht dem alten
         if (current != null) {
             current.stop(); // beendet eine laufende Ausgabe
         }
-        pausedEarly = false;
+        resumeEarly();
         long mine = generation.incrementAndGet();
         Read read = new Read(finished);
         synchronized (this) {
@@ -68,7 +80,7 @@ public final class ReadAloudBinding {
             active = read;
             read.future = reader.submit(() -> {
                 try {
-                    read(mine, text);
+                    read(mine, text, allowed);
                 } finally {
                     read.finish();
                 }
@@ -117,19 +129,32 @@ public final class ReadAloudBinding {
         }
     }
 
-    private void read(long mine, String text) {
+    /** Grund in der Statuszeile, wenn die Seite inzwischen nicht mehr an einen KI-Dienst darf. */
+    public static final String NOT_ALLOWED = "Die Seite ist nicht mehr für KI-Dienste freigegeben";
+
+    private void read(long mine, String text, java.util.function.BooleanSupplier allowed) {
         if (generation.get() != mine) {
             return; // inzwischen gestoppt oder von einem neueren Text abgelöst
         }
         boolean[] reported = new boolean[1]; // eine Meldung je Vorlesen, nicht je Abschnitt
         try {
-            ReadAloud current = service();
+            if (!allowed.getAsBoolean()) {
+                if (generation.get() == mine) {
+                    showFailure(NOT_ALLOWED);
+                }
+                return;
+            }
+            ReadAloud current = Objects.requireNonNull(factory.get(), "read aloud");
+            // Angehalten, während der Dienst noch nach seinen Modellen gefragt wurde: erst beim Fortsetzen beginnen.
+            synchronized (pauseLock) {
+                while (pausedEarly && generation.get() == mine) {
+                    pauseLock.wait(50);
+                }
+            }
             if (generation.get() != mine) {
                 return;
             }
-            if (pausedEarly) {
-                current.pause();
-            }
+            service = current;
             current.speak(text, new ReadAloud.Listener() {
                 @Override
                 public void failed(String message) {
@@ -140,6 +165,8 @@ public final class ReadAloudBinding {
                     }
                 }
             });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // abgelöst oder gestoppt
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Vorlesen fehlgeschlagen ({0})", e.getClass().getName());
             if (!reported[0] && generation.get() == mine) {
@@ -149,17 +176,10 @@ public final class ReadAloudBinding {
         }
     }
 
-    /** Je Vorlesen neu gebaut: ein inzwischen gewähltes Modell oder ein anderer Dienst gilt sofort. */
-    private ReadAloud service() {
-        ReadAloud current = Objects.requireNonNull(factory.get(), "read aloud");
-        service = current;
-        return current;
-    }
-
     /** Beendet die laufende Ausgabe; idempotent. */
     public void stop() {
         generation.incrementAndGet();
-        pausedEarly = false;
+        resumeEarly();
         ReadAloud current = service;
         if (current != null) {
             current.stop();
@@ -177,9 +197,16 @@ public final class ReadAloudBinding {
         }
     }
 
+    private void resumeEarly() {
+        synchronized (pauseLock) {
+            pausedEarly = false;
+            pauseLock.notifyAll();
+        }
+    }
+
     /** Setzt eine angehaltene Ausgabe dort fort, wo sie stand. */
     public void resume() {
-        pausedEarly = false;
+        resumeEarly();
         ReadAloud current = service;
         if (current != null) {
             current.resume();
