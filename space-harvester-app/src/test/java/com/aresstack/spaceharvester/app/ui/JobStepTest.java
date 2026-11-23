@@ -64,13 +64,38 @@ class JobStepTest {
         assertThat(ActivitiesView.stateText(withErrors)).doesNotContain("fehlerfrei");
         RowActions.Action failedBar = ActivitiesView.progressSlots(withErrors, null,
                 ActivitiesView.stateText(withErrors)).get(0);
-        assertThat(((ActivitiesView.ProgressIcon) failedBar.icon()).label()).isEqualTo("397/398");
+        // Beendet: der Zustand vor den Zahlen, für alle Arten gleich (Angelo 23.11.2026).
+        assertThat(((ActivitiesView.ProgressIcon) failedBar.icon()).label()).isEqualTo("Fertig · 397/398");
 
         // Solange nichts gefunden ist, sagt der Balken den Zustand statt „0/0“.
         JobStatus fresh = running(JobType.SYNC, new JobProgress(0, 0, 0, 0));
         RowActions.Action empty = ActivitiesView.progressSlots(fresh, null, ActivitiesView.stateText(fresh)).get(0);
         assertThat(((ActivitiesView.ProgressIcon) empty.icon()).label()).isEqualTo(Texts.state(fresh));
         assertThat(empty.tooltip()).isEqualTo(Texts.state(fresh) + " · angelegt " + Texts.time(fresh.createdAt()));
+    }
+
+    /**
+     * Angelo 23.11.2026: Manche Aufträge blieben bei 1034/1034 stehen, andere sagten „Fertig, fehlerfrei“. Jetzt sagt
+     * jeder beendete Auftrag seinen Zustand, mit Zahlen, wo es welche gibt; offen nur die Zahlen.
+     */
+    @Test
+    void everyFinishedJobSaysSoAndKeepsItsCountsWhereThereAreAny() {
+        JobStatus full = finished(JobType.ENRICHMENT, new JobProgress(1034, 1034, 1034, 0));
+        assertThat(ActivitiesView.barLabel(full, ActivitiesView.stateText(full))).isEqualTo("Fertig · 1034/1034");
+        JobStatus nothing = finished(JobType.ENRICHMENT, new JobProgress(0, 0, 0, 0));
+        assertThat(ActivitiesView.barLabel(nothing, ActivitiesView.stateText(nothing))).isEqualTo("Fertig, fehlerfrei");
+        JobStatus open = running(JobType.ENRICHMENT, new JobProgress(1034, 1034, 1034, 0));
+        assertThat(ActivitiesView.barLabel(open, ActivitiesView.stateText(open))).isEqualTo("1034/1034");
+        JobStatus cancelled = new JobStatus("j5", JobType.SYNC, "wiki", "OPS", "local", JobState.CANCELLED,
+                new JobProgress(15603, 12191, 12191, 0), null, false, Instant.EPOCH, Instant.EPOCH, Instant.EPOCH,
+                null, null);
+        assertThat(ActivitiesView.barLabel(cancelled, ActivitiesView.stateText(cancelled)))
+                .isEqualTo("Abgebrochen · 12191/15603");
+        // Passt es nicht in den Balken, bleibt der Zustand; die Zahlen stehen im Tooltip.
+        assertThat(ActivitiesView.ProgressIcon.fit("Abgebrochen · 12191/15603", String::length, 20))
+                .isEqualTo("Abgebrochen");
+        assertThat(ActivitiesView.ProgressIcon.fit("12191/15603", String::length, 5)).isEqualTo("12191/15603");
+        assertThat(ActivitiesView.ProgressIcon.fit("Fertig · 3/3", String::length, 40)).isEqualTo("Fertig · 3/3");
     }
 
     @Test
