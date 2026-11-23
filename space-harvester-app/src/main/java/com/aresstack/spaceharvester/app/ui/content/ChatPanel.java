@@ -251,6 +251,8 @@ public final class ChatPanel extends JPanel {
             com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.openBook(), APP_SEARCH_OFF);
     /** Ob die interne Suche an ist; gilt für die nächsten Fragen, bis man sie ausschaltet. */
     private boolean appSearchOn;
+    /** Der Abstand hinter „Interne Suche“; weicht mit ihr in der schmalsten Stufe der Fußzeile. */
+    private final java.awt.Component appSearchGap = Box.createHorizontalStrut(4);
     private final ComposerButton attach = ComposerButton.iconButton(ComposerIcons.paperclip(), ATTACH);
     private final ComposerButton mic = ComposerButton.iconButton(ComposerIcons.microphone(), DICTATE);
     private final ComposerButton discardButton = ComposerButton.iconButton(
@@ -526,7 +528,7 @@ public final class ChatPanel extends JPanel {
         east.add(levelBar);
         east.add(Box.createHorizontalStrut(4));
         east.add(appSearch);
-        east.add(Box.createHorizontalStrut(4));
+        east.add(appSearchGap);
         east.add(web);
         east.add(Box.createHorizontalStrut(4));
         east.add(attach);
@@ -1440,6 +1442,7 @@ public final class ChatPanel extends JPanel {
         // Letzte Stufe für sehr schmale Leisten oder breite Schriften: die (noch gesperrte) Websuche weicht.
         web.setVisible(stage < 3);
         appSearch.setVisible(stage < 3);
+        appSearchGap.setVisible(stage < 3);
     }
 
     /** Schaltet die interne Suche: an ist der Knopf eingerastet. */
