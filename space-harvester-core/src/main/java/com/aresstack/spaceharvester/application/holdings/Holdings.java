@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.holdings;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
@@ -205,6 +206,38 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
      * @throws UnknownSourceException wenn eine Quelle nicht konfiguriert ist
      */
     public PageSelection resolve(AccessContext caller, Selection selection) {
+        return resolve(caller, selection, null);
+    }
+
+    /**
+     * {@link #resolve} nachsichtig (ADR 0034 §4), mit den Rechten des Aufrufers: Wurzeln, die er nicht sehen darf, deren
+     * Quelle nicht konfiguriert ist oder deren Seite der Katalog eines inventarisierten Space nicht kennt (etwa ein
+     * veralteter Favorit), werden übersprungen und in {@link Lenient#skippedRoots()} gemeldet, statt die ganze
+     * Auflösung zu brechen. Eine Wurzel in einem noch nie geladenen Space gilt nicht als übersprungen; sie macht die
+     * Auflösung wie bei {@link #resolve} unvollständig.
+     */
+    public Lenient resolveLenient(AccessContext caller, Selection selection) {
+        List<Selection.Root> skipped = new ArrayList<>();
+        PageSelection resolved = resolve(caller, selection, skipped);
+        return new Lenient(resolved, skipped);
+    }
+
+    /**
+     * Eine nachsichtig aufgelöste Auswahl.
+     *
+     * @param selection    die Seiten der übrigen Wurzeln
+     * @param skippedRoots die übersprungenen Wurzeln in ihrer Reihenfolge, etwa für „n Favoriten nicht verfügbar“
+     */
+    public record Lenient(PageSelection selection, List<Selection.Root> skippedRoots) {
+
+        public Lenient {
+            Objects.requireNonNull(selection, "selection");
+            skippedRoots = List.copyOf(skippedRoots);
+        }
+    }
+
+    /** Gemeinsame Auflösung; {@code skipped} {@code null} heißt streng, sonst landen übersprungene Wurzeln darin. */
+    private PageSelection resolve(AccessContext caller, Selection selection, List<Selection.Root> skipped) {
         Objects.requireNonNull(caller, "caller");
         Objects.requireNonNull(selection, "selection");
         Map<String, Set<String>> pages = new LinkedHashMap<>();
@@ -213,8 +246,25 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         HoldingCounts counts = HoldingCounts.ZERO;
         boolean complete = true;
         for (Selection.Root root : selection.roots()) {
-            for (String spaceKey : spaceKeys(caller, root)) {
-                Resolved resolved = resolve(caller, root.sourceId(), spaceKey, root.pageId());
+            List<Resolved> parts = new ArrayList<>();
+            try {
+                for (String spaceKey : spaceKeys(caller, root)) {
+                    parts.add(resolve(caller, root.sourceId(), spaceKey, root.pageId()));
+                }
+            } catch (AccessDeniedException | UnknownSourceException e) {
+                if (skipped == null) {
+                    throw e;
+                }
+                skipped.add(root);
+                continue;
+            }
+            if (skipped != null && root.pageId() != null && parts.stream()
+                    .allMatch(part -> !part.found() && part.summary().inventoried())) {
+                skipped.add(root);
+                continue;
+            }
+            for (Resolved resolved : parts) {
+                String spaceKey = resolved.summary().spaceKey();
                 spaces.putIfAbsent(new Space(root.sourceId(), spaceKey), resolved.summary());
                 complete &= resolved.summary().inventoried() && resolved.found();
                 Set<String> selected = pages.computeIfAbsent(root.sourceId(), id -> new HashSet<>());
@@ -230,6 +280,66 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         }
         return new PageSelection(PageSet.of(pages), counts, List.copyOf(spaces.values()), complete,
                 PageSet.of(locked));
+    }
+
+    // --- Fingerabdruck (ADR 0034 §4) ------------------------------------------------------------------------------
+
+    /**
+     * Fingerabdruck des Katalogstands einer aufgelösten Auswahl (ADR 0034 §4): je Seite Elternseite, ob und in welcher
+     * Version ihr Inhalt gespeichert ist, Version der Kopfdaten, ob sie veraltet oder gesperrt ist. Ändern sich die
+     * Seiten der Auswahl oder ihr Stand, ändert er sich; so erkennt eine Zusammenfassung „veraltet“. Berechnet beim
+     * Lesen aus dem Katalog, ohne Scan der Quelle und ohne Abfrage; Spaces ohne Leserecht des Aufrufers zählen nicht.
+     */
+    public String fingerprint(AccessContext caller, PageSelection selection) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        java.util.TreeMap<String, String> entries = new java.util.TreeMap<>();
+        for (SpaceSummary space : selection.spaces()) {
+            if (!access.permits(caller, ResourceScope.space(space.sourceId(), space.spaceKey()), AccessKind.METADATA)) {
+                continue;
+            }
+            Set<String> scope = selection.pagesOf(space.sourceId());
+            catalog.stock(space.sourceId(), space.spaceKey()).ifPresent(stock -> catalogState(stock, scope)
+                    .forEach((pageId, entry) -> entries.put(space.sourceId() + '\u0000' + space.spaceKey() + '\u0000'
+                            + pageId, entry)));
+        }
+        return digest(entries);
+    }
+
+    /**
+     * Der Katalogstand je Seite aus {@code scope} (Seiten-ID → Eintrag), sortiert; Grundlage von {@link #fingerprint}
+     * und vom Fingerabdruck einer Ausgabe aus dem Bestand (ADR 0029), die ihn um den gespeicherten Inhalt ergänzt.
+     */
+    public static java.util.TreeMap<String, String> catalogState(HoldingsCatalog.Stock stock, Set<String> scope) {
+        java.util.TreeMap<String, String> entries = new java.util.TreeMap<>();
+        for (HoldingsCatalog.CatalogPage page : stock.pages()) {
+            if (scope.contains(page.pageId())) {
+                entries.put(page.pageId(), page.parentPageId() + "\u0000" + page.loaded() + "\u0000" + page.version()
+                        + "\u0000" + page.loadedVersion() + "\u0000" + stock.stale().contains(page.pageId()));
+            }
+        }
+        for (HoldingsCatalog.LockedPage page : stock.locked()) {
+            if (scope.contains(page.pageId())) {
+                entries.putIfAbsent(page.pageId(), page.parentPageId() + "\u0000locked");
+            }
+        }
+        return entries;
+    }
+
+    /** SHA-256 über die Einträge in ihrer Reihenfolge, gekürzt auf 12 Bytes in Hex. */
+    public static String digest(Map<String, String> entries) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            entries.forEach((key, entry) -> {
+                digest.update(key.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                digest.update((byte) 1);
+                digest.update(entry.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                digest.update((byte) 2);
+            });
+            return java.util.HexFormat.of().formatHex(digest.digest(), 0, 12);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 fehlt", e);
+        }
     }
 
     /**
