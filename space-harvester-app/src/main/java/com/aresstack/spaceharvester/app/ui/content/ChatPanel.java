@@ -884,6 +884,9 @@ public final class ChatPanel extends JPanel {
     public void selection(Selection selection) {
         treeSelection = selection;
         apply(scope());
+        if (!Objects.equals(scope(), treeSelection)) {
+            resolveTree();
+        }
     }
 
     /**
@@ -1068,9 +1071,35 @@ public final class ChatPanel extends JPanel {
         // Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird.
         updateSend();
         updateQuickActions();
-        if (onResolved != null) {
+        // Analysen wie der Graph grenzen sich auf die Auswahl im Baum ein, nie auf die gelesene Seite des Chats.
+        if (onResolved != null && Objects.equals(current, treeSelection)) {
             onResolved.accept(resolved);
         }
+    }
+
+    private int treeRequest;
+
+    /** Löst die Auswahl im Baum allein für {@link #onResolved} auf, solange der Chat einen anderen Bereich nimmt. */
+    private void resolveTree() {
+        AppRuntime runtime = context.runtime();
+        Selection tree = treeSelection;
+        int ticket = ++treeRequest;
+        if (onResolved == null) {
+            return;
+        }
+        if (runtime == null || tree == null) {
+            onResolved.accept(null);
+            return;
+        }
+        Background.run(() -> runtime.workspace().resolveSelection(tree.toCore(runtime)), resolved -> {
+            if (ticket == treeRequest && onResolved != null) {
+                onResolved.accept(resolved);
+            }
+        }, error -> {
+            if (ticket == treeRequest && onResolved != null) {
+                onResolved.accept(null);
+            }
+        });
     }
 
     /**

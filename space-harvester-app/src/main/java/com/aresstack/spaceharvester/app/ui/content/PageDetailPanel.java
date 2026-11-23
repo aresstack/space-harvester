@@ -1551,6 +1551,9 @@ public final class PageDetailPanel extends JPanel {
         readingPane.loading();
         breadcrumbs.clear();
         positionShown.accept(null);
+        // Die vorige Seite ist nicht mehr zu sehen: bis die neue geladen ist (oder nie, wenn das scheitert), gilt für
+        // den Chat wieder die Auswahl im Baum.
+        chat.reading(null);
         references.message(" ");
         // Die Unterseiten der vorigen Seite gelten ab jetzt nicht mehr, auch wenn das Laden scheitert. Der Graph
         // verlässt die Seite zuerst, damit deren Abmeldung für die alte Seite nichts mehr lädt.
