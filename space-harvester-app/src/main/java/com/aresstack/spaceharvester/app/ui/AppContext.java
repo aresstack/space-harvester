@@ -242,6 +242,8 @@ public final class AppContext {
     private final AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
     private char[] sessionAiKey;
     private KeePassLink keePass;
+    private com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser webBrowser;
+    private boolean webBrowserLocated;
     /** Für welchen Proxy-Benutzer das Passwort der Sitzung gilt. */
     private volatile String proxyPasswordUser;
     private final SecretVault vault;
@@ -670,6 +672,22 @@ public final class AppContext {
             LOG.warn("Der API-Key des KI-Dienstes ließ sich nicht lesen: {}", e.getMessage());
         }
         return aiKey;
+    }
+
+    /**
+     * Der Browser der Websuche im Chat (Firefox über WebDriver BiDi, wie im Enterprise AI Client), beim ersten Gebrauch
+     * angelegt; {@code null} ohne Firefox. Die Profile je Chat liegen im Datenordner unter {@code browser-profiles}.
+     */
+    public synchronized com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser webBrowser() {
+        if (!webBrowserLocated) {
+            webBrowserLocated = true;
+            AppSettings current = settings();
+            Path data = current == null || current.storage() == null ? configFile.toAbsolutePath().getParent()
+                    : current.storage().dataDirectory();
+            webBrowser = com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser.start(data,
+                    com.aresstack.spaceharvester.app.chat.browser.BrowserSettings.shared());
+        }
+        return webBrowser;
     }
 
     /** Die KeePass-Anbindung (KeePassRPC); fragt beim Koppeln nach dem Einmal-Passwort aus KeePass. */
@@ -1264,6 +1282,13 @@ public final class AppContext {
 
     /** Beendet die Laufzeit (beim Schließen des Fensters); schließt Lucene-Indizes und gibt ihre Sperren frei. */
     public void shutdown() {
+        com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser browser;
+        synchronized (this) {
+            browser = webBrowser;
+        }
+        if (browser != null) {
+            browser.shutdown();
+        }
         if (runtime != null) {
             runtime.close();
             runtime = null;

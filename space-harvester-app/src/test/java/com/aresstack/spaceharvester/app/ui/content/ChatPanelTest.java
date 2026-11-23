@@ -326,6 +326,52 @@ class ChatPanelTest {
     }
 
     @Test
+    void aBrowserQuestionInTheTranscriptTakesOnlyTheFirstClickAndTheWebPopupHasAllRows() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        java.util.List<com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome> answers =
+                new java.util.ArrayList<>();
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            panel.showApproval("Bestätigung nötig", "example.org möchte geöffnet werden", true, answers::add);
+            java.util.List<javax.swing.JButton> buttons = new java.util.ArrayList<>();
+            collect(panel, buttons);
+            buttons.forEach(button -> labels.add(button.getText()));
+            buttons.stream().filter(b -> ChatPanel.APPROVE_ALWAYS_TEXT.equals(b.getText())).findFirst()
+                    .orElseThrow().doClick();
+            buttons.stream().filter(b -> ChatPanel.REJECT_TEXT.equals(b.getText())).findFirst()
+                    .orElseThrow().doClick();
+        });
+        assertThat(labels).contains(ChatPanel.APPROVE_ONCE_TEXT, ChatPanel.APPROVE_ALWAYS_TEXT,
+                ChatPanel.REJECT_ALWAYS_TEXT, ChatPanel.REJECT_TEXT);
+        assertThat(answers).containsExactly(
+                com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.APPROVED_ALWAYS);
+    }
+
+    private static void collect(java.awt.Container container, java.util.List<javax.swing.JButton> into) {
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof javax.swing.JButton button && button.getText() != null
+                    && "transcript.approval".equals(nameOfApprovalRow(button))) {
+                into.add(button);
+            }
+            if (child instanceof java.awt.Container inner) {
+                collect(inner, into);
+            }
+        }
+    }
+
+    private static String nameOfApprovalRow(java.awt.Component component) {
+        for (java.awt.Container parent = component.getParent(); parent != null; parent = parent.getParent()) {
+            if ("transcript.approval".equals(parent.getName())) {
+                return parent.getName();
+            }
+        }
+        return null;
+    }
+
+    @Test
     void theKnowledgeLineNamesTheSelectionItsPagesAndWhatIsMissing() {
         assertThat(ChatPanel.knowledgeText(null, null, true, true)).isEqualTo(ChatPanel.NO_SELECTION);
         Selection page = new Selection("wiki", "DEV", "42", "Handbuch");

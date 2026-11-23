@@ -144,13 +144,38 @@ public final class ChatPanel extends JPanel {
     private static final String NORMAL_EDITOR_HEIGHT = "composer.normalHeight";
     private static final java.util.prefs.Preferences PREFERENCES =
             java.util.prefs.Preferences.userNodeForPackage(ChatPanel.class);
-    static final String WEB = "Websuche folgt";
     /** Schalter „Interne Suche“ (Angelo 23.11.2026): das Modell darf die globale Suche der App nutzen. */
     static final String APP_SEARCH_LABEL = "Interne Suche";
     static final String APP_SEARCH_OFF = "Interne Suche einschalten: Der Assistent darf alle für die KI "
             + "freigegebenen Wissensquellen durchsuchen, wie die Suchleiste";
     static final String APP_SEARCH_ON = "Interne Suche ist an: Der Assistent durchsucht alle für die KI freigegebenen "
             + "Wissensquellen (Klick: aus)";
+    static final String WEB_LABEL = "Websuche";
+    static final String WEB = "Websuche für diesen Chat einschalten: Der Assistent sucht mit einem eigenen Firefox im "
+            + "Web und im Intranet";
+    static final String WEB_ON = "Websuche für diesen Chat ist an (Klick: aus)";
+    static final String WEB_UNAVAILABLE = "Websuche nicht verfügbar: Firefox nicht gefunden (Pfad mit "
+            + "-Denterpriseai.firefox=... angeben)";
+    static final String WEB_BUDGET_LABEL = "Browser-Budget";
+    static final String WEB_BUDGET_TIP = "Browser-Budget: %d Werkzeugrunden je Antwort, Tabs und Verzögerung";
+    static final String BOTH_ON_WARNING = "Websuche und interne Suche sind gleichzeitig an. "
+            + "Inhalte aus Wissensquellen können in Browseraufrufe einfließen.";
+    /** Vorgaben wie {@code BrowserBudget} und {@code BrowserLoad} im Enterprise AI Client. */
+    static final int WEB_BUDGET_DEFAULT = 20;
+    static final int WEB_BUDGET_MIN = 1;
+    static final int WEB_BUDGET_MAX = 999;
+    static final int WEB_BUDGET_SLIDER_MIN = 4;
+    static final int WEB_BUDGET_SLIDER_MAX = 60;
+    static final int WEB_TABS_DEFAULT = 4;
+    static final int WEB_TABS_MAX = 8;
+    static final int WEB_DELAY_MAX = 10000;
+    static final int WEB_DELAY_SLIDER_MAX = 2000;
+    private static final String WEB_KEY = "chat.web.";
+    static final String APPROVE_TEXT = "Bestätigen";
+    static final String REJECT_TEXT = "Abbrechen";
+    static final String APPROVE_ONCE_TEXT = "Einmal erlauben";
+    static final String APPROVE_ALWAYS_TEXT = "Immer erlauben";
+    static final String REJECT_ALWAYS_TEXT = "Immer verbieten";
     static final String NO_MODEL = "Kein Chat-Modell";
     static final String MODEL_TIP = "Chat-Modell aus Einstellungen › KI";
     static final String NO_SELECTION = "Links eine Wissensquelle, einen Space oder eine Seite wählen";
@@ -253,6 +278,10 @@ public final class ChatPanel extends JPanel {
     private boolean appSearchOn;
     /** Der Abstand hinter „Interne Suche“; weicht mit ihr in der schmalsten Stufe der Fußzeile. */
     private final java.awt.Component appSearchGap = Box.createHorizontalStrut(4);
+    /** Der kleine Pfeil an der Weltkugel: öffnet Budget, Tabs, Verzögerung, Profil (wie im EAC). */
+    private final ComposerButton webBudget = new ComposerButton(ComposerIcons.chevronDown(), null, false, "");
+    private boolean webOn;
+    private WebSearchPopup lastWebPopup;
     private final ComposerButton attach = ComposerButton.iconButton(ComposerIcons.paperclip(), ATTACH);
     private final ComposerButton mic = ComposerButton.iconButton(ComposerIcons.microphone(), DICTATE);
     private final ComposerButton discardButton = ComposerButton.iconButton(
@@ -498,9 +527,15 @@ public final class ChatPanel extends JPanel {
 
         model.addActionListener(e -> showModelMenu());
         effort.addActionListener(e -> showEffortMenu());
-        web.setEnabled(false);
         appSearch.getAccessibleContext().setAccessibleName(APP_SEARCH_LABEL);
         appSearch.addActionListener(e -> appSearch(!appSearchOn));
+        web.getAccessibleContext().setAccessibleName(WEB_LABEL);
+        web.addActionListener(e -> webSearch(!webOn));
+        webBudget.setPreferredSize(new Dimension(14, 28));
+        webBudget.setMaximumSize(new Dimension(14, 28));
+        webBudget.getAccessibleContext().setAccessibleName(WEB_BUDGET_LABEL);
+        webBudget.addActionListener(e -> openWebPopup());
+        showWebState();
         mic.setAccent(ResearchUiPalette.RECORDING_ORANGE);
         mic.addActionListener(e -> toggleDictation());
         discardButton.addActionListener(e -> discardDictation());
@@ -530,6 +565,7 @@ public final class ChatPanel extends JPanel {
         east.add(appSearch);
         east.add(appSearchGap);
         east.add(web);
+        east.add(webBudget);
         east.add(Box.createHorizontalStrut(4));
         east.add(attach);
         east.add(Box.createHorizontalStrut(4));
@@ -1439,8 +1475,9 @@ public final class ChatPanel extends JPanel {
         model.setToolTipText(MODEL_TIP + (NO_MODEL.equals(modelName) && stage < 1 ? "" : ": " + modelName));
         effort.setText(stage >= 2 ? null : effortLevel);
         effort.setToolTipText(EFFORT_TIP + ": " + effortLevel);
-        // Letzte Stufe für sehr schmale Leisten oder breite Schriften: die (noch gesperrte) Websuche weicht.
+        // Letzte Stufe für sehr schmale Leisten oder breite Schriften: die Websuche weicht.
         web.setVisible(stage < 3);
+        webBudget.setVisible(stage < 3);
         appSearch.setVisible(stage < 3);
         appSearchGap.setVisible(stage < 3);
     }
@@ -1468,6 +1505,199 @@ public final class ChatPanel extends JPanel {
             }
         }
         return ids;
+    }
+
+    /** Schaltet die Websuche dieses Chats (Composer-Knopf wie „Browser“ im Enterprise AI Client). */
+    void webSearch(boolean on) {
+        webOn = on && webAvailable();
+        showWebState();
+    }
+
+    boolean webSearchOn() {
+        return webOn;
+    }
+
+    /** Ob es Firefox gibt; ohne bleibt der Knopf gesperrt und sagt warum. */
+    private boolean webAvailable() {
+        return context.webBrowser() != null;
+    }
+
+    /** Knopf und Pfeil zeigen den Zustand: an hervorgehoben, ohne Firefox gesperrt mit Grund. */
+    private void showWebState() {
+        boolean available = webAvailable();
+        web.setEnabled(available);
+        webBudget.setEnabled(available);
+        web.setEmphasized(webOn);
+        web.setToolTipText(!available ? WEB_UNAVAILABLE : webOn ? WEB_ON : WEB);
+        webBudget.setToolTipText(String.format(WEB_BUDGET_TIP, webInt("budget", WEB_BUDGET_DEFAULT)));
+    }
+
+    private static int webInt(String key, int fallback) {
+        return com.aresstack.spaceharvester.app.ui.AppState.shared().getInt(WEB_KEY + key, fallback);
+    }
+
+    private static boolean webFlag(String key) {
+        return com.aresstack.spaceharvester.app.ui.AppState.shared().getBoolean(WEB_KEY + key, false);
+    }
+
+    private static void webPut(String key, int value) {
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(WEB_KEY + key, value);
+    }
+
+    private static void webPut(String key, boolean value) {
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(WEB_KEY + key, value);
+    }
+
+    /** Öffnet das Menü am Pfeil: Profil, Werkzeugrunden, parallele Tabs, Verzögerung, Human Emulation, Maus. */
+    private void openWebPopup() {
+        java.util.List<WebSearchPopup.Row> rows = new ArrayList<>();
+        rows.add(new WebSearchPopup.Row(WebSearchPopup.TITLE, webInt("budget", WEB_BUDGET_DEFAULT), WEB_BUDGET_MIN,
+                WEB_BUDGET_MAX, WEB_BUDGET_SLIDER_MIN, WEB_BUDGET_SLIDER_MAX, value -> {
+                    webPut("budget", value);
+                    showWebState();
+                }));
+        rows.add(new WebSearchPopup.Row(WebSearchPopup.TABS_TITLE, webInt("tabs", WEB_TABS_DEFAULT), 1, WEB_TABS_MAX,
+                1, WEB_TABS_MAX, value -> webPut("tabs", value)));
+        rows.add(new WebSearchPopup.Row(WebSearchPopup.DELAY_TITLE, webInt("delay", 0), 0, WEB_DELAY_MAX, 0,
+                WEB_DELAY_SLIDER_MAX, value -> webPut("delay", value)));
+        java.util.List<WebSearchPopup.Check> checks = new ArrayList<>();
+        checks.add(new WebSearchPopup.Check(WebSearchPopup.HUMAN_TITLE, WebSearchPopup.HUMAN_TIP, webFlag("human"),
+                value -> webPut("human", value)));
+        checks.add(new WebSearchPopup.Check(WebSearchPopup.MOUSE_TITLE, WebSearchPopup.MOUSE_TIP, webFlag("mouse"),
+                value -> webPut("mouse", value)));
+        WebSearchPopup.Check profile = new WebSearchPopup.Check(WebSearchPopup.PROFILE_TITLE,
+                WebSearchPopup.PROFILE_TIP, webFlag("internal"), value -> webPut("internal", value));
+        lastWebPopup = new WebSearchPopup(com.aresstack.enterpriseai.ui.comic.theme.ComicPalette.defaultPalette(),
+                profile, rows, checks);
+        lastWebPopup.showAbove(webBudget);
+    }
+
+    /** Für Tests: das zuletzt geöffnete Menü am Pfeil. */
+    WebSearchPopup lastWebPopup() {
+        return lastWebPopup;
+    }
+
+    /**
+     * Die Websuche eines Turns: Browser-Werkzeuge des Chats, Regeln, Budget und das Ende (schließt den Browser und
+     * lässt die Karte platzen); {@code null}, wenn sie aus ist oder Firefox fehlt.
+     */
+    private ChatTurn.WebSearch webSearchFor(String chatId, WebSearchCard card, TurnListener listener) {
+        com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser browser = webOn ? context.webBrowser() : null;
+        if (browser == null) {
+            return null;
+        }
+        browser.profile(chatId, webFlag("internal"));
+        browser.load(chatId, webInt("tabs", WEB_TABS_DEFAULT), webInt("delay", 0));
+        browser.humanEmulation(chatId, webFlag("human"), webFlag("mouse"));
+        // Rückfragen gehören zu diesem Chat und dieser Antwort, nie zum gerade sichtbaren Verlauf.
+        com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt prompt =
+                new com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt(listener::askApproval,
+                        SwingUtilities::invokeLater);
+        String rules = com.aresstack.spaceharvester.app.chat.browser.BrowserRules.BROWSER + "\n"
+                + browser.profileRule(chatId);
+        java.util.concurrent.atomic.AtomicLong begun = new java.util.concurrent.atomic.AtomicLong(-1);
+        return new ChatTurn.WebSearch(new com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools(
+                browser.tools(chatId), call -> browser.asking(prompt, call)), rules,
+                Math.max(WEB_BUDGET_MIN, Math.min(WEB_BUDGET_MAX, webInt("budget", WEB_BUDGET_DEFAULT))),
+                () -> begun.set(browser.beginTurn(chatId,
+                        progress -> SwingUtilities.invokeLater(() -> card.update(progress)))),
+                () -> {
+                    long turn = begun.get();
+                    var last = turn < 0 ? null : browser.endTurn(chatId, turn);
+                    if (last != null) {
+                        SwingUtilities.invokeLater(() -> card.update(last));
+                    }
+                });
+    }
+
+    /**
+     * Eine Rückfrage im Verlauf wie {@code ChatTranscriptPanel.showApproval} im Enterprise AI Client: gelbe
+     * Aktivitätsblase mit „Bestätigen“/„Abbrechen“ oder, wenn gemerkte Antworten möglich sind, „Einmal erlauben“,
+     * „Immer erlauben“, „Immer verbieten“ und „Abbrechen“. Der erste Klick gilt. Nur auf dem EDT.
+     */
+    com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt.Handle showApproval(String title,
+            String description, boolean offersAlways,
+            java.util.function.Consumer<com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome> answer) {
+        com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel thought =
+                new com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel(BubbleSide.LEFT, bubbles,
+                        title, description);
+        thought.setHeaderTimestamp(System.currentTimeMillis());
+        JPanel row = new JPanel();
+        row.setName("transcript.approval");
+        row.setOpaque(false);
+        row.setLayout(new javax.swing.BoxLayout(row, javax.swing.BoxLayout.Y_AXIS));
+        BubbleMessageRow bubbleRow = new BubbleMessageRow(thought, BubbleSide.LEFT);
+        bubbleRow.setAlignmentX(LEFT_ALIGNMENT);
+        row.add(bubbleRow);
+        java.util.Map<javax.swing.JButton, com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome> outcomes =
+                new java.util.LinkedHashMap<>();
+        outcomes.put(new javax.swing.JButton(offersAlways ? APPROVE_ONCE_TEXT : APPROVE_TEXT),
+                com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.APPROVED);
+        if (offersAlways) {
+            outcomes.put(new javax.swing.JButton(APPROVE_ALWAYS_TEXT),
+                    com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.APPROVED_ALWAYS);
+            outcomes.put(new javax.swing.JButton(REJECT_ALWAYS_TEXT),
+                    com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.REJECTED_ALWAYS);
+        }
+        outcomes.put(new javax.swing.JButton(REJECT_TEXT),
+                com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.REJECTED);
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        buttons.setOpaque(false);
+        buttons.setBorder(BorderFactory.createEmptyBorder(0, 22, 0, 12));
+        boolean[] answered = {false};
+        for (var entry : outcomes.entrySet()) {
+            buttons.add(entry.getKey());
+            entry.getKey().addActionListener(event -> {
+                if (answered[0]) {
+                    return;
+                }
+                answered[0] = true;
+                outcomes.keySet().forEach(button -> button.setEnabled(false));
+                answer.accept(entry.getValue());
+            });
+        }
+        buttons.setAlignmentX(LEFT_ALIGNMENT);
+        buttons.setMaximumSize(new Dimension(Integer.MAX_VALUE, buttons.getPreferredSize().height));
+        row.add(buttons);
+        row.setAlignmentX(LEFT_ALIGNMENT);
+        emptyNote.setVisible(false);
+        transcript.add(row);
+        transcript.revalidate();
+        transcript.repaint();
+        scrollDown();
+        return (approved, outcome) -> {
+            answered[0] = true;
+            outcomes.keySet().forEach(button -> button.setEnabled(false));
+            row.remove(buttons);
+            if (thought.getVisualState()
+                    == com.aresstack.enterpriseai.ui.comic.bubble.AnimatedThoughtBubblePanel.VisualState.RUNNING) {
+                if (approved) {
+                    thought.completeSuccessfully(outcome, null);
+                } else {
+                    thought.completeWithFailure(outcome, null);
+                }
+            }
+            row.revalidate();
+            row.repaint();
+        };
+    }
+
+    /** Die Karte „Browserrecherche“ als Aktivitätsblase im Verlauf. */
+    private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
+                                                                                         String body) {
+        com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel bubble =
+                new com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel(BubbleSide.LEFT, bubbles,
+                        title, body);
+        bubble.setHeaderTimestamp(System.currentTimeMillis());
+        bubble.setMaximumBubbleWidth(640);
+        BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
+        row.setAlignmentX(LEFT_ALIGNMENT);
+        emptyNote.setVisible(false);
+        transcript.add(row);
+        transcript.revalidate();
+        transcript.repaint();
+        scrollDown();
+        return bubble;
     }
 
     /** Für Tests: wie knapp die Fußzeile gerade ist (0 bis 3). */
@@ -1550,6 +1780,9 @@ public final class ChatPanel extends JPanel {
      */
     void send() {
         if (turn != null) {
+            if (listening != null) {
+                listening.endApprovals();
+            }
             turn.cancel();
             return;
         }
@@ -1639,6 +1872,13 @@ public final class ChatPanel extends JPanel {
             turn.searchingGlossarySynonyms(
                     com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
         }
+        // Websuche (Composer-Knopf): die Browser-Werkzeuge des Chats dazu, mit Karte „Browserrecherche“.
+        WebSearchCard card = new WebSearchCard(body -> addActivity(WebSearchCard.TITLE, body));
+        ChatTurn.WebSearch web = webSearchFor(chat.id(), card, listener);
+        if (web != null) {
+            turn.webSearch(web);
+            listener.webCard = card;
+        }
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());
@@ -1692,6 +1932,37 @@ public final class ChatPanel extends JPanel {
         private final java.awt.event.ComponentListener follow;
         ChatTurn turn;
         boolean detached;
+        /** Die Karte „Browserrecherche“ dieser Antwort, {@code null} ohne Websuche. */
+        WebSearchCard webCard;
+        /** Offene Rückfragen der Websuche dieser Antwort (nur EDT). */
+        private final List<java.util.function.Consumer<
+                com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome>> approvals = new ArrayList<>();
+        /** Nach Stopp oder Verlassen des Chats: keine neuen Rückfragen mehr. */
+        private boolean approvalsEnded;
+
+        /**
+         * Die Rückfrage-Fläche dieser Antwort: Fragen erscheinen nur im Verlauf ihres Chats. Nach Stopp oder Wechsel
+         * des Chats gibt es keine Fläche mehr (das Werkzeug läuft dann nicht), offene Fragen enden als abgebrochen.
+         */
+        com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt.Handle askApproval(String title,
+                String description, boolean offersAlways,
+                java.util.function.Consumer<com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome> answer) {
+            if (approvalsEnded || detached) {
+                throw new IllegalStateException("Der Chat der Rückfrage ist nicht mehr offen.");
+            }
+            approvals.add(answer);
+            return showApproval(title, description, offersAlways, answer);
+        }
+
+        /** Beendet alle offenen Rückfragen als abgebrochen; neue gibt es nicht mehr. Nur auf dem EDT. */
+        void endApprovals() {
+            approvalsEnded = true;
+            List<java.util.function.Consumer<com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome>>
+                    open = new ArrayList<>(approvals);
+            approvals.clear();
+            open.forEach(answer -> answer.accept(
+                    com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.CANCELLED));
+        }
 
         TurnListener(ChatRecord started, Path startedNode, AssistantMarkdownBubble bubble, SourceLinks links) {
             this.started = started;
@@ -1783,6 +2054,7 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void completed(String full) {
+            finishWebCard(false);
             show(text.isEmpty() ? full : text.toString());
             if (!detached) {
                 scrollDown();
@@ -1796,6 +2068,7 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void failed(String message) {
+            finishWebCard(false);
             show(message);
             bubble.setHeaderColor(Comic.RED);
             // Eine gescheiterte Antwort wird nicht gespeichert (wie im EAC); die Frage bleibt im Chat.
@@ -1808,9 +2081,16 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void cancelled(String partial) {
+            finishWebCard(true);
             show(partial.isEmpty() ? CANCELLED : partial + "\n\n" + CANCELLED);
             finish(partial.isEmpty() ? null
                     : ChatRecord.Message.assistant(partial, true, System.currentTimeMillis(), sources), CANCELLED);
+        }
+
+        private void finishWebCard(boolean cancelled) {
+            if (webCard != null) {
+                webCard.finish(null, cancelled);
+            }
         }
 
         private void finish(ChatRecord.Message answer, String note) {
@@ -1866,6 +2146,7 @@ public final class ChatPanel extends JPanel {
     /** Löst die Ansicht vom laufenden Turn: er schreibt seinen Chat zu Ende, zeigt hier aber nichts mehr. */
     private void detachTurn() {
         if (listening != null) {
+            listening.endApprovals();
             listening.detached = true;
             listening = null;
         }
@@ -2324,6 +2605,14 @@ public final class ChatPanel extends JPanel {
             return;
         }
         store.delete(home, chat.id());
+        // Das Browser-Profil des Chats geht mit dem Chat (wie im Enterprise AI Client), ohne die Oberfläche aufzuhalten.
+        String deletedChat = chat.id();
+        com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser browser = context.webBrowser();
+        if (browser != null) {
+            Thread cleanup = new Thread(() -> browser.deleteProfile(deletedChat), "chat-browser-profil");
+            cleanup.setDaemon(true);
+            cleanup.start();
+        }
         List<ChatRecord> saved = store.list(node);
         open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0));
     }

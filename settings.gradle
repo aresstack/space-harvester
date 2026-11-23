@@ -27,6 +27,10 @@ include 'enterprise-ai-sources'
 
 include 'enterprise-ai-keepass'
 
+// Chatgebundener Browser (Firefox über WebDriver BiDi) aus enterprise-ai-client, unveränderte Kopie, siehe
+// enterprise-ai-browser/UPSTREAM.md.
+include 'enterprise-ai-browser'
+
 // Dokumentausgabe des Enterprise AI Client (Word, PDF, Markdown) als eigene Bibliothek ohne Swing (angepasste Kopie,
 // siehe document-export/UPSTREAM.md).
 include 'document-export'
