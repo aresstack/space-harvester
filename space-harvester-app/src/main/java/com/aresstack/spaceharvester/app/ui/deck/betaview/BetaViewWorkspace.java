@@ -96,11 +96,24 @@ public final class BetaViewWorkspace extends JPanel {
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.all().forEach(this::added);
         select(null);
+        // Sind die Zugangsdaten schon da, meldet BetaView beim ersten Zeigen von selbst an (Angelo, 23.11.).
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()
+                    && !autoTried) {
+                autoTried = true;
+                if (pillOf.isEmpty() && BetaViewConnectForm.isConfigured()) {
+                    newLogin();
+                }
+            }
+        });
     }
 
+    /** Die automatische Anmeldung beim ersten Zeigen ist schon gelaufen. */
+    private boolean autoTried;
+
     /**
-     * „Neue Anmeldung“: Hat die gemerkte Anmeldung schon einmal funktioniert, meldet sie direkt an; das Formular kommt
-     * nur ohne gemerkte Zugangsdaten und wenn es scheitert (Deck-Regel, Angelo 23.11.).
+     * „Neue Anmeldung“ (und das erste Zeigen): Sind Zugangsdaten da (KeePass-Eintrag), meldet sie direkt an; das
+     * Formular kommt nur ohne Zugangsdaten und wenn es scheitert (Deck-Regel, Angelo 23.11.).
      */
     void newLogin() {
         if (!BetaViewConnectForm.isConfigured()) {

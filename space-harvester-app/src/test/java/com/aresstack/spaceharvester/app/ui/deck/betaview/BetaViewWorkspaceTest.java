@@ -115,7 +115,7 @@ class BetaViewWorkspaceTest {
                     return new ServerCredentials(account, secret.get().toCharArray());
                 }
             };
-            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.CONFIGURED_KEY, (String) null);
+            clearLoginState();
             build(shared, new FakePrompts(folder.resolve("x")));
             assertThat(BetaViewConnectForm.isConfigured()).as("vor dem ersten Erfolg").isFalse();
             SwingUtilities.invokeAndWait(() -> {
@@ -148,8 +148,47 @@ class BetaViewWorkspaceTest {
                     "Formular mit Grund");
             assertThat(onEdt(workspace::sessionCount)).isEqualTo(2);
         } finally {
-            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.CONFIGURED_KEY, (String) null);
+            clearLoginState();
         }
+    }
+
+    @Test
+    void theSharedKeePassEntryOfAnotherAreaLogsInWithoutTheForm() throws Exception {
+        try (FakeBetaViewServer server = new FakeBetaViewServer()) {
+            ServerAccount account = new ServerAccount("Host", server.address().toString(), FakeBetaViewServer.USER);
+            ServerAccounts shared = new ServerAccounts() {
+                @Override
+                public List<ServerAccount> accounts() {
+                    return List.of(account);
+                }
+
+                @Override
+                public ServerCredentials credentials(String entry) {
+                    return new ServerCredentials(account, FakeBetaViewServer.PASSWORD.toCharArray());
+                }
+            };
+            clearLoginState();
+            // Nur NDV kennt den Eintrag; BetaView nimmt denselben Host-Zugang und die gemerkte Adresse.
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put("deck.ndv.entry", "Host");
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ADDRESS_KEY,
+                    server.address().toString());
+            build(shared, new FakePrompts(folder.resolve("x")));
+            assertThat(BetaViewConnectForm.isConfigured()).isTrue();
+            SwingUtilities.invokeAndWait(workspace::newLogin);
+            connected();
+        } finally {
+            clearLoginState();
+        }
+    }
+
+    private static void clearLoginState() {
+        java.util.Map<String, String> cleared = new java.util.HashMap<>();
+        for (String key : new String[] {BetaViewConnectForm.CONFIGURED_KEY, BetaViewConnectForm.ENTRY_KEY,
+                BetaViewConnectForm.LOGIN_KEY, BetaViewConnectForm.ADDRESS_KEY, "deck.terminal.entry",
+                "deck.ndv.entry", "deck.ftp.entry"}) {
+            cleared.put(key, null);
+        }
+        com.aresstack.spaceharvester.app.ui.AppState.shared().putAll(cleared);
     }
 
     @Test

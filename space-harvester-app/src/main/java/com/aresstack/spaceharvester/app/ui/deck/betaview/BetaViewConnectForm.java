@@ -221,13 +221,32 @@ final class BetaViewConnectForm extends JPanel {
     private java.util.function.Consumer<String> direct;
 
     /**
-     * Ob „Neue Anmeldung“ direkt anmelden darf: Die Anmeldung über einen gemerkten KeePass-Eintrag hat schon einmal
-     * funktioniert. Von Hand eingegebene Kennwörter werden nie gespeichert; dann kommt immer das Formular.
+     * Ob BetaView ohne Formular anmelden darf: Es gibt einen KeePass-Eintrag, den eigenen gemerkten oder den geteilten
+     * Eintrag von Terminal, NDV oder FTP (derselbe Host-Zugang). Wer zuletzt von Hand angemeldet hat, bekommt das
+     * Formular; von Hand eingegebene Kennwörter werden nie gespeichert (Angelo, 23.11.: „warum Anmeldedialog, wenn
+     * die Anmeldedaten schon vorhanden sind“).
      */
     static boolean isConfigured() {
+        return !MANUAL.equals(AppState.shared().get(LOGIN_KEY)) && !savedEntry().isBlank();
+    }
+
+    /** Geteilte Einträge der anderen Bereiche des Command Deck, in dieser Reihenfolge. */
+    static final String[] SHARED_ENTRY_KEYS = {"deck.terminal.entry", "deck.ndv.entry", "deck.ftp.entry"};
+
+    /** Der KeePass-Eintrag für BetaView: der eigene gemerkte, sonst der geteilte eines anderen Bereichs. */
+    static String savedEntry() {
         AppState state = AppState.shared();
-        return state.getBoolean(CONFIGURED_KEY, false) && KEEPASS.equals(state.get(LOGIN_KEY))
-                && !nonNull(state.get(ENTRY_KEY)).isBlank();
+        String own = nonNull(state.get(ENTRY_KEY)).strip();
+        if (!own.isEmpty()) {
+            return own;
+        }
+        for (String key : SHARED_ENTRY_KEYS) {
+            String shared = nonNull(state.get(key)).strip();
+            if (!shared.isEmpty()) {
+                return shared;
+            }
+        }
+        return "";
     }
 
     /** Die gemerkte Anmeldung hat funktioniert. */
@@ -236,12 +255,17 @@ final class BetaViewConnectForm extends JPanel {
     }
 
     /**
-     * „Neue Anmeldung“ ohne Formular: gemerkte Adresse und gemerkter KeePass-Eintrag. Scheitert schon das Lesen aus
+     * Anmelden ohne Formular: gemerkte Adresse (sonst die Vorgabe) und der gemerkte oder geteilte KeePass-Eintrag. Scheitert schon das Lesen aus
      * KeePass, meldet {@code failed} den Grund; das Formular zeigt ihn dann.
      */
     void connectDirectly(java.util.function.Consumer<String> failed) {
         recall();
         login.select(KEEPASS);
+        String title = savedEntry();
+        if (!title.equals(entryTitle())) {
+            entry.addItem(title);
+            entry.setSelectedItem(title);
+        }
         direct = failed;
         submit();
         if (direct != null && !submit.isEnabled()) {
