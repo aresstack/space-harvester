@@ -2819,9 +2819,24 @@ public final class Workspace {
         }
     }
 
-    /** Die Aufträge eines Reiters: nur Hintergrundaufträge oder nur die übrigen. */
+    /** Die Aufträge eines Reiters: nur die des Reiters „Hintergrund“ ({@link #inBackgroundTab}) oder nur die übrigen. */
     private List<JobStatus> jobs(boolean background) {
-        return jobs().stream().filter(job -> job.type().background() == background).toList();
+        return jobs().stream().filter(job -> inBackgroundTab(job) == background).toList();
+    }
+
+    /**
+     * Ob ein Auftrag im Reiter „Hintergrund“ steht: die Hintergrundaufträge ({@link JobType#background()}) und die
+     * Anreicherung, die die App nach jedem Abgleich von sich aus anstößt
+     * ({@link com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync#TASK}). Deren Netzarbeit läuft
+     * ohnehin als „KI-Anreicherung“ im Hintergrund; Angelo 23.11.2026: „etwas läuft entweder im Vordergrund oder im
+     * Hintergrund, aber nicht beides“. Unter „Aufträge“ bleibt, was der Benutzer gestartet hat. „Alle anhalten“ und
+     * „Alle abbrechen“ eines Reiters treffen genau seine Zeilen.
+     */
+    public static boolean inBackgroundTab(JobStatus job) {
+        return job.type().background() || job.type() == JobType.ENRICHMENT
+                && com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync.TASK.equals(
+                job.parameter(com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync
+                        .TASK_PARAMETER));
     }
 
     /**
