@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.app.ui.deck.visual;
 
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.controls.MessagePlate;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
 import com.aresstack.spaceharvester.deck.editor.EditorSessions;
@@ -13,16 +15,11 @@ import com.aresstack.spaceharvester.mainframe.outline.SourceLanguage;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-import javax.swing.ButtonGroup;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
-import javax.swing.JToggleButton;
-import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.border.EmptyBorder;
@@ -31,9 +28,7 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.Font;
 import java.awt.Frame;
-import java.awt.Insets;
 import java.util.Optional;
 
 /**
@@ -44,7 +39,7 @@ import java.util.Optional;
  * und darunter die Gliederung (Auswahl zeigt das Element im Diagramm). Export über den Knopf oben rechts. Die Suche
  * unten im Editor sucht, solange das Diagramm sichtbar ist, darin nach Knoten.
  */
-final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
+final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, DocumentEditor.CenterTools {
 
     static final String TYPE_KEY = "deck.visual.type";
     static final String DEPTH_KEY = "deck.visual.mindmap-depth";
@@ -57,10 +52,13 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
     private final CallTargets targets;
     private final MermaidDiagramPanel diagram = new MermaidDiagramPanel(false);
     private final MessagePlate plate = new MessagePlate();
-    private final JToggleButton editToggle = new JToggleButton("✏️");
-    private final JToggleButton collapseToggle = new JToggleButton();
-    private final ButtonGroup typeGroup = new ButtonGroup();
-    private final java.util.Map<DiagramType, JToggleButton> typeButtons = new java.util.EnumMap<>(DiagramType.class);
+    // Symbolknöpfe und Auswahllisten der App statt Emoji-Knöpfen (Angelo 24.11.).
+    private final IconButton editToggle = new IconButton(Glyph.PENCIL,
+            "Bearbeiten im Diagramm: Knoten umbenennen, Kanten ziehen (rechte Maustaste)");
+    private final IconButton collapseToggle = new IconButton(Glyph.OVERVIEW, "Übersicht (kompaktes Diagramm)");
+    private final java.util.Map<DiagramType, IconButton> typeButtons = new java.util.EnumMap<>(DiagramType.class);
+    private final JComponent[] barTools;
+    private final JComponent sideTools;
     private DiagramType type;
     private int mindmapDepth;
     private boolean collapsed;
@@ -87,27 +85,53 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
         });
         diagram.setNodeDoubleClickListener(this::openTarget);
 
-        JButton export = Comic.exportButton("Diagramm exportieren (SVG oder PNG)");
-        export.addActionListener(e -> export());
-        JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
-        tools.setOpaque(false);
-        tools.add(export);
-        JPanel top = new JPanel(new BorderLayout());
-        top.setOpaque(false);
-        top.add(plate, BorderLayout.NORTH);
-        JPanel toolRow = new JPanel(new BorderLayout());
-        toolRow.setOpaque(false);
-        toolRow.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
-        toolRow.add(tools, BorderLayout.EAST);
-        top.add(toolRow, BorderLayout.CENTER);
+        // Zoom, Einpassen, Neu zeichnen und Export als Symbolknöpfe vorn in der Werkzeugzeile des Editors, keine eigene
+        // Zeile und nichts über dem Diagramm.
+        JLabel zoom = diagram.getZoomLabel();
+        zoom.setFont(Comic.regular(12f));
+        zoom.setForeground(Comic.MUTED);
+        zoom.setPreferredSize(new Dimension(44, 24));
+        zoom.setToolTipText("Vergrößerung");
+        barTools = new JComponent[] {
+                action(VisualIcons.minus(), "Verkleinern", diagram::zoomOut),
+                zoom,
+                action(Glyph.PLUS, "Vergrößern", diagram::zoomIn),
+                action(Glyph.FIT, "Einpassen", diagram::fit),
+                action(Glyph.REFRESH, "Neu zeichnen in dieser Vergrößerung", diagram::reRender),
+                action(Glyph.EXPORT, "Diagramm exportieren (SVG oder PNG)", this::export)};
+        sideTools = buildSideTools();
 
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, diagram, sidebar());
-        split.setResizeWeight(1.0);
-        split.setBorder(BorderFactory.createEmptyBorder());
-        split.setDividerSize(6);
-        add(top, BorderLayout.NORTH);
-        add(split, BorderLayout.CENTER);
-        SwingUtilities.invokeLater(() -> split.setDividerLocation(Math.max(200, split.getWidth() - 300)));
+        add(plate, BorderLayout.NORTH);
+        if (editor.sidePanelsDetached()) {
+            // Der Arbeitsbereich hat eine Seitenleiste: dort stehen die Werkzeuge als Reiter, die Gliederung ist schon
+            // ein Reiter und zeigt in dieser Ansicht das gewählte Element im Diagramm. Nichts rechts vom Diagramm.
+            editor.outlineChooser(this::showElement);
+            add(diagram, BorderLayout.CENTER);
+        } else {
+            JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, diagram, sidebar());
+            split.setResizeWeight(1.0);
+            split.setBorder(BorderFactory.createEmptyBorder());
+            split.setDividerSize(6);
+            add(split, BorderLayout.CENTER);
+            SwingUtilities.invokeLater(() -> split.setDividerLocation(Math.max(200, split.getWidth() - 300)));
+        }
+    }
+
+    private static IconButton action(javax.swing.Icon icon, String tooltip, Runnable run) {
+        IconButton button = new IconButton(icon, tooltip);
+        button.getAccessibleContext().setAccessibleName(tooltip);
+        button.addActionListener(e -> run.run());
+        return button;
+    }
+
+    @Override
+    public JComponent[] barTools() {
+        return barTools;
+    }
+
+    @Override
+    public JComponent sideTools() {
+        return sideTools;
     }
 
     /** Ob der Editor Mermaid-Quelltext zeigt (Endung oder erstes Wort), dann wird er direkt gezeichnet. */
@@ -123,112 +147,14 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
 
     // ---- Seitenleiste --------------------------------------------------------------------------------------------
 
+    /** Ohne Seitenleiste des Arbeitsbereichs (etwa FTP): Werkzeuge und Gliederung rechts neben dem Diagramm. */
     private JComponent sidebar() {
         JPanel outer = new JPanel(new BorderLayout());
         outer.setBackground(Comic.SURFACE);
         outer.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Comic.LINE));
         outer.setPreferredSize(new Dimension(300, 200));
         outer.setMinimumSize(new Dimension(220, 100));
-
-        JPanel header = new JPanel();
-        header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
-        header.setOpaque(false);
-        header.setBorder(new EmptyBorder(8, 12, 4, 12));
-        JPanel row = new JPanel(new BorderLayout(4, 0));
-        row.setOpaque(false);
-        row.setAlignmentX(Component.LEFT_ALIGNMENT);
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
-
-        // Bearbeiten nur für Mermaid-Quelltext, der gespeichert werden darf; Diagramme aus der Gliederung nur lesen
-        square(editToggle, "Bearbeiten im Diagramm: Knoten umbenennen, Kanten ziehen (rechte Maustaste)");
-        editToggle.setEnabled(mermaid && editor.editable());
-        editToggle.addActionListener(e -> diagram.setEditable(editToggle.isSelected()));
-        row.add(editToggle, BorderLayout.WEST);
-
-        if (!mermaid) {
-            square(collapseToggle, null);
-            collapseToggle.setSelected(collapsed);
-            showCollapse();
-            collapseToggle.addActionListener(e -> {
-                collapsed = collapseToggle.isSelected();
-                // ausdrücklich gewählt: „Details einblenden“ gilt auch für große Quelltexte
-                autoCollapse = false;
-                AppState.shared().put(COLLAPSED_KEY, collapsed);
-                showCollapse();
-                generate();
-            });
-            JPanel collapseCell = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-            collapseCell.setOpaque(false);
-            collapseCell.add(collapseToggle);
-            row.add(collapseCell, BorderLayout.CENTER);
-
-            JPanel types = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
-            types.setOpaque(false);
-            for (DiagramType each : DiagramType.values()) {
-                JToggleButton button = new JToggleButton(each.getIcon());
-                square(button, each.getLabel());
-                button.getAccessibleContext().setAccessibleName(each.getLabel());
-                button.setSelected(each == type);
-                button.addActionListener(e -> {
-                    type = each;
-                    AppState.shared().put(TYPE_KEY, each.name());
-                    generate();
-                });
-                typeGroup.add(button);
-                typeButtons.put(each, button);
-                types.add(button);
-            }
-            row.add(types, BorderLayout.EAST);
-        }
-        header.add(row);
-
-        if (!mermaid) {
-            JPanel depth = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
-            depth.setOpaque(false);
-            depth.setAlignmentX(Component.LEFT_ALIGNMENT);
-            depth.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
-            JLabel label = Comic.caption("Mindmap-Tiefe");
-            label.setToolTipText("Rekursionstiefe für externe Aufrufe in der Mindmap (0 = keine Rekursion)");
-            JSpinner spinner = new JSpinner(new SpinnerNumberModel(mindmapDepth, 0, 10, 1));
-            spinner.setPreferredSize(new Dimension(56, 24));
-            spinner.setToolTipText("0 = flach, 1 = direkte Aufrufe, 2+ = rekursiv");
-            spinner.getAccessibleContext().setAccessibleName("Mindmap-Tiefe");
-            spinner.addChangeListener(e -> {
-                int value = (Integer) spinner.getValue();
-                if (value != mindmapDepth) {
-                    mindmapDepth = value;
-                    AppState.shared().put(DEPTH_KEY, value);
-                    if (type == DiagramType.MINDMAP) {
-                        generate();
-                    }
-                }
-            });
-            depth.add(label);
-            depth.add(spinner);
-            header.add(depth);
-        }
-        outer.add(header, BorderLayout.NORTH);
-
-        JPanel body = new JPanel();
-        body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
-        body.setBorder(new EmptyBorder(4, 12, 12, 12));
-        body.setOpaque(false);
-        JScrollPane detail = new JScrollPane(diagram.getDetailArea());
-        detail.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
-        detail.setAlignmentX(Component.LEFT_ALIGNMENT);
-        body.add(detail);
-        body.add(Box.createVerticalStrut(6));
-        JPanel edit = diagram.getEditPanel();
-        edit.setAlignmentX(Component.LEFT_ALIGNMENT);
-        body.add(edit);
-        body.add(Box.createVerticalStrut(4));
-        JLabel status = diagram.getStatusLabel();
-        status.setAlignmentX(Component.LEFT_ALIGNMENT);
-        body.add(status);
-        body.add(Box.createVerticalStrut(6));
-        body.add(advanced());
-
-        JComponent center = Comic.scroll(body);
+        JComponent center = sideTools;
         if (!mermaid) {
             JComponent outline = editor.outlineView(this::showElement);
             registeredOutline = outline;
@@ -240,6 +166,117 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
         }
         outer.add(center, BorderLayout.CENTER);
         return outer;
+    }
+
+    /** Die Werkzeuge der Ansicht: Bearbeiten, Übersicht, Diagrammart, Mindmap-Tiefe, Angaben zum gewählten Element. */
+    private JComponent buildSideTools() {
+        JPanel header = new JPanel();
+        header.setLayout(new BoxLayout(header, BoxLayout.Y_AXIS));
+        header.setOpaque(false);
+        header.setBorder(new EmptyBorder(4, 4, 4, 4));
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        // Bearbeiten nur für Mermaid-Quelltext, der gespeichert werden darf; Diagramme aus der Gliederung nur lesen
+        editToggle.getAccessibleContext().setAccessibleName("Bearbeiten im Diagramm");
+        editToggle.setVisible(mermaid && editor.editable());
+        editToggle.addActionListener(e -> {
+            editToggle.marked(!editToggle.marked());
+            diagram.setEditable(editToggle.marked());
+        });
+        row.add(editToggle);
+
+        if (!mermaid) {
+            collapseToggle.getAccessibleContext().setAccessibleName("Übersicht");
+            showCollapse();
+            collapseToggle.addActionListener(e -> {
+                collapsed = !collapsed;
+                // ausdrücklich gewählt: „Details einblenden“ gilt auch für große Quelltexte
+                autoCollapse = false;
+                AppState.shared().put(COLLAPSED_KEY, collapsed);
+                showCollapse();
+                generate();
+            });
+            row.add(collapseToggle);
+            row.add(Box.createHorizontalStrut(8));
+            for (DiagramType each : DiagramType.values()) {
+                IconButton button = new IconButton(VisualIcons.diagramType(each), each.getLabel());
+                button.getAccessibleContext().setAccessibleName(each.getLabel());
+                button.marked(each == type);
+                button.addActionListener(e -> {
+                    type = each;
+                    AppState.shared().put(TYPE_KEY, each.name());
+                    typeButtons.forEach((key, other) -> other.marked(key == each));
+                    generate();
+                });
+                typeButtons.put(each, button);
+                row.add(button);
+            }
+        }
+        header.add(row);
+
+        if (!mermaid) {
+            JPanel depth = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+            depth.setOpaque(false);
+            depth.setAlignmentX(Component.LEFT_ALIGNMENT);
+            JLabel label = Comic.caption("Mindmap-Tiefe");
+            label.setToolTipText("Rekursionstiefe für externe Aufrufe in der Mindmap (0 = keine Rekursion)");
+            javax.swing.JComboBox<Integer> choice = Comic.combo();
+            for (int value = 0; value <= 10; value++) {
+                choice.addItem(value);
+            }
+            choice.setSelectedItem(mindmapDepth);
+            choice.setToolTipText("0 = flach, 1 = direkte Aufrufe, 2+ = rekursiv");
+            choice.getAccessibleContext().setAccessibleName("Mindmap-Tiefe");
+            choice.addActionListener(e -> {
+                int value = choice.getSelectedItem() instanceof Integer chosen ? chosen : mindmapDepth;
+                if (value != mindmapDepth) {
+                    mindmapDepth = value;
+                    AppState.shared().put(DEPTH_KEY, value);
+                    if (type == DiagramType.MINDMAP) {
+                        generate();
+                    }
+                }
+            });
+            depth.add(label);
+            depth.add(choice);
+            header.add(depth);
+        }
+
+        JPanel body = new JPanel();
+        body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+        body.setBorder(new EmptyBorder(4, 4, 8, 4));
+        body.setOpaque(false);
+        javax.swing.JTextArea details = diagram.getDetailArea();
+        details.setFont(Comic.regular(12.5f));
+        details.setBackground(Color.WHITE);
+        details.setBorder(new EmptyBorder(4, 6, 4, 6));
+        JComponent detail = Comic.scroll(details);
+        detail.setBorder(Comic.fieldBorder());
+        detail.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
+        detail.setPreferredSize(new Dimension(200, 90));
+        detail.setAlignmentX(Component.LEFT_ALIGNMENT);
+        body.add(detail);
+        body.add(Box.createVerticalStrut(6));
+        JPanel edit = diagram.getEditPanel();
+        edit.setOpaque(false);
+        edit.setAlignmentX(Component.LEFT_ALIGNMENT);
+        body.add(edit);
+        body.add(Box.createVerticalStrut(4));
+        JLabel status = diagram.getStatusLabel();
+        status.setFont(Comic.regular(12f));
+        status.setForeground(Comic.MUTED);
+        status.setAlignmentX(Component.LEFT_ALIGNMENT);
+        body.add(status);
+        body.add(Box.createVerticalStrut(6));
+        body.add(advanced());
+
+        JPanel tools = new JPanel(new BorderLayout());
+        tools.setOpaque(false);
+        tools.add(header, BorderLayout.NORTH);
+        tools.add(Comic.scroll(body), BorderLayout.CENTER);
+        return tools;
     }
 
     /** „Erweitert“: Neu-Rastern beim Zoomen (in MainframeMate unter Einstellungen › Allgemein). */
@@ -256,12 +293,15 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
         JLabel label = Comic.caption("Neu zeichnen ab Zoom-Änderung (%)");
         label.setToolTipText("Nach dem Zoomen schärfer neu zeichnen, wenn sich der Zoom um so viele Prozentpunkte "
                 + "geändert hat; 0 = aus");
-        JSpinner spinner = new JSpinner(new SpinnerNumberModel(
-                Math.max(0, AppState.shared().getInt(REFRESH_KEY, 1)), 0, 100, 1));
-        spinner.setPreferredSize(new Dimension(56, 24));
+        int current = Math.max(0, AppState.shared().getInt(REFRESH_KEY, 1));
+        javax.swing.JComboBox<Integer> spinner = Comic.combo();
+        java.util.TreeSet<Integer> values = new java.util.TreeSet<>(java.util.List.of(0, 1, 2, 5, 10, 20, 50, 100));
+        values.add(Math.min(100, current));
+        values.forEach(spinner::addItem);
+        spinner.setSelectedItem(Math.min(100, current));
         spinner.getAccessibleContext().setAccessibleName("Neu zeichnen ab Zoom-Änderung in Prozent");
-        spinner.addChangeListener(e -> {
-            int value = (Integer) spinner.getValue();
+        spinner.addActionListener(e -> {
+            int value = spinner.getSelectedItem() instanceof Integer chosen ? chosen : current;
             AppState.shared().put(REFRESH_KEY, value);
             diagram.setAutoRefreshThresholdPercent(value);
         });
@@ -280,22 +320,9 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
     }
 
     private void showCollapse() {
-        collapseToggle.setText(collapsed ? "🔍" : "🔎");
+        collapseToggle.marked(collapsed);
         collapseToggle.setToolTipText(collapsed ? "Details einblenden (vollständiges Diagramm)"
                 : "Übersicht (kompaktes Diagramm)");
-    }
-
-    private static void square(javax.swing.AbstractButton button, String tooltip) {
-        button.setFont(button.getFont().deriveFont(Font.PLAIN, 14f));
-        button.setMargin(new Insets(2, 4, 2, 4));
-        Dimension size = new Dimension(30, 28);
-        button.setPreferredSize(size);
-        button.setMinimumSize(size);
-        button.setMaximumSize(size);
-        button.setFocusable(false);
-        if (tooltip != null) {
-            button.setToolTipText(tooltip);
-        }
     }
 
     private JComponent registeredOutline;
@@ -322,6 +349,9 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
      * sie noch dieses Diagramm (Bild, SVG, Kacheln) festhält; laufende Erzeugung verwerfen.
      */
     void dispose() {
+        if (editor.sidePanelsDetached()) {
+            editor.outlineChooser(null);
+        }
         if (registeredOutline != null) {
             editor.releaseOutlineView(registeredOutline);
             registeredOutline = null;
@@ -380,7 +410,6 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
                 if (!mermaid && result.collapsed() != collapsed) {
                     // Große Modelle zeigt MainframeMate zuerst kompakt und merkt sich das für die nächsten Typen
                     collapsed = result.collapsed();
-                    collapseToggle.setSelected(collapsed);
                     showCollapse();
                 }
                 diagram.setMermaidSource(result.mermaid().get());
@@ -517,7 +546,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
     @Override
     public void clearSearch() {
         diagram.clearSearch();
-        editToggle.setSelected(false);
+        editToggle.marked(false);
         diagram.setEditable(false);
     }
 
@@ -532,7 +561,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch {
     }
 
     void chooseType(DiagramType next) {
-        JToggleButton button = typeButtons.get(next);
+        IconButton button = typeButtons.get(next);
         if (button != null) {
             button.doClick();
         }

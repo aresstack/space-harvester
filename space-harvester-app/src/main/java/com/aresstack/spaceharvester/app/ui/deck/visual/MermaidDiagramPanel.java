@@ -196,134 +196,42 @@ public class MermaidDiagramPanel extends JPanel {
         final JLayeredPane layeredPane = new JLayeredPane();
         layeredPane.setLayout(null);
 
-        // Overlay buttons (translucent, centered at top)
-        final int BTN_SIZE = 36;
-        final int BTN_GAP = 4;
-
-        final JPanel btnZoomOut = createOverlayButton("\u2796", BTN_SIZE);  // ➖
-        btnZoomOut.setToolTipText("Verkleinern");
-        final JPanel btnZoomIn = createOverlayButton("\u2795", BTN_SIZE);   // ➕
-        btnZoomIn.setToolTipText("Vergr\u00F6\u00DFern");
-        final JPanel btnFit = createOverlayButton("\uD83D\uDDBC", BTN_SIZE); // 🖼 (frame = einpassen)
-        btnFit.setToolTipText("Einpassen");
-        final JPanel btnReRender = createOverlayButton("\uD83D\uDD04", BTN_SIZE); // 🔄 (refresh)
-        btnReRender.setToolTipText("Neu rendern");
-
+        // Zoom-Knöpfe liegen nicht mehr über dem Diagramm (Angelo 24.11.: ungestylt, verdecken den Inhalt), sondern als
+        // Symbolknöpfe in der Werkzeugzeile des Editors (DiagramView); hier nur noch das Bild.
         layeredPane.add(imagePanel, JLayeredPane.DEFAULT_LAYER);
-        layeredPane.add(btnZoomOut, JLayeredPane.PALETTE_LAYER);
-        layeredPane.add(zoomLabel, JLayeredPane.PALETTE_LAYER);
-        layeredPane.add(btnZoomIn, JLayeredPane.PALETTE_LAYER);
-        layeredPane.add(btnFit, JLayeredPane.PALETTE_LAYER);
-        layeredPane.add(btnReRender, JLayeredPane.PALETTE_LAYER);
-
-        // Position overlay buttons on resize
         layeredPane.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
-                int w = layeredPane.getWidth();
-                int h = layeredPane.getHeight();
-                imagePanel.setBounds(0, 0, w, h);
-
-                // Center the 4 buttons + zoom label at the top
-                int totalW = 4 * BTN_SIZE + 3 * BTN_GAP + 50; // 50 for zoom label
-                int startX = (w - totalW) / 2;
-                int y = 10;
-                btnZoomOut.setBounds(startX, y, BTN_SIZE, BTN_SIZE);
-                // zoom label between - and +
-                zoomLabel.setBounds(startX + BTN_SIZE + BTN_GAP, y + 6, 50, 24);
-                btnZoomIn.setBounds(startX + BTN_SIZE + BTN_GAP + 50, y, BTN_SIZE, BTN_SIZE);
-                btnFit.setBounds(startX + 2 * BTN_SIZE + 2 * BTN_GAP + 50, y, BTN_SIZE, BTN_SIZE);
-                btnReRender.setBounds(startX + 3 * BTN_SIZE + 3 * BTN_GAP + 50, y, BTN_SIZE, BTN_SIZE);
-            }
-        });
-
-        // Wire overlay button clicks via glass-pane approach (mouse events on JLayeredPane)
-        addOverlayClickHandler(btnZoomOut, new Runnable() {
-            @Override
-            public void run() {
-                double cx = imagePanel.getWidth() / 2.0;
-                double cy = imagePanel.getHeight() / 2.0;
-                zoomBy(1.0 / 1.4, cx, cy);
-            }
-        });
-        addOverlayClickHandler(btnZoomIn, new Runnable() {
-            @Override
-            public void run() {
-                double cx = imagePanel.getWidth() / 2.0;
-                double cy = imagePanel.getHeight() / 2.0;
-                zoomBy(1.4, cx, cy);
-            }
-        });
-        addOverlayClickHandler(btnFit, new Runnable() {
-            @Override
-            public void run() {
-                fitToPanel();
-            }
-        });
-        addOverlayClickHandler(btnReRender, new Runnable() {
-            @Override
-            public void run() {
-                reRasterize();
+                imagePanel.setBounds(0, 0, layeredPane.getWidth(), layeredPane.getHeight());
             }
         });
 
         add(layeredPane, BorderLayout.CENTER);
     }
 
-    // ═══════════════════════════════════════════════════════════
-    //  Overlay button factory (adapted from WikiImageDialog for light bg)
-    // ═══════════════════════════════════════════════════════════
-
-    /**
-     * Translucent rounded overlay button for light backgrounds.
-     * Semi-transparent white with a subtle border, dark icon.
-     */
-    private static JPanel createOverlayButton(String symbol, int size) {
-        final JPanel panel = new JPanel(new BorderLayout()) {
-            @Override
-            protected void paintComponent(Graphics g) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                // Semi-transparent white background
-                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.85f));
-                g2.setColor(new Color(255, 255, 255));
-                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
-                // Subtle border
-                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.3f));
-                g2.setColor(new Color(120, 120, 120));
-                g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 10, 10);
-                g2.dispose();
-                super.paintComponent(g);
-            }
-        };
-        panel.setOpaque(false);
-        Cursors.set(panel, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-
-        JLabel label = new JLabel(symbol, SwingConstants.CENTER);
-        label.setForeground(new Color(60, 60, 60));
-        label.setFont(label.getFont().deriveFont(Font.BOLD, 15f));
-        panel.add(label, BorderLayout.CENTER);
-        panel.setPreferredSize(new Dimension(size, size));
-        return panel;
+    /** Verkleinern um die Mitte (Knopf „−“). */
+    public void zoomOut() {
+        zoomBy(1.0 / 1.4, imagePanel.getWidth() / 2.0, imagePanel.getHeight() / 2.0);
     }
 
-    private static void addOverlayClickHandler(final JPanel btn, final Runnable action) {
-        btn.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                action.run();
-            }
-            @Override
-            public void mouseEntered(MouseEvent e) {
-                btn.setOpaque(true);
-                btn.repaint();
-            }
-            @Override
-            public void mouseExited(MouseEvent e) {
-                btn.setOpaque(false);
-                btn.repaint();
-            }
-        });
+    /** Vergrößern um die Mitte (Knopf „+“). */
+    public void zoomIn() {
+        zoomBy(1.4, imagePanel.getWidth() / 2.0, imagePanel.getHeight() / 2.0);
+    }
+
+    /** Einpassen. */
+    public void fit() {
+        fitToPanel();
+    }
+
+    /** Neu zeichnen in der aktuellen Vergrößerung. */
+    public void reRender() {
+        reRasterize();
+    }
+
+    /** Die Anzeige des Zooms in Prozent (für die Werkzeugzeile). */
+    public JLabel getZoomLabel() {
+        return zoomLabel;
     }
 
     // ═══════════════════════════════════════════════════════════

@@ -39,7 +39,7 @@ final class OutlinePanel extends JPanel {
     private final JLabel status = Comic.muted(" ");
     private final IntConsumer navigator;
     /** Für die Diagramm-Ansicht: gewähltes Element (Klick oder Enter); {@code null} im Text. */
-    private final java.util.function.Consumer<JclElement> chooser;
+    private java.util.function.Consumer<JclElement> chooser;
     private Outline outline;
     private boolean filling;
 
@@ -81,10 +81,8 @@ final class OutlinePanel extends JPanel {
                 }
             }
         });
-        if (chooser != null) {
-            // Wie MainframeMate: Auswahl in der Gliederung zeigt das Element im Diagramm
-            tree.addTreeSelectionListener(event -> chosen());
-        }
+        // Wie MainframeMate: Auswahl in der Gliederung zeigt das Element im Diagramm (nur mit chooser)
+        tree.addTreeSelectionListener(event -> chosen());
         tree.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "outline-jump");
         tree.getActionMap().put("outline-jump", new javax.swing.AbstractAction() {
             @Override
@@ -156,6 +154,11 @@ final class OutlinePanel extends JPanel {
         for (int row = 0; row < tree.getRowCount(); row++) {
             tree.expandRow(row);
         }
+    }
+
+    /** Diagramm-Ansicht an/aus: Auswahl zeigt das Element im Diagramm; {@code null} = zur Zeile springen. */
+    void chooser(java.util.function.Consumer<JclElement> next) {
+        chooser = next;
     }
 
     private void chosen() {

@@ -89,6 +89,9 @@ public final class DocumentEditor extends JPanel {
     private final RTextScrollPane scroll;
     private final MessagePlate plate = new MessagePlate();
     private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+    /** Werkzeuge der eigenen Ansicht in der Mitte (etwa Zoom und Export des Diagramms), vorn in der Werkzeugzeile. */
+    private final JPanel centerTools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+    private final List<Consumer<JComponent>> centerSideListeners = new ArrayList<>();
     private final IconButton relationsToggle = new IconButton(EditorIcons.relations(),
             "Beziehungen ein/aus (Ressourcen, Callees, Caller)");
     private final IconButton outlineToggle = new IconButton(EditorIcons.outline(), "Gliederung ein/aus");
@@ -197,6 +200,8 @@ public final class DocumentEditor extends JPanel {
         copy.addActionListener(e -> Toolkit.getDefaultToolkit().getSystemClipboard()
                 .setContents(new StringSelection(area.getText()), null));
         saveAs.addActionListener(e -> saveAsChosen());
+        centerTools.setOpaque(false);
+        tools.add(centerTools);
         tools.add(relationsToggle);
         tools.add(outlineToggle);
         tools.add(compareToggle);
@@ -379,8 +384,55 @@ public final class DocumentEditor extends JPanel {
         void clearSearch();
     }
 
+    /**
+     * Eine eigene Ansicht in der Mitte mit Werkzeugen: {@link #barTools()} stehen vorn in der Werkzeugzeile des
+     * Editors, {@link #sideTools()} zeigt ein Arbeitsbereich mit eigener Seitenleiste dort als Reiter (sonst bettet die
+     * Ansicht sie selbst ein, siehe {@link #sidePanelsDetached()}).
+     */
+    public interface CenterTools {
+
+        JComponent[] barTools();
+
+        JComponent sideTools();
+    }
+
+    /** Meldet die Seitenwerkzeuge der Mitte: beim Zeigen einer {@link CenterTools}-Ansicht, {@code null} beim Text. */
+    public void onCenterSide(Consumer<JComponent> listener) {
+        centerSideListeners.add(Objects.requireNonNull(listener, "listener"));
+    }
+
+    /** Ob ein Arbeitsbereich die Seitenpanels in seine Seitenleiste genommen hat ({@link #detachSidePanels()}). */
+    public boolean sidePanelsDetached() {
+        return sidePanels != null;
+    }
+
+    /**
+     * Auswahl in der Gliederung geht an {@code chooser} statt zur Zeile (Diagramm-Ansicht: Element im Diagramm zeigen);
+     * {@code null} stellt das Springen zur Zeile wieder her.
+     */
+    public void outlineChooser(Consumer<com.aresstack.spaceharvester.mainframe.model.JclElement> chooser) {
+        outlinePanel.chooser(chooser);
+    }
+
+    private void centerTools(CenterTools view) {
+        centerTools.removeAll();
+        if (view != null) {
+            for (JComponent part : view.barTools()) {
+                centerTools.add(part);
+            }
+        }
+        centerTools.revalidate();
+        revalidate();
+        repaint();
+        JComponent side = view == null ? null : view.sideTools();
+        for (Consumer<JComponent> listener : List.copyOf(centerSideListeners)) {
+            listener.accept(side);
+        }
+    }
+
     /** Ersetzt die Mitte durch eine eigene Ansicht (z. B. ein Diagramm); {@link #showText()} holt den Text zurück. */
     public void showInCenter(JComponent view) {
+        centerTools(view instanceof CenterTools withTools ? withTools : null);
         centerSearch = view instanceof CenterSearch search ? search : null;
         for (java.awt.Component component : center.getComponents()) {
             if (component != textAndOutline && component != textAndCompare) {
@@ -394,6 +446,7 @@ public final class DocumentEditor extends JPanel {
     }
 
     public void showText() {
+        centerTools(null);
         if (centerSearch != null) {
             centerSearch.clearSearch();
             centerSearch = null;
