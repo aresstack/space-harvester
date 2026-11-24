@@ -84,6 +84,14 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     als abgebrochen, ohne dass das Werkzeug läuft. Nach jeder Antwort schließt der Browser, das Profil bleibt. Ohne
     Firefox ist der Knopf gesperrt und sagt warum. Websuche und interne Suche sind unabhängig voneinander; sind beide
     an, warnt die Meldung oben, dass Inhalte aus Wissensquellen in Browseraufrufe einfließen können.
+12. **Suche ohne Auswahl, Suchagent** (Nachtrag, Angelo 24.11.2026): Die App startet auf dem Suchreiter. Ein Klick
+    auf den Suchreiter (oder Strg+Zahl) hebt die Auswahl der Wissensquellen ganz auf, auch die globale; die Suche in
+    der Titelleiste lässt sie stehen. Wer die Suche ohne Auswahl verlässt, hat „Wissensquellen“ gewählt. Ohne Auswahl antwortet der Chat trotzdem: Er hat dann keine Bereichswerkzeuge (und
+    keine langsame Suche im Bereich), nur die zugeschalteten (interne Suche samt `seite_lesen` ihrer Treffer,
+    Websuche) und die Anhänge in der Frage; ohne jedes Werkzeug antwortet das Modell aus eigenem Wissen. Seine Chats
+    liegen bei denen zu allen Wissensquellen. In der Suche, und ohne Auswahl, arbeitet der Chat als Suchagent: eigene
+    Rolle (gründlich über mehrere Runden recherchieren, umformulieren, Treffer im Volltext lesen, Anhänge gründlich
+    auswerten) und so viele Werkzeugrunden wie das Budget am Pfeil der Websuche. Anderswo bleibt der Chat, wie er ist.
 
 ## Folgen
 
