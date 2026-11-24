@@ -161,7 +161,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             previous = path;
         }
         String next = batch.nextCursor();
-        if (next != null && previous != null) {
+        if (!batch.complete() && previous != null) {
             next = CURSOR_PREFIX + encode(previous) + "." + next;
         }
         return new PartitionResources(resources, next);

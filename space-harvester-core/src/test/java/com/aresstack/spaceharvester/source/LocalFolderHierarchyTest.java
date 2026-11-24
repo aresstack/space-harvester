@@ -132,6 +132,15 @@ class LocalFolderHierarchyTest {
                 .extracting(HarvestSource.PageNode::title).containsExactlyInAnyOrder("Betrieb", "Einleitung.md");
     }
 
+    @Test
+    void completeInventoryDoesNotWrapAnEmptyCursor() {
+        KnowledgeSourceHarvestSource source = open();
+        PageMetadataBatch batch = source.pageMetadata("docs", null, 500);
+
+        assertThat(batch.nextCursor()).isNull();
+        assertThat(batch.pages()).isNotEmpty();
+    }
+
     private Map<String, PageMetadata> list(KnowledgeSourceHarvestSource source, int limit) {
         Map<String, PageMetadata> pages = new LinkedHashMap<>();
         String cursor = null;
