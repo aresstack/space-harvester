@@ -220,6 +220,9 @@ class StandingTabTest {
 
         assertThat(StandingTab.deleteQuestion(ExportPanel.Selection.ALL))
                 .isEqualTo("Wirklich die Aussagen-Analysen aller Wissensquellen löschen? Die Seiten bleiben.");
+        assertThat(StandingTab.deleteQuestion(new ExportPanel.Selection.Collection("f1", "Betrieb", List.of(), true)))
+                .isEqualTo("Wirklich die Aussagen-Analysen der Favoriten in „Betrieb“ samt Unterseiten löschen? "
+                        + "Die Seiten bleiben.");
     }
 
     private static StatusQuoEntry stale(StatusQuoEntry e) {

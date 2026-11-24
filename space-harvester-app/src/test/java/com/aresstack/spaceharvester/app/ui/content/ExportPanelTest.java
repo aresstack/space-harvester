@@ -382,6 +382,36 @@ class ExportPanelTest {
     }
 
     /**
+     * ADR 0034 (3c): Ein Favoriten-Ordner exportiert wie eine Quelle, je Favorit eine Zeile und eine Wurzel (eine Quelle
+     * darin je Space); ein veralteter Favorit fällt still weg, ein leerer Ordner sperrt die Format-Knöpfe.
+     */
+    @Test
+    void aFavoritesFolderExportsOneRowAndRootPerFavoriteLikeASource() throws Exception {
+        startTwo();
+        ExportPanel[] panel = new ExportPanel[1];
+        com.aresstack.spaceharvester.application.holdings.Selection.Root anhang =
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.source("anhang");
+        com.aresstack.spaceharvester.application.holdings.Selection.Root gone =
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.source("gibt-es-nicht");
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ExportPanel(context);
+            panel[0].selection(new ExportPanel.Selection.Collection("f1", "Betrieb", List.of(anhang, gone), true));
+        });
+        await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).contains(ExportPanel.NOTHING_YET));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].coreSelectionForTest().roots()).as("je Space der Favoriten-Quelle eine Wurzel")
+                    .hasSize(1).allMatch(root -> root.sourceId().equals("anhang") && root.spaceKey() != null);
+            assertThat(panel[0].exportBlocked("pdf")).as("Format-Knöpfe frei wie bei einer Quelle").isNull();
+            panel[0].selection(new ExportPanel.Selection.Collection("f2", "Leer", List.of(), true));
+        });
+        await(() -> texts(panel[0].spaces).contains(ExportPanel.NO_FAVORITES));
+        SwingUtilities.invokeAndWait(() -> assertThat(panel[0].exportBlocked("pdf"))
+                .isEqualTo(ExportPanel.NO_FAVORITES));
+        assertThat(ExportPanel.perPart(new ExportPanel.Selection.Collection("f1", null, List.of(), true)))
+                .isEqualTo("je Favorit");
+    }
+
+    /**
      * Angelo 17.11.2026: Auf der Quelle und bei „Wissensquellen“ ist der Export echt wie der Knopf in der Seitenleiste:
      * je Space ein eigener Auftrag und eine getrennte Datei, die Dateiliste nennt sie je Space. Nur „Wissensquellen“
      * fragt vorher zurück (Architekt 17.11.2026); ein Nein startet nichts.

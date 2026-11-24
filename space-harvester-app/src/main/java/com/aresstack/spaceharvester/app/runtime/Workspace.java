@@ -1586,7 +1586,17 @@ public final class Workspace {
      */
     public int deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection selection,
                                        boolean withChecks) {
-        java.util.function.Predicate<PageKey> pages = analysesOf(selection, resolveSelection(selection));
+        return deleteStatementAnalyses(selection, withChecks, true);
+    }
+
+    /**
+     * Wie {@link #deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection, boolean)};
+     * {@code wholeSources} false löscht auch bei einer Quellen-Wurzel nur die aufgelösten Seiten: so bei einer Sammlung
+     * (ADR 0034 §3, „Löschen“ im Stand wirkt nie auf eine ganze Quelle).
+     */
+    public int deleteStatementAnalyses(com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                       boolean withChecks, boolean wholeSources) {
+        java.util.function.Predicate<PageKey> pages = analysesOf(selection, resolveSelection(selection), wholeSources);
         int deleted = harvester.knowledgeGraph().delete(caller, pages);
         if (withChecks) {
             harvester.statementChecks().delete(caller, pages);
@@ -1602,9 +1612,16 @@ public final class Workspace {
     static java.util.function.Predicate<PageKey> analysesOf(
             com.aresstack.spaceharvester.application.holdings.Selection selection,
             com.aresstack.spaceharvester.application.holdings.PageSelection pages) {
+        return analysesOf(selection, pages, true);
+    }
+
+    /** Wie oben; ohne {@code sources} nur die Seiten aus dem Bestand, auch bei einer Quellen-Wurzel (Sammlung). */
+    static java.util.function.Predicate<PageKey> analysesOf(
+            com.aresstack.spaceharvester.application.holdings.Selection selection,
+            com.aresstack.spaceharvester.application.holdings.PageSelection pages, boolean sources) {
         java.util.Set<String> wholeSources = new java.util.HashSet<>();
         for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : selection.roots()) {
-            if (root.spaceKey() == null && root.pageId() == null) {
+            if (sources && root.spaceKey() == null && root.pageId() == null) {
                 wholeSources.add(root.sourceId());
             }
         }
