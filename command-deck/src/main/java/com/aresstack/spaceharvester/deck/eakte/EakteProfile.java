@@ -61,11 +61,18 @@ public record EakteProfile(URI webdav, URI start, String user) {
         return user + "@" + webdav.getHost();
     }
 
+    /** Pfad der WebDAV-Schnittstelle von Fabasoft, wenn nichts anderes eingestellt ist. */
+    public static final String DEFAULT_WEBDAV_PATH = "/fsc/webdav";
+
     /**
-     * Das Profil aus der einen E-Akte-Adresse, die man sonst im Browser öffnet: sie ist der Einstieg der Anmeldung,
-     * die WebDAV-Wurzel ist fest {@code <Schema>://<Server>/fsc/webdav} (Fabasoft, wie im Testprogramm v2.0).
+     * Das Profil aus der Basisadresse der E-Akte (URL-Feld des KeePass-Eintrags) und dem WebDAV-Pfad: Endpunkt ist
+     * {@code <Schema>://<Server><Pfad>}, zugleich Einstieg der Anmeldung und WebDAV-Wurzel (live belegt mit v2.0:
+     * Start = WebDAV-Adresse ergibt 207). Ein Pfad in der Adresse zählt nicht; so wird {@code /fsc/webdav} auch bei
+     * einer schon vollständigen Adresse nie doppelt angehängt.
+     *
+     * @param path WebDAV-Pfad, leer = {@link #DEFAULT_WEBDAV_PATH}
      */
-    public static EakteProfile fromAddress(String address, String user) {
+    public static EakteProfile fromAddress(String address, String path, String user) {
         String text = address == null ? "" : address.strip();
         if (text.isEmpty()) {
             throw new IllegalArgumentException("E-Akte-Adresse fehlt");
@@ -73,18 +80,33 @@ public record EakteProfile(URI webdav, URI start, String user) {
         if (!text.contains("://")) {
             text = "https://" + text;
         }
-        URI start;
+        URI base;
         try {
-            start = URI.create(text);
+            base = URI.create(text);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("E-Akte-Adresse: keine gültige Adresse");
         }
-        if (start.getScheme() == null || start.getHost() == null) {
+        if (base.getScheme() == null || base.getHost() == null) {
             throw new IllegalArgumentException("E-Akte-Adresse: keine gültige Adresse");
         }
-        URI webdav = URI.create(start.getScheme().toLowerCase(Locale.ROOT) + "://" + start.getRawAuthority()
-                + "/fsc/webdav");
-        return new EakteProfile(webdav, start, user);
+        URI endpoint = URI.create(base.getScheme().toLowerCase(Locale.ROOT) + "://" + base.getRawAuthority()
+                + webdavPath(path));
+        return new EakteProfile(endpoint, endpoint, user);
+    }
+
+    /** Der WebDAV-Pfad: mit führendem, ohne abschließenden Schrägstrich; leer = {@link #DEFAULT_WEBDAV_PATH}. */
+    public static String webdavPath(String path) {
+        String text = path == null ? "" : path.strip();
+        while (text.endsWith("/")) {
+            text = text.substring(0, text.length() - 1);
+        }
+        if (text.isEmpty()) {
+            return DEFAULT_WEBDAV_PATH;
+        }
+        if (text.contains("://") || text.contains("?") || text.contains("#") || text.contains(" ")) {
+            throw new IllegalArgumentException("WebDAV-Pfad: nur ein Pfad wie " + DEFAULT_WEBDAV_PATH);
+        }
+        return text.startsWith("/") ? text : "/" + text;
     }
 
     private static URI checked(URI address, String what) {

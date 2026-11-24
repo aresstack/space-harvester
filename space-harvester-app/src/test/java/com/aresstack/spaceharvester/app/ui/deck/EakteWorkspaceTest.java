@@ -35,7 +35,7 @@ class EakteWorkspaceTest {
 
     private static final String ENTRY = "E-Akte Flotte";
     private static final List<String> KEYS = List.of(EakteConnectForm.ENTRY_KEY,
-            EakteConnectForm.START_KEY, EakteConnectForm.USE_PROXY_KEY);
+            EakteConnectForm.START_KEY, EakteConnectForm.USE_PROXY_KEY, EakteConnectForm.WEBDAV_PATH_KEY);
 
     private final ExecutorService background = Executors.newVirtualThreadPerTaskExecutor();
     private FakeEakteServer fake;
@@ -93,7 +93,7 @@ class EakteWorkspaceTest {
             EakteConnectForm form = workspace.form();
             form.entries(List.of(ENTRY));
             form.entry.setSelectedItem(ENTRY);
-            form.start.setText(fake.start().toString());
+            form.start.setText(fake.webdav().resolve("/").toString());
         });
     }
 
@@ -210,7 +210,7 @@ class EakteWorkspaceTest {
             assertThat(form.start.getText()).as("keine vorbelegte Adresse").isEmpty();
             form.entries(List.of(ENTRY));
             form.entry.setSelectedItem(ENTRY);
-            form.start.setText(fake.start().toString());
+            form.start.setText(fake.webdav().resolve("/").toString());
             form.submit();
         });
         await(() -> onEdt(() -> workspace.selected() != null
@@ -222,7 +222,7 @@ class EakteWorkspaceTest {
     @Test
     void takesTheAddressFromTheKeePassEntry() throws Exception {
         fake = new FakeEakteServer();
-        keePassUrl = fake.start().toString();
+        keePassUrl = fake.webdav().resolve("/").toString(); // nur die Basisadresse, wie in KeePass
         EakteSessions sessions = new EakteSessions(
                 new HttpEakteServer(HttpClientFactory.direct(), Duration.ofSeconds(10), null), background);
         SwingUtilities.invokeAndWait(() -> {
@@ -231,6 +231,7 @@ class EakteWorkspaceTest {
             form.entries(List.of(ENTRY));
             form.entry.setSelectedItem(ENTRY);
             assertThat(form.start.getText()).isEmpty();
+            assertThat(form.start.getToolTipText()).contains("Domain", "Subdomains", "/fsc/webdav", "optional");
             form.submit();
         });
         await(() -> onEdt(() -> workspace.selected() != null

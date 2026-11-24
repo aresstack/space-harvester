@@ -46,9 +46,9 @@ public final class HttpEakteServer implements EakteServer {
             if (profile.start() != null) {
                 http.trace("Anmeldung über die Startseite: " + SsoHttp.safe(profile.start()));
                 SsoHttp.Response start = withPassword.settle(http.get(profile.start()));
-                if (start.status() >= 400) {
-                    throw new IOException("Die E-Akte antwortet nach der Anmeldung HTTP " + start.status());
-                }
+                // Wie v2.0: was die E-Akte auf den Einstieg antwortet (bei WebDAV als Einstieg etwa 405 auf GET),
+                // entscheidet nicht; das tut der folgende PROPFIND.
+                http.trace("Einstieg nach der Anmeldung: HTTP " + start.status());
             }
             SamlNavigator sessionOnly = new SamlNavigator(http, null);
             HttpEakteConnection connection = new HttpEakteConnection(http, sessionOnly);

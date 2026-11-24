@@ -238,4 +238,16 @@ class HttpEakteServerTest {
         assertThat(fake.loginReferers()).hasSize(1);
         assertThat(fake.loginReferers().get(0)).contains("/eai/mapz/login");
     }
+
+    /** Live mit v2.0 belegt: Einstieg = WebDAV-Adresse; die Anmeldung läuft über den WebDAV-Endpunkt selbst. */
+    @Test
+    void entryAndWebDavAreTheSameAddressLikeTheLiveTest() throws Exception {
+        EakteProfile same = EakteProfile.fromAddress(fake.webdav().resolve("/").toString(), "", FakeEakteServer.USER);
+        assertThat(same.start()).isEqualTo(same.webdav());
+        try (EakteConnection connection = server.connect(same, FakeEakteServer.PASSWORD.toCharArray())) {
+            assertThat(connection.list(connection.rootHref())).hasSize(5);
+        }
+        assertThat(fake.passwordPosts()).isEqualTo(1);
+        assertThat(fake.requests()).contains("openam GET /openam/", "openam GET /openam/XUI/");
+    }
 }

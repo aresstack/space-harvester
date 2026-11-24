@@ -36,7 +36,11 @@ final class EakteConnectForm extends JPanel {
 
     static final String ENTRY_KEY = "deck.eakte.keepass-entry";
     static final String START_KEY = "deck.eakte.start";
+    /** Vorgabe Angelo: nur die Domain samt Subdomains; der Pfad /fsc/webdav ist optional. */
+    static final String ADDRESS_TIP = "<html>Nur die Domain eintragen (einschließlich Subdomains).<br>"
+            + "Der Pfad /fsc/webdav ist optional.</html>";
     static final String USE_PROXY_KEY = "deck.eakte.use-proxy";
+    static final String WEBDAV_PATH_KEY = "deck.eakte.webdav-path";
 
     final JComboBox<String> entry = Comic.combo();
     /**
@@ -44,13 +48,15 @@ final class EakteConnectForm extends JPanel {
      * KeePass-Eintrags. Die WebDAV-Wurzel legt
      * der Adapter fest ({@link EakteProfile#fromAddress}); Anmeldedienste ergeben sich aus den Weiterleitungen.
      */
-    final PlaceholderField start = new PlaceholderField(30, "Adresse, die du sonst im Browser öffnest");
+    final PlaceholderField start = new PlaceholderField(30, "Domain der E-Akte (sonst aus KeePass)");
 
     final JCheckBox useProxy = Comic.checkBox("Proxy der App verwenden");
+    /** Erweitert: Pfad der WebDAV-Schnittstelle, Vorgabe {@code /fsc/webdav} (nur als Platzhalter). */
+    final PlaceholderField webdavPath = new PlaceholderField(30, EakteProfile.DEFAULT_WEBDAV_PATH);
     private final JLabel keePassHint = Comic.muted(" ");
     private final JLabel problem = new JLabel(" ");
     private final JPanel advanced = new JPanel(new GridBagLayout());
-    private final JButton disclosure = Comic.disclosure("Erweitert", "Proxy");
+    private final JButton disclosure = Comic.disclosure("Erweitert", "WebDAV-Pfad und Proxy");
     private final ServerAccounts accounts;
     private final BiConsumer<EakteProfile, char[]> connect;
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton submit;
@@ -72,9 +78,11 @@ final class EakteConnectForm extends JPanel {
         top.setOpaque(false);
         row(top, 0, "KeePass-Eintrag", entry);
         row(top, 1, "", keePassHint);
+        start.setToolTipText(ADDRESS_TIP);
         row(top, 2, "E-Akte-Adresse", start);
         advanced.setOpaque(false);
-        row(advanced, 0, "", useProxy);
+        row(advanced, 0, "WebDAV-Pfad", webdavPath);
+        row(advanced, 1, "", useProxy);
         advanced.setVisible(false);
         disclosure.addActionListener(e -> {
             boolean open = !Comic.disclosed(disclosure);
@@ -159,7 +167,7 @@ final class EakteConnectForm extends JPanel {
         String typed = start.getText().strip();
         if (!typed.isEmpty()) {
             try {
-                EakteProfile.fromAddress(typed, "pruefung");
+                EakteProfile.fromAddress(typed, webdavPath.getText(), "pruefung");
             } catch (IllegalArgumentException e) {
                 failed(e.getMessage());
                 return;
@@ -178,7 +186,7 @@ final class EakteConnectForm extends JPanel {
                     throw new IllegalArgumentException("keine E-Akte-Adresse (URL) im Eintrag; bitte im Formular "
                             + "eintragen");
                 }
-                EakteProfile profile = EakteProfile.fromAddress(address, read.user());
+                EakteProfile profile = EakteProfile.fromAddress(address, webdavPath.getText(), read.user());
                 remember(title, typed);
                 direct = null;
                 attemptEntry = title;
@@ -230,7 +238,7 @@ final class EakteConnectForm extends JPanel {
     /** Wie {@code ConnectForm.serverChanged}: die Adresse des Eintrags als Vorschlag, eingetippt gilt sie nur dann. */
     private void entryChanged() {
         String location = locations.getOrDefault(entryTitle(), "");
-        start.setPlaceholder(location.isBlank() ? "Adresse, die du sonst im Browser öffnest" : location);
+        start.setPlaceholder(location.isBlank() ? "Domain der E-Akte (sonst aus KeePass)" : location);
     }
 
     void focusFirst() {
@@ -241,6 +249,7 @@ final class EakteConnectForm extends JPanel {
     private void remember(String title, String typed) {
         AppState.shared().putAll(Map.of(ENTRY_KEY, title, START_KEY, typed));
         AppState.shared().put(USE_PROXY_KEY, useProxy.isSelected());
+        AppState.shared().put(WEBDAV_PATH_KEY, webdavPath.getText().strip());
     }
 
     private void recall() {
@@ -252,6 +261,7 @@ final class EakteConnectForm extends JPanel {
         }
         start.setText(value(state.get(START_KEY), ""));
         useProxy.setSelected(proxyWanted());
+        webdavPath.setText(value(state.get(WEBDAV_PATH_KEY), ""));
     }
 
     private static String value(String stored, String fallback) {
