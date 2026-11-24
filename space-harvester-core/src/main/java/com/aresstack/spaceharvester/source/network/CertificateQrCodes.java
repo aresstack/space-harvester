@@ -3,16 +3,11 @@ package com.aresstack.spaceharvester.source.network;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.BinaryBitmap;
 import com.google.zxing.DecodeHintType;
-import com.google.zxing.EncodeHintType;
 import com.google.zxing.LuminanceSource;
 import com.google.zxing.NotFoundException;
 import com.google.zxing.Result;
-import com.google.zxing.WriterException;
-import com.google.zxing.common.BitMatrix;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
-import com.google.zxing.qrcode.QRCodeWriter;
-import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import com.google.zxing.multi.qrcode.QRCodeMultiReader;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -47,8 +42,6 @@ import javax.imageio.ImageIO;
  */
 public final class CertificateQrCodes {
 
-    /** Ruhezone um den Code in Modulen; vier verlangt die Norm, Telefone lesen damit auch vom Bildschirm. */
-    static final int QUIET_ZONE = 4;
     /** Pixel je Modul in den gespeicherten Bildern. */
     static final int MODULE_PIXELS = 6;
 
@@ -62,7 +55,7 @@ public final class CertificateQrCodes {
      * @param modulePixels Pixel je Modul (mindestens 1)
      */
     public static Optional<BufferedImage> image(X509Certificate certificate, int modulePixels) {
-        return matrix(text(certificate)).map(matrix -> render(matrix, Math.max(1, modulePixels)));
+        return QrCodes.image(text(certificate), StandardCharsets.ISO_8859_1, modulePixels);
     }
 
     /** Der Code als PNG; leer wie bei {@link #image}. */
@@ -171,36 +164,6 @@ public final class CertificateQrCodes {
         } catch (CertificateException | RuntimeException e) {
             return Optional.empty();
         }
-    }
-
-    private static Optional<BitMatrix> matrix(String text) {
-        for (ErrorCorrectionLevel level : List.of(ErrorCorrectionLevel.M, ErrorCorrectionLevel.L)) {
-            Map<EncodeHintType, Object> hints = new EnumMap<>(EncodeHintType.class);
-            hints.put(EncodeHintType.ERROR_CORRECTION, level);
-            hints.put(EncodeHintType.MARGIN, QUIET_ZONE);
-            hints.put(EncodeHintType.CHARACTER_SET, StandardCharsets.ISO_8859_1.name());
-            try {
-                // Größe 0: ein Pixel je Modul, das Hochskalieren übernimmt render.
-                return Optional.of(new QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0, hints));
-            } catch (WriterException | IllegalArgumentException e) {
-                // zu groß für diese Stufe
-            }
-        }
-        return Optional.empty();
-    }
-
-    private static BufferedImage render(BitMatrix matrix, int scale) {
-        int width = matrix.getWidth() * scale;
-        int height = matrix.getHeight() * scale;
-        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_BINARY);
-        int black = 0xFF000000;
-        int white = 0xFFFFFFFF;
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                image.setRGB(x, y, matrix.get(x / scale, y / scale) ? black : white);
-            }
-        }
-        return image;
     }
 
     /** Helligkeit eines {@link BufferedImage} für zxing; Transparenz zählt als Weiß. */

@@ -62,6 +62,8 @@ public final class SpeechBubblePanel extends JPanel
     private final JLabel headerLabel;
     private static final int ACCESSORY_GAP = 4;
     private JComponent headerAccessory;
+    private JComponent trailingAccessory; // right-aligned, directly left of the timestamp, or null
+    private java.awt.Component headerGlue; // pushes the trailing block to the right edge, or null
     private final JPanel headerRow;
     private JLabel timestampLabel; // small stacked date/time next to the name, or null
     private final JTextArea textArea;
@@ -239,8 +241,8 @@ public final class SpeechBubblePanel extends JPanel
             timestampLabel.setFont(base.deriveFont(Font.PLAIN, Math.max(6f, base.getSize2D() * 0.5f)));
             timestampLabel.setAlignmentY(BOTTOM_ALIGNMENT);
             // A minimum gap, then glue so the time/date block is pushed to the bubble's right edge.
-            headerRow.add(javax.swing.Box.createHorizontalStrut(6));
-            headerRow.add(javax.swing.Box.createHorizontalGlue());
+            ensureHeaderGlue();
+            headerRow.add(javax.swing.Box.createHorizontalStrut(ACCESSORY_GAP));
             headerRow.add(timestampLabel);
         }
         timestampLabel.setForeground(timestampColor());
@@ -285,6 +287,38 @@ public final class SpeechBubblePanel extends JPanel
         refreshLayout();
     }
 
+    /**
+     * Places small controls (e.g. copy and QR buttons) at the right edge of the header row, directly left of the
+     * timestamp. Like {@link #setHeaderAccessory} it never touches the text area and never makes the header taller.
+     * Replaces a previous one.
+     */
+    public void setHeaderTrailingAccessory(JComponent accessory) {
+        if (trailingAccessory != null) {
+            headerRow.remove(trailingAccessory);
+        }
+        trailingAccessory = accessory;
+        if (accessory != null) {
+            Dimension size = new Dimension(accessory.getPreferredSize().width,
+                    Math.min(accessory.getPreferredSize().height, headerLabel.getPreferredSize().height));
+            accessory.setPreferredSize(size);
+            accessory.setMaximumSize(size);
+            accessory.setAlignmentY(BOTTOM_ALIGNMENT);
+            ensureHeaderGlue();
+            // right after the glue; the timestamp brings its own gap in front of it
+            headerRow.add(accessory, headerRow.getComponentZOrder(headerGlue) + 1);
+        }
+        refreshLayout();
+    }
+
+    /** A minimum gap after the name, then ONE glue that pushes everything after it to the right edge. */
+    private void ensureHeaderGlue() {
+        if (headerGlue == null) {
+            headerRow.add(javax.swing.Box.createHorizontalStrut(6));
+            headerGlue = javax.swing.Box.createHorizontalGlue();
+            headerRow.add(headerGlue);
+        }
+    }
+
     /** Header block size: the name plus the optional accessory and timestamp, no taller than its parts. */
     private Dimension headerBlockSize() {
         Dimension label = headerLabel.getPreferredSize();
@@ -295,8 +329,13 @@ public final class SpeechBubblePanel extends JPanel
             width += ACCESSORY_GAP + accessory.width;
             height = Math.max(height, accessory.height);
         }
+        if (trailingAccessory != null) {
+            Dimension accessory = trailingAccessory.getPreferredSize();
+            width += 6 + accessory.width;
+            height = Math.max(height, accessory.height);
+        }
         if (timestampLabel != null) {
-            width += 6 + timestampLabel.getPreferredSize().width + 4;
+            width += (trailingAccessory == null ? 6 : 0) + ACCESSORY_GAP + timestampLabel.getPreferredSize().width;
         }
         return new Dimension(width, height);
     }
@@ -536,7 +575,8 @@ public final class SpeechBubblePanel extends JPanel
         if (headerLabel.isVisible()) {
             FontMetrics headerMetrics = headerLabel.getFontMetrics(headerLabel.getFont());
             int headerWidth = headerMetrics.stringWidth(headerLabel.getText())
-                    + (timestampLabel != null ? 6 + timestampLabel.getPreferredSize().width : 0);
+                    + (timestampLabel != null ? 6 + timestampLabel.getPreferredSize().width : 0)
+                    + (trailingAccessory != null ? 6 + trailingAccessory.getPreferredSize().width : 0);
             maximum = Math.max(maximum, headerWidth + 8);
         }
         if (hasDetails()) {

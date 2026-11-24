@@ -897,7 +897,7 @@ public final class SourcesView implements View {
                         + "dieser Rechner vertraut; Einzelheiten zeigt das Archiv unter „Zertifikate exportieren …“.");
                 return;
             }
-            CertificateCodesView.open(root, name, found.get());
+            QrCodesView.open(root, name, found.get());
         }, error -> {
             card.busy(null, null);
             if (!(error instanceof java.util.concurrent.CancellationException) && !cancelled.get()) {

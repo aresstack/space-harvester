@@ -139,6 +139,18 @@ class ChatPanelTest {
             copies.get(1).doClick();
             assertThat(copied).containsExactly("Frühere Frage", "Frühere Antwort");
             assertThat(copies.get(1).isConfirming()).isTrue();
+            // Links vom Kopierknopf der QR-Knopf (Angelo 24.11.2026): öffnet die Nachricht als QR-Code.
+            java.util.List<com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton> qrs = new java.util.ArrayList<>();
+            collect(panel[0], com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton.class, qrs);
+            assertThat(qrs).hasSize(5);
+            assertThat(qrs.get(0).getParent()).isSameAs(copies.get(0).getParent());
+            assertThat(qrs.get(0).getParent().getComponentZOrder(qrs.get(0)))
+                    .isLessThan(qrs.get(0).getParent().getComponentZOrder(copies.get(0)));
+            java.util.List<String> shown = new java.util.ArrayList<>();
+            panel[0].setQrCodes((name, text) -> shown.add(text));
+            qrs.get(0).doClick();
+            qrs.get(1).doClick();
+            assertThat(shown).containsExactly("Frühere Frage", "Frühere Antwort");
             // Bereichswechsel im Verlauf: eine Marke vor der Frage aus dem anderen Bereich, keine beim Nachladen.
             assertThat(panel[0].areaMarks()).containsExactly(ChatPanel.FROM_HERE + "Handbuch · alle Spaces · 3 Seiten");
             // Quellen stehen als Links unter ihrer Antwort, in der Nummer der Antwort; ohne Quellen keine Zeile. Ein

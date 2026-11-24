@@ -345,6 +345,58 @@ class AttachmentViewerPanelTest {
     }
 
     /**
+     * Angelo 24.11.2026: „zur Fundstelle springen“ muss die Stelle markieren. Im PDF blättert der Viewer zur Seite mit
+     * dem Auszug und legt Rechtecke über den Text; ein fehlender Auszug wird gemeldet, nicht still übergangen.
+     */
+    @Test
+    void aSourcePassageInAPdfTurnsToItsPageAndIsMarked() throws Exception {
+        FakeLoader loader = new FakeLoader().file("att-pdf", pdf(3));
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("att-pdf", "Bescheid.pdf", "application/pdf", 3100), loader, null,
+                    Runnable::run);
+            viewer.setSize(700, 460);
+            viewer.doLayout();
+            List<Boolean> found = new ArrayList<>();
+            viewer.showPassage("Widerspruchsfrist", found::add);
+            viewer.showPassage("seite\n 3", found::add);
+            assertThat(found).containsExactly(false, true);
+            assertThat(viewer.page()).isEqualTo(2);
+            assertThat(viewer.passage().page()).isEqualTo(2);
+            assertThat(viewer.passage().boxes()).singleElement().satisfies(box -> {
+                // 72 pt vom linken Rand, Grundlinie 700 pt über dem unteren Rand einer A4-Seite (595 × 842 pt)
+                assertThat(box.getX()).isBetween(0.10, 0.14);
+                assertThat(box.getMaxY()).isBetween(0.14, 0.20);
+                assertThat(box.getWidth()).isBetween(0.05, 0.30);
+            });
+            viewer.showPassage("Seite 4", found::add);
+            assertThat(found).containsExactly(false, true, false);
+            assertThat(viewer.passage()).isNull();
+            viewer.close();
+        });
+    }
+
+    /** Im Word-Dokument wird der Auszug markiert, unempfindlich gegen Zeilenumbruch und Groß-/Kleinschreibung. */
+    @Test
+    void aSourcePassageInAWordDocumentIsMarked() throws Exception {
+        FakeLoader loader = new FakeLoader().file("docx",
+                wordWithText("Die Frist endet am 31.12.2026 mit Ablauf des Tages.")).withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("docx", "Schreiben.docx", "application/octet-stream", -1), loader, null,
+                    Runnable::run);
+            List<Boolean> found = new ArrayList<>();
+            viewer.showPassage("endet am\n31.12.2026", found::add);
+            assertThat(found).containsExactly(true);
+            assertThat(viewer.markedText()).isEqualTo("endet am 31.12.2026");
+            viewer.showPassage("Widerspruch", found::add);
+            assertThat(found).containsExactly(true, false);
+            assertThat(viewer.markedText()).isNull();
+            viewer.close();
+        });
+    }
+
+    /**
      * Angelo 24.11.2026: Der eine Viewer kann E-Mails. Outlook-Nachricht formatiert mit Kopf und Anlagenliste; ein
      * Klick auf die PDF-Anlage zeigt sie über der E-Mail, „Zurück“ führt wieder zur E-Mail. Erfundene Inhalte.
      */
