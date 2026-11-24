@@ -6,7 +6,6 @@ import com.aresstack.spaceharvester.deck.ndv.analysis.NaturalDependencyGraph;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NaturalDependencyService;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis;
 import java.awt.BorderLayout;
-import java.awt.Dimension;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -64,8 +63,7 @@ final class NdvRelationsPanel extends JPanel {
     NdvRelationsPanel(Navigator navigator) {
         super(new BorderLayout(0, 6));
         setOpaque(false);
-        setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
-        setPreferredSize(new Dimension(300, 0));
+        setBorder(BorderFactory.createEmptyBorder());
         getAccessibleContext().setAccessibleName("Beziehungen");
         view.segment(CALLEES).segment(CALLERS).segment(DATA);
         view.select(CALLEES);
@@ -132,6 +130,14 @@ final class NdvRelationsPanel extends JPanel {
         view.select(name);
     }
 
+    private String query = "";
+
+    /** Suche der Seitenleiste: nur passende Einträge (mit ihren Kindern) bleiben stehen. */
+    void query(String text) {
+        query = text == null ? "" : text;
+        fill();
+    }
+
     private void fill() {
         root.removeAllChildren();
         String mode = view.selected();
@@ -149,6 +155,7 @@ final class NdvRelationsPanel extends JPanel {
             note.setText(start.getChildren().isEmpty() ? (callees ? "Ruft nichts auf" : "Wird von nichts aufgerufen")
                     : (start.totalNodes() - 1) + " Einträge, Tiefe bis " + NdvAnalysis.HIERARCHY_DEPTH);
         }
+        com.aresstack.spaceharvester.app.ui.deck.editor.TreeQuery.prune(root, query, String::valueOf);
         model.reload();
         for (int row = 0; row < tree.getRowCount() && row < 200; row++) {
             if (tree.getPathForRow(row).getPathCount() <= 2) {

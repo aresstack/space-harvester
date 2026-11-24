@@ -28,6 +28,7 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
@@ -77,6 +78,8 @@ final class RelationsPanel extends JPanel {
     private final CardLayout sideCards = new CardLayout();
     private final JPanel sideHolder = new JPanel(sideCards);
     private final JSplitPane split;
+    private final JPanel resourcesView;
+    private final JPanel callsView;
 
     RelationsPanel(Actions actions) {
         super(new BorderLayout());
@@ -92,7 +95,7 @@ final class RelationsPanel extends JPanel {
         resourcesTree.getAccessibleContext().setAccessibleName("Ressourcen");
         ToolTipManager.sharedInstance().registerComponent(resourcesTree);
         resourcesTree.addMouseListener(clicks(resourcesTree));
-        JPanel top = new JPanel(new BorderLayout(0, 6));
+        JPanel top = resourcesView = new JPanel(new BorderLayout(0, 6));
         top.setOpaque(false);
         top.setBorder(BorderFactory.createEmptyBorder(8, 8, 6, 8));
         top.add(Comic.caption("Ressourcen"), BorderLayout.NORTH);
@@ -103,7 +106,7 @@ final class RelationsPanel extends JPanel {
         sideHolder.add(callees.panel, CALLEES);
         sideHolder.add(callers.panel, CALLERS);
         sides.onSelect(name -> sideCards.show(sideHolder, name));
-        JPanel bottom = new JPanel(new BorderLayout(0, 6));
+        JPanel bottom = callsView = new JPanel(new BorderLayout(0, 6));
         bottom.setOpaque(false);
         bottom.setBorder(BorderFactory.createEmptyBorder(8, 8, 6, 8));
         JPanel sideRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -123,6 +126,25 @@ final class RelationsPanel extends JPanel {
 
     private boolean hasData;
 
+    /**
+     * Löst Ressourcen und Aufrufhierarchie heraus, damit ein Arbeitsbereich sie in seine Seitenleiste legt (Angelo 24.11.:
+     * nichts neben dem Quelltext, eine Seitenleiste mit Reitern in der Fußleiste). Die Namensfelder entfallen dann,
+     * gefiltert wird über die Suche oben in der Seitenleiste ({@link #names(String)}).
+     */
+    JComponent[] detach() {
+        remove(split);
+        split.removeAll();
+        callees.nameFrame.setVisible(false);
+        callers.nameFrame.setVisible(false);
+        return new JComponent[] {resourcesView, callsView};
+    }
+
+    /** Namens-Ausdruck für beide Seiten (Callees und Caller), aus der Suche der Seitenleiste. */
+    void names(String regex) {
+        callees.nameField.setText(regex);
+        callers.nameField.setText(regex);
+    }
+
     boolean hasData() {
         return hasData;
     }
@@ -140,8 +162,20 @@ final class RelationsPanel extends JPanel {
         callers.loading();
     }
 
+    private SourceRelations.Analysis shownAnalysis;
+    private String resourcesQuery = "";
+
+    /** Suche der Seitenleiste über den Ressourcen. */
+    void resources(String query) {
+        resourcesQuery = query == null ? "" : query;
+        if (shownAnalysis != null) {
+            show(shownAnalysis);
+        }
+    }
+
     /** Zeigt eine fertige Auswertung. */
     void show(SourceRelations.Analysis analysis) {
+        shownAnalysis = analysis;
         hasData = analysis != SourceRelations.Analysis.NONE;
         SourceRelations.Resources resources = analysis.resources();
         resourcesRoot.removeAllChildren();
@@ -157,6 +191,7 @@ final class RelationsPanel extends JPanel {
                 resourcesRoot.add(group);
             }
             resourcesStatus.setText(resources.total() + " Einträge in " + resources.sections().size() + " Gruppen");
+            TreeQuery.prune(resourcesRoot, resourcesQuery, String::valueOf);
         }
         resourcesModel.reload();
         expand(resourcesTree, Integer.MAX_VALUE);
@@ -325,6 +360,7 @@ final class RelationsPanel extends JPanel {
                 "Referenz-Typen filtern (CALLNAT, PERFORM, INCLUDE, …)");
         final JTextField nameField = Comic.field(10);
         final JPanel panel = new JPanel(new BorderLayout(0, 6));
+        final InputFrame nameFrame;
         SourceRelations.Hierarchy data;
         String title;
 
@@ -361,7 +397,7 @@ final class RelationsPanel extends JPanel {
                     apply();
                 }
             });
-            InputFrame nameFrame = InputFrame.search(nameField);
+            nameFrame = InputFrame.search(nameField);
             JPanel tools = new JPanel(new BorderLayout(4, 0));
             tools.setOpaque(false);
             JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));

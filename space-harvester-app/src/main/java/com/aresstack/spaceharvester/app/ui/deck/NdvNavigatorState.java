@@ -61,12 +61,14 @@ final class NdvNavigatorState {
         state.put(PREFIX + "sidebarVisible", value);
     }
 
-    boolean relationsVisible() {
-        return state.getBoolean(PREFIX + "relationsVisible", true);
+    /** Gewählter Reiter der Seitenleiste (Bibliotheken, Ressourcen, …); leer = Bibliotheken. */
+    String sideTab() {
+        String value = state.get(PREFIX + "sideTab");
+        return value == null ? "" : value;
     }
 
-    void relationsVisible(boolean value) {
-        state.put(PREFIX + "relationsVisible", value);
+    void sideTab(String value) {
+        state.put(PREFIX + "sideTab", value);
     }
 
     /** Sortierung als {@code Spalte:ASCENDING}, leer = Name aufsteigend. */
