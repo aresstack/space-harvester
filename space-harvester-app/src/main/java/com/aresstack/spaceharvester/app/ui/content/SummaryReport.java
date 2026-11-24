@@ -108,12 +108,24 @@ final class SummaryReport {
     /** Die gerade gezeigte Zusammenfassung, für Space-Namen der Themen. */
     private UpdateSummary rendered;
 
+    /**
+     * Erklärend zeichnen (Podcast-Ansicht eines Bereichs, Angelo 24.11.2026): je Thema steht die ausführliche Fassung
+     * direkt im Text statt hinter dem Details-Knopf, damit man mitlesen kann, was der Podcast erklärt.
+     */
+    private boolean explained;
+
     SummaryReport(JPanel column, Host host) {
         this.column = Objects.requireNonNull(column, "column");
         this.host = Objects.requireNonNull(host, "host");
     }
 
     /** Die gezeigte Zusammenfassung, {@code null} vor der ersten. */
+    /** Zeichnet ab jetzt erklärend ({@link #explained}). */
+    SummaryReport explained(boolean value) {
+        explained = value;
+        return this;
+    }
+
     UpdateSummary rendered() {
         return rendered;
     }
@@ -238,12 +250,22 @@ final class SummaryReport {
         }
         if (summary.unreadableChanges() > 0) {
             column.add(Box.createVerticalStrut(8));
-            add(column, Comic.wrapped(summary.unreadableChanges() == 1
-                    ? "Eine Änderung durfte die KI nicht lesen; sie fehlt in der Zusammenfassung."
-                    : summary.unreadableChanges() + " Änderungen durfte die KI nicht lesen; sie fehlen in der "
-                    + "Zusammenfassung.", Comic.MUTED, 12.5f));
+            add(column, Comic.wrapped(unreadable(summary), Comic.MUTED, 12.5f));
         }
         column.add(Box.createVerticalStrut(12));
+    }
+
+    /** Der Hinweis auf Nichtgelesenes: bei Updates Änderungen, bei einem Bereich Seiten (ohne Freigabe, übers Budget). */
+    static String unreadable(UpdateSummary summary) {
+        int count = summary.unreadableChanges();
+        if (summary.isArea()) {
+            return count == 1 ? "Eine Seite hat die KI nicht gelesen (keine KI-Freigabe, nicht geladen oder über der "
+                    + "Seitengrenze); sie fehlt im Überblick."
+                    : count + " Seiten hat die KI nicht gelesen (keine KI-Freigabe, nicht geladen oder über der "
+                    + "Seitengrenze); sie fehlen im Überblick.";
+        }
+        return count == 1 ? "Eine Änderung durfte die KI nicht lesen; sie fehlt in der Zusammenfassung."
+                : count + " Änderungen durfte die KI nicht lesen; sie fehlen in der Zusammenfassung.";
     }
 
     /**
@@ -298,7 +320,7 @@ final class SummaryReport {
             topic.setFont(Comic.semiBold(13.5f));
             topic.setForeground(Comic.INK);
             head.add(topic);
-            if (statement.details() != null && !statement.details().isBlank()) {
+            if (!explained && statement.details() != null && !statement.details().isBlank()) {
                 com.aresstack.spaceharvester.app.ui.IconButton details =
                         new com.aresstack.spaceharvester.app.ui.IconButton(
                                 com.aresstack.spaceharvester.app.ui.Glyph.SUMMARIZE, DETAILS_TIP).compact();
@@ -312,7 +334,8 @@ final class SummaryReport {
             add(column, head);
             parts.add(head);
         }
-        String text = statement.text();
+        String text = explained && statement.details() != null && !statement.details().isBlank()
+                ? statement.details() : statement.text();
         if (across) {
             java.util.Set<String> names = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
             statement.pages().stream().map(SummaryPage::spaceKey).filter(Objects::nonNull)

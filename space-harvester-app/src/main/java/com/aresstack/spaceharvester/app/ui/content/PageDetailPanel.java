@@ -141,6 +141,9 @@ public final class PageDetailPanel extends JPanel {
     /** Die Quellenseite (ADR 0030): unter „Leseansicht“ die Updates der gewählten Wissensquelle. */
     private static final String SOURCE_CARD = "source";
     private static final String SOURCE_TEXT_CARD = "source-text";
+    /** Umschalter „Bereich“: der Überblick über den ganzen Bereich statt der Änderungen (Angelo 24.11.2026). */
+    private static final String AREA_CARD = "area";
+    private static final String AREA_TEXT_CARD = "area-text";
     /** Technik-Reiter ohne Seite: dieselben drei Unterreiter, unter „Analyse“ nur die Beziehungen der Auswahl. */
     private static final String WIDE_ADVANCED_CARD = "wide-advanced";
     static final String EMPTY_PAGE = "Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.";
@@ -214,6 +217,15 @@ public final class PageDetailPanel extends JPanel {
     private final SourceUpdatesView sourceView;
     /** Quellenseite: unter „Text“ die Updates mit ihren Änderungen (Angelo, 17.11.2026). */
     private final SourceUpdatesView sourceChanges;
+    /** Der Überblick über den Bereich zum Lesen (Leseansicht) und zum Hören (Podcast-Ansicht). */
+    private final AreaSummaryView areaView;
+    private final AreaSummaryView areaPodcast;
+    /**
+     * „Änderungen | Bereich“ mittig unten, je Leiste einer (Leseansicht, Podcast-Ansicht der Änderungen und des
+     * Bereichs); alle zeigen dieselbe, global gemerkte Wahl.
+     */
+    private final List<com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle> scopeToggles =
+            new java.util.ArrayList<>();
     /** „Eigenschaften“ der Quellenseite: Kennzahlen und Einstellungen der Quelle. */
     private final SourcePropertiesView sourceProperties;
     private final JLabel state = Comic.muted(" ");
@@ -435,12 +447,56 @@ public final class PageDetailPanel extends JPanel {
     }
     /** Neben der Lupe in der Podcast-Ansicht: „Transkript kopieren“ des Podcasts der Quellenseite bzw. der Seite. */
     private final JPanel sourceFoot = footRow();
+    /** Leseansicht der Quellenseite: nur der Umschalter „Änderungen | Bereich“. */
+    private final JPanel readingSourceFoot = footRow();
+    /** Podcast-Ansicht des Bereichs: Transkript, Umschalter, Untertitel. */
+    private final JPanel areaFoot = footRow();
     private final JPanel pageFoot = footRow();
 
     private static JPanel footRow() {
         JPanel row = new JPanel(new BorderLayout());
         row.setOpaque(false);
         return row;
+    }
+
+    /**
+     * Ein Umschalter „Änderungen | Bereich“ mittig in seiner Leiste (Angelo 24.11.2026, wie „Aufträge | Hintergrund“);
+     * die Wahl gilt global für alle Seiten, alle Umschalter folgen ihr.
+     */
+    private JComponent scopeRow() {
+        com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle toggle = AreaSummaryView.scopeToggle();
+        scopeToggles.add(toggle);
+        toggle.onSelect(this::scopeChosen);
+        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
+        row.setOpaque(false);
+        row.add(toggle);
+        return row;
+    }
+
+    private void scopeChosen(String chosen) {
+        AreaSummaryView.choose(AreaSummaryView.AREA.equals(chosen));
+        for (com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle toggle : scopeToggles) {
+            toggle.select(chosen);
+        }
+        showDeck();
+    }
+
+    /** Ob die Quellenseite statt der Änderungen den Überblick über den Bereich zeigt. */
+    private boolean areaShown() {
+        return SOURCE_CARD.equals(pageCard) && sourceView.sourceId() != null && AreaSummaryView.areaChosen();
+    }
+
+    /** Für Tests: der Überblick zum Lesen und zum Hören, der Umschalter der Leseansicht. */
+    AreaSummaryView areaView() {
+        return areaView;
+    }
+
+    AreaSummaryView areaPodcast() {
+        return areaPodcast;
+    }
+
+    List<com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle> scopeToggles() {
+        return scopeToggles;
     }
     private VideoViewerPanel originalVideoViewer;
     /** Das gezeigte MP4-Video für seine Standbilder in „Analysen › Bilder“; {@code null} ohne Video. */
@@ -552,6 +608,25 @@ public final class PageDetailPanel extends JPanel {
         // Leseansicht, ohne sie neu zu erzeugen; die Leseansicht markiert das laufende Thema mit (Angelo 23.11.2026).
         sourceView.onSummary(sourceChanges::adopt);
         sourceChanges.onFollow(sourceView::followPodcast);
+        this.areaView = new AreaSummaryView(() -> context.runtime() == null ? null
+                : context.runtime().workspace(), AreaSummaryView.Mode.READ);
+        this.areaPodcast = new AreaSummaryView(() -> context.runtime() == null ? null
+                : context.runtime().workspace(), AreaSummaryView.Mode.LISTEN);
+        for (AreaSummaryView view : List.of(areaView, areaPodcast)) {
+            view.onOpen((pageSource, pageId) -> {
+                if (context.navigator() != null) {
+                    context.navigator().openPage(pageSource, pageId);
+                } else {
+                    load(pageSource, pageId, false);
+                }
+            });
+            view.onOpenSpace((spaceSource, spaceKey) -> {
+                if (context.navigator() != null) {
+                    context.navigator().openSpace(spaceSource, spaceKey);
+                }
+            });
+        }
+        areaPodcast.podcastEvents(context.events()::publish);
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
         sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,
@@ -628,6 +703,11 @@ public final class PageDetailPanel extends JPanel {
         pageFoot.add(Comic.row(pagePodcast.subtitleToggle()), BorderLayout.EAST);
         sourceFoot.add(Comic.row(sourceChanges.podcast().transcriptCopy()), BorderLayout.WEST);
         sourceFoot.add(Comic.row(sourceChanges.podcast().subtitleToggle()), BorderLayout.EAST);
+        sourceFoot.add(scopeRow(), BorderLayout.CENTER);
+        readingSourceFoot.add(scopeRow(), BorderLayout.CENTER);
+        areaFoot.add(Comic.row(areaPodcast.podcast().transcriptCopy()), BorderLayout.WEST);
+        areaFoot.add(Comic.row(areaPodcast.podcast().subtitleToggle()), BorderLayout.EAST);
+        areaFoot.add(scopeRow(), BorderLayout.CENTER);
         readerPage.setOrb(pagePodcast.orb());
         // Der Chat liest mit derselben Sprachausgabe vor; sein Knopf steht auf der Höhe dieser Knöpfe (Angelo 23.11.2026).
         chat.useReadAloud(this::readAloudBinding);
@@ -771,6 +851,8 @@ public final class PageDetailPanel extends JPanel {
         statementsView.onNote(note -> tabNote(STATEMENTS, note));
         statementsView.onShowJob(jobId -> context.navigator().showJob(jobId));
         sourceView.onStatus(text -> tabStatus(READING, text));
+        areaView.onStatus(text -> tabStatus(READING, text));
+        areaPodcast.onStatus(text -> tabStatus(READ, text));
         standing.onStatus(text -> tabStatus(STAND, text));
         standing.onJump(this::openAt);
         // Nach jedem (Neu-)Start, etwa nach dem Speichern der Wörter für den Stand, liest „Stand“ neu (Beobachter, kein
@@ -942,6 +1024,8 @@ public final class PageDetailPanel extends JPanel {
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
         deck.add(sourceChanges, SOURCE_TEXT_CARD);
+        deck.add(areaView, AREA_CARD);
+        deck.add(areaPodcast, AREA_TEXT_CARD);
         add(deck, BorderLayout.CENTER);
         clear();
     }
@@ -1050,6 +1134,8 @@ public final class PageDetailPanel extends JPanel {
             // Keine Quellenseite mehr: Anmeldung beim Änderungsprotokoll endet, die leere Karte nennt wieder die Seite.
             sourceView.source(null, null);
             sourceChanges.source(null, null);
+            areaView.area(null, null);
+            areaPodcast.area(null, null);
             sourceProperties.source(null);
             empty.setText(EMPTY_PAGE);
         }
@@ -1060,8 +1146,11 @@ public final class PageDetailPanel extends JPanel {
     private void showDeck() {
         String selected = tabs.selected();
         // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
-        sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected));
-        sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected));
+        boolean area = areaShown();
+        sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected) && !area);
+        sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected) && !area);
+        areaView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected) && area);
+        areaPodcast.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected) && area);
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && ADVANCED.equals(selected) && wide
                 && PROPERTIES.equals(wideAdvanced.selected()));
         readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
@@ -1083,7 +1172,9 @@ public final class PageDetailPanel extends JPanel {
         String page = pageCard;
         if (SOURCE_CARD.equals(page)) {
             // Quellenseite: „Leseansicht“ die KI-Zusammenfassung, „Text“ die Updates; die übrigen Reiter noch leer.
-            page = READING.equals(selected) ? SOURCE_CARD : READ.equals(selected) ? SOURCE_TEXT_CARD : EMPTY;
+            // Mit „Bereich“ statt der Änderungen der Überblick über den ganzen Bereich (Angelo 24.11.2026).
+            page = READING.equals(selected) ? area ? AREA_CARD : SOURCE_CARD
+                    : READ.equals(selected) ? area ? AREA_TEXT_CARD : SOURCE_TEXT_CARD : EMPTY;
         }
         boolean wideAdvancedShown = ADVANCED.equals(selected) && wide;
         cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD
@@ -1111,6 +1202,8 @@ public final class PageDetailPanel extends JPanel {
         empty.setText(EMPTY_SOURCE);
         sourceView.source(sourceId, spaceKey, shownTitle);
         sourceChanges.source(sourceId, spaceKey, shownTitle);
+        areaView.area(sourceId, spaceKey);
+        areaPodcast.area(sourceId, spaceKey);
         // Kennzahlen und Einstellungen gibt es vorerst nur für die ganze Quelle.
         sourceProperties.source(spaceKey == null ? sourceId : null);
         pageCard = SOURCE_CARD;
@@ -1127,6 +1220,8 @@ public final class PageDetailPanel extends JPanel {
         empty.setText(EMPTY_SOURCE);
         sourceView.source(null, null, title);
         sourceChanges.source(null, null, title);
+        areaView.area(null, null);
+        areaPodcast.area(null, null);
         sourceProperties.all(sourceIds);
         pageCard = SOURCE_CARD;
         showDeck();
@@ -3011,7 +3106,10 @@ public final class PageDetailPanel extends JPanel {
                 : ADVANCED.equals(selected) && PAGE.equals(pageCard) ? advancedFoot
                 : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
                 : READ.equals(selected) && videoTranscriptShown ? videoTranscript.action()
+                : READ.equals(selected) && SOURCE_CARD.equals(pageCard) && areaShown() ? areaFoot
                 : READ.equals(selected) && SOURCE_CARD.equals(pageCard) ? sourceFoot
+                : READING.equals(selected) && SOURCE_CARD.equals(pageCard) && sourceView.sourceId() != null
+                ? readingSourceFoot
                 : READ.equals(selected) && PAGE.equals(pageCard) ? pageFoot
                 : wide && folder != null ? folderFoot
                 : null;
@@ -5593,6 +5691,7 @@ public final class PageDetailPanel extends JPanel {
      */
     JComponent headerActions() {
         return Comic.row(analysisActions, advancedActions, sourceView.tools(), sourceChanges.tools(),
+                areaView.tools(), areaPodcast.tools(),
                 sourceProperties.tools(), readingHelp,
                 statementsHelp,
                 standingHelp, glossaryHelp, graphHelp, star, more);
@@ -5640,8 +5739,14 @@ public final class PageDetailPanel extends JPanel {
             return menu;
         }
         if (sourceMenuShown() && READING.equals(tabs.selected())) {
-            menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", sourceView.hasSummary(),
-                    this::saveSummary));
+            menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", areaShown()
+                    ? areaView.hasSummary() : sourceView.hasSummary(), this::saveSummary));
+            addPodcastSettings(menu);
+            return menu;
+        }
+        if (sourceMenuShown() && areaShown()) {
+            menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
+                    areaPodcast.podcast().hasTranscript(), () -> saveTranscript(areaPodcast.podcast())));
             addPodcastSettings(menu);
             return menu;
         }
@@ -5710,7 +5815,11 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void saveSummary() {
-        if (sourceView.hasSummary()) {
+        if (areaShown()) {
+            if (areaView.hasSummary()) {
+                saveText("Überblick " + safeName(title.getText()) + ".txt", areaView.copyText(), "Überblick");
+            }
+        } else if (sourceView.hasSummary()) {
             saveText("Zusammenfassung " + safeName(title.getText()) + ".txt", sourceView.copyText(),
                     "Zusammenfassung");
         }
