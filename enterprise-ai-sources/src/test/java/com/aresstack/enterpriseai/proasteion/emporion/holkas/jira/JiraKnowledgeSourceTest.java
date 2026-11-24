@@ -287,6 +287,9 @@ public class JiraKnowledgeSourceTest {
         assertEquals(id("DEMO-1"), source.resolveAddress("https://JIRA.example.org/jira/browse/DEMO-1?focusedCommentId=1#comment-1"));
         assertEquals(id("OPS-7"), source.resolveAddress("https://jira.example.org/jira/projects/OPS/issues/OPS-7?filter=allissues"));
         assertEquals(id("OPS-7"), source.resolveAddress("https://jira.example.org/jira/secure/RapidBoard.jspa?rapidView=1&selectedIssue=OPS-7"));
+        assertEquals(id("OPS-7"), source.resolveAddress("https://jira.example.org/jira/servicedesk/customer/portal/3/OPS-7"));
+        assertEquals(id("OPS-7"), source.resolveAddress("https://jira.example.org/jira/servicedesk/customer/portal/3/OPS-7?sda_source=notification-email"));
+        assertKind(Kind.NOT_FOUND, () -> source.resolveAddress("https://jira.example.org/jira/servicedesk/customer/portal/3"));
         assertEquals(id("DEMO-1"), source.resolveAddress("jira://jira.example.org/jira/issue/DEMO-1"));
         assertEquals(id("DEMO-1"), source.resolveAddress("jira://jira.example.org/jira/browse/DEMO-1"));
         assertKind(Kind.NOT_FOUND, () -> source.resolveAddress("https://jira.example.org/jira/secure/Dashboard.jspa"));

@@ -84,6 +84,11 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     als abgebrochen, ohne dass das Werkzeug läuft. Nach jeder Antwort schließt der Browser, das Profil bleibt. Ohne
     Firefox ist der Knopf gesperrt und sagt warum. Websuche und interne Suche sind unabhängig voneinander; sind beide
     an, warnt die Meldung oben, dass Inhalte aus Wissensquellen in Browseraufrufe einfließen können.
+    Nachtrag 24.11.2026: Ändernde Aktionen (`browser_act`, etwa ein Formular absenden) fragen mit „Immer erlauben“ und
+    „Immer verbieten“ je Website; die Antwort steht unter Einstellungen › Browser › Ändernde Aktionen (vorher fragte
+    jede Aktion jedes Mal, weil Space Harvester keine gemerkten Regeln hatte). Ablauf wie im EAC: eine Wolke je
+    Werkzeugaufruf, beim ersten Browser-Aufruf „Browser wird gestartet“, danach die Karte „Browserrecherche“; die
+    Antwortblase wartet unsichtbar hinter den Wolken und erscheint mit ihrem ersten Text.
 12. **Suche ohne Auswahl, Suchagent** (Nachtrag, Angelo 24.11.2026): Die App startet auf dem Suchreiter. Ein Klick
     auf den Suchreiter (oder Strg+Zahl) hebt die Auswahl der Wissensquellen ganz auf, auch die globale; die Suche in
     der Titelleiste lässt sie stehen. Wer die Suche ohne Auswahl verlässt, hat „Wissensquellen“ gewählt. Ohne Auswahl antwortet der Chat trotzdem: Er hat dann keine Bereichswerkzeuge (und

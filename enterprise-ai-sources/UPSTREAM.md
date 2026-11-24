@@ -5,6 +5,8 @@ Embedding-Adapters aus [aresstack/enterprise-ai-client](https://github.com/aress
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
+`df278fb1de239fa3a453cbae7d299a04d50a1cb9`, der Merge von enterprise-ai-client#237 (Jira: Kundenportal-Links des
+Service Desk `…/servicedesk/customer/portal/<n>/KEY-1` lösen zum Vorgang auf); früher
 `da2f5c496f8cee275acbac57ee74e7ab11024972`, der Merge von enterprise-ai-client#226 (Einmalcode, der auf eine große Datei weiterleitet: `UrlConnectionConfluenceTransport#postForm` liest einen strombaren Körper nicht mehr, die
 Antwort trägt Status, Typ und die Cookies aller Schritte, der Code gilt als angenommen); davor `4b3de28cbb203ffe63ca717f531df1d6142a2031`, der Merge von enterprise-ai-client#225 (`RestQuerySource`: GET-Abfragen
 unter `/rest/` der Quelle mit ihrer Anmeldung, für die Exporte „Confluence-Metadaten“ und „Analytics“ des Space
