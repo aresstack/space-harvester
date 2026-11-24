@@ -8,6 +8,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFil
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.SourceSettingsReader;
 import com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy;
+import com.aresstack.enterpriseai.source.api.files.FilePatterns;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.sources.SourceField;
 import java.nio.file.Files;
@@ -134,8 +135,11 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
             SourceSettings settings = settings(config);
             KnowledgeSourcePort files = provider.open(SourceAddress.of(config.id()), settings);
             // Dasselbe Verzeichnis wie in der Quelle, mit demselben Leser bestimmt.
-            Path root = new SourceSettingsReader(provider.type(), settings).path("directory", null);
-            return new OpenedSource(new LocalFolderHierarchy(files, root), null);
+            SourceSettingsReader reader = new SourceSettingsReader(provider.type(), settings);
+            Path root = reader.path("directory", null);
+            FilePatterns patterns = new FilePatterns(FilePatterns.split(reader.text("include", null)),
+                    FilePatterns.split(reader.text("exclude", null)));
+            return new OpenedSource(new LocalFolderHierarchy(files, root, patterns), null);
         } catch (IllegalArgumentException e) {
             throw new InvalidSourceConfigurationException(List.of(e.getMessage()));
         }

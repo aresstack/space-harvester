@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.ListedPage;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -64,9 +65,17 @@ class ParityFilesTest {
         JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
         assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
         List<ListedPage> pages = harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages();
-        return pages.stream().collect(Collectors.toMap(this::path, page -> new String(harvester.pages()
+        assertThat(pages.stream().filter(ParityFilesTest::isFolder)
+                .map(page -> page.header().metadata().attributes().get("file.path")).toList())
+                .containsExactlyInAnyOrder("docs", "docs/betrieb", "docs/betrieb/nacht", "docs/bilder", "daten");
+        return pages.stream().filter(page -> !isFolder(page))
+                .collect(Collectors.toMap(this::path, page -> new String(harvester.pages()
                 .page(harvester.caller(), "parity", page.header().key().pageId(), false).snapshot().payload().bytes(),
                 StandardCharsets.UTF_8)));
+    }
+
+    private static boolean isFolder(ListedPage page) {
+        return PageMetadata.FOLDER_KIND.equals(page.header().metadata().attributes().get(PageMetadata.RESOURCE_KIND));
     }
 
     /** Dateiname aus dem Titel; im Paritäts-Ordner sind die Namen eindeutig. */

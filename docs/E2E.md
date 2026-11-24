@@ -706,8 +706,10 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/syncs/$F
 ```
 
 ```json
-{ "state": "completed", "summary": { "added": 2, "complete": true, "generation": 1 } }
+{ "state": "completed", "summary": { "added": 3, "complete": true, "generation": 1 } }
 ```
+
+Der Abgleich zählt auch die Ordnerknoten; hier sind es zwei Dateien und ein Unterordner. Die Navigation lädt die direkten Kinder eines Ordners bei Bedarf.
 
 Die Seiten-ID ist der relative Pfad als Base64url (`start.md` → `c3RhcnQubWQ`); das Original ist die Datei Byte für
 Byte (`GET …/pages/c3RhcnQubWQ` liefert `text/markdown`):
@@ -720,7 +722,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 {
   "origin": "cache",
   "pages": [
-    { "pageId": "YmV0cmllYi9iZXJlaXRzY2hhZnQubWQ", "title": "bereitschaft.md", "spaceKey": "handbuch", "parentPageId": null },
+    { "pageId": "YmV0cmllYg", "title": "betrieb", "spaceKey": "handbuch", "parentPageId": null },
+    { "pageId": "YmV0cmllYi9iZXJlaXRzY2hhZnQubWQ", "title": "bereitschaft.md", "spaceKey": "handbuch", "parentPageId": "YmV0cmllYg" },
     { "pageId": "c3RhcnQubWQ", "title": "start.md", "spaceKey": "handbuch", "parentPageId": null }
   ]
 }

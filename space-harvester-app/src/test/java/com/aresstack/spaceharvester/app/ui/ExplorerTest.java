@@ -215,21 +215,24 @@ class ExplorerTest {
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
 
-        // Ordnerquellen zeigen ihre Seiten flach unter dem Space; ein Vorfahr, den der Baum nicht als Wurzel zeigt,
-        // hindert nicht daran, die Seite direkt unter dem Space zu finden.
+        // Resolve the real folder path without relying on the indexed cache.
         Explorer.Batch spaces = Explorer.children(context.runtime(), new Explorer.SourceItem("handbuch", "Handbuch"),
                 null);
         Explorer.SpaceItem space = (Explorer.SpaceItem) spaces.nodes().get(0).item();
-        // Beide Seiten aus einer Auflistung vor dem Explorer: später kann der Bestand erst teilweise gefüllt sein.
         List<Explorer.PageItem> pages = Explorer.children(context.runtime(), space, null).nodes().stream()
                 .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
                 .toList();
-        Explorer.PageItem target = pages.stream().filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
-                .filter(page -> page.title().toLowerCase(java.util.Locale.ROOT).contains("wartung"))
+        Explorer.PageItem folder = pages.stream().filter(page -> page.title().equals("betrieb"))
                 .findFirst().orElseThrow();
+        assertThat(folder.kind()).isEqualTo(HarvestSource.PageNode.Kind.FOLDER);
+        Explorer.PageItem target = Explorer.children(context.runtime(), folder, null).nodes().stream()
+                .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .filter(page -> page.title().equals("wartungsfenster.md")).findFirst().orElseThrow();
         PageNavigation.Position position = new PageNavigation.Position("handbuch", space.spaceKey(), space.name(),
-                List.of(new HarvestSource.PageNode("unbekannt", "Ordner", space.spaceKey(), true)),
-                new HarvestSource.PageNode(target.pageId(), target.title(), space.spaceKey(), false));
+                List.of(new HarvestSource.PageNode(folder.pageId(), folder.title(), space.spaceKey(), true,
+                        HarvestSource.PageNode.Kind.FOLDER)),
+                new HarvestSource.PageNode(target.pageId(), target.title(), space.spaceKey(), false,
+                        HarvestSource.PageNode.Kind.FILE));
 
         Explorer[] explorer = new Explorer[1];
         int[] scopeCalls = new int[1];
@@ -256,7 +259,7 @@ class ExplorerTest {
 
         // Erst Treffer A (Pfad wird im Hintergrund geholt), dann B: die spätere Antwort für A überschreibt B nicht.
         Explorer.PageItem other = pages.stream()
-                .filter(page -> !page.pageId().equals(wanted)).findFirst().orElseThrow();
+                .filter(page -> page.title().equals("anderes.md")).findFirst().orElseThrow();
         SwingUtilities.invokeAndWait(() -> {
             explorer[0].revealPage("handbuch", other.pageId());
             explorer[0].revealPage(position);
