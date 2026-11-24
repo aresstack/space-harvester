@@ -145,6 +145,10 @@ public final class AttachmentViewerPanel extends JPanel {
     private double renderScale = PDF_BASE_SCALE;
     /** Zählt jede Zeichenanfrage; ein älteres Ergebnis wird verworfen. */
     private int renderGeneration;
+    /** Die markierte Fundstelle im PDF ({@link #showPassage}); {@code null} ohne. */
+    private RenderedPages.Passage passage;
+    /** Eine Fundstelle, die auf das Ende des Ladens wartet. */
+    private Runnable passageWaiting;
     private boolean closed;
     /** Zählt jedes Laden; ein Dekodier-Ergebnis für ein älteres Laden wird verworfen. */
     private int loadGeneration;
@@ -558,6 +562,7 @@ public final class AttachmentViewerPanel extends JPanel {
     private void loaded() {
         spinner.setBusy(false);
         busy.setVisible(false);
+        SwingUtilities.invokeLater(this::passageReady); // nach dem Einsetzen des Inhalts
     }
 
     /** Statt des Inhalts eine Meldung. */
@@ -565,6 +570,7 @@ public final class AttachmentViewerPanel extends JPanel {
         spinner.setBusy(false);
         busy.setText(text);
         busy.setVisible(true);
+        SwingUtilities.invokeLater(this::passageReady);
     }
 
     private static JComponent transparent() {
@@ -1126,6 +1132,155 @@ public final class AttachmentViewerPanel extends JPanel {
         headingObservers.add(observer);
     }
 
+    /**
+     * Springt zur Fundstelle und markiert sie (Angelo 24.11.2026: „das Interessante ist ja, wo es steht“). Gesucht wird
+     * der wörtliche {@code excerpt} ({@link Passages}): im PDF auf den Seiten (blättert hin, orange Rechtecke über dem
+     * Text), im Word-Dokument und in der Textansicht im Text (markiert und rollt hin). Lädt der Anhang noch, wird
+     * danach gesucht. {@code found} erfährt auf dem EDT, ob die Stelle gefunden wurde; ohne Auszug, in Bildern und
+     * Folien nie.
+     */
+    public void showPassage(String excerpt, Consumer<Boolean> found) {
+        String wanted = excerpt == null ? "" : excerpt.strip();
+        if (closed || wanted.isEmpty()) {
+            found.accept(false);
+            return;
+        }
+        if (spinner.isBusy()) {
+            passageWaiting = () -> locatePassage(wanted, found);
+            return;
+        }
+        locatePassage(wanted, found);
+    }
+
+    private void locatePassage(String wanted, Consumer<Boolean> found) {
+        if (closed) {
+            found.accept(false);
+        } else if (documentPane.isVisible()) {
+            found.accept(markText(documentArea, wanted));
+        } else if (textPane.isVisible()) {
+            found.accept(markText(textArea, wanted));
+        } else if (pages != null) {
+            markPdf(wanted, found);
+        } else {
+            found.accept(false);
+        }
+    }
+
+    /** Die markierte Stelle im PDF (für Tests): Seite und Rechtecke, {@code null} ohne. */
+    RenderedPages.Passage passage() {
+        return passage;
+    }
+
+    /** Der markierte Text im Text oder Word-Dokument (für Tests), {@code null} ohne. */
+    String markedText() {
+        javax.swing.text.JTextComponent area = documentPane.isVisible() ? documentArea : textArea;
+        for (javax.swing.text.Highlighter.Highlight mark : area.getHighlighter().getHighlights()) {
+            if (mark.getPainter() instanceof PassagePainter) {
+                try {
+                    return area.getDocument().getText(mark.getStartOffset(),
+                            mark.getEndOffset() - mark.getStartOffset());
+                } catch (javax.swing.text.BadLocationException e) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Lädt nichts mehr (Inhalt oder Meldung steht): die wartende Fundstelle suchen. */
+    private void passageReady() {
+        Runnable waiting = passageWaiting;
+        passageWaiting = null;
+        if (waiting != null) {
+            waiting.run();
+        }
+    }
+
+    private boolean markText(javax.swing.text.JTextComponent area, String excerpt) {
+        javax.swing.text.Highlighter highlighter = area.getHighlighter();
+        for (javax.swing.text.Highlighter.Highlight mark : highlighter.getHighlights()) {
+            if (mark.getPainter() instanceof PassagePainter) {
+                highlighter.removeHighlight(mark);
+            }
+        }
+        javax.swing.text.Document text = area.getDocument();
+        try {
+            int[] at = Passages.locate(text.getText(0, text.getLength()), excerpt, -1, -1);
+            if (at == null) {
+                return false;
+            }
+            highlighter.addHighlight(at[0], at[1], new PassagePainter());
+            area.setCaretPosition(at[0]);
+            SwingUtilities.invokeLater(() -> reveal(area, at[0], at[1]));
+            return true;
+        } catch (javax.swing.text.BadLocationException e) {
+            return false;
+        }
+    }
+
+    /** Rollt so, dass die Stelle im oberen Drittel steht (wie die Suche im Editor). */
+    private static void reveal(javax.swing.text.JTextComponent area, int start, int end) {
+        try {
+            java.awt.geom.Rectangle2D from = area.modelToView2D(start);
+            java.awt.geom.Rectangle2D to = area.modelToView2D(end);
+            if (from == null) {
+                return;
+            }
+            java.awt.Rectangle target = from.getBounds();
+            if (to != null) {
+                target.add(to.getBounds());
+            }
+            java.awt.Rectangle visible = area.getVisibleRect();
+            int top = Math.max(0, target.y - visible.height / 3);
+            area.scrollRectToVisible(new java.awt.Rectangle(target.x, top, 1, Math.max(target.height,
+                    visible.height - visible.height / 3)));
+        } catch (javax.swing.text.BadLocationException | IllegalArgumentException ignored) {
+            // Stelle inzwischen außerhalb des Textes.
+        }
+    }
+
+    /** Sucht auf dem Zeichen-Thread (PDFBox ist nicht threadsicher) und blättert zur Seite mit der Stelle. */
+    private void markPdf(String excerpt, Consumer<Boolean> found) {
+        final RenderedPages document = pages;
+        renderer.execute(() -> {
+            RenderedPages.Passage at;
+            try {
+                at = document.find(excerpt);
+            } catch (IOException | RuntimeException e) {
+                at = null;
+            }
+            final RenderedPages.Passage hit = at;
+            onEdt(() -> {
+                if (closed || document != pages) {
+                    found.accept(false);
+                    return;
+                }
+                passage = hit;
+                if (hit == null) {
+                    canvas.marks = List.of();
+                    canvas.repaint();
+                    found.accept(false);
+                    return;
+                }
+                if (hit.page() == page && canvas.staticImage != null) {
+                    canvas.marks = hit.boxes();
+                    canvas.revealMarks();
+                    canvas.repaint();
+                } else {
+                    showPage(hit.page());
+                }
+                found.accept(true);
+            });
+        });
+    }
+
+    /** Markiert die Fundstelle im Text; eigene Klasse, damit nur sie wieder entfernt wird. */
+    private static final class PassagePainter extends javax.swing.text.DefaultHighlighter.DefaultHighlightPainter {
+        PassagePainter() {
+            super(Passages.MARK);
+        }
+    }
+
     /** Springt zur Überschrift: sie steht danach oben in der Ansicht. */
     public void showHeading(Heading heading) {
         if (!documentPane.isVisible()) {
@@ -1326,12 +1481,14 @@ public final class AttachmentViewerPanel extends JPanel {
                 }
                 loaded();
                 if (fresh) {
+                    canvas.marks = passage != null && passage.page() == target ? passage.boxes() : List.of();
                     canvas.setStaticImage(drawn);
                     if (pendingView != null) {
                         canvas.apply(pendingView);
                         pendingView = null;
                         zoomed();
                     }
+                    canvas.revealMarks();
                 } else {
                     canvas.replaceImage(drawn, drawn.getWidth() / (double) Math.max(1, canvas.imgW));
                     renderScale = scale;
@@ -1624,6 +1781,8 @@ public final class AttachmentViewerPanel extends JPanel {
         private boolean fitted;
         /** Ob der Benutzer gezoomt oder den Ausschnitt verschoben hat; „Einpassen“ setzt es zurück. */
         boolean adjusted;
+        /** Die markierte Fundstelle als Rechtecke, Anteil der Seite (0…1); leer ohne. */
+        List<java.awt.geom.Rectangle2D> marks = List.of();
 
         Canvas() {
             setBackground(new Color(30, 30, 30));
@@ -1732,6 +1891,23 @@ public final class AttachmentViewerPanel extends JPanel {
             return (int) Math.round(zoom * 100);
         }
 
+        /** Ist die Seite größer als die Fläche, den Ausschnitt so legen, dass die Fundstelle mittig steht. */
+        void revealMarks() {
+            if (marks.isEmpty() || imgW <= 0 || getWidth() <= 0) {
+                return;
+            }
+            java.awt.geom.Rectangle2D first = marks.get(0);
+            double w = imgW * zoom;
+            double h = imgH * zoom;
+            if (w > getWidth()) {
+                offsetX = ViewerWheel.panTo(offsetX, getWidth() / 2.0 - first.getCenterX() * w, w, getWidth());
+            }
+            if (h > getHeight()) {
+                offsetY = ViewerWheel.panTo(offsetY, getHeight() / 2.0 - first.getCenterY() * h, h, getHeight());
+            }
+            repaint();
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
@@ -1751,6 +1927,16 @@ public final class AttachmentViewerPanel extends JPanel {
                     g2.drawImage(animatedIcon.getImage(), x, y, w, h, this);
                 } else {
                     g2.drawImage(staticImage, x, y, w, h, null);
+                }
+                for (java.awt.geom.Rectangle2D mark : marks) {
+                    int mx = x + (int) Math.round(mark.getX() * w);
+                    int my = y + (int) Math.round(mark.getY() * h);
+                    int mw = Math.max(2, (int) Math.round(mark.getWidth() * w));
+                    int mh = Math.max(2, (int) Math.round(mark.getHeight() * h));
+                    g2.setColor(Passages.MARK);
+                    g2.fillRect(mx, my, mw, mh);
+                    g2.setColor(Passages.MARK.darker());
+                    g2.drawRect(mx, my, mw, mh);
                 }
             } finally {
                 g2.dispose();

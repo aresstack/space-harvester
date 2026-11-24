@@ -83,6 +83,8 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
             Locale.GERMANY);
     private static final Color FIND_MARK = new Color(0xFFE066);
     private static final Color FIND_CURRENT = new Color(0xFFA94D);
+    /** Eine gezeigte Fundstelle ({@link #showPassage}): kräftiges Orange wie der aktuelle Treffer. */
+    private static final Color PASSAGE_MARK = FIND_CURRENT;
 
     private final EditorSession session;
     private final RSyntaxTextArea area = new RSyntaxTextArea();
@@ -605,6 +607,61 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
     @Override
     public JComponent findCorner() {
         return ownsFind ? languagePart : null;
+    }
+
+    /**
+     * Zeigt eine Fundstelle im Text: holt den Text nach vorn, markiert die Stelle orange, wählt sie aus und rollt sie
+     * ins obere Drittel. Gesucht wird über
+     * {@link com.aresstack.spaceharvester.app.ui.content.viewer.Passages#locate}; die vorige Fundstelle verliert ihre
+     * Markierung.
+     *
+     * @return ob die Stelle gefunden wurde
+     */
+    public boolean showPassage(String excerpt, int start, int end) {
+        clearPassage();
+        int[] found = com.aresstack.spaceharvester.app.ui.content.viewer.Passages.locate(area.getText(), excerpt,
+                start, end);
+        if (found == null) {
+            return false;
+        }
+        if (centerSearch != null) {
+            showText();
+        }
+        try {
+            area.getHighlighter().addHighlight(found[0], found[1], new PassagePainter());
+        } catch (BadLocationException e) {
+            return false;
+        }
+        area.getFoldManager().ensureOffsetNotInClosedFold(found[0]);
+        area.select(found[0], found[1]);
+        // Erst nach dem Layout: die Vorschau ist eben erst wieder sichtbar geworden
+        javax.swing.SwingUtilities.invokeLater(() -> centerOn(found[0]));
+        return true;
+    }
+
+    private void clearPassage() {
+        Highlighter highlighter = area.getHighlighter();
+        for (Highlighter.Highlight highlight : highlighter.getHighlights()) {
+            if (highlight.getPainter() instanceof PassagePainter) {
+                highlighter.removeHighlight(highlight);
+            }
+        }
+    }
+
+    /** Die markierte Fundstelle als {@code {start, end}}; {@code null} ohne. Für Tests. */
+    int[] passage() {
+        for (Highlighter.Highlight highlight : area.getHighlighter().getHighlights()) {
+            if (highlight.getPainter() instanceof PassagePainter) {
+                return new int[] {highlight.getStartOffset(), highlight.getEndOffset()};
+            }
+        }
+        return null;
+    }
+
+    private static final class PassagePainter extends DefaultHighlighter.DefaultHighlightPainter {
+        PassagePainter() {
+            super(PASSAGE_MARK);
+        }
     }
 
     /** Markiert alle Treffer neu, faltet im Filtermodus und zeigt die Zahl. */
