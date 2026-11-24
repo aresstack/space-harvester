@@ -100,13 +100,8 @@ public final class FirefoxEngine implements BrowserEngine {
         try {
             writeDefaultsOnce(profileDirectory);
             int port = freeLoopbackPort();
-            List<String> command = new ArrayList<String>();
-            command.add(executable.toString());
-            command.add("-profile");
-            command.add(profileDirectory.toAbsolutePath().toString());
-            command.add("-no-remote");
-            command.add("--remote-debugging-port=" + port);
-            ProcessBuilder builder = new ProcessBuilder(command);
+            ProcessBuilder builder = new ProcessBuilder(command(executable, profileDirectory, port,
+                    System.getProperty("os.name")));
             // Java 8 has no Redirect.DISCARD: send stdout to the null device so it never blocks Firefox.
             builder.redirectOutput(new File(System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")
                     ? "NUL" : "/dev/null"));
@@ -128,6 +123,25 @@ public final class FirefoxEngine implements BrowserEngine {
             lock.release();
             throw e;
         }
+    }
+
+    /**
+     * The Firefox command line. On Windows {@code firefox.exe} is a launcher that starts the real browser as a child
+     * and exits with code 0; {@code -wait-for-browser} keeps the launcher alive as long as the browser, so the start
+     * check, {@code destroy()} and the profile lock follow the real browser instead of reporting "beendet" and
+     * starting a second Firefox.
+     */
+    static List<String> command(Path executable, Path profileDirectory, int port, String osName) {
+        List<String> command = new ArrayList<String>();
+        command.add(executable.toString());
+        command.add("-profile");
+        command.add(profileDirectory.toAbsolutePath().toString());
+        command.add("-no-remote");
+        if (osName != null && osName.toLowerCase(Locale.ROOT).contains("win")) {
+            command.add("-wait-for-browser");
+        }
+        command.add("--remote-debugging-port=" + port);
+        return command;
     }
 
     private void awaitReady(final Process process, int port) throws BrowserException {
