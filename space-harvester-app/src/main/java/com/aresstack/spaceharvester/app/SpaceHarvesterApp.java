@@ -54,7 +54,10 @@ public final class SpaceHarvesterApp {
             config = fromEnv == null || fromEnv.isBlank() ? AppSettingsLoader.defaultFile(home) : Path.of(fromEnv);
         }
         AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home), config, version());
-        Runtime.getRuntime().addShutdownHook(new Thread(context::shutdown, "space-harvester-shutdown"));
+        // Auch beim Beenden von außen (Abmelden, Strg+C) mit Frist; nach AppExit#exit kehrt der Hook sofort zurück.
+        Runtime.getRuntime().addShutdownHook(new Thread(
+                () -> AppExit.cleanUp(java.util.List.of(context::shutdown), AppExit.timeout()),
+                "space-harvester-shutdown"));
         if (screenshots != null) {
             CountDownLatch started = new CountDownLatch(1);
             SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
