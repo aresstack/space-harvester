@@ -1,0 +1,625 @@
+package com.aresstack.spaceharvester.deck.ftp.commonsnet;
+
+import com.aresstack.spaceharvester.deck.ftp.mvs.MvsLocation;
+import com.aresstack.spaceharvester.deck.ftp.mvs.MvsLocationType;
+import com.aresstack.spaceharvester.deck.ftp.mvs.MvsQuoteNormalizer;
+import com.aresstack.spaceharvester.deck.ftp.mvs.MvsVirtualResource;
+
+import org.apache.commons.net.ftp.FTPClient;
+import org.apache.commons.net.ftp.FTPFile;
+import org.apache.commons.net.ftp.FTPListParseEngine;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.StringReader;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * Service for listing MVS datasets/members with robust strategy chain.
+ *
+ * Strategy order:
+ * 1. NLST (names only) - fastest
+ * 2. LIST via FTPListParseEngine (paged, parsed)
+ * 3. LIST Raw fallback (parse raw listing lines)
+ *
+ * If one strategy returns empty/error, the next is tried automatically.
+ */
+public class MvsListingService {
+
+    private static final java.util.logging.Logger LOG =
+            java.util.logging.Logger.getLogger(MvsListingService.class.getName());
+
+    private static final int DEFAULT_PAGE_SIZE = 200;
+
+    private final FTPClient ftpClient;
+
+    public MvsListingService(FTPClient ftpClient) {
+        this.ftpClient = ftpClient;
+    }
+
+    /**
+     * List children of an MVS location with pagination.
+     * Tries multiple strategies until one succeeds.
+     *
+     * Performs a **dual listing** for DATASET locations:
+     * 1. PDS members (e.g. NLST 'USR1.TMP(*)' or NLST 'USR1.TMP')
+     * 2. Sub-datasets (NLST 'USR1.TMP.*')
+     * Both results are merged so the user sees members AND sub-datasets.
+     */
+    public void listChildren(MvsLocation location, int pageSize, AtomicBoolean cancellation,
+                            PageCallback callback) throws IOException {
+
+        if (location.getType() == MvsLocationType.ROOT) {
+            LOG.fine("[MvsListingService] Cannot list ROOT - HLQ required");
+            callback.onPage(Collections.<MvsVirtualResource>emptyList(), true);
+            return;
+        }
+
+        if (location.getType() == MvsLocationType.MEMBER) {
+            LOG.fine("[MvsListingService] Cannot list MEMBER - it's a file");
+            callback.onPage(Collections.<MvsVirtualResource>emptyList(), true);
+            return;
+        }
+
+        String queryPath = location.getQueryPath();
+        LOG.fine("[MvsListingService] Listing: logicalPathValue=" + location.getLogicalPath() +
+                          ", queryPathValue=" + queryPath + ", typSchluessel=" + location.getType());
+
+        // ── 1. Direct listing: PDS members / direct matches ──
+        List<String> queryCandidates = buildQueryCandidates(location, queryPath);
+
+        List<MvsVirtualResource> directResults = Collections.emptyList();
+        boolean pagedDelivered = false;
+
+        for (String candidate : queryCandidates) {
+            if (cancellation.get()) {
+                return;
+            }
+
+            // Strategy 1: NLST
+            directResults = tryNlst(candidate, location, cancellation);
+            if (!directResults.isEmpty()) {
+                LOG.fine("[MvsListingService] NLST succeeded with " + directResults.size() + " results for: " + candidate);
+                break;
+            }
+
+            // Strategy 2: LIST with ParseEngine (paged)
+            directResults = tryListPaged(candidate, location, pageSize, cancellation, callback);
+            if (!directResults.isEmpty()) {
+                LOG.fine("[MvsListingService] LIST (paged) succeeded with " + directResults.size() + " results for: " + candidate);
+                pagedDelivered = true;
+                break;
+            }
+
+            // Strategy 3: LIST Raw fallback
+            directResults = tryListRaw(candidate, location, cancellation);
+            if (!directResults.isEmpty()) {
+                LOG.fine("[MvsListingService] LIST (raw) succeeded with " + directResults.size() + " results for: " + candidate);
+                break;
+            }
+        }
+
+        // ── 2. Wildcard listing: sub-datasets 'PARENT.*' ──
+        List<MvsVirtualResource> subDatasetResults = Collections.emptyList();
+        String wildcardPath = buildWildcardPath(location);
+        if (wildcardPath != null && !cancellation.get()) {
+            subDatasetResults = tryNlst(wildcardPath,
+                    // Use a qualifier context parent so results are interpreted as sub-datasets
+                    MvsLocation.qualifierContext(MvsQuoteNormalizer.unquote(location.getLogicalPath())),
+                    cancellation);
+            if (!subDatasetResults.isEmpty()) {
+                LOG.fine("[MvsListingService] Wildcard NLST returned " + subDatasetResults.size() + " sub-datasets for: " + wildcardPath);
+            }
+        }
+
+        // ── 3. Merge and deduplicate ──
+        Map<String, MvsVirtualResource> merged = new LinkedHashMap<String, MvsVirtualResource>();
+        // Sub-datasets first (they show as directories)
+        for (MvsVirtualResource res : subDatasetResults) {
+            String key = res.getKey();
+            if (!merged.containsKey(key)) {
+                merged.put(key, res);
+            }
+        }
+        // Then direct results (members)
+        for (MvsVirtualResource res : directResults) {
+            String key = res.getKey();
+            if (!merged.containsKey(key)) {
+                merged.put(key, res);
+            }
+        }
+
+        List<MvsVirtualResource> allResults = new ArrayList<MvsVirtualResource>(merged.values());
+
+        if (pagedDelivered && subDatasetResults.isEmpty()) {
+            // Results were already delivered via paged callback, nothing more to do
+            return;
+        }
+
+        if (pagedDelivered && !subDatasetResults.isEmpty()) {
+            // Paged delivery happened but we have additional sub-datasets to add
+            // Deliver them as an additional page
+            callback.onPage(subDatasetResults, true);
+            return;
+        }
+
+        // Deliver merged results via pagination
+        deliverResultsPaged(allResults, pageSize, cancellation, callback);
+    }
+
+    /**
+     * Build wildcard path for sub-dataset listing.
+     * E.g. for DATASET 'USR1.TMP' → "'USR1.TMP.*'"
+     * Returns null for ROOT, MEMBER, or paths already containing wildcards.
+     */
+    private String buildWildcardPath(MvsLocation location) {
+        if (location.getType() == MvsLocationType.ROOT || location.getType() == MvsLocationType.MEMBER) {
+            return null;
+        }
+        String unquoted = MvsQuoteNormalizer.unquote(location.getLogicalPath());
+        if (unquoted.isEmpty() || unquoted.contains("*") || unquoted.contains("(")) {
+            return null;
+        }
+        return MvsQuoteNormalizer.normalize(unquoted + ".*");
+    }
+
+    /**
+     * Build query candidates to try.
+     */
+    private List<String> buildQueryCandidates(MvsLocation location, String queryPath) {
+        List<String> candidates = new ArrayList<String>();
+
+        // For DATASET context prefer explicit member query first.
+        if (location.getType() == MvsLocationType.DATASET) {
+            String memberQuery = toMemberQuery(location.getLogicalPath());
+            if (!memberQuery.isEmpty()) {
+                candidates.add(memberQuery);
+            }
+        }
+
+        // Primary: as-is
+        if (!candidates.contains(queryPath)) {
+            candidates.add(queryPath);
+        }
+
+        // Try uppercase variant
+        String unquoted = MvsQuoteNormalizer.unquote(queryPath);
+        String uppercase = unquoted.toUpperCase();
+        if (!uppercase.equals(unquoted)) {
+            String normalizedUpper = MvsQuoteNormalizer.normalize(uppercase);
+            if (!candidates.contains(normalizedUpper)) {
+                candidates.add(normalizedUpper);
+            }
+        }
+
+        // Try unquoted variant (some servers don't like quotes)
+        if (!unquoted.equals(queryPath) && !candidates.contains(unquoted)) {
+            candidates.add(unquoted);
+        }
+
+        return candidates;
+    }
+
+    private String toMemberQuery(String logicalPath) {
+        String unquoted = MvsQuoteNormalizer.unquote(logicalPath);
+        if (unquoted.isEmpty() || unquoted.contains("(")) {
+            return "";
+        }
+        return MvsQuoteNormalizer.normalize(unquoted + "(*)");
+    }
+
+    /**
+     * Strategy 1: NLST (names only).
+     */
+    private List<MvsVirtualResource> tryNlst(String queryPath, MvsLocation parentLocation,
+                                             AtomicBoolean cancellation) {
+        try {
+            LOG.fine("[MvsListingService] effectiveCommand=NLST queryPathValue=" + queryPath);
+            String[] names = ftpClient.listNames(queryPath);
+
+            int replyCode = ftpClient.getReplyCode();
+            String replyString = ftpClient.getReplyString();
+
+            if (names == null || names.length == 0) {
+                // 550 or empty is not fatal - just means no results with this strategy
+                LOG.fine("[MvsListingService] NLST empty/null for: " + queryPath +
+                                  " (reply=" + replyCode + ": " + replyString.trim() + ")");
+                return Collections.emptyList();
+            }
+
+            LOG.fine("[MvsListingService] NLST returned " + names.length + " entries");
+            return buildResourcesFromNames(names, parentLocation, cancellation);
+
+        } catch (IOException e) {
+            LOG.fine("[MvsListingService] NLST failed for: " + queryPath + " - " + e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Strategy 2: LIST with FTPListParseEngine (paged).
+     */
+    private List<MvsVirtualResource> tryListPaged(String queryPath, MvsLocation parentLocation,
+                                                   int pageSize, AtomicBoolean cancellation,
+                                                   PageCallback callback) {
+        try {
+            LOG.fine("[MvsListingService] effectiveCommand=LIST(paged) queryPathValue=" + queryPath);
+            FTPListParseEngine engine = ftpClient.initiateListParsing(queryPath);
+
+            if (engine == null) {
+                LOG.fine("[MvsListingService] LIST engine null for: " + queryPath);
+                return Collections.emptyList();
+            }
+
+            List<MvsVirtualResource> allResults = new ArrayList<MvsVirtualResource>();
+            boolean isFirst = true;
+
+            while (engine.hasNext() && !cancellation.get()) {
+                FTPFile[] page = engine.getNext(pageSize);
+                if (page == null || page.length == 0) {
+                    break;
+                }
+
+                List<MvsVirtualResource> pageResults = buildResourcesFromFtpFiles(page, parentLocation, cancellation);
+                allResults.addAll(pageResults);
+
+                // Deliver first page immediately
+                if (isFirst && !pageResults.isEmpty()) {
+                    LOG.fine("[MvsListingService] Delivering first page: " + pageResults.size() + " items");
+                    callback.onPage(pageResults, !engine.hasNext());
+                    isFirst = false;
+                } else if (!pageResults.isEmpty()) {
+                    callback.onPage(pageResults, !engine.hasNext());
+                }
+            }
+
+            if (allResults.isEmpty()) {
+                LOG.fine("[MvsListingService] LIST (paged) returned empty for: " + queryPath);
+            }
+
+            return allResults;
+
+        } catch (IOException e) {
+            LOG.fine("[MvsListingService] LIST (paged) failed for: " + queryPath + " - " + e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Strategy 3: LIST with raw line parsing (fallback).
+     */
+    private List<MvsVirtualResource> tryListRaw(String queryPath, MvsLocation parentLocation,
+                                                 AtomicBoolean cancellation) {
+        try {
+            LOG.fine("[MvsListingService] effectiveCommand=LIST(raw) queryPathValue=" + queryPath);
+            FTPFile[] files = ftpClient.listFiles(queryPath);
+
+            if (files == null || files.length == 0) {
+                LOG.fine("[MvsListingService] LIST (raw) empty for: " + queryPath +
+                                  " (reply=" + ftpClient.getReplyCode() + ")");
+                return Collections.emptyList();
+            }
+
+            // Check for unparseable entries and try to extract from raw listing
+            List<String> names = new ArrayList<String>();
+            for (FTPFile file : files) {
+                if (cancellation.get()) {
+                    break;
+                }
+
+                String name = file.getName();
+                if (name != null && !name.isEmpty()) {
+                    names.add(name);
+                } else if (file.getRawListing() != null) {
+                    // Try to extract name from raw listing
+                    String extracted = extractNameFromRawListing(file.getRawListing());
+                    if (extracted != null && !extracted.isEmpty()) {
+                        names.add(extracted);
+                    }
+                }
+            }
+
+            if (names.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            LOG.fine("[MvsListingService] LIST (raw) extracted " + names.size() + " names");
+            return buildResourcesFromNames(names.toArray(new String[0]), parentLocation, cancellation);
+
+        } catch (IOException e) {
+            LOG.fine("[MvsListingService] LIST (raw) failed for: " + queryPath + " - " + e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Extract dataset/member name from raw MVS listing line.
+     * MVS listing format varies, but typically the dataset name is the last "word".
+     */
+    private String extractNameFromRawListing(String rawLine) {
+        if (rawLine == null || rawLine.isEmpty()) {
+            return null;
+        }
+
+        String trimmed = rawLine.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        // For MVS, the dataset name is often at the end of the line
+        // Example formats:
+        // "Volume Unit    Referred Ext Used Recfm Lrecl BlkSz Dsorg Dsname"
+        // "MIGRAT  ... BENUTZERKENNUNG.DATASET"
+
+        String[] parts = trimmed.split("\\s+");
+        if (parts.length > 0) {
+            String lastPart = parts[parts.length - 1];
+            // Validate it looks like a dataset name
+            if (isValidDatasetName(lastPart)) {
+                return lastPart;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Check if a string looks like a valid MVS dataset name.
+     */
+    private boolean isValidDatasetName(String name) {
+        if (name == null || name.isEmpty() || name.length() > 44) {
+            return false;
+        }
+
+        // Must contain only valid characters: A-Z, 0-9, @, #, $, ., (, )
+        for (char c : name.toCharArray()) {
+            if (!Character.isLetterOrDigit(c) && c != '.' && c != '@' && c != '#' && c != '$' &&
+                c != '(' && c != ')') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Build MvsVirtualResource list from NLST names.
+     */
+    private List<MvsVirtualResource> buildResourcesFromNames(String[] names, MvsLocation parentLocation,
+                                                              AtomicBoolean cancellation) {
+        Map<String, MvsVirtualResource> deduped = new LinkedHashMap<String, MvsVirtualResource>();
+        String parentUnquoted = MvsQuoteNormalizer.unquote(parentLocation.getLogicalPath()).toUpperCase();
+
+        for (String name : names) {
+            if (cancellation.get()) {
+                break;
+            }
+
+            if (name == null || name.trim().isEmpty()) {
+                continue;
+            }
+
+            String trimmed = name.trim();
+            String unquoted = MvsQuoteNormalizer.unquote(trimmed).toUpperCase();
+
+            // Skip parent entry
+            if (unquoted.equals(parentUnquoted)) {
+                LOG.fine("[MvsListingService] Skipping parent entry: " + trimmed);
+                continue;
+            }
+
+            MvsLocation childLocation = createChildLocation(parentLocation, trimmed, parentUnquoted);
+            if (childLocation != null && !childLocation.equals(parentLocation)) {
+                String key = childLocation.getLogicalPath().toUpperCase();
+                if (!deduped.containsKey(key)) {
+                    deduped.put(key, MvsVirtualResource.builder(childLocation).build());
+                }
+            }
+        }
+
+        return new ArrayList<MvsVirtualResource>(deduped.values());
+    }
+
+    /**
+     * Build MvsVirtualResource list from FTPFile array.
+     */
+    private List<MvsVirtualResource> buildResourcesFromFtpFiles(FTPFile[] files, MvsLocation parentLocation,
+                                                                 AtomicBoolean cancellation) {
+        Map<String, MvsVirtualResource> deduped = new LinkedHashMap<String, MvsVirtualResource>();
+        String parentUnquoted = MvsQuoteNormalizer.unquote(parentLocation.getLogicalPath()).toUpperCase();
+
+        for (FTPFile file : files) {
+            if (cancellation.get()) {
+                break;
+            }
+
+            String name = file.getName();
+            if (name == null || name.trim().isEmpty()) {
+                // Try raw listing
+                if (file.getRawListing() != null) {
+                    name = extractNameFromRawListing(file.getRawListing());
+                }
+            }
+
+            if (name == null || name.trim().isEmpty()) {
+                continue;
+            }
+
+            String trimmed = name.trim();
+            String unquoted = MvsQuoteNormalizer.unquote(trimmed).toUpperCase();
+
+            // Skip parent entry
+            if (unquoted.equals(parentUnquoted)) {
+                continue;
+            }
+
+            MvsLocation childLocation = createChildLocation(parentLocation, trimmed, parentUnquoted);
+            if (childLocation != null && !childLocation.equals(parentLocation)) {
+                String key = childLocation.getLogicalPath().toUpperCase();
+                if (deduped.containsKey(key)) {
+                    continue;
+                }
+
+                MvsVirtualResource.Builder builder = MvsVirtualResource.builder(childLocation);
+
+                if (file.getSize() >= 0) {
+                    builder.size(file.getSize());
+                }
+                if (file.getTimestamp() != null) {
+                    builder.lastModified(file.getTimestamp().getTimeInMillis());
+                }
+
+                deduped.put(key, builder.build());
+            }
+        }
+
+        return new ArrayList<MvsVirtualResource>(deduped.values());
+    }
+
+    /**
+     * Create child location from listing entry.* <p>
+     * When the parent location contains a wildcard (e.g. {@code 'APAB*'} or
+     * {@code 'KKR07.ZABA*'}), the server returns fully-qualified names that
+     * matched the pattern.  We must NOT concatenate those results with the
+     * wildcard pattern itself; instead we use the <em>stable base</em> (the
+     * non-wildcard prefix) for prefix stripping and child path construction.
+     */
+    private MvsLocation createChildLocation(MvsLocation parent, String childName, String parentUnquoted) {
+        String unquotedChild = MvsQuoteNormalizer.unquote(childName);
+        String unquotedChildUpper = unquotedChild.toUpperCase();
+
+        // --- Wildcard-aware parent resolution ---
+        boolean isWildcard = MvsQuoteNormalizer.hasWildcard(parent.getLogicalPath());
+        String basePath;              // stable path used for child construction
+        String effectiveParentUpper;  // used for prefix stripping (upper case)
+
+        if (isWildcard) {
+            basePath = MvsQuoteNormalizer.getWildcardBase(parent.getLogicalPath());
+            effectiveParentUpper = basePath.toUpperCase();
+        } else {
+            basePath = MvsQuoteNormalizer.unquote(parent.getLogicalPath());
+            effectiveParentUpper = parentUnquoted; // already upper case
+        }
+
+        // Strip the effective parent prefix from the child name
+        String actualName;
+        if (!effectiveParentUpper.isEmpty() && unquotedChildUpper.startsWith(effectiveParentUpper + ".")) {
+            actualName = unquotedChild.substring(effectiveParentUpper.length() + 1);
+        } else {
+            actualName = unquotedChild;
+        }
+
+        if (actualName.isEmpty()) {
+            return null;
+        }
+
+        // --- HLQ / QUALIFIER_CONTEXT parents ---
+        if (parent.getType() == MvsLocationType.HLQ || parent.getType() == MvsLocationType.QUALIFIER_CONTEXT) {
+            int dot = actualName.indexOf('.');
+            if (dot >= 0) {
+                // Multiple qualifiers remaining → group by next qualifier
+                String nextQualifier = actualName.substring(0, dot);
+                if (nextQualifier.isEmpty()) {
+                    return null;
+                }
+                if (basePath.isEmpty()) {
+                    return MvsLocation.qualifierContext(nextQualifier);
+                }
+                return MvsLocation.qualifierContext(basePath + "." + nextQualifier);
+            }
+
+            // Single qualifier remaining (leaf entry)
+            if (basePath.isEmpty()) {
+                // Top-level wildcard (e.g. 'APAB*') → result is a top-level qualifier
+                return isWildcard ? MvsLocation.hlq(actualName)
+                                  : MvsLocation.dataset(actualName);
+            }
+            return MvsLocation.dataset(basePath + "." + actualName);
+        }
+
+        // --- DATASET parents ---
+        if (parent.getType() == MvsLocationType.DATASET) {
+            String datasetPath = isWildcard ? basePath : MvsQuoteNormalizer.unquote(parent.getLogicalPath());
+
+            // Member entry in fully qualified format: PDS(MEMBER)
+            if (!effectiveParentUpper.isEmpty()
+                    && unquotedChildUpper.startsWith(effectiveParentUpper + "(")
+                    && unquotedChild.endsWith(")")) {
+                int open = unquotedChild.indexOf('(');
+                int close = unquotedChild.lastIndexOf(')');
+                if (open > 0 && close > open + 1) {
+                    String memberName = unquotedChild.substring(open + 1, close);
+                    return MvsLocation.member(datasetPath + "(" + memberName + ")");
+                }
+            }
+
+            boolean isQualifiedChild = !effectiveParentUpper.isEmpty()
+                    && unquotedChildUpper.startsWith(effectiveParentUpper + ".");
+
+            if (isQualifiedChild) {
+                int dot = actualName.indexOf('.');
+                String nextQualifier = dot >= 0 ? actualName.substring(0, dot) : actualName;
+                if (nextQualifier.isEmpty()) {
+                    return null;
+                }
+                return MvsLocation.dataset(datasetPath + "." + nextQualifier);
+            }
+        }
+
+        // Fallback: for wildcards, build from base to avoid concatenating the
+        // wildcard pattern; for non-wildcards, delegate to MvsLocation.createChild.
+        if (isWildcard) {
+            if (basePath.isEmpty()) {
+                return MvsLocation.parse(actualName);
+            }
+            return MvsLocation.parse(basePath + "." + actualName);
+        }
+
+        return parent.createChild(actualName);
+    }
+
+    /**
+     * Deliver results via pagination.
+     */
+    private void deliverResultsPaged(List<MvsVirtualResource> results, int pageSize,
+                                     AtomicBoolean cancellation, PageCallback callback) {
+        if (results.isEmpty()) {
+            callback.onPage(Collections.<MvsVirtualResource>emptyList(), true);
+            return;
+        }
+
+        int total = results.size();
+        int offset = 0;
+
+        while (offset < total && !cancellation.get()) {
+            int end = Math.min(offset + pageSize, total);
+            List<MvsVirtualResource> page = results.subList(offset, end);
+            boolean isLast = (end >= total);
+
+            callback.onPage(page, isLast);
+            offset = end;
+
+            if (!isLast) {
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Callback for paginated results.
+     */
+    public interface PageCallback {
+        void onPage(List<MvsVirtualResource> items, boolean isLast);
+    }
+}
+

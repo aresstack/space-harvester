@@ -30,6 +30,15 @@ public interface FileConnection extends AutoCloseable {
     }
 
     /** Liest Text; auf MVS mit Satzstruktur werden die Satzenden zu Zeilenumbrüchen. */
+    /**
+     * Ob ein Doppelklick den Eintrag wie einen Ordner öffnet (Liste) statt im Editor. Auf dem Mainframe wie
+     * MainframeMate ({@code MvsBrowserController.openResource}): HLQ und Qualifier immer, ein Dataset nur, wenn es
+     * partitioniert ist; Member nie. Sonst: ob es ein Ordner ist.
+     */
+    default boolean opensAsFolder(RemoteEntry entry) throws IOException {
+        return entry.directory();
+    }
+
     RemoteFile read(String path) throws IOException;
 
     /** Liest Bytes ohne Umwandlung. */

@@ -7,6 +7,11 @@ import com.aresstack.spaceharvester.deck.ftp.TransferOptions;
 import com.aresstack.spaceharvester.deck.ftp.FtpProfile;
 import com.aresstack.spaceharvester.deck.ftp.FtpReplyException;
 import com.aresstack.spaceharvester.deck.ftp.MvsPath;
+import com.aresstack.spaceharvester.deck.ftp.mvs.MvsLocation;
+import com.aresstack.spaceharvester.deck.ftp.mvs.MvsLocationType;
+import com.aresstack.spaceharvester.deck.ftp.mvs.MvsQuoteNormalizer;
+import com.aresstack.spaceharvester.deck.ftp.mvs.MvsVirtualResource;
+import java.util.concurrent.atomic.AtomicBoolean;
 import com.aresstack.spaceharvester.deck.ftp.RemoteEntry;
 import com.aresstack.spaceharvester.deck.ftp.RemoteFile;
 import java.io.ByteArrayInputStream;
@@ -40,6 +45,9 @@ final class CommonsNetFiles implements FileConnection {
     private final boolean recordStructure;
     private final TransferOptions transfer;
     private final String startHlq;
+    /** Art jedes gelisteten MVS-Orts (wie MainframeMate sie am {@code MvsVirtualResource} trägt). */
+    private final java.util.Map<String, MvsLocation> locations = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int LIST_PAGE = 200;
 
     CommonsNetFiles(FtpProfile profile, String user, char[] password) throws IOException {
         this.ftp = Clients.connect(profile, user, password);
@@ -201,163 +209,67 @@ final class CommonsNetFiles implements FileConnection {
     }
 
     /**
-     * Doppelte Liste wie MainframeMate: {@code NLST 'X'} liefert Members (oder passende Datasets), {@code NLST 'X.*'}
-     * die Datasets darunter; zusammengeführt ohne Doppelte. Ist beides leer, {@code LIST 'X'}.
+     * Liste wie die MVS-Ansicht von MainframeMate ({@code MvsConnectionTab} → {@code MvsBrowserController} →
+     * {@code MvsListingService}): Ort mit Art (HLQ, Qualifier, Dataset, Member), bei einem Dataset zuerst
+     * {@code NLST 'DS(*)'} für die Members, dann {@code 'DS.*'} für Datasets darunter. Die Art jedes gelisteten
+     * Orts merkt sich die Verbindung, damit ein Doppelklick ihn wieder mit derselben Art öffnet.
      */
     private List<RemoteEntry> listMvs(String resolved) throws IOException {
         if (resolved.isEmpty() || MvsPath.ROOT.equals(resolved)) {
             throw new FtpReplyException("Die MVS-Wurzel lässt sich nicht auflisten – bitte einen HLQ eingeben", 0);
         }
-        Set<String> seen = new LinkedHashSet<>();
-        List<RemoteEntry> entries = new ArrayList<>();
-        String[] direct = ftp.listNames(resolved);
-        if (direct != null) {
-            for (RemoteEntry entry : directEntries(resolved, direct)) {
-                if (seen.add(entry.path().toUpperCase(Locale.ROOT))) {
-                    entries.add(entry);
-                }
-            }
+        MvsLocation location = location(resolved);
+        List<MvsVirtualResource> resources = new ArrayList<>();
+        new MvsListingService(ftp).listChildren(location, LIST_PAGE, new AtomicBoolean(),
+                (items, last) -> resources.addAll(items));
+        if (resources.isEmpty()) {
+            // MvsListingService schluckt Fehler je Strategie (leer = „nichts gefunden“). Eine abgerissene Verbindung
+            // darf aber nicht als leere Liste durchgehen, sonst greifen Wiederholung und Neuaufbau nicht.
+            ftp.sendNoOp();
         }
-        String unquoted = MvsPath.unquote(resolved);
-        if (!unquoted.endsWith("*") && !unquoted.contains("(")) {
-            String[] below = ftp.listNames("'" + unquoted + ".*'");
-            if (below != null) {
-                List<RemoteEntry> datasets = datasetsBelow(resolved, below);
-                if (datasets.stream().anyMatch(entry -> isLeaf(below, entry))) {
-                    datasets = withSequentialAsFiles(unquoted, below, datasets);
-                }
-                for (RemoteEntry entry : datasets) {
-                    if (seen.add(entry.path().toUpperCase(Locale.ROOT))) {
-                        entries.add(entry);
-                    }
-                }
-            }
-        }
-        if (!entries.isEmpty()) {
-            return entries;
-        }
-        FTPFile[] files = ftp.listFiles(resolved);
-        if (files != null) {
-            String self = unquoted.toUpperCase(Locale.ROOT);
-            for (FTPFile file : files) {
-                if (file == null || file.getName() == null || file.getName().isEmpty()) {
-                    continue;
-                }
-                String name = file.getName();
-                Calendar time = file.getTimestamp();
-                String full = MvsPath.unquote(name.trim()).toUpperCase(Locale.ROOT);
-                if (full.equals(self) || self.endsWith("." + full)) {
-                    // LIST eines sequenziellen Datasets liefert das Dataset selbst (Dsorg PS): eine Datei unter
-                    // seinem eigenen Pfad, kein Ordner, der wieder nur sich selbst enthält.
-                    entries.add(new RemoteEntry(MvsPath.unquote(name.trim()), resolved, file.isDirectory(),
-                            file.getSize(), time == null ? Optional.empty() : Optional.of(time.toInstant())));
-                    continue;
-                }
-                entries.add(new RemoteEntry(name, MvsPath.child(resolved, name),
-                        file.isDirectory() || !name.contains("("), file.getSize(),
-                        time == null ? Optional.empty() : Optional.of(time.toInstant())));
-            }
+        List<RemoteEntry> entries = new ArrayList<>(resources.size());
+        for (MvsVirtualResource resource : resources) {
+            MvsLocation child = resource.getLocation();
+            locations.put(key(child.getLogicalPath()), child);
+            long modified = resource.getLastModified();
+            entries.add(new RemoteEntry(resource.getDisplayName(), child.getLogicalPath(), child.isDirectory(),
+                    resource.getSize() > 0 ? resource.getSize() : -1, modified > 0 ? Optional.of(java.time.Instant.ofEpochMilli(modified))
+                    : Optional.empty()));
         }
         return entries;
     }
 
-    /** Einträge aus {@code NLST 'X'}: voll qualifizierte Namen sind Datasets, kurze Namen Members. */
-    private static List<RemoteEntry> directEntries(String parent, String[] names) {
-        List<RemoteEntry> entries = new ArrayList<>();
-        String parentUpper = MvsPath.unquote(parent).toUpperCase(Locale.ROOT);
-        for (String raw : names) {
-            if (raw == null || raw.isBlank()) {
-                continue;
-            }
-            String name = raw.trim();
-            String unquoted = MvsPath.unquote(name);
-            if (unquoted.equalsIgnoreCase(parentUpper)) {
-                continue;
-            }
-            if (unquoted.toUpperCase(Locale.ROOT).startsWith(parentUpper + ".")) {
-                entries.add(RemoteEntry.directory(unquoted.substring(parentUpper.length() + 1),
-                        MvsPath.absolute(unquoted)));
-            } else if (name.startsWith("'")) {
-                entries.add(new RemoteEntry(unquoted, name, !unquoted.contains("("), -1, Optional.empty()));
-            } else if (name.contains("(")) {
-                entries.add(RemoteEntry.file(name, MvsPath.child(parent, name)));
-            } else if (MvsPath.isMemberName(name)) {
-                entries.add(RemoteEntry.file(name, MvsPath.child(parent, name)));
-            } else {
-                entries.add(RemoteEntry.directory(name, MvsPath.child(parent, name)));
-            }
+    /** Wie {@code MvsBrowserController.openResource}: ein Dataset öffnet nur als Liste, wenn es partitioniert ist. */
+    @Override
+    public boolean opensAsFolder(RemoteEntry entry) {
+        if (!mvs) {
+            return entry.directory();
         }
-        return entries;
-    }
-
-    /** Ob ein Eintrag aus {@code NLST 'X.*'} ein echtes Dataset ist (keine bloße Qualifier-Stufe). */
-    private static boolean isLeaf(String[] names, RemoteEntry entry) {
-        String path = MvsPath.unquote(entry.path());
-        for (String raw : names) {
-            if (raw != null && MvsPath.unquote(raw.trim()).equalsIgnoreCase(path)) {
-                return true;
-            }
-        }
-        return false;
+        MvsLocation location = location(entry.path());
+        return switch (location.getType()) {
+            case HLQ, QUALIFIER_CONTEXT -> true;
+            case DATASET -> MvsDatasetProbe.isLikelyPartitionedDataset(ftp, location);
+            default -> false;
+        };
     }
 
     /**
-     * NLST sagt nicht, ob ein Dataset partitioniert (PO, hat Members) oder sequenziell (PS, eine Datei) ist. Das steht
-     * nur in der Spalte Dsorg von {@code LIST 'X.*'}; sequenzielle Datasets werden damit zu Dateien, die man lesen kann.
-     * Kann der Server das nicht liefern, bleibt es bei Ordnern wie bisher.
+     * Der gemerkte Ort mit seiner Art, sonst wie eine Eingabe in der Pfadzeile ({@code MvsLocation.parse}). Ein
+     * getippter Name mit Punkt gilt als Dataset statt als bloße Qualifier-Stufe: Die Dataset-Liste von
+     * {@code MvsListingService} enthält die Qualifier-Liste ({@code 'X.*'}) und zusätzlich die Members ({@code 'X(*)'}).
      */
-    private List<RemoteEntry> withSequentialAsFiles(String parent, String[] names, List<RemoteEntry> datasets) {
-        Set<String> sequential = new java.util.HashSet<>();
-        try {
-            FTPFile[] files = ftp.listFiles("'" + parent + ".*'");
-            if (files != null) {
-                for (FTPFile file : files) {
-                    if (file != null && file.getName() != null && file.isFile()) {
-                        sequential.add(MvsPath.unquote(file.getName()).toUpperCase(Locale.ROOT));
-                    }
-                }
-            }
-        } catch (IOException ignored) {
-            return datasets;
+    private MvsLocation location(String path) {
+        MvsLocation known = locations.get(key(path));
+        if (known != null) {
+            return known;
         }
-        if (sequential.isEmpty()) {
-            return datasets;
-        }
-        String prefix = parent.toUpperCase(Locale.ROOT) + ".";
-        List<RemoteEntry> result = new ArrayList<>();
-        for (RemoteEntry entry : datasets) {
-            String full = MvsPath.unquote(entry.path()).toUpperCase(Locale.ROOT);
-            // z/OS zeigt Namen unter dem Arbeitsverzeichnis relativ, sonst voll qualifiziert.
-            boolean file = isLeaf(names, entry) && (sequential.contains(full)
-                    || sequential.stream().anyMatch(name -> full.endsWith("." + name) && full.startsWith(prefix)));
-            result.add(file ? RemoteEntry.file(entry.name(), entry.path()) : entry);
-        }
-        return result;
+        MvsLocation parsed = MvsLocation.parse(path);
+        return parsed.getType() == MvsLocationType.QUALIFIER_CONTEXT
+                ? MvsLocation.dataset(parsed.getLogicalPath()) : parsed;
     }
 
-    /** Einträge aus {@code NLST 'X.*'}: immer Datasets, angezeigt wird nur die nächste Stufe. */
-    private static List<RemoteEntry> datasetsBelow(String parent, String[] names) {
-        List<RemoteEntry> entries = new ArrayList<>();
-        String parentUpper = MvsPath.unquote(parent).toUpperCase(Locale.ROOT);
-        for (String raw : names) {
-            if (raw == null || raw.isBlank()) {
-                continue;
-            }
-            String unquoted = MvsPath.unquote(raw.trim());
-            if (unquoted.equalsIgnoreCase(parentUpper)) {
-                continue;
-            }
-            String display = unquoted.toUpperCase(Locale.ROOT).startsWith(parentUpper + ".")
-                    ? unquoted.substring(parentUpper.length() + 1) : unquoted;
-            String path = MvsPath.absolute(unquoted);
-            int dot = display.indexOf('.');
-            if (dot > 0) {
-                display = display.substring(0, dot);
-                path = MvsPath.absolute(parentUpper + "." + display);
-            }
-            entries.add(RemoteEntry.directory(display, path));
-        }
-        return entries;
+    private static String key(String path) {
+        return MvsQuoteNormalizer.unquote(path).toUpperCase(Locale.ROOT);
     }
 
     @Override
@@ -365,8 +277,8 @@ final class CommonsNetFiles implements FileConnection {
         FtpReplyException last = null;
         for (String candidate : candidates(path)) {
             try {
-                byte[] bytes = RecordStructure.withoutPadding(retrieve(candidate));
-                String text = recordStructure ? RecordStructure.decode(bytes, charset) : new String(bytes, charset);
+                byte[] bytes = RecordStructure.withoutPadding(retrieve(candidate), transfer.transform());
+                String text = recordStructure ? RecordStructure.decode(bytes, charset, transfer.transform()) : new String(bytes, charset);
                 return RemoteFile.of(candidate, text);
             } catch (FtpReplyException refused) {
                 last = refused;
@@ -415,7 +327,7 @@ final class CommonsNetFiles implements FileConnection {
 
     @Override
     public void write(String path, String text) throws IOException {
-        byte[] bytes = recordStructure ? RecordStructure.encode(text, charset) : RecordStructure.text(text, charset);
+        byte[] bytes = recordStructure ? RecordStructure.encode(text, charset, transfer.transform()) : RecordStructure.text(text, charset);
         store(path, bytes);
     }
 

@@ -12,7 +12,8 @@ import java.util.Objects;
  * @param structure    STRU
  * @param transferMode MODE
  */
-public record TransferOptions(FileType fileType, TextFormat textFormat, Structure structure, TransferMode transferMode) {
+public record TransferOptions(FileType fileType, TextFormat textFormat, Structure structure, TransferMode transferMode,
+                              TextTransform transform) {
 
     /** {@code TYPE}. */
     public enum FileType {
@@ -84,13 +85,23 @@ public record TransferOptions(FileType fileType, TextFormat textFormat, Structur
     }
 
     public static final TransferOptions DEFAULT = new TransferOptions(FileType.ASCII, TextFormat.DEFAULT,
-            Structure.AUTO, TransferMode.STREAM);
+            Structure.AUTO, TransferMode.STREAM, TextTransform.DEFAULT);
+
+    /** Ohne eigene Datenumwandlung: die Standardwerte von MainframeMate ({@link TextTransform#DEFAULT}). */
+    public TransferOptions(FileType fileType, TextFormat textFormat, Structure structure, TransferMode transferMode) {
+        this(fileType, textFormat, structure, transferMode, TextTransform.DEFAULT);
+    }
+
+    public TransferOptions withTransform(TextTransform value) {
+        return new TransferOptions(fileType, textFormat, structure, transferMode, value);
+    }
 
     public TransferOptions {
         fileType = Objects.requireNonNullElse(fileType, FileType.ASCII);
         textFormat = Objects.requireNonNullElse(textFormat, TextFormat.DEFAULT);
         structure = Objects.requireNonNullElse(structure, Structure.AUTO);
         transferMode = Objects.requireNonNullElse(transferMode, TransferMode.STREAM);
+        transform = Objects.requireNonNullElse(transform, TextTransform.DEFAULT);
         if (!transferMode.supported()) {
             throw new IllegalArgumentException("Übertragungsmodus „" + transferMode.label()
                     + "“ wird nicht unterstützt – nur Stream (Block und Komprimiert würden die Daten verfälschen)");
