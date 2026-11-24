@@ -125,8 +125,9 @@ public final class ChatPanel extends JPanel {
     static final String NO_CHAT_MODEL = "Kein Chat-Modell: unter Einstellungen › KI ein Text-Modell wählen";
     static final String RENAME = "Umbenennen";
     static final String DELETE = "Chat löschen";
-    static final String DELETE_TITLE = "Chat löschen";
-    static final String DELETE_QUESTION = "Diesen Chat wirklich löschen?";
+    static final String DELETE_ALL = "Alle Chats löschen";
+    static final String DELETED_TIP = "Gelöscht, bis zum Neustart wiederherstellbar: Klick öffnet ihn wieder";
+    static final String DELETE_ALL_QUESTION = "Wirklich alle Chats aller Bereiche löschen?";
     static final String ASSISTANT = "Assistent";
     static final String ANSWERING = "Antwort wird geschrieben …";
     /** Wie in AskAI: solange Ollama das Modell lädt, steht das in der Blase und in der Statuszeile. */
@@ -209,6 +210,9 @@ public final class ChatPanel extends JPanel {
     /** Oben rechts in der Kopfzeile des Inhaltsbereichs, als Symbole (Angelo, 17.11.2026): Plus und Papierkorb. */
     private final IconButton newChat = new IconButton(ComposerIcons.plus(16), NEW_CHAT).compact();
     private final IconButton deleteChat = new IconButton(Glyph.TRASH, DELETE).compact();
+    /** Die „wirklich“-Rückfrage (Ja/Nein) vor dem Löschen; Tests antworten selbst. */
+    java.util.function.BiPredicate<String, String> confirm = (title, question) -> Dialogs.confirm(this, title,
+            question);
     /** „Chat: ‹Name› ▾“ für die Mitte der Kopfzeile; der Name kürzt sich mit „…“, wenn der Platz nicht reicht. */
     private final JPanel header = new JPanel(new BorderLayout(6, 0));
     private final JPanel headerActions = Comic.row(newChat, deleteChat);
@@ -1696,19 +1700,27 @@ public final class ChatPanel extends JPanel {
         BubbleMessageRow bubbleRow = new BubbleMessageRow(thought, BubbleSide.LEFT);
         bubbleRow.setAlignmentX(LEFT_ALIGNMENT);
         row.add(bubbleRow);
+        // Knöpfe im App-Stil (Angelo 24.11.2026): erlauben als Hauptaktion, „Immer verbieten“ rot, Rest flach.
         java.util.Map<javax.swing.JButton, com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome> outcomes =
                 new java.util.LinkedHashMap<>();
-        outcomes.put(new javax.swing.JButton(offersAlways ? APPROVE_ONCE_TEXT : APPROVE_TEXT),
+        outcomes.put(Comic.primary(offersAlways ? APPROVE_ONCE_TEXT : APPROVE_TEXT, null),
                 com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.APPROVED);
         if (offersAlways) {
-            outcomes.put(new javax.swing.JButton(APPROVE_ALWAYS_TEXT),
+            outcomes.put(Comic.button(APPROVE_ALWAYS_TEXT, null),
                     com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.APPROVED_ALWAYS);
-            outcomes.put(new javax.swing.JButton(REJECT_ALWAYS_TEXT),
+            outcomes.put(Comic.danger(REJECT_ALWAYS_TEXT, null),
                     com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.REJECTED_ALWAYS);
         }
-        outcomes.put(new javax.swing.JButton(REJECT_TEXT),
+        outcomes.put(Comic.button(REJECT_TEXT, null),
                 com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.REJECTED);
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        // Umbrechend: In der schmalen Leiste rutschen Knöpfe in eine zweite Zeile, statt abgeschnitten zu werden.
+        JPanel buttons = new JPanel(
+                new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 8, 4)) {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
         buttons.setOpaque(false);
         buttons.setBorder(BorderFactory.createEmptyBorder(0, 22, 0, 12));
         boolean[] answered = {false};
@@ -1724,7 +1736,6 @@ public final class ChatPanel extends JPanel {
             });
         }
         buttons.setAlignmentX(LEFT_ALIGNMENT);
-        buttons.setMaximumSize(new Dimension(Integer.MAX_VALUE, buttons.getPreferredSize().height));
         row.add(buttons);
         row.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
@@ -2003,6 +2014,8 @@ public final class ChatPanel extends JPanel {
         private final java.awt.event.ComponentListener follow;
         ChatTurn turn;
         boolean detached;
+        /** Der Chat wurde gelöscht: Die Antwort wird nicht mehr gespeichert. */
+        volatile boolean discarded;
         /** Die Karte „Browserrecherche“ dieser Antwort, {@code null} ohne Websuche. */
         WebSearchCard webCard;
         /** Offene Rückfragen der Websuche dieser Antwort (nur EDT). */
@@ -2173,6 +2186,9 @@ public final class ChatPanel extends JPanel {
             // (Codex-Befund zu #967).
             SwingUtilities.invokeLater(() -> bubble.removeComponentListener(follow));
             ChatRecord next = started;
+            if (discarded) {
+                return;
+            }
             if (answer != null) {
                 next = store.load(startedNode, started.id());
                 next = (next == null ? started : next).plus(answer, answer.at());
@@ -2369,10 +2385,13 @@ public final class ChatPanel extends JPanel {
         updateHeaderActions();
     }
 
-    /** Löschen geht nur bei einem gespeicherten Chat (einer mit Nachrichten) und nicht während einer Antwort. */
+    /**
+     * Der offene Chat ist immer löschbar (Angelo 24.11.2026), auch wenn er zu einem anderen Bereich gehört oder gerade
+     * eine Antwort läuft; die Antwort wird dann abgebrochen und nicht mehr gespeichert.
+     */
     private void updateHeaderActions() {
         newChat.setEnabled(node != null);
-        deleteChat.setEnabled(home != null && !chat.isEmpty() && turn == null);
+        deleteChat.setEnabled(true);
         updateQuickActions();
     }
 
@@ -2407,7 +2426,15 @@ public final class ChatPanel extends JPanel {
     List<Component> chatMenuItems() {
         List<Component> items = new ArrayList<>();
         Path here = store.folder(node);
-        List<ChatStore.Entry> all = store.all();
+        List<ChatStore.Entry> all = new ArrayList<>(store.all());
+        // Vorläufig gelöschte Chats stehen bis zum Neustart durchgestrichen dabei (Angelo 24.11.2026).
+        java.util.Set<String> deletedIds = new java.util.HashSet<>();
+        for (ChatStore.Entry entry : store.deleted()) {
+            deletedIds.add(entry.record().id());
+            all.add(entry);
+        }
+        all.sort(java.util.Comparator.comparingLong((ChatStore.Entry entry) -> entry.record().modifiedAt())
+                .reversed());
         List<ChatStore.Entry> local = all.stream().filter(entry -> entry.folder().equals(here)).toList();
         List<ChatStore.Entry> others = all.stream().filter(entry -> !entry.folder().equals(here)).toList();
         if (all.isEmpty()) {
@@ -2422,28 +2449,37 @@ public final class ChatPanel extends JPanel {
             none.setEnabled(false);
             items.add(none);
         }
-        local.forEach(entry -> items.add(chatItem(entry)));
+        local.forEach(entry -> items.add(chatItem(entry, deletedIds.contains(entry.record().id()))));
         if (!others.isEmpty()) {
             items.add(new JPopupMenu.Separator());
             items.add(menuHeading(CHATS_ELSEWHERE));
-            others.forEach(entry -> items.add(chatItem(entry)));
+            others.forEach(entry -> items.add(chatItem(entry, deletedIds.contains(entry.record().id()))));
         }
         return items;
     }
 
-    private JMenuItem chatItem(ChatStore.Entry entry) {
+    private JMenuItem chatItem(ChatStore.Entry entry, boolean deleted) {
         ChatRecord record = entry.record();
-        boolean current = record.id().equals(chat.id());
-        JMenuItem item = new JMenuItem((current ? "✓ " : "    ") + record.title());
+        boolean current = !deleted && record.id().equals(chat.id());
+        String label = (current ? "✓ " : "    ") + record.title();
+        JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label);
         String area = lastArea(record);
-        item.setToolTipText(Texts.count(record.messages().size(), "Nachricht", "Nachrichten")
+        item.setToolTipText(deleted ? DELETED_TIP : Texts.count(record.messages().size(), "Nachricht", "Nachrichten")
                 + (area == null ? "" : " · zuletzt: " + areaName(area)));
         item.addActionListener(e -> {
-            if (!current) {
+            if (deleted) {
+                // Öffnen macht das Löschen rückgängig.
+                ChatRecord restored = store.restore(entry.folder(), record.id());
+                open(restored == null ? record : restored, entry.folder());
+            } else if (!current) {
                 open(record, entry.folder());
             }
         });
         return item;
+    }
+
+    private static String escapeHtml(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private static JMenuItem menuHeading(String text) {
@@ -2680,7 +2716,6 @@ public final class ChatPanel extends JPanel {
         rename.addActionListener(ignored -> startRename());
         menu.add(rename);
         JMenuItem delete = new JMenuItem(DELETE);
-        delete.setEnabled(!chat.isEmpty() && turn == null);
         delete.addActionListener(ignored -> deleteChat());
         menu.add(delete);
         menu.show(chatName, e.getX(), e.getY());
@@ -2719,22 +2754,58 @@ public final class ChatPanel extends JPanel {
         return chatNameEditor.getParent() == nameHolder;
     }
 
-    /** Löscht den aktuellen Chat nach „wirklich“-Rückfrage (Ja/Nein) und zeigt den nächsten des Bereichs. */
+    /**
+     * Löscht den offenen Chat ohne Rückfrage (Angelo 24.11.2026): Er bleibt bis zum nächsten Start durchgestrichen im
+     * Menü unter ▾ stehen, ein Klick dort holt ihn zurück; endgültig weg ist er erst nach dem Neustart. Danach steht der
+     * nächste Chat des Bereichs da.
+     */
     private void deleteChat() {
-        if (!Dialogs.confirm(this, DELETE_TITLE, DELETE_QUESTION)) {
-            return;
-        }
-        store.delete(home, chat.id());
-        // Das Browser-Profil des Chats geht mit dem Chat (wie im Enterprise AI Client), ohne die Oberfläche aufzuhalten.
-        String deletedChat = chat.id();
-        com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser browser = context.webBrowser();
-        if (browser != null) {
-            Thread cleanup = new Thread(() -> browser.deleteProfile(deletedChat), "chat-browser-profil");
-            cleanup.setDaemon(true);
-            cleanup.start();
+        discardTurn();
+        if (home != null && !chat.isEmpty()) {
+            store.trash(home, chat.id());
         }
         List<ChatRecord> saved = store.list(node);
-        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0));
+        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0), store.folder(node));
+    }
+
+    /**
+     * „Alle Chats löschen“ im Menü am Dreieck (Angelo 24.11.2026): nach „wirklich“-Rückfrage (Ja/Nein) alle Chats
+     * aller Bereiche endgültig, auch die vorläufig gelöschten, samt ihren Browser-Profilen; danach ein neuer Chat.
+     */
+    void deleteAllChats() {
+        if (!confirm.test(DELETE_ALL, DELETE_ALL_QUESTION)) {
+            return;
+        }
+        discardTurn();
+        List<String> ids = new ArrayList<>(store.deleteAll());
+        ids.add(chat.id());
+        deleteBrowserProfiles(ids);
+        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(node));
+    }
+
+    /** Bricht eine laufende Antwort ab, deren Chat gelöscht wird: Sie schreibt ihn nicht wieder auf die Platte. */
+    private void discardTurn() {
+        if (turn == null) {
+            return;
+        }
+        if (listening != null) {
+            listening.discarded = true;
+            listening.endApprovals();
+        }
+        turn.cancel();
+        detachTurn();
+    }
+
+    /** Das Browser-Profil eines Chats geht mit dem Chat (wie im Enterprise AI Client), ohne die Oberfläche aufzuhalten. */
+    private void deleteBrowserProfiles(List<String> chatIds) {
+        com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser browser = context.webBrowser();
+        if (browser == null) {
+            return;
+        }
+        List<String> ids = List.copyOf(new java.util.LinkedHashSet<>(chatIds));
+        Thread cleanup = new Thread(() -> ids.forEach(browser::deleteProfile), "chat-browser-profil");
+        cleanup.setDaemon(true);
+        cleanup.start();
     }
 
     // ------------------------------------------------------------------ für Tests
