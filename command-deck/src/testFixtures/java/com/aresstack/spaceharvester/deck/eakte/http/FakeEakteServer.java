@@ -74,16 +74,9 @@ public final class FakeEakteServer implements AutoCloseable {
         FILES.put(BROKEN_FILE, "");
     }
 
+    /** Eine echte (erfundene) Outlook-Nachricht mit dem Erlass als PDF-Anlage, über 256 KB groß (gestreamt). */
     private static byte[] message() {
-        byte[] bytes = new byte[264 * 1024];
-        byte[] ole = {(byte) 0xD0, (byte) 0xCF, 0x11, (byte) 0xE0, (byte) 0xA1, (byte) 0xB1, 0x1A, (byte) 0xE1};
-        System.arraycopy(ole, 0, bytes, 0, ole.length);
-        long seed = 4711;
-        for (int i = ole.length; i < bytes.length; i++) {
-            seed = seed * 6364136223846793005L + 1442695040888963407L;
-            bytes[i] = (byte) (seed >>> 56);
-        }
-        return bytes;
+        return FakeOutlookMessage.build(256 * 1024);
     }
 
     private final HttpServer eakte;

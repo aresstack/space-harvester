@@ -65,8 +65,8 @@ import javax.swing.tree.TreeSelectionModel;
  * und Fehler in der Statuszeile der App; ein Fehler wird nie stillschweigend zu „leer“, er steht als Fehler da.
  * Kennung jedes Eintrags ist das vom Server gelieferte {@code DAV:href}, nie ein Name.
  *
- * <p>Zum gezeigten Dokument gibt es zwei Sichten, umgeschaltet über „Vorschau | Extraktion“ in der Titelleiste
- * ({@link #viewToggle()}, nur sichtbar, solange ein Dokument gezeigt wird; die Stellung gilt je Sitzungsreiter). Die
+ * <p>Zum gezeigten Dokument gibt es drei Sichten, umgeschaltet über „Vorschau | Text | Extraktion“ mittig in der
+ * Leiste mit der Lupe unter dem Dokument, nie in der Titelleiste (Angelo 24.11.2026) ({@link #viewToggle()}, nur sichtbar, solange ein Dokument gezeigt wird; die Stellung gilt je Sitzungsreiter). Die
  * Extraktion ({@link ExtractionView}, experimentell) ordnet ihre Ergebnisse dem Dokumentstand {@code href} + ETag zu.
  */
 final class EakteBrowser extends JPanel {
@@ -77,6 +77,8 @@ final class EakteBrowser extends JPanel {
     private static final String NO_PREVIEW = "keine";
     private static final String EXTRACTION_CARD = "extraktion";
     private static final String VIEWER_CARD = "viewer";
+    /** Kennung einer Anlage einer E-Mail: {@code href} der E-Mail, dieses Zeichen, die Nummer der Anlage. */
+    static final String PART = "#anlage/";
     static final String PREVIEW = "Vorschau";
     static final String TEXT = "Text";
     static final String EXTRACTION = "Extraktion";
@@ -97,6 +99,8 @@ final class EakteBrowser extends JPanel {
     /** Was die Mappen zuletzt enthielten ({@code DAV:href} → Einträge); Aktualisieren liest neu. */
     private final Map<String, List<EakteEntry>> listing = new HashMap<>();
     private final Map<EditorSession, Path> previewFiles = new HashMap<>();
+    /** Inhalt der Anlagen gezeigter E-Mails nach ihrer Kennung ({@link #PART}); kommen nicht vom Server. */
+    private final Map<String, byte[]> parts = new HashMap<>();
     private Consumer<StatusNote> status = note -> { };
     private StatusNote current = StatusNote.plain(" ");
     private EditorSession shownPreview;
@@ -169,8 +173,8 @@ final class EakteBrowser extends JPanel {
         previewStage.add(none, NO_PREVIEW);
         previewStage.add(extraction, EXTRACTION_CARD);
         viewToggle.segment(PREVIEW).segment(TEXT).segment(EXTRACTION);
-        viewToggle.setToolTipText("Sicht auf das gezeigte Dokument: formatiert (Viewer wie bei Jira-Anhängen), "
-                + "als Text oder experimentelle Extraktion");
+        viewToggle.setToolTipText("Sicht auf das gezeigte Dokument: formatiert (Viewer wie bei den "
+                + "Confluence-Anhängen), als Text oder experimentelle Extraktion");
         viewToggle.getAccessibleContext().setAccessibleName("Vorschau, Text oder Extraktion");
         viewToggle.setVisible(false);
         viewToggle.onSelect(view -> showView());
@@ -191,13 +195,14 @@ final class EakteBrowser extends JPanel {
         ComicDivider.install(split);
         add(split, BorderLayout.CENTER);
 
+        // Leiste mit der Lupe unter dem Dokument: die Aktionen, mittig die vorhandene Vorschau als Reiter
+        // „Vorschau | Text | Extraktion“ und daneben „Analyse starten“ als Symbolknopf (Angelo 24.11.2026).
         footTools = DeckBars.tools(
                 DeckBars.action(Glyph.REFRESH, "Aktualisieren: gewählte Mappe neu lesen", this::reload),
-                DeckBars.action(ComposerIcons.document(), "Vorschau in der App (Eingabe, Doppelklick); PDF, Word, "
-                        + "Outlook-Nachricht … als Text", this::previewSelected),
                 DeckBars.action(ComposerIcons.openExternal(), "Öffnen mit dem zugehörigen Programm (Kopie in einem "
                         + "temporären Ordner, der beim Schließen gelöscht wird)", this::openExternally),
                 DeckBars.action(ComposerIcons.download(), "Speichern unter …", this::saveSelected),
+                viewToggle,
                 extraction.actions());
         extraction.actions().setVisible(false);
     }
@@ -343,7 +348,7 @@ final class EakteBrowser extends JPanel {
         return viewer;
     }
 
-    /** Der Umschalter „Vorschau | Extraktion“ für die Titelleiste des Bereichs. */
+    /** Der Umschalter „Vorschau | Text | Extraktion“ in der Leiste mit der Lupe ({@link #footTools()}). */
     JComponent viewToggle() {
         return viewToggle;
     }
@@ -365,7 +370,7 @@ final class EakteBrowser extends JPanel {
     /** Zeigt im Vorschaubereich die gewählte Sicht des gezeigten Dokuments. */
     private void showView() {
         boolean extracting = extractionShown();
-        extraction.actions().setVisible(extracting);
+        extraction.actions().setVisible(shownPreview != null);
         if (shownPreview == null) {
             previewCards.show(previewStage, NO_PREVIEW);
             return;
@@ -484,7 +489,7 @@ final class EakteBrowser extends JPanel {
         if (path == null) {
             return;
         }
-        if (path.getLastPathComponent() instanceof Doc) {
+        if (path.getLastPathComponent() instanceof Doc || path.getLastPathComponent() instanceof Part) {
             previewSelected();
         } else if (tree.isExpanded(path)) {
             tree.collapsePath(path);
@@ -587,11 +592,17 @@ final class EakteBrowser extends JPanel {
         DocumentEditor editor = new DocumentEditor(opened);
         editor.readOnlyView(); // ganze Fläche fürs Dokument; gesucht wird nur mit der Lupe des Deck
         previewStage.add(editor, opened.location());
-        // Gemeinsamer Viewer für lokale Dateien im Deck (wie im Bereich Dateien); Umschalter in der Titelleiste
+        // Gemeinsamer Viewer für lokale Dateien im Deck (wie im Bereich Dateien); Umschalter unten in der Leiste
         DeckFileViewer fileViewer = new DeckFileViewer(file, entry.name(), null);
         viewer = fileViewer.viewer();
         viewer.detachFooter(); // Speichern/Öffnen stehen schon in der Fußleiste des Deck
         viewer.onHeadings(this::refreshOutline);
+        if (!entry.href().contains(PART)) {
+            // Eine E-Mail: ihre Anlagen kommen als Unterknoten in den Baum, ein Klick auf eine Anlage wählt ihn
+            // (Angelo 24.11.2026: der Erlass steckt als PDF in der archivierten E-Mail).
+            viewer.onMail(() -> mailShown(entry));
+            viewer.onMailAttachment(attachment -> selectPart(entry, attachment.index()));
+        }
         previewStage.add(fileViewer, VIEWER_CARD);
         if (!DeckFileViewer.shows(entry.name()) && PREVIEW.equals(viewToggle.selected())) {
             viewToggle.select(TEXT); // etwa Outlook-Nachrichten: dafür hat der Viewer keine Vorschau, der Text schon
@@ -602,6 +613,65 @@ final class EakteBrowser extends JPanel {
         if (!extractionShown()) {
             report(StatusNote.plain("Vorschau: „" + entry.name() + "“ · " + READ_ONLY));
         }
+    }
+
+    /** Hängt die Anlagen der gezeigten E-Mail als Unterknoten an ihren Knoten im Baum. */
+    private void mailShown(EakteEntry mail) {
+        Doc doc = docNode(mail.href());
+        if (doc == null || viewer == null || viewer.mail().isEmpty() || doc.getChildCount() > 0) {
+            return;
+        }
+        List<com.aresstack.spaceharvester.app.ui.content.viewer.MailMessage.Attachment> attachments =
+                viewer.mail().get().attachments();
+        if (attachments.isEmpty()) {
+            return;
+        }
+        TreePath chosen = tree.getSelectionPath();
+        for (var attachment : attachments) {
+            EakteEntry part = new EakteEntry(attachment.name(), mail.href() + PART + attachment.index(), false,
+                    attachment.data().length, mail.modified(), attachment.mediaType(), mail.created(), mail.etag(),
+                    mail.objectAddress());
+            parts.put(part.href(), attachment.data());
+            doc.add(new Part(part));
+        }
+        revisiting = true;
+        try {
+            treeModel.nodeStructureChanged(doc);
+            if (chosen != null) {
+                tree.setSelectionPath(chosen);
+            }
+        } finally {
+            revisiting = false;
+        }
+        tree.expandPath(new TreePath(doc.getPath()));
+    }
+
+    /** Wählt die Anlage {@code index} der E-Mail {@code mail} im Baum; sie erscheint dann rechts. */
+    private void selectPart(EakteEntry mail, int index) {
+        Doc doc = docNode(mail.href());
+        if (doc == null) {
+            return;
+        }
+        String href = mail.href() + PART + index;
+        for (int i = 0; i < doc.getChildCount(); i++) {
+            if (doc.getChildAt(i) instanceof Part part && part.entry.href().equals(href)) {
+                TreePath path = new TreePath(part.getPath());
+                tree.setSelectionPath(path);
+                tree.scrollPathToVisible(path);
+                return;
+            }
+        }
+    }
+
+    /** Der Knoten des Dokuments {@code href} im Baum, sonst {@code null}. */
+    private Doc docNode(String href) {
+        java.util.Enumeration<javax.swing.tree.TreeNode> all = root.depthFirstEnumeration();
+        while (all.hasMoreElements()) {
+            if (all.nextElement() instanceof Doc doc && doc.entry.href().equals(href)) {
+                return doc;
+            }
+        }
+        return null;
     }
 
     private void dropPreview() {
@@ -702,8 +772,18 @@ final class EakteBrowser extends JPanel {
 
     /** Lädt gestreamt nach {@code target}; Fehler stehen in der Statuszeile, die Zukunft endet dann nie. */
     private CompletableFuture<Path> fetch(EakteEntry entry, Path target) {
-        report(StatusNote.plain("Lade „" + entry.name() + "“ …"));
         CompletableFuture<Path> done = new CompletableFuture<>();
+        byte[] attachment = parts.get(entry.href());
+        if (attachment != null) { // Anlage einer E-Mail: schon im Speicher, nicht vom Server
+            try {
+                Files.write(target, attachment);
+                done.complete(target);
+            } catch (IOException e) {
+                failed(entry, e);
+            }
+            return done;
+        }
+        report(StatusNote.plain("Lade „" + entry.name() + "“ …"));
         Path part;
         OutputStream out;
         try {
@@ -763,6 +843,21 @@ final class EakteBrowser extends JPanel {
         return shownPreview;
     }
 
+    /** Die Anlagen, die unter der E-Mail {@code href} im Baum stehen (für Tests). */
+    List<String> partsOf(String href) {
+        Doc doc = docNode(href);
+        List<String> names = new ArrayList<>();
+        for (int i = 0; doc != null && i < doc.getChildCount(); i++) {
+            names.add(((Part) doc.getChildAt(i)).entry.name());
+        }
+        return names;
+    }
+
+    /** Das gezeigte Dokument (auch eine Anlage), sonst {@code null} (für Tests). */
+    EakteEntry shownEntry() {
+        return shownPreview == null ? null : selected();
+    }
+
     // ---- Hilfen ---------------------------------------------------------------------------------------------------
 
     private EakteEntry document() {
@@ -777,6 +872,9 @@ final class EakteBrowser extends JPanel {
     /** Das im Baum gewählte Dokument, sonst {@code null}. */
     private EakteEntry selected() {
         TreePath path = tree.getSelectionPath();
+        if (path != null && path.getLastPathComponent() instanceof Part part) {
+            return part.entry;
+        }
         return path != null && path.getLastPathComponent() instanceof Doc doc ? doc.entry : null;
     }
 
@@ -787,6 +885,9 @@ final class EakteBrowser extends JPanel {
             return null;
         }
         Object last = path.getLastPathComponent();
+        if (last instanceof Part part) {
+            last = part.getParent();
+        }
         if (last instanceof Doc doc) {
             last = doc.getParent();
         }
@@ -921,12 +1022,28 @@ final class EakteBrowser extends JPanel {
         }
     }
 
-    /** Ein Dokument im Baum (Blatt). */
+    /** Ein Dokument im Baum; eine gezeigte E-Mail bekommt ihre Anlagen als Unterknoten ({@link Part}). */
     private static final class Doc extends DefaultMutableTreeNode {
 
         private final EakteEntry entry;
 
         Doc(EakteEntry entry) {
+            super(entry.name(), true);
+            this.entry = entry;
+        }
+
+        @Override
+        public boolean getAllowsChildren() {
+            return getChildCount() > 0;
+        }
+    }
+
+    /** Eine Anlage einer E-Mail (Blatt unter ihrem {@link Doc}); Inhalt aus der E-Mail, nicht vom Server. */
+    private static final class Part extends DefaultMutableTreeNode {
+
+        private final EakteEntry entry;
+
+        Part(EakteEntry entry) {
             super(entry.name(), false);
             this.entry = entry;
         }
@@ -943,6 +1060,10 @@ final class EakteBrowser extends JPanel {
                 setIcon(FilesIcons.forName(doc.entry.name()));
                 setText(doc.entry.name());
                 setToolTipText(details(doc.entry));
+            } else if (value instanceof Part part) {
+                setIcon(FilesIcons.forName(part.entry.name()));
+                setText(part.entry.name());
+                setToolTipText("Anlage der E-Mail „" + ((Doc) part.getParent()).entry.name() + "“");
             } else if (value instanceof Folder folder) {
                 setIcon(FilesIcons.folder());
                 setText(folder.loading ? folder.name + " …" : folder.name);

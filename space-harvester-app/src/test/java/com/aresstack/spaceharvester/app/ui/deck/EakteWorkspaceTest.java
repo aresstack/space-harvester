@@ -174,9 +174,16 @@ class EakteWorkspaceTest {
                 .toList())).as("keine Tabelle neben dem Baum").isEmpty();
         assertThat(onEdt(() -> components(browser, com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor.class)
                 .get(0).getComponent(2).isVisible())).as("Suchzeile des Editors").isFalse();
-        // Outlook-Nachricht: der Viewer der Leseansicht hat dafür keine Vorschau, also steht die Textsicht vorn.
+        // Outlook-Nachricht: der gemeinsame Viewer zeigt sie formatiert (Kopf, Text, Anlagen), die Vorschau bleibt
+        // vorn; die Anlagen stehen als Unterknoten unter der E-Mail im Baum (Angelo 24.11.2026).
         assertThat(onEdt(() -> ((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) browser.viewToggle())
-                .selected())).isEqualTo(EakteBrowser.TEXT);
+                .selected())).isEqualTo(EakteBrowser.PREVIEW);
+        String mailHref = onEdt(() -> browser.entries().get(0).href());
+        await(() -> onEdt(() -> browser.partsOf(mailHref).equals(java.util.List.of(
+                com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.ATTACHMENT, "Messwerte.bin"))),
+                "Anlagen unter der E-Mail");
+        assertThat(onEdt(() -> browser.viewer().textContent()))
+                .contains(com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.SUBJECT);
         assertThat(onEdt(() -> components(browser,
                 com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel.class))).hasSize(1);
         // Links „Ordner | Gliederung“: eine Outlook-Nachricht hat keine Überschriften, das steht dort.
@@ -185,9 +192,12 @@ class EakteWorkspaceTest {
         assertThat(onEdt(browser::outline)).isEmpty();
         SwingUtilities.invokeAndWait(() -> ((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle)
                 browser.leftToggle()).select(EakteBrowser.FOLDERS));
-        // Umschalter „Vorschau | Extraktion“ in der Titelleiste; Extraktion ohne Analysedienst: nicht analysiert
+        // „Vorschau | Text | Extraktion“ in der Leiste mit der Lupe, „Analyse starten“ daneben, nichts in der
+        // Titelleiste; Extraktion ohne Analysedienst: nicht analysiert
         assertThat(onEdt(() -> browser.viewToggle().isVisible())).isTrue();
-        assertThat(onEdt(() -> workspace.tools().getComponent(0) == browser.viewToggle())).isTrue();
+        assertThat(onEdt(() -> browser.viewToggle().getParent() == browser.footTools())).isTrue();
+        assertThat(onEdt(() -> browser.extraction().actions().getParent() == browser.footTools()
+                && browser.extraction().actions().isVisible())).isTrue();
         String href = onEdt(() -> browser.entries().get(0).href());
         assertThat(onEdt(() -> browser.extraction().shown()))
                 .isEqualTo(new com.aresstack.spaceharvester.application.extraction.DocumentRef("eakte", href,
@@ -197,6 +207,26 @@ class EakteWorkspaceTest {
         await(() -> onEdt(() -> browser.status().text().equals("Extraktion: Noch nicht analysiert")),
                 "Extraktion nicht analysiert");
         assertThat(onEdt(() -> browser.extraction().actions().isVisible())).isTrue();
+
+        // Ein Klick auf die PDF-Anlage in der E-Mail wählt ihren Knoten: rechts das PDF, Extraktion und Speichern
+        // beziehen sich auf die Anlage (Kennung der E-Mail plus Nummer der Anlage, ETag der E-Mail).
+        SwingUtilities.invokeAndWait(() -> ((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle)
+                browser.viewToggle()).select(EakteBrowser.PREVIEW));
+        SwingUtilities.invokeAndWait(() -> browser.viewer().openMailAttachment(0));
+        await(() -> onEdt(() -> browser.viewer() != null && browser.viewer().attachment().fileName()
+                .equals(com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.ATTACHMENT)), "PDF-Anlage");
+        assertThat(onEdt(() -> browser.shownEntry().name()))
+                .isEqualTo(com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.ATTACHMENT);
+        assertThat(onEdt(() -> browser.viewer().attachment().kind()))
+                .isEqualTo(com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentKind.PDF);
+        assertThat(onEdt(() -> browser.extraction().shown()))
+                .isEqualTo(new com.aresstack.spaceharvester.application.extraction.DocumentRef("eakte",
+                        mailHref + EakteBrowser.PART + "0", "\"4711-1\""));
+        Path pdf = downloads.resolve(com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.ATTACHMENT);
+        SwingUtilities.invokeAndWait(browser::saveSelected);
+        await(() -> Files.exists(pdf), "Anlage gespeichert");
+        assertThat(Files.readAllBytes(pdf)).isEqualTo(com.aresstack.spaceharvester.deck.eakte.http
+                .FakeOutlookMessage.PDF);
         Path temp = onEdt(browser::tempFolder);
         assertThat(temp).isNotNull();
 
