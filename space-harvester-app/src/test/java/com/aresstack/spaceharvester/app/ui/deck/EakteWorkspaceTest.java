@@ -126,6 +126,14 @@ class EakteWorkspaceTest {
         assertThat(EakteConnectForm.savedEntry()).isEqualTo(ENTRY);
         assertThat(fake.passwordPosts()).isEqualTo(1);
 
+        // „Titel filtern …“ im Kopf der Seitenleiste: nur passende Dokumente, Mappen bleiben.
+        SwingUtilities.invokeAndWait(() -> browser.filter.setText("akten"));
+        assertThat(onEdt(() -> browser.visibleNames())).contains("Ablage", "Übersicht Akten.txt");
+        SwingUtilities.invokeAndWait(() -> browser.filter.setText("gibt es nicht"));
+        assertThat(onEdt(() -> browser.visibleNames())).doesNotContain("Übersicht Akten.txt").contains("Ablage");
+        SwingUtilities.invokeAndWait(() -> browser.filter.setText(""));
+        assertThat(onEdt(() -> browser.visibleNames())).contains("Übersicht Akten.txt");
+
         // Leer ist leer, ein Fehler ist ein Fehler (nie ein „leerer“ Ordner).
         String root = onEdt(browser::folder);
         SwingUtilities.invokeAndWait(() -> browser.show(browser.entries().get(3).href()));

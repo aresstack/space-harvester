@@ -264,7 +264,6 @@ final class NdvBrowser extends JPanel {
                 openLibrary(libraryList.getSelectedValue());
             }
         });
-        Comic.style(libraryFilter);
         libraryFilter.getDocument().addDocumentListener(changes(this::filterLibraries));
         libraryBusy = new BusyOverlay(Comic.scroll(libraryList));
         JPanel left = sideBar();
@@ -410,13 +409,14 @@ final class NdvBrowser extends JPanel {
         right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, objectPanel, sourcePanel);
         right.setResizeWeight(0.4);
         right.setOpaque(false);
-        right.setBorder(BorderFactory.createEmptyBorder(8, 6, 8, 12));
+        right.setBorder(BorderFactory.createEmptyBorder(8, 6, 0, 12));
         ComicDivider.install(right);
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, right);
+        // Unter der Arbeitsfläche rechts die Leiste mit der Lupe, auf einer Linie mit der Fußleiste der Seitenleiste.
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, DeckBars.withFind(right));
         split.setResizeWeight(0.2);
         split.setDividerLocation(220);
         split.setOpaque(false);
-        split.setBorder(BorderFactory.createEmptyBorder());
+        split.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 0));
         ComicDivider.install(split);
         add(split, BorderLayout.CENTER);
         add(indexPanel, BorderLayout.EAST);
@@ -895,7 +895,7 @@ final class NdvBrowser extends JPanel {
                 field.getAccessibleContext().setAccessibleName(name + " filtern");
                 field.getDocument().addDocumentListener(changes(() -> applySideFilter(name)));
             }
-            sideSearch.add(InputFrame.search(field), name);
+            sideSearch.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead(name, field), name);
         });
         for (JPanel holder : List.of(resourcesHolder, callsHolder, outlineHolder)) {
             holder.setOpaque(false);
@@ -915,21 +915,17 @@ final class NdvBrowser extends JPanel {
                 + "Bibliothek (Tiefe bis " + NdvAnalysis.HIERARCHY_DEPTH + ")"));
         sideTabs.put(SIDE_OUTLINE, new IconButton(com.aresstack.spaceharvester.app.ui.deck.editor.EditorIcons
                 .outline(), "Gliederung des geöffneten Quelltexts"));
-        JPanel tabs = new JPanel(new java.awt.GridLayout(1, 0, 2, 0));
-        tabs.setOpaque(false);
         sideTabs.forEach((name, tab) -> {
             tab.getAccessibleContext().setAccessibleName(name);
             tab.addActionListener(e -> selectSide(name));
-            tabs.add(tab);
         });
-        JPanel footer = new JPanel(new BorderLayout());
-        footer.setOpaque(false);
-        footer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(4, 0, 0, 0)));
-        footer.add(tabs, BorderLayout.CENTER);
+        // Gemeinsame Fußleiste der Seitenleisten (feste Höhe, auf einer Linie mit der Lupenleiste), Reiter mittig.
+        JComponent footer = new com.aresstack.spaceharvester.app.ui.controls.SideFoot(null,
+                com.aresstack.spaceharvester.app.ui.controls.SideFoot.centered(sideTabs.values()
+                        .toArray(java.awt.Component[]::new)), null);
         JPanel left = new JPanel(new BorderLayout(0, 6));
         left.setOpaque(false);
-        left.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 6));
+        left.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 6));
         left.add(sideSearch, BorderLayout.NORTH);
         left.add(sideStage, BorderLayout.CENTER);
         left.add(footer, BorderLayout.SOUTH);
@@ -1859,7 +1855,6 @@ final class NdvBrowser extends JPanel {
                 }
             }
         });
-        Comic.style(libraryFilter);
         libraryFilter.addKeyListener(new KeyAdapter() {
             @Override
             public void keyPressed(KeyEvent event) {
