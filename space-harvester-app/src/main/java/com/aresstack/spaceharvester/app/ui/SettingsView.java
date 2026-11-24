@@ -341,7 +341,8 @@ public final class SettingsView implements View {
         page(BROWSER, Comic.column(
                 Comic.plate(BrowserSettingsPanel.HEADING, Comic.ORANGE, browser.note()),
                 Comic.plate("Profil Extern", Comic.BLUE, browser.external()),
-                Comic.plate("Profil Intern", Comic.ORANGE, browser.internal())));
+                Comic.plate("Profil Intern", Comic.ORANGE, browser.internal()),
+                Comic.plate(BrowserSettingsPanel.CHANGES_HEADING, Comic.RED, browser.changes())));
         var deck = new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel();
         page(DIAGRAMS, Comic.column(
                 Comic.plate(com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel.DIAGRAM_HEADING,
