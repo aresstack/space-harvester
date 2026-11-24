@@ -416,7 +416,7 @@ public final class PageDetailPanel extends JPanel {
         row.setOpaque(false);
         return row;
     }
-    /** Neben der Lupe in der Leseansicht: „Transkript kopieren“ des Podcasts der Quellenseite bzw. der Seite. */
+    /** Neben der Lupe in der Podcast-Ansicht: „Transkript kopieren“ des Podcasts der Quellenseite bzw. der Seite. */
     private final JPanel sourceFoot = footRow();
     private final JPanel pageFoot = footRow();
 
@@ -529,8 +529,12 @@ public final class PageDetailPanel extends JPanel {
         }
         // Beide Reiter zeigen dasselbe Update: Wer es in einem wählt, sieht es im anderen auch.
         sourceView.onSelected(sourceChanges::select);
-        sourceView.podcastEvents(context.events()::publish);
+        sourceChanges.podcastEvents(context.events()::publish);
         sourceChanges.onSelected(sourceView::select);
+        // Der Podcast der Quelle bzw. des Spaces steht in der Podcast-Ansicht und erzählt die Zusammenfassung der
+        // Leseansicht, ohne sie neu zu erzeugen; die Leseansicht markiert das laufende Thema mit (Angelo 23.11.2026).
+        sourceView.onSummary(sourceChanges::adopt);
+        sourceChanges.onFollow(sourceView::followPodcast);
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
         sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,
@@ -605,8 +609,8 @@ public final class PageDetailPanel extends JPanel {
         // Links neben der Lupe das Kopieren, rechtsbündig der Schalter „Untertitel“ (Angelo 22.11.2026).
         pageFoot.add(Comic.row(pagePodcast.transcriptCopy()), BorderLayout.WEST);
         pageFoot.add(Comic.row(pagePodcast.subtitleToggle()), BorderLayout.EAST);
-        sourceFoot.add(Comic.row(sourceView.podcast().transcriptCopy()), BorderLayout.WEST);
-        sourceFoot.add(Comic.row(sourceView.podcast().subtitleToggle()), BorderLayout.EAST);
+        sourceFoot.add(Comic.row(sourceChanges.podcast().transcriptCopy()), BorderLayout.WEST);
+        sourceFoot.add(Comic.row(sourceChanges.podcast().subtitleToggle()), BorderLayout.EAST);
         readerPage.setOrb(pagePodcast.orb());
         // Der Chat liest mit derselben Sprachausgabe vor; sein Knopf steht auf der Höhe dieser Knöpfe (Angelo 23.11.2026).
         chat.useReadAloud(this::readAloudBinding);
@@ -2946,8 +2950,8 @@ public final class PageDetailPanel extends JPanel {
                 : ADVANCED.equals(selected) && PAGE.equals(pageCard) ? advancedFoot
                 : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
                 : READ.equals(selected) && videoTranscriptShown ? videoTranscript.action()
-                : READING.equals(selected) && SOURCE_CARD.equals(pageCard) ? sourceFoot
-                : READING.equals(selected) && PAGE.equals(pageCard) ? pageFoot
+                : READ.equals(selected) && SOURCE_CARD.equals(pageCard) ? sourceFoot
+                : READ.equals(selected) && PAGE.equals(pageCard) ? pageFoot
                 : null;
         if (footTools.getComponentCount() == (shown == null ? 0 : 1)
                 && (shown == null || footTools.getComponent(0) == shown)) {
@@ -5553,7 +5557,8 @@ public final class PageDetailPanel extends JPanel {
 
     /** Auf der Quellenseite in der Leseansicht hat das Dreieck die Speicher-Einträge der Zusammenfassung. */
     private boolean sourceMenuShown() {
-        return SOURCE_CARD.equals(pageCard) && READING.equals(tabs.selected()) && sourceView.sourceId() != null;
+        return SOURCE_CARD.equals(pageCard) && (READING.equals(tabs.selected()) || READ.equals(tabs.selected()))
+                && sourceView.sourceId() != null;
     }
 
     /**
@@ -5563,13 +5568,17 @@ public final class PageDetailPanel extends JPanel {
      */
     javax.swing.JPopupMenu moreMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
-        if (sourceMenuShown()) {
+        if (sourceMenuShown() && READING.equals(tabs.selected())) {
             menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", sourceView.hasSummary(),
                     this::saveSummary));
+            return menu;
+        }
+        if (sourceMenuShown()) {
+            // Der Podcast steht in der Podcast-Ansicht, seine Einträge also auch.
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
-                    sourceView.podcast().hasTranscript(), () -> saveTranscript(sourceView.podcast())));
-            menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceView.podcastRenewable(),
-                    sourceView::renewPodcast));
+                    sourceChanges.podcast().hasTranscript(), () -> saveTranscript(sourceChanges.podcast())));
+            menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceChanges.podcastRenewable(),
+                    sourceChanges::renewPodcast));
             return menu;
         }
         for (ComposerButton action : List.of(bookmark, browse)) {
@@ -5611,7 +5620,7 @@ public final class PageDetailPanel extends JPanel {
         String name = "Transkript " + safeName(title.getText()) + ".md";
         podcast.transcript(text -> {
             if (text.isBlank()) {
-                tabStatus(READING, "Transkript: Der Podcast hat noch keinen Text");
+                tabStatus(tabs.selected(), "Transkript: Der Podcast hat noch keinen Text");
             } else {
                 saveText(name, text, "Transkript");
             }
@@ -5624,8 +5633,9 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         Background.execute(() -> Files.writeString(target, text, java.nio.charset.StandardCharsets.UTF_8),
-                () -> tabStatus(READING, what + " gespeichert: " + target),
-                failure -> tabStatus(READING, what + " nicht gespeichert: " + Problems.describe(failure).title()));
+                () -> tabStatus(tabs.selected(), what + " gespeichert: " + target),
+                failure -> tabStatus(tabs.selected(), what + " nicht gespeichert: "
+                        + Problems.describe(failure).title()));
     }
 
     Breadcrumbs breadcrumbs() {
