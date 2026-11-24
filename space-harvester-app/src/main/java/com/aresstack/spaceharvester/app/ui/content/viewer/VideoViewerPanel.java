@@ -30,7 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Play BSCW videos through an authenticated range bridge without exposing source credentials to VLC.
+ * Play source videos through a range bridge without exposing source credentials to VLC.
  * Keep native video and Swing controls in separate opaque regions to prevent AWT mixing artifacts.
  */
 public final class VideoViewerPanel extends JPanel implements AutoCloseable {
@@ -895,7 +895,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         if (startRequestedAtNanos != 0 && !actuallyPlaying
                 && System.nanoTime() - startRequestedAtNanos
                 > TimeUnit.MILLISECONDS.toNanos(settings.get(VideoSettings.Value.START_TIMEOUT_MILLIS))) {
-            playbackFailed("VLC startet nicht. Installation, Videoformat und BSCW-Verbindung prüfen.");
+            playbackFailed("VLC startet nicht. Installation, Videoformat und Zugriff auf die Quelle prüfen.");
             return;
         }
         try {
@@ -920,7 +920,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
                     return;
                 } else {
                     seekRequestedAtNanos = 0;
-                    message.setText("Position nicht erreicht. BSCW-Verbindung oder Seek-Fähigkeit prüfen.");
+                    message.setText("Position nicht erreicht. Quellenzugriff oder Seek-Fähigkeit prüfen.");
                 }
             }
             if (!transport.seekBar().isDragging()) {
