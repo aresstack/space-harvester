@@ -16,4 +16,16 @@ class ChatMissingPagesTest {
         assertThat(ChatPanel.notLoadedAnchor("Wissen: Space Handbuch · 3 Seiten")).isNull();
         assertThat(ChatPanel.notLoadedAnchor(null)).isNull();
     }
+
+    @Test
+    void theCrosshairTakesExactlyThePagesTheKnowledgeLineCountsAsNotLoaded() {
+        for (com.aresstack.spaceharvester.application.holdings.HoldingState state
+                : com.aresstack.spaceharvester.application.holdings.HoldingState.values()) {
+            com.aresstack.spaceharvester.application.holdings.HoldingCounts one =
+                    com.aresstack.spaceharvester.application.holdings.HoldingCounts.of(state);
+            assertThat(ChatPanel.notLoaded(state)).as(state.name()).isEqualTo(one.pages() - one.stored() > 0);
+        }
+        assertThat(ChatPanel.notLoaded(com.aresstack.spaceharvester.application.holdings.HoldingState.LOCKED))
+                .as("eine gesperrte Seite zählt als nicht geladen, also findet das Fadenkreuz sie").isTrue();
+    }
 }
