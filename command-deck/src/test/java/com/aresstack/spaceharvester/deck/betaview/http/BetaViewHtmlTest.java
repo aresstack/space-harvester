@@ -26,6 +26,20 @@ class BetaViewHtmlTest {
     }
 
     @Test
+    void readsThePageLinesInsideThePayloadOfTheRealServer() {
+        // So antwortet BetaView wirklich (Angelo, 24.11.: im Viewer stand das rohe JSON).
+        String json = "{\"messages\":[],\"payload\":{\"docId\":\"D1\",\"page\":1,"
+                + "\"text\":[\"KOPFZEILE\",\"  WERT 1\"]}}";
+        assertThat(BetaViewHtml.pageText(json)).isEqualTo("KOPFZEILE\n  WERT 1\n");
+    }
+
+    @Test
+    void brokenJsonIsReadLikeMainframeMate() {
+        String json = "{\"messages\":[],\"payload\":{\"text\":[\"A\",\"B, C\"]}";
+        assertThat(BetaViewHtml.pageText(json)).isEqualTo("A\nB, C\n");
+    }
+
+    @Test
     void withoutTextTheAnswerStays() {
         assertThat(BetaViewHtml.pageText("{\"error\":\"x\"}")).isEqualTo("{\"error\":\"x\"}");
     }

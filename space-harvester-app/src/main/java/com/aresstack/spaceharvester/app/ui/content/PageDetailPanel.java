@@ -403,7 +403,6 @@ public final class PageDetailPanel extends JPanel {
     /** Die Unterreiter von „Analysen“ einer Seite mit „mit Unterseiten“ rechts, in der unteren Leiste. */
     private final TabFoot analysisFoot;
     /** Die Unterreiter von „Begriffe“ (Akronyme, Bezeichner, Verben, Beziehungen) neben denen von „Analysen“. */
-    private final JComponent termsKinds;
     /** Die Unterreiter von „Erweitert“ einer Seite bzw. ohne Seite, in der unteren Leiste. */
     private final TabFoot advancedFoot;
     private final TabFoot wideAdvancedFoot;
@@ -717,7 +716,7 @@ public final class PageDetailPanel extends JPanel {
         analysisActions.add(analysisView.proposeIcon());
         analysisActions.add(analysisView.createIcon());
         analysisFoot = new TabFoot(analysisTabs.detachBar(), subpages.box());
-        termsKinds = terms.kindBar();
+        terms.selectableKinds();
         storeField.onChange(this::switchStore);
         originalContent.setOpaque(false);
         fileContent.setOpaque(false);
@@ -748,8 +747,6 @@ public final class PageDetailPanel extends JPanel {
             showTabStatus();
         });
         analysisTabs.onSelect(name -> {
-            // Unter „Begriffe“ dessen Unterreiter hinter einem Strich in derselben Leiste.
-            analysisFoot.secondary(TERMS.equals(name) ? termsKinds : null);
             if (RELATIONS.equals(name)) {
                 loadBelowRelations();
             }

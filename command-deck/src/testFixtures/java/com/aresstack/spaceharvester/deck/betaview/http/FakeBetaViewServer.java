@@ -230,12 +230,14 @@ public final class FakeBetaViewServer implements AutoCloseable {
             case "document.page.get.action" -> {
                 int index = Integer.parseInt(form.getOrDefault("pageIndex", "0"));
                 String text = session.current.pages().get(index);
-                StringBuilder json = new StringBuilder("{\"page\":" + (index + 1) + ",\"text\":[");
+                // Wie der echte Server: Zeilen in "payload" (Angelo, 24.11.: sonst stand rohes JSON im Viewer).
+                StringBuilder json = new StringBuilder("{\"messages\":[],\"payload\":{\"docId\":\"D"
+                        + (index + 1) + "\",\"page\":" + (index + 1) + ",\"text\":[");
                 String[] lines = text.split("\n");
                 for (int i = 0; i < lines.length; i++) {
                     json.append(i == 0 ? "" : ",").append('"').append(lines[i].replace("\"", "\\\"")).append('"');
                 }
-                send(exchange, 200, "application/json", json.append("]}").toString());
+                send(exchange, 200, "application/json", json.append("]}}").toString());
             }
             case "downloadDialog.action" -> html(exchange, "<html><body><form>" + tokenFields(session)
                     + hidden("function", "download") + hidden("pages", String.valueOf(session.current.pages().size()))
