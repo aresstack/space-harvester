@@ -123,7 +123,7 @@ public final class SearchView implements View {
     final javax.swing.AbstractButton repeat;
     /** Zurück und Vor zwischen den Suchen dieser Sitzung (Begriff und Bereich). */
     final javax.swing.AbstractButton backVisit;
-    /** Zurück und Vor für die Statuszeile, solange die Suche zu sehen ist. */
+    /** Zurück und Vor links an der Suchleiste, solange die Suche zu sehen ist. */
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.CENTER, 2, 0));
     final javax.swing.AbstractButton forwardVisit;
     /** Was links im Baum markiert ist; leer für „Wissensquellen“. */
@@ -1176,7 +1176,7 @@ public final class SearchView implements View {
     }
 
 
-    /** Zurück und Vor der Suche für die Statuszeile des Hauptfensters. */
+    /** Zurück und Vor der Suche links an der Suchleiste des Hauptfensters. */
     public JComponent navigation() {
         return navigation;
     }

@@ -5744,7 +5744,7 @@ public final class PageDetailPanel extends JPanel {
                 standingHelp, glossaryHelp, graphHelp, star, more);
     }
 
-    /** Zurück und Vor für die Statuszeile des Hauptfensters. */
+    /** Zurück und Vor links an der Suchleiste des Hauptfensters. */
     JComponent navigation() {
         JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 2, 0));
         row.setOpaque(false);
