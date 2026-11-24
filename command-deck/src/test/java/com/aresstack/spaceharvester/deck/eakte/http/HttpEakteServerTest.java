@@ -84,6 +84,9 @@ class HttpEakteServerTest {
         }
         assertThat(fake.passwordPosts()).isEqualTo(1);
         assertThat(trace).anyMatch(line -> line.contains("zur Anmeldung um"));
+        // v2.0 (completeWebDavSamlChallenge): nach der SAML-Antwort kein GET auf den WebDAV-Endpunkt, sondern PROPFIND
+        assertThat(fake.requests()).noneMatch(line -> line.startsWith("eakte GET /fsc/webdav"));
+        assertThat(trace).anyMatch(line -> line.contains("wiederhole die Anfrage statt der Weiterleitung"));
     }
 
     @Test

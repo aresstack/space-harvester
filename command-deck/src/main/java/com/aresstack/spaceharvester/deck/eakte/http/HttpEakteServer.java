@@ -50,8 +50,10 @@ public final class HttpEakteServer implements EakteServer {
                     throw new IOException("Die E-Akte antwortet nach der Anmeldung HTTP " + start.status());
                 }
             }
-            HttpEakteConnection connection = new HttpEakteConnection(http, new SamlNavigator(http, null));
-            connection.check(withPassword);
+            SamlNavigator sessionOnly = new SamlNavigator(http, null);
+            HttpEakteConnection connection = new HttpEakteConnection(http, sessionOnly);
+            // v2.0: nach der Anmeldung über die Startseite kein zweiter Passwort- oder REST-Versuch für WebDAV.
+            connection.check(profile.start() != null ? sessionOnly : withPassword);
             return connection;
         } finally {
             login.forget();

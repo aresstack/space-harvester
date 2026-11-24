@@ -40,12 +40,30 @@ final class SamlNavigator {
 
     /** Folgt {@code response}, bis die E-Akte selbst ohne Weiterleitung antwortet, und liefert diese Antwort. */
     SsoHttp.Response settle(SsoHttp.Response response) throws IOException {
+        return settle(response, false);
+    }
+
+    /**
+     * Der eigene SAML-Challenge von WebDAV, wie {@code completeWebDavSamlChallenge} in v2.0: mit der bestehenden
+     * OpenAM-Sitzung abschließen; leitet die E-Akte nach der SAML-Antwort weiter, endet es dort (kein GET auf den
+     * WebDAV-Endpunkt), der Aufrufer wiederholt seine Anfrage.
+     */
+    SsoHttp.Response challenge(SsoHttp.Response response) throws IOException {
+        return settle(response, true);
+    }
+
+    private SsoHttp.Response settle(SsoHttp.Response response, boolean stopAfterSaml) throws IOException {
         SsoHttp.Response current = response;
         URI continuation = null;
         int samlPosts = 0;
         int transitions = 0;
         boolean triedSession = false;
         for (int step = 1; step <= MAX_STEPS; step++) {
+            if (stopAfterSaml && samlPosts > 0 && current.redirect() && http.profile().isEakte(current.next())) {
+                http.trace("SAML-Antwort von der E-Akte verarbeitet; wiederhole die Anfrage statt der Weiterleitung "
+                        + "zu folgen");
+                return current;
+            }
             if (current.redirect()) {
                 current = http.get(current.next());
                 continue;
