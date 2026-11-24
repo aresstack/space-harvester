@@ -68,7 +68,7 @@ public final class SearchView implements View {
      * Treffer je Stapel: ein Bildschirm voll statt des Höchstwerts des Core ({@link KeywordSearch#MAX_LIMIT}), damit
      * eine Suche nicht für jede Eingabe hundert Seiten in den Cache holt.
      */
-    static final int LIMIT = 25;
+    public static final int LIMIT = 25;
     /** Schluss der Fortschrittszeile, wenn nichts mehr nachlädt. */
     static final String DONE = "Die Suche ist abgeschlossen";
     /** Abstand der Abfragen des Ladestands ({@code KeywordSearch.progress}), solange Seiten in den Cache laden. */
