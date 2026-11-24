@@ -33,6 +33,7 @@ final class FlexmarkSwingRenderer {
     private final DesktopLinkOpener linkOpener;
     private final MermaidImageRenderer mermaidImageRenderer;
     private final MermaidImageRenderer svgImageRenderer = new SvgImageRenderer();
+    private final MermaidImageRenderer drawioImageRenderer = new DrawioImageRenderer(svgImageRenderer);
 
     FlexmarkSwingRenderer(MarkdownTheme theme, DesktopLinkOpener linkOpener,
                           MermaidImageRenderer mermaidImageRenderer) {
@@ -139,6 +140,11 @@ final class FlexmarkSwingRenderer {
         String code = block.getContentChars().toString();
         if ("mermaid".equalsIgnoreCase(language) && renderMermaid) {
             return new MermaidDiagramPanel(code, theme, mermaidImageRenderer);
+        }
+        // draw.io-XML (```drawio, oder ```xml/nackt mit <mxfile/<mxGraphModel als Wurzel) über drawio-java, wie in Seiten
+        // und Exporten; während des Streamings bleibt es ein Codeblock.
+        if (renderMermaid && DrawioImageRenderer.isDrawioBlock(language, code)) {
+            return MermaidDiagramPanel.drawio(code, theme, drawioImageRenderer);
         }
         // Rohes SVG (```svg, oder ```xml/```html mit <svg als Wurzel, oder nacktes <svg> — siehe SvgMarkdownBlocks)
         // geht über denselben Bildweg wie Mermaid; während des Streamings bleibt es ein Codeblock.
