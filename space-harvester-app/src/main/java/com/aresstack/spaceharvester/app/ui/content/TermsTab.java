@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.app.ui.Pager;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.Relation;
 import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.app.ui.controls.CountTile;
 import com.aresstack.spaceharvester.app.ui.controls.InfoPopup;
 import com.aresstack.spaceharvester.app.ui.controls.TabHeader;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
@@ -23,7 +24,6 @@ import javax.swing.BoxLayout;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.SwingConstants;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.BorderLayout;
@@ -152,22 +152,25 @@ final class TermsTab extends JPanel {
     }
 
     private final TabHeader head = new TabHeader("Begriffe dieser Seite");
-    private final JLabel acronymCount = number();
-    private final JLabel identifierCount = number();
-    private final JLabel relationCount = number();
-    private final JLabel verbCount = number();
+    private final CountTile acronymCount = new CountTile(NOT_YET, "Akronyme");
+    private final CountTile identifierCount = new CountTile(NOT_YET, "Bezeichner");
+    private final CountTile relationCount = new CountTile(NOT_YET, "Beziehungen");
+    private final CountTile verbCount = new CountTile(NOT_YET, "Verben");
     private final JLabel completeness = badge();
     private final JLabel analysis = Comic.text("Analyse vom letzten Seitenabgleich");
     private final PlaceholderField filter = new PlaceholderField(12, "Begriffe filtern …");
-    /** Unterreiter (Angelo 23.11.2026): je Überschrift ein Reiter in der unteren Leiste; die Zähler oben bleiben. */
+    /**
+     * Abschnitte (Angelo 24.11.2026): die vier Kennzahlen oben sind zugleich die Umschalter; genau eine ist gewählt und
+     * bestimmt, welcher Abschnitt darunter zu sehen ist. Keine zweite Reiterzeile in der unteren Leiste.
+     */
     static final String ACRONYMS = "Akronyme";
     static final String IDENTIFIERS = "Bezeichner";
     static final String VERBS = "Verben";
     static final String RELATIONS = "Beziehungen";
     static final List<String> KINDS = List.of(ACRONYMS, IDENTIFIERS, VERBS, RELATIONS);
-    /** Der gewählte Unterreiter; {@code null}: alle Abschnitte untereinander (etwa beim Stand der Auswahl). */
+    /** Der gewählte Abschnitt; {@code null}: alle Abschnitte untereinander (etwa beim Stand der Auswahl). */
     private String kind;
-    private final com.aresstack.spaceharvester.app.ui.PillTabs kindTabs = new com.aresstack.spaceharvester.app.ui.PillTabs();
+    private final javax.swing.ButtonGroup kindGroup = new javax.swing.ButtonGroup();
     private final JPanel acronymsBox = new JPanel(new BorderLayout(0, 4));
     private final JPanel identifiersBox = new JPanel(new BorderLayout(0, 4));
     private final JPanel verbsBox = new JPanel(new BorderLayout(0, 4));
@@ -181,6 +184,8 @@ final class TermsTab extends JPanel {
     /** Die Verben der gezeigten Seite; {@code null}: unbekannt (keine aktuelle Aussagenanalyse). */
     private List<PageVerb> shownVerbs;
     private final JLabel relationTitle = heading("Beziehungen");
+    /** Die Beziehungen der gezeigten Seite; {@code null}: nicht abgefragt. Der Filter wirkt auch auf sie. */
+    private List<Relation> shownRelations;
     private final JPanel relationLines = new JPanel();
     private final JLabel hint = Comic.muted(" ");
     private Consumer<List<Span>> onJump = spans -> { };
@@ -267,10 +272,11 @@ final class TermsTab extends JPanel {
 
         JPanel counts = new JPanel(new GridLayout(1, 4, 12, 0));
         counts.setOpaque(false);
-        counts.add(count(acronymCount, "Akronyme"));
-        counts.add(count(identifierCount, "Bezeichner"));
-        counts.add(count(verbCount, "Verben"));
-        counts.add(count(relationCount, "Beziehungen"));
+        for (CountTile tile : tiles()) {
+            counts.add(cell(tile));
+            kindGroup.add(tile);
+            tile.addActionListener(event -> kind(tile.caption()));
+        }
 
         analysisRow.setOpaque(false);
         analysisRow.add(analysis, BorderLayout.WEST);
@@ -409,17 +415,31 @@ final class TermsTab extends JPanel {
         relationCount.setText(relations == null ? NOT_YET : String.valueOf(relations.size()));
         relationCount.setToolTipText(relations == null ? "Beziehungen liegen für diese Seite nicht vor"
                 : "Bestätigte und vorgeschlagene Beziehungen zwischen den Begriffen dieser Seite");
-        relationLines.removeAll();
+        shownRelations = relations == null ? null : List.copyOf(relations);
         ownRelationLines = relations == null ? java.util.Set.of()
                 : relations.stream().map(Relation::line).collect(java.util.stream.Collectors.toUnmodifiableSet());
-        for (Relation relation : relations == null ? List.<Relation>of() : relations) {
+        if (selection == null) {
+            fill();
+        }
+    }
+
+    /** Die Beziehungen der Seite, die zum Filter {@code query} (klein geschrieben) passen; gibt ihre Zahl zurück. */
+    private int fillRelations(String query) {
+        relationLines.removeAll();
+        int visible = 0;
+        for (Relation relation : shownRelations == null ? List.<Relation>of() : shownRelations) {
+            if (!query.isEmpty() && !relation.line().toLowerCase(Locale.ROOT).contains(query)) {
+                continue;
+            }
             JLabel line = Comic.text(relation.line());
             line.setAlignmentX(LEFT_ALIGNMENT);
             relationLines.add(line);
+            visible++;
         }
-        relationTitle.setVisible(relations != null && !relations.isEmpty());
+        relationTitle.setVisible(visible > 0);
         relationLines.revalidate();
         relationLines.repaint();
+        return visible;
     }
 
     /** {@code listener} öffnet eine Seite aus den Fundstellen eines Begriffs der Auswahl. */
@@ -443,6 +463,7 @@ final class TermsTab extends JPanel {
         shown = null;
         shownTerms = null;
         shownVerbs = null;
+        shownRelations = null;
         head.title("Begriffe in " + chosen.title());
         head.status(null, null);
         analysisRow.setVisible(false);
@@ -483,7 +504,7 @@ final class TermsTab extends JPanel {
             counted(chosen);
             if (selection == chosen) {
                 String unreadable = "Gesamtzahl nicht lesbar: " + failure.getClass().getSimpleName();
-                for (JLabel count : List.of(acronymCount, identifierCount, verbCount, relationCount)) {
+                for (CountTile count : tiles()) {
                     count.setToolTipText(unreadable);
                 }
             }
@@ -621,9 +642,39 @@ final class TermsTab extends JPanel {
     }
 
     private void finished() {
-        boolean empty = loadedTerms == 0 && relationLines.getComponentCount() == 0;
+        boolean empty = visible(chips.getComponentCount(), identifierChips.getComponentCount(),
+                verbChips.getComponentCount(), relationLines.getComponentCount()) == 0;
         String q = filter.getText() == null ? "" : filter.getText().trim();
-        hint.setText(!empty ? " " : q.isEmpty() ? NO_TERMS : NO_MATCH);
+        hint.setText(!empty ? " " : q.isEmpty() ? (kind == null ? NO_TERMS
+                : "In der Auswahl wurden keine " + plural(kind) + " erkannt.") : noMatch(kind));
+    }
+
+    /** Wie viele Einträge der gewählte Abschnitt zeigt; ohne Wahl alle zusammen. */
+    private int visible(int acronyms, int identifiers, int verbs, int relations) {
+        return kind == null ? acronyms + identifiers + verbs + relations : switch (kind) {
+            case ACRONYMS -> acronyms;
+            case IDENTIFIERS -> identifiers;
+            case VERBS -> verbs;
+            default -> relations;
+        };
+    }
+
+    /** „Kein Begriff passt zum Filter.“, bezogen auf den gewählten Abschnitt („Keine Beziehung …“). */
+    static String noMatch(String kind) {
+        if (kind == null) {
+            return NO_MATCH;
+        }
+        return switch (kind) {
+            case ACRONYMS -> "Kein Akronym passt zum Filter.";
+            case IDENTIFIERS -> "Kein Bezeichner passt zum Filter.";
+            case VERBS -> "Kein Verb passt zum Filter.";
+            default -> "Keine Beziehung passt zum Filter.";
+        };
+    }
+
+    /** Der Abschnitt in der Mehrzahl für Hinweise („Beziehungen“); ohne Wahl „Begriffe“. */
+    private static String plural(String kind) {
+        return kind == null ? "Begriffe" : kind;
     }
 
     private boolean nearEnd() {
@@ -913,17 +964,18 @@ final class TermsTab extends JPanel {
         verbChips.removeAll();
         int verbs = 0;
         for (PageVerb verb : shownVerbs == null ? List.<PageVerb>of() : shownVerbs) {
-            if (!query.isEmpty() && !verb.verb().lemma().contains(query)) {
+            if (!query.isEmpty() && !verb.verb().lemma().toLowerCase(Locale.ROOT).contains(query)) {
                 continue;
             }
             addVerbPill(textForm(chip(verb.verb().lemma(), verbTooltip(verb.verb(), true), verb.spans()),
                     verb.verb()), verb.verb());
             verbs++;
         }
+        int relations = fillRelations(query);
         acronymTitle.setVisible(!visible.isEmpty());
         identifierTitle.setVisible(identifiers > 0);
         verbTitle.setVisible(verbs > 0);
-        hint.setText(hint(shown, visible.size() + identifiers + verbs, !query.isEmpty()));
+        hint.setText(hint(shown, visible(visible.size(), identifiers, verbs, relations), !query.isEmpty(), kind));
         for (JPanel list : List.of(chips, identifierChips, verbChips)) {
             list.revalidate();
             list.repaint();
@@ -1019,6 +1071,11 @@ final class TermsTab extends JPanel {
     }
 
     static String hint(PageAcronyms acronyms, int visible, boolean filtered) {
+        return hint(acronyms, visible, filtered, null);
+    }
+
+    /** Wie {@link #hint(PageAcronyms, int, boolean)}, bezogen auf den gewählten Abschnitt {@code kind}. */
+    static String hint(PageAcronyms acronyms, int visible, boolean filtered, String kind) {
         PageAcronyms.State state = acronyms == null ? PageAcronyms.State.MISSING : acronyms.state();
         return switch (state) {
             case MISSING -> "Noch keine Analyse für diese Seite. Sie entsteht nach dem nächsten Abgleich oder über "
@@ -1026,26 +1083,22 @@ final class TermsTab extends JPanel {
             case STALE -> "Die Analyse passt nicht mehr zum angezeigten Text; „Analyse neu berechnen“ unter Text "
                     + "zeigt die Begriffe wieder.";
             case FAILED -> "Die letzte Analyse ist fehlgeschlagen; „Analyse neu berechnen“ unter Text startet sie neu.";
-            case CURRENT -> visible == 0 && !filtered ? "Auf dieser Seite wurden keine Begriffe erkannt."
-                    : visible == 0 && filtered ? "Kein Begriff passt zum Filter." : " ";
+            case CURRENT -> visible == 0 && !filtered ? "Auf dieser Seite wurden keine " + plural(kind) + " erkannt."
+                    : visible == 0 && filtered ? noMatch(kind) : " ";
         };
     }
 
-    private static JPanel count(JLabel number, String caption) {
-        JPanel cell = new JPanel(new BorderLayout(0, 2));
-        cell.setOpaque(false);
-        cell.add(number, BorderLayout.CENTER);
-        JLabel label = Comic.muted(caption);
-        label.setHorizontalAlignment(SwingConstants.CENTER);
-        cell.add(label, BorderLayout.SOUTH);
-        return cell;
+    /** Die Kennzahlen in der Reihenfolge der Abschnitte ({@link #KINDS}). */
+    private List<CountTile> tiles() {
+        return List.of(acronymCount, identifierCount, verbCount, relationCount);
     }
 
-    private static JLabel number() {
-        JLabel label = new JLabel(NOT_YET, SwingConstants.CENTER);
-        label.setFont(Comic.semiBold(22f));
-        label.setForeground(Comic.INK);
-        return label;
+    /** Hält eine Kachel mittig in ihrer Spalte, damit sie quadratisch bleibt. */
+    private static JPanel cell(CountTile tile) {
+        JPanel cell = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        cell.setOpaque(false);
+        cell.add(tile);
+        return cell;
     }
 
     private static JLabel badge() {
@@ -1156,11 +1209,11 @@ final class TermsTab extends JPanel {
         }
     }
 
-    // --- Unterreiter Akronyme/Bezeichner/Verben/Beziehungen (Angelo 23.11.2026) ------------------------------------
+    // --- Abschnitte Akronyme/Bezeichner/Verben/Beziehungen über die Kennzahlen (Angelo 24.11.2026) -----------------
 
     private static final String KIND_KEY = "spaceHarvester.terms.kind";
 
-    /** Eine Überschrift eines Abschnitts; mit gewähltem Unterreiter überflüssig und ausgeblendet. */
+    /** Eine Überschrift eines Abschnitts; mit gewähltem Abschnitt überflüssig und ausgeblendet. */
     private JLabel heading(String text) {
         JLabel label = new JLabel(text) {
             @Override
@@ -1174,29 +1227,25 @@ final class TermsTab extends JPanel {
     }
 
     /**
-     * Die Unterreiter als Pillen für die untere Leiste der Seitenansicht. Ab dem ersten Aufruf zeigt die Ansicht nur
-     * noch den gewählten Abschnitt („Akronyme“ zuerst); ohne Aufruf (Stand der Auswahl) bleiben alle untereinander.
+     * Schaltet die Kennzahlen als Umschalter ein (Seitenansicht): ab dann ist genau ein Abschnitt gewählt, „Akronyme“
+     * zuerst. Ohne Aufruf (Stand der Auswahl) bleiben alle Abschnitte untereinander, bis eine Kennzahl geklickt wird.
      */
-    JComponent kindBar() {
-        if (kindTabs.names().isEmpty()) {
-            for (String name : KINDS) {
-                kindTabs.tab(name, new JPanel());
-            }
-            kindTabs.onSelect(this::kind);
+    void selectableKinds() {
+        if (kind == null) {
             kind(ACRONYMS);
         }
-        return kindTabs.detachBar();
     }
 
-    /** Wählt den Unterreiter; {@code null} zeigt alle Abschnitte. */
+    /** Wählt den Abschnitt; {@code null} zeigt alle Abschnitte. */
     void kind(String chosen) {
         if (chosen != null && !KINDS.contains(chosen)) {
-            throw new IllegalArgumentException("Unbekannter Unterreiter: " + chosen);
+            throw new IllegalArgumentException("Unbekannter Abschnitt: " + chosen);
         }
         kind = chosen;
-        if (chosen != null && !chosen.equals(kindTabs.selected())) {
-            kindTabs.select(chosen);
-            return;
+        if (chosen == null) {
+            kindGroup.clearSelection();
+        } else {
+            tiles().get(KINDS.indexOf(chosen)).setSelected(true);
         }
         acronymsBox.setVisible(shows(ACRONYMS));
         identifiersBox.setVisible(shows(IDENTIFIERS));
@@ -1208,11 +1257,17 @@ final class TermsTab extends JPanel {
                 part.setVisible(shows(of));
             }
         }
+        // Filter und Hinweis beziehen sich immer auf den gewählten Abschnitt.
+        if (selection == null) {
+            fill();
+        } else if (!loading && sections.stream().noneMatch(section -> section.pager.hasMore())) {
+            finished();
+        }
         revalidate();
         repaint();
     }
 
-    /** Der gewählte Unterreiter; {@code null}: alle. */
+    /** Der gewählte Abschnitt; {@code null}: alle. */
     String kind() {
         return kind;
     }
