@@ -295,6 +295,22 @@ public final class BetaViewWorkspace extends JPanel {
         sessions.closeAll();
     }
 
+    /** Maustaste Zurück in den Dokumenten der gewählten Sitzung. */
+    public void navigateBack() {
+        SessionPanel panel = selected == null ? null : panelOf.get(selected);
+        if (panel != null) {
+            panel.documents.navigateBack();
+        }
+    }
+
+    /** Maustaste Vor. */
+    public void navigateForward() {
+        SessionPanel panel = selected == null ? null : panelOf.get(selected);
+        if (panel != null) {
+            panel.documents.navigateForward();
+        }
+    }
+
     BetaViewSession selected() {
         return selected;
     }
