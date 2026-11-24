@@ -123,6 +123,22 @@ class ChatPanelTest {
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
             assertThat(panel[0].chatName()).isEqualTo(earlier.id());
             assertThat(panel[0].bubbles()).isEqualTo(5);
+            // Wie im EAC: jede Sprechblase mit Datum und Uhrzeit oben rechts und dem Kopierknopf; die Antwort kopiert
+            // ihren Markdown-Quelltext, die Frage ihren Text.
+            for (long at : new long[] {1_000, 1_500, 1_600, 1_700, 1_800}) {
+                assertThat(labelsWithTooltip(panel[0],
+                        com.aresstack.enterpriseai.ui.comic.bubble.BubbleTimestamps.tooltip(at))).isNotZero();
+            }
+            java.util.List<com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton> copies =
+                    new java.util.ArrayList<>();
+            collect(panel[0], com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton.class, copies);
+            assertThat(copies).hasSize(5);
+            java.util.List<String> copied = new java.util.ArrayList<>();
+            panel[0].setClipboard(copied::add);
+            copies.get(0).doClick();
+            copies.get(1).doClick();
+            assertThat(copied).containsExactly("Frühere Frage", "Frühere Antwort");
+            assertThat(copies.get(1).isConfirming()).isTrue();
             // Bereichswechsel im Verlauf: eine Marke vor der Frage aus dem anderen Bereich, keine beim Nachladen.
             assertThat(panel[0].areaMarks()).containsExactly(ChatPanel.FROM_HERE + "Handbuch · alle Spaces · 3 Seiten");
             // Quellen stehen als Links unter ihrer Antwort, in der Nummer der Antwort; ohne Quellen keine Zeile. Ein
@@ -731,5 +747,22 @@ class ChatPanelTest {
                 HoldingCounts.ZERO, true, true, 1))
                 .isEqualTo("Wissen: Ordner Betrieb · " + ChatPanel.NOT_LOADED + " · 1 Favorit nicht verfügbar");
         assertThat(ChatPanel.allowed(null, null, folder)).as("Quelle des Favoriten nicht freigegeben").isFalse();
+    }
+
+    private static <T> void collect(java.awt.Container container, Class<T> type, java.util.List<T> found) {
+        for (java.awt.Component child : container.getComponents()) {
+            if (type.isInstance(child)) {
+                found.add(type.cast(child));
+            }
+            if (child instanceof java.awt.Container nested) {
+                collect(nested, type, found);
+            }
+        }
+    }
+
+    private static long labelsWithTooltip(java.awt.Container container, String tooltip) {
+        java.util.List<javax.swing.JLabel> labels = new java.util.ArrayList<>();
+        collect(container, javax.swing.JLabel.class, labels);
+        return labels.stream().filter(label -> tooltip.equals(label.getToolTipText())).count();
     }
 }
