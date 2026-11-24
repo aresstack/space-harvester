@@ -1,22 +1,18 @@
 package com.aresstack.spaceharvester.app.ui.deck.visual;
 
 import com.aresstack.spaceharvester.app.ui.AppState;
+import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.controls.MessagePlate;
 import com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.DiagramType;
 import com.aresstack.spaceharvester.mainframe.diagram.SourceDiagrams;
 import com.aresstack.spaceharvester.mainframe.outline.SourceLanguage;
 
-import javax.swing.ButtonGroup;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
-import javax.swing.JToggleButton;
 import javax.swing.SwingWorker;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
-import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.Font;
-import java.awt.Insets;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.Optional;
@@ -41,9 +37,10 @@ public final class SpoolDiagram {
     private final JPanel holder = new JPanel(cards);
     private final MermaidDiagramPanel diagram = new MermaidDiagramPanel(false);
     private final MessagePlate plate = new MessagePlate();
-    private final JToggleButton toggle = new JToggleButton("Diagramm", VisualIcons.eye());
+    /** Symbolknöpfe wie in jeder Leiste der App; gewählt = Kreis bleibt stehen. */
+    private final IconButton toggle = new IconButton(VisualIcons.eye(), SHOW);
     private final JPanel controls = new JPanel(new FlowLayout(FlowLayout.CENTER, 2, 0));
-    private final Map<DiagramType, JToggleButton> typeButtons = new EnumMap<>(DiagramType.class);
+    private final Map<DiagramType, IconButton> typeButtons = new EnumMap<>(DiagramType.class);
     private DiagramType type = DiagramType.STRUCTURE;
     private boolean active;
     private long ticket;
@@ -65,32 +62,20 @@ public final class SpoolDiagram {
         holder.add(textView, TEXT_CARD);
         holder.add(diagramCard, DIAGRAM_CARD);
 
-        toggle.setFocusable(false);
-        toggle.setToolTipText(SHOW);
         toggle.getAccessibleContext().setAccessibleName("Diagramm");
         toggle.addActionListener(e -> toggle());
         controls.setOpaque(false);
         controls.add(toggle);
-        ButtonGroup group = new ButtonGroup();
         for (DiagramType each : DiagramType.values()) {
-            JToggleButton button = new JToggleButton(each.getIcon());
-            button.setFont(button.getFont().deriveFont(Font.PLAIN, 14f));
-            button.setMargin(new Insets(2, 4, 2, 4));
-            Dimension size = new Dimension(28, 28);
-            button.setPreferredSize(size);
-            button.setMinimumSize(size);
-            button.setMaximumSize(size);
-            button.setFocusable(false);
-            button.setToolTipText(each.getLabel());
-            button.getAccessibleContext().setAccessibleName(each.getLabel());
+            IconButton button = new IconButton(VisualIcons.diagramType(each), each.getLabel());
             button.setSelected(each == type);
             button.addActionListener(e -> {
                 type = each;
+                typeButtons.forEach((key, other) -> other.setSelected(key == each));
                 if (active) {
                     generate();
                 }
             });
-            group.add(button);
             typeButtons.put(each, button);
             controls.add(button);
         }
@@ -164,7 +149,6 @@ public final class SpoolDiagram {
 
     private void showLabel() {
         toggle.setSelected(active);
-        toggle.setText(active ? "Text" : "Diagramm");
         toggle.setToolTipText(active ? BACK : SHOW);
     }
 
@@ -234,11 +218,11 @@ public final class SpoolDiagram {
         return diagram;
     }
 
-    JToggleButton toggleButton() {
+    IconButton toggleButton() {
         return toggle;
     }
 
-    Map<DiagramType, JToggleButton> typeButtons() {
+    Map<DiagramType, IconButton> typeButtons() {
         return typeButtons;
     }
 }
