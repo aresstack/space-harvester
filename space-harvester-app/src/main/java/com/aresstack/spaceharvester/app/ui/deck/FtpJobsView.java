@@ -1,9 +1,9 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
 import com.aresstack.spaceharvester.app.ui.deck.visual.SpoolDiagram;
-import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
+import com.aresstack.spaceharvester.app.ui.FindBar;
 import com.aresstack.spaceharvester.app.ui.Glyph;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
@@ -42,6 +42,7 @@ import java.util.regex.PatternSyntaxException;
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -84,13 +85,12 @@ final class FtpJobsView extends JPanel {
     private final JTable spoolTable = Comic.table(new JTable(spoolModel));
     private final RSyntaxTextArea spoolText = new RSyntaxTextArea();
     private final JComboBox<SpoolText.Language> language = Comic.combo();
-    private final PlaceholderField find = new PlaceholderField(12, "Suche im Spool (z.B. IEF, ABEND)");
-    private final JLabel findCount = Comic.muted("");
+    /** Die Suche der App (Lupe links, klappt über die Werkzeuge auf), hier über Spool-Text bzw. Diagramm. */
+    private FindBar findBar;
     /** „Visuell“ wie MainframeMate JobDetailTab: Spool-Text als schreibgeschütztes Diagramm. */
     private SpoolDiagram diagram;
     private final JLabel info = Comic.text(" ");
-    private final ComposerButton whole;
-    private int findFrom;
+    private final IconButton whole;
     /** Die Spool-Datei, deren Text gerade im Textfeld steht; {@code null} während des Ladens. */
     private SpoolFile loadedSpool;
     /** Ob gerade die Gesamtausgabe im Textfeld steht. */
@@ -264,42 +264,10 @@ final class FtpJobsView extends JPanel {
         });
         language.setToolTipText("Sprache der Hervorhebung (Auto erkennt JCL, COBOL, Natural)");
         language.addActionListener(e -> highlight());
-        whole = Comic.button("Gesamter Output", "Alle Spool-Dateien zusammen laden");
-        whole.addActionListener(e -> loadWhole());
+        whole = DeckBars.action(Glyph.EXPAND_ALL, "Gesamter Output – alle Spool-Dateien zusammen laden",
+                this::loadWhole);
         CopyButton copy = new CopyButton(() -> SpoolText.sanitize(spoolText.getText()));
         copy.setToolTipText("Angezeigten Inhalt in die Zwischenablage kopieren");
-        InputFrame findFrame = InputFrame.search(find);
-        var previous = InputFrame.flatButton("▲", "Vorheriger Treffer (Umschalt+Eingabe)");
-        previous.addActionListener(e -> findPrevious());
-        var next = InputFrame.flatButton("▼", "Nächster Treffer (Eingabe)");
-        next.addActionListener(e -> findNext());
-        findFrame.addButton(previous);
-        findFrame.addButton(next);
-        find.addActionListener(e -> findNext());
-        find.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("shift ENTER"), "find-previous");
-        find.getActionMap().put("find-previous", new javax.swing.AbstractAction() {
-            @Override
-            public void actionPerformed(java.awt.event.ActionEvent e) {
-                findPrevious();
-            }
-        });
-        find.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            @Override
-            public void insertUpdate(javax.swing.event.DocumentEvent e) {
-                findFrom = 0;
-            }
-
-            @Override
-            public void removeUpdate(javax.swing.event.DocumentEvent e) {
-                findFrom = 0;
-                findCount.setText("");
-            }
-
-            @Override
-            public void changedUpdate(javax.swing.event.DocumentEvent e) {
-                findFrom = 0;
-            }
-        });
         info.setToolTipText("Angaben zum gewählten Job");
 
         JPanel detailHead = new JPanel(new BorderLayout(0, 4));
@@ -308,20 +276,19 @@ final class FtpJobsView extends JPanel {
         titleRow.setOpaque(false);
         titleRow.add(spoolTitle, BorderLayout.WEST);
         titleRow.add(info, BorderLayout.CENTER);
-        JPanel toolRow = new JPanel(new BorderLayout(8, 0));
+        JPanel tools = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        tools.setOpaque(false);
+        tools.add(whole);
+        tools.add(copy);
+        tools.add(language);
+        tools.add(diagram.controls());
+        JComponent searchRoot = spoolText;
+        findBar = new FindBar(() -> searchRoot, root -> new SpoolHits());
+        findBar.setBorder(BorderFactory.createEmptyBorder());
+        findBar.tools(tools);
+        JPanel toolRow = new JPanel(new BorderLayout());
         toolRow.setOpaque(false);
-        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        left.setOpaque(false);
-        left.add(whole);
-        left.add(copy);
-        left.add(language);
-        left.add(diagram.controls());
-        JPanel right = new JPanel(new BorderLayout(4, 0));
-        right.setOpaque(false);
-        right.add(findFrame, BorderLayout.CENTER);
-        right.add(findCount, BorderLayout.EAST);
-        toolRow.add(left, BorderLayout.WEST);
-        toolRow.add(right, BorderLayout.CENTER);
+        toolRow.add(findBar, BorderLayout.CENTER);
         detailHead.add(titleRow, BorderLayout.NORTH);
         detailHead.add(toolRow, BorderLayout.SOUTH);
 
@@ -708,8 +675,6 @@ final class FtpJobsView extends JPanel {
         spoolText.setText(normalize ? SpoolText.clean(raw) : SpoolText.sanitize(raw));
         spoolText.setCaretPosition(0);
         spoolText.putClientProperty("ddName", ddName);
-        findFrom = 0;
-        findCount.setText("");
         highlight();
         diagram.contentChanged();
     }
@@ -738,73 +703,89 @@ final class FtpJobsView extends JPanel {
         return language;
     }
 
-    /** Nächster Treffer, am Ende wieder von vorn; zählt alle Treffer. */
-    void findNext() {
-        if (diagram.active()) {
-            diagramFound(findFrom > 0 ? diagram.step(1) : diagram.search(find.getText()));
-            findFrom = 1;
-            return;
-        }
-        String query = find.getText();
-        String text = spoolText.getText();
-        if (query.isEmpty() || text.isEmpty()) {
-            return;
-        }
-        String haystack = text.toLowerCase(Locale.ROOT);
-        String needle = query.toLowerCase(Locale.ROOT);
-        int count = SpoolText.count(text, query);
-        int at = haystack.indexOf(needle, findFrom);
-        if (at < 0 && findFrom > 0) {
-            at = haystack.indexOf(needle);
-        }
-        found(at, needle.length(), count);
-        findFrom = at < 0 ? 0 : at + needle.length();
-    }
+    /**
+     * Was die Suchleiste im Spool findet: bei sichtbarem Diagramm die Knoten, sonst die Textstellen (Groß-/Klein egal);
+     * am Ende geht es wieder von vorn.
+     */
+    private final class SpoolHits implements FindBar.Hits {
+        private final List<Integer> starts = new ArrayList<>();
+        private int length;
+        private int current = -1;
+        private boolean inDiagram;
+        private int diagramCount;
+        private String searchedText;
 
-    /** Vorheriger Treffer, am Anfang wieder vom Ende. */
-    void findPrevious() {
-        if (diagram.active()) {
-            diagramFound(findFrom > 0 ? diagram.step(-1) : diagram.search(find.getText()));
-            findFrom = 1;
-            return;
+        @Override
+        public void search(String query) {
+            clear();
+            inDiagram = diagram.active();
+            searchedText = spoolText.getText();
+            if (inDiagram) {
+                diagramCount = diagram.search(query);
+                return;
+            }
+            if (query.isEmpty() || searchedText.isEmpty()) {
+                return;
+            }
+            String haystack = searchedText.toLowerCase(Locale.ROOT);
+            String needle = query.toLowerCase(Locale.ROOT);
+            length = needle.length();
+            for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + length)) {
+                starts.add(at);
+            }
+            current = starts.isEmpty() ? -1 : 0;
+            select();
         }
-        String query = find.getText();
-        String text = spoolText.getText();
-        if (query.isEmpty() || text.isEmpty()) {
-            return;
-        }
-        String haystack = text.toLowerCase(Locale.ROOT);
-        String needle = query.toLowerCase(Locale.ROOT);
-        int count = SpoolText.count(text, query);
-        int before = findFrom - needle.length() - 1;
-        int at = before < 0 ? -1 : haystack.lastIndexOf(needle, before);
-        if (at < 0) {
-            at = haystack.lastIndexOf(needle);
-        }
-        found(at, needle.length(), count);
-        findFrom = at < 0 ? 0 : at + needle.length();
-    }
 
-    private void found(int at, int length, int count) {
-        if (at >= 0) {
-            spoolText.setCaretPosition(at);
-            spoolText.select(at, at + length);
-            findCount.setText(count + " Treffer");
-            findCount.setForeground(Comic.MUTED);
-        } else {
-            findCount.setText("Nicht gefunden");
-            findCount.setForeground(Comic.RED);
+        @Override
+        public void next() {
+            move(1);
         }
-    }
 
-    /** Treffer im Diagramm (Knoten) wie im Text als „x / y Treffer“. */
-    private void diagramFound(int count) {
-        if (count > 0) {
-            findCount.setText(diagram.searchIndex() + " / " + count + " Treffer");
-            findCount.setForeground(Comic.MUTED);
-        } else {
-            findCount.setText("Nicht gefunden");
-            findCount.setForeground(Comic.RED);
+        @Override
+        public void previous() {
+            move(-1);
+        }
+
+        private void move(int direction) {
+            if (inDiagram) {
+                diagramCount = diagram.step(direction);
+                return;
+            }
+            if (!starts.isEmpty()) {
+                current = Math.floorMod(current + direction, starts.size());
+                select();
+            }
+        }
+
+        private void select() {
+            if (current >= 0) {
+                int at = starts.get(current);
+                spoolText.setCaretPosition(at);
+                spoolText.select(at, at + length);
+            }
+        }
+
+        @Override
+        public void clear() {
+            starts.clear();
+            current = -1;
+            diagramCount = 0;
+        }
+
+        @Override
+        public int hitCount() {
+            return inDiagram ? diagramCount : starts.size();
+        }
+
+        @Override
+        public int currentIndex() {
+            return inDiagram ? Math.max(0, diagram.searchIndex() - 1) : Math.max(0, current);
+        }
+
+        @Override
+        public boolean stale() {
+            return inDiagram != diagram.active() || !spoolText.getText().equals(searchedText);
         }
     }
 
@@ -812,16 +793,21 @@ final class FtpJobsView extends JPanel {
         return diagram;
     }
 
+    /** Sucht im Spool wie über die Suchleiste (für Tests). */
     void find(String query) {
-        find.setText(query);
+        findBar.search(query);
     }
 
     String findCountText() {
-        return findCount.getText();
+        return findBar.counterText();
     }
 
     int selectionStart() {
         return spoolText.getSelectionStart();
+    }
+
+    String selectedSpoolText() {
+        return spoolText.getSelectedText();
     }
 
     private void clearSpool() {
@@ -834,7 +820,6 @@ final class FtpJobsView extends JPanel {
         spoolText.setText("");
         spoolTitle.setText("Spool");
         info.setText(" ");
-        findCount.setText("");
     }
 
     private void updateActions() {

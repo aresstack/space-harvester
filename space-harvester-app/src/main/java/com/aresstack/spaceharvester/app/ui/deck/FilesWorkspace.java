@@ -160,6 +160,8 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private final Map<EditorSession, DocumentEditor> editorOf = new LinkedHashMap<>();
     /** Fester Kartenname je Dokument – der Ort kann sich durch „Speichern unter“ ändern. */
     private final Map<EditorSession, String> cardOf = new LinkedHashMap<>();
+    /** Dokumente (PDF, Word, PowerPoint, Excel) in den Anhang-Viewern, der Editor dahinter als Textansicht. */
+    private final Map<EditorSession, DeckFileViewer> viewerOf = new LinkedHashMap<>();
     private int cardCounter;
     private final CardLayout cards = new CardLayout();
     private final JPanel center = new JPanel(cards);
@@ -718,7 +720,14 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         editorOf.put(session, editor);
         String card = "doc-" + (++cardCounter);
         cardOf.put(session, card);
-        center.add(editor, card);
+        if (session.store() == preview && DeckFileViewer.shows(session.name())) {
+            DeckFileViewer viewer = new DeckFileViewer(java.nio.file.Path.of(session.location()), session.name(),
+                    editor);
+            viewerOf.put(session, viewer);
+            center.add(viewer, card);
+        } else {
+            center.add(editor, card);
+        }
         ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(FilesIcons.forName(session.name()),
                 session.store() == preview ? session.name() + " (Vorschau)" : session.name(), session.location(),
                 "Dokument schließen (auch Mittelklick auf den Reiter)", () -> closeDocument(session));
@@ -775,7 +784,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             pills.revalidate();
             pills.repaint();
         }
-        if (editor != null) {
+        DeckFileViewer viewer = viewerOf.remove(session);
+        if (viewer != null) {
+            viewer.close();
+            center.remove(viewer);
+        } else if (editor != null) {
             center.remove(editor);
         }
         if (session == selected) {
@@ -1128,7 +1141,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         }
         if (java.nio.file.Files.isRegularFile(path)) {
             String fileName = path.getFileName() == null ? location : path.getFileName().toString();
-            select(editors.open(store, location, fileName));
+            boolean document = preview != null
+                    && com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(fileName);
+            select(editors.open(document ? preview : store, location, fileName));
         } else {
             go(location);
         }
@@ -1387,6 +1402,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
 
     EditorSession selected() {
         return selected;
+    }
+
+    /** Die Anhang-Viewer eines Dokuments; {@code null} bei Text. */
+    DeckFileViewer viewer(EditorSession session) {
+        return viewerOf.get(session);
     }
 
     DocumentEditor editor(EditorSession session) {

@@ -32,7 +32,8 @@ class SpoolDiagramTest {
         });
         await(() -> onEdtQuiet(() -> spool.diagram().hasDiagram()), "Diagramm gezeichnet");
         assertThat(onEdt(() -> spool.diagram().getMermaidSource())).contains("STEP1").contains("IDCAMS");
-        assertThat(onEdt(() -> spool.toggleButton().getText())).isEqualTo("Text");
+        assertThat(onEdt(() -> spool.toggleButton().isSelected())).isTrue();
+        assertThat(onEdt(() -> spool.toggleButton().getToolTipText())).isEqualTo(SpoolDiagram.BACK);
         assertThat(onEdt(() -> spool.search("STEP2"))).isPositive();
         assertThat(onEdt(spool::searchIndex)).isEqualTo(1);
 
@@ -47,7 +48,8 @@ class SpoolDiagramTest {
             return null;
         });
         assertThat(onEdt(spool::active)).isFalse();
-        assertThat(onEdt(() -> spool.toggleButton().getText())).isEqualTo("Diagramm");
+        assertThat(onEdt(() -> spool.toggleButton().isSelected())).isFalse();
+        assertThat(onEdt(() -> spool.toggleButton().getToolTipText())).isEqualTo(SpoolDiagram.SHOW);
     }
 
     @Test

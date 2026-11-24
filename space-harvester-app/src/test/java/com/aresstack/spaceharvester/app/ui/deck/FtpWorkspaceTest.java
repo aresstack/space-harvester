@@ -288,16 +288,11 @@ class FtpWorkspaceTest {
             waitFor(() -> onEdt(() -> jobs.spoolTextValue().contains("IDC0001I")), until);
 
             // Suche im Spool mit Trefferzahl; Sprache wählbar.
-            SwingUtilities.invokeAndWait(() -> {
-                jobs.find("IDC0001I");
-                jobs.findNext();
-            });
-            assertThat(onEdt(jobs::findCountText)).endsWith("Treffer");
-            SwingUtilities.invokeAndWait(() -> {
-                jobs.find("GIBTSNICHT");
-                jobs.findNext();
-            });
-            assertThat(onEdt(jobs::findCountText)).isEqualTo("Nicht gefunden");
+            SwingUtilities.invokeAndWait(() -> jobs.find("IDC0001I"));
+            assertThat(onEdt(jobs::findCountText)).matches("1 / \\d+");
+            assertThat(onEdt(jobs::selectedSpoolText)).isEqualToIgnoringCase("IDC0001I");
+            SwingUtilities.invokeAndWait(() -> jobs.find("GIBTSNICHT"));
+            assertThat(onEdt(jobs::findCountText)).isEqualTo("Keine Treffer");
             SwingUtilities.invokeAndWait(() -> jobs.languageBox().setSelectedItem(SpoolText.Language.PLAIN));
             assertThat(onEdt(jobs::languageShown)).isEqualTo(SpoolText.Language.PLAIN);
             SwingUtilities.invokeAndWait(() -> jobs.languageBox().setSelectedItem(SpoolText.Language.AUTO));

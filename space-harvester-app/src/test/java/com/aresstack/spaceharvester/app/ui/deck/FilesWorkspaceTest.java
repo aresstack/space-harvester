@@ -465,6 +465,12 @@ class FilesWorkspaceTest {
         assertThat(workspace.pillTitles()).containsExactly(root.getFileName().toString(), "bericht.pdf (Vorschau)");
         assertThat(workspace.editor(workspace.selected()).text()).isEqualTo("Text aus dem PDF\n");
         assertThat(workspace.selected().writable()).isFalse();
+        // Formatiert in den Anhang-Viewern vorn, der Text (wie die KI ihn liest) per Knopf umschaltbar
+        DeckFileViewer viewer = workspace.viewer(workspace.selected());
+        assertThat(viewer).isNotNull();
+        assertThat(viewer.textShown()).isFalse();
+        SwingUtilities.invokeAndWait(() -> viewer.showText(true));
+        assertThat(viewer.textShown()).isTrue();
     }
 
     private List<String> labels() throws Exception {

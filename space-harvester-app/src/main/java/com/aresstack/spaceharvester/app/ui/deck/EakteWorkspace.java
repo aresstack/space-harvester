@@ -315,6 +315,22 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         sessions.closeAll();
     }
 
+    /** Maustaste Zurück im Browser der gewählten Sitzung. */
+    void navigateBack() {
+        EakteBrowser browser = selected == null ? null : browserOf.get(selected);
+        if (browser != null) {
+            browser.navigateBack();
+        }
+    }
+
+    /** Maustaste Vor. */
+    void navigateForward() {
+        EakteBrowser browser = selected == null ? null : browserOf.get(selected);
+        if (browser != null) {
+            browser.navigateForward();
+        }
+    }
+
     EakteSession selected() {
         return selected;
     }

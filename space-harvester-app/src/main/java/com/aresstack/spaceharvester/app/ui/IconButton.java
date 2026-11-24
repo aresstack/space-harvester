@@ -45,7 +45,7 @@ public final class IconButton extends JButton {
 
     @Override
     protected void paintComponent(Graphics graphics) {
-        if (isEnabled() && (getModel().isRollover() || getModel().isPressed() || focusRing.shown())) {
+        if (isEnabled() && (getModel().isRollover() || getModel().isPressed() || focusRing.shown() || isSelected())) {
             RoundHover.paint(graphics, 0, 0, getWidth(), getHeight(), getModel().isPressed());
         }
         super.paintComponent(graphics);
