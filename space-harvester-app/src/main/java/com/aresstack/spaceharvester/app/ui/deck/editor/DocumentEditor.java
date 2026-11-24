@@ -112,6 +112,8 @@ public final class DocumentEditor extends JPanel {
     private final JComboBox<VersionChoice> versions = Comic.combo();
     private final JLabel compareInfo = Comic.muted(" ");
     private final JTextField findField = Comic.field(22);
+    /** Die eigene Suchzeile unten; Leseansichten blenden sie zugunsten der Lupe des Deck aus ({@link #readOnlyView()}). */
+    private JComponent findRow;
     private InputFrame findFrame;
     private final IconButton filterToggle = new IconButton(EditorIcons.filterLines(),
             "Zeilen filtern: alle Zeilen ohne Treffer zuklappen");
@@ -247,7 +249,8 @@ public final class DocumentEditor extends JPanel {
         top.add(toolRow, BorderLayout.CENTER);
         add(top, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
-        add(findRow(), BorderLayout.SOUTH);
+        findRow = findRow();
+        add(findRow, BorderLayout.SOUTH);
 
         AppState state = AppState.shared();
         wrap(state.getBoolean(WRAP_KEY, false));
@@ -905,6 +908,27 @@ public final class DocumentEditor extends JPanel {
             });
         }
         relationsAndText.revalidate();
+    }
+
+    /**
+     * Reine Leseansicht (E-Akte, Angelo 24.11.): ganze Fläche für das Dokument, keine Gliederung daneben, keine
+     * zweite Suchzeile, kein Vergleich, keine Sprachwahl; gesucht wird nur mit der Lupe des Deck (Strg+F geht dann an sie). Die gemerkten Einstellungen
+     * der übrigen Editoren bleiben unberührt.
+     */
+    public void readOnlyView() {
+        outlineToggle.marked(false);
+        outlinePanel.setVisible(false);
+        findRow.setVisible(false);
+        // Für Dokumente ohne Wirkung: Gliederung/Beziehungen/Sprache sind für JCL, COBOL, Natural; der Vergleich
+        // nutzt lokale Kopien, die an der wechselnden temporären Datei hängen; Bearbeiten gibt es nicht.
+        showRelations(false);
+        for (JComponent tool : List.of(outlineToggle, relationsToggle, compareToggle, undo, redo, saveAs)) {
+            tool.setVisible(false);
+        }
+        area.getInputMap(JComponent.WHEN_FOCUSED)
+                .remove(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK));
+        textAndOutline.revalidate();
+        revalidate();
     }
 
     private void showOutline(boolean show) {

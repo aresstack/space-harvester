@@ -144,6 +144,8 @@ class EakteWorkspaceTest {
         SwingUtilities.invokeAndWait(() -> browser.show(browser.entries().get(0).href()));
         await(() -> onEdt(() -> browser.entries().size() == 1), "Vorgang 4711");
         assertThat(onEdt(() -> EakteBrowser.type(browser.entries().get(0)))).isEqualTo("Outlook-Nachricht");
+        SwingUtilities.invokeAndWait(() -> browser.selectEntry(browser.entries().get(0).href()));
+        assertThat(onEdt(() -> browser.entries())).as("Dokument gewählt: Inhalt seiner Mappe bleibt").hasSize(1);
         Path saved = downloads.resolve("Anfrage Frachtraum #7 (Kopie).msg");
         SwingUtilities.invokeAndWait(() -> {
             browser.saveTarget = name -> java.util.Optional.of(downloads.resolve(name));
@@ -157,6 +159,13 @@ class EakteWorkspaceTest {
 
         SwingUtilities.invokeAndWait(browser::previewSelected);
         await(() -> onEdt(() -> browser.shownPreview() != null), "Vorschau");
+        // Keine zweite Liste neben dem Baum, keine Gliederung, keine eigene Suchzeile: rechts nur das Dokument.
+        assertThat(onEdt(() -> components(browser, javax.swing.JTable.class).stream()
+                .filter(table -> SwingUtilities.getAncestorOfClass(
+                        com.aresstack.spaceharvester.app.ui.extraction.ExtractionView.class, table) == null)
+                .toList())).as("keine Tabelle neben dem Baum").isEmpty();
+        assertThat(onEdt(() -> components(browser, com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor.class)
+                .get(0).getComponent(2).isVisible())).as("Suchzeile des Editors").isFalse();
         // Umschalter „Vorschau | Extraktion“ in der Titelleiste; Extraktion ohne Analysedienst: nicht analysiert
         assertThat(onEdt(() -> browser.viewToggle().isVisible())).isTrue();
         assertThat(onEdt(() -> workspace.tools().getComponent(0) == browser.viewToggle())).isTrue();
@@ -273,5 +282,18 @@ class EakteWorkspaceTest {
             Thread.sleep(50);
         }
         throw new AssertionError("Nicht erreicht: " + what);
+    }
+
+    private static <T> List<T> components(java.awt.Container root, Class<T> type) {
+        List<T> found = new java.util.ArrayList<>();
+        for (java.awt.Component child : root.getComponents()) {
+            if (type.isInstance(child)) {
+                found.add(type.cast(child));
+            }
+            if (child instanceof java.awt.Container container) {
+                found.addAll(components(container, type));
+            }
+        }
+        return found;
     }
 }
