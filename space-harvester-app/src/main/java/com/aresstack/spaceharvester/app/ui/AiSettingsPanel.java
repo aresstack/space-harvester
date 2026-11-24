@@ -244,12 +244,19 @@ final class AiSettingsPanel {
             AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS);
     final JSpinner podcastWorkers = countSpinner(1, AiServiceSettings.Speech.MAX_PODCAST_WORKERS, 1,
             AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS);
-    static final String PODCAST_PAUSE_LABEL = "Podcast – Pause";
-    static final String PODCAST_PAUSE_UNIT = "ms zwischen Beiträgen";
-    static final String PODCAST_ATTEMPTS_LABEL = "Podcast – Versuche";
-    static final String PODCAST_ATTEMPTS_UNIT = "je Stück";
-    static final String PODCAST_WORKERS_LABEL = "Podcast – Synthesen";
-    static final String PODCAST_WORKERS_UNIT = "zugleich je Beitrag";
+    static final String PODCAST_TIMING_LABEL = "Podcast – Sprechen";
+    static final String PODCAST_PAUSE_UNIT = "ms Pause";
+    static final String PODCAST_ATTEMPTS_UNIT = "Versuche";
+    static final String PODCAST_WORKERS_UNIT = "zugleich";
+    static final String PODCAST_TIMING_HELP = "Wie der Podcast vertont wird, nur für den Podcast, nicht fürs Vorlesen."
+            + "\n\nms Pause: Stille zwischen zwei Wortbeiträgen; Vorgabe "
+            + AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS + " ms.\n\nVersuche: so oft versucht die "
+            + "Sprachausgabe ein Stück, bevor sie Satz für Satz spricht; Vorgabe "
+            + AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS + ".\n\nzugleich: so viele Stücke eines Beitrags "
+            + "vertont der Dienst gleichzeitig, zusammen nie mehr als „" + PARALLEL_LABEL + "“; Vorgabe "
+            + AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS + ".\n\nSchlüssel in der Konfigurationsdatei: "
+            + "space-harvester.ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS + ", ."
+            + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS + " und ." + AiServiceSettings.PODCAST_SPEECH_WORKERS + ".";
     private static final com.aresstack.spaceharvester.application.podcast.PodcastVoices VOICES =
             com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled();
     final JTextField chunkOverlap = Comic.field(6);
@@ -657,18 +664,11 @@ final class AiSettingsPanel {
             modelRows.add(CHECK_PARALLEL_LABEL, Comic.row(checkParallel, Comic.text(CHECK_PARALLEL_UNIT)),
                     "„" + CHECK_JOB + "“: so viele Sätze einer Seite sind höchstens gleichzeitig beim Modell; "
                             + "Vorgabe " + CheckSettings.DEFAULT_PARALLEL);
-            modelRows.add(PODCAST_PAUSE_LABEL, Comic.row(podcastPause, Comic.text(PODCAST_PAUSE_UNIT)),
-                    "Stille zwischen zwei Wortbeiträgen im Podcast; Vorgabe "
-                            + AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS + " ms. Schlüssel: "
-                            + "space-harvester.ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS);
-            modelRows.add(PODCAST_ATTEMPTS_LABEL, Comic.row(podcastAttempts, Comic.text(PODCAST_ATTEMPTS_UNIT)),
-                    "So oft versucht die Sprachausgabe ein Stück des Podcasts, bevor sie Satz für Satz spricht; "
-                            + "Vorgabe " + AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS + ". Schlüssel: "
-                            + "space-harvester.ai." + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS);
-            modelRows.add(PODCAST_WORKERS_LABEL, Comic.row(podcastWorkers, Comic.text(PODCAST_WORKERS_UNIT)),
-                    "So viele Stücke eines Beitrags vertont der Dienst gleichzeitig; zusammen nie mehr als "
-                            + "„" + PARALLEL_LABEL + "“. Vorgabe " + AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS
-                            + ". Schlüssel: space-harvester.ai." + AiServiceSettings.PODCAST_SPEECH_WORKERS);
+            // Eine Zeile mit ?-Knopf statt drei Zeilen mit Hinweistext (UX: Hilfe als ?-Knopf am Zeilenende).
+            modelRows.add(PODCAST_TIMING_LABEL, Comic.row(podcastPause, Comic.text(PODCAST_PAUSE_UNIT),
+                    podcastAttempts, Comic.text(PODCAST_ATTEMPTS_UNIT), podcastWorkers,
+                    Comic.text(PODCAST_WORKERS_UNIT), new HelpButton(Dialogs.CLOSE_SIZE, PODCAST_TIMING_LABEL,
+                            PODCAST_TIMING_HELP)), null);
             advanced.addActionListener(e -> advanced(!advancedOpen()));
             advanced(false);
         }
@@ -2178,8 +2178,6 @@ final class AiSettingsPanel {
         modelRows.visible(simplifyParallel, open);
         modelRows.visible(checkParallel, open);
         modelRows.visible(podcastPause, open);
-        modelRows.visible(podcastAttempts, open);
-        modelRows.visible(podcastWorkers, open);
         Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();
