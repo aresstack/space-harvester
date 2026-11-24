@@ -99,6 +99,20 @@ class JobListConsistencyTest {
     }
 
     @Test
+    void localWorkWaitsOnlyForLocalWorkAndTakesNoPlace() {
+        // Angelo 24.11.2026: lokale Arbeit wie der MaltParser belegt keinen Platz unter „Vorbereitung“.
+        JobStatus analysis = job("l1", JobType.STATEMENT_ANALYSIS, "ALPHA", JobState.RUNNING, Map.of(), 1, NONE);
+        JobStatus reread = job("l2", JobType.REREAD, "ALPHA", JobState.QUEUED, Map.of(), 2, NONE);
+        JobStatus sync = job("s1", JobType.SYNC, "ALPHA", JobState.QUEUED, Map.of(), 3, NONE);
+        List<JobStatus> all = List.of(analysis, reread, sync);
+
+        assertThat(WaitReason.of(reread, all, 1)).hasValueSatisfying(reason ->
+                assertThat(reason).contains("lokale Arbeit", "1 lokaler Auftrag läuft", "keinen Platz"));
+        assertThat(WaitReason.of(sync, all, 1)).as("die laufende Analyse belegt den einen Platz nicht")
+                .hasValue("startet gleich");
+    }
+
+    @Test
     void theTooltipOfAWaitingBarNamesTheReason() {
         JobStatus waiting = job("w1", JobType.SYNC, "ALPHA", JobState.QUEUED, Map.of(), 9, NONE);
         RowActions.Action bar = ActivitiesView.progressSlots(waiting, null, ActivitiesView.stateText(waiting),
