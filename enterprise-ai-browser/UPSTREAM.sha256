@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git b538149bd7b51aa24380a83d879fa3cae26fd7d1
+# upstream https://github.com/aresstack/enterprise-ai-client.git 68400723e3b6ee1d77a6601268709bb11d413947
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 55661b9ef0c68a9b68f65199485fe6f1fb639038d6df07a09b2f9c98b5a527e1  src/main/java/com/aresstack/enterpriseai/astu/acropolis/attachment/AttachmentException.java
 5ff7a727bd25add3e4fc0c6abb75a9b2cd531745f2aa0a6800b5505feec6c5d4  src/main/java/com/aresstack/enterpriseai/astu/acropolis/attachment/AttachmentTextExtractor.java
