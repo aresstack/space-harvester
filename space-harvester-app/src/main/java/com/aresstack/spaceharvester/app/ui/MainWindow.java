@@ -999,6 +999,9 @@ public final class MainWindow implements AppContext.Navigator {
                 viewStatus.setVisible(false);
             }
             backForward.setVisible(false);
+            // Die Bereichsknöpfe (auch das Zahnrad der Einstellungen) gehören zum Space Harvester: In einer anderen
+            // Perspektive bleibt keiner gedrückt, wenn die Einstellungen zugehen (Angelo, 24.11.).
+            navGroup.clearSelection();
         }
         if (next.drawer() == null) {
             if (split.getDividerSize() > 0 || !split.isLeftCollapsed()) {
@@ -1195,6 +1198,11 @@ public final class MainWindow implements AppContext.Navigator {
     /** Ob die Einstellungen gerade über einer anderen Perspektive stehen (für Tests). */
     boolean settingsOverPerspective() {
         return settingsOver != null;
+    }
+
+    /** Ob der Knopf des Bereichs gedrückt ist (für Tests). */
+    boolean navSelected(AppContext.Section section) {
+        return nav.get(section).isSelected();
     }
 
     @Override
