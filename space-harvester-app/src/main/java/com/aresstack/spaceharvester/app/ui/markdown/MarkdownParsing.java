@@ -11,7 +11,7 @@ import java.util.Arrays;
 
 /**
  * Die eine Deutung einer Modellantwort als Markdown, für Anzeige ({@link FlexmarkSwingRenderer}) und Vorlesen
- * (MarkdownSpeech im EAC): derselbe Parser mit Tabellen, Durchstreichen und Autolinks und dieselben Vorstufen
+ * ({@link MarkdownSpeech}): derselbe Parser mit Tabellen, Durchstreichen und Autolinks und dieselben Vorstufen
  * (äußere Markdown-Umhüllung, Sonderleerzeichen hinter Blockmarken, nacktes SVG).
  */
 final class MarkdownParsing {

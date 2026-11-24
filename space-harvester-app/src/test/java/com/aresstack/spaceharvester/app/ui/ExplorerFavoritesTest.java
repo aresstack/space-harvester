@@ -75,9 +75,10 @@ class ExplorerFavoritesTest {
             explorer[0].favoritesButton().doClick();
             assertThat(explorer[0].onlyFavorites()).isTrue();
             assertThat(explorer[0].favoritesButton().getIcon()).isSameAs(Glyph.STAR_FILLED);
-            assertThat(explorer[0].favoriteList().isShowing() || explorer[0].favoriteList().getParent() != null).isTrue();
-            assertThat(explorer[0].favoriteList().getModel().getSize()).isEqualTo(1);
-            assertThat(explorer[0].favoriteList().getModel().getElementAt(0).where()).isEqualTo("Handbuch");
+            assertThat(explorer[0].favoriteView().component().getParent()).isNotNull();
+            assertThat(explorer[0].favoriteView().tree().component().getRowCount()).isEqualTo(1);
+            assertThat(explorer[0].favoriteView().shown()).singleElement()
+                    .satisfies(favorite -> assertThat(favorite.where()).isEqualTo("Handbuch"));
             // Eine Seite merkt sich ihren Pfad im Hintergrund.
             explorer[0].toggleFavorite(new Explorer.PageItem("handbuch", space, pageId, "Wartung", false));
         });
@@ -89,15 +90,15 @@ class ExplorerFavoritesTest {
         do {
             assertThat(System.nanoTime()).as("Zeitlimit: Seiten-Favorit").isLessThan(deadline);
             Thread.sleep(50);
-            SwingUtilities.invokeAndWait(() -> listed[0] = explorer[0].favoriteList().getModel().getSize());
+            SwingUtilities.invokeAndWait(() -> listed[0] = explorer[0].favoriteView().tree().component().getRowCount());
         } while (listed[0] < 2);
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(explorer[0].favoriteList().getModel().getSize()).isEqualTo(2);
-            Favorites.Favorite page = explorer[0].favoriteList().getModel().getElementAt(1);
+            assertThat(explorer[0].favoriteView().shown()).hasSize(2);
+            Favorites.Favorite page = explorer[0].favoriteView().shown().get(1);
             assertThat(page.pageId()).isEqualTo(pageId);
             assertThat(page.where()).startsWith("Handbuch › ");
             // Nichts im Baum gewählt: kein Favorit markiert.
-            assertThat(explorer[0].favoriteList().getSelectedValue()).isNull();
+            assertThat(explorer[0].favoriteView().marked()).isNull();
             explorer[0].reveal("handbuch", space);
         });
         // Die Liste markiert den Favoriten des gewählten Knotens, damit ein Klick auf den schon offenen Favoriten
@@ -107,7 +108,7 @@ class ExplorerFavoritesTest {
         do {
             assertThat(System.nanoTime()).as("Zeitlimit: Space im Baum gewählt").isLessThan(revealed);
             Thread.sleep(50);
-            SwingUtilities.invokeAndWait(() -> marked[0] = explorer[0].favoriteList().getSelectedValue());
+            SwingUtilities.invokeAndWait(() -> marked[0] = explorer[0].favoriteView().marked());
         } while (marked[0] == null);
         SwingUtilities.invokeAndWait(() -> {
             assertThat(marked[0].spaceKey()).isEqualTo(space);
@@ -116,6 +117,49 @@ class ExplorerFavoritesTest {
             assertThat(explorer[0].onlyFavorites()).isFalse();
         });
         assertThat(Files.isRegularFile(home.resolve("data").resolve(Favorites.FILE))).isTrue();
+    }
+
+    @Test
+    void foldersAreCreatedMovedAndChosenAsCollectionsAndTheStarLandsInTheChosenFolder() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources: []
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        Favorites favorites = context.favorites();
+        Favorites.Favorite ops = Favorites.Favorite.space("wiki", "OPS", "Betrieb", "Confluence");
+        Favorites.Favorite jira = Favorites.Favorite.source("jira", "Jira");
+        favorites.toggle(ops);
+        String projects = favorites.createFolder("Projekte", null);
+        java.util.List<String> chosen = new java.util.ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            explorer.onFolder((id, name) -> chosen.add(id + "|" + name));
+            FavoritesView view = explorer.favoriteView();
+            view.reload();
+            com.aresstack.spaceharvester.app.ui.controls.FolderTree<Favorites.Entry> tree = view.tree();
+            // Ordner zuerst angelegt? Nein: der Space-Favorit kam zuerst, der Ordner steht dahinter.
+            assertThat(tree.component().getRowCount()).isEqualTo(2);
+            // Ein Ordner gewählt: ein neuer Stern landet darin, gemeldet wird die Sammlung.
+            tree.select(java.util.List.of(projects));
+            favorites.toggle(jira);
+            assertThat(favorites.favoritesIn(projects, false)).containsExactly(jira);
+            tree.component().getActionMap().get("favorite-open").actionPerformed(null);
+            assertThat(chosen).containsExactly(projects + "|Projekte");
+            // Ohne Maus verschieben: der Space-Favorit in den Ordner.
+            String opsId = ((Favorites.Bookmark) favorites.tree().get(0)).id();
+            tree.select(java.util.List.of(opsId));
+            assertThat(tree.moveSelectedTo(projects)).isTrue();
+            assertThat(favorites.favoritesIn(projects, false)).containsExactly(jira, ops);
+            // Ohne Auswahl: oben.
+            tree.component().clearSelection();
+            favorites.toggle(Favorites.Favorite.source("wiki", "Wiki"));
+            assertThat(favorites.favoritesIn(null, false)).extracting(Favorites.Favorite::sourceId)
+                    .containsExactly("wiki");
+        });
     }
 
     @Test

@@ -304,6 +304,8 @@ public final class Harvester implements AutoCloseable {
 
     /** Eigentümer der Aufträge, die über diesen Einstieg entstehen. */
     public static final String OWNER = "space-harvester-core";
+    /** Kennung des KI-Schritts der Fristenanalyse (ADR 0035). */
+    public static final String DEADLINE_STEP = "deadline-facts";
 
     /** So lange bleiben Läufe im Suchlauf-Protokoll, wenn nichts anderes eingestellt ist. */
     public static final Duration DEFAULT_SEARCH_RUN_MAX_AGE = Duration.ofDays(30);
@@ -394,6 +396,7 @@ public final class Harvester implements AutoCloseable {
     private final com.aresstack.spaceharvester.application.presentation.VideoPresentations videoPresentations;
     private final com.aresstack.spaceharvester.application.quality.SearchQualityRuns searchQuality;
     private final Simplifications simplifications;
+    private final com.aresstack.spaceharvester.application.deadlines.DeadlineAnalysisService documentAnalyses;
     private final StatementChecks statementChecks;
     private final StatementAnalysis statementAnalysis;
     private final KnowledgeGraph knowledgeGraph;
@@ -810,6 +813,10 @@ public final class Harvester implements AutoCloseable {
             // #122 Stufe 2: Fachglossar als Nutzerdaten neben den Beziehungen; KI nur auf Knopfdruck, dasselbe Modell.
             this.glossary = new Glossary(catalog, new FileGlossaryStore(builder.dataDirectory.resolve("glossary")),
                     access, cache::findHeader, clock);
+            // Geprüfte Glossare (Angelo 23.11.2026) beim Start übernehmen, nur mit terms.glossary.approved.
+            if (builder.terms.glossaryApproved()) {
+                com.aresstack.spaceharvester.application.glossary.ApprovedGlossary.bundled().forEach(glossary::adopt);
+            }
             // K5b: Suchmethode „Nur Fachbegriffe“ über Glossar und Synonymbeziehungen, nichts gespeichert.
             // Reihenfolge wie im Reiter „Fachglossar“: Wichtigkeit aus der Übersicht (entsteht weiter unten, gefragt
             // wird erst bei der Suche), je Bereich gehalten bis zur nächsten Aussagenanalyse.
@@ -1281,6 +1288,29 @@ public final class Harvester implements AutoCloseable {
                     new StatementCheckStore(enrichmentStore, clock), withdrawn::mayProcess,
                     StatementChecks.pageAccess(access, page -> cache.find(page).map(PageSnapshot::spaceKey)));
             StatementChecks checked = this.statementChecks;
+            // ADR 0035, Abschnitt 4: Dokumentanalyse der Fristen-Fachlogik als Auftrag; KI über die Modellzeile
+            // „Fristen“ (ai.deadline-*), je Sachverhalt parallel bis ai.parallel, an das Modell nur freigegebene
+            // Dokumente. Die Ablage (E-Akte) schließt die App an.
+            java.util.function.Supplier<AiServiceSettings> deadlineAi = () -> {
+                AiServiceSettings ai = liveAi ? this.settings.ai() : startAi;
+                return ai == null ? null : ai.deadline();
+            };
+            ChatStepModel deadlineModel = new ChatStepModel(DEADLINE_STEP, deadlineAi, () -> null, catalog,
+                    trustBundles, builder.userAgent);
+            this.documentAnalyses = new com.aresstack.spaceharvester.application.deadlines.DeadlineAnalysisService(
+                    jobs, OWNER, TikaDocumentText.shared(),
+                    new com.aresstack.spaceharvester.application.deadlines.IdentifierExtractor(sentences),
+                    new com.aresstack.spaceharvester.application.deadlines.AiFactExtractor(deadlineModel,
+                            com.aresstack.spaceharvester.ai.ModelRetry.logging(
+                                    () -> Thread.currentThread().isInterrupted()),
+                            com.aresstack.spaceharvester.application.deadlines.AiFactExtractor.DEFAULT_MAX_CHARS,
+                            com.aresstack.spaceharvester.application.deadlines.IdentifierExtractor::parts, () -> {
+                                AiServiceSettings ai = deadlineAi.get();
+                                return ai == null ? 1 : ai.parallel();
+                            }),
+                    new com.aresstack.spaceharvester.application.deadlines.ExtractionValidator(
+                            com.aresstack.spaceharvester.application.deadlines.IdentifierExtractor::parts),
+                    withdrawn::mayProcess);
             // „In PPTX umwandeln“ (Angelo 20.11.2026): fünf Aufträge je Video, Text-Modell = ai.chat-model, an den
             // KI-Dienst nur Seiten mit KI-Freigabe; die Zwischenergebnisse fallen mit der Freigabe.
             PageQueries presentationPages = this.pages;
@@ -2092,6 +2122,14 @@ public final class Harvester implements AutoCloseable {
      */
     public ReadingViews readingViews() {
         return readingViews;
+    }
+
+    /**
+     * Die Dokumentanalyse der Fristen-Fachlogik (ADR 0035): Ergebnisse je Dokumentstand, Analysieren als Auftrag. Die
+     * App schließt die Ablage an ({@code content(…)}), etwa die E-Akte.
+     */
+    public com.aresstack.spaceharvester.application.deadlines.DeadlineAnalysisService documentAnalyses() {
+        return documentAnalyses;
     }
 
     /**

@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.glossary.ApprovedGlossary;
 import com.aresstack.spaceharvester.application.glossary.Glossary;
 import com.aresstack.spaceharvester.application.glossary.GlossaryClassification;
 import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
@@ -106,13 +107,22 @@ class TermConfiguration {
                 Clock.systemUTC());
     }
 
-    /** Fachglossar als Nutzerdaten unter {@code space-harvester.glossary.directory}, außerhalb des Caches. */
+    /**
+     * Fachglossar als Nutzerdaten unter {@code space-harvester.glossary.directory}, außerhalb des Caches; mitgelieferte
+     * geprüfte Glossare übernimmt es beim Start ({@link Glossary#adopt}).
+     */
     @Bean
     Glossary glossary(SourceCatalog catalog, AccessGuard access,
                       @Value("${space-harvester.glossary.directory:data/glossary}") Path directory,
-                      ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader) {
-        return new Glossary(catalog, new FileGlossaryStore(directory), access,
+                      ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader,
+                      LiveConfiguration live) {
+        Glossary glossary = new Glossary(catalog, new FileGlossaryStore(directory), access,
                 headers(repository.getIfAvailable(), reader.getIfAvailable()), Clock.systemUTC());
+        // Geprüfte Glossare beim Start übernehmen, nur mit space-harvester.terms.glossary.approved (Standard an).
+        if (live.current().terms().glossaryApproved()) {
+            ApprovedGlossary.bundled().forEach(glossary::adopt);
+        }
+        return glossary;
     }
 
     /** Suchmethode „Nur Fachbegriffe“ (K5b): Glossar und Synonymbeziehungen, nichts gespeichert. */

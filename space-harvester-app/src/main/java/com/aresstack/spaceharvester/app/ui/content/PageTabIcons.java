@@ -20,9 +20,19 @@ final class PageTabIcons {
         return ComposerIcons.openBook();
     }
 
-    /** Text: das Blatt mit Zeilen. */
+    /**
+     * Podcast-Ansicht (bisher „Text“): der Kopfhörer. Der gefilterte Text zum Anhören, mit dem Podcast der Seite
+     * (Angelo 23.11.2026: „dann weiß man, dass das so eine gefilterte Ansicht ist, die sich zum Anhören eignet“).
+     */
     static Icon text() {
-        return ComposerIcons.document();
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawArc(2, 2, 11, 12, 0, 180);
+                g2.drawRoundRect(1, 8, 3, 6, 2, 2);
+                g2.drawRoundRect(11, 8, 3, 6, 2, 2);
+            }
+        };
     }
 
     /** Info (Eigenschaften und Technik der Seite): das Info-Zeichen. */

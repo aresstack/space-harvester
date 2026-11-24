@@ -81,14 +81,14 @@ class ReaderPassageLinkTest {
         assertThat(workspace.passage(target.id()).match()).isEqualTo(PassageLookup.Match.FOUND);
 
         onEdt(() -> {
-            panel.tabs().select("Text");
+            panel.tabs().select("Podcast-Ansicht");
             panel.reader().setCaretPosition(0);
             view.openPassage("wiki", target.id());
             return null;
         });
         awaitTrue(() -> onEdt(() -> panel.passages().selectedIndex() == 1));
         // Der zuletzt gewählte Reiter bleibt vorne (hier „Text“); dort ist der Absatz markiert.
-        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Text");
+        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Podcast-Ansicht");
         assertThat(onEdt(() -> panel.reader().getSelectionStart())).isEqualTo(target.start());
         assertThat(onEdt(() -> panel.reader().getSelectionEnd())).isEqualTo(target.end());
         assertThat(onEdt(() -> panel.feedback().isVisible())).isFalse();
@@ -128,13 +128,13 @@ class ReaderPassageLinkTest {
         sync(workspace);
         assertThat(workspace.passage(target.id()).match()).isEqualTo(PassageLookup.Match.OLDER_VERSION);
         onEdt(() -> {
-            panel.tabs().select("Text");
+            panel.tabs().select("Podcast-Ansicht");
             view.openPassage("wiki", target.id());
             return null;
         });
         awaitTrue(() -> onEdt(() -> panel.shownPage() != null
                 && panel.feedback().text().startsWith(PageDetailPanel.PASSAGE_OLDER)));
-        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Text");
+        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Podcast-Ansicht");
         assertThat(onEdt(() -> panel.passages().selectedIndex())).isEqualTo(-1);
         assertThat(onEdt(() -> panel.passages().titles())).isNotEmpty();
 

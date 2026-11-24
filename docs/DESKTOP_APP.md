@@ -421,6 +421,18 @@ Core selbst.
   das, die Frage bleibt stehen. Wechselt die Auswahl während einer Antwort, schreibt der Turn seinen Chat zu Ende und
   die Ansicht zeigt den neuen Bereich. Nicht übernommen: Modus, Agentenphase, Browser-Budget, Werkzeuge des Modells,
   Wissens-Umschalter (Wissen ist immer an), Export und Zitate.
+  **Vorlesen** (Angelo, 23.11.2026, `ChatReadAloud`): derselbe runde Knopf wie in der Leseansicht, an derselben Stelle
+  (10 px vom rechten Rand neben der Bildlaufleiste, auf der Höhe des sichtbaren Knopfs der Leseansicht bzw. des
+  Podcasts, sonst 45 px unter der Oberkante des Verlaufs); er überlagert höchstens die rechtsbündige Frage, die
+  Antwortzeilen rücken rechts so weit ein, dass er sie nie verdeckt. Ablauf wie im Verlauf des Enterprise AI Client:
+  Play liest die letzte Antwort vor und bleibt aktiv, jede neue Antwort wird dann vorgelesen; beim Vorlesen hält der
+  Knopf an und setzt fort, danach beendet er. Gesprochen wird nur der sichtbare Text der Antwort (`MarkdownSpeech`,
+  unverändert aus dem EAC), bereinigt wie der Podcast (`SpeakableText`), über dieselbe Sprachausgabe wie die
+  Leseansicht (immer nur eine Stimme). Ein Doppelklick auf ein Wort einer Antwort liest während des Vorlesens ab dort
+  weiter (`ReadAloudStart`). Der gerade gelesene Satz bzw. Abschnitt (ein Aufzählungspunkt als Ganzes) ist gelb
+  unterstrichen: der Vorlese-Ablauf meldet je Stück seine ungefähre Stelle und Dauer (`ReadAloud.Listener.playing`),
+  die Sätze darin schalten anteilig zur Länge weiter; ungefähr, nie Wort für Wort. Ein anderer Chat, ein anderer
+  Bereich oder die zugeklappte Leiste beenden das Vorlesen.
 - **Export** (Angelo, 13.11.2026, `ExportPanel`) hängt nicht an der gezeigten Seite, sondern an der Auswahl links im
   Explorer: Quelle, Space oder Seite samt Unterseiten („Links gewählt bestimmt rechts“). Für einen Space oder eine
   Seite die Karte **Stand** (jüngster fertiger Download genau dieser Auswahl: Stand vom, Seiten, Bilder, Medien,

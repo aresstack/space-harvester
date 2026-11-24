@@ -66,6 +66,22 @@ public final class ReadAloudBinding {
      * Grund geht an die Statuszeile.
      */
     public void speak(String text, java.util.function.BooleanSupplier allowed, Runnable finished) {
+        speak(text, allowed, finished, null);
+    }
+
+    /** Wohin das Vorlesen meldet, welcher Abschnitt gerade erklingt (auf dem EDT, nur für die laufende Ausgabe). */
+    public interface Progress {
+
+        /** Ungefähr die Zeichen {@code [from, to)} des vorgelesenen Texts erklingen jetzt, etwa {@code millis} lang. */
+        void playing(int from, int to, long millis);
+    }
+
+    /**
+     * Wie {@link #speak(String, java.util.function.BooleanSupplier, Runnable)}; {@code progress} erfährt auf dem EDT,
+     * welcher Abschnitt gerade erklingt (grobe Hervorhebung im Chat, Angelo 23.11.2026), {@code null} = niemand.
+     */
+    public void speak(String text, java.util.function.BooleanSupplier allowed, Runnable finished,
+                      Progress progress) {
         Objects.requireNonNull(allowed, "allowed");
         ReadAloud current = service;
         service = null; // ein Anhalten vor dem Start gilt dem neuen Vorlesen, nicht dem alten
@@ -80,7 +96,7 @@ public final class ReadAloudBinding {
             active = read;
             read.future = reader.submit(() -> {
                 try {
-                    read(mine, text, allowed);
+                    read(mine, text, allowed, progress);
                 } finally {
                     read.finish();
                 }
@@ -132,7 +148,7 @@ public final class ReadAloudBinding {
     /** Grund in der Statuszeile, wenn die Seite inzwischen nicht mehr an einen KI-Dienst darf. */
     public static final String NOT_ALLOWED = "Die Seite ist nicht mehr für KI-Dienste freigegeben";
 
-    private void read(long mine, String text, java.util.function.BooleanSupplier allowed) {
+    private void read(long mine, String text, java.util.function.BooleanSupplier allowed, Progress progress) {
         if (generation.get() != mine) {
             return; // inzwischen gestoppt oder von einem neueren Text abgelöst
         }
@@ -162,6 +178,17 @@ public final class ReadAloudBinding {
                     if (!reported[0]) {
                         reported[0] = true;
                         showFailure(message);
+                    }
+                }
+
+                @Override
+                public void playing(int from, int to, long millis) {
+                    if (progress != null && generation.get() == mine) {
+                        SwingUtilities.invokeLater(() -> {
+                            if (generation.get() == mine) {
+                                progress.playing(from, to, millis);
+                            }
+                        });
                     }
                 }
             });

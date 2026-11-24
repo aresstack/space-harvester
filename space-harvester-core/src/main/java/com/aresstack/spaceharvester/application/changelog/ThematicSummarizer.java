@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.changelog;
 
 import com.aresstack.spaceharvester.ai.AiOutputTruncatedException;
 import com.aresstack.spaceharvester.ai.AiServiceException;
+import com.aresstack.spaceharvester.ai.ModelRetry;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
@@ -13,10 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -612,52 +609,10 @@ final class ThematicSummarizer {
             @Override
             public <T, R> List<R> run(List<T> items, IntFunction<String> title, BiFunction<T, JobContext, R> work,
                                       JobContext context) {
-                return inParallel(Math.max(1, model.parallel()), items, context, item -> work.apply(item, context));
+                return com.aresstack.spaceharvester.application.jobs.ParallelWork.map(Math.max(1, model.parallel()), items,
+                        context, "summary-", item -> work.apply(item, context));
             }
         };
-    }
-
-    private static <T, R> List<R> inParallel(int lanes, List<T> items, JobContext context, Function<T, R> work) {
-        int parallel = Math.max(1, Math.min(lanes, items.size()));
-        if (parallel == 1) {
-            List<R> results = new ArrayList<>(items.size());
-            for (T item : items) {
-                context.checkpoint();
-                results.add(work.apply(item));
-            }
-            return results;
-        }
-        ExecutorService pool = Executors.newFixedThreadPool(parallel,
-                Thread.ofPlatform().daemon().name("summary-", 0).factory());
-        try {
-            List<Future<R>> running = new ArrayList<>(items.size());
-            for (T item : items) {
-                running.add(pool.submit(() -> {
-                    context.checkpoint();
-                    return work.apply(item);
-                }));
-            }
-            List<R> results = new ArrayList<>(items.size());
-            for (Future<R> future : running) {
-                try {
-                    results.add(future.get());
-                } catch (ExecutionException e) {
-                    running.forEach(other -> other.cancel(true));
-                    if (e.getCause() instanceof RuntimeException runtime) {
-                        throw runtime;
-                    }
-                    throw new IllegalStateException(e.getCause());
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    running.forEach(other -> other.cancel(true));
-                    throw new JobCancelledException(context.jobId());
-                }
-            }
-            context.checkpoint();
-            return results;
-        } finally {
-            pool.shutdownNow();
-        }
     }
 
     /**
@@ -727,7 +682,7 @@ final class ThematicSummarizer {
 
     /** Vorübergehend: keine Verbindung, überlastet oder 5xx (UNREACHABLE) und Fristen; nie Anmeldung oder Format. */
     static boolean transientFailure(AiServiceException e) {
-        return e.reason() == AiServiceException.Reason.UNREACHABLE || e.reason() == AiServiceException.Reason.TIMEOUT;
+        return ModelRetry.transientFailure(e);
     }
 
     /**
@@ -749,24 +704,21 @@ final class ThematicSummarizer {
 
     private static String completeRetrying(SummaryModel model, String instructions, String input,
                                            JobContext context) {
-        int retries = Math.max(0, model.retries());
-        for (int attempt = 0; ; attempt++) {
-            try {
-                return model.complete(instructions, input);
-            } catch (AiServiceException e) {
-                if (!transientFailure(e) || attempt >= retries || context.cancelRequested()) {
-                    throw e;
+        return ModelRetry.call(model.retries(), backoffMillis, new ModelRetry.Listener() {
+            @Override
+            public void retrying(int nextAttempt, AiServiceException cause) {
+                if (context.cancelRequested()) {
+                    throw cause;
                 }
-                failure(context, "Anfrage gescheitert, Versuch " + (attempt + 2) + " folgt", e);
-                try {
-                    Thread.sleep(Math.min(30_000, backoffMillis << attempt));
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    throw new JobCancelledException(context.jobId());
-                }
+                failure(context, "Anfrage gescheitert, Versuch " + nextAttempt + " folgt", cause);
                 context.checkpoint();
             }
-        }
+
+            @Override
+            public RuntimeException interrupted() {
+                return new JobCancelledException(context.jobId());
+            }
+        }, () -> model.complete(instructions, input));
     }
 
     /** Das Zusammenführen; eine abgeschnittene Antwort wird mit dem Grund erneut erfragt, bis {@link #ATTEMPTS}. */

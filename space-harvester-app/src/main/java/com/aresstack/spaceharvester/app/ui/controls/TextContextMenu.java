@@ -125,7 +125,7 @@ public final class TextContextMenu {
     }
 
     /** Strg, auf dem Mac die Befehlstaste; ohne Bildschirm (Tests) Strg. */
-    private static int shortcutMask() {
+    public static int shortcutMask() {
         try {
             return Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
         } catch (java.awt.HeadlessException e) {

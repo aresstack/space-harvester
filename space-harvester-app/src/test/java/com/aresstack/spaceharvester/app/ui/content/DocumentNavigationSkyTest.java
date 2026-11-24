@@ -180,7 +180,7 @@ class DocumentNavigationSkyTest {
         final PageDetailPanel[] holder = new PageDetailPanel[1];
         SwingUtilities.invokeAndWait(() -> {
             PageDetailPanel panel = new PageDetailPanel(context);
-            panel.tabs().select("Text");
+            panel.tabs().select("Podcast-Ansicht");
             panel.reader().setText(text);
             panel.reader().setCaretPosition(0);
             panel.showNavigation(navigation);

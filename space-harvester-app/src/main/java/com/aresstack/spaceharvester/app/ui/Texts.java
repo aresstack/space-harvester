@@ -164,6 +164,7 @@ public final class Texts {
             case SEARCH_QUALITY -> "Suchqualität messen";
             case UPDATE_PODCAST -> "Podcast erzeugen";
             case READING_PREFETCH -> "Lese-Ansichten vorladen";
+            case DOCUMENT_ANALYSIS -> "Dokument analysieren";
             case BACKGROUND -> "Hintergrund";
         };
     }

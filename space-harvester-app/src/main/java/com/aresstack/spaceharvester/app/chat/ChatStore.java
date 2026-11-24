@@ -97,7 +97,7 @@ public final class ChatStore {
             return entries;
         }
         List<Path> folders = new ArrayList<>();
-        // Bereichsordner liegen höchstens drei Ebenen tief: <Quelle>/<Space>/<Seite> oder _alle.
+        // Bereichsordner liegen höchstens drei Ebenen tief: <Quelle>/<Space>/<Seite>, _sammlung/<Ordner> oder _alle.
         try (java.util.stream.Stream<Path> walk = Files.walk(base, 3)) {
             walk.filter(Files::isDirectory).forEach(folders::add);
         } catch (IOException | java.io.UncheckedIOException e) {

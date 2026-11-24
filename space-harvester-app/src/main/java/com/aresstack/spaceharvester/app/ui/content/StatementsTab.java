@@ -1502,7 +1502,7 @@ final class StatementsTab extends JPanel {
         }
         row.setAlignmentX(LEFT_ALIGNMENT);
         if (jump != null && !jump.isEmpty()) {
-            area.setToolTipText("Zum Beleg im Reiter „Text“ springen");
+            area.setToolTipText("Zum Beleg im Reiter „Podcast-Ansicht“ springen");
             Cursors.set(area, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             Runnable go = () -> onJump.accept(jump);
             jumps.add(go);

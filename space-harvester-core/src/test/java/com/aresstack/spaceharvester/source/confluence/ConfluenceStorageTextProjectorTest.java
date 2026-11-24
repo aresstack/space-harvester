@@ -54,13 +54,35 @@ class ConfluenceStorageTextProjectorTest {
     }
 
     @Test
-    void layoutsAndPanelsKeepTheirVisibleTextOnlyIfNotInsideAMacro() {
+    void layoutsAndPanelsKeepTheirVisibleText() {
         PageText text = project("<ac:layout><ac:layout-section><ac:layout-cell><p>links</p></ac:layout-cell>"
-                + "<ac:layout-cell><ac:structured-macro ac:name=\"info\"><ac:rich-text-body><p>Hinweis</p>"
-                + "</ac:rich-text-body></ac:structured-macro><p>rechts</p></ac:layout-cell></ac:layout-section>"
-                + "</ac:layout>");
+                + "<ac:layout-cell><ac:structured-macro ac:name=\"info\"><ac:parameter ac:name=\"title\">Achtung"
+                + "</ac:parameter><ac:rich-text-body><p>Hinweis</p></ac:rich-text-body></ac:structured-macro>"
+                + "<p>rechts</p></ac:layout-cell></ac:layout-section></ac:layout>");
 
-        assertThat(text.text()).isEqualTo("links\nrechts");
+        assertThat(text.text()).isEqualTo("links\nHinweis\nrechts");
+    }
+
+    /** Angelo 23.11.2026: Tabellen fehlten im Text, weil sie in Makros (Aufklapper, Seiteneigenschaften …) stehen. */
+    @Test
+    void tablesInsideMacrosKeepTheirRows() {
+        PageText text = project("<p>Vor</p><ac:structured-macro ac:name=\"expand\" ac:macro-id=\"1\">"
+                + "<ac:parameter ac:name=\"title\">Details</ac:parameter><ac:rich-text-body>"
+                + "<ac:structured-macro ac:name=\"details\"><ac:rich-text-body><table><tbody>"
+                + "<tr><th><p>Verfahren</p></th><td><p>Antrag wird <strong>schriftlich</strong> gestellt.</p></td></tr>"
+                + "<tr><th><p>Zuständig</p></th><td><p>Referat 4</p></td></tr></tbody></table>"
+                + "</ac:rich-text-body></ac:structured-macro></ac:rich-text-body></ac:structured-macro><p>Nach</p>");
+
+        assertThat(text.text()).isEqualTo("Vor\nVerfahren | Antrag wird schriftlich gestellt.\n"
+                + "Zuständig | Referat 4\nNach");
+    }
+
+    @Test
+    void inlineMacrosDoNotBreakTheLineAndContributeNoParameters() {
+        PageText text = project("<p>Stand <ac:structured-macro ac:name=\"status\"><ac:parameter ac:name=\"title\">"
+                + "OFFEN</ac:parameter></ac:structured-macro> seit heute</p>");
+
+        assertThat(text.text()).isEqualTo("Stand seit heute");
     }
 
     @Test

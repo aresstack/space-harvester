@@ -46,10 +46,21 @@ public interface GlossaryAccess {
      * @param generation    Modell-/Promptversion bei KI-Erzeugung, sonst {@code null}
      * @param reviewedAt    Zeitpunkt der letzten Benutzerentscheidung oder {@code null}
      * @param revision      Stand für das optimistische Sperren
+     * @param reference     geprüftes Glossar, das den globalen Begriff nennt, oder {@code null}
      */
     record Entry(String id, String term, String normalized, String sourceId, String spaceKey, RelationOrigin origin,
                  ReviewStatus status, List<RelationEvidence> evidence, boolean evidenceStale, String explanation,
-                 String generation, Instant createdAt, Instant updatedAt, Instant reviewedAt, long revision) {
+                 String generation, Instant createdAt, Instant updatedAt, Instant reviewedAt, long revision,
+                 Reference reference) {
+
+        /** Ohne Quelle aus einem geprüften Glossar. */
+        public Entry(String id, String term, String normalized, String sourceId, String spaceKey,
+                     RelationOrigin origin, ReviewStatus status, List<RelationEvidence> evidence,
+                     boolean evidenceStale, String explanation, String generation, Instant createdAt,
+                     Instant updatedAt, Instant reviewedAt, long revision) {
+            this(id, term, normalized, sourceId, spaceKey, origin, status, evidence, evidenceStale, explanation,
+                    generation, createdAt, updatedAt, reviewedAt, revision, null);
+        }
 
         public Entry {
             Objects.requireNonNull(id, "id");
@@ -58,6 +69,17 @@ public interface GlossaryAccess {
             Objects.requireNonNull(status, "status");
             evidence = evidence == null ? List.of() : List.copyOf(evidence);
         }
+    }
+
+    /**
+     * Quelle eines Begriffs aus einem geprüften Glossar (ADR 0019, Nachtrag 23.11.2026).
+     *
+     * @param title   Titel der Quelle
+     * @param url     Fundstelle
+     * @param wording Begriff im Wortlaut der Quelle
+     * @param page    Seite der Quelle
+     */
+    record Reference(String title, String url, String wording, int page) {
     }
 
     /**

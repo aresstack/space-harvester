@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
+import com.aresstack.spaceharvester.application.text.TextGrounding;
+import com.aresstack.spaceharvester.application.text.TextSpan;
+import com.aresstack.spaceharvester.application.text.GroundedText;
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementCandidates.Context;
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementCandidates.EventCandidate;
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementCandidates.MentionCandidate;
@@ -282,29 +285,17 @@ public final class StatementValidator {
             return null;
         }
         String document = paragraph.documentText();
-        String wanted = squash(words.text());
         TextSpan range = words.first() > 0 ? sentence.wordRange(words.first(), words.last()) : null;
-        if (range != null && (wanted.isEmpty() || squash(range.of(document)).equals(wanted))) {
-            return new GroundedText(range, range.of(document));
+        TextGrounding.Result grounded = TextGrounding.ground(document, range, words.text(), sentence.words(),
+                MAX_TERM_WORDS * 2);
+        if (grounded instanceof TextGrounding.Grounded found) {
+            return found.text();
         }
-        if (wanted.isEmpty()) {
-            result.reject("missing-words");
-            return null;
-        }
-        List<TextSpan> hits = new ArrayList<>();
-        List<TextSpan> all = sentence.words();
-        for (int first = 0; first < all.size(); first++) {
-            for (int last = first; last < all.size() && last - first < MAX_TERM_WORDS * 2; last++) {
-                TextSpan candidate = new TextSpan(all.get(first).start(), all.get(last).end());
-                if (squash(candidate.of(document)).equals(wanted)) {
-                    hits.add(candidate);
-                }
-            }
-        }
-        if (hits.size() == 1) {
-            return new GroundedText(hits.getFirst(), hits.getFirst().of(document));
-        }
-        result.reject(hits.isEmpty() ? "words-not-in-sentence" : "words-ambiguous");
+        result.reject(switch (((TextGrounding.Rejected) grounded).reason()) {
+            case MISSING -> "missing-words";
+            case NOT_FOUND -> "words-not-in-sentence";
+            case AMBIGUOUS -> "words-ambiguous";
+        });
         return null;
     }
 
@@ -375,11 +366,6 @@ public final class StatementValidator {
     static String fold(String text) {
         String lower = text.trim().toLowerCase(Locale.ROOT).replace("ß", "ss");
         return Normalizer.normalize(lower, Normalizer.Form.NFD).replaceAll("\\p{M}+", "");
-    }
-
-    /** Vergleichstext der Verankerung: Leerraum zusammengefasst, Groß-/Kleinschreibung und Randzeichen egal. */
-    private static String squash(String text) {
-        return TermNormalizer.fromLemma(text == null ? "" : text);
     }
 
     /** Was von einem Absatz übrig blieb, und warum der Rest nicht. */

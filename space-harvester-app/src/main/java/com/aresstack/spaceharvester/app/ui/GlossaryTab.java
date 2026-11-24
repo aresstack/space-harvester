@@ -96,6 +96,8 @@ public final class GlossaryTab {
     static final String ONLY_MANUAL = "Nur manuelle Einträge lassen sich löschen; einen Vorschlag ablehnen";
     static final String ALREADY_CONFIRMED = "Schon bestätigt";
     static final String NO_GLOSSARY = "Das Fachglossar ist noch nicht verfügbar.";
+    /** Ein Favoriten-Ordner ohne Favoriten: „Fachbegriffe ermitteln“ hat nichts zu tun. */
+    static final String EMPTY_COLLECTION = "Der Ordner enthält keine Favoriten; nichts zu ermitteln";
     static final String RUNNING = "Ein Lauf läuft schon; Fortschritt unter Aufträge und in der Statusleiste";
     static final String STARTED = DETECT + " läuft im Hintergrund; neue Vorschläge erscheinen hier sofort, "
             + "Fortschritt unter Aufträge";
@@ -492,7 +494,8 @@ public final class GlossaryTab {
     }
 
     private com.aresstack.spaceharvester.application.holdings.Selection core(ExportPanel.Selection chosen) {
-        return context == null || context.runtime() == null ? null : chosen.toCore(context.runtime());
+        return context == null || context.runtime() == null ? null
+                : com.aresstack.spaceharvester.app.ui.content.SelectionHoldings.core(context.runtime(), chosen);
     }
 
     /** Meldet sich beim Glossar und bei den Aufträgen an; ein neues Glossar (neue Laufzeit) ersetzt das alte. */
@@ -615,12 +618,24 @@ public final class GlossaryTab {
             Entry entry = row.entry();
             List<String> line = new ArrayList<>(List.of(entry.term(), categoryWord(row.category()),
                     importance(row.importance()), Relation.statusText(entry.status().name()),
-                    Relation.originText(entry.origin().name()),
-                    entry.explanation() == null ? "" : entry.explanation(), ""));
+                    originWord(entry), entry.explanation() == null ? "" : entry.explanation(), ""));
             line.add(entry.id());
             cells.add(List.copyOf(line));
         }
         return cells;
+    }
+
+    /** Herkunft in der Tabelle; Begriffe aus einem geprüften Glossar heißen „Geprüftes Glossar“. */
+    static final String APPROVED = "Geprüftes Glossar";
+
+    static String originWord(Entry entry) {
+        return entry.reference() != null ? APPROVED : Relation.originText(entry.origin().name());
+    }
+
+    /** „Quelle: Anlage 1 Glossar …, Seite 2 („Annahmebeauftragte (pl.)“)“ und die Fundstelle in der Zeile darunter. */
+    static String referenceText(GlossaryAccess.Reference reference) {
+        return "Quelle: " + reference.title() + ", Seite " + reference.page()
+                + (reference.wording() == null ? "" : " („" + reference.wording() + "“)") + "\n" + reference.url();
     }
 
     /** „12 Seiten“ (die Seitenstreuung zählt zuerst); „–“ ohne Wichtigkeit in der Auswahl. Alles im Tooltip. */
@@ -891,6 +906,8 @@ public final class GlossaryTab {
         ExportPanel.Selection chosen = selection;
         if (chosen.global()) {
             detect(null, null, null, null);
+        } else if (chosen instanceof ExportPanel.Selection.Collection collection) {
+            detect(collection.roots(), collection.title());
         } else {
             detect(chosen.sourceId(), chosen.spaceKey(), chosen.spaceKey() == null ? null : chosen.pageId(),
                     chosen.title());
@@ -909,6 +926,44 @@ public final class GlossaryTab {
     }
 
     void detect(String sourceId, String spaceKey, String pageId, String title) {
+        start(detectName(pageId, title), pageId != null, glossary -> glossary.classify(sourceId, spaceKey, pageId));
+    }
+
+    /**
+     * „Fachbegriffe ermitteln“ für einen Favoriten-Ordner (ADR 0034, 3d): je Favorit derselbe Lauf wie für den Knoten im
+     * Baum (Seite samt Unterseiten, Space oder Quelle), nie alle Wissensquellen. Ein Favorit ohne Freigabe wird
+     * übergangen; scheitern alle, kommt der erste Fehler. Ein leerer Ordner startet nichts.
+     */
+    void detect(List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots, String title) {
+        if (roots.isEmpty()) {
+            notice(EMPTY_COLLECTION, Severity.WARN);
+            return;
+        }
+        start(collectionDetectName(title), true, glossary -> {
+            List<JobStatus> started = new ArrayList<>();
+            RuntimeException first = null;
+            for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : roots) {
+                try {
+                    started.addAll(glossary.classify(root.sourceId(), root.spaceKey(), root.pageId()));
+                } catch (GlossaryAccess.NotAllowedException notAllowed) {
+                    first = first == null ? notAllowed : first;
+                }
+            }
+            if (started.isEmpty() && first != null) {
+                throw first;
+            }
+            return started;
+        });
+    }
+
+    /** „Fachbegriffe ermitteln für „Ordner““: der Lauf über die Favoriten eines Ordners. */
+    static String collectionDetectName(String title) {
+        return DETECT + " für „" + (title == null || title.isBlank() ? "Ordner" : title) + "“";
+    }
+
+    /** Startet die Läufe im Hintergrund; {@code named}: die Rückmeldung nennt den Lauf, sonst der allgemeine Text. */
+    private void start(String name, boolean named,
+                       java.util.function.Function<GlossaryAccess, List<JobStatus>> classify) {
         Optional<GlossaryAccess> glossary = access.get();
         if (glossary.isEmpty() || !jobs.isEmpty() || starting) {
             return;
@@ -916,9 +971,8 @@ public final class GlossaryTab {
         observe(glossary.get());
         starting = true;
         updateDetect();
-        String name = detectName(pageId, title);
         notice(name + " wird gestartet …", Severity.INFO);
-        Background.run(() -> glossary.get().classify(sourceId, spaceKey, pageId), started -> {
+        Background.run(() -> classify.apply(glossary.get()), started -> {
             starting = false;
             if (started.isEmpty()) {
                 updateDetect();
@@ -926,7 +980,7 @@ public final class GlossaryTab {
             }
             started.forEach(status -> jobs.put(status.id(), status));
             updateDetect();
-            notice(pageId == null ? STARTED : name + STARTED.substring(DETECT.length()), Severity.INFO);
+            notice(named ? name + STARTED.substring(DETECT.length()) : STARTED, Severity.INFO);
             if (context != null && context.navigator() != null) {
                 context.navigator().followJobs();
             }
@@ -1168,6 +1222,9 @@ public final class GlossaryTab {
             text.append(" (").append(entry.generation()).append(')');
         }
         text.append('\n');
+        if (entry.reference() != null) {
+            text.append(referenceText(entry.reference())).append('\n');
+        }
         text.append("Status: ").append(statusWord(entry.status()));
         if (entry.reviewedAt() != null) {
             text.append(" am ").append(minute(entry.reviewedAt()));

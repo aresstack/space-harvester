@@ -553,6 +553,14 @@ public final class Workspace {
     }
 
     /**
+     * Die Dokumentanalyse der Fristen-Fachlogik (ADR 0035): Ergebnisse je Dokumentstand, Analysieren als Auftrag; die
+     * Ablage (E-Akte) schließt das Command Deck an.
+     */
+    public com.aresstack.spaceharvester.application.deadlines.DeadlineAnalysisService documentAnalyses() {
+        return harvester.documentAnalyses();
+    }
+
+    /**
      * Lese-Ansicht einer Seite ({@code …/pages/{pageId}/reading-view}, #176): gerendertes HTML der Quelle mit den
      * Bildern, die sie zeigt; Rechte und Version prüft der Core.
      */
@@ -3056,6 +3064,16 @@ public final class Workspace {
     public com.aresstack.spaceharvester.application.holdings.PageSelection resolveSelection(
             com.aresstack.spaceharvester.application.holdings.Selection selection) {
         return harvester.holdings().resolve(caller, selection);
+    }
+
+    /**
+     * {@link #resolveSelection} nachsichtig (ADR 0034 §4): Wurzeln, die der Aufrufer nicht sehen kann oder die der
+     * Katalog nicht mehr kennt (etwa ein veralteter Favorit), fallen heraus und stehen in {@code skippedRoots}, statt die
+     * ganze Auflösung zu brechen. Für Sammlungen; nie auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.holdings.Holdings.Lenient resolveLenient(
+            com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.holdings().resolveLenient(caller, selection);
     }
 
     /**

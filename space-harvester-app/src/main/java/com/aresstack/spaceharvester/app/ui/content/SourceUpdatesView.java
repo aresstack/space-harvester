@@ -194,8 +194,24 @@ final class SourceUpdatesView extends JPanel {
     enum Mode { SUMMARY, CHANGES }
 
     private final Mode mode;
-    /** Der Podcast der Zusammenfassung: Knopf oben rechts im Himmel, nur in der Leseansicht. */
+    /**
+     * Der Podcast der Zusammenfassung: Knopf oben rechts im Himmel, nur im Reiter „Podcast-Ansicht“ (Angelo 23.11.2026:
+     * der Podcast steht immer in der Podcast-Ansicht; die Zusammenfassung bleibt in der Leseansicht und ist seine
+     * Grundlage, sie entsteht dafür nicht neu).
+     */
     private final PodcastControl<UpdateSummary> podcast;
+    /** Podcast-Ansicht: die Zusammenfassung, die der Podcast erzählt; {@code null} ohne. */
+    private UpdateSummary spoken;
+    /** Leseansicht: erfährt jede gelesene Zusammenfassung (die Podcast-Ansicht übernimmt sie). */
+    private Consumer<UpdateSummary> onSummary = ignored -> { };
+    /** Podcast-Ansicht: erfährt, welchen Themen der Podcast folgt (die Leseansicht markiert sie mit). */
+    private Consumer<List<Integer>> onFollow = ignored -> { };
+    /** Podcast-Ansicht: Zeile und Unterschiede jeder gezeigten Seite, in der Reihenfolge des Berichts. */
+    private final Map<String, List<JComponent>> pageParts = new java.util.LinkedHashMap<>();
+    /** Podcast-Ansicht: die Überschrift des Updates, gelb, solange der Podcast den Überblick erzählt. */
+    private JComponent reportTitle;
+    /** Podcast-Ansicht: die Bilder neben den Seitenzeilen, um sie beim Neuzeichnen wieder abzunehmen. */
+    private final List<Runnable> unpicture = new ArrayList<>();
     /** Die Teile jedes gezeigten Themas der Zusammenfassung (Nummer in {@link UpdateSummary#statements()}). */
     private final Map<Integer, List<JComponent>> topicParts = new java.util.HashMap<>();
     /** Nimmt die gelbe Markierung des Themas zurück, dem der Podcast gerade folgt. */
@@ -234,9 +250,12 @@ final class SourceUpdatesView extends JPanel {
             Actions current = actions.get();
             return current == null ? null : current.podcasts();
         }, runner);
-        podcast.follow(this::followPodcast);
-        if (mode == Mode.SUMMARY) {
-            // Das Bild des Kapitels steht neben seiner Meldung und geht von dort im Betrachter auf (Angelo 22.11.2026).
+        podcast.follow(statements -> {
+            followPodcast(statements);
+            onFollow.accept(statements);
+        });
+        if (mode == Mode.CHANGES) {
+            // Das Bild des Kapitels steht neben der ersten Seite seines Themas und geht von dort im Betrachter auf.
             podcast.cue(new PodcastControl.Cue() {
                 @Override
                 public boolean open(int topic) {
@@ -297,10 +316,10 @@ final class SourceUpdatesView extends JPanel {
         reportScroll = Comic.scroll(report);
         busy = new BusyOverlay(reportScroll);
         busy.onCancel(this::cancelSummary);
-        if (mode == Mode.SUMMARY) {
+        if (mode == Mode.CHANGES) {
             sky.setTrailingInset(PodcastOrb.SIZE + 2 * SkyLayer.ORB_INSET);
         }
-        add(new SkyLayer(busy, sky, report, mode == Mode.SUMMARY ? podcast.orb() : null, reportScroll),
+        add(new SkyLayer(busy, sky, report, mode == Mode.CHANGES ? podcast.orb() : null, reportScroll),
                 BorderLayout.CENTER);
         // Beim Sichtbarwerden einmal nachholen, was verdeckt gemeldet wurde.
         addHierarchyListener(event -> {
@@ -321,14 +340,59 @@ final class SourceUpdatesView extends JPanel {
         podcast.events(events);
     }
 
-    /** Der Podcast der gezeigten Zusammenfassung (für Tests). */
+    /** Der Podcast der gezeigten Zusammenfassung; spielt nur in der Podcast-Ansicht. */
     PodcastControl<UpdateSummary> podcast() {
         return podcast;
     }
 
+    /** Leseansicht: {@code listener} erfährt jede gelesene Zusammenfassung, auch {@code null}. */
+    void onSummary(Consumer<UpdateSummary> listener) {
+        onSummary = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Podcast-Ansicht: {@code listener} erfährt die Themen, denen der Podcast gerade folgt. */
+    void onFollow(Consumer<List<Integer>> listener) {
+        onFollow = Objects.requireNonNull(listener, "listener");
+    }
+
+    /**
+     * Podcast-Ansicht: übernimmt die Zusammenfassung, die die Leseansicht gelesen oder gerade erstellt hat, wenn sie
+     * zum gezeigten Update gehört. So erzählt der Podcast die vorhandene Zusammenfassung, ohne dass sie neu entsteht.
+     */
+    void adopt(UpdateSummary read) {
+        if (mode != Mode.CHANGES || read == null || !Objects.equals(read.sourceId(), sourceId)
+                || !Objects.equals(read.updateId(), selected) || !Objects.equals(read.spaceKey(), spaceKey)
+                || read.equals(spoken)) {
+            return;
+        }
+        speak(read);
+    }
+
+    /** Die Zusammenfassung, die der Podcast der Podcast-Ansicht erzählt (für Tests). */
+    UpdateSummary spoken() {
+        return spoken;
+    }
+
+    /**
+     * Was der Podcast erzählt: in der Podcast-Ansicht übernimmt ihn der Knopf, die Themen werden den Seitenzeilen
+     * zugeordnet; die Leseansicht reicht ihre Zusammenfassung nur weiter.
+     */
+    private void speak(UpdateSummary told) {
+        if (mode == Mode.SUMMARY) {
+            onSummary.accept(told);
+            return;
+        }
+        spoken = told;
+        podcast.summary(told);
+        indexTopics();
+        markFollowed();
+        showPictures();
+        loadPictures();
+    }
+
     /** Ob „Podcast neu erstellen“ gerade geht (für den Eintrag im Menü ▾ oben rechts). */
     boolean podcastRenewable() {
-        return mode == Mode.SUMMARY && podcast.renewable();
+        return mode == Mode.CHANGES && podcast.renewable();
     }
 
     /** „Podcast neu erstellen“: Plan, Texte, Audio und Bilder entstehen neu (Angelo 22.11.2026). */
@@ -391,7 +455,7 @@ final class SourceUpdatesView extends JPanel {
         windows.clear();
         shown = null;
         summary = null;
-        podcast.summary(null);
+        speak(null);
         abandonAutoRun();
         offerSummary();
         renderList();
@@ -522,7 +586,7 @@ final class SourceUpdatesView extends JPanel {
                 selected = null;
                 shown = null;
                 summary = null;
-                podcast.summary(null);
+                speak(null);
                 offerSummary();
                 renderList();
                 message(NO_UPDATES);
@@ -586,7 +650,7 @@ final class SourceUpdatesView extends JPanel {
         }
         if (!updateId.equals(selected)) {
             summary = null;
-            podcast.summary(null);
+            speak(null);
         }
         if (!keepPosition) {
             textGeneration++;
@@ -614,10 +678,13 @@ final class SourceUpdatesView extends JPanel {
                     texts.add(window);
                     pages.addAll(window.report().pages());
                 } while (window.more() && !window.report().pages().isEmpty() && pages.size() < wanted);
-                return new Loaded(new ChangeReport(texts.getFirst().report().update(), pages), null, false, texts);
+                // Der Podcast der Podcast-Ansicht erzählt die vorhandene Zusammenfassung; erstellt wird hier keine.
+                return new Loaded(new ChangeReport(texts.getFirst().report().update(), pages), null, false, texts,
+                        current.summary(id, updateId, space));
             }
-            return new Loaded(current.report(id, updateId, space), current.summary(id, updateId, space),
-                    current.summariesAvailable(), List.of());
+            UpdateSummary read = current.summary(id, updateId, space);
+            return new Loaded(current.report(id, updateId, space), read, current.summariesAvailable(), List.of(),
+                    read);
         }, found -> {
             if (mine != generation || !updateId.equals(selected)) {
                 done.run();
@@ -629,6 +696,7 @@ final class SourceUpdatesView extends JPanel {
                 return;
             }
             if (keepPosition && found.report().equals(shown) && Objects.equals(found.summary(), summary)
+                    && (mode == Mode.SUMMARY || Objects.equals(found.spoken(), spoken))
                     && markdown(found.texts()).equals(markdown(windows))) {
                 done.run();
                 return;
@@ -646,10 +714,10 @@ final class SourceUpdatesView extends JPanel {
                 checkCarried(current, id, space);
             }
             summary = found.summary();
-            podcast.summary(summary);
             available = found.available();
             autoSummarize();
             renderReport(shown);
+            speak(found.spoken());
             offerSummary();
             restore(position);
             done.run();
@@ -661,7 +729,8 @@ final class SourceUpdatesView extends JPanel {
         });
     }
 
-    private record Loaded(ChangeReport report, UpdateSummary summary, boolean available, List<UpdateText> texts) {
+    private record Loaded(ChangeReport report, UpdateSummary summary, boolean available, List<UpdateText> texts,
+                          UpdateSummary spoken) {
     }
 
     /** Die schon geladenen Seiten des Update-Texts. */
@@ -1014,6 +1083,9 @@ final class SourceUpdatesView extends JPanel {
         unmark.clear();
         bodies.clear();
         placed = List.of();
+        pageParts.clear();
+        unpicture.clear();
+        reportTitle = null;
         ChangeUpdate update = found.update();
         // Eine Zeile für den Zeitraum (Angelo, 21.11.2026): „von bis“ statt Datum und darunter derselbe Zeitraum.
         boolean span = !update.open() && update.from() != null;
@@ -1021,6 +1093,7 @@ final class SourceUpdatesView extends JPanel {
         title.setFont(Comic.semiBold(15f));
         title.setForeground(Comic.INK);
         add(reportBody, title);
+        reportTitle = title;
         if (!span) {
             add(reportBody, Comic.wrapped(period(update), Comic.MUTED, 12.5f));
         }
@@ -1051,10 +1124,14 @@ final class SourceUpdatesView extends JPanel {
                 kind.setBorder(BorderFactory.createEmptyBorder(8, 0, 4, 0));
                 add(reportBody, kind);
                 for (ReportedPage page : group.getValue()) {
-                    add(reportBody, pageRow(page));
+                    JPanel row = pageRow(page);
+                    add(reportBody, row);
+                    List<JComponent> parts = pageParts.computeIfAbsent(page.pageId(), ignored -> new ArrayList<>());
+                    parts.add(row);
                     JComponent diff = diffBlock(page);
                     if (diff != null) {
                         add(reportBody, diff);
+                        parts.add(diff);
                     }
                     reportBody.add(Box.createVerticalStrut(4));
                 }
@@ -1075,8 +1152,42 @@ final class SourceUpdatesView extends JPanel {
             reportBody.add(Box.createVerticalStrut(8));
             add(reportBody, Comic.wrapped(local, Comic.MUTED, 12.5f));
         }
+        // Neu gezeichnet, während der Podcast läuft (etwa nach „Weitere Seiten laden“): Markierung und Bilder bleiben.
+        indexTopics();
+        markFollowed();
+        showPictures();
         reportBody.revalidate();
         reportBody.repaint();
+    }
+
+    /**
+     * Podcast-Ansicht: ordnet jedes Thema der erzählten Zusammenfassung den Zeilen seiner Seiten im Bericht zu, den
+     * Überblick der Überschrift des Updates. Was nicht im Bericht steht (noch nicht nachgeladen), bleibt unmarkiert.
+     */
+    private void indexTopics() {
+        if (mode != Mode.CHANGES) {
+            return;
+        }
+        unmark.forEach(Runnable::run);
+        unmark.clear();
+        topicParts.clear();
+        UpdateSummary told = spoken;
+        if (told == null) {
+            return;
+        }
+        if (reportTitle != null) {
+            topicParts.put(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW,
+                    new ArrayList<>(List.of(reportTitle)));
+        }
+        for (int i = 0; i < told.statements().size(); i++) {
+            List<JComponent> parts = new ArrayList<>();
+            for (SummaryPage page : told.statements().get(i).pages()) {
+                parts.addAll(pageParts.getOrDefault(page.pageId(), List.of()));
+            }
+            if (!parts.isEmpty()) {
+                topicParts.put(i, parts);
+            }
+        }
     }
 
     /**
@@ -1542,8 +1653,14 @@ final class SourceUpdatesView extends JPanel {
         unmark.forEach(Runnable::run);
         unmark.clear();
         JComponent first = null;
+        // Mehrere Themen können dieselbe Seite nennen: jedes Teil nur einmal markieren, sonst hielte die zweite
+        // Markierung Gelb für den Ausgangszustand und es bliebe nach dem Zurücknehmen stehen.
+        java.util.Set<JComponent> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         for (Integer number : followed) {
             for (JComponent part : topicParts.getOrDefault(number, List.of())) {
+                if (!seen.add(part)) {
+                    continue;
+                }
                 first = first == null ? part : first;
                 mark(part);
             }
@@ -1611,7 +1728,10 @@ final class SourceUpdatesView extends JPanel {
                         && text.getHighlighter().getHighlights().length > 0) {
                     marked.add(text.getText());
                 } else if (part.isOpaque() && PODCAST_MARK.equals(part.getBackground())) {
-                    marked.add(((JLabel) part.getComponent(0)).getText());
+                    // Leseansicht: Zeile mit Beschriftung vorn; Podcast-Ansicht: Überschrift oder Seitenzeile
+                    marked.add(part instanceof JLabel label ? label.getText()
+                            : part.getComponent(0) instanceof JLabel label ? label.getText()
+                            : ((javax.swing.text.JTextComponent) part.getComponent(0)).getText());
                 }
             }
         }
@@ -1683,8 +1803,23 @@ final class SourceUpdatesView extends JPanel {
     private record LoadedPicture(TopicPicture topic, PictureStage.Picture read) {
     }
 
-    /** Ein Bild an seiner Stelle im Bericht. */
-    private record PlacedPicture(int topic, TextWithPicture body, ImageViewer.Picture viewer) {
+    /**
+     * Ein Bild an seiner Stelle im Bericht: in der Leseansicht in der Meldung ({@link TextWithPicture}), in der
+     * Podcast-Ansicht rechts in der Zeile der ersten Seite des Themas.
+     *
+     * @param anchor wo das Bild steht
+     * @param bounds wo genau, in Koordinaten von {@code anchor}
+     */
+    private record PlacedPicture(int topic, JComponent anchor, Supplier<java.awt.Rectangle> bounds, String caption,
+                                 ImageViewer.Picture viewer) {
+    }
+
+    /** So breit steht ein Bild in der Podcast-Ansicht rechts neben der Seitenzeile. */
+    static final int ROW_PICTURE_WIDTH = 220;
+
+    /** Die Zusammenfassung, zu der die Bilder gehören: die gezeigte (Leseansicht) bzw. die erzählte. */
+    private UpdateSummary pictured() {
+        return mode == Mode.SUMMARY ? rendered : spoken;
     }
 
     /** So breit wird ein Schaubild (SVG) für den Bericht gerastert: scharf auch auf Bildschirmen mit Skalierung. */
@@ -1740,8 +1875,8 @@ final class SourceUpdatesView extends JPanel {
     /** Fragt im Hintergrund, welche Bilder der Podcast zur gezeigten Zusammenfassung schon fertig hat. */
     private void loadPictures() {
         Actions current = actions.get();
-        UpdateSummary of = rendered;
-        if (mode != Mode.SUMMARY || current == null || of == null || bodies.isEmpty()) {
+        UpdateSummary of = pictured();
+        if (current == null || of == null || (mode == Mode.SUMMARY ? bodies.isEmpty() : pageParts.isEmpty())) {
             return;
         }
         if (picturesOf != null && !samePodcast(picturesOf, of)) {
@@ -1749,7 +1884,7 @@ final class SourceUpdatesView extends JPanel {
         }
         int mine = ++pictureLoads;
         runner.run(() -> readPictures(current, of), loaded -> {
-            if (mine == pictureLoads && samePodcast(rendered, of)) {
+            if (mine == pictureLoads && samePodcast(pictured(), of)) {
                 picturesOf = of;
                 loadedPictures = loaded;
                 showPictures();
@@ -1789,6 +1924,10 @@ final class SourceUpdatesView extends JPanel {
 
     /** Stellt die gelesenen Bilder neben ihre Meldungen; was keine Stelle findet, fehlt. */
     private void showPictures() {
+        if (mode == Mode.CHANGES) {
+            showRowPictures();
+            return;
+        }
         List<LoadedPicture> loaded = samePodcast(rendered, picturesOf) ? loadedPictures : List.of();
         Map<Integer, Integer> at = rendered == null ? Map.of() : placements(new ArrayList<>(bodies.keySet()),
                 rendered.statements(), loaded.stream().map(LoadedPicture::topic).toList());
@@ -1805,7 +1944,66 @@ final class SourceUpdatesView extends JPanel {
             int position = now.size();
             body.picture(image, read.caption());
             body.onOpen(() -> openPicture(position, false));
-            now.add(new PlacedPicture(loaded.get(index).topic().topic(), body,
+            now.add(new PlacedPicture(loaded.get(index).topic().topic(), body, body::pictureBounds, body.caption(),
+                    new ImageViewer.Picture(image, read.caption(), read.vector())));
+        }
+        placed = List.copyOf(now);
+        reportBody.revalidate();
+        reportBody.repaint();
+    }
+
+    /**
+     * Podcast-Ansicht: jedes Bild genau einmal rechts in der Zeile der ersten Seite seines Themas, in der Reihenfolge
+     * des Berichts (wie {@link #placements}); ein Klick öffnet es im Betrachter.
+     */
+    private void showRowPictures() {
+        unpicture.forEach(Runnable::run);
+        unpicture.clear();
+        UpdateSummary told = spoken;
+        List<LoadedPicture> loaded = samePodcast(told, picturesOf) ? loadedPictures : List.of();
+        if (told == null || loaded.isEmpty()) {
+            placed = List.of();
+            return;
+        }
+        // Die Themen in der Reihenfolge ihrer ersten Seite im Bericht.
+        List<Integer> order = new ArrayList<>();
+        Map<Integer, JPanel> firstRow = new java.util.HashMap<>();
+        for (Map.Entry<String, List<JComponent>> page : pageParts.entrySet()) {
+            for (int i = 0; i < told.statements().size(); i++) {
+                if (!firstRow.containsKey(i) && page.getValue().getFirst() instanceof JPanel row
+                        && told.statements().get(i).pages().stream()
+                        .anyMatch(p -> p.pageId().equals(page.getKey()))) {
+                    firstRow.put(i, row);
+                    order.add(i);
+                }
+            }
+        }
+        Map<Integer, Integer> at = placements(order, told.statements(),
+                loaded.stream().map(LoadedPicture::topic).toList());
+        List<PlacedPicture> now = new ArrayList<>();
+        java.util.Set<JPanel> used = new java.util.HashSet<>();
+        for (Integer number : order) {
+            Integer index = at.get(number);
+            JPanel row = firstRow.get(number);
+            java.awt.image.BufferedImage image = index == null ? null : inline(loaded.get(index).read());
+            if (image == null || !used.add(row)) {
+                continue;
+            }
+            PictureStage.Picture read = loaded.get(index).read();
+            int width = Math.min(ROW_PICTURE_WIDTH, image.getWidth());
+            int height = Math.max(1, image.getHeight() * width / Math.max(1, image.getWidth()));
+            JLabel picture = new JLabel(new javax.swing.ImageIcon(
+                    image.getScaledInstance(width, height, java.awt.Image.SCALE_SMOOTH)));
+            picture.setName("podcast-picture");
+            picture.setBorder(BorderFactory.createEmptyBorder(2, 12, 2, 0));
+            picture.setVerticalAlignment(javax.swing.SwingConstants.TOP);
+            int position = now.size();
+            clickable(() -> openPicture(position, false), read.caption() == null ? "Bild öffnen" : read.caption(),
+                    picture);
+            row.add(picture, BorderLayout.EAST);
+            unpicture.add(() -> row.remove(picture));
+            now.add(new PlacedPicture(loaded.get(index).topic().topic(), picture,
+                    () -> new java.awt.Rectangle(0, 0, picture.getWidth(), picture.getHeight()), read.caption(),
                     new ImageViewer.Picture(image, read.caption(), read.vector())));
         }
         placed = List.copyOf(now);
@@ -1830,8 +2028,8 @@ final class SourceUpdatesView extends JPanel {
     private boolean openTopicPicture(int topic) {
         for (int i = 0; i < placed.size(); i++) {
             if (placed.get(i).topic() == topic) {
-                TextWithPicture body = placed.get(i).body();
-                body.scrollRectToVisible(body.pictureBounds());
+                JComponent anchor = placed.get(i).anchor();
+                anchor.scrollRectToVisible(placed.get(i).bounds().get());
                 return openPicture(i, true);
             }
         }
@@ -1847,12 +2045,13 @@ final class SourceUpdatesView extends JPanel {
         if (position < 0 || position >= placed.size() || SwingUtilities.getRootPane(this) == null) {
             return false;
         }
-        TextWithPicture body = placed.get(position).body();
+        PlacedPicture at = placed.get(position);
+        JComponent anchor = at.anchor();
         ViewerPopup popup = ViewerPopup.open(this, new ImageViewer(placed.stream().map(PlacedPicture::viewer)
                         .toList(), position, Comic.viewerLook(
                         com.aresstack.spaceharvester.app.settings.ViewerBackground.DEFAULT)),
-                () -> SwingUtilities.isDescendingFrom(body, this)
-                        ? SwingUtilities.convertRectangle(body, body.pictureBounds(), this) : null);
+                () -> SwingUtilities.isDescendingFrom(anchor, this)
+                        ? SwingUtilities.convertRectangle(anchor, at.bounds().get(), this) : null);
         if (cued) {
             cuePopup = popup;
             popup.onClosed(() -> {
@@ -1867,7 +2066,7 @@ final class SourceUpdatesView extends JPanel {
 
     /** Die Bilder im Bericht, als Bildunterschriften in seiner Reihenfolge (für Tests). */
     List<String> reportPictures() {
-        return placed.stream().map(picture -> picture.body().caption()).toList();
+        return placed.stream().map(PlacedPicture::caption).toList();
     }
 
     /** Klickt das Bild an Stelle {@code position} im Bericht an (für Tests). */

@@ -18,6 +18,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -144,6 +145,32 @@ public final class FileGlossaryStore implements GlossaryStore {
                     // Abgebrochenes Anhängen: diese Zeile fehlt im Protokoll, die Einträge sind unberührt.
                 }
             }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return found;
+    }
+
+    @Override
+    public synchronized Set<String> logged(Collection<String> ids, String action) {
+        Path file = directory.resolve(AUDIT);
+        Set<String> wanted = new HashSet<>(ids);
+        Set<String> found = new HashSet<>();
+        if (wanted.isEmpty() || !Files.exists(file)) {
+            return found;
+        }
+        try (java.util.stream.Stream<String> lines = Files.lines(file, StandardCharsets.UTF_8)) {
+            lines.filter(line -> !line.isBlank() && line.contains(action)).forEach(line -> {
+                try {
+                    JsonNode node = JSON.readTree(line);
+                    String id = node.path("entryId").asString(null);
+                    if (wanted.contains(id) && action.equals(node.path("action").asString(null))) {
+                        found.add(id);
+                    }
+                } catch (RuntimeException e) {
+                    // Abgebrochenes Anhängen: diese Zeile fehlt im Protokoll, wie bei history.
+                }
+            });
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

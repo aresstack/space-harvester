@@ -127,6 +127,21 @@ class ChatStepModelTest {
     }
 
     @Test
+    void theDeadlineExtractionHasItsOwnLine() {
+        AiServiceSettings thinking = AI.withStepThinking("high");
+        assertThat(thinking.deadline().chatModel()).isEqualTo("chat-model");
+        assertThat(thinking.deadline().chatMaxTokens()).isEqualTo(AiServiceSettings.DEFAULT_DEADLINE_MAX_TOKENS)
+                .isEqualTo(8192);
+        assertThat(thinking.deadline().stepThinking()).as("Fristen denken standardmäßig nicht").isEqualTo("none");
+
+        AiServiceSettings own = AI.withDeadline(new AiServiceSettings.ModelUse("fristen-modell", 4096, "LOW"));
+        assertThat(own.deadline().chatModel()).isEqualTo("fristen-modell");
+        assertThat(own.deadline().chatMaxTokens()).isEqualTo(4096);
+        assertThat(own.deadline().stepThinking()).isEqualTo("low");
+        assertThat(own.imagePlan().chatModel()).as("andere Zeilen bleiben").isEqualTo("chat-model");
+    }
+
+    @Test
     void theDiagramPlanHasItsOwnLineAndThePartsKeepTheImageLine() {
         AiServiceSettings thinking = AI.withStepThinking("high");
         assertThat(thinking.imagePlan().chatModel()).isEqualTo("chat-model");

@@ -268,7 +268,8 @@ class ExportPanelTest {
 
         assertThat(direct.roots(null)).containsExactly(page.root());
         assertThat(direct.withSubfolders()).isFalse();
-        assertThat(all.roots(null)).containsExactly(page.root(), space.root());
+        // Baumreihenfolge: der Unterordner „Notfall“ steht vor dem später gesetzten Favoriten.
+        assertThat(all.roots(null)).containsExactly(space.root(), page.root());
         assertThat(all.withSubfolders()).isTrue();
         assertThat(all.title()).isEqualTo("Betrieb");
         assertThat(all).isNotEqualTo(direct);

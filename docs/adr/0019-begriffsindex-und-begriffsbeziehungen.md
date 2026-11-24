@@ -271,3 +271,26 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
 - Ein zweiter Anlass, während für einen Space noch ein Lauf wartet oder läuft, startet für diesen Space nichts
   (`BackgroundJobs.running`). Nach einem Neustart setzen unterbrochene Unteraufträge nur bei eingeschalteter Automatik
   fort.
+
+## Nachtrag (23.11.2026): Geprüfte Glossare übernehmen
+
+- Angelo 23.11.2026: Ein fachlich abgesegnetes Glossar kommt direkt ins Fachglossar. Mitgeliefert ist „Anlage 1
+  Glossar – Begriffe des Kassen- und Rechnungswesens“
+  (<https://zrb.bund.de/fileadmin/downloads/vorschriften/vv-bho/rds_buchf_zv/Anlage_1_Glossar.pdf>), 146 Begriffe,
+  Erläuterungen im Wortlaut der Quelle, als Ressource `geprueft-zrb-vv-bho-anlage-1-glossar.json` neben
+  `ApprovedGlossary` (Schema `approved-glossary/v1`). Kein zweites Glossar: `Glossary#adopt` legt die Einträge über
+  die vorhandene Logik an.
+- Je Begriff ein Eintrag im globalen Geltungsbereich, `MANUAL`, `CONFIRMED`, Einordnung `FACHLICH` durch den
+  Menschen (Grund `APPROVED_GLOSSARY`), Urheber `glossary:<id>`. Der Suchbegriff (`term`) lässt grammatische Zusätze
+  und Abkürzungen des Wortlauts weg („Annahmebeauftragte (pl.)“ → „Annahmebeauftragte“); Wortlaut, Seite,
+  Abkürzungen und weitere Schreibweisen stehen in der Ressource.
+- Beim Start, idempotent, mit `space-harvester.terms.glossary.approved` (ohne Schlüssel an, in Server und App gleich
+  gelesen, `TermSettings.GLOSSARY_APPROVED`, `ConfigurationParityTest`). Entscheidungen der Bearbeiter gehen vor: Ein
+  abgelehnter Eintrag bleibt abgelehnt, ein entfernter kommt nicht wieder (Protokoll `remove`), eine eigene
+  Erläuterung bleibt. Ein vorhandener Vorschlag desselben Begriffs wird bestätigt und behält seine Herkunft.
+- Vorrang vor KI und Regel: Gibt es einen Begriff global von Hand bestätigt, legt ein Lauf in einer Quelle oder einem
+  Space keinen neuen ungeprüften Eintrag desselben Begriffs an (zählt als `suppressed`). Vorhandene Einträge im
+  Bereich bleiben, wie sie sind.
+- Quelle je Eintrag: `ApprovedGlossary.reference` (Titel, URL, Wortlaut, Seite) für globale Einträge, deren Suchwert
+  ein geprüftes Glossar nennt; REST liefert sie als `reference` am Eintrag. Synonyme und Abkürzungen aus dem Glossar
+  („Der Begriff Kassenanordnung wird synonym verwendet.“) sind noch nicht als Begriffsbeziehungen angelegt.

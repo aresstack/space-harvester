@@ -98,7 +98,7 @@ public final class PageDetailPanel extends JPanel {
 
     private static final System.Logger LOG = System.getLogger(PageDetailPanel.class.getName());
 
-    private static final String READ = "Text";
+    private static final String READ = "Podcast-Ansicht";
     private static final String READING = "Leseansicht";
     private java.util.function.BiConsumer<String, String> pageShown = (source, space) -> { };
     /** Stand des sichtbaren Reiters für die Statuszeile des Hauptfensters ({@link #onStatus}). */
@@ -428,7 +428,7 @@ public final class PageDetailPanel extends JPanel {
         row.setOpaque(false);
         return row;
     }
-    /** Neben der Lupe in der Leseansicht: „Transkript kopieren“ des Podcasts der Quellenseite bzw. der Seite. */
+    /** Neben der Lupe in der Podcast-Ansicht: „Transkript kopieren“ des Podcasts der Quellenseite bzw. der Seite. */
     private final JPanel sourceFoot = footRow();
     private final JPanel pageFoot = footRow();
 
@@ -541,8 +541,12 @@ public final class PageDetailPanel extends JPanel {
         }
         // Beide Reiter zeigen dasselbe Update: Wer es in einem wählt, sieht es im anderen auch.
         sourceView.onSelected(sourceChanges::select);
-        sourceView.podcastEvents(context.events()::publish);
+        sourceChanges.podcastEvents(context.events()::publish);
         sourceChanges.onSelected(sourceView::select);
+        // Der Podcast der Quelle bzw. des Spaces steht in der Podcast-Ansicht und erzählt die Zusammenfassung der
+        // Leseansicht, ohne sie neu zu erzeugen; die Leseansicht markiert das laufende Thema mit (Angelo 23.11.2026).
+        sourceView.onSummary(sourceChanges::adopt);
+        sourceChanges.onFollow(sourceView::followPodcast);
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
         sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,
@@ -617,9 +621,12 @@ public final class PageDetailPanel extends JPanel {
         // Links neben der Lupe das Kopieren, rechtsbündig der Schalter „Untertitel“ (Angelo 22.11.2026).
         pageFoot.add(Comic.row(pagePodcast.transcriptCopy()), BorderLayout.WEST);
         pageFoot.add(Comic.row(pagePodcast.subtitleToggle()), BorderLayout.EAST);
-        sourceFoot.add(Comic.row(sourceView.podcast().transcriptCopy()), BorderLayout.WEST);
-        sourceFoot.add(Comic.row(sourceView.podcast().subtitleToggle()), BorderLayout.EAST);
+        sourceFoot.add(Comic.row(sourceChanges.podcast().transcriptCopy()), BorderLayout.WEST);
+        sourceFoot.add(Comic.row(sourceChanges.podcast().subtitleToggle()), BorderLayout.EAST);
         readerPage.setOrb(pagePodcast.orb());
+        // Der Chat liest mit derselben Sprachausgabe vor; sein Knopf steht auf der Höhe dieser Knöpfe (Angelo 23.11.2026).
+        chat.useReadAloud(this::readAloudBinding);
+        chat.alignReadAloudWith(readingPane.readAloud().orb(), pagePodcast.orb());
         textBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(readerPage);
         textBusy.setHighlight(Comic.BLUE);
         textBusy.setVeilColor(Comic.SURFACE);
@@ -995,23 +1002,9 @@ public final class PageDetailPanel extends JPanel {
         if (spaceKey == null) {
             return;
         }
-        String title = page.header().metadata().title();
-        java.util.List<String> path = new java.util.ArrayList<>();
-        java.util.List<String> ancestors = new java.util.ArrayList<>();
-        path.add(sourceTitle(sourceId));
-        if (shownPosition != null) {
-            path.add(shownPosition.spaceName() == null || shownPosition.spaceName().isBlank() ? spaceKey
-                    : shownPosition.spaceName());
-            for (com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode ancestor
-                    : shownPosition.ancestors()) {
-                path.add(ancestor.title());
-                ancestors.add(ancestor.pageId());
-            }
-        } else {
-            path.add(spaceKey);
-        }
-        context.favorites().toggle(new com.aresstack.spaceharvester.app.ui.Favorites.Favorite(sourceId, spaceKey,
-                pageId, title, path, ancestors));
+        // Derselbe Weg wie der Stern im Baum (ADR 0034): Pfad aus der Position, Zielordner aus der Favoritenansicht.
+        context.favorites().toggle(com.aresstack.spaceharvester.app.ui.Favorites.Favorite.page(sourceId, spaceKey,
+                pageId, page.header().metadata().title(), shownPosition, sourceTitle(sourceId)));
     }
 
     private String sourceTitle(String id) {
@@ -1182,12 +1175,11 @@ public final class PageDetailPanel extends JPanel {
         watchOverviewHoldings(runtime, selection);
         overviewGlossary.selection(selection);
         overviewGraph.pages(selection == null || runtime == null || selection.global() ? null
-                : () -> runtime.workspace().resolveSelection(selection.toCore(runtime)).pages());
+                : () -> SelectionHoldings.pages(runtime, selection));
         wideAnalysis.scope(selection == null || runtime == null ? null : new AnalysisView.Scope() {
             @Override
             public PageSet pages() {
-                return selection.global() ? null
-                        : runtime.workspace().resolveSelection(selection.toCore(runtime)).pages();
+                return SelectionHoldings.pages(runtime, selection);
             }
 
             @Override
@@ -1202,20 +1194,13 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Meldet sich beim Bestand der Auswahl an (eine Quelle samt Space, bei „Wissensquellen“ jede Quelle), damit Zahlen
+     * Meldet sich beim Bestand der Auswahl an (je Wurzel Quelle samt Space, bei „Wissensquellen“ jede Quelle, bei einem
+     * Favoriten-Ordner jeder Favorit; {@link SelectionHoldings}), damit Zahlen
      * und Herkunft der Begriffe nach Laden, Abgleich oder Bereinigung stimmen; kein Zeitgeber.
      */
     private void watchOverviewHoldings(AppRuntime runtime, ExportPanel.Selection selection) {
         overviewHoldings.forEach(com.aresstack.spaceharvester.application.observe.Subscription::close);
         overviewHoldings.clear();
-        if (runtime == null || selection == null) {
-            return;
-        }
-        List<String> sourceIds = selection.global()
-                ? runtime.workspace().sources().stream()
-                        .map(com.aresstack.spaceharvester.application.sources.HarvestSource::id).toList()
-                : List.of(selection.sourceId());
-        String spaceKey = selection.global() ? null : selection.spaceKey();
         com.aresstack.spaceharvester.application.holdings.HoldingsListener listener =
                 new com.aresstack.spaceharvester.application.holdings.HoldingsListener() {
                     @Override
@@ -1228,13 +1213,7 @@ public final class PageDetailPanel extends JPanel {
                         javax.swing.SwingUtilities.invokeLater(() -> holdingsChanged(selection));
                     }
                 };
-        for (String source : sourceIds) {
-            try {
-                overviewHoldings.add(runtime.workspace().subscribeHoldings(source, spaceKey, listener));
-            } catch (RuntimeException gone) {
-                // Die Quelle gibt es in dieser Laufzeit nicht mehr; der Baum räumt die Auswahl gleich weg.
-            }
-        }
+        overviewHoldings.addAll(SelectionHoldings.watch(runtime, selection, listener));
     }
 
     private void holdingsChanged(ExportPanel.Selection selection) {
@@ -2801,7 +2780,7 @@ public final class PageDetailPanel extends JPanel {
         long limit = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES
                 : context.settings().storage().maxPageBytes();
         String reason = "Keine Vorschau: zu groß für den Cache (Grenze " + Texts.bytes(limit) + ")."
-                + (textOnly ? "\nDer Textauszug steht im Reiter „Text“, die Suche findet die Datei darüber."
+                + (textOnly ? "\nDer Textauszug steht im Reiter „Podcast-Ansicht“, die Suche findet die Datei darüber."
                 : "\nAbgelegt sind nur ihre Kopfdaten (kein lesbarer Text oder größer als die Grenze zum Laden).")
                 + "\nGrenzen unter Einstellungen › Daten › „Größte Datei im Cache“.";
         AppRuntime runtime = context.runtime();
@@ -3012,8 +2991,8 @@ public final class PageDetailPanel extends JPanel {
                 : ADVANCED.equals(selected) && PAGE.equals(pageCard) ? advancedFoot
                 : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
                 : READ.equals(selected) && videoTranscriptShown ? videoTranscript.action()
-                : READING.equals(selected) && SOURCE_CARD.equals(pageCard) ? sourceFoot
-                : READING.equals(selected) && PAGE.equals(pageCard) ? pageFoot
+                : READ.equals(selected) && SOURCE_CARD.equals(pageCard) ? sourceFoot
+                : READ.equals(selected) && PAGE.equals(pageCard) ? pageFoot
                 : wide && folder != null ? folderFoot
                 : null;
         if (footTools.getComponentCount() == (shown == null ? 0 : 1)
@@ -5620,7 +5599,8 @@ public final class PageDetailPanel extends JPanel {
 
     /** Auf der Quellenseite in der Leseansicht hat das Dreieck die Speicher-Einträge der Zusammenfassung. */
     private boolean sourceMenuShown() {
-        return SOURCE_CARD.equals(pageCard) && READING.equals(tabs.selected()) && sourceView.sourceId() != null;
+        return SOURCE_CARD.equals(pageCard) && (READING.equals(tabs.selected()) || READ.equals(tabs.selected()))
+                && sourceView.sourceId() != null;
     }
 
     /**
@@ -5630,13 +5610,17 @@ public final class PageDetailPanel extends JPanel {
      */
     javax.swing.JPopupMenu moreMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
-        if (sourceMenuShown()) {
+        if (sourceMenuShown() && READING.equals(tabs.selected())) {
             menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", sourceView.hasSummary(),
                     this::saveSummary));
+            return menu;
+        }
+        if (sourceMenuShown()) {
+            // Der Podcast steht in der Podcast-Ansicht, seine Einträge also auch.
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
-                    sourceView.podcast().hasTranscript(), () -> saveTranscript(sourceView.podcast())));
-            menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceView.podcastRenewable(),
-                    sourceView::renewPodcast));
+                    sourceChanges.podcast().hasTranscript(), () -> saveTranscript(sourceChanges.podcast())));
+            menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceChanges.podcastRenewable(),
+                    sourceChanges::renewPodcast));
             return menu;
         }
         for (ComposerButton action : List.of(bookmark, browse)) {
@@ -5678,7 +5662,7 @@ public final class PageDetailPanel extends JPanel {
         String name = "Transkript " + safeName(title.getText()) + ".md";
         podcast.transcript(text -> {
             if (text.isBlank()) {
-                tabStatus(READING, "Transkript: Der Podcast hat noch keinen Text");
+                tabStatus(tabs.selected(), "Transkript: Der Podcast hat noch keinen Text");
             } else {
                 saveText(name, text, "Transkript");
             }
@@ -5691,8 +5675,9 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         Background.execute(() -> Files.writeString(target, text, java.nio.charset.StandardCharsets.UTF_8),
-                () -> tabStatus(READING, what + " gespeichert: " + target),
-                failure -> tabStatus(READING, what + " nicht gespeichert: " + Problems.describe(failure).title()));
+                () -> tabStatus(tabs.selected(), what + " gespeichert: " + target),
+                failure -> tabStatus(tabs.selected(), what + " nicht gespeichert: "
+                        + Problems.describe(failure).title()));
     }
 
     Breadcrumbs breadcrumbs() {

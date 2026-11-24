@@ -411,6 +411,42 @@ class ChatPanelTest {
     }
 
     @Test
+    void aFolderGivesTheChatItsSubfoldersOnlyWithSubpagesAndOnlyFavoritesOfTheResolvedCollection() {
+        com.aresstack.spaceharvester.app.ui.Favorites favorites =
+                new com.aresstack.spaceharvester.app.ui.Favorites(() -> home.resolve("favorites.json"));
+        String top = favorites.createFolder("Betrieb", null);
+        String sub = favorites.createFolder("Nachtlauf", top);
+        String deeper = favorites.createFolder("Spool", sub);
+        String other = favorites.createFolder("Anderes", null);
+        var seite = new com.aresstack.spaceharvester.app.ui.Favorites.Favorite("wiki", "DEV", "42", "Seite",
+                java.util.List.of(), java.util.List.of());
+        var space = com.aresstack.spaceharvester.app.ui.Favorites.Favorite.space("wiki", "OPS", "Betrieb", "Wiki");
+        var spaeter = new com.aresstack.spaceharvester.app.ui.Favorites.Favorite("wiki", "DEV", "77", "Später",
+                java.util.List.of(), java.util.List.of());
+        favorites.toggle(seite, top);
+        favorites.toggle(space, sub);
+        var roots = favorites.favoritesIn(top, true).stream()
+                .map(com.aresstack.spaceharvester.app.ui.Favorites.Favorite::root).toList();
+        // Nach dem Senden dazugekommen: steht nicht in der aufgelösten Sammlung, also nicht im Bereich.
+        favorites.toggle(spaeter, top);
+
+        var with = ChatPanel.collectionNodes(favorites, new Selection.Collection(top, "Betrieb", roots, true));
+        var without = ChatPanel.collectionNodes(favorites, new Selection.Collection(top, "Betrieb", roots, false));
+
+        assertThat(with.content(null).folders()).extracting(
+                com.aresstack.spaceharvester.app.chat.CollectionNodes.Folder::id).containsExactly(sub);
+        assertThat(with.content(null).roots()).containsExactly(seite.root());
+        assertThat(with.content(sub).roots()).containsExactly(space.root());
+        assertThat(with.content(deeper)).as("auch tiefer").isNotNull();
+        assertThat(with.content(other)).as("ein Ordner außerhalb").isNull();
+        assertThat(without.content(null).folders()).isEmpty();
+        assertThat(without.content(sub)).as("ohne Unterordner kein Zugriff").isNull();
+        assertThat(ChatPanel.scopeKey(ChatNode.collection(top), false))
+                .isNotEqualTo(ChatPanel.scopeKey(ChatNode.collection(other), false))
+                .isNotEqualTo(ChatPanel.scopeKey(ChatNode.ALL, false));
+    }
+
+    @Test
     void theKnowledgeLineNamesTheSelectionItsPagesAndWhatIsMissing() {
         assertThat(ChatPanel.knowledgeText(null, null, true, true)).isEqualTo(ChatPanel.NO_SELECTION);
         Selection page = new Selection.Node("wiki", "DEV", "42", "Handbuch");

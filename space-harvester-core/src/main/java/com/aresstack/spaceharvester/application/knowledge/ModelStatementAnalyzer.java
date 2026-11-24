@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.knowledge;
 
+import com.aresstack.spaceharvester.ai.ModelRetry;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.stepmodel.StepModel;
 import java.io.IOException;
@@ -170,7 +171,8 @@ public final class ModelStatementAnalyzer implements StatementAnalyzer {
                         "Seite nicht für den KI-Dienst freigegeben", null);
             }
             List<ParsedStatements.Sentence> chunk = asked.subList(from, Math.min(asked.size(), from + MAX_LINES));
-            String response = model.complete(INSTRUCTIONS, input(text, chunk));
+            String response = model.completeRetrying(INSTRUCTIONS, input(text, chunk),
+                    ModelRetry.logging(cancelled));
             calls++;
             ModelAnswer.Parsed parsed = ModelAnswer.parse(chunk.size(), response);
             rejectedLines += parsed.rejected();
