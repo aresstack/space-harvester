@@ -129,10 +129,8 @@ public final class ChatPanel extends JPanel {
     static final String DELETED_TIP = "Gelöscht, bis zum Neustart wiederherstellbar: Klick öffnet ihn wieder";
     static final String DELETE_ALL_QUESTION = "Wirklich alle Chats aller Bereiche löschen?";
     static final String ASSISTANT = "Assistent";
-    static final String ANSWERING = "Antwort wird geschrieben …";
-    /** Wie in AskAI: solange Ollama das Modell lädt, steht das in der Blase und in der Statuszeile. */
+    /** Wie in AskAI: solange Ollama das Modell lädt, steht das in der gelben Blase. */
     static final String MODEL_LOADING = "Modell wird geladen …";
-    static final String SEARCHING = "Wissen wird gesucht …";
     static final String CANCELLED = "Abgebrochen";
     static final String DOWNLOAD_DONE = "abgeschlossen";
     static final String DOWNLOAD_FAILED = "fehlgeschlagen";
@@ -462,11 +460,9 @@ public final class ChatPanel extends JPanel {
         add(transcriptLayers, BorderLayout.CENTER);
 
         composer = buildComposer();
-        JPanel knowledgeRow = new JPanel(new BorderLayout(8, 0));
-        knowledgeRow.setOpaque(false);
+        // Angelo 24.11.2026: Über dem Eingabefeld stehen nur Aktionsknöpfe, Text und Anhänge. Die Wissenszeile samt
+        // „Laden“ steht in der gelben Blase der Antwort (KnowledgeCard).
         knowledge.setForeground(Comic.MUTED);
-        knowledgeRow.add(knowledge, BorderLayout.CENTER);
-        knowledgeRow.add(load, BorderLayout.EAST);
         load.setVisible(false);
         load.addActionListener(e -> load());
         // Die Schnellaktionen stehen direkt über der Wissen-Zeile und brechen in der schmalen Leiste um.
@@ -477,7 +473,6 @@ public final class ChatPanel extends JPanel {
         JPanel south = new JPanel(new BorderLayout(0, 4));
         south.setOpaque(false);
         south.add(above, BorderLayout.NORTH);
-        south.add(knowledgeRow, BorderLayout.CENTER);
         south.add(composer, BorderLayout.SOUTH);
         add(south, BorderLayout.SOUTH);
 
@@ -1764,16 +1759,7 @@ public final class ChatPanel extends JPanel {
         }
         outcomes.put(Comic.button(REJECT_TEXT, null),
                 com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.REJECTED);
-        // Umbrechend: In der schmalen Leiste rutschen Knöpfe in eine zweite Zeile, statt abgeschnitten zu werden.
-        JPanel buttons = new JPanel(
-                new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 8, 4)) {
-            @Override
-            public Dimension getMaximumSize() {
-                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-            }
-        };
-        buttons.setOpaque(false);
-        buttons.setBorder(BorderFactory.createEmptyBorder(0, 22, 0, 12));
+        JPanel buttons = buttonPanel();
         boolean[] answered = {false};
         for (var entry : outcomes.entrySet()) {
             buttons.add(entry.getKey());
@@ -1786,7 +1772,6 @@ public final class ChatPanel extends JPanel {
                 answer.accept(entry.getValue());
             });
         }
-        buttons.setAlignmentX(LEFT_ALIGNMENT);
         row.add(buttons);
         row.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
@@ -1811,9 +1796,30 @@ public final class ChatPanel extends JPanel {
         };
     }
 
+    /** Die Knopfzeile unter einer gelben Blase; umbrechend, damit in der schmalen Leiste nichts abgeschnitten wird. */
+    private static JPanel buttonPanel() {
+        JPanel buttons = new JPanel(
+                new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 8, 4)) {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        buttons.setOpaque(false);
+        buttons.setBorder(BorderFactory.createEmptyBorder(0, 22, 0, 12));
+        buttons.setAlignmentX(LEFT_ALIGNMENT);
+        return buttons;
+    }
+
     /** Eine Aktivitätsblase im Verlauf: die Karte „Browserrecherche“ oder die Wolke eines Werkzeugaufrufs. */
     private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
                                                                                          String body) {
+        return addActivity(title, body, List.of());
+    }
+
+    /** Wie oben, mit Knöpfen unter der Blase (etwa „Laden“ in der Gedankenblase), umbrechend wie bei Rückfragen. */
+    private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
+            String body, List<? extends JComponent> buttons) {
         if (listening != null) {
             listening.behindActivity();
         }
@@ -1822,8 +1828,20 @@ public final class ChatPanel extends JPanel {
                         title, body);
         bubble.setHeaderTimestamp(System.currentTimeMillis());
         bubble.setMaximumBubbleWidth(640);
-        BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
-        row.setAlignmentX(LEFT_ALIGNMENT);
+        BubbleMessageRow bubbleRow = new BubbleMessageRow(bubble, BubbleSide.LEFT);
+        bubbleRow.setAlignmentX(LEFT_ALIGNMENT);
+        JComponent row = bubbleRow;
+        if (!buttons.isEmpty()) {
+            JPanel both = new JPanel();
+            both.setOpaque(false);
+            both.setLayout(new javax.swing.BoxLayout(both, javax.swing.BoxLayout.Y_AXIS));
+            both.add(bubbleRow);
+            JPanel panel = buttonPanel();
+            buttons.forEach(panel::add);
+            both.add(panel);
+            both.setAlignmentX(LEFT_ALIGNMENT);
+            row = both;
+        }
         emptyNote.setVisible(false);
         transcript.add(row);
         transcript.revalidate();
@@ -1974,7 +1992,6 @@ public final class ChatPanel extends JPanel {
         chips.removeAll();
         chips.setVisible(false);
         attach.setToolTipText(ATTACH);
-        status.setText(SEARCHING);
         composer.revalidate();
         composer.repaint();
         answering = addAnswer("…");
@@ -1982,6 +1999,25 @@ public final class ChatPanel extends JPanel {
         Path targetNode = home;
         TurnListener listener = new TurnListener(target, targetNode, answering, answeringSources);
         listening = listener;
+        // Die gelbe Blase gleich mit dem Senden (Angelo 24.11.2026): Bereichssuche und interne Suche gleich, mit
+        // Wissenszeile und „Laden“; die Antwortblase wartet unsichtbar dahinter, bis Text kommt.
+        boolean withKnowledge = custom == null && (scope != null || appSearchOn);
+        List<JComponent> cardButtons = new ArrayList<>();
+        if (withKnowledge && load.isVisible() && load.isEnabled()) {
+            ComposerButton loadNow = Comic.button(LOAD, load.getToolTipText());
+            loadNow.addActionListener(e -> {
+                loadNow.setEnabled(false);
+                load();
+            });
+            cardButtons.add(loadNow);
+        }
+        KnowledgeCard thinking = new KnowledgeCard(withKnowledge,
+                (title, body) -> addActivity(title, body, cardButtons));
+        if (withKnowledge) {
+            thinking.knowledge(knowledge.getText());
+        }
+        listener.card = thinking;
+        thinking.open();
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
                 listener, SwingUtilities::invokeLater);
         if (custom != null) {
@@ -2124,6 +2160,10 @@ public final class ChatPanel extends JPanel {
         volatile boolean discarded;
         /** Die Karte „Browserrecherche“ dieser Antwort, {@code null} ohne Websuche. */
         WebSearchCard webCard;
+        /** Die gelbe Gedankenblase dieser Antwort (Wissen, Schritte, Quellen, Balken); {@code null} nur in Tests. */
+        KnowledgeCard card;
+        /** Laufende Werkzeugaufrufe außer dem Browser: Kennung und Text, für die Schritte der Gedankenblase. */
+        private final java.util.Map<String, String> steps = new java.util.HashMap<>();
         /** Die Browser-Werkzeuge dieser Antwort, {@code null} ohne Websuche. */
         com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools browserTools;
         /** Die Zeile der Antwortblase; wartet unsichtbar hinter den Wolken, bis Text kommt (EAC). */
@@ -2249,6 +2289,11 @@ public final class ChatPanel extends JPanel {
                 browserSeen = true;
                 browserStart = key;
                 title = WebSearchCard.STARTING;
+            } else if (card != null && !card.finished()) {
+                // Suchen und Lesen im Wissen zeigt die eine Gedankenblase als Schritte, keine eigenen Wolken.
+                steps.put(key, what);
+                card.step(what);
+                return;
             }
             var cloud = addActivity(title, "");
             clouds.put(key, cloud);
@@ -2257,6 +2302,10 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void toolFinished(String key) {
+            String step = steps.remove(key);
+            if (step != null && card != null && !detached) {
+                card.stepDone(step);
+            }
             var cloud = clouds.remove(key);
             if (cloud == null || detached) {
                 return;
@@ -2293,16 +2342,15 @@ public final class ChatPanel extends JPanel {
             if (text.isEmpty()) {
                 bubble.view().setMarkdown(MODEL_LOADING);
             }
-            if (!detached) {
-                status.setText(MODEL_LOADING);
+            if (!detached && card != null) {
+                card.step(MODEL_LOADING);
             }
         }
 
         @Override
         public void released(int count) {
-            if (!detached) {
-                status.setText(status.getText().strip() + " · " + Texts.count(count, "Seite", "Seiten")
-                        + " für KI freigegeben");
+            if (!detached && card != null) {
+                card.released(count);
             }
         }
 
@@ -2315,8 +2363,8 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void using(String what) {
-            if (!detached) {
-                status.setText(ANSWERING + " · " + what);
+            if (!detached && card != null) {
+                card.step(what);
             }
         }
 
@@ -2325,15 +2373,24 @@ public final class ChatPanel extends JPanel {
             sources = context.accepted().stream().map(ChatRecord.Source::of).toList();
             // Die Quellen stehen schon während der Antwort unter der Blase und wachsen mit jeder neuen.
             links.show(sources);
-            if (!detached) {
-                status.setText(context.isEmpty() ? ANSWERING + " · ohne Auszüge aus dem Bestand"
-                        : ANSWERING + " · " + Texts.count(context.accepted().size(), "Auszug", "Auszüge")
-                        + " aus dem Bestand");
+            if (!detached && card != null) {
+                card.sources(sources.stream().map(ChatRecord.Source::title).toList());
+            }
+        }
+
+        @Override
+        public void progress(int done, int total) {
+            if (!detached && card != null) {
+                card.progress(done, total);
             }
         }
 
         @Override
         public void delta(String delta) {
+            // Die Antwort schreibt: Die Gedankenblase platzt mit ihrer Bilanz (wie im EAC).
+            if (card != null && !detached) {
+                card.finish(false);
+            }
             reveal();
             MarkdownMessageView view = bubble.view();
             if (text.isEmpty()) {
@@ -2390,6 +2447,9 @@ public final class ChatPanel extends JPanel {
         private void finishWebCard(boolean cancelled) {
             if (webCard != null) {
                 webCard.finish(null, cancelled);
+            }
+            if (card != null && !detached) {
+                card.finish(cancelled);
             }
         }
 

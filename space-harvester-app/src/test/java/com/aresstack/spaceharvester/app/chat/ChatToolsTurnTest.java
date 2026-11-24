@@ -213,7 +213,8 @@ class ChatToolsTurnTest {
         assertThat(events.completed).isEqualTo("Bei vollem Spool [2].");
         AiChat.Request first = port.requests.get(0);
         assertThat(first.tools()).extracting(AiChat.Tool::name)
-                .containsExactlyInAnyOrder(ChatTools.SEARCH, ChatTools.LIST, ChatTools.READ, ChatTools.TERM);
+                .containsExactlyInAnyOrder(ChatTools.SEARCH, ChatTools.LIST, ChatTools.READ, ChatTools.TERM,
+                        ChatTools.EVALUATE);
         assertThat(first.messages().get(0).text()).startsWith(ChatKnowledge.TOOL_PROMPT)
                 .contains("[1] ").contains("Berechtigungsmanagement").contains(ChatTools.ref(open))
                 .doesNotContain("vollem Spool");
@@ -491,7 +492,8 @@ class ChatToolsTurnTest {
     }
 
     @Test
-    void withoutTheSearchAgentThereAreNoSubAgentsAndSeveralCallsOfARoundKeepTheirOrder() throws Exception {
+    void theAreaSearchOutsideTheSearchTabAlsoHasSubAgentsAndSeveralCallsOfARoundKeepTheirOrder() throws Exception {
+        // Angelo 24.11.2026: Bereichssuche und interne Suche verhalten sich gleich, beide mit Hintergrund-Agenten.
         PageKey night = page("nachtlauf");
         PageKey house = page("datenhaus");
         ScriptedChat port = new ScriptedChat(List.of(
@@ -505,7 +507,8 @@ class ChatToolsTurnTest {
                 .knowledgeByTools(null).parallelAgents(4).releasing(releases()).start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
 
-        assertThat(port.requests.get(0).tools()).extracting(AiChat.Tool::name).doesNotContain(ChatTools.EVALUATE);
+        assertThat(port.requests.get(0).tools()).extracting(AiChat.Tool::name).contains(ChatTools.EVALUATE);
+        assertThat(port.requests.get(0).messages().get(0).text()).contains(ChatKnowledge.AGENT_EVALUATE_PROMPT);
         List<AiChat.Message> messages = port.requests.get(1).messages();
         assertThat(messages.subList(messages.size() - 2, messages.size()))
                 .satisfiesExactly(a -> assertThat(a.toolCallId()).isEqualTo("c1"),
