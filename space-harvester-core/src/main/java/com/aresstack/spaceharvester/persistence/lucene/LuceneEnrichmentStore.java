@@ -625,7 +625,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_BATCH + " liegen");
         }
         requireOpen();
-        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()) {
+        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()
+                || filter.anyOf() != null && filter.anyOf().isEmpty()) {
             return List.of();
         }
         org.apache.lucene.search.Query query = termQuery(filter, from, inclusive);
@@ -659,7 +660,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_KEY_BATCH + " liegen");
         }
         requireOpen();
-        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()) {
+        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()
+                || filter.anyOf() != null && filter.anyOf().isEmpty()) {
             return List.of();
         }
         org.apache.lucene.search.Query query = termQuery(filter, from, false);
@@ -741,6 +743,10 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         }
         if (filter.normalized() != null) {
             query.add(new TermQuery(new Term(TERM_NORMALIZED, filter.normalized())), BooleanClause.Occur.FILTER);
+        }
+        if (filter.anyOf() != null) {
+            query.add(new TermInSetQuery(TERM_NORMALIZED, filter.anyOf().stream().map(BytesRef::new).toList()),
+                    BooleanClause.Occur.FILTER);
         }
         if (filter.startsWith() != null) {
             query.add(new PrefixQuery(new Term(TERM_NORMALIZED, filter.startsWith())), BooleanClause.Occur.FILTER);

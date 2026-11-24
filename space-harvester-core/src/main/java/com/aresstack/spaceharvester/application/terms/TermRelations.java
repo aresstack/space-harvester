@@ -716,7 +716,7 @@ public class TermRelations {
 
         private final AccessContext caller;
         private final PageSet pages;
-        private final Map<String, List<PageScope>> byTerm = new HashMap<>();
+        private Map<String, List<PageScope>> byTerm;
         private final Map<PageKey, Optional<PageScope>> scopes = new HashMap<>();
 
         Occurrences(AccessContext caller, PageSet pages) {
@@ -731,28 +731,49 @@ public class TermRelations {
         }
 
         private boolean covered(TermRelation relation, String normalized) {
-            return byTerm.computeIfAbsent(normalized, this::scopes).stream()
+            return byTerm().getOrDefault(normalized, List.of()).stream()
                     .anyMatch(page -> relation.scope().covers(page.sourceId(), page.spaceKey()));
         }
 
-        private List<PageScope> scopes(String normalized) {
-            if (pages.isEmpty() || !TermText.usable(normalized)) {
-                return List.of();
+        /**
+         * Wo die Begriffe aller Beziehungen in der Seitenmenge vorkommen, mit einer Abfrage für alle zusammen und nur
+         * über Schlüssel. Vorher lief je Begriff eine eigene Abfrage über die ganze Seitenmenge, die jede Fundstelle
+         * vollständig las: bei vielen Beziehungen der teure Teil von Liste und Zahl (Angelo 24.11.2026).
+         */
+        private Map<String, List<PageScope>> byTerm() {
+            if (byTerm != null) {
+                return byTerm;
             }
-            TermIndex.Filter filter = new TermIndex.Filter(pages.sourceIds(), null, normalized, null,
-                    processorVersion, null, TermOrigin.PAGES, pages);
-            Set<PageScope> found = new LinkedHashSet<>();
-            String from = null;
-            while (true) {
-                List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
-                for (TermPosting posting : batch) {
-                    scopes.computeIfAbsent(posting.page(), this::scope).ifPresent(found::add);
+            Set<String> wanted = new HashSet<>();
+            for (TermRelation relation : store.all()) {
+                for (String term : List.of(relation.fromTerm(), relation.toTerm())) {
+                    String normalized = TermText.normalize(term);
+                    if (TermText.usable(normalized)) {
+                        wanted.add(normalized);
+                    }
                 }
-                if (batch.size() < TermIndex.MAX_BATCH) {
-                    return List.copyOf(found);
-                }
-                from = batch.get(batch.size() - 1).sortKey();
             }
+            Map<String, Set<PageScope>> found = new HashMap<>();
+            if (!pages.isEmpty() && !wanted.isEmpty()) {
+                TermIndex.Filter filter = new TermIndex.Filter(pages.sourceIds(), null, null, null, processorVersion,
+                        null, TermOrigin.PAGES, pages).anyOf(wanted);
+                String from = null;
+                while (true) {
+                    List<TermIndex.TermKey> batch = index.keys(filter, from, TermIndex.MAX_KEY_BATCH);
+                    for (TermIndex.TermKey key : batch) {
+                        scopes.computeIfAbsent(key.page(), this::scope).ifPresent(scope -> found
+                                .computeIfAbsent(key.normalized(), term -> new LinkedHashSet<>()).add(scope));
+                    }
+                    if (batch.size() < TermIndex.MAX_KEY_BATCH) {
+                        break;
+                    }
+                    from = batch.get(batch.size() - 1).sortKey();
+                }
+            }
+            Map<String, List<PageScope>> lists = new HashMap<>();
+            found.forEach((term, where) -> lists.put(term, List.copyOf(where)));
+            byTerm = lists;
+            return lists;
         }
 
         private Optional<PageScope> scope(PageKey key) {

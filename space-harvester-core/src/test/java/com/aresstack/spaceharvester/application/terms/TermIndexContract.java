@@ -179,4 +179,18 @@ public abstract class TermIndexContract {
                 .filteredOn(TermIndex.TermKey::ofDocument).extracting(TermIndex.TermKey::extraction)
                 .containsOnly("x1");
     }
+
+    @Test
+    void anyOfKeepsOnlyTheNamedTermsInOneQuery() {
+        store().save(terms(B1, "1", payload(term("Beleg", "noun", null, 0, 5), term("API", "acronym", null, 6, 9))));
+        store().save(terms(A1, "1", payload(term("Beleg", "noun", null, 0, 5), term("Konto", "noun", null, 6, 11))));
+        TermIndex.Filter everything = new TermIndex.Filter(BOTH, null, null, null, "1");
+
+        assertThat(index().keys(everything.anyOf(Set.of("beleg", "api", "fehlt")), null, TermIndex.MAX_KEY_BATCH))
+                .extracting(key -> key.normalized() + "/" + key.page().sourceId())
+                .containsExactly("api/wiki-b", "beleg/wiki-a", "beleg/wiki-b");
+        assertThat(index().postings(everything.anyOf(Set.of("konto")), null, false, 10))
+                .extracting(TermPosting::normalized).containsExactly("konto");
+        assertThat(index().keys(everything.anyOf(Set.of()), null, TermIndex.MAX_KEY_BATCH)).isEmpty();
+    }
 }
