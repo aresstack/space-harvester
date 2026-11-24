@@ -47,6 +47,13 @@ public final class ContentView implements View {
     /** „Wissensquellen“ im Explorer gewählt: die Bereichsanzeige nennt keine Quelle (Architekt 17.11.2026). */
     private boolean allSources;
     private String spaceKey;
+    /** Der gewählte Favoriten-Ordner (ADR 0034), sonst {@code null}. */
+    private ExportPanel.Selection.Collection folder;
+    /**
+     * Die Stellung von „mit Unterseiten“ am Ordner (ADR 0034 §6): Vorgabe an (der oberste Ordner enthält alles
+     * darunter), eine Stellung für alle Ordner, gemerkt nur für die Sitzung, wie an der Seite.
+     */
+    private boolean folderSubfolders = true;
 
     public ContentView(AppContext context) {
         this.context = context;
@@ -97,6 +104,38 @@ public final class ContentView implements View {
         body.add(detail, BorderLayout.CENTER);
         context.onChange(ignored -> renderCrumbs());
         renderCrumbs();
+        // Die Checkbox am Ordner löst ihn mit der neuen Stellung auf; eine Änderung am Ordner gilt sofort, also auch
+        // ab der nächsten Frage im Chat (ADR 0034 §3, Beobachter, kein Zeitgeber).
+        detail.onFolderSubfolders(on -> {
+            folderSubfolders = on;
+            refreshFolder();
+        });
+        context.favorites().onChange(() -> {
+            if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+                refreshFolder();
+            } else {
+                javax.swing.SwingUtilities.invokeLater(this::refreshFolder);
+            }
+        });
+    }
+
+    /**
+     * Wählt einen Favoriten-Ordner (ADR 0034): löst ihn mit der gemerkten Stellung von „mit Unterseiten“ auf (aus = die
+     * direkten Favoriten, an = samt Unterordnern) und wendet die Auswahl an wie eine Auswahl im Baum.
+     */
+    public void folder(String folderId, String title) {
+        selection(ExportPanel.Selection.Collection.of(context.favorites(), folderId, title, folderSubfolders));
+    }
+
+    /** Löst den gewählten Ordner neu auf; gleiche Wurzeln und Stellung lassen die Auswahl, wie sie ist. */
+    private void refreshFolder() {
+        if (folder == null) {
+            return;
+        }
+        ExportPanel.Selection.Collection next = folder.withSubfolders(context.favorites(), folderSubfolders);
+        if (!next.equals(folder)) {
+            selection(next);
+        }
     }
 
     @Override
@@ -322,6 +361,7 @@ public final class ContentView implements View {
      * „Chat“ (Angelo, 13.11.2026); {@code null} ohne Auswahl.
      */
     public void selection(ExportPanel.Selection selection) {
+        folder = selection instanceof ExportPanel.Selection.Collection collection ? collection : null;
         detail.export().selection(selection);
         // Der Chat löst die Auswahl im Core zu Seiten auf (ADR 0029) und frischt sie bei Bestandsmeldungen auf; der
         // Graph grenzt sich auf dieselben Seiten ein, ohne ein zweites Mal aufzulösen.

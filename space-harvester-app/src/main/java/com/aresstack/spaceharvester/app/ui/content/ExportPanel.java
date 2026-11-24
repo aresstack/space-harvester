@@ -270,6 +270,26 @@ public final class ExportPanel extends JPanel {
             public Selection normalized() {
                 return title == null ? this : new Collection(folderId, null, roots, withSubfolders);
             }
+
+            /**
+             * Die einzige Auflösung Ordner → Wurzeln (ADR 0034 §6): je Favorit des Ordners seine Wurzel
+             * ({@link com.aresstack.spaceharvester.app.ui.Favorites.Favorite#root}), ohne Doppelte, in
+             * Baumreihenfolge; mit {@code withSubfolders} auch die Favoriten aller Unterordner rekursiv.
+             */
+            public static Collection of(com.aresstack.spaceharvester.app.ui.Favorites favorites, String folderId,
+                                        String title, boolean withSubfolders) {
+                List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots = favorites
+                        .favoritesIn(folderId, withSubfolders).stream()
+                        .map(com.aresstack.spaceharvester.app.ui.Favorites.Favorite::root)
+                        .distinct()
+                        .toList();
+                return new Collection(folderId, title, roots, withSubfolders);
+            }
+
+            /** Derselbe Ordner neu aufgelöst, mit {@code on} als Stellung der Checkbox „mit Unterseiten“. */
+            public Collection withSubfolders(com.aresstack.spaceharvester.app.ui.Favorites favorites, boolean on) {
+                return of(favorites, folderId, title, on);
+            }
         }
     }
 

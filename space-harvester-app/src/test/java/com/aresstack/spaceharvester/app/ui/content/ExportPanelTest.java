@@ -248,6 +248,34 @@ class ExportPanelTest {
 
     /** Stand = jüngster fertiger Download genau dieser Auswahl; ein Seiten-Download zählt nicht für den Space. */
     @Test
+    void aFolderResolvesToItsDirectFavoritesOrWithSubfoldersToAllBelow() {
+        // ADR 0034 §6: aus = die direkten Favoriten des Ordners, an = samt Unterordnern rekursiv; je Favorit eine
+        // Wurzel wie im Baum (Seite samt Unterseiten, Space oder Quelle), ohne Doppelte.
+        com.aresstack.spaceharvester.app.ui.Favorites favorites = new com.aresstack.spaceharvester.app.ui.Favorites(
+                () -> null);
+        String top = favorites.createFolder("Betrieb", null);
+        String below = favorites.createFolder("Notfall", top);
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite page =
+                new com.aresstack.spaceharvester.app.ui.Favorites.Favorite("wiki", "OPS", "4711", "Runbook", null,
+                        null);
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite space =
+                com.aresstack.spaceharvester.app.ui.Favorites.Favorite.space("wiki", "DEV", "Entwicklung", "Wiki");
+        favorites.toggle(page, top);
+        favorites.toggle(space, below);
+
+        ExportPanel.Selection.Collection direct = ExportPanel.Selection.Collection.of(favorites, top, "Betrieb", false);
+        ExportPanel.Selection.Collection all = direct.withSubfolders(favorites, true);
+
+        assertThat(direct.roots(null)).containsExactly(page.root());
+        assertThat(direct.withSubfolders()).isFalse();
+        // Baumreihenfolge: der Unterordner „Notfall“ steht vor dem später gesetzten Favoriten.
+        assertThat(all.roots(null)).containsExactly(space.root(), page.root());
+        assertThat(all.withSubfolders()).isTrue();
+        assertThat(all.title()).isEqualTo("Betrieb");
+        assertThat(all).isNotEqualTo(direct);
+    }
+
+    @Test
     void aCollectionIsNeverTheGlobalSelectionAndCoversOnlyItsRoots() {
         // ADR 0034 §3: „global“ heißt All, nie „ohne Quelle“; eine Sammlung gilt sonst als „Alle Wissensquellen“.
         com.aresstack.spaceharvester.application.holdings.Selection.Root page =

@@ -303,6 +303,8 @@ public final class MainWindow implements AppContext.Navigator {
         // Links gewählt bestimmt rechts (Angelo, 13.11.2026): der Reiter „Export“ folgt der Auswahl im Explorer.
         // Die Auswahl links bestimmt die Inhalte, darunter Begriffe, Fachglossar und Graph unter Analysen (ADR 0029).
         explorer.onSelection(content::selection);
+        // Ein Favoriten-Ordner wählt die Sammlung über die eine Auflösung Ordner → Wurzeln (ADR 0034).
+        explorer.onFolder(content::folder);
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
