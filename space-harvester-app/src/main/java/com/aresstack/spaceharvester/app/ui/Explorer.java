@@ -52,6 +52,7 @@ import java.util.Set;
 import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -1728,6 +1729,7 @@ public final class Explorer {
      */
     private static Batch wholeSpace(AppRuntime runtime, String sourceId, String spaceKey) {
         Map<String, String> titles = new HashMap<>();
+        Set<String> folders = new HashSet<>();
         PageTree pageTree;
         try {
             Map<String, TreeEntry> entries = new LinkedHashMap<>();
@@ -1738,6 +1740,9 @@ public final class Explorer {
                     PageMetadata page = entry.page();
                     entries.putIfAbsent(page.pageId(), new TreeEntry(page.pageId(), page.parentPageId()));
                     titles.putIfAbsent(page.pageId(), page.title());
+                    if (folder(page)) {
+                        folders.add(page.pageId());
+                    }
                 }
                 next = entries.size() >= TREE_LIMIT ? null : listing.nextCursor();
             } while (next != null);
@@ -1751,22 +1756,36 @@ public final class Explorer {
                 throw unreachable;
             }
             titles.clear();
-            stock.pages().forEach((id, page) -> titles.put(id, page.header().metadata().title()));
+            folders.clear();
+            stock.pages().forEach((id, page) -> {
+                titles.put(id, page.header().metadata().title());
+                if (folder(page.header().metadata())) {
+                    folders.add(id);
+                }
+            });
             pageTree = stock.tree();
         }
         List<Node> nodes = new ArrayList<>();
         for (PageTree.Node child : pageTree.roots()) {
-            nodes.add(built(sourceId, spaceKey, child, titles));
+            nodes.add(built(sourceId, spaceKey, child, titles, folders));
         }
         return new Batch(nodes, null);
     }
 
-    private static Node built(String sourceId, String spaceKey, PageTree.Node node, Map<String, String> titles) {
+    /** Ein Ordner der Quelle (Ordner-Quelle, BSCW): im Baum mit Ordnersymbol. */
+    private static boolean folder(PageMetadata page) {
+        return PageMetadata.FOLDER_KIND.equals(page.attributes().get(PageMetadata.RESOURCE_KIND));
+    }
+
+    private static Node built(String sourceId, String spaceKey, PageTree.Node node, Map<String, String> titles,
+                              Set<String> folders) {
         String title = titles.get(node.pageId());
         Node built = leaf(new PageItem(sourceId, spaceKey, node.pageId(),
-                title == null || title.isBlank() ? node.pageId() : title, !node.children().isEmpty()));
+                title == null || title.isBlank() ? node.pageId() : title, !node.children().isEmpty(),
+                folders.contains(node.pageId()) ? HarvestSource.PageNode.Kind.FOLDER
+                        : HarvestSource.PageNode.Kind.PAGE));
         for (PageTree.Node child : node.children()) {
-            built.add(built(sourceId, spaceKey, child, titles));
+            built.add(built(sourceId, spaceKey, child, titles, folders));
         }
         return built;
     }

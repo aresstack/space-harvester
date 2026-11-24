@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.facts.PageFacts;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
@@ -323,6 +324,11 @@ class CoreParityTest {
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
             Map<String, ListedPage> byPath = new TreeMap<>();
             for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
+                if (PageMetadata.FOLDER_KIND.equals(page.header().metadata().attributes()
+                        .get(PageMetadata.RESOURCE_KIND))) {
+                    // Ordner gliedern nur den Seitenbaum (Angelo, 24.11.2026); verglichen werden die Dokumente.
+                    continue;
+                }
                 // Ressourcen-ID der Ordner-Quelle: …/<Quelle>/<Pfad relativ zum Ordner, Base64url>
                 String value = page.header().metadata().resourceId();
                 byPath.put(new String(Base64.getUrlDecoder().decode(value.substring(value.lastIndexOf('/') + 1)),
