@@ -13,10 +13,13 @@ import java.util.Set;
  * Konservative Textprojektion des Confluence-Storage-Formats ({@value #SCHEMA}): nur sichtbarer Fließtext.
  *
  * <ul>
- *   <li>Makros ({@code ac:structured-macro}, {@code ac:macro}) samt Parametern und Inhalt, Bilder, Emoticons,
- *       Platzhalter und alle Ressourcenverweise ({@code ri:*}) entfallen vollständig: nichts wird ausgeführt,
- *       aufgelöst, nachgeladen oder eingebettet. Dazu zählen auch Code-, Diagramm- und Include-Makros; ihre
- *       Auswertung ist Sache eigener Prozessoren (#19).</li>
+ *   <li>Von Makros ({@code ac:structured-macro}, {@code ac:macro}) bleibt nur der Text, der auf der Seite selbst
+ *       steht ({@code ac:rich-text-body}): Aufklapper, Panels, Hinweiskästen, Seiteneigenschaften, Spalten,
+ *       Tabellenfilter usw. umschließen oft ganze Tabellen und Absätze (Angelo 23.11.2026: Tabellen fehlten im
+ *       Text). Parameter und Klartext-Inhalte ({@code ac:plain-text-body}: Code, Diagramme) entfallen, ebenso
+ *       Bilder, Emoticons, Platzhalter und alle Ressourcenverweise ({@code ri:*}): nichts wird ausgeführt,
+ *       aufgelöst, nachgeladen oder eingebettet. Makros ohne eigenen Text (Include, Inhaltsverzeichnis, Jira, …)
+ *       ergeben also nichts; ihre Auswertung ist Sache eigener Prozessoren (#19).</li>
  *   <li>Linktexte ({@code ac:link-body}, {@code ac:plain-text-link-body}) bleiben, ihr Ziel nicht.</li>
  *   <li>Blockelemente trennen Zeilen, Tabellenzellen werden durch {@code " | "} getrennt; Leerraum wird zu einem
  *       Leerzeichen zusammengefasst.</li>
@@ -28,14 +31,19 @@ import java.util.Set;
  */
 final class ConfluenceStorageText {
 
+    /**
+     * Bleibt bei v1, obwohl Makro-Inhalte seit dem 23.11.2026 mitzählen: {@link PageText#inputSha256()} deckt den Text
+     * ab, also werden genau die Seiten neu berechnet, deren Text sich dadurch ändert, nicht jede Seite samt ihrer
+     * KI-Analysen.
+     */
     static final String SCHEMA = "confluence-storage-text/v1";
 
-    private static final Set<String> SUPPRESSED = Set.of("ac:structured-macro", "ac:macro", "ac:image",
+    private static final Set<String> SUPPRESSED = Set.of("ac:plain-text-body", "ac:image",
             "ac:emoticon", "ac:placeholder", "ac:parameter", "ac:task-id", "ac:task-status", "ac:inline-comment-marker-ref",
             "script", "style", "time");
     private static final Set<String> BLOCKS = Set.of("p", "div", "li", "ul", "ol", "tr", "table", "tbody", "thead",
             "br", "hr", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "ac:task", "ac:task-list",
-            "ac:layout", "ac:layout-section", "ac:layout-cell", "dl", "dt", "dd");
+            "ac:layout", "ac:layout-section", "ac:layout-cell", "ac:rich-text-body", "dl", "dt", "dd");
     private static final Set<String> CELLS = Set.of("td", "th");
     private static final Map<String, String> ENTITIES = Map.ofEntries(Map.entry("amp", "&"), Map.entry("lt", "<"),
             Map.entry("gt", ">"), Map.entry("quot", "\""), Map.entry("apos", "'"), Map.entry("nbsp", " "),
