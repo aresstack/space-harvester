@@ -272,6 +272,46 @@ public class BrowserMcpToolsTest {
     }
 
     @Test
+    public void openManyWithAQuestionLetsTheChatsSubAgentEvaluateEveryLoadedPage() throws Exception {
+        RecordingPort port = new RecordingPort();
+        BrowserMcpTools tools = new BrowserMcpTools(port);
+        ChatConversationId chat = new ChatConversationId("chat-evaluate");
+        final List<String> asked = Collections.synchronizedList(new ArrayList<String>());
+        tools.setPageEvaluator(chat, new BrowserPageEvaluator() {
+            @Override
+            public String evaluate(String question, String title, String url, String text) {
+                asked.add(question + "|" + title + "|" + url + "|" + text);
+                return "Beitrag von " + title;
+            }
+        }, 4);
+        Map<String, Object> values = new HashMap<String, Object>();
+        values.put("urls", Arrays.asList("https://a.example/", "https://blocked.example/", "https://down.example/"));
+        values.put("question", "Was steht da?");
+        McpToolResult result = null;
+        for (McpToolContribution tool : tools.contributionsFor(chat)) {
+            if (tool.getName().equals(BrowserMcpTools.OPEN_MANY)) {
+                result = tool.getHandler().invoke(new McpToolCall(BrowserMcpTools.OPEN_MANY, values));
+            }
+        }
+
+        assertFalse(result.isError());
+        String text = result.getText();
+        assertEquals(Collections.singletonList("Was steht da?|Seite A|https://a.example/|Inhalt A"), asked);
+        assertTrue(text, text.contains("1. Seite A | https://a.example/ | geladen\nAuswertung: Beitrag von Seite A"));
+        assertFalse("statt des Textes die Auswertung", text.contains("Inhalt A"));
+        assertTrue(text, text.contains("2. https://blocked.example/ | übersprungen: gesperrt"));
+
+        tools.setPageEvaluator(chat, null, 4);
+        for (McpToolContribution tool : tools.contributionsFor(chat)) {
+            if (tool.getName().equals(BrowserMcpTools.OPEN_MANY)) {
+                result = tool.getHandler().invoke(new McpToolCall(BrowserMcpTools.OPEN_MANY, values));
+            }
+        }
+        assertTrue("ohne Unteragenten wie bisher der Text", result.getText().contains("Inhalt A"));
+        assertEquals(1, asked.size());
+    }
+
+    @Test
     public void openManyTakesLinkIdsOfTheLastList() throws Exception {
         RecordingPort port = new RecordingPort();
         BrowserMcpTools tools = new BrowserMcpTools(port);
