@@ -140,6 +140,9 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final String PODCAST_VOICE_COHOST = "podcast-voice-cohost";
     public static final String READ_ALOUD_MODEL = "read-aloud-model";
     public static final String READ_ALOUD_VOICE = "read-aloud-voice";
+    public static final String PODCAST_PAUSE_MILLIS = "podcast-pause-millis";
+    public static final String PODCAST_SPEECH_ATTEMPTS = "podcast-speech-attempts";
+    public static final String PODCAST_SPEECH_WORKERS = "podcast-speech-workers";
     /** Die Stufen des Nachdenkens, wie sie in der Datei stehen und mit jeder Anfrage mitgehen. */
     public static final List<String> THINKING_LEVELS = List.of("none", "low", "medium", "high");
 
@@ -241,12 +244,32 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
      * @param podcastCohost  Stimme des Co-Hosts ({@code podcast-voice-cohost})
      * @param readAloudModel TTS-Modell des Vorlesens ({@code read-aloud-model})
      * @param readAloudVoice Stimme des Vorlesens ({@code read-aloud-voice})
+     * @param podcastPauseMillis Pause zwischen zwei Beiträgen des Podcasts in Millisekunden
+     *                       ({@code podcast-pause-millis}); {@code null}: {@link #DEFAULT_PODCAST_PAUSE_MILLIS}
+     * @param podcastAttempts Versuche je Stück beim Vertonen des Podcasts ({@code podcast-speech-attempts});
+     *                       {@code null}: {@link #DEFAULT_PODCAST_ATTEMPTS}
+     * @param podcastWorkers gleichzeitige Synthesen je Beitrag des Podcasts ({@code podcast-speech-workers});
+     *                       {@code null}: {@link #DEFAULT_PODCAST_WORKERS}
      */
     public record Speech(String podcastModel, String podcastHost, String podcastCohost, String readAloudModel,
-                         String readAloudVoice) {
+                         String readAloudVoice, Integer podcastPauseMillis, Integer podcastAttempts,
+                         Integer podcastWorkers) {
 
-        /** Nichts eingestellt: Modell und Stimmen wählt die App. */
-        public static final Speech AUTOMATIC = new Speech(null, null, null, null, null);
+        /** Vorgabe der Pause zwischen zwei Beiträgen des Podcasts. */
+        public static final int DEFAULT_PODCAST_PAUSE_MILLIS = 350;
+        /** Längste einstellbare Pause zwischen zwei Beiträgen. */
+        public static final int MAX_PODCAST_PAUSE_MILLIS = 5000;
+        /** Vorgabe der Versuche je Stück beim Vertonen des Podcasts. */
+        public static final int DEFAULT_PODCAST_ATTEMPTS = 3;
+        /** Höchstens so viele Versuche je Stück (wie der Regler des Vorlese-Ablaufs im Enterprise AI Client). */
+        public static final int MAX_PODCAST_ATTEMPTS = 5;
+        /** Vorgabe der gleichzeitigen Synthesen je Beitrag des Podcasts. */
+        public static final int DEFAULT_PODCAST_WORKERS = 2;
+        /** Höchstens so viele gleichzeitige Synthesen je Beitrag (wie im Vorlese-Ablauf des Enterprise AI Client). */
+        public static final int MAX_PODCAST_WORKERS = 8;
+
+        /** Nichts eingestellt: Modell, Stimmen und Sprechwerte wählt die App. */
+        public static final Speech AUTOMATIC = new Speech(null, null, null, null, null, null, null, null);
 
         public Speech {
             podcastModel = strip(podcastModel);
@@ -254,6 +277,43 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
             podcastCohost = strip(podcastCohost);
             readAloudModel = strip(readAloudModel);
             readAloudVoice = strip(readAloudVoice);
+            check(podcastPauseMillis, 0, MAX_PODCAST_PAUSE_MILLIS, PODCAST_PAUSE_MILLIS);
+            check(podcastAttempts, 1, MAX_PODCAST_ATTEMPTS, PODCAST_SPEECH_ATTEMPTS);
+            check(podcastWorkers, 1, MAX_PODCAST_WORKERS, PODCAST_SPEECH_WORKERS);
+        }
+
+        /** Nur Modell und Stimmen; Pause, Versuche und Synthesen nach Vorgabe. */
+        public Speech(String podcastModel, String podcastHost, String podcastCohost, String readAloudModel,
+                      String readAloudVoice) {
+            this(podcastModel, podcastHost, podcastCohost, readAloudModel, readAloudVoice, null, null, null);
+        }
+
+        /** Dieselben Modelle und Stimmen mit anderen Sprechwerten des Podcasts; {@code null} heißt Vorgabe. */
+        public Speech withPodcastTiming(Integer pauseMillis, Integer attempts, Integer workers) {
+            return new Speech(podcastModel, podcastHost, podcastCohost, readAloudModel, readAloudVoice, pauseMillis,
+                    attempts, workers);
+        }
+
+        /** Die wirksame Pause zwischen zwei Beiträgen des Podcasts in Millisekunden. */
+        public int podcastPause() {
+            return podcastPauseMillis == null ? DEFAULT_PODCAST_PAUSE_MILLIS : podcastPauseMillis;
+        }
+
+        /** Die wirksamen Versuche je Stück beim Vertonen des Podcasts. */
+        public int podcastSynthesisAttempts() {
+            return podcastAttempts == null ? DEFAULT_PODCAST_ATTEMPTS : podcastAttempts;
+        }
+
+        /** Die wirksamen gleichzeitigen Synthesen je Beitrag des Podcasts. */
+        public int podcastSynthesisWorkers() {
+            return podcastWorkers == null ? DEFAULT_PODCAST_WORKERS : podcastWorkers;
+        }
+
+        // Eigene Meldung ohne den Wert, wie die übrigen Prüfungen; PREFIX ist eine Konstante und lädt nichts nach.
+        private static void check(Integer value, int min, int max, String key) {
+            if (value != null && (value < min || value > max)) {
+                throw new IllegalArgumentException(PREFIX + key + " muss zwischen " + min + " und " + max + " liegen");
+            }
         }
 
         // Eigene Hilfe statt der äußeren: Sonst lädt AUTOMATIC die äußere Klasse, deren NONE dann ein noch leeres
@@ -354,7 +414,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         summaryPlanUse = summaryPlanUse == null ? ModelUse.DEFAULT : summaryPlanUse;
         imagePlanUse = imagePlanUse == null ? ModelUse.DEFAULT : imagePlanUse;
         deadlineUse = deadlineUse == null ? ModelUse.DEFAULT : deadlineUse;
-        speech = speech == null ? new Speech(null, null, null, null, null) : speech;
+        speech = speech == null ? new Speech(null, null, null, null, null, null, null, null) : speech;
     }
 
     /** Ohne eigene Einstellungen der Sprachausgabe: Modell und Stimmen wählt die App selbst. */
@@ -625,7 +685,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 use(properties, DEADLINE_MODEL, DEADLINE_MAX_TOKENS, DEADLINE_THINKING),
                 new Speech(value(properties, PODCAST_SPEECH_MODEL), value(properties, PODCAST_VOICE_HOST),
                         value(properties, PODCAST_VOICE_COHOST), value(properties, READ_ALOUD_MODEL),
-                        value(properties, READ_ALOUD_VOICE)));
+                        value(properties, READ_ALOUD_VOICE), tokens(properties, PODCAST_PAUSE_MILLIS),
+                        tokens(properties, PODCAST_SPEECH_ATTEMPTS), tokens(properties, PODCAST_SPEECH_WORKERS)));
     }
 
     /** Dieselben Einstellungen für eine andere Art von Dienst. */

@@ -234,6 +234,22 @@ final class AiSettingsPanel {
     final ComposerButton pickReadAloud = Comic.button("▾", "Sprachmodell (TTS) des Vorlesens aus der Liste des "
             + "Dienstes wählen");
     final JComboBox<String> readAloudVoice = voiceBox();
+    /**
+     * Sprechwerte des Podcasts unter „Erweitert“ (Angelo 24.11.2026: keine fest eingebauten Werte): Pause zwischen
+     * zwei Beiträgen, Versuche je Stück und gleichzeitige Synthesen je Beitrag; nur für den Podcast, nicht fürs Vorlesen.
+     */
+    final JSpinner podcastPause = countSpinner(0, AiServiceSettings.Speech.MAX_PODCAST_PAUSE_MILLIS, 50,
+            AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS);
+    final JSpinner podcastAttempts = countSpinner(1, AiServiceSettings.Speech.MAX_PODCAST_ATTEMPTS, 1,
+            AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS);
+    final JSpinner podcastWorkers = countSpinner(1, AiServiceSettings.Speech.MAX_PODCAST_WORKERS, 1,
+            AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS);
+    static final String PODCAST_PAUSE_LABEL = "Podcast – Pause";
+    static final String PODCAST_PAUSE_UNIT = "ms zwischen Beiträgen";
+    static final String PODCAST_ATTEMPTS_LABEL = "Podcast – Versuche";
+    static final String PODCAST_ATTEMPTS_UNIT = "je Stück";
+    static final String PODCAST_WORKERS_LABEL = "Podcast – Synthesen";
+    static final String PODCAST_WORKERS_UNIT = "zugleich je Beitrag";
     private static final com.aresstack.spaceharvester.application.podcast.PodcastVoices VOICES =
             com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled();
     final JTextField chunkOverlap = Comic.field(6);
@@ -641,6 +657,18 @@ final class AiSettingsPanel {
             modelRows.add(CHECK_PARALLEL_LABEL, Comic.row(checkParallel, Comic.text(CHECK_PARALLEL_UNIT)),
                     "„" + CHECK_JOB + "“: so viele Sätze einer Seite sind höchstens gleichzeitig beim Modell; "
                             + "Vorgabe " + CheckSettings.DEFAULT_PARALLEL);
+            modelRows.add(PODCAST_PAUSE_LABEL, Comic.row(podcastPause, Comic.text(PODCAST_PAUSE_UNIT)),
+                    "Stille zwischen zwei Wortbeiträgen im Podcast; Vorgabe "
+                            + AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS + " ms. Schlüssel: "
+                            + "space-harvester.ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS);
+            modelRows.add(PODCAST_ATTEMPTS_LABEL, Comic.row(podcastAttempts, Comic.text(PODCAST_ATTEMPTS_UNIT)),
+                    "So oft versucht die Sprachausgabe ein Stück des Podcasts, bevor sie Satz für Satz spricht; "
+                            + "Vorgabe " + AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS + ". Schlüssel: "
+                            + "space-harvester.ai." + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS);
+            modelRows.add(PODCAST_WORKERS_LABEL, Comic.row(podcastWorkers, Comic.text(PODCAST_WORKERS_UNIT)),
+                    "So viele Stücke eines Beitrags vertont der Dienst gleichzeitig; zusammen nie mehr als "
+                            + "„" + PARALLEL_LABEL + "“. Vorgabe " + AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS
+                            + ". Schlüssel: space-harvester.ai." + AiServiceSettings.PODCAST_SPEECH_WORKERS);
             advanced.addActionListener(e -> advanced(!advancedOpen()));
             advanced(false);
         }
@@ -738,6 +766,9 @@ final class AiSettingsPanel {
         podcastCohost.setSelectedItem(text(current.speech().podcastCohost()));
         readAloudModel.setText(text(current.speech().readAloudModel()));
         readAloudVoice.setSelectedItem(text(current.speech().readAloudVoice()));
+        podcastPause.setValue(current.speech().podcastPause());
+        podcastAttempts.setValue(current.speech().podcastSynthesisAttempts());
+        podcastWorkers.setValue(current.speech().podcastSynthesisWorkers());
         loadPollInterval.setText(current.loadPollInterval() == null ? "" : current.loadPollInterval());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
@@ -778,7 +809,9 @@ final class AiSettingsPanel {
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null
                 || savedSimplification(settings).parallel() != SimplificationSettings.DEFAULT_PARALLEL
-                || savedCheck(settings).parallel() != CheckSettings.DEFAULT_PARALLEL);
+                || savedCheck(settings).parallel() != CheckSettings.DEFAULT_PARALLEL
+                || current.speech().podcastPauseMillis() != null || current.speech().podcastAttempts() != null
+                || current.speech().podcastWorkers() != null);
         timeout = current.timeout();
         releasedIds = current.externalProcessingSources();
         renderReleased(settings, releasedIds);
@@ -1054,7 +1087,16 @@ final class AiSettingsPanel {
                 new AiDraft.Use(imagePlanModel.getText(), imagePlanMaxTokens.text(), imagePlanThinking.level()),
                 new AiDraft.Use(deadlineModel.getText(), deadlineMaxTokens.text(), deadlineThinking.level()),
                 new AiServiceSettings.Speech(podcastSpeechModel.getText(), voice(podcastHost), voice(podcastCohost),
-                        readAloudModel.getText(), voice(readAloudVoice)));
+                        readAloudModel.getText(), voice(readAloudVoice)).withPodcastTiming(
+                        own(podcastPause, AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS),
+                        own(podcastAttempts, AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS),
+                        own(podcastWorkers, AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS)));
+    }
+
+    /** Der Wert eines Zählers; die Vorgabe heißt nichts eingestellt ({@code null}), dann gilt die des Core. */
+    private static Integer own(JSpinner spinner, int fallback) {
+        int value = ((Number) spinner.getValue()).intValue();
+        return value == fallback ? null : value;
     }
 
     private static String text(String value) {
@@ -1687,6 +1729,13 @@ final class AiSettingsPanel {
     }
 
     /** Ein Zahlenfeld von {@code minimum} bis {@code maximum} im Stil der Dauer-Felder dieser App. */
+    /** Wie {@link #countSpinner(int, int, int)}, mit einem anderen Anfangswert als dem kleinsten. */
+    private static JSpinner countSpinner(int minimum, int maximum, int step, int initial) {
+        JSpinner spinner = countSpinner(minimum, maximum, step);
+        spinner.setValue(initial);
+        return spinner;
+    }
+
     private static JSpinner countSpinner(int minimum, int maximum, int step) {
         JSpinner spinner = new JSpinner(new SpinnerNumberModel(minimum, minimum, maximum, step));
         spinner.setFont(Comic.regular(13f));
@@ -2128,6 +2177,9 @@ final class AiSettingsPanel {
         modelRows.visible(chunkOverlap, open);
         modelRows.visible(simplifyParallel, open);
         modelRows.visible(checkParallel, open);
+        modelRows.visible(podcastPause, open);
+        modelRows.visible(podcastAttempts, open);
+        modelRows.visible(podcastWorkers, open);
         Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();

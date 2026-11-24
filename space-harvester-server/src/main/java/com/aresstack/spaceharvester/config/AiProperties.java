@@ -54,6 +54,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param podcastVoiceCohost  Stimme des Co-Hosts; leer: erste Stimme der anderen Stimmlage
  * @param readAloudModel      TTS-Modell des Vorlesens (Chat, Leseansicht); leer: das bevorzugte des Dienstes
  * @param readAloudVoice      Stimme des Vorlesens; leer: Standardstimme der Modellfamilie
+ * @param podcastPauseMillis  Pause zwischen zwei Beiträgen des Podcasts in ms; leer: Vorgabe des Core
+ * @param podcastSpeechAttempts Versuche je Stück beim Vertonen des Podcasts; leer: Vorgabe des Core
+ * @param podcastSpeechWorkers gleichzeitige Synthesen je Beitrag des Podcasts; leer: Vorgabe des Core
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -73,7 +76,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            Integer imagePlanMaxTokens, String imagePlanThinking, String deadlineModel,
                            Integer deadlineMaxTokens, String deadlineThinking, String podcastSpeechModel,
                            String podcastVoiceHost, String podcastVoiceCohost, String readAloudModel,
-                           String readAloudVoice) {
+                           String readAloudVoice, Integer podcastPauseMillis, Integer podcastSpeechAttempts,
+                           Integer podcastSpeechWorkers) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
@@ -86,7 +90,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                 new AiServiceSettings.ModelUse(imagePlanModel, imagePlanMaxTokens, imagePlanThinking),
                 new AiServiceSettings.ModelUse(deadlineModel, deadlineMaxTokens, deadlineThinking),
                 new AiServiceSettings.Speech(podcastSpeechModel, podcastVoiceHost, podcastVoiceCohost,
-                        readAloudModel, readAloudVoice));
+                        readAloudModel, readAloudVoice, podcastPauseMillis, podcastSpeechAttempts,
+                        podcastSpeechWorkers));
     }
 
     /** Ohne API-Key. */
