@@ -1934,7 +1934,12 @@ public final class ChatPanel extends JPanel {
         });
     }
 
-    /** Die erste Seite des Bereichs, die nur in der Quelle steht (nicht geladen); {@code null}, wenn keine fehlt. */
+    /**
+     * Die erste Seite des Bereichs, die nicht geladen ist; {@code null}, wenn keine fehlt. Dieselbe Zählung wie
+     * „… davon nicht geladen“ ({@link #areaText}: {@code pages() - stored()}, also auch gesperrte Seiten). Bis
+     * 24.11.2026 nahm das Fadenkreuz nur {@code REMOTE}; war die angezeigte Seite gesperrt ({@code LOCKED}), meldete es
+     * „Keine nicht geladene Seite mehr“ (Angelo 24.11.2026).
+     */
     static com.aresstack.spaceharvester.application.snapshot.PageKey firstMissing(com.aresstack.spaceharvester.app.runtime.Workspace workspace, PageSelection scope) {
         for (com.aresstack.spaceharvester.application.holdings.SpaceSummary space : scope.spaces()) {
             Set<String> ids = scope.pagesOf(space.sourceId());
@@ -1943,13 +1948,18 @@ public final class ChatPanel extends JPanel {
             }
             for (com.aresstack.spaceharvester.application.holdings.PageHolding page
                     : workspace.holdings(space.sourceId(), space.spaceKey(), ids).pages().values()) {
-                if (ids.contains(page.pageId())
-                        && page.state() == com.aresstack.spaceharvester.application.holdings.HoldingState.REMOTE) {
+                if (ids.contains(page.pageId()) && notLoaded(page.state())) {
                     return new com.aresstack.spaceharvester.application.snapshot.PageKey(space.sourceId(), page.pageId());
                 }
             }
         }
         return null;
+    }
+
+    /** Ob eine Seite in diesem Zustand als „nicht geladen“ zählt, genau wie in der Wissenszeile. */
+    static boolean notLoaded(com.aresstack.spaceharvester.application.holdings.HoldingState state) {
+        HoldingCounts one = HoldingCounts.of(state);
+        return one.pages() > one.stored();
     }
 
     /** Für Tests: wie knapp die Fußzeile gerade ist (0 bis 3). */
