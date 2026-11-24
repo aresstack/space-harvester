@@ -77,23 +77,73 @@ final class AreaSummaryView extends JPanel {
             + "In der Podcast-Ansicht erklärt ein Podcast denselben Überblick; der Text darunter zeigt je Thema die "
             + "ausführliche Erklärung, gelb, was gerade erzählt wird.";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
-    /** Bereiche, für die schon einmal von selbst zusammengefasst wurde (je Sitzung, für beide Ansichten). */
-    private static final Set<String> AUTO_STARTED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * Bereiche, die schon einmal sichtbar geladen wurden (je Sitzung, für beide Ansichten): nur beim ersten Mal entsteht
+     * ein fehlender Überblick von selbst. Ein Ordner zählt nach seiner ID, so startet eine Änderung an ihm (andere
+     * Favoriten, „mit Unterseiten“) nie von selbst einen KI-Lauf (ADR 0034 §7).
+     */
+    private static final Set<String> AUTO_CONSIDERED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    static final String NO_FAVORITES = "Der Ordner hat noch keine Favoriten.";
 
     /** Was die Ansicht zeigt: zum Lesen oder zum Hören. */
     enum Mode { READ, LISTEN }
+
+    /**
+     * Was zusammengefasst wird: eine Quelle ({@code spaceKey == null}), ein Space oder ein Favoriten-Ordner
+     * ({@code folder}, ADR 0034 §7 Paket 5c); dieselbe Ansicht für alle.
+     */
+    record Target(String sourceId, String spaceKey, ExportPanel.Selection.Collection folder) {
+
+        static Target area(String sourceId, String spaceKey) {
+            return new Target(Objects.requireNonNull(sourceId, "sourceId"),
+                    spaceKey == null || spaceKey.isBlank() ? null : spaceKey, null);
+        }
+
+        static Target folder(ExportPanel.Selection.Collection folder) {
+            return new Target(null, null, Objects.requireNonNull(folder, "folder"));
+        }
+
+        /** Die Auswahl für den Core: die aufgelösten Wurzeln des Ordners, sonst Quelle oder Space. */
+        com.aresstack.spaceharvester.application.holdings.Selection core() {
+            return folder != null ? new com.aresstack.spaceharvester.application.holdings.Selection(folder.roots())
+                    : com.aresstack.spaceharvester.application.holdings.Selection.of(spaceKey == null
+                    ? com.aresstack.spaceharvester.application.holdings.Selection.Root.source(sourceId)
+                    : com.aresstack.spaceharvester.application.holdings.Selection.Root.space(sourceId, spaceKey));
+        }
+
+        /** Die Quellen, deren Meldungen die Ansicht hört (der Core meldet nach dem Ablegen jede Quelle der Auswahl). */
+        Set<String> sources() {
+            Set<String> found = new LinkedHashSet<>();
+            if (folder != null) {
+                folder.roots().forEach(root -> found.add(root.sourceId()));
+            } else {
+                found.add(sourceId);
+            }
+            return found;
+        }
+
+        /** Woran „schon einmal geöffnet“ hängt: der Ordner nach ID und Unterordner-Stellung, sonst der Bereich. */
+        String identity() {
+            return folder != null ? "ordner\u0000" + folder.folderId() + '\u0000' + folder.withSubfolders()
+                    : sourceId + '\u0000' + spaceKey;
+        }
+
+        boolean empty() {
+            return folder != null && folder.roots().isEmpty();
+        }
+    }
 
     /** Was die Ansicht vom Core braucht. */
     interface Actions {
 
         /** Die Bereichszusammenfassung, {@code null} ohne. */
-        UpdateSummary area(String sourceId, String spaceKey);
+        UpdateSummary area(Target target);
 
         /** Ob ein Chat-Modell eingestellt ist. */
         boolean available();
 
-        /** Startet „Zusammenfassen“ für den Bereich. */
-        JobStatus summarize(String sourceId, String spaceKey, boolean interactive);
+        /** Startet „Zusammenfassen“ für den Bereich; {@code interactive} für einen Klick. */
+        JobStatus summarize(Target target, boolean interactive);
 
         /** Aufträge, Meldungen der Quelle, Podcast und Bilder wie bei den Updates. */
         SourceUpdatesView.Actions shared();
@@ -105,8 +155,8 @@ final class AreaSummaryView extends JPanel {
             SourceUpdatesView.Actions shared = SourceUpdatesView.Actions.of(workspace);
             return new Actions() {
                 @Override
-                public UpdateSummary area(String sourceId, String spaceKey) {
-                    return workspace.areaSummary(sourceId, spaceKey).orElse(null);
+                public UpdateSummary area(Target target) {
+                    return workspace.areaSummary(target.core()).orElse(null);
                 }
 
                 @Override
@@ -115,8 +165,8 @@ final class AreaSummaryView extends JPanel {
                 }
 
                 @Override
-                public JobStatus summarize(String sourceId, String spaceKey, boolean interactive) {
-                    return workspace.summarizeArea(sourceId, spaceKey, interactive);
+                public JobStatus summarize(Target target, boolean interactive) {
+                    return workspace.summarizeArea(target.core(), interactive);
                 }
 
                 @Override
@@ -149,8 +199,7 @@ final class AreaSummaryView extends JPanel {
     private ZoneId zone = ZoneId.systemDefault();
     private java.util.function.BooleanSupplier showing = this::isShowing;
 
-    private String sourceId;
-    private String spaceKey;
+    private Target target;
     private UpdateSummary summary;
     private boolean available = true;
     private boolean empty;
@@ -285,18 +334,34 @@ final class AreaSummaryView extends JPanel {
 
     /** Zeigt den Bereich einer Quelle ({@code space == null}) oder eines Space; {@code id == null} leert die Ansicht. */
     void area(String id, String space) {
+        target(id == null ? null : Target.area(id, space));
+    }
+
+    /** Zeigt den Überblick über einen Favoriten-Ordner (ADR 0034 §7, Paket 5c); {@code null} leert die Ansicht. */
+    void folder(ExportPanel.Selection.Collection folder) {
+        target(folder == null ? null : Target.folder(folder));
+    }
+
+    private void target(Target next) {
+        if (Objects.equals(next, target)) {
+            return;
+        }
         subscription.close();
         subscription = Subscription.NONE;
         generation++;
-        sourceId = id;
-        spaceKey = id == null || space == null || space.isBlank() ? null : space;
+        target = next;
         summary = null;
-        empty = false;
+        empty = next != null && next.empty();
         loaded = false;
         podcast.summary(null);
         offer();
-        if (id == null) {
+        if (next == null) {
             message(" ");
+            return;
+        }
+        if (empty) {
+            loaded = true;
+            render();
             return;
         }
         Actions current = actions.get();
@@ -304,25 +369,36 @@ final class AreaSummaryView extends JPanel {
             message(NOT_RUNNING);
             return;
         }
-        try {
-            // Der Core meldet die Quelle, sobald der Überblick abgelegt ist oder sich ihr Bestand ändert.
-            subscription = current.shared().subscribe(id, changed -> SwingUtilities.invokeLater(() -> {
-                if (Objects.equals(changed, sourceId)) {
-                    reload();
-                }
-            }));
-        } catch (RuntimeException e) {
-            subscription = Subscription.NONE;
+        // Der Core meldet jede Quelle der Auswahl, sobald der Überblick abgelegt ist oder sich ihr Bestand ändert.
+        List<Subscription> subscriptions = new ArrayList<>();
+        Set<String> sources = next.sources();
+        for (String source : sources) {
+            try {
+                subscriptions.add(current.shared().subscribe(source, changed -> SwingUtilities.invokeLater(() -> {
+                    if (target != null && target.sources().contains(changed)) {
+                        reload();
+                    }
+                })));
+            } catch (RuntimeException e) {
+                // Eine Quelle, die es nicht mehr gibt, meldet nichts; der Überblick liest ohne sie.
+            }
         }
+        subscription = () -> subscriptions.forEach(Subscription::close);
         reload();
     }
 
+    /** Quelle des gezeigten Bereichs; {@code null} bei einem Ordner oder ohne Bereich. */
     String sourceId() {
-        return sourceId;
+        return target == null ? null : target.sourceId();
     }
 
     String spaceKey() {
-        return spaceKey;
+        return target == null ? null : target.spaceKey();
+    }
+
+    /** Der gezeigte Ordner, {@code null} ohne. */
+    ExportPanel.Selection.Collection folder() {
+        return target == null ? null : target.folder();
     }
 
     /** Die gezeigte Zusammenfassung, {@code null} ohne. */
@@ -333,14 +409,13 @@ final class AreaSummaryView extends JPanel {
     /** Liest den Überblick neu. */
     void reload() {
         Actions current = actions.get();
-        String id = sourceId;
-        String space = spaceKey;
-        if (current == null || id == null) {
+        Target of = target;
+        if (current == null || of == null || of.empty()) {
             return;
         }
         int mine = ++generation;
-        runner.run(() -> new Loaded(current.area(id, space), current.available()), found -> {
-            if (mine != generation || !Objects.equals(id, sourceId) || !Objects.equals(space, spaceKey)) {
+        runner.run(() -> new Loaded(current.area(of), current.available()), found -> {
+            if (mine != generation || !Objects.equals(of, target)) {
                 return;
             }
             loaded = true;
@@ -372,12 +447,13 @@ final class AreaSummaryView extends JPanel {
     }
 
     /**
-     * Fehlt der Überblick, entsteht er beim Öffnen einmal von selbst (ADR 0034 §7: als gewöhnlicher Auftrag, ein Klick
-     * zieht vor); nur bei sichtbarer Ansicht und mit Chat-Modell. {@code true}, wenn gestartet.
+     * Fehlt der Überblick beim ersten sichtbaren Öffnen des Bereichs, entsteht er einmal von selbst (ADR 0034 §7: als
+     * nachrangiger Auftrag, ein Klick zieht vor); nur mit Chat-Modell. Wer den Bereich schon einmal gesehen hat, bekommt
+     * bei einer Änderung nur „veraltet“, nie einen KI-Lauf von selbst. {@code true}, wenn gestartet.
      */
     private boolean autoSummarize() {
-        if (!loaded || summary != null || empty || !available || runningJob != null || sourceId == null
-                || !showing.getAsBoolean() || !AUTO_STARTED.add(sourceId + '\u0000' + spaceKey)) {
+        if (!loaded || !available || runningJob != null || target == null || !showing.getAsBoolean()
+                || !AUTO_CONSIDERED.add(target.identity()) || summary != null || empty) {
             return false;
         }
         summarize(false);
@@ -386,9 +462,8 @@ final class AreaSummaryView extends JPanel {
 
     private void summarize(boolean interactive) {
         Actions current = actions.get();
-        String id = sourceId;
-        String space = spaceKey;
-        if (current == null || id == null || runningJob != null) {
+        Target of = target;
+        if (current == null || of == null || runningJob != null) {
             return;
         }
         runningJob = "";
@@ -397,9 +472,9 @@ final class AreaSummaryView extends JPanel {
         if (interactive) {
             onStatus.accept(SUMMARIZING);
         }
-        runner.run(() -> current.summarize(id, space, interactive), status -> {
+        runner.run(() -> current.summarize(of, interactive), status -> {
             runningJob = status.id();
-            watch(current, status.id(), id, space);
+            watch(current, status.id(), of);
         }, failure -> {
             runningJob = null;
             if (failure instanceof SummaryUnavailableException unavailable
@@ -414,14 +489,14 @@ final class AreaSummaryView extends JPanel {
     }
 
     /** Erst anmelden, dann den Stand lesen: so geht das Ende des Auftrags nicht verloren (ADR 0027). */
-    private void watch(Actions current, String jobId, String id, String space) {
+    private void watch(Actions current, String jobId, Target of) {
         jobWatch.close();
         try {
             jobWatch = current.shared().subscribeJobs(new JobListener() {
                 @Override
                 public void changed(JobStatus status) {
                     if (status.id().equals(jobId)) {
-                        SwingUtilities.invokeLater(() -> progressed(status, id, space));
+                        SwingUtilities.invokeLater(() -> progressed(status, of));
                     }
                 }
 
@@ -433,10 +508,10 @@ final class AreaSummaryView extends JPanel {
         } catch (RuntimeException e) {
             jobWatch = Subscription.NONE;
         }
-        runner.run(() -> current.shared().job(jobId), status -> progressed(status, id, space), failure -> { });
+        runner.run(() -> current.shared().job(jobId), status -> progressed(status, of), failure -> { });
     }
 
-    private void progressed(JobStatus status, String id, String space) {
+    private void progressed(JobStatus status, Target of) {
         if (!status.id().equals(runningJob) || !status.state().terminal()) {
             return;
         }
@@ -450,7 +525,7 @@ final class AreaSummaryView extends JPanel {
             default -> "Überblick fehlgeschlagen" + (status.error() == null ? "" : ": " + status.error().message());
         });
         offer();
-        if (Objects.equals(id, sourceId) && Objects.equals(space, spaceKey)) {
+        if (Objects.equals(of, target)) {
             if (status.state() == JobState.COMPLETED) {
                 reload();
             } else {
@@ -466,19 +541,19 @@ final class AreaSummaryView extends JPanel {
             return;
         }
         busy.setText("Wird abgebrochen …");
-        runner.run(() -> current.shared().cancelJob(job), status -> progressed(status, sourceId, spaceKey),
+        runner.run(() -> current.shared().cancelJob(job), status -> progressed(status, target),
                 failure -> { });
     }
 
     /** Knopf „Zusammenfassen“, Einstieg und Ring nach dem Stand. */
     private void offer() {
-        boolean possible = sourceId != null && available && !empty && runningJob == null;
-        summarize.setVisible(mode == Mode.READ && sourceId != null);
+        boolean possible = target != null && available && !empty && runningJob == null;
+        summarize.setVisible(mode == Mode.READ && target != null);
         summarize.setEnabled(possible);
         summarize.setToolTipText(summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP);
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SourceUpdatesView.SUMMARIZE
                 : SourceUpdatesView.RESUMMARIZE);
-        boolean working = runningJob != null && sourceId != null;
+        boolean working = runningJob != null && target != null;
         busy.setText(working ? SUMMARIZING : null);
         busy.setBusy(working);
     }
@@ -493,12 +568,12 @@ final class AreaSummaryView extends JPanel {
                 showPictures();
                 loadPictures();
             });
-        } else if (sourceId == null) {
+        } else if (target == null) {
             SummaryReport.add(reportBody, Comic.wrapped(" ", Comic.MUTED, 13.5f));
         } else if (!loaded) {
             SummaryReport.add(reportBody, Comic.wrapped(" ", Comic.MUTED, 13.5f));
         } else if (empty) {
-            SummaryReport.add(reportBody, Comic.wrapped(EMPTY, Comic.MUTED, 13.5f));
+            SummaryReport.add(reportBody, Comic.wrapped(target.empty() ? NO_FAVORITES : EMPTY, Comic.MUTED, 13.5f));
         } else if (!available) {
             SummaryReport.add(reportBody, Comic.wrapped(NO_MODEL, Comic.MUTED, 13.5f));
         } else if (runningJob != null) {
@@ -578,13 +653,18 @@ final class AreaSummaryView extends JPanel {
 
             @Override
             public Runnable opener(SummaryPage page) {
-                String source = page.sourceIdOr(sourceId);
+                String source = page.sourceIdOr(sourceId());
                 return source == null ? null : () -> onOpen.accept(source, page.pageId());
             }
 
             @Override
             public void openSpace(String space) {
-                onOpenSpace.accept(sourceId, space);
+                // Im Ordner kennt die Seite ihre Quelle (SummaryPage.sourceId); sonst die des Bereichs.
+                String source = pagesOf(space).map(page -> page.sourceIdOr(sourceId())).filter(Objects::nonNull)
+                        .findFirst().orElse(sourceId());
+                if (source != null) {
+                    onOpenSpace.accept(source, space);
+                }
             }
 
             @Override

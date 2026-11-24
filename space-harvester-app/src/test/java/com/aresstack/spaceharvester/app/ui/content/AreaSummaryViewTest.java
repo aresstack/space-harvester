@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.changelog.SummaryPage;
 import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
 import com.aresstack.spaceharvester.application.changelog.SummaryUnavailableException;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
+import com.aresstack.spaceharvester.application.holdings.Selection.Root;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import org.junit.jupiter.api.Test;
@@ -121,6 +122,61 @@ class AreaSummaryViewTest {
         assertThat(view.busy()).isFalse();
     }
 
+    private static ExportPanel.Selection.Collection folder(String id, Root... roots) {
+        return new ExportPanel.Selection.Collection(id, "Mein Ordner", List.of(roots), false);
+    }
+
+    @Test
+    void aFolderIsSummarizedOverItsResolvedRootsAndOpensPagesInTheirOwnSource() {
+        ExportPanel.Selection.Collection folder = folder("ordner-a", Root.space("wiki", "BAU"),
+                Root.subtree("jira", "PRJ", "7"));
+        actions.stored = overview("selection-abc");
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        List<String> opened = new ArrayList<>();
+        view.onOpen((source, page) -> opened.add(source + "/" + page));
+
+        view.folder(folder);
+
+        assertThat(actions.asked).last().satisfies(target -> assertThat(target.core().roots())
+                .containsExactly(Root.space("wiki", "BAU"), Root.subtree("jira", "PRJ", "7")));
+        assertThat(view.folder()).isEqualTo(folder);
+        assertThat(view.sourceId()).isNull();
+        assertThat(view.texts()).contains("Der Bereich beschreibt das Beispielarchiv.");
+        assertThat(actions.summarized).isEmpty();
+    }
+
+    @Test
+    void aChangedFolderOnlyShowsStaleAndNeverStartsTheModelByItself() {
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        actions.stored = overview("selection-abc");
+        view.folder(folder("ordner-b", Root.space("wiki", "BAU")));
+        assertThat(actions.summarized).isEmpty();
+
+        // Ein weiterer Favorit: andere Wurzeln, also (noch) kein Überblick; trotzdem kein KI-Lauf von selbst.
+        actions.stored = null;
+        view.folder(folder("ordner-b", Root.space("wiki", "BAU"), Root.source("jira")));
+        assertThat(actions.summarized).isEmpty();
+        assertThat(view.texts()).contains(AreaSummaryView.NO_SUMMARY);
+        assertThat(view.summarizeOffered()).isTrue();
+    }
+
+    @Test
+    void aNeverSummarizedFolderStartsOnceInTheBackgroundAndAClickIsInteractive() {
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.folder(folder("ordner-c", Root.space("wiki", "BAU")));
+        assertThat(actions.summarized).containsExactly("ordner:ordner-c|null|false");
+    }
+
+    @Test
+    void anEmptyFolderSaysSoWithoutAskingTheModel() {
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.folder(folder("ordner-leer"));
+        assertThat(view.texts()).contains(AreaSummaryView.NO_FAVORITES);
+        assertThat(actions.asked).isEmpty();
+        assertThat(actions.summarized).isEmpty();
+        assertThat(view.summarizeOffered()).isFalse();
+    }
+
     @Test
     void theToggleIsRememberedGloballyAndDefaultsToChanges() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
@@ -145,9 +201,11 @@ class AreaSummaryViewTest {
         boolean available = true;
         boolean failEmpty;
         final List<String> summarized = new ArrayList<>();
+        final List<AreaSummaryView.Target> asked = new ArrayList<>();
 
         @Override
-        public UpdateSummary area(String sourceId, String spaceKey) {
+        public UpdateSummary area(AreaSummaryView.Target target) {
+            asked.add(target);
             return stored;
         }
 
@@ -157,11 +215,13 @@ class AreaSummaryViewTest {
         }
 
         @Override
-        public JobStatus summarize(String sourceId, String spaceKey, boolean interactive) {
+        public JobStatus summarize(AreaSummaryView.Target target, boolean interactive) {
             if (failEmpty) {
-                throw new SummaryUnavailableException(SummaryUnavailableException.Reason.EMPTY_AREA, sourceId);
+                throw new SummaryUnavailableException(SummaryUnavailableException.Reason.EMPTY_AREA,
+                        target.sourceId());
             }
-            summarized.add(sourceId + "|" + spaceKey + "|" + interactive);
+            summarized.add((target.folder() == null ? target.sourceId() : "ordner:" + target.folder().folderId())
+                    + "|" + target.spaceKey() + "|" + interactive);
             return SourceUpdatesViewTest.FakeActions.job("job-area-" + summarized.size(), JobState.QUEUED);
         }
 
