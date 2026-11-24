@@ -22,7 +22,7 @@ public final class DeckBars {
     /** Höhe der Kopfleiste samt Linie darunter. */
     public static final int HEAD_HEIGHT = ChatSidebar.HEAD_HEIGHT;
     /** Höhe der Fußleiste samt Linie darüber: wie die Fußleiste des Hauptfensters (Lupe, Suchfeld). */
-    public static final int FOOT_HEIGHT = 43;
+    public static final int FOOT_HEIGHT = Comic.FOOT_HEIGHT;
     private static final int SIDE = 12;
     private static final int GAP = 12;
 
@@ -52,6 +52,62 @@ public final class DeckBars {
 
         /** Die Bedienelemente der gezeigten Ansicht; {@code null} ohne. Derselbe Baustein über die ganze Laufzeit. */
         JComponent footTools();
+    }
+
+    /** Schlüssel am Command Deck: wer ihn trägt, setzt die Leiste mit der Lupe in den sichtbaren {@link FindSlot}. */
+    static final String FIND_HOST = "deck.findSlot.host";
+
+    /**
+     * Platz für die Leiste mit der Lupe unter der Arbeitsfläche eines Bereichs mit Seitenleiste (Angelo 24.11.2026):
+     * zweigeteilt wie im Space Harvester. Unter der Seitenleiste steht ihre eigene Fußleiste
+     * ({@link com.aresstack.spaceharvester.app.ui.controls.SideFoot}), unter der Arbeitsfläche dieser Platz; das
+     * Command Deck setzt seine eine Leiste mit der Lupe in den Platz, der gerade zu sehen ist. Ohne sichtbaren Platz
+     * steht sie unter dem ganzen Bereich.
+     */
+    public static final class FindSlot extends JPanel {
+
+        public FindSlot() {
+            super(new java.awt.BorderLayout());
+            setOpaque(false);
+            addHierarchyListener(event -> {
+                if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) {
+                    for (Container up = getParent(); up != null; up = up.getParent()) {
+                        if (up instanceof JComponent host && host.getClientProperty(FIND_HOST) instanceof Runnable r) {
+                            javax.swing.SwingUtilities.invokeLater(r);
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Die Arbeitsfläche eines Bereichs mit Seitenleiste: {@code content} oben, darunter der {@link FindSlot} für die
+     * Leiste mit der Lupe.
+     */
+    public static JPanel withFind(JComponent content) {
+        JPanel work = new JPanel(new java.awt.BorderLayout());
+        work.setOpaque(false);
+        work.add(content, java.awt.BorderLayout.CENTER);
+        work.add(new FindSlot(), java.awt.BorderLayout.SOUTH);
+        return work;
+    }
+
+    /** Der sichtbare Platz für die Leiste mit der Lupe unter {@code root}, sonst {@code null}. */
+    static FindSlot showingSlot(Container root) {
+        for (Component child : root.getComponents()) {
+            if (child instanceof FindSlot slot && slot.isShowing()) {
+                return slot;
+            }
+            if (child instanceof Container inner && child.isVisible()) {
+                FindSlot found = showingSlot(inner);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     /** Symbolknopf einer Leiste: nur das Symbol, der Text steht im Tooltip und als zugänglicher Name. */

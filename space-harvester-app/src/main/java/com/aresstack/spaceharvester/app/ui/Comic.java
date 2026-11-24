@@ -60,6 +60,12 @@ public final class Comic {
     public static final Color GREEN = ResearchUiPalette.WAVE_GREEN;
     public static final Color DARK = ResearchUiPalette.SECONDARY_SURFACE;
     public static final Color LINE = ResearchUiPalette.LIGHT_CONTROL_BORDER;
+    /**
+     * Höhe jeder Fußleiste (Angelo 24.11.2026: überall dieselbe Höhe): die Leiste mit der Lupe unter der Arbeitsfläche
+     * ({@link FindBar}), die Fußleiste jeder Seitenleiste ({@link com.aresstack.spaceharvester.app.ui.controls.SideFoot})
+     * und die Fußleisten des Command Deck. Samt Linie darüber.
+     */
+    public static final int FOOT_HEIGHT = 43;
     /** Fläche einer Meldungsplatte mit Hinweis (helles Gelb, Rand {@link #YELLOW}). */
     public static final Color NOTICE = new Color(0xFFF6D5);
     /** Markierung eines neuen Absatzes in der Leseansicht (wie bei Git grün). */

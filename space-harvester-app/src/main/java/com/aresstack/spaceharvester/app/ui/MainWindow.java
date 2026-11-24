@@ -498,11 +498,13 @@ public final class MainWindow implements AppContext.Navigator {
         top.setToolTipText(MAXIMIZE_TOOLTIP);
 
         side.setBackground(Comic.SURFACE);
-        side.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 10));
+        // Unten ohne Rand: Die Fußleiste des Explorers (SideFoot) steht bündig auf einer Linie mit der Leiste mit der
+        // Lupe unter der Arbeitsfläche, gleich hoch (Comic.FOOT_HEIGHT).
+        side.setBorder(BorderFactory.createEmptyBorder(10, 12, 0, 10));
         side.setMinimumSize(new Dimension(0, 0));
         side.add(explorer.component(), EXPLORER);
-        side.add(sources.drawer(), AppContext.Section.SOURCES.name());
-        side.add(settings.drawer(), AppContext.Section.SETTINGS.name());
+        side.add(bottomGap(sources.drawer()), AppContext.Section.SOURCES.name());
+        side.add(bottomGap(settings.drawer()), AppContext.Section.SETTINGS.name());
         deck.setMinimumSize(new Dimension(320, 0));
         // Aktionszeile und Suche gehören zur Arbeitsfläche: sie reichen nicht unter den Explorer.
         JPanel work = new JPanel(new BorderLayout());
@@ -1559,6 +1561,15 @@ public final class MainWindow implements AppContext.Navigator {
         return running == 0 || Dialogs.confirm(frame, "Space Harvester beenden?", "Space Harvester wirklich beenden? "
                 + Texts.count(running, "Auftrag läuft", "Aufträge laufen")
                 + " noch. Beim Beenden werden sie abgebrochen; ihr Ergebnis bleibt unbestätigt.");
+    }
+
+    /** Eine Schublade der linken Leiste mit dem unteren Rand, den die Leiste selbst nicht mehr hat. */
+    private static JComponent bottomGap(JComponent drawer) {
+        JPanel holder = new JPanel(new BorderLayout());
+        holder.setOpaque(false);
+        holder.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+        holder.add(drawer, BorderLayout.CENTER);
+        return holder;
     }
 
     private static Icon icon(AppContext.Section section) {
