@@ -348,6 +348,19 @@ public final class ChatTurn {
     private int agentRounds;
 
     /**
+     * Wie viele Unteragenten gleichzeitig Treffer der internen Suche auswerten und wie viele Werkzeugaufrufe einer
+     * Runde (außer Browser) gleichzeitig laufen (Menü „Parallele Agenten (intern)“, Angelo 24.11.2026).
+     */
+    public ChatTurn parallelAgents(int agents) {
+        this.agents = Math.max(1, agents);
+        return this;
+    }
+
+    private int agents = 1;
+    /** Die laufenden Anfragen der Unteragenten, damit Stopp sie beendet. */
+    private final Set<AiChat.Task> subTasks = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
      * Ein Favoriten-Ordner ist der Bereich (ADR 0034 §5): {@code nodes} liefert seine Unterordner und Favoriten für
      * {@value ChatTools#LIST}; {@code null} für jeden anderen Bereich.
      */
@@ -380,6 +393,7 @@ public final class ChatTurn {
         if (streaming != null) {
             streaming.cancel();
         }
+        subTasks.forEach(AiChat.Task::cancel);
     }
 
     private void run() {
@@ -549,7 +563,7 @@ public final class ChatTurn {
                 running.cancel();
             }
         };
-        toolset = withWebSearch(toolset);
+        toolset = withWebSearch(withSubAgents(toolset));
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
         int shown = 0;
@@ -695,13 +709,53 @@ public final class ChatTurn {
     private void runTools(List<AiChat.Message> messages, String text, List<AiChat.ToolCall> calls, int round) {
         List<AiChat.Message> next = new ArrayList<>(messages);
         next.add(AiChat.Message.assistant(text == null ? "" : text, calls));
-        for (AiChat.ToolCall call : calls) {
-            if (cancelRequested) {
-                break;
+        // Mehrere Aufrufe einer Runde laufen gleichzeitig (höchstens „Parallele Agenten“); Browser-Aufrufe bleiben
+        // nacheinander, der Browser eines Chats bedient eine Aktion nach der anderen. Die Antworten bleiben in der
+        // Reihenfolge der Aufrufe.
+        String[] results = new String[calls.size()];
+        List<java.util.concurrent.Future<?>> running = new ArrayList<>();
+        java.util.concurrent.ExecutorService pool = agents > 1 && calls.size() > 1
+                ? java.util.concurrent.Executors.newFixedThreadPool(Math.min(agents, calls.size()),
+                daemon("chat-werkzeug")) : null;
+        try {
+            for (int i = 0; i < calls.size(); i++) {
+                if (cancelRequested) {
+                    break;
+                }
+                AiChat.ToolCall call = calls.get(i);
+                int index = i;
+                Runnable work = () -> {
+                    if (cancelRequested) {
+                        return;
+                    }
+                    String what = toolset.describe(call);
+                    onUi(() -> listener.using(what));
+                    results[index] = toolset.run(call);
+                };
+                if (pool == null || browserCall(call)) {
+                    work.run();
+                } else {
+                    running.add(pool.submit(work));
+                }
             }
-            String what = toolset.describe(call);
-            onUi(() -> listener.using(what));
-            next.add(AiChat.Message.tool(call.id(), toolset.run(call)));
+            for (java.util.concurrent.Future<?> future : running) {
+                try {
+                    future.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (ExecutionException e) {
+                    // Ein Werkzeug liefert sonst immer Text; ohne Antwort zählt der Aufruf unten als gescheitert.
+                }
+            }
+        } finally {
+            if (pool != null) {
+                pool.shutdownNow();
+            }
+        }
+        for (int i = 0; i < calls.size(); i++) {
+            next.add(AiChat.Message.tool(calls.get(i).id(), results[i] != null ? results[i]
+                    : cancelRequested ? "Abgebrochen." : "Das Werkzeug ist gescheitert."));
         }
         round(next, round + 1);
     }
@@ -1163,6 +1217,188 @@ public final class ChatTurn {
                 }
             }
         };
+    }
+
+    /** Ob der Aufruf ein Browser-Werkzeug ist (diese laufen nacheinander). */
+    private boolean browserCall(AiChat.ToolCall call) {
+        WebSearch web = webSearch;
+        return web != null && web.tools().handles(call.name());
+    }
+
+    private static java.util.concurrent.ThreadFactory daemon(String name) {
+        return work -> {
+            Thread thread = new Thread(work, name);
+            thread.setDaemon(true);
+            return thread;
+        };
+    }
+
+    // ------------------------------------------------------------------ Unteragenten (Angelo 24.11.2026)
+
+    /** Höchstens so viele Zeichen einer Seite liest ein Unteragent. */
+    static final int SUB_AGENT_CHARS = ChatKnowledge.MAX_PAGE_CHARS;
+
+    /**
+     * Die Werkzeuge {@code base} samt {@value ChatTools#EVALUATE}, wenn der Turn ein Suchagent mit Wissen ist (Bereich
+     * oder interne Suche): mehrere Treffer gehen gleichzeitig an Unteragenten, jeder liest seine Seite im Volltext und
+     * liefert nur, was sie zur Frage beiträgt.
+     */
+    private ChatToolset withSubAgents(ChatToolset base) {
+        if (agentRounds <= 0 || (scope == null && appSources == null)) {
+            return base;
+        }
+        return new ChatToolset() {
+            @Override
+            public List<AiChat.Tool> definitions() {
+                List<AiChat.Tool> all = new ArrayList<>(base.definitions());
+                all.add(ChatTools.evaluateDefinition());
+                return all;
+            }
+
+            @Override
+            public String run(AiChat.ToolCall call) {
+                return ChatTools.EVALUATE.equals(call.name()) ? evaluate(call) : base.run(call);
+            }
+
+            @Override
+            public String describe(AiChat.ToolCall call) {
+                return base.describe(call);
+            }
+
+            @Override
+            public void cancel() {
+                base.cancel();
+                subTasks.forEach(AiChat.Task::cancel);
+            }
+        };
+    }
+
+    /** {@value ChatTools#EVALUATE}: je Kennung ein Unteragent, höchstens „Parallele Agenten“ gleichzeitig. */
+    private String evaluate(AiChat.ToolCall call) {
+        tools.jackson.databind.JsonNode arguments;
+        try {
+            arguments = BROWSER_JSON.readTree(call.argumentsJson() == null || call.argumentsJson().isBlank() ? "{}"
+                    : call.argumentsJson());
+        } catch (JacksonException e) {
+            return "Die Argumente sind kein gültiges JSON.";
+        }
+        String asked = arguments.path("frage").asString("").strip();
+        if (asked.isEmpty()) {
+            asked = question;
+        }
+        List<String> refs = new ArrayList<>();
+        for (tools.jackson.databind.JsonNode ref : arguments.path("kennungen")) {
+            String value = ref.asString("").strip();
+            if (!value.isEmpty() && !refs.contains(value)) {
+                refs.add(value);
+            }
+        }
+        if (refs.isEmpty()) {
+            return "Keine Kennungen angegeben; Kennungen liefern die Suchwerkzeuge.";
+        }
+        String focus = asked;
+        String[] answers = new String[refs.size()];
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
+                Math.min(agents, refs.size()), daemon("chat-unteragent"));
+        try {
+            List<java.util.concurrent.Future<?>> running = new ArrayList<>();
+            for (int i = 0; i < refs.size(); i++) {
+                int index = i;
+                running.add(pool.submit(() -> answers[index] = evaluateOne(focus, refs.get(index))));
+            }
+            for (java.util.concurrent.Future<?> future : running) {
+                try {
+                    future.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (ExecutionException e) {
+                    // Die Auswertung dieser Seite fehlt; die anderen zählen.
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < refs.size(); i++) {
+            out.append(out.isEmpty() ? "" : "\n\n").append(answers[i] == null ? refs.get(i)
+                    + ": Auswertung gescheitert." : answers[i]);
+        }
+        return out.toString();
+    }
+
+    /** Ein Unteragent: liest die Seite im Volltext (nach der KI-Freigabe) und fragt das Modell nach ihrem Beitrag. */
+    private String evaluateOne(String asked, String ref) {
+        if (cancelRequested) {
+            return ref + ": Abgebrochen.";
+        }
+        ChatTools reader = tools;
+        PageKey key = ChatTools.parse(ref);
+        if (reader == null || !reader.allows(key)) {
+            return ref + ": " + ChatTools.UNAVAILABLE;
+        }
+        ChatTools.Page page = reader.page(key);
+        if (page == null) {
+            return ref + ": " + ChatTools.NOT_STORED;
+        }
+        String spaceKey = reader.spaceOf(key);
+        if (spaceKey == null) {
+            spaceKey = page.spaceKey();
+        }
+        try {
+            if (spaceKey == null) {
+                throw new IllegalStateException("Seite ohne Space");
+            }
+            releasePageOrThrow(spaceKey, key);
+        } catch (RuntimeException failed) {
+            return ref + ": Die Seite ließ sich nicht für die KI freigeben; sie geht nicht an das Modell.";
+        }
+        String text = ChatKnowledge.excerpt(page.text(), SUB_AGENT_CHARS);
+        int number = cite(new ChatKnowledge.Excerpt(page.title(), key.sourceId(), page.location(),
+                ChatKnowledge.excerpt(page.text(), ChatKnowledge.MAX_HIT_CHARS), key.pageId()), key);
+        List<AiChat.Message> messages = List.of(AiChat.Message.system(ChatKnowledge.SUB_AGENT_PROMPT),
+                AiChat.Message.user("Frage: " + asked + "\n\nSeite [" + number + "] " + page.title() + "\n\n" + text));
+        return "Quelle [" + number + "] " + page.title() + " (" + ref + "):\n" + askSubAgent(messages);
+    }
+
+    /** Eine Anfrage eines Unteragenten, gestreamt wie jede KI-Anfrage; wartet auf ihr Ende. */
+    private String askSubAgent(List<AiChat.Message> messages) {
+        java.util.concurrent.CompletableFuture<String> result = new java.util.concurrent.CompletableFuture<>();
+        AiChat.Task running = port.stream(new AiChat.Request(messages, model, effort), new AiChat.Listener() {
+            @Override
+            public void delta(String text) {
+            }
+
+            @Override
+            public void completed(String text) {
+                result.complete(text == null || text.isBlank() ? "(keine Auswertung)" : text.strip());
+            }
+
+            @Override
+            public void failed(AiChatException error) {
+                result.complete("Auswertung gescheitert: " + describe(error).lines().findFirst().orElse(""));
+            }
+
+            @Override
+            public void cancelled() {
+                result.complete("Abgebrochen.");
+            }
+        });
+        subTasks.add(running);
+        if (cancelRequested) {
+            running.cancel();
+        }
+        try {
+            return result.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            running.cancel();
+            return "Abgebrochen.";
+        } catch (ExecutionException e) {
+            return "Auswertung gescheitert.";
+        } finally {
+            subTasks.remove(running);
+        }
     }
 
     /** Der Systemhinweis samt den Browser-Regeln, wenn die Websuche an ist. */
