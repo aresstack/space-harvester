@@ -1555,13 +1555,14 @@ public final class MainWindow implements AppContext.Navigator {
                 + " noch. Beim Beenden werden sie abgebrochen; ihr Ergebnis bleibt unbestätigt.");
     }
 
-    /** Eine Schublade der linken Leiste mit dem unteren Rand, den die Leiste selbst nicht mehr hat. */
+    /**
+     * Gibt einer Schublade der linken Leiste den unteren Rand, den die Leiste selbst nicht mehr hat. Ohne Hülle: Die
+     * Schublade bleibt direktes Kind der Leiste.
+     */
     private static JComponent bottomGap(JComponent drawer) {
-        JPanel holder = new JPanel(new BorderLayout());
-        holder.setOpaque(false);
-        holder.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
-        holder.add(drawer, BorderLayout.CENTER);
-        return holder;
+        drawer.setBorder(BorderFactory.createCompoundBorder(drawer.getBorder(),
+                BorderFactory.createEmptyBorder(0, 0, 10, 0)));
+        return drawer;
     }
 
     private static Icon icon(AppContext.Section section) {
