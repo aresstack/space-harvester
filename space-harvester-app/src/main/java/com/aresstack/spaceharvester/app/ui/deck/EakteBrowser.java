@@ -7,6 +7,9 @@ import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.SaveChooser;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
+import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
 import com.aresstack.spaceharvester.app.ui.extraction.ExtractionView;
 import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider;
@@ -75,7 +78,9 @@ final class EakteBrowser extends JPanel {
     private static final String READ_ONLY = "nur lesen";
     private static final String NO_PREVIEW = "keine";
     private static final String EXTRACTION_CARD = "extraktion";
+    private static final String VIEWER_CARD = "viewer";
     static final String PREVIEW = "Vorschau";
+    static final String TEXT = "Text";
     static final String EXTRACTION = "Extraktion";
     /** Herkunft der Dokumentreferenzen der Extraktion. */
     static final String ORIGIN = "eakte";
@@ -97,6 +102,8 @@ final class EakteBrowser extends JPanel {
     private Consumer<StatusNote> status = note -> { };
     private StatusNote current = StatusNote.plain(" ");
     private EditorSession shownPreview;
+    /** Das gezeigte Dokument formatiert, mit den Anhang-Viewern der Leseansicht (Jira, Confluence): PDF, Word, … */
+    private AttachmentViewerPanel viewer;
     private final SegmentedToggle viewToggle = new SegmentedToggle();
     private final ExtractionView extraction = new ExtractionView(DocumentAnalysisProvider.NONE);
     private Path temp;
@@ -143,9 +150,10 @@ final class EakteBrowser extends JPanel {
         none.add(Comic.muted("Dokument im Baum wählen, es erscheint hier"));
         previewStage.add(none, NO_PREVIEW);
         previewStage.add(extraction, EXTRACTION_CARD);
-        viewToggle.segment(PREVIEW).segment(EXTRACTION);
-        viewToggle.setToolTipText("Sicht auf das gezeigte Dokument: Vorschau oder experimentelle Extraktion");
-        viewToggle.getAccessibleContext().setAccessibleName("Vorschau oder Extraktion");
+        viewToggle.segment(PREVIEW).segment(TEXT).segment(EXTRACTION);
+        viewToggle.setToolTipText("Sicht auf das gezeigte Dokument: formatiert (Viewer wie bei Jira-Anhängen), "
+                + "als Text oder experimentelle Extraktion");
+        viewToggle.getAccessibleContext().setAccessibleName("Vorschau, Text oder Extraktion");
         viewToggle.setVisible(false);
         viewToggle.onSelect(view -> showView());
         extraction.onSource(source -> viewToggle.select(PREVIEW));
@@ -201,7 +209,8 @@ final class EakteBrowser extends JPanel {
             previewCards.show(previewStage, NO_PREVIEW);
             return;
         }
-        previewCards.show(previewStage, extracting ? EXTRACTION_CARD : shownPreview.location());
+        previewCards.show(previewStage, extracting ? EXTRACTION_CARD
+                : TEXT.equals(viewToggle.selected()) || viewer == null ? shownPreview.location() : VIEWER_CARD);
         if (extracting) {
             report(extraction.currentStatus());
         }
@@ -388,6 +397,14 @@ final class EakteBrowser extends JPanel {
         DocumentEditor editor = new DocumentEditor(opened);
         editor.readOnlyView(); // ganze Fläche fürs Dokument; gesucht wird nur mit der Lupe des Deck
         previewStage.add(editor, opened.location());
+        ReaderAttachment attachment = new ReaderAttachment(entry.href(), entry.name(), entry.contentType(),
+                entry.size());
+        viewer = new AttachmentViewerPanel(attachment, fileLoader(file), null, null);
+        viewer.detachFooter(); // Speichern/Öffnen stehen schon in der Fußleiste des Deck
+        previewStage.add(viewer, VIEWER_CARD);
+        if (!AttachmentViewerPanel.showsFormatted(attachment) && PREVIEW.equals(viewToggle.selected())) {
+            viewToggle.select(TEXT); // etwa Outlook-Nachrichten: dafür hat der Viewer keine Vorschau, der Text schon
+        }
         extraction.show(documentRef(entry));
         viewToggle.setVisible(true);
         showView();
@@ -403,15 +420,36 @@ final class EakteBrowser extends JPanel {
         EditorSession old = shownPreview;
         shownPreview = null;
         for (Component component : previewStage.getComponents()) {
-            if (component instanceof DocumentEditor) {
+            if (component instanceof DocumentEditor || component instanceof AttachmentViewerPanel) {
                 previewStage.remove(component);
             }
+        }
+        if (viewer != null) {
+            viewer.close();
+            viewer = null;
         }
         extraction.show(null);
         viewToggle.setVisible(false);
         showView();
         editors.close(old);
         deleteQuietly(previewFiles.remove(old));
+    }
+
+    /** Liefert dem Viewer die schon geholte Kopie im temporären Ordner (gelesen abseits des EDT). */
+    private static ReaderAttachmentLoader fileLoader(Path file) {
+        return (attachment, done, failed) -> CompletableFuture.supplyAsync(() -> {
+            try {
+                return Files.readAllBytes(file);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }).whenComplete((bytes, error) -> SwingUtilities.invokeLater(() -> {
+            if (error != null) {
+                failed.accept(EakteSessions.describe(error));
+            } else {
+                done.accept(bytes);
+            }
+        }));
     }
 
     /** Öffnen mit dem zugehörigen Programm über eine Kopie im temporären Ordner dieser Sitzung. */

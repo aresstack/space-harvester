@@ -166,6 +166,11 @@ class EakteWorkspaceTest {
                 .toList())).as("keine Tabelle neben dem Baum").isEmpty();
         assertThat(onEdt(() -> components(browser, com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor.class)
                 .get(0).getComponent(2).isVisible())).as("Suchzeile des Editors").isFalse();
+        // Outlook-Nachricht: der Viewer der Leseansicht hat dafür keine Vorschau, also steht die Textsicht vorn.
+        assertThat(onEdt(() -> ((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) browser.viewToggle())
+                .selected())).isEqualTo(EakteBrowser.TEXT);
+        assertThat(onEdt(() -> components(browser,
+                com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel.class))).hasSize(1);
         // Umschalter „Vorschau | Extraktion“ in der Titelleiste; Extraktion ohne Analysedienst: nicht analysiert
         assertThat(onEdt(() -> browser.viewToggle().isVisible())).isTrue();
         assertThat(onEdt(() -> workspace.tools().getComponent(0) == browser.viewToggle())).isTrue();
