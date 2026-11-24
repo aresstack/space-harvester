@@ -2766,7 +2766,7 @@ public final class ChatPanel extends JPanel {
         bindReadAloud();
     }
 
-    /** Knopf an oder aus, je nachdem, ob gerade eine Sprachausgabe eingerichtet ist. */
+    /** Knopf bereit oder gesperrt mit Grund, je nachdem, ob gerade eine Sprachausgabe eingerichtet ist. */
     private void bindReadAloud() {
         AppRuntime runtime = context.runtime();
         boolean available;
@@ -2775,7 +2775,8 @@ public final class ChatPanel extends JPanel {
         } catch (RuntimeException e) {
             available = false;
         }
-        readAloud.bind(available ? readAloudBindings.get() : null);
+        readAloud.bind(available ? readAloudBindings.get() : null,
+                runtime == null ? ChatReadAloud.NO_RUNTIME_TIP : ChatReadAloud.NO_SPEECH_TIP);
         if (transcriptLayers != null) {
             transcriptLayers.revalidate();
             transcriptLayers.repaint();

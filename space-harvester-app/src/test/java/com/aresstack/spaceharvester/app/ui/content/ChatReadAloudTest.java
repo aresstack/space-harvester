@@ -147,10 +147,18 @@ class ChatReadAloudTest {
     }
 
     @Test
-    void withoutSpeechTheButtonStaysAway() throws Exception {
+    void withoutSpeechTheButtonIsShownLockedWithItsReason() throws Exception {
+        // „Ich sehe das immer noch nicht“ (Angelo 24.11.2026): wie im EAC gesperrt mit Grund statt unsichtbar
         ChatReadAloud reading = onEdt(() -> new ChatReadAloud(new JPanel()));
-        SwingUtilities.invokeAndWait(() -> reading.bind(null));
-        assertThat(reading.orb().isVisible()).isFalse();
+        SwingUtilities.invokeAndWait(() -> {
+            reading.answer(bubble(SECOND));
+            reading.bind(null);
+        });
+        assertThat(reading.orb().isVisible()).isTrue();
+        assertThat(reading.orb().isEnabled()).isFalse();
+        assertThat(reading.orb().getToolTipText()).isEqualTo(ChatReadAloud.NO_SPEECH_TIP);
+        SwingUtilities.invokeAndWait(reading::toggle);
+        assertThat(reading.speaking()).isFalse();
     }
 
     @Test
