@@ -17,7 +17,6 @@ import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -37,13 +36,11 @@ public final class FindBar extends JPanel {
     static final String FIND_TOOLTIP = "In dieser Ansicht suchen (Strg+F)";
 
     private final Supplier<JComponent> area;
-    /** Wie in der Wurzel gesucht wird; Standard {@link ReaderFind}. */
-    private final Function<JComponent, Hits> hits;
     private final PlaceholderField field = new PlaceholderField(24, PLACEHOLDER);
     private final JLabel counter = Comic.muted("");
     private final ComposerButton previousButton;
     private final ComposerButton nextButton;
-    private Hits find;
+    private ReaderFind find;
     /** Der Text, nach dem zuletzt gesucht wurde; {@code null}, solange nichts markiert ist. */
     private String searched;
     /** Die Wurzel, in der {@link #find} sucht. */
@@ -76,44 +73,10 @@ public final class FindBar extends JPanel {
     }
     private boolean open;
 
-    /**
-     * Was die Leiste durchsucht. Standard ist {@link ReaderFind} über alle Texte der Wurzel; eine Ansicht mit eigener
-     * Suche (etwa der JES-Spool mit Text oder Diagramm) gibt ihre eigene, damit Aussehen und Bedienung überall gleich
-     * bleiben.
-     */
-    public interface Hits {
-
-        /** Neue Suche; der erste Treffer wird gezeigt. */
-        void search(String query);
-
-        void next();
-
-        void previous();
-
-        /** Markierungen entfernen. */
-        void clear();
-
-        int hitCount();
-
-        /** Stelle des aktuellen Treffers ab 0. */
-        int currentIndex();
-
-        /** Ob sich der Inhalt seit der Suche geändert hat. */
-        default boolean stale() {
-            return false;
-        }
-    }
-
     public FindBar(Supplier<JComponent> area) {
-        this(area, FindBar::readerHits);
-    }
-
-    /** Leiste mit eigener Suche: {@code hits} liefert für die Wurzel aus {@code area}, was gesucht wird. */
-    public FindBar(Supplier<JComponent> area, Function<JComponent, Hits> hits) {
         super(null);
         setLayout(new RowLayout());
         this.area = area;
-        this.hits = hits;
         setOpaque(false);
         line(true);
         field.getAccessibleContext().setAccessibleName("In dieser Ansicht suchen");
@@ -254,13 +217,13 @@ public final class FindBar extends JPanel {
     }
 
     /** Sucht {@code query}, als hätte man es eingetippt und Enter gedrückt; liefert die Zahl der Treffer. */
-    public int search(String query) {
+    int search(String query) {
         expand(true);
         field.setText(query == null ? "" : query);
         return find == null ? 0 : find.hitCount();
     }
 
-    public String counterText() {
+    String counterText() {
         return counter.getText();
     }
 
@@ -268,48 +231,8 @@ public final class FindBar extends JPanel {
         return field;
     }
 
-    Hits find() {
+    ReaderFind find() {
         return find;
-    }
-
-    private static Hits readerHits(JComponent root) {
-        ReaderFind reader = new ReaderFind(root);
-        return new Hits() {
-            @Override
-            public void search(String query) {
-                reader.search(query);
-            }
-
-            @Override
-            public void next() {
-                reader.next();
-            }
-
-            @Override
-            public void previous() {
-                reader.previous();
-            }
-
-            @Override
-            public void clear() {
-                reader.clear();
-            }
-
-            @Override
-            public int hitCount() {
-                return reader.hitCount();
-            }
-
-            @Override
-            public int currentIndex() {
-                return reader.currentIndex();
-            }
-
-            @Override
-            public boolean stale() {
-                return reader.stale();
-            }
-        };
     }
 
     // ------------------------------------------------------------------ intern
@@ -342,7 +265,7 @@ public final class FindBar extends JPanel {
             searched = null;
         }
         if (find == null) {
-            find = hits.apply(root);
+            find = new ReaderFind(root);
             findRoot = root;
         }
         if (find.stale()) {
