@@ -88,7 +88,10 @@ public final class ChatSidebar extends JPanel {
         return more;
     }
 
-    /** Das Menü hinter dem Dreieck: „Seitenleiste einklappen“ und „Alle Chats löschen“ (mit Ja/Nein-Rückfrage). */
+    /**
+     * Das Menü hinter dem Dreieck: „Seitenleiste einklappen“, „Alle Chats löschen“ (mit Ja/Nein-Rückfrage) und die
+     * Grenzen der Parallelität.
+     */
     public javax.swing.JPopupMenu moreMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
         javax.swing.JMenuItem item = new javax.swing.JMenuItem(COLLAPSE, collapseIcon());
@@ -100,6 +103,11 @@ public final class ChatSidebar extends JPanel {
         deleteAll.setFont(Comic.regular(13f));
         deleteAll.addActionListener(e -> chat.deleteAllChats());
         menu.add(deleteAll);
+        // Die Grenzen der Parallelität wie im Menü der Aufträge (Angelo 24.11.2026).
+        menu.addSeparator();
+        for (javax.swing.JMenu parallel : chat.parallelMenus()) {
+            menu.add(parallel);
+        }
         return menu;
     }
 

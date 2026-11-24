@@ -97,6 +97,15 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     liegen bei denen zu allen Wissensquellen. In der Suche, und ohne Auswahl, arbeitet der Chat als Suchagent: eigene
     Rolle (gründlich über mehrere Runden recherchieren, umformulieren, Treffer im Volltext lesen, Anhänge gründlich
     auswerten) und so viele Werkzeugrunden wie das Budget am Pfeil der Websuche. Anderswo bleibt der Chat, wie er ist.
+13. **Hintergrund-Agenten, Parallelität im Menü** (Nachtrag, Angelo 24.11.2026): Die Grenzen stehen nicht in den
+    Einstellungen, sondern im Dreieck-Menü der Chat-Leiste, mit dem Code der Aufträge (`ParallelChoice`: 1 bis 64 oder
+    „Benutzerdefiniert …“ ohne praktische Obergrenze): „Parallele Tabs“ (Websuche, Vorgabe 16), „Parallele Agenten
+    (intern)“ (Vorgabe 32) und „Parallele Dateien“ (Anhänge samt PDF, Vorgabe 8). Der Suchagent mit Bereich oder
+    interner Suche hat zusätzlich `treffer_auswerten`: Je Kennung liest ein Unteragent die Seite im Volltext (nach der
+    KI-Freigabe, mit Quellennummer) und liefert in einer eigenen, gestreamten Anfrage nur ihren Beitrag zur Frage;
+    höchstens „Parallele Agenten“ gleichzeitig, Stopp bricht alle ab. Mehrere Werkzeugaufrufe einer Runde laufen
+    ebenso gleichzeitig, Browser-Aufrufe nacheinander; die Antworten bleiben in der Reihenfolge der Aufrufe. Die
+    Grenze der Tabs wirkt erst ganz, wenn die Obergrenze im Browser-Werkzeug des EAC fällt (Folge-PR im EAC).
 
 ## Folgen
 

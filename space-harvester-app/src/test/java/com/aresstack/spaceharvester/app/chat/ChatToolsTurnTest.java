@@ -426,13 +426,92 @@ class ChatToolsTurnTest {
         assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
 
         AiChat.Request first = port.requests.get(0);
-        assertThat(first.tools()).extracting(AiChat.Tool::name).containsExactly(ChatTools.READ, ChatTools.APP_SEARCH);
+        assertThat(first.tools()).extracting(AiChat.Tool::name)
+                .containsExactly(ChatTools.READ, ChatTools.APP_SEARCH, ChatTools.EVALUATE);
         assertThat(first.messages().get(0).text()).startsWith(ChatKnowledge.AGENT_PROMPT)
                 .contains(ChatKnowledge.AGENT_APP_SEARCH_PROMPT).contains(ChatKnowledge.ATTACHMENTS_PROMPT)
                 .doesNotContain(ChatKnowledge.AGENT_AREA_PROMPT);
         assertThat(port.requests).hasSize(budget + 1);
         assertThat(port.requests.get(budget).tools()).isEmpty();
         assertThat(events.completed).isEqualTo("Gefunden.");
+    }
+
+    @Test
+    void theSearchAgentLetsSubAgentsEvaluateSeveralHitsAtOnceEachReadingItsReleasedPage() throws Exception {
+        // Angelo 24.11.2026: Jeder Treffer wird von einem eigenen Agenten im Hintergrund ausgewertet, gleichzeitig bis
+        // „Parallele Agenten (intern)“.
+        PageKey night = page("nachtlauf");
+        PageKey house = page("datenhaus");
+        CountDownLatch bothRunning = new CountDownLatch(2);
+        List<AiChat.Request> requests = new CopyOnWriteArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger mainRound = new java.util.concurrent.atomic.AtomicInteger();
+        AiChat port = (request, listener) -> {
+            requests.add(request);
+            if (ChatKnowledge.SUB_AGENT_PROMPT.equals(request.messages().get(0).text())) {
+                bothRunning.countDown();
+                try {
+                    // Erst antworten, wenn beide Unteragenten gleichzeitig laufen.
+                    assertThat(bothRunning.await(30, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                String page = request.messages().get(1).text();
+                listener.completed(page.contains("vollem Spool") ? "Bricht bei vollem Spool ab." : "Trägt nichts bei.");
+                return () -> { };
+            }
+            if (mainRound.getAndIncrement() == 0) {
+                listener.toolCalls("", List.of(new AiChat.ToolCall("c1", ChatTools.EVALUATE,
+                        "{\"kennungen\":[\"" + ChatTools.ref(night) + "\",\"" + ChatTools.ref(house) + "\"]}")));
+            } else {
+                listener.completed("Fertig [1].");
+            }
+            return () -> { };
+        };
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", space, "Handbuch",
+                events, Runnable::run).knowledgeByTools(null).searchAgent(5).parallelAgents(4)
+                .releasing(releases()).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(events.completed).isEqualTo("Fertig [1].");
+        AiChat.Request first = requests.get(0);
+        assertThat(first.tools()).extracting(AiChat.Tool::name).contains(ChatTools.EVALUATE);
+        assertThat(first.messages().get(0).text()).contains(ChatKnowledge.AGENT_EVALUATE_PROMPT);
+        AiChat.Request last = requests.get(requests.size() - 1);
+        AiChat.Message result = last.messages().get(last.messages().size() - 1);
+        assertThat(result.toolCallId()).isEqualTo("c1");
+        assertThat(result.text()).contains("Bricht bei vollem Spool ab.").contains("Trägt nichts bei.")
+                .contains(ChatTools.ref(night)).contains(ChatTools.ref(house)).contains("Quelle [");
+        assertThat(result.text().indexOf(ChatTools.ref(night)))
+                .as("die Auswertungen in der Reihenfolge der Kennungen")
+                .isLessThan(result.text().indexOf(ChatTools.ref(house)));
+        assertThat(released()).as("was ans Modell ging, ist freigegeben").contains(night, house);
+        assertThat(events.context.accepted()).hasSize(2);
+    }
+
+    @Test
+    void withoutTheSearchAgentThereAreNoSubAgentsAndSeveralCallsOfARoundKeepTheirOrder() throws Exception {
+        PageKey night = page("nachtlauf");
+        PageKey house = page("datenhaus");
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.READ, "{\"kennung\":\"" + ChatTools.ref(night) + "\"}"),
+                        new AiChat.ToolCall("c2", ChatTools.READ, "{\"kennung\":\"" + ChatTools.ref(house) + "\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).parallelAgents(4).releasing(releases()).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests.get(0).tools()).extracting(AiChat.Tool::name).doesNotContain(ChatTools.EVALUATE);
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        assertThat(messages.subList(messages.size() - 2, messages.size()))
+                .satisfiesExactly(a -> assertThat(a.toolCallId()).isEqualTo("c1"),
+                        b -> assertThat(b.toolCallId()).isEqualTo("c2"));
+        assertThat(messages.get(messages.size() - 2).text()).contains("vollem Spool");
+        assertThat(messages.get(messages.size() - 1).text()).contains("Berechtigungsmanagement");
     }
 
     @Test
@@ -1114,7 +1193,7 @@ class ChatToolsTurnTest {
     private static final class Events implements ChatTurn.Listener {
 
         final CountDownLatch done = new CountDownLatch(1);
-        final List<String> using = new ArrayList<>();
+        final List<String> using = new CopyOnWriteArrayList<>();
         final List<Thread> usingThreads = new CopyOnWriteArrayList<>();
         int released;
         final List<String> deltas = new CopyOnWriteArrayList<>();

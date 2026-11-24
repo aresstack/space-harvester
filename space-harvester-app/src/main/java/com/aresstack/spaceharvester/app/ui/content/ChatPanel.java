@@ -167,8 +167,21 @@ public final class ChatPanel extends JPanel {
     static final int WEB_BUDGET_MAX = 999;
     static final int WEB_BUDGET_SLIDER_MIN = 4;
     static final int WEB_BUDGET_SLIDER_MAX = 60;
-    static final int WEB_TABS_DEFAULT = 4;
-    static final int WEB_TABS_MAX = 8;
+    /**
+     * Die drei Grenzen der Parallelität im Menü am Dreieck der Chat-Leiste (Angelo 24.11.2026), mit denselben Stufen
+     * und „Benutzerdefiniert …“ wie bei den Aufträgen: Tabs der Websuche, Agenten der internen Suche, Dateien und
+     * Anhänge.
+     */
+    static final String PARALLEL_TABS = "Parallele Tabs";
+    static final String PARALLEL_AGENTS = "Parallele Agenten (intern)";
+    static final String PARALLEL_FILES = "Parallele Dateien";
+    static final int WEB_TABS_DEFAULT = 16;
+    static final int AGENTS_DEFAULT = 32;
+    static final int FILES_DEFAULT = 8;
+    /** Die Stufen im Menü; darunter „Benutzerdefiniert …“. */
+    static final List<Integer> PARALLEL_STEPS = List.of(1, 2, 4, 8, 16, 32, 64);
+    /** Größte freie Eingabe unter „Benutzerdefiniert …“ (das Feld nimmt vier Ziffern). */
+    static final int PARALLEL_MAX = 9999;
     static final int WEB_DELAY_MAX = 10000;
     static final int WEB_DELAY_SLIDER_MAX = 2000;
     private static final String WEB_KEY = "chat.web.";
@@ -1633,7 +1646,34 @@ public final class ChatPanel extends JPanel {
         com.aresstack.spaceharvester.app.ui.AppState.shared().put(WEB_KEY + key, value);
     }
 
-    /** Öffnet das Menü am Pfeil: Profil, Werkzeugrunden, parallele Tabs, Verzögerung, Human Emulation, Maus. */
+    /**
+     * Die Einträge „Parallele Tabs“, „Parallele Agenten (intern)“ und „Parallele Dateien“ für das Menü am Dreieck der
+     * Chat-Leiste, mit dem Code der Aufträge ({@link com.aresstack.spaceharvester.app.ui.ParallelChoice}).
+     */
+    public List<javax.swing.JMenu> parallelMenus() {
+        return List.of(parallelChoice("Parallele Tabs: wie viele Seiten die Websuche gleichzeitig "
+                        + "öffnet und auswertet", "tabs", WEB_TABS_DEFAULT).menu(PARALLEL_TABS),
+                parallelChoice("Parallele Agenten (intern): wie viele Agenten Treffer der internen "
+                        + "Suche gleichzeitig lesen und auswerten", "agents", AGENTS_DEFAULT).menu(PARALLEL_AGENTS),
+                parallelChoice("Parallele Dateien: wie viele lokale Dateien und Anhänge (auch PDF) "
+                        + "gleichzeitig gelesen werden", "files", FILES_DEFAULT).menu(PARALLEL_FILES));
+    }
+
+    private com.aresstack.spaceharvester.app.ui.ParallelChoice parallelChoice(String tip, String key, int fallback) {
+        var choice = new com.aresstack.spaceharvester.app.ui.ParallelChoice(tip + " (1 bis " + PARALLEL_MAX + ").",
+                1, PARALLEL_MAX, PARALLEL_STEPS, parallel(key, fallback), value -> webPut(key, value),
+                text -> feedback.warning(text, null));
+        choice.ask = current -> com.aresstack.spaceharvester.app.ui.Dialogs.askNumber(this, "Benutzerdefiniert",
+                tip, 1, PARALLEL_MAX, current);
+        return choice;
+    }
+
+    /** Eine der Grenzen der Parallelität, mindestens 1. */
+    static int parallel(String key, int fallback) {
+        return Math.max(1, Math.min(PARALLEL_MAX, webInt(key, fallback)));
+    }
+
+    /** Öffnet das Menü am Pfeil: Profil, Werkzeugrunden, Verzögerung, Human Emulation, Maus. */
     private void openWebPopup() {
         java.util.List<WebSearchPopup.Row> rows = new ArrayList<>();
         rows.add(new WebSearchPopup.Row(WebSearchPopup.TITLE, webInt("budget", WEB_BUDGET_DEFAULT), WEB_BUDGET_MIN,
@@ -1641,8 +1681,6 @@ public final class ChatPanel extends JPanel {
                     webPut("budget", value);
                     showWebState();
                 }));
-        rows.add(new WebSearchPopup.Row(WebSearchPopup.TABS_TITLE, webInt("tabs", WEB_TABS_DEFAULT), 1, WEB_TABS_MAX,
-                1, WEB_TABS_MAX, value -> webPut("tabs", value)));
         rows.add(new WebSearchPopup.Row(WebSearchPopup.DELAY_TITLE, webInt("delay", 0), 0, WEB_DELAY_MAX, 0,
                 WEB_DELAY_SLIDER_MAX, value -> webPut("delay", value)));
         java.util.List<WebSearchPopup.Check> checks = new ArrayList<>();
@@ -1672,7 +1710,7 @@ public final class ChatPanel extends JPanel {
             return null;
         }
         browser.profile(chatId, webFlag("internal"));
-        browser.load(chatId, webInt("tabs", WEB_TABS_DEFAULT), webInt("delay", 0));
+        browser.load(chatId, parallel("tabs", WEB_TABS_DEFAULT), webInt("delay", 0));
         browser.humanEmulation(chatId, webFlag("human"), webFlag("mouse"));
         // Rückfragen gehören zu diesem Chat und dieser Antwort, nie zum gerade sichtbaren Verlauf.
         com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt prompt =
@@ -1978,6 +2016,7 @@ public final class ChatPanel extends JPanel {
             if (searchFront || open == null) {
                 turn.searchAgent(researchBudget());
             }
+            turn.parallelAgents(parallel("agents", AGENTS_DEFAULT));
         }
         // Websuche (Composer-Knopf): die Browser-Werkzeuge des Chats dazu, mit Karte „Browserrecherche“.
         WebSearchCard card = new WebSearchCard(body -> addActivity(WebSearchCard.TITLE, body));
@@ -2009,27 +2048,65 @@ public final class ChatPanel extends JPanel {
         };
     }
 
-    /** Hängt lesbare Textdateien und Dokumente (PDF, Word …) aus den Chips an; Binäres wird nur genannt. */
+    /**
+     * Hängt lesbare Textdateien und Dokumente (PDF, Word …) aus den Chips an; Binäres wird nur genannt. Die Dateien
+     * werden gleichzeitig gelesen, höchstens „Parallele Dateien“ auf einmal (Angelo 24.11.2026); die Reihenfolge der
+     * Chips bleibt.
+     */
     private String withAttachments(String text) {
         if (attachments.isEmpty()) {
             return text;
         }
-        StringBuilder b = new StringBuilder(text);
-        for (Path file : attachments) {
-            b.append("\n\n--- Anhang: ").append(file.getFileName()).append(" ---\n");
-            try {
-                // Dokumente (PDF, Word, Excel …) wie die Vorschau im Command Deck über den Tika-Adapter des Core.
-                String name = file.getFileName() == null ? "" : file.getFileName().toString();
-                String content = com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(name)
-                        ? new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().load(file.toString()).text()
-                        : Files.readString(file, StandardCharsets.UTF_8);
-                b.append(ChatKnowledge.excerpt(content, ChatKnowledge.MAX_PAGE_CHARS));
-            } catch (java.io.IOException | RuntimeException
-                     | com.aresstack.spaceharvester.deck.editor.DocumentException unreadable) {
-                b.append("(nicht als Text lesbar)");
+        List<Path> files = List.copyOf(attachments);
+        String[] contents = new String[files.size()];
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
+                Math.min(parallel("files", FILES_DEFAULT), files.size()), work -> {
+                    Thread thread = new Thread(work, "chat-anhang");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+        try {
+            List<java.util.concurrent.Future<?>> running = new ArrayList<>();
+            for (int i = 0; i < files.size(); i++) {
+                int index = i;
+                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index))));
             }
+            for (java.util.concurrent.Future<?> future : running) {
+                try {
+                    future.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (java.util.concurrent.ExecutionException e) {
+                    // Dann fehlt nur der Text dieser Datei; sie gilt unten als nicht lesbar.
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        StringBuilder b = new StringBuilder(text);
+        for (int i = 0; i < files.size(); i++) {
+            b.append("\n\n--- Anhang: ").append(files.get(i).getFileName()).append(" ---\n")
+                    .append(contents[i] == null ? UNREADABLE : contents[i]);
         }
         return b.toString();
+    }
+
+    private static final String UNREADABLE = "(nicht als Text lesbar)";
+
+    /** Der Text einer angehängten Datei, auf das Budget einer Seite gekürzt. */
+    private static String attachmentText(Path file) {
+        try {
+            // Dokumente (PDF, Word, Excel …) wie die Vorschau im Command Deck über den Tika-Adapter des Core.
+            String name = file.getFileName() == null ? "" : file.getFileName().toString();
+            String content = com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(name)
+                    ? new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().load(file.toString()).text()
+                    : Files.readString(file, StandardCharsets.UTF_8);
+            return ChatKnowledge.excerpt(content, ChatKnowledge.MAX_PAGE_CHARS);
+        } catch (java.io.IOException | RuntimeException
+                 | com.aresstack.spaceharvester.deck.editor.DocumentException unreadable) {
+            return UNREADABLE;
+        }
     }
 
     /** Nimmt die Ereignisse eines Turns entgegen; nach dem Ende speichert er den Chat, zu dem der Turn gehört. */

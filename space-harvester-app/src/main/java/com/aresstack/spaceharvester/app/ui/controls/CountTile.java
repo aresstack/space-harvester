@@ -26,7 +26,14 @@ public final class CountTile extends JToggleButton {
     private static final float NUMBER_SIZE = 22f;
     private static final float CAPTION_SIZE = 12f;
 
+    /** Dauer eines Atemzugs der zählenden Kachel. */
+    private static final int BREATH_MILLIS = 3200;
+
     private final String caption;
+    /** Nur Animation, fragt nichts ab; läuft, solange die Kachel zählt und im Fenster hängt. */
+    private final javax.swing.Timer breath = new javax.swing.Timer(50, e -> repaint());
+    private boolean counting;
+    private long breathStart;
 
     public CountTile(String number, String caption) {
         super(number);
@@ -43,6 +50,48 @@ public final class CountTile extends JToggleButton {
 
     public String caption() {
         return caption;
+    }
+
+    /**
+     * Ob die Zahl noch hochzählt (Angelo 24.11.2026): Solange „atmet“ der Hintergrund der Kachel, also ein sanftes
+     * Pulsieren im Atemrhythmus.
+     */
+    public void counting(boolean on) {
+        if (counting == on) {
+            return;
+        }
+        counting = on;
+        breathStart = System.currentTimeMillis();
+        if (on && isDisplayable()) {
+            breath.start();
+        } else {
+            breath.stop();
+        }
+        repaint();
+    }
+
+    public boolean counting() {
+        return counting;
+    }
+
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        if (counting) {
+            breath.start();
+        }
+    }
+
+    @Override
+    public void removeNotify() {
+        breath.stop();
+        super.removeNotify();
+    }
+
+    /** Deckkraft des Atems jetzt, zwischen 0 und 1. */
+    private double breathNow() {
+        double phase = ((System.currentTimeMillis() - breathStart) % BREATH_MILLIS) / (double) BREATH_MILLIS;
+        return (1 - Math.cos(2 * Math.PI * phase)) / 2;
     }
 
     @Override
@@ -74,6 +123,12 @@ public final class CountTile extends JToggleButton {
                 g.fillRoundRect(0, 0, width - 1, height - 1, ARC, ARC);
             } else if (getModel().isRollover() && isEnabled()) {
                 g.setColor(new Color(Comic.INK.getRed(), Comic.INK.getGreen(), Comic.INK.getBlue(), 20));
+                g.fillRoundRect(0, 0, width - 1, height - 1, ARC, ARC);
+            }
+            if (counting) {
+                Color tone = on ? Color.WHITE : Comic.INK;
+                int alpha = (int) Math.round((on ? 70 : 38) * breathNow());
+                g.setColor(new Color(tone.getRed(), tone.getGreen(), tone.getBlue(), alpha));
                 g.fillRoundRect(0, 0, width - 1, height - 1, ARC, ARC);
             }
             g.setColor(on ? Comic.INK : Comic.LINE);

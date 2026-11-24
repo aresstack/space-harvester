@@ -62,6 +62,14 @@ final class TabFoot extends JPanel {
         repaint();
     }
 
+    /** Holt das Element rechts zurück, wenn es zwischenzeitlich in einer anderen Leiste stand. */
+    void reclaimTrailing() {
+        if (trailing != null && trailing.getParent() != this) {
+            add(trailing);
+            revalidate();
+        }
+    }
+
     JComponent secondary() {
         return secondary;
     }

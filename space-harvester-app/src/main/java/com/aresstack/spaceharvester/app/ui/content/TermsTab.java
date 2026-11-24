@@ -93,6 +93,23 @@ final class TermsTab extends JPanel {
         default Totals totals() throws Exception {
             return null;
         }
+
+        /**
+         * Wie {@link #totals()}; {@code progress} erfährt aus dem Hintergrund Zwischenstände, damit die Kacheln
+         * mitzählen (Angelo 24.11.2026).
+         */
+        default Totals totals(Consumer<Partial> progress) throws Exception {
+            return totals();
+        }
+
+        /** Schlüssel, unter dem die Gesamtzahlen gemerkt werden; {@code null}: nicht merken. */
+        default Object key() {
+            return null;
+        }
+    }
+
+    /** Ein Zwischenstand der Zählung; {@code null}: noch nicht begonnen. */
+    record Partial(Integer acronyms, Integer identifiers, Integer verbs, Integer relations) {
     }
 
     /**
@@ -199,6 +216,20 @@ final class TermsTab extends JPanel {
     private boolean countAgain;
     private final InfoPopup popup = new InfoPopup();
     private Runner runner = Background::run;
+    /** Höchstens so viele Auswahlen behalten ihre Gesamtzahlen. */
+    private static final int REMEMBERED = 200;
+    /**
+     * Die zuletzt gezählten Gesamtzahlen je Auswahl (Angelo 24.11.2026): Ein erneuter Klick zeigt sie sofort; gezählt
+     * wird dann still im Hintergrund nach, damit sie nach Änderungen am Bestand stimmen.
+     */
+    private final java.util.Map<Object, Totals> remembered = new java.util.LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(java.util.Map.Entry<Object, Totals> eldest) {
+            return size() > REMEMBERED;
+        }
+    };
+    /** Nummer der laufenden Zählung; Zwischenstände einer beendeten oder überholten Zählung gelten nicht. */
+    private int countRun;
     /** Die gezeigte Auswahl; {@code null} zeigt eine einzelne Seite. */
     private Selection selection;
     private final List<Section> sections = new ArrayList<>();
@@ -467,10 +498,29 @@ final class TermsTab extends JPanel {
         head.title("Begriffe in " + chosen.title());
         head.status(null, null);
         analysisRow.setVisible(false);
-        totals(null, null, null);
-        onStatus.accept(" ");
+        Object key = chosen.key();
+        Totals known = key == null ? null : remembered.get(key);
+        if (known == null) {
+            totals(null, null, null);
+            onStatus.accept(" ");
+        } else {
+            showTotals(known);
+        }
         query();
-        count();
+        count(known == null);
+    }
+
+    private void showTotals(Totals counted) {
+        totals(counted.acronyms(), counted.identifiers(), counted.verbs(), counted.relations());
+        String origin = coverage(counted);
+        onStatus.accept(origin == null ? " " : origin);
+    }
+
+    /** Lässt die Kacheln „atmen“, solange ihre Zahlen noch hochzählen. */
+    private void breathing(boolean on) {
+        for (CountTile tile : tiles()) {
+            tile.counting(on);
+        }
     }
 
     /**
@@ -485,30 +535,55 @@ final class TermsTab extends JPanel {
             countAgain = true;
             return;
         }
-        count();
+        count(false);
     }
 
-    private void count() {
+    /**
+     * @param visible ob die Kacheln mitzählen und atmen (erste Zählung einer Auswahl); sonst bleiben die bekannten
+     *                Zahlen stehen, bis das Ergebnis da ist
+     */
+    private void count(boolean visible) {
         Selection chosen = selection;
         counting = true;
         countAgain = false;
-        // Die Kennzahlen kommen getrennt von den Listen; die Listen warten nie auf sie.
-        runner.run(chosen::totals, counted -> {
-            counted(chosen);
-            if (selection == chosen && counted != null) {
-                totals(counted.acronyms(), counted.identifiers(), counted.verbs(), counted.relations());
-                String origin = coverage(counted);
-                onStatus.accept(origin == null ? " " : origin);
+        int run = ++countRun;
+        breathing(visible);
+        Consumer<Partial> progress = partial -> javax.swing.SwingUtilities.invokeLater(() -> {
+            if (visible && run == countRun && selection == chosen) {
+                totals(partial.acronyms(), partial.identifiers(), partial.verbs(), partial.relations());
             }
-        }, failure -> {
+        });
+        // Die Kennzahlen kommen getrennt von den Listen; die Listen warten nie auf sie.
+        runner.run(() -> chosen.totals(progress), counted -> {
+            finished(run);
+            Object key = chosen.key();
+            if (key != null && counted != null) {
+                remembered.put(key, counted);
+            }
+            if (selection == chosen && counted != null) {
+                showTotals(counted);
+            }
             counted(chosen);
+        }, failure -> {
+            finished(run);
             if (selection == chosen) {
                 String unreadable = "Gesamtzahl nicht lesbar: " + failure.getClass().getSimpleName();
                 for (CountTile count : tiles()) {
+                    if (COUNTING.equals(count.getText()) || visible) {
+                        count.setText(NOT_YET);
+                    }
                     count.setToolTipText(unreadable);
                 }
             }
+            counted(chosen);
         });
+    }
+
+    private void finished(int run) {
+        if (run == countRun) {
+            countRun++;
+            breathing(false);
+        }
     }
 
     /** Ob gerade eine Auswahl statt einer Seite zu sehen ist. */
@@ -541,7 +616,7 @@ final class TermsTab extends JPanel {
     private void counted(Selection chosen) {
         counting = false;
         if (countAgain && selection == chosen) {
-            count();
+            count(false);
         }
     }
 
@@ -1115,6 +1190,11 @@ final class TermsTab extends JPanel {
         return head.statusText();
     }
 
+    List<CountTile> countTiles() {
+        return tiles();
+    }
+
+    /** Für Tests: die Kennzahlen. */
     List<String> counts() {
         return List.of(acronymCount.getText(), identifierCount.getText(), relationCount.getText());
     }

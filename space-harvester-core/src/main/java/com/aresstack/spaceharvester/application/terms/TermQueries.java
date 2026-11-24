@@ -376,6 +376,15 @@ public class TermQueries {
      * @throws UnknownSourceException bei unbekannter {@code sourceId}
      */
     public TermTotals totals(AccessContext caller, TermSearch search) {
+        return totals(caller, search, null);
+    }
+
+    /**
+     * Wie {@link #totals(AccessContext, TermSearch)}; {@code progress} erfährt nach jedem gelesenen Stapel den
+     * Zwischenstand (im aufrufenden Thread), damit eine Oberfläche mitzählen kann. {@code null}: keine Meldungen.
+     */
+    public TermTotals totals(AccessContext caller, TermSearch search,
+                             java.util.function.Consumer<TermTotals> progress) {
         Objects.requireNonNull(search, "search");
         String q = search.q() == null || search.q().isBlank() ? null : TermText.normalize(search.q());
         String startsWith = search.startsWith() == null || search.startsWith().isBlank() ? null
@@ -403,6 +412,9 @@ public class TermQueries {
             }
             if (batch.size() < TermIndex.MAX_BATCH) {
                 break;
+            }
+            if (progress != null) {
+                progress.accept(new TermTotals(counts));
             }
             from = batch.get(batch.size() - 1).sortKey();
         }
