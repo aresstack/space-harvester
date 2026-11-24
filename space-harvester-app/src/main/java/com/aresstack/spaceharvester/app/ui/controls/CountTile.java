@@ -37,7 +37,7 @@ public final class CountTile extends JToggleButton {
         setBorderPainted(false);
         setFocusPainted(false);
         setRolloverEnabled(true);
-        setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        Cursors.set(this, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         getAccessibleContext().setAccessibleName(caption);
     }
 

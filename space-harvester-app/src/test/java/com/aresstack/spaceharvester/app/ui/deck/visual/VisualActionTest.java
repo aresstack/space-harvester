@@ -86,6 +86,57 @@ class VisualActionTest {
     }
 
     @Test
+    void withTheWorkspaceSideBarNothingStandsRightOfTheDiagramAndTheToolsAreIconsInTheToolRow() throws Exception {
+        Fixture fixture = open(write("MAINPROG.NSP", NATURAL_MAIN));
+        java.util.List<javax.swing.JComponent> sides = new java.util.ArrayList<>();
+        onEdt(() -> {
+            fixture.editor.detachSidePanels();
+            fixture.editor.onCenterSide(sides::add);
+            fixture.action.toggle();
+            return null;
+        });
+        DiagramView view = onEdt(fixture.action::view);
+        onEdt(() -> {
+            // Kein Teiler, kein Panel rechts: nur Meldungszeile und Diagramm.
+            assertThat(java.util.Arrays.stream(view.getComponents())
+                    .noneMatch(c -> c instanceof javax.swing.JSplitPane)).isTrue();
+            // Die Werkzeuge gehen als Reiter in die Seitenleiste des Arbeitsbereichs, ohne Emoji-Knöpfe und ohne Lupe.
+            assertThat(sides).containsExactly(view.sideTools());
+            assertThat(components(view.sideTools(), javax.swing.JToggleButton.class)).isEmpty();
+            assertThat(components(view.sideTools(), javax.swing.JSpinner.class)).isEmpty();
+            // Zoom, Einpassen, Neu zeichnen, Export: Symbolknöpfe in der Werkzeugzeile des Editors.
+            for (javax.swing.JComponent tool : view.barTools()) {
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(tool, fixture.editor)).isTrue();
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(tool, view)).isFalse();
+            }
+            assertThat(java.util.Arrays.stream(view.barTools())
+                    .filter(c -> c instanceof com.aresstack.spaceharvester.app.ui.IconButton)).hasSize(5);
+            fixture.action.toggle();
+            return null;
+        });
+        assertThat(sides).hasSize(2).last().isNull();
+        onEdt(() -> {
+            for (javax.swing.JComponent tool : view.barTools()) {
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(tool, fixture.editor)).isFalse();
+            }
+            return null;
+        });
+    }
+
+    private static <T> java.util.List<T> components(java.awt.Container root, Class<T> type) {
+        java.util.List<T> found = new java.util.ArrayList<>();
+        for (java.awt.Component child : root.getComponents()) {
+            if (type.isInstance(child)) {
+                found.add(type.cast(child));
+            }
+            if (child instanceof java.awt.Container inner) {
+                found.addAll(components(inner, type));
+            }
+        }
+        return found;
+    }
+
+    @Test
     void mindmapFollowsCallsIntoSiblingFiles() throws Exception {
         Path main = write("MAINPROG.NSP", NATURAL_MAIN);
         write("SUBPROG.NSN", NATURAL_SUB);

@@ -6,13 +6,13 @@ import com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.
 import java.awt.Graphics2D;
 
 /** Strichsymbole der Diagramm-Ansicht (16 × 16, Vordergrundfarbe des Knopfs). */
-final class VisualIcons {
+public final class VisualIcons {
 
     private VisualIcons() {
     }
 
     /** „Visuell“: Auge (in MainframeMate der Knopf „👁 Visuell“). */
-    static StrokeIcon eye() {
+    public static StrokeIcon eye() {
         return new StrokeIcon() {
             @Override
             protected void paint(Graphics2D g) {
@@ -20,6 +20,16 @@ final class VisualIcons {
                 g.drawArc(1, 0, 14, 12, 200, 140);
                 g.drawOval(5, 5, 6, 6);
                 g.fillOval(7, 7, 2, 2);
+            }
+        };
+    }
+
+    /** „Verkleinern“: ein Minus, Gegenstück zum Plus. */
+    static StrokeIcon minus() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g) {
+                g.drawLine(3, 8, 13, 8);
             }
         };
     }
