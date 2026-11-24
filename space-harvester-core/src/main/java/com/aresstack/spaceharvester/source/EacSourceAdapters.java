@@ -59,14 +59,16 @@ public final class EacSourceAdapters {
     public static SourceAdapter sharePoint() {
         return KnowledgeSourceProviderAdapter.connected(connection -> new SharePointSourceProvider(
                 ref -> sharePointCredentials(connection.secrets(), ref), connection.routes(), connection.tls(),
-                connection.userAgent(), DocumentExtraction.detector(), DocumentExtraction.registry()),
+                connection.userAgent(), new OneNoteContentDetector(DocumentExtraction.detector()),
+                DocumentExtraction.registry()),
                 CREDENTIAL_REF, null).withCredentialRefPassThrough();
     }
 
     public static SourceAdapter betaView() {
         return KnowledgeSourceProviderAdapter.connected(connection -> new BetaViewSourceProvider(
                 ref -> betaViewCredentials(connection.secrets(), ref), connection.routes(), connection.tls(),
-                connection.userAgent(), DocumentExtraction.detector(), DocumentExtraction.registry()),
+                connection.userAgent(), new OneNoteContentDetector(DocumentExtraction.detector()),
+                DocumentExtraction.registry()),
                 CREDENTIAL_REF, null).withCredentialRefPassThrough().requiringCredentials();
     }
 

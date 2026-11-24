@@ -744,6 +744,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
         if (name.endsWith(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         if (name.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
         if (name.endsWith(".doc")) return "application/msword";
+        if (name.endsWith(".one")) return OneNoteContentDetector.MIME;
         if (name.endsWith(".txt") || name.endsWith(".md")) return "text/plain";
         if (name.endsWith(".html") || name.endsWith(".htm")) return "text/html";
         if (name.endsWith(".json")) return "application/json";

@@ -87,6 +87,7 @@ public final class LargeFiles {
             case "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
             case "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation";
             case "doc" -> "application/msword";
+            case "one" -> "application/onenote";
             case "xls" -> "application/vnd.ms-excel";
             case "csv" -> "text/csv";
             case "txt", "md", "log" -> "text/plain";

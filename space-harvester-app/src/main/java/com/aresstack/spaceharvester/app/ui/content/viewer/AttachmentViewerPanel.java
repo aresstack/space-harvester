@@ -855,6 +855,10 @@ public final class AttachmentViewerPanel extends JPanel {
                 showUnavailable(NO_PREVIEW_TEXT);
                 return;
             case NOTEBOOK:
+                if (!com.aresstack.spaceharvester.source.OneNotePreviewReader.supportsSize(attachment.size())) {
+                    showUnavailable("OneNote: Datei zu groß für die Vorschau (maximal 20 MiB).");
+                    return;
+                }
                 loading("OneNote wird geladen …");
                 requestOriginal(bytes -> decodeAside(() -> {
                     try {

@@ -10,7 +10,7 @@ import java.util.Objects;
 
 /** Read a preview through the existing structured document adapter. */
 public final class OneNotePreviewReader {
-    private static final long MAX_BYTES = 20L * 1024 * 1024;
+    public static final long MAX_BYTES = 20L * 1024 * 1024;
     private static final long MAX_CHARS = 1_000_000;
     private final DocumentStructure structure;
     private final ExtractionLimits limits;
@@ -36,8 +36,13 @@ public final class OneNotePreviewReader {
                 d.idleTimeout(), d.totalTimeout(), d.tempSpaceReserve(), d.parallel(), d.memoryLimits());
     }
 
+    /** Check known sizes before loading an original for preview. */
+    public static boolean supportsSize(long bytes) {
+        return bytes <= MAX_BYTES;
+    }
+
     public OneNotePreview read(String title, byte[] bytes) throws IOException {
-        if (bytes.length > MAX_BYTES) {
+        if (!supportsSize(bytes.length)) {
             throw new IOException("OneNote preview exceeds the 20 MiB memory limit");
         }
         Path original = Files.createTempFile("onenote-preview-", ".one");

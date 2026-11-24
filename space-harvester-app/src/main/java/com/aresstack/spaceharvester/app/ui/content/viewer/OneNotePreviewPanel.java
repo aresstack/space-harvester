@@ -18,6 +18,9 @@ final class OneNotePreviewPanel extends JPanel {
         preview.sections().forEach(model::addElement);
         sections = new JList<>(model);
         sections.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        // Keep horizontal navigation inside the notebook while its page list has focus.
+        bindPageNavigation("LEFT", -1);
+        bindPageNavigation("RIGHT", 1);
         sections.setCellRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value, int index,
@@ -57,6 +60,21 @@ final class OneNotePreviewPanel extends JPanel {
         }
         return "OneNote: kein lesbarer Text (" + outcome.status() + ", "
                 + outcome.reason().map(StatusReason::code).orElse("-") + ")";
+    }
+
+    private void bindPageNavigation(String key, int direction) {
+        String action = "note-page-" + key;
+        sections.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(key), action);
+        sections.getActionMap().put(action, new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent event) {
+                int target = sections.getSelectedIndex() + direction;
+                if (target >= 0 && target < sectionCount()) {
+                    selectSection(target);
+                    sections.ensureIndexIsVisible(target);
+                }
+            }
+        });
     }
 
     private void displaySelectedSection() {

@@ -39,6 +39,20 @@ class AttachmentViewerPanelTest {
     Path temp;
 
     @Test
+    void oversizedOneNoteIsNotLoadedForPreview() throws Exception {
+        FakeLoader loader = new FakeLoader();
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("note", "Notes.one", "application/onenote",
+                            com.aresstack.spaceharvester.source.OneNotePreviewReader.MAX_BYTES + 1),
+                    loader, null, Runnable::run);
+            assertThat(viewer.statusText()).contains("zu groß", "20 MiB");
+            assertThat(loader.loads).isEmpty();
+            viewer.close();
+        });
+    }
+
+    @Test
     void aPdfShowsItsPagesWithZoomSaveAndOpen() throws Exception {
         byte[] pdf = pdf(3);
         FakeLoader loader = new FakeLoader().file("att-pdf", pdf);

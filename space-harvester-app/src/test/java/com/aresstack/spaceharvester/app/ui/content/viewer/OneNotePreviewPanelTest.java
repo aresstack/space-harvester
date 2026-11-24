@@ -21,6 +21,13 @@ class OneNotePreviewPanelTest {
     }
 
     @Test
+    void commandDeckRoutesOneNoteToReadOnlySharedViewer() {
+        assertThat(com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument("Notes.ONE")).isTrue();
+        assertThat(new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().writable()).isFalse();
+        assertThat(com.aresstack.spaceharvester.app.ui.deck.DeckFileViewer.shows("Notes.ONE")).isTrue();
+    }
+
+    @Test
     void explainInsufficientTemporarySpace() {
         Outcome outcome = Outcome.of(ExtractionStatus.FAILED, StatusReason.TEMP_SPACE_LOW);
         assertThat(OneNotePreviewPanel.unavailableMessage(outcome))
@@ -49,8 +56,21 @@ class OneNotePreviewPanelTest {
             OneNotePreviewPanel panel = new OneNotePreviewPanel(preview);
             assertThat(panel.sectionCount()).isEqualTo(2);
             assertThat(panel.displayedText()).isEqualTo("First page");
-            panel.selectSection(1);
+            javax.swing.JSplitPane split = (javax.swing.JSplitPane) panel.getComponent(0);
+            javax.swing.JList<?> list = (javax.swing.JList<?>) ((javax.swing.JScrollPane)
+                    split.getLeftComponent()).getViewport().getView();
+            javax.swing.Action next = list.getActionMap().get(list.getInputMap(javax.swing.JComponent.WHEN_FOCUSED)
+                    .get(javax.swing.KeyStroke.getKeyStroke("RIGHT")));
+            javax.swing.Action previous = list.getActionMap().get(list.getInputMap(javax.swing.JComponent.WHEN_FOCUSED)
+                    .get(javax.swing.KeyStroke.getKeyStroke("LEFT")));
+            assertThat(next).isNotNull();
+            assertThat(previous).isNotNull();
+            next.actionPerformed(new java.awt.event.ActionEvent(list, 0, "next"));
             assertThat(panel.displayedText()).isEqualTo("Second page");
+            next.actionPerformed(new java.awt.event.ActionEvent(list, 0, "next"));
+            assertThat(panel.displayedText()).isEqualTo("Second page");
+            previous.actionPerformed(new java.awt.event.ActionEvent(list, 0, "previous"));
+            assertThat(panel.displayedText()).isEqualTo("First page");
         });
     }
 }
