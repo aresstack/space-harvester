@@ -100,7 +100,9 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     KI-Freigabe, mit Quellennummer) und liefert in einer eigenen, gestreamten Anfrage nur ihren Beitrag zur Frage;
     höchstens „Parallele Agenten“ gleichzeitig, Stopp bricht alle ab. Mehrere Werkzeugaufrufe einer Runde laufen
     ebenso gleichzeitig, Browser-Aufrufe nacheinander; die Antworten bleiben in der Reihenfolge der Aufrufe. Die
-    Grenze der Tabs wirkt erst ganz, wenn die Obergrenze im Browser-Werkzeug des EAC fällt (Folge-PR im EAC).
+    Grenze der Tabs gilt ohne die frühere feste 8 des EAC-Browserwerkzeugs. Webtreffer: `browser_open_many` mit
+    `question` lässt je geladener Seite einen Unteragenten (dieselbe Rolle wie intern) den Volltext auswerten,
+    höchstens „Parallele Tabs“ gleichzeitig; zurück kommt nur der Beitrag jeder Seite (EAC #236).
 
 ## Folgen
 

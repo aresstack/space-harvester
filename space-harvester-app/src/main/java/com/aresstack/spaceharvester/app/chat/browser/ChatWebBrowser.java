@@ -149,6 +149,16 @@ public final class ChatWebBrowser {
         tools.setBatchLoad(new ChatConversationId(chatId), tabs, delayMillis);
     }
 
+    /**
+     * Unteragenten für {@code browser_open_many} mit Frage: je geladener Seite eine Auswertung, höchstens
+     * {@code parallel} gleichzeitig (Angelo 24.11.2026); {@code null} schaltet sie ab.
+     */
+    public void pageEvaluator(String chatId,
+                              com.aresstack.enterpriseai.proasteion.application.agent.BrowserPageEvaluator evaluator,
+                              int parallel) {
+        tools.setPageEvaluator(new ChatConversationId(chatId), evaluator, parallel);
+    }
+
     /** Menschliche Eingabe (Tasten, Lesepausen) und Mausbewegungen im Browser des Chats. */
     public void humanEmulation(String chatId, boolean keys, boolean mouse) {
         tools.setHumanEmulation(new ChatConversationId(chatId), keys, mouse);

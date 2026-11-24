@@ -2017,6 +2017,8 @@ public final class ChatPanel extends JPanel {
         ChatTurn.WebSearch web = webSearchFor(chat.id(), card, listener);
         if (web != null) {
             turn.webSearch(web);
+            // Angelo 24.11.2026: Webtreffer wertet je Seite ein eigener Agent aus, so viele gleichzeitig wie Tabs.
+            context.webBrowser().pageEvaluator(chat.id(), turn::evaluatePage, parallel("tabs", WEB_TABS_DEFAULT));
             listener.webCard = card;
         }
         listener.turn = turn;

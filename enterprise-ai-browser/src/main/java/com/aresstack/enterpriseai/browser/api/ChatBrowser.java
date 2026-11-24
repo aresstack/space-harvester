@@ -26,8 +26,11 @@ public interface ChatBrowser {
     /** Reads {@code tabId} (or the current tab if {@code null}) without navigating. */
     BrowserPage read(String tabId) throws BrowserException;
 
-    /** Upper bound for the tabs {@link #openMany} loads at the same time. */
-    int MAX_PARALLEL_TABS = 8;
+    /**
+     * Upper bound for the tabs {@link #openMany} loads at the same time: only a guard against nonsense values; how many
+     * tabs actually load at once is the user's setting (the wave is never larger than the list of addresses).
+     */
+    int MAX_PARALLEL_TABS = 9999;
 
     /** Upper bound for the random wait before each tab of {@link #openMany}. */
     int MAX_TAB_DELAY_MILLIS = 10000;

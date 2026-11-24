@@ -1361,6 +1361,20 @@ public final class ChatTurn {
         return "Quelle [" + number + "] " + page.title() + " (" + ref + "):\n" + askSubAgent(messages);
     }
 
+    /**
+     * Ein Unteragent der Websuche: wertet eine von {@code browser_open_many} geladene Seite für {@code asked} aus (leer:
+     * die Frage des Nutzers). Läuft auf einem Thread des Browser-Werkzeugs, mehrere gleichzeitig.
+     */
+    public String evaluatePage(String asked, String title, String url, String text) {
+        if (cancelRequested) {
+            return "Abgebrochen.";
+        }
+        String focus = asked == null || asked.isBlank() ? question : asked.strip();
+        return askSubAgent(List.of(AiChat.Message.system(ChatKnowledge.SUB_AGENT_PROMPT),
+                AiChat.Message.user("Frage: " + focus + "\n\nSeite " + (title == null || title.isBlank()
+                        ? "(ohne Titel)" : title) + " (" + url + ")\n\n" + (text == null ? "" : text))));
+    }
+
     /** Eine Anfrage eines Unteragenten, gestreamt wie jede KI-Anfrage; wartet auf ihr Ende. */
     private String askSubAgent(List<AiChat.Message> messages) {
         java.util.concurrent.CompletableFuture<String> result = new java.util.concurrent.CompletableFuture<>();
