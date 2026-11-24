@@ -133,7 +133,8 @@ class JobsTest {
                 JobTask.blocking(JobContext::checkpoint));
         JobStatus queued = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a", JobTask.blocking(context -> { }));
         JobStatus other = jobs.submit(JobType.SYNC, "files", "DOCS", "client-a", JobTask.blocking(context -> { }));
-        JobStatus global = jobs.submit(JobType.KNOWLEDGE_GRAPH_EXPORT, Jobs.ALL_SOURCES, null, "client-a",
+        // Ein quellenübergreifender Auftrag, der einen Platz braucht (der Graph-Export liefe auf der lokalen Spur sofort).
+        JobStatus global = jobs.submit(JobType.SEARCH_QUALITY, Jobs.ALL_SOURCES, null, "client-a",
                 JobTask.blocking(context -> { }));
 
         // Der laufende endet erst an seinem nächsten Checkpoint.

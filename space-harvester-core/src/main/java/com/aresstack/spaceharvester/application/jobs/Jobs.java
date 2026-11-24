@@ -149,6 +149,13 @@ public class Jobs implements AutoCloseable {
 
     /** Laufende Folgeaufträge ({@link JobType#followUp()}) außer Downloads. */
     private int runningFollowUps;
+    /** Laufende lokale Aufträge ({@link JobType#local()}); sie belegen keinen Platz unter „Vorbereitung“. */
+    private int runningLocal;
+    /**
+     * So viele lokale Aufträge ({@link JobType#local()}) laufen höchstens zugleich: die Hälfte der Prozessorkerne,
+     * mindestens einer, damit der Rechner bedienbar bleibt.
+     */
+    private int localSlots = defaultLocalSlots();
     /** Laufende Hintergrundaufträge ({@link JobType#background()}). */
     private int runningBackground;
     /**
@@ -1848,6 +1855,8 @@ public class Jobs implements AutoCloseable {
                 if (job.type.download()) {
                     preparing++;
                     job.stage = JobStage.PREPARING;
+                } else if (job.type.local()) {
+                    runningLocal++;
                 } else if (!ownLane(job)) {
                     running++;
                     if (job.type.followUp()) {
@@ -1892,7 +1901,8 @@ public class Jobs implements AutoCloseable {
      * Plätze für die Vorbereitung ({@link #parallelPreparations()}); sonst Abgleiche und Exporte vor Folgeaufträgen,
      * damit die Anreicherung nie einen Export aufhält; Folgeaufträge belegen höchstens alle Plätze bis auf einen.
      * Hintergrundaufträge ({@link JobType#background()}) kommen zuletzt: nur wenn kein anderer Auftrag wartet, und
-     * zusammen mit den Folgeaufträgen höchstens alle Plätze bis auf einen. Unter dem Sperrobjekt.
+     * zusammen mit den Folgeaufträgen höchstens alle Plätze bis auf einen. Lokale Aufträge ({@link JobType#local()})
+     * laufen auf eigener Spur bis {@link #localSlots()} und zählen für keine dieser Grenzen. Unter dem Sperrobjekt.
      */
     private Job next() {
         // #944 (Angelo 17.11.2026): keine festen Auftragsplätze mehr. Abgleiche, Seitenexporte und Folgeaufträge
@@ -1917,6 +1927,15 @@ public class Jobs implements AutoCloseable {
             }
             if (heldBySource(job)) {
                 // Das Löschen der Daten seiner Quelle ist offen: zählt nicht als wartend und hält keinen anderen auf.
+                continue;
+            }
+            if (job.type.local()) {
+                // Eigene Spur für lokale Arbeit (Angelo 24.11.2026): kein Platz unter „Vorbereitung“; wartet nur auf
+                // einen freien lokalen Platz und hält keinen anderen Auftrag auf, auch keinen Hintergrund.
+                if (runningLocal < localSlots) {
+                    pick = job;
+                    break;
+                }
                 continue;
             }
             if (job.type.background()) {
@@ -2155,6 +2174,10 @@ public class Jobs implements AutoCloseable {
         if (ownLane(job)) {
             return;
         }
+        if (job.type.local()) {
+            runningLocal--;
+            return;
+        }
         if (!job.type.download()) {
             running--;
             if (job.type.followUp()) {
@@ -2188,6 +2211,38 @@ public class Jobs implements AutoCloseable {
             store.save(job.snapshot());
             job.slot.complete(null);
         }
+    }
+
+    /** Die Vorgabe für {@link #localSlots()}: die Hälfte der Prozessorkerne, mindestens einer. */
+    static int defaultLocalSlots() {
+        return Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
+    }
+
+    /**
+     * Höchstens gleichzeitig laufende lokale Aufträge ({@link JobType#local()}): eigene Spur neben den Plätzen unter
+     * „Vorbereitung“, die für Abgleiche, Exporte und die KI im Netz bleiben.
+     */
+    public int localSlots() {
+        lock.lock();
+        try {
+            return localSlots;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Ändert {@link #localSlots()} sofort, mindestens 1; laufende lokale Aufträge laufen zu Ende. */
+    public void localSlots(int value) {
+        if (value < 1) {
+            throw new IllegalArgumentException("Mindestens ein lokaler Platz");
+        }
+        lock.lock();
+        try {
+            localSlots = value;
+        } finally {
+            lock.unlock();
+        }
+        dispatch();
     }
 
     /** Höchstens gleichzeitig vorbereitende Downloads ({@code jobs.parallel-preparations}). */

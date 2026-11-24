@@ -155,6 +155,18 @@ public enum JobType {
         return this == BACKGROUND;
     }
 
+    /**
+     * Rechnet nur lokal am PC, ohne KI im Netz und ohne Quelle (Angelo 24.11.2026: „die Plätze beziehen sich ja auf die
+     * KI-Ressourcen im Netz, nicht auf die lokalen Ressourcen am PC“): Aussagenanalyse mit dem MaltParser, „Neu lesen“,
+     * Import eines Pakets, „Daten bereinigen“, Graph-Export, Umwandeln und „PPTX erzeugen“. Solche Aufträge laufen auf
+     * eigener Spur ({@link Jobs#localSlots()}), belegen keinen Platz unter „Vorbereitung“ und halten keinen anderen
+     * Auftrag auf.
+     */
+    public boolean local() {
+        return this == STATEMENT_ANALYSIS || this == REREAD || this == IMPORT || this == PURGE
+                || this == KNOWLEDGE_GRAPH_EXPORT || this == CONVERSION || this == PRESENTATION_EXPORT;
+    }
+
     /** Gehört zu „In PPTX umwandeln“ (Angelo 20.11.2026). */
     public boolean presentation() {
         return this == VIDEO_TRANSCRIPT || this == VIDEO_SLIDES || this == TRANSCRIPT_CORRECTION
