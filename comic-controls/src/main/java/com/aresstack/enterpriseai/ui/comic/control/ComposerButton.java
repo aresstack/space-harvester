@@ -24,6 +24,7 @@ public class ComposerButton extends JButton {
     private final boolean primary;
     private Color accent;
     private boolean emphasized;
+    private Color glyphTint;
 
     public ComposerButton(Icon icon, String text, boolean primary) {
         this(icon, text, primary, null);
@@ -61,9 +62,19 @@ public class ComposerButton extends JButton {
         return primary;
     }
 
+    /**
+     * Colors the glyph of a flat (not filled) enabled button, e.g. to show a toggle's state without a plate;
+     * {@code null} keeps the standard control text color.
+     */
+    public void setGlyphTint(Color glyphTint) {
+        this.glyphTint = glyphTint;
+        repaint();
+    }
+
     @Override
     protected void paintComponent(Graphics graphics) {
-        ComposerButtonStyle.paintBackground(this, graphics, accent, primary || emphasized);
+        // The tint goes into the single foreground decision, so painting never flips the color back and forth.
+        ComposerButtonStyle.paintBackground(this, graphics, accent, primary || emphasized, glyphTint);
         super.paintComponent(graphics);
     }
 

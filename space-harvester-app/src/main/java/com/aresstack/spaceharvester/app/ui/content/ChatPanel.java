@@ -1854,15 +1854,9 @@ public final class ChatPanel extends JPanel {
         return buttons;
     }
 
-    /** Eine Aktivitätsblase im Verlauf: die Karte „Browserrecherche“ oder die Wolke eines Werkzeugaufrufs. */
+    /** Eine Aktivitätsblase im Verlauf: die Karte „Browserrecherche“, die Gedankenblase oder eine Werkzeugwolke. */
     private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
                                                                                          String body) {
-        return addActivity(title, body, List.of());
-    }
-
-    /** Wie oben, mit Knöpfen unter der Blase (etwa „Laden“ in der Gedankenblase), umbrechend wie bei Rückfragen. */
-    private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
-            String body, List<? extends JComponent> buttons) {
         if (listening != null) {
             listening.behindActivity();
         }
@@ -1873,24 +1867,88 @@ public final class ChatPanel extends JPanel {
         bubble.setMaximumBubbleWidth(640);
         BubbleMessageRow bubbleRow = new BubbleMessageRow(bubble, BubbleSide.LEFT);
         bubbleRow.setAlignmentX(LEFT_ALIGNMENT);
-        JComponent row = bubbleRow;
-        if (!buttons.isEmpty()) {
-            JPanel both = new JPanel();
-            both.setOpaque(false);
-            both.setLayout(new javax.swing.BoxLayout(both, javax.swing.BoxLayout.Y_AXIS));
-            both.add(bubbleRow);
-            JPanel panel = buttonPanel();
-            buttons.forEach(panel::add);
-            both.add(panel);
-            both.setAlignmentX(LEFT_ALIGNMENT);
-            row = both;
-        }
         emptyNote.setVisible(false);
-        transcript.add(row);
+        transcript.add(bubbleRow);
         transcript.revalidate();
         transcript.repaint();
         scrollDown();
         return bubble;
+    }
+
+    /** Tooltip des Kreispfeils hinter „… davon nicht geladen“. */
+    static final String RETRY_MISSING = "Nicht geladene Seiten erneut laden";
+    /** Tooltip des Fadenkreuzes dahinter. */
+    static final String OPEN_MISSING = "Nicht geladene Seite öffnen (Zurück führt hierher zurück)";
+    private static final java.util.regex.Pattern MISSING_COUNT =
+            java.util.regex.Pattern.compile("\\d+ davon nicht geladen");
+
+    /** Der Teil der Wissenszeile, hinter dem die Icons stehen; {@code null}, wenn nichts fehlt. */
+    static String notLoadedAnchor(String knowledgeLine) {
+        if (knowledgeLine == null) {
+            return null;
+        }
+        java.util.regex.Matcher missing = MISSING_COUNT.matcher(knowledgeLine);
+        if (missing.find()) {
+            return missing.group();
+        }
+        return knowledgeLine.contains(NOT_LOADED) ? NOT_LOADED : null;
+    }
+
+    /**
+     * Kreispfeil (erneut laden, wie bisher „Laden“) und, wenn der Bereich Seiten kennt, Fadenkreuz (die erste nicht
+     * geladene Seite in der Seitenansicht öffnen; deren Verlauf führt mit Zurück und der Maustaste zurück).
+     */
+    private List<JComponent> missingActions(PageSelection scope) {
+        List<JComponent> actions = new ArrayList<>();
+        IconButton retry = new IconButton(Glyph.REFRESH, RETRY_MISSING).compact();
+        retry.addActionListener(e -> {
+            retry.setEnabled(false);
+            load();
+        });
+        actions.add(retry);
+        if (scope != null && scope.counts().pages() > scope.counts().stored()) {
+            IconButton locate = new IconButton(Glyph.CROSSHAIR, OPEN_MISSING).compact();
+            locate.addActionListener(e -> openMissing(scope, locate));
+            actions.add(locate);
+        }
+        return actions;
+    }
+
+    private void openMissing(PageSelection scope, IconButton locate) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        locate.setEnabled(false);
+        Background.run(() -> firstMissing(runtime.workspace(), scope), key -> {
+            locate.setEnabled(true);
+            if (key == null) {
+                feedback.info("Keine nicht geladene Seite mehr", null);
+            } else {
+                context.navigator().openPage(key.sourceId(), key.pageId());
+            }
+        }, error -> {
+            locate.setEnabled(true);
+            feedback.problem(error);
+        });
+    }
+
+    /** Die erste Seite des Bereichs, die nur in der Quelle steht (nicht geladen); {@code null}, wenn keine fehlt. */
+    static com.aresstack.spaceharvester.application.snapshot.PageKey firstMissing(com.aresstack.spaceharvester.app.runtime.Workspace workspace, PageSelection scope) {
+        for (com.aresstack.spaceharvester.application.holdings.SpaceSummary space : scope.spaces()) {
+            Set<String> ids = scope.pagesOf(space.sourceId());
+            if (ids.isEmpty()) {
+                continue;
+            }
+            for (com.aresstack.spaceharvester.application.holdings.PageHolding page
+                    : workspace.holdings(space.sourceId(), space.spaceKey(), ids).pages().values()) {
+                if (ids.contains(page.pageId())
+                        && page.state() == com.aresstack.spaceharvester.application.holdings.HoldingState.REMOTE) {
+                    return new com.aresstack.spaceharvester.application.snapshot.PageKey(space.sourceId(), page.pageId());
+                }
+            }
+        }
+        return null;
     }
 
     /** Für Tests: wie knapp die Fußzeile gerade ist (0 bis 3). */
@@ -2043,19 +2101,18 @@ public final class ChatPanel extends JPanel {
         TurnListener listener = new TurnListener(target, targetNode, answering, answeringSources);
         listening = listener;
         // Die gelbe Blase gleich mit dem Senden (Angelo 24.11.2026): Bereichssuche und interne Suche gleich, mit
-        // Wissenszeile und „Laden“; die Antwortblase wartet unsichtbar dahinter, bis Text kommt.
+        // Wissenszeile; die Antwortblase wartet unsichtbar dahinter, bis Text kommt.
         boolean withKnowledge = custom == null && (scope != null || appSearchOn);
-        List<JComponent> cardButtons = new ArrayList<>();
-        if (withKnowledge && load.isVisible() && load.isEnabled()) {
-            ComposerButton loadNow = Comic.button(LOAD, load.getToolTipText());
-            loadNow.addActionListener(e -> {
-                loadNow.setEnabled(false);
-                load();
-            });
-            cardButtons.add(loadNow);
-        }
-        KnowledgeCard thinking = new KnowledgeCard(withKnowledge,
-                (title, body) -> addActivity(title, body, cardButtons));
+        // Direkt hinter „… davon nicht geladen“ in derselben Zeile (Angelo 24.11.2026): Erneut laden (Kreispfeil) und
+        // die nicht geladene Seite öffnen (Fadenkreuz), als Icons ohne Kasten, erst beim Darüberfahren als Knopf.
+        String anchor = withKnowledge && load.isVisible() && load.isEnabled() ? notLoadedAnchor(knowledge.getText())
+                : null;
+        List<JComponent> inline = anchor == null ? List.of() : missingActions(scope);
+        KnowledgeCard thinking = new KnowledgeCard(withKnowledge, (title, body) -> {
+            com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel bubble = addActivity(title, body);
+            bubble.setInlineActions(anchor, inline);
+            return bubble;
+        });
         if (withKnowledge) {
             thinking.knowledge(knowledge.getText());
         }

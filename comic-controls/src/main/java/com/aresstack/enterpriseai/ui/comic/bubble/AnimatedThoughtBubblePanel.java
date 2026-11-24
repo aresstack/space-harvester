@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.bubble;
 
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextArea;
@@ -120,7 +121,96 @@ public class AnimatedThoughtBubblePanel extends JPanel {
     }
 
     public String getExplanation() {
-        return explanationArea.getText();
+        return explanationArea.getText().replace(String.valueOf(INLINE_GAP), "");
+    }
+
+    /** Non-breaking (UAX #14: glue) space reserving room for the inline actions right after their anchor. */
+    private static final char INLINE_GAP = '\u2007';
+    /** Gap in pixels before, between and after the inline actions. */
+    private static final int INLINE_SPACING = 4;
+    private String inlineAnchor;
+    private final List<JComponent> inlineActions = new ArrayList<JComponent>();
+
+    /**
+     * Small buttons INSIDE the text, right behind the first occurrence of {@code anchor} on the same line (e.g. a
+     * retry and an open button behind "1 of them not loaded"): the text keeps room for them with non-breaking spaces,
+     * so they wrap together with the anchor's last word. Without the anchor in the text the actions stay hidden;
+     * {@code null} or no actions removes them.
+     */
+    public void setInlineActions(String anchor, List<? extends JComponent> actions) {
+        for (JComponent action : inlineActions) {
+            explanationArea.remove(action);
+        }
+        inlineActions.clear();
+        inlineAnchor = anchor == null || anchor.isEmpty() ? null : anchor;
+        if (inlineAnchor != null && actions != null) {
+            for (JComponent action : actions) {
+                inlineActions.add(action);
+                explanationArea.add(action);
+            }
+        }
+        applyExplanation(getExplanation());
+        refreshLayout();
+    }
+
+    /** The inline actions as set (tests). */
+    List<JComponent> inlineActions() {
+        return java.util.Collections.unmodifiableList(inlineActions);
+    }
+
+    private String withInlineGap(String text) {
+        if (inlineAnchor == null || inlineActions.isEmpty()) {
+            return text;
+        }
+        int at = text.indexOf(inlineAnchor);
+        if (at < 0) {
+            return text;
+        }
+        FontMetrics metrics = explanationArea.getFontMetrics(explanationArea.getFont());
+        int needed = INLINE_SPACING;
+        for (JComponent action : inlineActions) {
+            needed += action.getPreferredSize().width + INLINE_SPACING;
+        }
+        int gap = Math.max(1, metrics.charWidth(INLINE_GAP));
+        int count = (needed + gap - 1) / gap;
+        StringBuilder room = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            room.append(INLINE_GAP);
+        }
+        int end = at + inlineAnchor.length();
+        return text.substring(0, end) + room + text.substring(end);
+    }
+
+    /** Puts the inline actions over the room behind their anchor, vertically centred on its line. */
+    private void placeInlineActions() {
+        if (inlineActions.isEmpty()) {
+            return;
+        }
+        String text = explanationArea.getText();
+        int at = text.indexOf(INLINE_GAP);
+        java.awt.Rectangle line = null;
+        if (at >= 0 && explanationArea.getWidth() > 0) {
+            try {
+                line = explanationArea.modelToView(at);
+            } catch (javax.swing.text.BadLocationException outOfText) {
+                line = null;
+            }
+        }
+        int x = line == null ? 0 : line.x + INLINE_SPACING;
+        for (JComponent action : inlineActions) {
+            Dimension size = action.getPreferredSize();
+            action.setVisible(line != null);
+            if (line != null) {
+                action.setBounds(x, line.y + (line.height - size.height) / 2, size.width, size.height);
+                x += size.width + INLINE_SPACING;
+            }
+        }
+    }
+
+    @Override
+    public void doLayout() {
+        super.doLayout();
+        placeInlineActions();
     }
 
     public String getResultSummary() {
@@ -163,7 +253,7 @@ public class AnimatedThoughtBubblePanel extends JPanel {
             }
             text = marker.replaceAll(" ").trim();
         }
-        explanationArea.setText(text);
+        explanationArea.setText(withInlineGap(text));
         progressStrip.update(current, total);
     }
 
