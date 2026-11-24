@@ -7,6 +7,12 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeRevision;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.astu.source.SourceLocators;
+import com.aresstack.enterpriseai.source.api.CrossReferences;
+import com.aresstack.enterpriseai.source.api.NavigationChildren;
+import com.aresstack.enterpriseai.source.api.NavigationNode;
+import com.aresstack.enterpriseai.source.api.PageNavigationSource;
+import com.aresstack.enterpriseai.source.api.PagePosition;
+import com.aresstack.enterpriseai.source.api.files.FilePatterns;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
@@ -19,6 +25,12 @@ import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.LinkOption;
+import java.util.Comparator;
+import java.util.stream.Stream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,10 +54,11 @@ import java.util.Objects;
  * Ein Ordner hat keinen Inhalt (leeres Original im Format {@value #FOLDER_FORMAT}).
  *
  * <p>Welche Dateien gelesen werden (versteckte, Muster, Größe, Freigaben), entscheidet weiter allein die Quelle; ein
- * Ordner ohne gelistete Datei erscheint nicht.
+ * Ordner ohne gelistete Datei erscheint nur in der Live-Navigation, nicht im Dokumenteninventar.
+ * The navigation reads only immediate children and never traverses unopened directories.
  */
 final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListingSource, ResourceMetadataSource,
-        StoredContentSource {
+        StoredContentSource, PageNavigationSource, ResourceNodeKindSource {
 
     /** {@link StoredContent#nativeFormat()} eines Ordners: kein Inhalt. */
     static final String FOLDER_FORMAT = "local-folder";
@@ -61,10 +74,13 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
     private final ResourceMetadataSource metadata;
     private final StoredContentSource stored;
     private final Path root;
+    private final FilePatterns patterns;
+    private static final int NAVIGATION_BATCH = 200;
+    private static final String NAVIGATION_CURSOR = "lfn1.";
     /** Anfang jeder Ressourcen-ID der Quelle, wie dort gebildet: {@code file:<Verzeichnis mit />/}. */
     private final String prefix;
 
-    LocalFolderHierarchy(KnowledgeSourcePort port, Path root) {
+    LocalFolderHierarchy(KnowledgeSourcePort port, Path root, FilePatterns patterns) {
         Objects.requireNonNull(port, "port");
         if (!(port instanceof PartitionListingSource listing) || !(port instanceof ResourceMetadataSource metadata)
                 || !(port instanceof StoredContentSource stored)) {
@@ -75,6 +91,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
         this.metadata = metadata;
         this.stored = stored;
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
+        this.patterns = Objects.requireNonNull(patterns, "patterns");
         this.prefix = "file:" + SourceLocators.path(this.root.toString()) + "/";
     }
 
@@ -173,6 +190,112 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
     }
 
     @Override
+    public NavigationChildren children(NavigationNode parent, String cursor) throws KnowledgeSourceException {
+        String path = parentPath(parent);
+        String after = navigationAfter(path, cursor);
+        List<NavigationNode> nodes = new ArrayList<>();
+        addDirectories(path, nodes);
+        addFiles(path, nodes);
+        nodes.sort(Comparator.comparing(LocalFolderHierarchy::navigationOrder));
+        List<NavigationNode> remaining = nodes.stream()
+                .filter(node -> after == null || navigationOrder(node).compareTo(after) > 0).toList();
+        int count = Math.min(NAVIGATION_BATCH, remaining.size());
+        String next = count < remaining.size()
+                ? NAVIGATION_CURSOR + encode(path) + "." + encode(navigationOrder(remaining.get(count - 1))) : null;
+        return new NavigationChildren(remaining.subList(0, count), next);
+    }
+
+    private String parentPath(NavigationNode parent) throws KnowledgeSourceException {
+        if (parent.isRoot()) {
+            if (!parent.key().equals(rootKey())) {
+                throw new KnowledgeSourceException(Kind.NOT_FOUND, "Unbekannte Ordner-Partition");
+            }
+            return ".";
+        }
+        String path = folderOf(metadata.localId(parent.resource()));
+        if (path == null) {
+            // Validate the resource without ever treating a file as a directory.
+            resourceMetadata(metadata.localId(parent.resource()));
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Datei besitzt keine Ordnerkinder");
+        }
+        return path;
+    }
+
+    private void addDirectories(String path, List<NavigationNode> nodes) throws KnowledgeSourceException {
+        Path directory = ".".equals(path) ? root : root.resolve(path);
+        try (Stream<Path> children = Files.list(directory)) {
+            children.filter(child -> Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS))
+                    .map(this::relativePath).filter(this::visibleFolder)
+                    .map(this::folder).map(this::navigationNode).forEach(nodes::add);
+        } catch (IOException | UncheckedIOException | SecurityException failure) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Ordner nicht lesbar: " + path, failure);
+        }
+    }
+
+    private void addFiles(String path, List<NavigationNode> nodes) throws KnowledgeSourceException {
+        SourceScope scope = SourceScope.builder().startPoints(path).maxDepth(0)
+                .maxResources(Integer.MAX_VALUE).ignoringSelection().build();
+        for (KnowledgeResource file : port.discover(scope)) {
+            nodes.add(navigationNode(withParent(file)));
+        }
+    }
+
+    private String relativePath(Path path) {
+        return root.relativize(path).toString().replace('\\', '/');
+    }
+
+    private static String navigationOrder(NavigationNode node) {
+        return (node.children() == NavigationNode.Children.NO ? "1:" : "0:") + node.key();
+    }
+
+    private static String navigationAfter(String path, String cursor) throws KnowledgeSourceException {
+        if (cursor == null || cursor.isEmpty()) {
+            return null;
+        }
+        String own = NAVIGATION_CURSOR + encode(path) + ".";
+        String after = cursor.startsWith(own) ? decode(cursor.substring(own.length())) : null;
+        if (after == null) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Cursor gehört nicht zu diesem Ordner");
+        }
+        return after;
+    }
+
+    @Override
+    public PagePosition position(KnowledgeResourceId page) throws KnowledgeSourceException {
+        KnowledgeResource resource = resourceMetadata(metadata.localId(page));
+        List<NavigationNode> ancestors = folders(pathOf(resource)).stream()
+                .map(this::folder).map(this::navigationNode).toList();
+        Path name = root.getFileName();
+        NavigationNode rootNode = NavigationNode.root(rootKey(), name == null ? root.toString() : name.toString(),
+                rootKey(), NavigationNode.Children.UNKNOWN);
+        return new PagePosition(rootNode, ancestors, navigationNode(resource));
+    }
+
+    private String rootKey() {
+        return "space:" + sourceId().value();
+    }
+
+    private NavigationNode navigationNode(KnowledgeResource resource) {
+        return NavigationNode.page(resource.id(), resource.title(), isFolder(resource)
+                ? NavigationNode.Children.UNKNOWN : NavigationNode.Children.NO);
+    }
+
+    private static boolean isFolder(KnowledgeResource resource) {
+        return PageMetadata.FOLDER_KIND.equals(resource.metadata().asMap().get(PageMetadata.RESOURCE_KIND));
+    }
+
+    @Override
+    public HarvestSource.PageNode.Kind kind(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+        return isFolder(resourceMetadata(metadata.localId(resourceId)))
+                ? HarvestSource.PageNode.Kind.FOLDER : HarvestSource.PageNode.Kind.FILE;
+    }
+
+    @Override
+    public CrossReferences crossReferences(KnowledgeResourceId page) throws KnowledgeSourceException {
+        return CrossReferences.outgoingOnly(discoverLinks(page));
+    }
+
+    @Override
     public String toString() {
         return "LocalFolderHierarchy{" + port + "}";
     }
@@ -208,19 +331,30 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
      */
     private String folderOf(String localId) {
         String path = localId == null ? null : decode(localId);
-        if (path == null || path.isEmpty()) {
-            return null;
-        }
-        for (String segment : path.split("/", -1)) {
-            if (segment.isEmpty() || segment.startsWith(".")) {
-                return null;
-            }
+        return path != null && visibleFolder(path) ? path : null;
+    }
+
+    // Validate every ancestor, including the real location, before exposing a directory.
+    private boolean visibleFolder(String path) {
+        if (path.isEmpty() || path.indexOf('\\') >= 0) {
+            return false;
         }
         try {
-            Path folder = root.resolve(path).normalize();
-            return folder.startsWith(root) && !folder.equals(root) && Files.isDirectory(folder) ? path : null;
-        } catch (RuntimeException invalid) {
-            return null;
+            Path current = root;
+            for (String segment : path.split("/", -1)) {
+                if (segment.isEmpty() || segment.startsWith(".")) {
+                    return false;
+                }
+                current = current.resolve(segment);
+                if (!current.startsWith(root) || !patterns.entersFolder(relativePath(current))
+                        || !Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS) || Files.isHidden(current)) {
+                    return false;
+                }
+            }
+            return !current.equals(root) && relativePath(current).equals(path)
+                    && current.toRealPath().startsWith(root.toRealPath());
+        } catch (IOException | RuntimeException invalid) {
+            return false;
         }
     }
 

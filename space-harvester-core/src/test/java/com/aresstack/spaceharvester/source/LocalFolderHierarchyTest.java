@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.source;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.tree.PageTreeBuilder;
@@ -75,6 +76,43 @@ class LocalFolderHierarchyTest {
         assertThat(new String(source.storedPage(id("Handbuch/Betrieb/Nachtlauf.md")).payload(),
                 StandardCharsets.UTF_8)).isEqualTo("Ablauf in der Nacht");
         assertThat(source.pageMetadata(id("notiz.txt")).parentPageId()).isNull();
+    }
+
+    @Test
+    void browseOnlyDirectChildrenAndIncludeEmptyFoldersWithoutIndexing() throws IOException {
+        KnowledgeSourceHarvestSource source = open();
+
+        HarvestSource.ChildPages roots = source.children("docs", null, null);
+        assertThat(roots.pages()).extracting(HarvestSource.PageNode::title)
+                .containsExactlyInAnyOrder("Handbuch", "Handbuch-Anhang.md", "Leer", "Protokolle", "notiz.txt");
+        assertThat(roots.pages()).filteredOn(node -> node.title().equals("Leer"))
+                .allSatisfy(node -> assertThat(node.kind()).isEqualTo(HarvestSource.PageNode.Kind.FOLDER));
+        assertThat(source.children("docs", id("Leer"), null).pages()).isEmpty();
+
+        Files.createDirectories(directory.resolve("Handbuch/Neu"));
+        assertThat(source.children("docs", id("Handbuch"), null).pages())
+                .extracting(HarvestSource.PageNode::title).containsExactlyInAnyOrder("Betrieb", "Einleitung.md", "Neu");
+        assertThat(source.children("docs", id("Handbuch/Betrieb"), null).pages())
+                .extracting(HarvestSource.PageNode::title).containsExactlyInAnyOrder("Nachtlauf.md", "Stoerung.txt");
+        assertThat(source.position(id("Handbuch/Betrieb/Nachtlauf.md")).ancestors())
+                .extracting(HarvestSource.PageNode::title).containsExactly("Handbuch", "Betrieb");
+    }
+
+    @Test
+    void paginateDirectChildrenWithoutLosingFolders() throws IOException {
+        Files.createDirectories(directory.resolve("Viele"));
+        for (int i = 0; i < 205; i++) {
+            Files.createDirectory(directory.resolve("Viele/Ordner" + i));
+        }
+        KnowledgeSourceHarvestSource source = open();
+        List<String> titles = new ArrayList<>();
+        String cursor = null;
+        do {
+            HarvestSource.ChildPages batch = source.children("docs", id("Viele"), cursor);
+            titles.addAll(batch.pages().stream().map(HarvestSource.PageNode::title).toList());
+            cursor = batch.nextCursor();
+        } while (cursor != null);
+        assertThat(titles).hasSize(205).doesNotHaveDuplicates();
     }
 
     private Map<String, PageMetadata> list(KnowledgeSourceHarvestSource source, int limit) {
