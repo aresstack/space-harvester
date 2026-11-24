@@ -71,7 +71,7 @@ import org.fife.ui.rtextarea.RTextScrollPane;
  * (z. B. JCL ausführen, Diagramm-Ansicht). Laden und Speichern laufen im Hintergrund; der Zustand kommt per
  * Beobachter aus der {@link EditorSession}.
  */
-public final class DocumentEditor extends JPanel {
+public final class DocumentEditor extends JPanel implements com.aresstack.spaceharvester.app.ui.FindBar.Own {
 
     static final String WRAP_KEY = "deck.editor.wrap";
     static final String OUTLINE_KEY = "deck.editor.outline";
@@ -115,9 +115,16 @@ public final class DocumentEditor extends JPanel {
     private final JComboBox<VersionChoice> versions = Comic.combo();
     private final JLabel compareInfo = Comic.muted(" ");
     private final JTextField findField = Comic.field(22);
-    /** Die eigene Suchzeile unten; Leseansichten blenden sie zugunsten der Lupe des Deck aus ({@link #readOnlyView()}). */
-    private JComponent findRow;
+    /**
+     * Keine eigene Suchzeile mehr (Angelo 24.11.2026: eine Suchleiste): gesucht wird mit der Lupe des Deck, die über
+     * {@link com.aresstack.spaceharvester.app.ui.FindBar.Own} in diesen Editor sucht; Falt-Umschalter und ▲▼ stehen in
+     * ihrem Feld. Das Feld hier trägt nur noch den Suchtext für die vorhandene Such- und Faltlogik.
+     */
     private InputFrame findFrame;
+    /** „Sprache“ samt Auswahl; steht rechts in der Ecke der Leiste mit der Lupe. */
+    private JComponent languagePart;
+    /** Leseansichten ({@link #readOnlyView()}) suchen nicht selbst; dort hebt die Lupe nur hervor. */
+    private boolean ownsFind = true;
     private final IconButton filterToggle = new IconButton(EditorIcons.filterLines(),
             "Zeilen filtern: alle Zeilen ohne Treffer zuklappen");
     private final IconButton previous = new IconButton(ComposerIcons.chevronUp(), "Vorheriger Treffer (Shift+Enter)");
@@ -175,7 +182,6 @@ public final class DocumentEditor extends JPanel {
             }
         });
         key(area, KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK), "deck-save", session::save);
-        key(area, KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK), "deck-find", this::focusFind);
         scroll = new RTextScrollPane(area, true);
         style(scroll);
         reparse.setRepeats(false);
@@ -254,8 +260,13 @@ public final class DocumentEditor extends JPanel {
         top.add(toolRow, BorderLayout.CENTER);
         add(top, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
-        findRow = findRow();
-        add(findRow, BorderLayout.SOUTH);
+        languagePart = findSetup();
+        // Gezeigt oder verdeckt: die Leiste mit der Lupe richtet Umschalter, Ecke und Treffer auf den sichtbaren Editor.
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) {
+                com.aresstack.spaceharvester.app.ui.FindBar.viewChanged(this);
+            }
+        });
 
         AppState state = AppState.shared();
         wrap(state.getBoolean(WRAP_KEY, false));
@@ -499,7 +510,7 @@ public final class DocumentEditor extends JPanel {
 
     // ---- Suche -----------------------------------------------------------------------------------------------------
 
-    private JComponent findRow() {
+    private JComponent findSetup() {
         findField.getAccessibleContext().setAccessibleName("Suchen");
         findField.setToolTipText("<html>Regulärer Ausdruck, ohne Groß/klein<br><br><b>Beispiele:</b><br>"
                 + "abc – enthält „abc“<br>^abc – beginnt mit „abc“<br>abc$ – endet mit „abc“<br>\\d+ – Ziffern<br><br>"
@@ -545,29 +556,55 @@ public final class DocumentEditor extends JPanel {
             }
         });
 
-        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        left.setOpaque(false);
-        left.add(findFrame);
-        left.add(filterToggle);
-        left.add(previous);
-        left.add(next);
-        left.add(findCount);
         JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         right.setOpaque(false);
         right.add(Comic.caption("Sprache"));
         right.add(languageChoice);
-        JPanel row = new JPanel(new BorderLayout(8, 0));
-        row.setOpaque(false);
-        row.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(4, 8, 4, 8)));
-        row.add(left, BorderLayout.CENTER);
-        row.add(right, BorderLayout.EAST);
-        return row;
+        return right;
     }
 
-    private void focusFind() {
-        findField.requestFocusInWindow();
-        findField.selectAll();
+    // ---- Suche über die Lupe des Deck (FindBar.Own) --------------------------------------------------------------
+
+    @Override
+    public boolean ownsFind() {
+        return ownsFind;
+    }
+
+    @Override
+    public void find(String query) {
+        findField.setText(query == null ? "" : query);
+    }
+
+    @Override
+    public void findStep(int direction) {
+        step(direction);
+    }
+
+    @Override
+    public String findCounter() {
+        return findCount.getText();
+    }
+
+    @Override
+    public boolean folding() {
+        return filterToggle.marked();
+    }
+
+    @Override
+    public void folding(boolean on) {
+        if (filterToggle.marked() != on) {
+            filterToggle.doClick();
+        }
+    }
+
+    @Override
+    public javax.swing.Icon foldIcon() {
+        return filterToggle.getIcon();
+    }
+
+    @Override
+    public JComponent findCorner() {
+        return ownsFind ? languagePart : null;
     }
 
     /** Markiert alle Treffer neu, faltet im Filtermodus und zeigt die Zahl. */
@@ -975,15 +1012,13 @@ public final class DocumentEditor extends JPanel {
     public void readOnlyView() {
         outlineToggle.marked(false);
         outlinePanel.setVisible(false);
-        findRow.setVisible(false);
+        ownsFind = false;
         // Für Dokumente ohne Wirkung: Gliederung/Beziehungen/Sprache sind für JCL, COBOL, Natural; der Vergleich
         // nutzt lokale Kopien, die an der wechselnden temporären Datei hängen; Bearbeiten gibt es nicht.
         showRelations(false);
         for (JComponent tool : List.of(outlineToggle, relationsToggle, compareToggle, undo, redo, saveAs)) {
             tool.setVisible(false);
         }
-        area.getInputMap(JComponent.WHEN_FOCUSED)
-                .remove(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK));
         textAndOutline.revalidate();
         revalidate();
     }

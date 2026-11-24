@@ -167,35 +167,48 @@ public final class FileBrowser {
     }
 
     public void back() {
+        go(-1);
+    }
+
+    public void forward() {
+        go(1);
+    }
+
+    /**
+     * Springt {@code steps} Ordner weit im Verlauf (negativ zurück, positiv vor); die übersprungenen wandern in die
+     * Gegenrichtung, wie im Browser.
+     */
+    public void go(int steps) {
         String target = read(() -> {
-            if (back.isEmpty()) {
+            Deque<String> from = steps < 0 ? back : forward;
+            Deque<String> to = steps < 0 ? forward : back;
+            int count = Math.abs(steps);
+            if (count == 0 || from.size() < count) {
                 return null;
             }
             message = null;
-            if (location != null) {
-                forward.push(location);
+            String now = location;
+            for (int i = 0; i < count; i++) {
+                if (now != null) {
+                    to.push(now);
+                }
+                now = from.pop();
             }
-            return back.pop();
+            return now;
         });
         if (target != null) {
             load(target);
         }
     }
 
-    public void forward() {
-        String target = read(() -> {
-            if (forward.isEmpty()) {
-                return null;
-            }
-            message = null;
-            if (location != null) {
-                back.push(location);
-            }
-            return forward.pop();
-        });
-        if (target != null) {
-            load(target);
-        }
+    /** Die Ordner zurück, der vorige zuerst. */
+    public List<String> backEntries() {
+        return read(() -> List.copyOf(back));
+    }
+
+    /** Die Ordner vor, der nächste zuerst. */
+    public List<String> forwardEntries() {
+        return read(() -> List.copyOf(forward));
     }
 
     public void up() {

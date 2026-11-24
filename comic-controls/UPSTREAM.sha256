@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git c0fc2bdc8eee6d0f18671f845ecb0408b0ba9519
+# upstream https://github.com/aresstack/enterprise-ai-client.git 64b5950c1cf132140f4473a9c69d4081edad571d
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 765d09baf95be1883d2d4adf2dd0ae431c8570ef29bb0d39a67252d3c5ce66c1  src/main/java/com/aresstack/enterpriseai/ui/comic/border/ComicBorder.java
 27f9434d0a518aa63b3f45f610ff949d996d240ee98001a792f68402161abbd2  src/main/java/com/aresstack/enterpriseai/ui/comic/bubble/AgentActivityBubblePanel.java
@@ -9,6 +9,7 @@ b52cf5f32f4fe9cfc8208c91838299defab181250705a4ad3e2c942ac1b997e9  src/main/java/
 6a29aa3145ed34736009f0fe722889fbf3ad82bb5773f510bd7d038b44db86bc  src/main/java/com/aresstack/enterpriseai/ui/comic/bubble/BubbleRowGeometry.java
 cc6fed34c54f9a688569c5d1734ee90397ca5d3adb9a061bdd9ea47f51e34020  src/main/java/com/aresstack/enterpriseai/ui/comic/bubble/BubbleSide.java
 ca2c6ad2c615d36e43b55d9e6c0859e27f31f26f797c69b3b06d74d8d43b0084  src/main/java/com/aresstack/enterpriseai/ui/comic/bubble/BubbleTimestamps.java
+b2588fc3d5cb669b41ed3e441a1f7878d2564f79ea1d4da48668e75615925e86  src/main/java/com/aresstack/enterpriseai/ui/comic/bubble/MessageCopyButton.java
 7de11e77900885299c280fcfc381bda8a60b13038d57ba639e1dd852913f28d5  src/main/java/com/aresstack/enterpriseai/ui/comic/bubble/SpeechBubblePanel.java
 a5c4d6d51e47371ed65080ecc4f5f83c96fc8c14bb67873b9e2fb698350d3a29  src/main/java/com/aresstack/enterpriseai/ui/comic/bubble/StreamingTextMeasure.java
 89badfe4795d9ed1e836a88bcb0cff2db7f2d0a17b74c0809ac93c591b7ea4bb  src/main/java/com/aresstack/enterpriseai/ui/comic/bubble/ThoughtBubbleTheme.java

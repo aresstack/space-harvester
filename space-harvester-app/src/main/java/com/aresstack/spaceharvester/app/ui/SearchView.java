@@ -121,11 +121,10 @@ public final class SearchView implements View {
     static final String REPEAT_TIP = "Suche im selben Bereich wiederholen (nicht im links gewählten)";
     /** Wiederholt die letzte Suche in ihrem Bereich; erst nach einer Suche wählbar. */
     final javax.swing.AbstractButton repeat;
-    /** Zurück und Vor zwischen den Suchen dieser Sitzung (Begriff und Bereich). */
-    final javax.swing.AbstractButton backVisit;
-    /** Zurück und Vor links an der Suchleiste, solange die Suche zu sehen ist. */
+    /** Zurück zwischen den Suchen dieser Sitzung (Begriff und Bereich); gedrückt halten zeigt den Verlauf. */
+    final com.aresstack.spaceharvester.app.ui.controls.BackButton backVisit;
+    /** Zurück links an der Suchleiste, solange die Suche zu sehen ist. */
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.CENTER, 2, 0));
-    final javax.swing.AbstractButton forwardVisit;
     /** Was links im Baum markiert ist; leer für „Wissensquellen“. */
     private List<Explorer.Scope> marked = List.of();
     /** Der Bereich der letzten Suche als Schnappschuss beim Start; {@code null} vor der ersten. */
@@ -331,17 +330,33 @@ public final class SearchView implements View {
         frame.setBackground(Comic.SURFACE);
         frame.add(heading, BorderLayout.NORTH);
         frame.add(root, BorderLayout.CENTER);
-        backVisit = new IconButton(Glyph.BACK, "Zurück zur vorigen Suche bzw. zum vorigen Filter").compact();
-        forwardVisit = new IconButton(Glyph.FORWARD, "Vor zur nächsten Suche bzw. zum nächsten Filter").compact();
-        backVisit.addActionListener(e -> back());
-        forwardVisit.addActionListener(e -> forward());
+        backVisit = new com.aresstack.spaceharvester.app.ui.controls.BackButton("Zurück zur vorigen Suche bzw. zum vorigen Filter")
+                .navigator(new com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator() {
+                    @Override
+                    public com.aresstack.spaceharvester.app.ui.controls.BackButton.History history() {
+                        List<String> forward = new ArrayList<>();
+                        for (int i = visit + 1; i < visits.size(); i++) {
+                            forward.add(visitName(visits.get(i)));
+                        }
+                        List<String> back = new ArrayList<>();
+                        for (int i = visit - 1; i >= 0; i--) {
+                            back.add(visitName(visits.get(i)));
+                        }
+                        return new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(forward, back);
+                    }
+
+                    @Override
+                    public void go(int steps) {
+                        int target = visit + steps;
+                        if (steps != 0 && target >= 0 && target < visits.size()) {
+                            revisit(target);
+                        }
+                    }
+                });
         navigation.setOpaque(false);
         navigation.add(backVisit);
-        navigation.add(forwardVisit);
         repeat = heading.tool(Glyph.SYNC, REPEAT_TIP, this::repeat);
         repeat.setEnabled(false);
-        backVisit.setEnabled(false);
-        forwardVisit.setEnabled(false);
         // Solange die Suche zu sehen ist, gehören die Maustasten 4/5 im ganzen Fenster ihr.
         com.aresstack.spaceharvester.app.ui.controls.MouseNavigation.install(frame, this::back, this::forward);
         heading.onSelect(() -> {
@@ -996,6 +1011,12 @@ public final class SearchView implements View {
     }
 
     /** Der Bereich als Text für die Überschrift: „Wissensquellen“, eine Quelle oder „Quelle › Space“. */
+    /** Name einer früheren Suche im Verlauf: Begriff und Bereich. */
+    private String visitName(Visit visit) {
+        String area = areaTitle(visit.area());
+        return visit.text().isBlank() ? area : "„" + visit.text().strip() + "“ in " + area;
+    }
+
     String areaTitle(List<Explorer.Scope> area) {
         if (area.isEmpty()) {
             return "Wissensquellen";
@@ -1276,8 +1297,7 @@ public final class SearchView implements View {
     }
 
     private void updateHistoryButtons() {
-        backVisit.setEnabled(canGoBack());
-        forwardVisit.setEnabled(canGoForward());
+        backVisit.refresh();
     }
 
     /** Übernimmt den Umfang; die Häkchen setzt {@link #syncBoxesToScope}. */

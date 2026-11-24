@@ -495,8 +495,8 @@ class SearchViewTest {
         assertThat(view[0].visits).hasSize(2);
         SwingUtilities.invokeAndWait(() -> view[0].backVisit.doClick());
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta");
-        assertThat(view[0].forwardVisit.isEnabled()).isTrue();
-        SwingUtilities.invokeAndWait(() -> view[0].forwardVisit.doClick());
+        assertThat(view[0].canGoForward()).isTrue();
+        SwingUtilities.invokeAndWait(() -> view[0].forward());
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta › DEV");
         // Eine noch nicht durchsuchte Quelle: nur sie wird nachgesucht.
         SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("alpha", null))));
