@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
+import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.observe.Coalescer;
@@ -779,10 +780,15 @@ public final class ChangeLog implements AutoCloseable {
             throw new SummaryUnavailableException(SummaryUnavailableException.Reason.NO_MODEL, sourceId);
         }
         // Leerer Bereich: Hinweis, kein Modellaufruf (ADR 0034 §7).
-        if (stock.resolveLenient(caller, selection).selection().unlockedSize() == 0) {
+        com.aresstack.spaceharvester.application.holdings.Holdings.Lenient resolvedNow =
+                stock.resolveLenient(caller, selection);
+        if (resolvedNow.selection().unlockedSize() == 0) {
             throw new SummaryUnavailableException(SummaryUnavailableException.Reason.EMPTY_AREA, sourceId);
         }
         Summaries runtime = summaries;
+        // Ohne geladene oder ohne freigegebene Seite bekäme das Modell nur Zahlen (Fehler 24.11.2026: Angelo sah den
+        // Lauf sofort enden, ohne Grund); der Grund steht dann vor dem Start da, ohne Modellaufruf.
+        requireReadablePages(runtime, area(caller, stock, selection, resolvedNow), sourceId);
         SummaryScope.Selected scope = SummaryScope.selection(caller, selection);
         String spaceKey = areaSpace(selection);
         Map<String, String> parameters = Map.of(AREA_PARAMETER, scope.key());
@@ -797,12 +803,14 @@ public final class ChangeLog implements AutoCloseable {
                 Visibility visible = new Visibility(caller);
                 com.aresstack.spaceharvester.application.holdings.Holdings.Lenient resolved =
                         stock.resolveLenient(caller, selection);
-                List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots =
-                        new ArrayList<>(selection.roots());
-                roots.removeAll(resolved.skippedRoots());
-                List<com.aresstack.spaceharvester.application.holdings.Holdings.StoredPage> stored = roots.isEmpty()
-                        ? List.of() : stock.storedPages(caller,
-                        new com.aresstack.spaceharvester.application.holdings.Selection(roots));
+                List<com.aresstack.spaceharvester.application.holdings.Holdings.StoredPage> stored =
+                        area(caller, stock, selection, resolved);
+                try {
+                    requireReadablePages(runtime, stored, sourceId);
+                } catch (SummaryUnavailableException e) {
+                    // Seit dem Start entladen oder entzogen: der Auftrag scheitert mit dem Grund, ohne Modellaufruf.
+                    throw new JobFailedException(e.reason().name(), e.getMessage());
+                }
                 List<AreaSummarizer.Page> pages = new ArrayList<>(stored.size());
                 Map<String, Map<String, String>> pageSpaces = new TreeMap<>();
                 for (com.aresstack.spaceharvester.application.holdings.Holdings.StoredPage page : stored) {
@@ -829,10 +837,17 @@ public final class ChangeLog implements AutoCloseable {
                 // Was nur aus der Quelle bekannt ist (kein gespeicherter Inhalt), zählt als nicht lesbar.
                 int unstored = Math.max(0, resolved.selection().unlockedSize() - stored.size());
                 String state = areaState(caller, stock, selection);
-                ThematicSummarizer.Result result = new AreaSummarizer(runtime.model(), runtime.released(),
-                        new SummaryChildJobs(runtime.jobs(), runtime.model(), runtime.clock(), JobType.UPDATE_SUMMARY,
-                                context.jobId(), sourceId, spaceKey, caller.jobOwner()), runtime.planner())
-                        .summarize(pages, text, names, Math.max(1, areaPages.getAsInt()), unstored, context);
+                ThematicSummarizer.Result result;
+                try {
+                    result = new AreaSummarizer(runtime.model(), runtime.released(),
+                            new SummaryChildJobs(runtime.jobs(), runtime.model(), runtime.clock(),
+                                    JobType.UPDATE_SUMMARY, context.jobId(), sourceId, spaceKey, caller.jobOwner()),
+                            runtime.planner())
+                            .summarize(pages, text, names, Math.max(1, areaPages.getAsInt()), unstored, context);
+                } catch (com.aresstack.spaceharvester.ai.AiServiceException e) {
+                    // Sonst meldet der Auftrag nur „Unerwarteter Fehler (AiServiceException)“; der Grund gehört dazu.
+                    throw ThematicSummarizer.jobFailure(e);
+                }
                 Instant now = runtime.clock().instant();
                 store.saveSummary(new StoredSummary(scope.key(), SummaryScope.Selected.STORED_UPDATE, null,
                         result.text(), result.statements(), runtime.model().version(), now, now, result.unreadable(),
@@ -848,6 +863,29 @@ public final class ChangeLog implements AutoCloseable {
                     caller.jobOwner(), parameters, task)
                     : runtime.jobs().submit(JobType.UPDATE_SUMMARY, sourceId, spaceKey, null, caller.jobOwner(),
                     parameters, task);
+        }
+    }
+
+    /** Die lokal gespeicherten Seiten der Auswahl, ohne die übersprungenen Wurzeln. */
+    private static List<com.aresstack.spaceharvester.application.holdings.Holdings.StoredPage> area(
+            AccessContext caller, com.aresstack.spaceharvester.application.holdings.Holdings stock,
+            com.aresstack.spaceharvester.application.holdings.Selection selection,
+            com.aresstack.spaceharvester.application.holdings.Holdings.Lenient resolved) {
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots =
+                new ArrayList<>(selection.roots());
+        roots.removeAll(resolved.skippedRoots());
+        return roots.isEmpty() ? List.of() : stock.storedPages(caller,
+                new com.aresstack.spaceharvester.application.holdings.Selection(roots));
+    }
+
+    /** Wenigstens eine geladene Seite mit KI-Freigabe, sonst der Grund als {@link SummaryUnavailableException}. */
+    private static void requireReadablePages(Summaries runtime,
+            List<com.aresstack.spaceharvester.application.holdings.Holdings.StoredPage> stored, String sourceId) {
+        if (stored.isEmpty()) {
+            throw new SummaryUnavailableException(SummaryUnavailableException.Reason.AREA_NOT_LOADED, sourceId);
+        }
+        if (stored.stream().noneMatch(page -> runtime.released().test(page.key()))) {
+            throw new SummaryUnavailableException(SummaryUnavailableException.Reason.AREA_NOT_RELEASED, sourceId);
         }
     }
 

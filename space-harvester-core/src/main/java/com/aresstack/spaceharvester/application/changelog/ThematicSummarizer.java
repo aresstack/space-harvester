@@ -674,6 +674,25 @@ final class ThematicSummarizer {
                 status.find() ? Integer.valueOf(status.group(1)) : null, null, e));
     }
 
+    /**
+     * Ein gescheiterter KI-Aufruf als Fehler des Auftrags mit verständlichem Grund statt „Unerwarteter Fehler
+     * (AiServiceException)“: fester Text je Grund, dazu der HTTP-Status, wenn die Meldung einen nennt; nie die Meldung
+     * selbst (sie könnte Adressen enthalten).
+     */
+    static JobFailedException jobFailure(AiServiceException e) {
+        java.util.regex.Matcher status = java.util.regex.Pattern.compile("HTTP (\\d{3})").matcher(
+                String.valueOf(e.getMessage()));
+        String reason = switch (e.reason()) {
+            case NOT_CONFIGURED -> "Kein KI-Dienst oder kein Modell eingerichtet";
+            case UNAUTHORIZED -> "Der KI-Dienst lehnt den Zugang ab";
+            case UNREACHABLE -> "Der KI-Dienst ist nicht erreichbar oder lehnt die Anfrage ab";
+            case TIMEOUT -> "Der KI-Dienst hat nicht rechtzeitig geantwortet";
+            case INVALID_RESPONSE -> "Die Antwort des KI-Dienstes war unbrauchbar";
+        };
+        return new JobFailedException("AI_" + e.reason().name(),
+                reason + (status.find() ? " (HTTP " + status.group(1) + ")" : ""), e);
+    }
+
     /** So viele verlorene Seiten ohne eine einzige gelungene Anfrage brechen den Auftrag mit dem Grund ab. */
     static final int FAIL_FAST_PAGES = 3;
     /** Gelungene Teilanfragen dieses Laufs; solange keine gelang, zählt jeder Verlust zum frühen Abbruch. */

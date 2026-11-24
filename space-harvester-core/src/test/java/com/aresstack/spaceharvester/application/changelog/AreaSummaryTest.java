@@ -93,6 +93,7 @@ class AreaSummaryTest {
     private Consumer<String> recorded = ignored -> {
     };
     private int budget = 10;
+    private RuntimeException failure;
     private String answer = """
             {"zusammenfassung": "Der Bereich DEV beschreibt die Entwicklung.",
              "themen": [{"titel": "Einstieg", "text": "Wozu es DEV gibt.", "details": "Ausführlich.",
@@ -152,6 +153,9 @@ class AreaSummaryTest {
 
         @Override
         public String complete(String given, String input) {
+            if (failure != null) {
+                throw failure;
+            }
             instructions.add(given);
             inputs.add(input);
             return answer;
@@ -297,5 +301,38 @@ class AreaSummaryTest {
         assertThatThrownBy(() -> log.summarizeArea(CALLER, Selection.of(Selection.Root.space("wiki", "OPS")), true))
                 .isInstanceOfSatisfying(SummaryUnavailableException.class, e ->
                         assertThat(e.reason()).isEqualTo(SummaryUnavailableException.Reason.EMPTY_AREA));
+    }
+
+    /**
+     * Fehler 24.11.2026 (Angelo: „Zusammenfassen“ unter „Bereich“ endet sofort ohne Überblick): Ohne geladene oder ohne
+     * freigegebene Seite bekam das Modell nur {@code "seiten":[]}. Jetzt nennt der Start den Grund, ohne Modellaufruf.
+     */
+    @Test
+    void withoutAReleasedOrLoadedPageTheStartSaysWhyAndNeverAsksTheModel() {
+        devSpace();
+        released.clear();
+        assertThatThrownBy(() -> log.summarizeArea(CALLER, SPACE, true))
+                .isInstanceOfSatisfying(SummaryUnavailableException.class, e -> assertThat(e.reason())
+                        .isEqualTo(SummaryUnavailableException.Reason.AREA_NOT_RELEASED));
+        stocks.put("wiki/OPS", new Stock(CONFIRMED, List.of(new CatalogPage("9", null, false, "1", null)),
+                Set.of(), List.of()));
+        assertThatThrownBy(() -> log.summarizeArea(CALLER, Selection.of(Selection.Root.space("wiki", "OPS")), true))
+                .isInstanceOfSatisfying(SummaryUnavailableException.class, e -> assertThat(e.reason())
+                        .isEqualTo(SummaryUnavailableException.Reason.AREA_NOT_LOADED));
+        assertThat(inputs).isEmpty();
+    }
+
+    /** Scheitert der KI-Dienst, nennt der Auftrag den Grund statt „Unerwarteter Fehler (AiServiceException)“. */
+    @Test
+    void aFailingModelEndsTheRunWithAReadableReason() {
+        devSpace();
+        failure = new com.aresstack.spaceharvester.ai.AiServiceException(
+                com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED, "HTTP 403 vom Dienst");
+        JobStatus job = log.summarizeArea(CALLER, SPACE, true);
+        runHeld();
+        JobStatus ended = jobs.status(job.id());
+        assertThat(ended.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.FAILED);
+        assertThat(ended.error().code()).isEqualTo("AI_UNAUTHORIZED");
+        assertThat(ended.error().message()).isEqualTo("Der KI-Dienst lehnt den Zugang ab (HTTP 403)");
     }
 }
