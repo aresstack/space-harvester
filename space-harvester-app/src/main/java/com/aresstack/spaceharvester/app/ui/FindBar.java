@@ -72,6 +72,79 @@ public final class FindBar extends JPanel {
         }
     }
     private boolean open;
+    /** Erst nach dem Aufbau fragt die Leiste die Ansicht (der Träger ist dann fertig). */
+    private boolean built;
+    /**
+     * Ecke rechts bei den Werkzeugen (Sprachauswahl des Code-Viewers, Angelo 24.11.2026); wie die Werkzeuge von der
+     * aufgeklappten Suche überdeckt.
+     */
+    private final JPanel corner = new JPanel(new MiddleLayout());
+    /**
+     * Umschalter „Hervorheben | Zeilen falten“ im Feld, links vor ▲▼ (Angelo 24.11.2026); nur sichtbar, wenn die
+     * Ansicht selbst sucht ({@link Own}).
+     */
+    private final IconButton foldToggle = new IconButton(null, Own.FOLD_TOOLTIP);
+    /** Die Ansicht, die gerade selbst sucht; {@code null}, solange {@link ReaderFind} sucht. */
+    private Own own;
+
+    /**
+     * Eine Ansicht, die mit dieser Leiste selbst sucht, statt dass {@link ReaderFind} nur hervorhebt (Code-Viewer:
+     * markieren und auf Wunsch alle Zeilen ohne Treffer zufalten). Gefunden wird die sichtbare Komponente unter der
+     * Wurzel, die {@link #ownsFind()} meldet.
+     */
+    public interface Own {
+        String FOLD_TOOLTIP = "Zeilen filtern: alle Zeilen ohne Treffer zuklappen";
+
+        /** Ob die Ansicht gerade selbst sucht. */
+        boolean ownsFind();
+
+        /** Sucht {@code query} neu (leer: Markierungen weg). */
+        void find(String query);
+
+        /** Springt zum nächsten ({@code 1}) oder vorigen ({@code -1}) Treffer. */
+        void findStep(int direction);
+
+        /** „aktueller / Gesamtzahl“ oder Hinweis der Ansicht. */
+        String findCounter();
+
+        /** Ob Zeilen ohne Treffer zugefaltet werden. */
+        boolean folding();
+
+        void folding(boolean on);
+
+        /** Das Symbol des Umschalters. */
+        javax.swing.Icon foldIcon();
+
+        /** Was rechts in der Ecke der Leiste steht (Sprachauswahl des Code-Viewers); {@code null} ohne. */
+        JComponent findCorner();
+    }
+
+    /** Schlüssel an der Komponente, die diese Leiste trägt: {@link Runnable}, das {@link #viewChanged()} ruft. */
+    public static final String VIEW_HOST = "findBar.viewHost";
+
+    /**
+     * Meldet der Leiste über {@code source}, dass eine selbst suchende Ansicht ({@link Own}) gezeigt oder verdeckt
+     * wurde, damit Umschalter, Ecke und Treffer zur sichtbaren Ansicht passen.
+     */
+    public static void viewChanged(java.awt.Component source) {
+        for (java.awt.Container up = source.getParent(); up != null; up = up.getParent()) {
+            if (up instanceof JComponent host && host.getClientProperty(VIEW_HOST) instanceof Runnable run) {
+                javax.swing.SwingUtilities.invokeLater(run);
+                return;
+            }
+        }
+    }
+
+    /** Eine andere Ansicht ist zu sehen: alte Markierungen weg, mit stehendem Text in der neuen weitersuchen. */
+    public void viewChanged() {
+        JComponent root = area.get();
+        Own shown = root == null ? null : owner(root);
+        if (shown != own) {
+            areaChanged();
+        } else {
+            showOwn();
+        }
+    }
 
     public FindBar(Supplier<JComponent> area) {
         super(null);
@@ -104,9 +177,19 @@ public final class FindBar extends JPanel {
         previousButton.addActionListener(event -> previous());
         nextButton = small(ComposerIcons.chevronDown(), "Nächster Treffer (Enter)");
         nextButton.addActionListener(event -> next());
+        foldToggle.getAccessibleContext().setAccessibleName("Zeilen filtern");
+        foldToggle.setVisible(false);
+        foldToggle.addActionListener(event -> {
+            if (own != null) {
+                own.folding(!own.folding());
+                foldToggle.marked(own.folding());
+                updateCounter();
+            }
+        });
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
         controls.setOpaque(false);
         controls.add(counter);
+        controls.add(foldToggle);
         controls.add(previousButton);
         controls.add(nextButton);
         // Ein Feld mit allem darin (AskAI-ComicFindBar): Text, ✕ bei Text, Zähler, vorheriger/nächster Treffer; die
@@ -126,11 +209,14 @@ public final class FindBar extends JPanel {
             }
         });
         tools.setOpaque(false);
+        corner.setOpaque(false);
         add(findButton);
         add(tools);
         add(search);
+        add(corner);
         expand(false);
         updateCounter();
+        built = true;
     }
 
     /** Strg+F oder Klick auf die Lupe: Suche aufklappen, Fokus ins Feld, Text markiert. */
@@ -171,6 +257,30 @@ public final class FindBar extends JPanel {
         repaint();
     }
 
+    /** Setzt die Ecke rechts; {@code null} lässt sie leer. */
+    void corner(JComponent component) {
+        if (component != null && component.getParent() == corner) {
+            return;
+        }
+        corner.removeAll();
+        if (component != null) {
+            corner.add(component, BorderLayout.CENTER);
+        }
+        corner.revalidate();
+        revalidate();
+        repaint();
+    }
+
+    /** Für Tests: die Ecke rechts. */
+    public JComponent cornerArea() {
+        return corner;
+    }
+
+    /** Für Tests: der Falt-Umschalter im Feld. */
+    public IconButton foldToggle() {
+        return foldToggle;
+    }
+
     /** Ob die Suche aufgeklappt ist. */
     public boolean isOpen() {
         return open;
@@ -189,7 +299,7 @@ public final class FindBar extends JPanel {
     }
 
     /** Enter: neuer Text sucht neu, derselbe Text springt zum nächsten Treffer. */
-    void next() {
+    public void next() {
         step(true);
     }
 
@@ -203,6 +313,10 @@ public final class FindBar extends JPanel {
         if (find != null) {
             find.clear();
         }
+        if (own != null) {
+            own.find("");
+        }
+        own = null;
         find = null;
         searched = null;
         updateCounter();
@@ -214,16 +328,22 @@ public final class FindBar extends JPanel {
         if (open && !field.getText().trim().isEmpty()) {
             step(true);
         }
+        showOwn();
     }
 
     /** Sucht {@code query}, als hätte man es eingetippt und Enter gedrückt; liefert die Zahl der Treffer. */
-    int search(String query) {
+    public int search(String query) {
         expand(true);
         field.setText(query == null ? "" : query);
-        return find == null ? 0 : find.hitCount();
+        return own != null ? 1 : find == null ? 0 : find.hitCount();
     }
 
-    String counterText() {
+    /** Der Suchtext im Feld. */
+    public String query() {
+        return field.getText();
+    }
+
+    public String counterText() {
         return counter.getText();
     }
 
@@ -242,7 +362,9 @@ public final class FindBar extends JPanel {
         open = searchOpen;
         search.setVisible(searchOpen);
         tools.setVisible(!searchOpen);
+        corner.setVisible(!searchOpen);
         findButton.setEmphasized(searchOpen);
+        showOwn();
         revalidate();
         repaint();
     }
@@ -257,6 +379,28 @@ public final class FindBar extends JPanel {
         JComponent root = area.get();
         if (root == null) {
             clear();
+            showOwn();
+            return;
+        }
+        Own owner = owner(root);
+        if (owner != own) {
+            clear();
+            own = owner;
+            showOwn();
+        }
+        if (own != null) {
+            // Die Ansicht sucht selbst (Hervorheben oder Zeilen falten); ReaderFind bleibt aus dem Spiel.
+            String query = field.getText();
+            if (query.trim().isEmpty()) {
+                own.find("");
+                searched = null;
+            } else if (query.equals(searched)) {
+                own.findStep(forward ? 1 : -1);
+            } else {
+                own.find(query);
+                searched = query;
+            }
+            updateCounter();
             return;
         }
         if (find != null && root != findRoot) {
@@ -290,7 +434,48 @@ public final class FindBar extends JPanel {
         updateCounter();
     }
 
+    /** Die sichtbare Ansicht unter {@code root}, die selbst sucht, sonst {@code null}. */
+    static Own owner(java.awt.Component root) {
+        if (!root.isVisible()) {
+            return null; // auch verdeckte Karten eines CardLayout
+        }
+        if (root instanceof Own candidate && candidate.ownsFind()) {
+            return candidate;
+        }
+        if (root instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                Own found = owner(child);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Falt-Umschalter im Feld und Ecke rechts nur, wenn die gezeigte Ansicht selbst sucht. */
+    private void showOwn() {
+        if (!built) {
+            return;
+        }
+        JComponent root = area.get();
+        Own shown = own != null ? own : root == null ? null : owner(root);
+        foldToggle.setVisible(shown != null);
+        if (shown != null) {
+            foldToggle.setIcon(shown.foldIcon());
+            foldToggle.marked(shown.folding());
+        }
+        corner(shown == null ? null : shown.findCorner());
+    }
+
     private void updateCounter() {
+        if (own != null) {
+            boolean active = searched != null;
+            counter.setText(active ? own.findCounter() : "");
+            previousButton.setEnabled(active);
+            nextButton.setEnabled(active);
+            return;
+        }
         boolean active = searched != null && find != null;
         counter.setText(!active ? "" : find.hitCount() == 0 ? "Keine Treffer"
                 : (find.currentIndex() + 1) + " / " + find.hitCount());
@@ -331,7 +516,7 @@ public final class FindBar extends JPanel {
             Dimension button = findButton.getPreferredSize();
             Dimension middle = tools.getPreferredSize();
             Dimension field = search.getPreferredSize();
-            int width = button.width + GAP + Math.max(middle.width, field.width);
+            int width = button.width + GAP + Math.max(middle.width + cornerWidth(), field.width);
             // Überall dieselbe Höhe wie die Fußleisten der Seitenleisten (Angelo 24.11.2026).
             return new Dimension(width + insets.left + insets.right, Comic.FOOT_HEIGHT);
         }
@@ -347,9 +532,13 @@ public final class FindBar extends JPanel {
         public void layoutContainer(java.awt.Container parent) {
             java.awt.Insets insets = parent.getInsets();
             int left = insets.left;
-            int right = parent.getWidth() - insets.right;
             int top = insets.top;
             int height = Math.max(0, parent.getHeight() - insets.top - insets.bottom);
+            int cornerWidth = cornerWidth();
+            int outer = parent.getWidth() - insets.right;
+            corner.setBounds(Math.max(left, outer - Math.max(0, cornerWidth - GAP)), top,
+                    Math.max(0, cornerWidth - GAP), height);
+            int right = outer - cornerWidth;
             Dimension button = findButton.getPreferredSize();
             findButton.setBounds(left, top + (height - button.height) / 2, button.width, button.height);
             int start = left + button.width + GAP;
@@ -364,6 +553,11 @@ public final class FindBar extends JPanel {
             int x = Math.max(start, Math.min((parent.getWidth() - middle) / 2, right - middle));
             tools.setBounds(x, top, middle, height);
         }
+    }
+
+    /** Platz der Ecke samt Abstand; ohne Inhalt keiner. */
+    private int cornerWidth() {
+        return open || corner.getComponentCount() == 0 ? 0 : corner.getPreferredSize().width + 12;
     }
 
     private static void bind(JComponent component, KeyStroke key, String name, Runnable action) {

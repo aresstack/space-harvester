@@ -61,6 +61,45 @@ class FindBarTest {
         }
     }
 
+    /** Eine selbst suchende Ansicht wird gezeigt: die Leiste darüber erfährt es über ihren Träger. */
+    @Test
+    void aShownViewReachesTheBarOverItsHost() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        JPanel host = new JPanel();
+        JPanel inner = new JPanel();
+        JLabel view = new JLabel("Editor");
+        host.add(inner);
+        inner.add(view);
+        host.putClientProperty(FindBar.VIEW_HOST, (Runnable) calls::incrementAndGet);
+        SwingUtilities.invokeAndWait(() -> FindBar.viewChanged(view));
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(calls.get()).isEqualTo(1);
+    }
+
+    /**
+     * Im Command Deck steht die Leiste im durchsuchten Bereich (DeckBars.FindSlot). Tippen darf den Cursor im Suchfeld
+     * nicht an den Anfang setzen, und das Feld selbst ist kein Treffer (Angelo 24.11.2026).
+     */
+    @Test
+    void typingInsideTheSearchedAreaKeepsTheCaretAtTheEnd() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JTextArea text = new JTextArea("Erlass zur Zuweisung von Frachtraum 7");
+            JPanel page = new JPanel(new java.awt.BorderLayout());
+            page.add(text, java.awt.BorderLayout.CENTER);
+            FindBar bar = new FindBar(() -> page);
+            page.add(bar, java.awt.BorderLayout.SOUTH);
+            bar.focus();
+            for (char typed : "Fracht".toCharArray()) {
+                PlaceholderField field = bar.field();
+                field.replaceSelection(String.valueOf(typed));
+            }
+            assertThat(bar.field().getText()).isEqualTo("Fracht");
+            assertThat(bar.field().getCaretPosition()).isEqualTo("Fracht".length());
+            assertThat(bar.counterText()).isEqualTo("1 / 1");
+            assertThat(bar.field().getHighlighter().getHighlights()).isEmpty();
+        });
+    }
+
     @Test
     void highlightsCountsAndCyclesThroughHits() throws Exception {
         SwingUtilities.invokeAndWait(() -> {

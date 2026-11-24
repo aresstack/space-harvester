@@ -11,7 +11,8 @@ import java.awt.LayoutManager;
 /**
  * Setzt die Suchleiste mittig in den freien Raum der Kopfzeile (#515): links und rechts gleich viel Abstand, das Feld
  * wächst mit dem Fenster bis {@link #MAX_WIDTH} und schrumpft bis {@link #MIN_WIDTH}; nie über die Icon-Gruppen, denn
- * es bekommt nur den Raum zwischen ihnen.
+ * es bekommt nur den Raum zwischen ihnen. Ein zweites Kind (Zurück/Vor, Angelo 24.11.2026) klebt direkt links am
+ * Feld; Feld und Knöpfe stehen dann gemeinsam mittig, der freie Platz liegt links davor.
  */
 final class SearchBarLayout implements LayoutManager {
 
@@ -19,15 +20,33 @@ final class SearchBarLayout implements LayoutManager {
     static final int MIN_WIDTH = 140;
     /** Mindestabstand zu den Icon-Gruppen links und rechts. */
     static final int GAP = 16;
+    /** Abstand zwischen Zurück/Vor und dem Suchfeld. */
+    static final int LEADING_GAP = 4;
 
     private SearchBarLayout() {
     }
 
     static JPanel wrap(JComponent bar) {
+        return wrap(bar, null);
+    }
+
+    /** Wie {@link #wrap(JComponent)}, mit {@code leading} direkt links am Feld. */
+    static JPanel wrap(JComponent bar, JComponent leading) {
         JPanel panel = new JPanel(new SearchBarLayout());
         panel.setOpaque(false);
         panel.add(bar);
+        if (leading != null) {
+            panel.add(leading);
+        }
         return panel;
+    }
+
+    /** Breite der Knöpfe links am Feld samt Abstand; 0, wenn keine da oder unsichtbar sind. */
+    private static int leadingWidth(Container parent) {
+        if (parent.getComponentCount() < 2 || !parent.getComponent(1).isVisible()) {
+            return 0;
+        }
+        return parent.getComponent(1).getPreferredSize().width + LEADING_GAP;
     }
 
     @Override
@@ -37,19 +56,31 @@ final class SearchBarLayout implements LayoutManager {
         }
         Component bar = parent.getComponent(0);
         Insets in = parent.getInsets();
-        int free = parent.getWidth() - in.left - in.right;
+        int lead = leadingWidth(parent);
+        int free = parent.getWidth() - in.left - in.right - lead;
         int width = Math.max(Math.min(MAX_WIDTH, free - 2 * GAP), Math.min(MIN_WIDTH, Math.max(0, free)));
         width = Math.min(width, Math.max(0, free));
-        int height = Math.min(bar.getPreferredSize().height, parent.getHeight() - in.top - in.bottom);
-        int x = in.left + (free - width) / 2;
-        int y = in.top + (parent.getHeight() - in.top - in.bottom - height) / 2;
-        bar.setBounds(x, y, width, height);
+        int inner = parent.getHeight() - in.top - in.bottom;
+        int height = Math.min(bar.getPreferredSize().height, inner);
+        int x = in.left + lead + (free - width) / 2;
+        bar.setBounds(x, in.top + (inner - height) / 2, width, height);
+        if (lead > 0) {
+            Component leading = parent.getComponent(1);
+            Dimension size = leading.getPreferredSize();
+            int h = Math.min(size.height, inner);
+            leading.setBounds(x - lead, in.top + (inner - h) / 2, size.width, h);
+        }
     }
 
     @Override
     public Dimension preferredLayoutSize(Container parent) {
-        int height = parent.getComponentCount() == 0 ? 0 : parent.getComponent(0).getPreferredSize().height;
-        return new Dimension(MIN_WIDTH + 2 * GAP, height);
+        int height = 0;
+        for (Component child : parent.getComponents()) {
+            if (child.isVisible()) {
+                height = Math.max(height, child.getPreferredSize().height);
+            }
+        }
+        return new Dimension(MIN_WIDTH + 2 * GAP + leadingWidth(parent), height);
     }
 
     @Override

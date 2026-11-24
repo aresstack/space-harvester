@@ -26,6 +26,8 @@ public final class ConnectionChecks {
     public static final String FAILED = "connection-failed";
     /** Info beim Abschließen eines Teils von vor dem Neustart. */
     static final String AFTER_RESTART = "Prüfung von vor dem Neustart";
+    /** Parameter eines Teils: die Kennung seiner Prüfung. */
+    static final String CHECK = "check";
     /**
      * Beendet den Teil auf einem eigenen Thread: {@link Check#finish} kommt etwa vom EDT, und das Ende eines Auftrags
      * schreibt in die Auftragsablage.
@@ -34,7 +36,12 @@ public final class ConnectionChecks {
             .name("verbindung-pruefen").start(task);
 
     private final BackgroundJobs background;
+    /** Je Prüfung ({@value #CHECK}) ihr Ende. */
     private final Map<String, CompletableFuture<Void>> pending = new ConcurrentHashMap<>();
+    /** Die Klammer der gerade laufenden Prüfungen; unter {@code this}. */
+    private String openGroup;
+    /** Wie viele Prüfungen in {@link #openGroup} noch laufen; unter {@code this}. */
+    private int openChecks;
 
     /** Eine sichtbare Prüfung; {@link #finish} beendet ihren Teil. */
     public interface Check {
@@ -78,16 +85,32 @@ public final class ConnectionChecks {
         if (!background.canRun()) {
             return Optional.empty();
         }
-        String groupId = BackgroundJobs.newGroupId();
+        String checkId = java.util.UUID.randomUUID().toString();
         CompletableFuture<Void> done = new CompletableFuture<>();
-        pending.put(groupId, done);
+        pending.put(checkId, done);
+        String groupId;
+        synchronized (this) {
+            // Prüfungen, die sich überschneiden, stehen in einer Klammer „Verbindung prüfen“ (Angelo 24.11.2026: der
+            // oberste ohne Klammer, obwohl er über mehrere Quellen läuft); die Quellen stehen in den Teilen.
+            if (openGroup == null || openChecks == 0) {
+                openGroup = BackgroundJobs.newGroupId();
+            }
+            groupId = openGroup;
+            openChecks++;
+        }
         try {
-            background.start(groupId, KIND, TITLE, List.of(new BackgroundPart.Draft(sourceId, null, Map.of())));
+            background.start(groupId, KIND, TITLE, List.of(new BackgroundPart.Draft(sourceId, null,
+                    Map.of(CHECK, checkId))));
         } catch (RuntimeException e) {
-            pending.remove(groupId);
+            pending.remove(checkId);
+            ended();
             return Optional.empty();
         }
+        java.util.concurrent.atomic.AtomicBoolean finished = new java.util.concurrent.atomic.AtomicBoolean();
         return Optional.of(failure -> {
+            if (finished.compareAndSet(false, true)) {
+                ended();
+            }
             // Der Teil nimmt die Prüfung beim Start aus der Karte; endet sie vorher, sieht er sie schon beendet.
             if (failure == null) {
                 done.complete(null);
@@ -97,6 +120,10 @@ public final class ConnectionChecks {
         });
     }
 
+    private synchronized void ended() {
+        openChecks = Math.max(0, openChecks - 1);
+    }
+
     private static Throwable unwrap(Throwable failure) {
         return failure instanceof java.util.concurrent.CompletionException && failure.getCause() != null
                 ? failure.getCause() : failure;
@@ -104,7 +131,8 @@ public final class ConnectionChecks {
 
     private JobTask work(BackgroundPart part) {
         return context -> {
-            CompletableFuture<Void> done = pending.remove(part.groupId());
+            String checkId = part.parameter(CHECK);
+            CompletableFuture<Void> done = checkId == null ? null : pending.remove(checkId);
             context.discovered(1);
             if (done == null) {
                 // Von vor einem Neustart oder schon beendet: keine Prüfung mehr zu zeigen.

@@ -735,7 +735,6 @@ public final class SettingsView implements View {
                     ? "an · " + settings.sync().backgroundParallelism() + " gleichzeitig" : "aus");
             cache.add(SettingDialogs.CHANGE_LOG_RETENTION, SettingDialogs.changeLogRetention(c.changeLog()));
             cache.add(SettingDialogs.SHOW_AFTER_UPDATE, c.changeLog().showAfterUpdate() ? "an" : "aus");
-            cache.add(SettingDialogs.AREA_PAGES, Texts.count(c.changeLog().areaPages(), "Seite", "Seiten"));
         }
         runtime.reset();
         AppRuntime current = context.runtime();

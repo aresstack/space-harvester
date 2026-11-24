@@ -173,7 +173,9 @@ class EakteWorkspaceTest {
                         com.aresstack.spaceharvester.app.ui.extraction.ExtractionView.class, table) == null)
                 .toList())).as("keine Tabelle neben dem Baum").isEmpty();
         assertThat(onEdt(() -> components(browser, com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor.class)
-                .get(0).getComponent(2).isVisible())).as("Suchzeile des Editors").isFalse();
+                .get(0).getComponentCount())).as("keine Suchzeile im Editor").isEqualTo(2);
+        assertThat(onEdt(() -> components(browser, com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor.class)
+                .get(0).ownsFind())).as("in der Leseansicht hebt die Lupe nur hervor").isFalse();
         // Outlook-Nachricht: der gemeinsame Viewer zeigt sie formatiert (Kopf, Text, Anlagen), die Vorschau bleibt
         // vorn; die Anlagen stehen als Unterknoten unter der E-Mail im Baum (Angelo 24.11.2026).
         assertThat(onEdt(() -> ((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) browser.viewToggle())

@@ -249,10 +249,15 @@ public class Jobs implements AutoCloseable {
         Foreground.onLeave(leaving);
     }
 
-    /** Die Angaben, dazu {@link #PRIORITY}, wenn der Aufrufer für eine offene Ansicht arbeitet (außer Downloads). */
+    /**
+     * Die Angaben, dazu {@link #PRIORITY}, wenn der Aufrufer für eine offene Ansicht arbeitet (außer Downloads und
+     * Hintergrundteilen).
+     */
     private static Map<String, String> withView(JobType type, Map<String, String> parameters) {
         String view = Foreground.view();
-        if (view == null || type.download() || parameters.containsKey(PRIORITY)) {
+        // Hintergrundteile nie: Ein Teil der KI-Anreicherung rechnet alles seiner Quelle, nicht nur, was die Ansicht
+        // ihm gab; mit Vorrang hielte er alle übrigen KI-Anfragen auf.
+        if (view == null || type.download() || type.background() || parameters.containsKey(PRIORITY)) {
             return Map.copyOf(parameters);
         }
         Map<String, String> marked = new java.util.HashMap<>(parameters);
@@ -2571,6 +2576,15 @@ public class Jobs implements AutoCloseable {
 
     /** Wie {@link #recovery(JobRecovery)}, mit eigener Zeitsteuerung, etwa in Tests; {@code null} für die eigene. */
     public void recovery(JobRecovery recovery, JobTimer timer) {
+        recovery(recovery, timer, true);
+    }
+
+    /**
+     * Wie {@link #recovery(JobRecovery, JobTimer)}; mit {@code resumeNow = false} laufen die beim letzten Ende ohne
+     * Verbindung angehaltenen Aufträge nicht von selbst an, sondern bleiben angehalten, bis jemand sie fortsetzt. Was
+     * ab jetzt die Verbindung verliert, läuft weiter von selbst wieder an.
+     */
+    public void recovery(JobRecovery recovery, JobTimer timer, boolean resumeNow) {
         Objects.requireNonNull(recovery, "recovery");
         lock.lock();
         try {
@@ -2578,6 +2592,9 @@ public class Jobs implements AutoCloseable {
             this.timer = timer;
         } finally {
             lock.unlock();
+        }
+        if (!resumeNow) {
+            return;
         }
         for (JobStatus status : store.all()) {
             if (status.state() == JobState.PAUSED && status.pauseReason() == PauseReason.CONNECTION_LOST) {

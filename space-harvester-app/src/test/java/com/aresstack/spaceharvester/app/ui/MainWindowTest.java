@@ -699,6 +699,51 @@ class MainWindowTest {
     }
 
     /**
+     * Angelo 24.11.2026: Zurück und Vor kleben direkt links an der Suchleiste (der freie Platz liegt links davor),
+     * immer sichtbar und nur einmal im Fenster, ohne das Feld unter seine Mindestbreite zu drücken.
+     */
+    @Test
+    void backAndForwardSitDirectlyLeftOfTheSearchBar() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            javax.swing.JPanel surface = window.content(() -> { }, () -> { });
+            javax.swing.JComponent bar = window.searchView().searchBar();
+            javax.swing.JComponent nav = window.backForward();
+            java.awt.Container top = bar.getParent().getParent();
+            for (AppContext.Section section : new AppContext.Section[] {AppContext.Section.SEARCH,
+                    AppContext.Section.CONTENT}) {
+                window.show(section);
+                for (int width : new int[] {960, 1280, 1920}) {
+                    surface.setSize(width, 600);
+                    layout(surface);
+                    assertThat(nav.isVisible() && nav.getParent().isVisible()).as("sichtbar in %s bei %d", section, width)
+                            .isTrue();
+                    assertThat(nav.getParent()).isSameAs(bar.getParent());
+                    assertThat(nav.getWidth()).as("Knöpfe da in %s", section).isPositive();
+                    assertThat(nav.getX() + nav.getWidth() + SearchBarLayout.LEADING_GAP)
+                            .as("klebt links am Feld bei %d", width).isEqualTo(bar.getX());
+                    assertThat(bar.getWidth()).isBetween(SearchBarLayout.MIN_WIDTH, SearchBarLayout.MAX_WIDTH);
+                    java.awt.Component west = ((java.awt.BorderLayout) top.getLayout())
+                            .getLayoutComponent(java.awt.BorderLayout.WEST);
+                    java.awt.Rectangle knobs = SwingUtilities.convertRectangle(nav.getParent(), nav.getBounds(), top);
+                    assertThat(knobs.x).as("Platz links davor bei %d", width)
+                            .isGreaterThanOrEqualTo(west.getX() + west.getWidth());
+                }
+            }
+            // Ein Zurück, immer da: auch in den Einstellungen, und nirgends ein zweites (etwa in der Statuszeile).
+            window.show(AppContext.Section.SETTINGS);
+            assertThat(nav.isVisible()).as("auch in den Einstellungen").isTrue();
+            assertThat(arrows(surface)).as("genau ein Zurück im Fenster").hasSize(1);
+        });
+    }
+
+    /**
      * #515: Ein Suchfeld für das ganze Fenster steht mittig zwischen den Icon-Gruppen der Kopfzeile, ohne sie bei
      * 960, 1280 oder 1920 px zu überdecken; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder
      * breitere Schriften), kürzt die Kopfzeile den Titel, nie das Suchfeld und nie die Knöpfe.
@@ -747,6 +792,23 @@ class MainWindowTest {
             window.openFromTree("handbuch", "4711");
             assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
         });
+    }
+
+    /** Alle sichtbaren Zurück/Vor-Knöpfe im Fenster. */
+    private static java.util.List<java.awt.Component> arrows(java.awt.Container container) {
+        java.util.List<java.awt.Component> found = new java.util.ArrayList<>();
+        for (java.awt.Component child : container.getComponents()) {
+            if (!child.isVisible()) {
+                continue;
+            }
+            if (child instanceof com.aresstack.spaceharvester.app.ui.controls.BackButton) {
+                found.add(child);
+            }
+            if (child instanceof java.awt.Container nested) {
+                found.addAll(arrows(nested));
+            }
+        }
+        return found;
     }
 
     private static void layout(java.awt.Container container) {

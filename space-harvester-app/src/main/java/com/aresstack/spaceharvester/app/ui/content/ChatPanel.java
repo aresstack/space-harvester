@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubblePalette;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
+import com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
 import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownBubble;
 import com.aresstack.spaceharvester.app.ui.markdown.CachingMermaidImageRenderer;
@@ -1854,15 +1855,9 @@ public final class ChatPanel extends JPanel {
         return buttons;
     }
 
-    /** Eine Aktivitätsblase im Verlauf: die Karte „Browserrecherche“ oder die Wolke eines Werkzeugaufrufs. */
+    /** Eine Aktivitätsblase im Verlauf: die Karte „Browserrecherche“, die Gedankenblase oder eine Werkzeugwolke. */
     private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
                                                                                          String body) {
-        return addActivity(title, body, List.of());
-    }
-
-    /** Wie oben, mit Knöpfen unter der Blase (etwa „Laden“ in der Gedankenblase), umbrechend wie bei Rückfragen. */
-    private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
-            String body, List<? extends JComponent> buttons) {
         if (listening != null) {
             listening.behindActivity();
         }
@@ -1873,24 +1868,101 @@ public final class ChatPanel extends JPanel {
         bubble.setMaximumBubbleWidth(640);
         BubbleMessageRow bubbleRow = new BubbleMessageRow(bubble, BubbleSide.LEFT);
         bubbleRow.setAlignmentX(LEFT_ALIGNMENT);
-        JComponent row = bubbleRow;
-        if (!buttons.isEmpty()) {
-            JPanel both = new JPanel();
-            both.setOpaque(false);
-            both.setLayout(new javax.swing.BoxLayout(both, javax.swing.BoxLayout.Y_AXIS));
-            both.add(bubbleRow);
-            JPanel panel = buttonPanel();
-            buttons.forEach(panel::add);
-            both.add(panel);
-            both.setAlignmentX(LEFT_ALIGNMENT);
-            row = both;
-        }
         emptyNote.setVisible(false);
-        transcript.add(row);
+        transcript.add(bubbleRow);
+        if (listening != null) {
+            listening.linksBelow();
+        }
         transcript.revalidate();
         transcript.repaint();
         scrollDown();
         return bubble;
+    }
+
+    /** Tooltip des Kreispfeils hinter „… davon nicht geladen“. */
+    static final String RETRY_MISSING = "Nicht geladene Seiten erneut laden";
+    /** Tooltip des Fadenkreuzes dahinter. */
+    static final String OPEN_MISSING = "Nicht geladene Seite öffnen (Zurück führt hierher zurück)";
+    private static final java.util.regex.Pattern MISSING_COUNT =
+            java.util.regex.Pattern.compile("\\d+ davon nicht geladen");
+
+    /** Der Teil der Wissenszeile, hinter dem die Icons stehen; {@code null}, wenn nichts fehlt. */
+    static String notLoadedAnchor(String knowledgeLine) {
+        if (knowledgeLine == null) {
+            return null;
+        }
+        java.util.regex.Matcher missing = MISSING_COUNT.matcher(knowledgeLine);
+        if (missing.find()) {
+            return missing.group();
+        }
+        return knowledgeLine.contains(NOT_LOADED) ? NOT_LOADED : null;
+    }
+
+    /**
+     * Kreispfeil (erneut laden, wie bisher „Laden“) und, wenn der Bereich Seiten kennt, Fadenkreuz (die erste nicht
+     * geladene Seite in der Seitenansicht öffnen; deren Verlauf führt mit Zurück und der Maustaste zurück).
+     */
+    private List<JComponent> missingActions(PageSelection scope) {
+        List<JComponent> actions = new ArrayList<>();
+        IconButton retry = new IconButton(Glyph.REFRESH, RETRY_MISSING).compact();
+        retry.addActionListener(e -> {
+            retry.setEnabled(false);
+            load();
+        });
+        actions.add(retry);
+        if (scope != null && scope.counts().pages() > scope.counts().stored()) {
+            IconButton locate = new IconButton(Glyph.CROSSHAIR, OPEN_MISSING).compact();
+            locate.addActionListener(e -> openMissing(scope, locate));
+            actions.add(locate);
+        }
+        return actions;
+    }
+
+    private void openMissing(PageSelection scope, IconButton locate) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        locate.setEnabled(false);
+        Background.run(() -> firstMissing(runtime.workspace(), scope), key -> {
+            locate.setEnabled(true);
+            if (key == null) {
+                feedback.info("Keine nicht geladene Seite mehr", null);
+            } else {
+                context.navigator().openPage(key.sourceId(), key.pageId());
+            }
+        }, error -> {
+            locate.setEnabled(true);
+            feedback.problem(error);
+        });
+    }
+
+    /**
+     * Die erste Seite des Bereichs, die nicht geladen ist; {@code null}, wenn keine fehlt. Dieselbe Zählung wie
+     * „… davon nicht geladen“ ({@link #areaText}: {@code pages() - stored()}, also auch gesperrte Seiten). Bis
+     * 24.11.2026 nahm das Fadenkreuz nur {@code REMOTE}; war die angezeigte Seite gesperrt ({@code LOCKED}), meldete es
+     * „Keine nicht geladene Seite mehr“ (Angelo 24.11.2026).
+     */
+    static com.aresstack.spaceharvester.application.snapshot.PageKey firstMissing(com.aresstack.spaceharvester.app.runtime.Workspace workspace, PageSelection scope) {
+        for (com.aresstack.spaceharvester.application.holdings.SpaceSummary space : scope.spaces()) {
+            Set<String> ids = scope.pagesOf(space.sourceId());
+            if (ids.isEmpty()) {
+                continue;
+            }
+            for (com.aresstack.spaceharvester.application.holdings.PageHolding page
+                    : workspace.holdings(space.sourceId(), space.spaceKey(), ids).pages().values()) {
+                if (ids.contains(page.pageId()) && notLoaded(page.state())) {
+                    return new com.aresstack.spaceharvester.application.snapshot.PageKey(space.sourceId(), page.pageId());
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Ob eine Seite in diesem Zustand als „nicht geladen“ zählt, genau wie in der Wissenszeile. */
+    static boolean notLoaded(com.aresstack.spaceharvester.application.holdings.HoldingState state) {
+        HoldingCounts one = HoldingCounts.of(state);
+        return one.pages() > one.stored();
     }
 
     /** Für Tests: wie knapp die Fußzeile gerade ist (0 bis 3). */
@@ -2021,8 +2093,8 @@ public final class ChatPanel extends JPanel {
         // Nur die Seite statt der Auswahl samt Unterseiten ist ein eigener Bereich.
         String scopeKey = custom != null ? custom.scopeKey() : scopeKey(node, scope != resolved);
         addAreaMark(lastQuestion(chat), area, scopeKey);
-        addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question);
         long now = System.currentTimeMillis();
+        addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question, now);
         if (home == null) {
             home = store.folder(stored());
         }
@@ -2037,25 +2109,24 @@ public final class ChatPanel extends JPanel {
         attach.setToolTipText(ATTACH);
         composer.revalidate();
         composer.repaint();
-        answering = addAnswer("…");
+        answering = addAnswer("…", now);
         ChatRecord target = chat;
         Path targetNode = home;
         TurnListener listener = new TurnListener(target, targetNode, answering, answeringSources);
         listening = listener;
         // Die gelbe Blase gleich mit dem Senden (Angelo 24.11.2026): Bereichssuche und interne Suche gleich, mit
-        // Wissenszeile und „Laden“; die Antwortblase wartet unsichtbar dahinter, bis Text kommt.
+        // Wissenszeile; die Antwortblase wartet unsichtbar dahinter, bis Text kommt.
         boolean withKnowledge = custom == null && (scope != null || appSearchOn);
-        List<JComponent> cardButtons = new ArrayList<>();
-        if (withKnowledge && load.isVisible() && load.isEnabled()) {
-            ComposerButton loadNow = Comic.button(LOAD, load.getToolTipText());
-            loadNow.addActionListener(e -> {
-                loadNow.setEnabled(false);
-                load();
-            });
-            cardButtons.add(loadNow);
-        }
-        KnowledgeCard thinking = new KnowledgeCard(withKnowledge,
-                (title, body) -> addActivity(title, body, cardButtons));
+        // Direkt hinter „… davon nicht geladen“ in derselben Zeile (Angelo 24.11.2026): Erneut laden (Kreispfeil) und
+        // die nicht geladene Seite öffnen (Fadenkreuz), als Icons ohne Kasten, erst beim Darüberfahren als Knopf.
+        String anchor = withKnowledge && load.isVisible() && load.isEnabled() ? notLoadedAnchor(knowledge.getText())
+                : null;
+        List<JComponent> inline = anchor == null ? List.of() : missingActions(scope);
+        KnowledgeCard thinking = new KnowledgeCard(withKnowledge, (title, body) -> {
+            com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel bubble = addActivity(title, body);
+            bubble.setInlineActions(anchor, inline);
+            return bubble;
+        });
         if (withKnowledge) {
             thinking.knowledge(knowledge.getText());
         }
@@ -2213,6 +2284,8 @@ public final class ChatPanel extends JPanel {
         /** Die Zeile der Antwortblase; wartet unsichtbar hinter den Wolken, bis Text kommt (EAC). */
         private final JComponent row;
         private boolean waiting;
+        /** Die gelbe Blase platzt gerade; die Antwort erscheint erst danach an ihrer Stelle. */
+        private boolean bursting;
         /** Die laufenden Wolken der Werkzeugaufrufe; alle Wolken verschwinden mit dem Ende der Antwort (EAC). */
         private final java.util.Map<String, com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel> clouds =
                 new java.util.HashMap<>();
@@ -2298,9 +2371,47 @@ public final class ChatPanel extends JPanel {
             links.setVisible(false);
         }
 
+        /**
+         * Die blauen Quellen stehen während der Recherche unter der gelben Blase (Angelo 24.11.2026), also hinter jeder
+         * neuen Blase am Ende des Verlaufs.
+         */
+        void linksBelow() {
+            if (detached || !waiting || links.getParent() != transcript) {
+                return;
+            }
+            transcript.remove(links);
+            transcript.add(links);
+        }
+
+        /**
+         * Wie im EAC ({@code ChatTranscriptPanel.applyActivity}/{@code settleActivity}): Die gelbe Blase platzt, und
+         * erst danach verschwindet ihre Zeile und die Antwort erscheint bündig an ihrer Stelle, die blauen Quellen
+         * darunter. Während des Platzens sind die Quellen kurz weg (Angelo 24.11.2026), sonst entstünde eine Lücke.
+         */
+        private void burst(boolean cancelled) {
+            if (card == null || card.finished()) {
+                return;
+            }
+            if (detached) {
+                return;
+            }
+            var thought = card.bubble();
+            bursting = true;
+            links.setVisible(false);
+            card.finish(cancelled, () -> {
+                bursting = false;
+                if (thought != null && thought.getParent() != null && thought.getParent().getParent() == transcript) {
+                    transcript.remove(thought.getParent());
+                }
+                reveal();
+                transcript.revalidate();
+                transcript.repaint();
+            });
+        }
+
         /** Der erste Text (oder das Ende): die Antwort erscheint hinter den Wolken. */
         private void reveal() {
-            if (!waiting || detached) {
+            if (!waiting || detached || bursting) {
                 return;
             }
             waiting = false;
@@ -2415,8 +2526,12 @@ public final class ChatPanel extends JPanel {
         @Override
         public void context(ChatKnowledge.Context context) {
             sources = context.accepted().stream().map(ChatRecord.Source::of).toList();
-            // Die Quellen stehen schon während der Antwort unter der Blase und wachsen mit jeder neuen.
+            // Die Quellen stehen schon während der Recherche unter der Blase und wachsen mit jeder neuen; während die
+            // gelbe Blase platzt, bleiben sie weg und kommen mit der Antwort wieder.
             links.show(sources);
+            if (bursting) {
+                links.setVisible(false);
+            }
             if (!detached && card != null) {
                 card.sources(sources.stream().map(ChatRecord.Source::title).toList());
             }
@@ -2431,10 +2546,8 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void delta(String delta) {
-            // Die Antwort schreibt: Die Gedankenblase platzt mit ihrer Bilanz (wie im EAC).
-            if (card != null && !detached) {
-                card.finish(false);
-            }
+            // Die Antwort schreibt: Die Gedankenblase platzt mit ihrer Bilanz, danach erscheint die Antwort (wie im EAC).
+            burst(false);
             reveal();
             MarkdownMessageView view = bubble.view();
             if (text.isEmpty()) {
@@ -2492,9 +2605,7 @@ public final class ChatPanel extends JPanel {
             if (webCard != null) {
                 webCard.finish(null, cancelled);
             }
-            if (card != null && !detached) {
-                card.finish(cancelled);
-            }
+            burst(cancelled);
         }
 
         private void finish(ChatRecord.Message answer, String note) {
@@ -2602,10 +2713,16 @@ public final class ChatPanel extends JPanel {
         turn = null;
     }
 
+    /**
+     * Eine Sprechblase wie im EAC ({@code ChatTranscriptPanel.createRow}): Datum und Uhrzeit oben rechts, der
+     * Kopierknopf hinter dem Namen.
+     */
     private SpeechBubblePanel addBubble(BubbleSide side, Color background, Color foreground, String header,
-                                        String text) {
+                                        String text, long at) {
         SpeechBubblePanel bubble = new SpeechBubblePanel(side, background, foreground, header, text);
         bubble.setMaximumBubbleWidth(640);
+        bubble.setHeaderTimestamp(at);
+        bubble.setHeaderAccessory(copyButton(foreground, () -> text));
         BubbleMessageRow row = new BubbleMessageRow(bubble, side);
         row.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
@@ -2620,7 +2737,7 @@ public final class ChatPanel extends JPanel {
     private JComponent answeringRow;
 
     /** Eine Antwortblase mit Markdown-Körper wie im EAC ({@code ChatTranscriptPanel.createMarkdownBubble}). */
-    private AssistantMarkdownBubble addAnswer(String markdown) {
+    private AssistantMarkdownBubble addAnswer(String markdown, long at) {
         if (mermaid == null) {
             mermaid = CachingMermaidImageRenderer.forChat();
         }
@@ -2628,6 +2745,9 @@ public final class ChatPanel extends JPanel {
                 bubbles.getAssistantForeground()), linkOpener, mermaid);
         view.setMarkdown(markdown);
         AssistantMarkdownBubble bubble = new AssistantMarkdownBubble(BubbleSide.LEFT, bubbles, ASSISTANT, view);
+        bubble.setHeaderTimestamp(at);
+        // Wie im EAC der Markdown-Quelltext, beim Klick gelesen: auch eine Antwort, die noch geschrieben wird.
+        bubble.setHeaderAccessory(copyButton(bubbles.getAssistantForeground(), view::getMarkdown));
         BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
         OrbClearance clearance = new OrbClearance(row, readAloud.orb());
         clearance.setAlignmentX(LEFT_ALIGNMENT);
@@ -2641,6 +2761,20 @@ public final class ChatPanel extends JPanel {
         transcript.repaint();
         scrollDown();
         return bubble;
+    }
+
+    /** Der Kopierknopf des EAC ({@code ChatTranscriptPanel.copyButton}): Vordergrund mit Alpha 200. */
+    private MessageCopyButton copyButton(Color foreground, java.util.function.Supplier<String> text) {
+        return new MessageCopyButton(new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 200),
+                text, value -> clipboard.accept(value));
+    }
+
+    /** Wohin der Kopierknopf schreibt; für Tests ohne Systemzwischenablage austauschbar. */
+    private java.util.function.Consumer<String> clipboard = value -> java.awt.Toolkit.getDefaultToolkit()
+            .getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(value), null);
+
+    void setClipboard(java.util.function.Consumer<String> clipboard) {
+        this.clipboard = clipboard;
     }
 
     private void scrollDown() {
@@ -2684,10 +2818,10 @@ public final class ChatPanel extends JPanel {
                 addAreaMark(asked, message.area(), message.scope());
                 asked = message.area() == null ? asked : message;
                 addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du",
-                        message.text());
+                        message.text(), message.at());
             } else {
                 AssistantMarkdownBubble answer = addAnswer(message.cancelled()
-                        ? message.text() + "\n\n" + CANCELLED : message.text());
+                        ? message.text() + "\n\n" + CANCELLED : message.text(), message.at());
                 answeringSources.show(message.sources());
                 readAloud.answer(answer);
             }
@@ -3153,6 +3287,17 @@ public final class ChatPanel extends JPanel {
 
     JComponent editor() {
         return editor;
+    }
+
+    /** Die sichtbaren Zeilen des Verlaufs in ihrer Reihenfolge (für Tests). */
+    List<Component> transcriptRows() {
+        List<Component> rows = new ArrayList<>();
+        for (Component row : transcript.getComponents()) {
+            if (row.isVisible()) {
+                rows.add(row);
+            }
+        }
+        return rows;
     }
 
     /** Das Vorlesen des Chats (für Tests). */

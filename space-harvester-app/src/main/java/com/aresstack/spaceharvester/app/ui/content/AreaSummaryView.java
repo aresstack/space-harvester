@@ -68,12 +68,13 @@ final class AreaSummaryView extends JPanel {
     static final String STALE = "Der Bereich hat sich seither geändert; „Neu zusammenfassen“ erstellt den Überblick "
             + "neu.";
     static final String SUMMARIZE_TIP = "Bereich zusammenfassen";
+    static final String FAILURE_HINT = "Einzelheiten stehen unter Aufträge.";
     static final String RESUMMARIZE_TIP = "Überblick neu erstellen";
     static final String HELP = "„Bereich“ fasst den ganzen gewählten Bereich zusammen, nicht nur die Änderungen: "
             + "worum es geht, wie er aufgebaut ist und wo man anfängt, zum Einstieg für Neue. Fehlt der Überblick, "
             + "erstellt das eingestellte Chat-Modell ihn beim Öffnen von selbst; „Zusammenfassen“ erstellt ihn neu. "
-            + "Es liest nur geladene Seiten mit KI-Freigabe, die oberen zuerst, höchstens so viele, wie unter "
-            + "Einstellungen › Cache bei „Bereichszusammenfassung – Seiten“ steht.\n\n"
+            + "Es liest alle geladenen Seiten mit KI-Freigabe, in Teilen nebeneinander, und führt die Teile danach "
+            + "zusammen.\n\n"
             + "In der Podcast-Ansicht erklärt ein Podcast denselben Überblick; der Text darunter zeigt je Thema die "
             + "ausführliche Erklärung, gelb, was gerade erzählt wird.";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
@@ -203,6 +204,12 @@ final class AreaSummaryView extends JPanel {
     private UpdateSummary summary;
     private boolean available = true;
     private boolean empty;
+    /**
+     * Warum der letzte Lauf nicht zum Überblick führte, {@code null} ohne (Fehler 24.11.2026: der Lauf endete sofort,
+     * die Ansicht stand wieder auf „Noch kein Überblick“, der Grund nur kurz in der Statuszeile). Steht in der Ansicht,
+     * bis neu gestartet oder ein anderer Bereich gewählt wird.
+     */
+    private String failure;
     private boolean loaded;
     private String runningJob;
     private int generation;
@@ -352,6 +359,7 @@ final class AreaSummaryView extends JPanel {
         target = next;
         summary = null;
         empty = next != null && next.empty();
+        failure = null;
         loaded = false;
         podcast.summary(null);
         offer();
@@ -467,6 +475,7 @@ final class AreaSummaryView extends JPanel {
             return;
         }
         runningJob = "";
+        failure = null;
         offer();
         render();
         if (interactive) {
@@ -475,13 +484,16 @@ final class AreaSummaryView extends JPanel {
         runner.run(() -> current.summarize(of, interactive), status -> {
             runningJob = status.id();
             watch(current, status.id(), of);
-        }, failure -> {
+        }, problem -> {
             runningJob = null;
-            if (failure instanceof SummaryUnavailableException unavailable
+            if (problem instanceof SummaryUnavailableException unavailable
                     && unavailable.reason() == SummaryUnavailableException.Reason.EMPTY_AREA) {
                 empty = true;
             } else {
-                onStatus.accept("Zusammenfassen nicht möglich: " + Problems.describe(failure).title());
+                // Der Core nennt den Grund selbst (etwa „keine Seite geladen“); sonst die Beschreibung des Fehlers.
+                failure = problem instanceof SummaryUnavailableException unavailable ? unavailable.getMessage() + "."
+                        : "Zusammenfassen nicht möglich: " + Problems.describe(problem).title();
+                onStatus.accept(failure);
             }
             offer();
             render();
@@ -518,12 +530,16 @@ final class AreaSummaryView extends JPanel {
         runningJob = null;
         jobWatch.close();
         jobWatch = Subscription.NONE;
-        onStatus.accept(switch (status.state()) {
+        String outcome = switch (status.state()) {
             case COMPLETED -> "Überblick erstellt";
             case CANCELLED -> "Abgebrochen; der bisherige Überblick bleibt.";
             case PAUSED -> "Überblick angehalten; fortsetzen unter Aufträge.";
             default -> "Überblick fehlgeschlagen" + (status.error() == null ? "" : ": " + status.error().message());
-        });
+        };
+        onStatus.accept(outcome);
+        if (status.state() == JobState.FAILED && Objects.equals(of, target)) {
+            failure = outcome + (outcome.endsWith(".") ? "" : ".") + " " + FAILURE_HINT;
+        }
         offer();
         if (Objects.equals(of, target)) {
             if (status.state() == JobState.COMPLETED) {
@@ -562,6 +578,10 @@ final class AreaSummaryView extends JPanel {
         reportBody.removeAll();
         summaryReport.clear();
         pictures.placed(List.of());
+        if (failure != null && target != null) {
+            SummaryReport.add(reportBody, Comic.wrapped(failure, Comic.RED, 13.5f));
+            reportBody.add(Box.createVerticalStrut(8));
+        }
         if (summary != null) {
             summaryReport.render(summary, () -> {
                 summaryReport.markFollowed();

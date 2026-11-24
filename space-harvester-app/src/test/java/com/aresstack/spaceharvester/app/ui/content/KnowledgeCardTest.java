@@ -45,9 +45,10 @@ class KnowledgeCardTest {
 
         assertThat(opened).containsExactly(KnowledgeCard.KNOWLEDGE_TITLE);
         assertThat(body[0]).startsWith("Wissen: Space Handbuch · 3 Seiten").contains(KnowledgeCard.STARTING)
-                .endsWith("[[bar:0/1]]");
-        assertThat(body[1]).contains("✓ Sucht im Bereich", "Quellen: [1] Nachtlauf  [2] Spool",
-                "2 Seiten für KI freigegeben").as("der Balken geht nie zurück").endsWith("[[bar:1/4]]");
+                .as("ohne Treffer kein Balken").doesNotContain("[[bar:");
+        assertThat(body[1]).contains("✓ Sucht im Bereich", "2 Seiten für KI freigegeben")
+                .as("die Quellen stehen nur als blaue Links darunter").doesNotContain("Quellen:", "Nachtlauf")
+                .as("der Balken geht nie zurück").endsWith("[[bar:1/4]]");
         assertThat(body[2]).isEqualTo("Recherche abgeschlossen · 1 Schritt · 2 Quellen · 2 Seiten für KI freigegeben");
         assertThat(bubble[0].getVisualState()).isNotEqualTo(AnimatedThoughtBubblePanel.VisualState.RUNNING);
     }

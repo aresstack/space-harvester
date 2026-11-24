@@ -617,6 +617,34 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void theChatListsEveryHitTheSearchBarListsForTheSameArea() throws Exception {
+        ChatTools probe = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+            }
+        });
+        // Der Suchindex entsteht nach dem Sync im Hintergrund: warten, bis die Suchleiste alle Seiten mit dem Wort kennt.
+        // Dieselbe Anfrage wie die Suchleiste mit derselben Auswahl: keywordSearchIn, ein Stapel der Suchleiste.
+        List<com.aresstack.spaceharvester.application.query.KeywordSearch.Hit> bar = await(() -> {
+            var ranked = workspace.keywordSearchIn(java.util.UUID.randomUUID().toString(),
+                    ChatTools.areaQuery("Spool", space), null, com.aresstack.spaceharvester.app.ui.SearchView.LIMIT,
+                    null).ranked();
+            return ranked.size() > 1 ? ranked : null;
+        });
+
+        String listed = probe.search("Spool");
+
+        for (var hit : bar) {
+            assertThat(listed).contains(ChatTools.ref(new PageKey(hit.sourceId(), hit.pageId())));
+        }
+    }
+
+    @Test
     void onlyTheOpenPageIsReleasedASearchReleasesNothingAndSendsNoPageText() throws Exception {
         PageKey open = page("datenhaus");
         // Der Suchindex entsteht nach dem Sync im Hintergrund: erst warten, bis die Suche Treffer liefert.
@@ -648,6 +676,13 @@ class ChatToolsTurnTest {
                 .allSatisfy(line -> assertThat(line.split(" \\| ")).hasSize(2));
         assertThat(hits).doesNotContain("vollem Spool").doesNotContain("Ablage der Ausgaben");
         assertThat(released()).containsExactly(open);
+        // Angelo 24.11.2026: Der Balken zählt Seiten, keine Runden mit fester Höchstzahl: gelesen ist die offene
+        // Seite, gefunden sind die Treffer der Suche samt ihr.
+        java.util.Set<String> found = new java.util.HashSet<>();
+        hits.lines().filter(line -> line.startsWith("- ")).forEach(line -> found.add(line.substring(2).split(" \\| ")[0]));
+        found.add(ChatTools.ref(open));
+        assertThat(events.progress).isNotEmpty();
+        assertThat(events.progress.get(events.progress.size() - 1)).containsExactly(1, found.size());
     }
 
     @Test
@@ -1219,6 +1254,13 @@ class ChatToolsTurnTest {
         @Override
         public void released(int count) {
             released += count;
+        }
+
+        final List<int[]> progress = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void progress(int done, int total) {
+            progress.add(new int[] {done, total});
         }
 
         final List<String> tools = new CopyOnWriteArrayList<>();

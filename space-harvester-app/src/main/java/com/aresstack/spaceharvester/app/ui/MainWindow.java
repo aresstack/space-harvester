@@ -116,6 +116,12 @@ public final class MainWindow implements AppContext.Navigator {
     /** Karte des Stands einer Perspektive in der Statuszeile (Präfix vor der Kennung). */
     private static final String PERSPECTIVE_STATUS = "perspective:";
     private JobStatusLine jobStatus;
+    /**
+     * Das eine Paar Zurück und Vor, direkt links an der Suchleiste der Kopfzeile, in jedem Bereich sichtbar: in der
+     * Suche blättert es zwischen den Suchen, sonst zwischen den Seiten; der freie Platz liegt links davor (Angelo,
+     * 24.11.2026).
+     */
+    private final JPanel backForward = new JPanel(new BorderLayout());
     private final JLabel status = Comic.muted(" ");
     /** ✕ hinter dem Stand der App: ein Ergebnis (etwa eines Exports) bleibt stehen, bis es der Benutzer wegklickt. */
     private final ComposerButton statusClose = closeButton();
@@ -129,7 +135,7 @@ public final class MainWindow implements AppContext.Navigator {
     /**
      * Der Stand des sichtbaren Bereichs links in der Statuszeile. So breit wie der Stand, der gerade gezeigt wird:
      * Ein Kartenstapel wäre sonst so breit wie sein breitester, auch unsichtbarer Stand (etwa der lange Stand der
-     * Suche) und schöbe den Auftragstext samt Zurück und Vor nach rechts, neben eine leere Fläche.
+     * Suche) und schöbe den Auftragstext nach rechts, neben eine leere Fläche.
      */
     private final JPanel viewStatus = new JPanel(viewStatusCards) {
         @Override
@@ -489,7 +495,8 @@ public final class MainWindow implements AppContext.Navigator {
         top.add(west, BorderLayout.WEST);
         top.add(east, BorderLayout.EAST);
         // Ein Suchfeld für das ganze Fenster, mittig zwischen den Icon-Gruppen (#515).
-        searchSlot = SearchBarLayout.wrap(searchView.searchBar());
+        backForward.setOpaque(false);
+        searchSlot = SearchBarLayout.wrap(searchView.searchBar(), backForward);
         top.add(searchSlot, BorderLayout.CENTER);
         ComicWindowDragger.install(top);
         // Meldet die Leiste beim Tooltip-Dienst an; den Text liefert getToolTipText je nach Fensterzustand.
@@ -602,6 +609,15 @@ public final class MainWindow implements AppContext.Navigator {
                 leaveSettingsOn(perspective.navigation());
             }
         }
+        // Wechselt das Deck seinen Bereich auf anderem Weg (Kachel auf Home, Chat, Verbinden), gehen die Einstellungen
+        // ebenso zu; sonst bliebe das Zahnrad gedrückt, obwohl links ein Deck-Bereich gewählt ist (Angelo, 24.11.).
+        if (commandDeck != null) {
+            commandDeck.onAreaChanged(() -> {
+                if (settingsOver != null && Perspectives.COMMAND_DECK.equals(settingsOver.id())) {
+                    leaveSettings();
+                }
+            });
+        }
         chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, stage, sideDeck);
         chatSplit.setBorder(null);
         chatSplit.setBackground(Comic.SURFACE);
@@ -665,7 +681,7 @@ public final class MainWindow implements AppContext.Navigator {
 
         // Gesamtstand aller Aufträge; Anhalten und Abbrechen stehen für alle zugleich in der Kopfzeile der Aufträge.
         jobStatus = new JobStatusLine(context.events());
-        jobStatus.navigation(content.navigation());
+        backForward(content.navigation());
         // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
         signInNotice = new SignInNotice(context, request -> {
             show(AppContext.Section.ACTIVITIES);
@@ -984,7 +1000,7 @@ public final class MainWindow implements AppContext.Navigator {
         }
         stageCards.show(stage, next.id());
         if (!harvester) {
-            // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.
+            // Stand und Aktionen der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.
             // Eine Perspektive mit eigenem Stand zeigt ihn an derselben Stelle.
             if (next.status() != null) {
                 viewStatusCards.show(viewStatus, PERSPECTIVE_STATUS + next.id());
@@ -992,7 +1008,6 @@ public final class MainWindow implements AppContext.Navigator {
             } else {
                 viewStatus.setVisible(false);
             }
-            jobStatus.navigationVisible(false);
             // Die Bereichsknöpfe (auch das Zahnrad der Einstellungen) gehören zum Space Harvester: In einer anderen
             // Perspektive bleibt keiner gedrückt, wenn die Einstellungen zugehen (Angelo, 24.11.).
             navGroup.clearSelection();
@@ -1096,10 +1111,8 @@ public final class MainWindow implements AppContext.Navigator {
             // angeklickt (Angelo, 24.11.2026).
             explorer.selectAll();
         }
-        // Zurück und Vor unten blättern in der Suche zwischen ihren Suchen und Filtern, sonst in den Seiten.
-        if (jobStatus != null) {
-            jobStatus.navigation(section == AppContext.Section.SEARCH ? searchView.navigation() : content.navigation());
-        }
+        // Zurück und Vor an der Suchleiste blättern in der Suche zwischen ihren Suchen und Filtern, sonst in den Seiten.
+        backForward(section == AppContext.Section.SEARCH ? searchView.navigation() : content.navigation());
         placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
             // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
@@ -1130,7 +1143,6 @@ public final class MainWindow implements AppContext.Navigator {
         // ADR 0033: Der Chat bezieht sich auf die Ansicht, die vorne ist (Leseansicht: offene Seite; Suche: Filter).
         content.chatSidebar().chat().searchFront(section == AppContext.Section.SEARCH);
         content.chatSidebar().chat().readingFront(section == AppContext.Section.CONTENT);
-        jobStatus.navigationVisible(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
         view.shown();
         if (changed) {
@@ -1140,8 +1152,23 @@ public final class MainWindow implements AppContext.Navigator {
             // Über der Perspektive: deren Navigation und Titel bleiben, die Mitte zeigt die Einstellungen.
             stageCards.show(stage, Perspectives.HARVESTER);
             viewStatus.setVisible(false);
-            jobStatus.navigationVisible(false);
         }
+    }
+
+    /** Setzt Zurück und Vor eines Bereichs links an die Suchleiste. */
+    private void backForward(JComponent buttons) {
+        backForward.removeAll();
+        backForward.add(buttons, BorderLayout.CENTER);
+        backForward.revalidate();
+        backForward.repaint();
+        if (searchSlot != null) {
+            searchSlot.revalidate();
+        }
+    }
+
+    /** Für Tests: Zurück und Vor links an der Suchleiste. */
+    JComponent backForward() {
+        return backForward;
     }
 
     /** „Zurück“ der Einstellungen: dorthin, woher sie kamen, auch in eine andere Perspektive. */

@@ -12,7 +12,8 @@ import java.util.function.BiFunction;
 /**
  * Die gelbe Gedankenblase einer Antwort, wie die Recherchekarte {@code ChatResearchCard} im Enterprise AI Client
  * (Angelo 24.11.2026): Sie erscheint sofort mit dem Senden, zeigt das Wissen der Frage (Bereich oder interne Suche),
- * die Schritte, die Quellen und einen Balken über die Arbeitsschritte, und platzt, sobald die Antwort schreibt. Vorher
+ * die Schritte und einen Balken über die Arbeitsschritte (die Quellen stehen nur als blaue Links darunter, Angelo
+ * 24.11.2026), und platzt, sobald die Antwort schreibt. Vorher
  * steht keine vorläufige Antwortblase und keine Zeile über dem Eingabefeld. Bereichssuche und interne Suche zeigen sie
  * gleich; ohne Wissen heißt sie „Antwort wird vorbereitet“. Nur auf dem EDT.
  */
@@ -38,7 +39,7 @@ final class KnowledgeCard {
     private int released;
     private List<String> sources = List.of();
     private int done;
-    private int total = 1;
+    private int total;
     private boolean finished;
 
     /**
@@ -94,15 +95,18 @@ final class KnowledgeCard {
         update();
     }
 
-    /** Die Quellen der Antwort, nummeriert wie unter der Antwort. */
+    /** Die Quellen der Antwort; die Blase zählt sie nur in der Bilanz, die Links stehen darunter. */
     void sources(List<String> titles) {
         sources = titles == null ? List.of() : List.copyOf(titles);
         update();
     }
 
-    /** Fortschritt der Arbeit: {@code done} von {@code total} Schritten; der Balken geht nie zurück. */
+    /**
+     * Fortschritt der Arbeit: {@code done} gelesene von {@code total} gefundenen Seiten (Angelo 24.11.2026: keine feste
+     * Höchstzahl); ohne Treffer kein Balken. Beide Zahlen wachsen nur.
+     */
     void progress(int done, int total) {
-        this.total = Math.max(1, total);
+        this.total = Math.max(this.total, Math.max(0, total));
         this.done = Math.max(this.done, Math.min(done, this.total));
         update();
     }
@@ -115,6 +119,14 @@ final class KnowledgeCard {
 
     /** Die Antwort schreibt (oder der Turn endet): Die Blase platzt mit der Bilanz. */
     void finish(boolean cancelled) {
+        finish(cancelled, null);
+    }
+
+    /**
+     * Wie {@link #finish(boolean)}; {@code afterBurst} läuft, sobald die Blase fertig geplatzt ist (wie
+     * {@code ChatTranscriptPanel.applyActivity} im EAC), ohne laufende Blase sofort. Nur der erste Aufruf zählt.
+     */
+    void finish(boolean cancelled, Runnable afterBurst) {
         if (finished) {
             return;
         }
@@ -122,11 +134,18 @@ final class KnowledgeCard {
         done = total;
         if (bubble != null && bubble.getVisualState() == AnimatedThoughtBubblePanel.VisualState.RUNNING) {
             if (cancelled) {
-                bubble.cancel(summary(true), null);
+                bubble.cancel(summary(true), afterBurst);
             } else {
-                bubble.completeSuccessfully(summary(false), null);
+                bubble.completeSuccessfully(summary(false), afterBurst);
             }
+        } else if (afterBurst != null) {
+            afterBurst.run();
         }
+    }
+
+    /** Die Blase im Verlauf oder {@code null}, solange sie nicht offen ist. */
+    AgentActivityBubblePanel bubble() {
+        return bubble;
     }
 
     boolean finished() {
@@ -156,18 +175,13 @@ final class KnowledgeCard {
         if (!current.isEmpty()) {
             text.append(text.isEmpty() ? "" : "\n").append(current);
         }
-        if (!sources.isEmpty()) {
-            StringBuilder list = new StringBuilder();
-            for (int i = 0; i < sources.size(); i++) {
-                list.append(i == 0 ? "" : "  ").append('[').append(i + 1).append("] ").append(sources.get(i));
-            }
-            text.append(text.isEmpty() ? "" : "\n").append("Quellen: ").append(list);
-        }
         if (released > 0) {
             text.append(text.isEmpty() ? "" : "\n").append(Texts.count(released, "Seite", "Seiten"))
                     .append(" für KI freigegeben");
         }
-        text.append(" [[bar:").append(done).append('/').append(total).append("]]");
+        if (total > 0) {
+            text.append(" [[bar:").append(done).append('/').append(total).append("]]");
+        }
         return text.toString();
     }
 

@@ -489,14 +489,17 @@ class SearchViewTest {
         });
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta");
         assertThat(view[0].covered).containsExactly("beta");
+        // Erst die Antwort der Suche abwarten: Vorher kennt die Ansicht keine Anfrage (lastQuery), und eine neue
+        // Quelle löst dann bewusst eine ganz neue Suche aus statt nachzusuchen (bis 24.11.2026 zeitabhängig rot).
+        await(() -> !view[0].overlay.isBusy() && view[0].model.rows.size() > 0);
         SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("beta", "DEV"))));
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta › DEV");
         assertThat(view[0].covered).as("nur gefiltert, nicht neu gesucht").containsExactly("beta");
         assertThat(view[0].visits).hasSize(2);
         SwingUtilities.invokeAndWait(() -> view[0].backVisit.doClick());
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta");
-        assertThat(view[0].forwardVisit.isEnabled()).isTrue();
-        SwingUtilities.invokeAndWait(() -> view[0].forwardVisit.doClick());
+        assertThat(view[0].canGoForward()).isTrue();
+        SwingUtilities.invokeAndWait(() -> view[0].forward());
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta › DEV");
         // Eine noch nicht durchsuchte Quelle: nur sie wird nachgesucht.
         SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("alpha", null))));

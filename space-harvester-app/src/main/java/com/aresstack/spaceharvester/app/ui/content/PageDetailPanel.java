@@ -549,12 +549,8 @@ public final class PageDetailPanel extends JPanel {
     private int linkRequest;
     /** Anker des Links, der die gerade ladende Seite geöffnet hat; die Leseansicht rollt dorthin. */
     private String pendingAnchor;
-    private final com.aresstack.spaceharvester.app.ui.IconButton backButton = new com.aresstack.spaceharvester.app.ui
-            .IconButton(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronLeft(),
-            "Zurück (Maustaste Zurück)");
-    private final com.aresstack.spaceharvester.app.ui.IconButton forwardButton = new com.aresstack.spaceharvester.app
-            .ui.IconButton(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronRight(),
-            "Vor (Maustaste Vor)");
+    /** Das eine Zurück (gedrückt halten: Verlauf vor und zurück); Vor über Maustaste und Verlauf. */
+    private final com.aresstack.spaceharvester.app.ui.controls.BackButton backButton = new com.aresstack.spaceharvester.app.ui.controls.BackButton("Zurück (Maustaste Zurück)");
     /** Die Maustasten Zurück (4) und Vor (5) irgendwo im Fenster, beim Loslassen wie im EAC. */
     private final java.awt.event.AWTEventListener mouseNavigation = event -> {
         if (event instanceof MouseEvent mouse && event.getID() == MouseEvent.MOUSE_RELEASED) {
@@ -952,8 +948,21 @@ public final class PageDetailPanel extends JPanel {
         readingPane.onViewerLook(() -> Comic.viewerLook(context.settings() == null
                 ? com.aresstack.spaceharvester.app.settings.ViewerBackground.DEFAULT
                 : context.settings().viewerBackground()));
-        backButton.addActionListener(e -> back());
-        forwardButton.addActionListener(e -> forward());
+        backButton.navigator(new com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator() {
+            @Override
+            public com.aresstack.spaceharvester.app.ui.controls.BackButton.History history() {
+                return new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(names(forwardStack), names(backStack));
+            }
+
+            @Override
+            public void go(int steps) {
+                if (steps < 0) {
+                    step(backStack, forwardStack, -steps);
+                } else if (steps > 0) {
+                    step(forwardStack, backStack, steps);
+                }
+            }
+        });
         updateNavigation();
 
         JPanel header = new JPanel(new BorderLayout(0, 4));
@@ -3844,7 +3853,8 @@ public final class PageDetailPanel extends JPanel {
     /** Was die Mitte gerade zeigt: die Seite, die Quellenseite oder nichts. */
     private Place current() {
         if (sourceId != null && pageId != null) {
-            return Place.page(sourceId, pageId);
+            // Mit dem gezeigten Titel, damit der Verlauf (Zurück gedrückt halten) Namen zeigt.
+            return new Place(sourceId, null, pageId, title.getText());
         }
         if (showsSource() && sourceView.sourceId() != null) {
             return Place.level(sourceView.sourceId(), sourceView.spaceKey(), title.getText());
@@ -3897,13 +3907,22 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private boolean step(java.util.Deque<Place> from, java.util.Deque<Place> to) {
-        if (from.isEmpty() || context.runtime() == null) {
+        return step(from, to, 1);
+    }
+
+    /** Springt {@code steps} Orte weit; die übersprungenen wandern ungeladen in den Verlauf der Gegenrichtung. */
+    private boolean step(java.util.Deque<Place> from, java.util.Deque<Place> to, int steps) {
+        if (steps < 1 || from.size() < steps || context.runtime() == null) {
             return false;
         }
-        Place next = from.pop();
         Place now = current();
-        if (now != null) {
-            to.push(now);
+        Place next = null;
+        for (int i = 0; i < steps; i++) {
+            if (now != null) {
+                to.push(now);
+            }
+            next = from.pop();
+            now = next;
         }
         navigating = true;
         try {
@@ -3921,8 +3940,18 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void updateNavigation() {
-        backButton.setEnabled(canGoBack());
-        forwardButton.setEnabled(canGoForward());
+        backButton.refresh();
+    }
+
+    /** Namen der Orte im Verlauf, der nächste zuerst. */
+    private static java.util.List<String> names(java.util.Deque<Place> places) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (Place place : places) {
+            String name = place.title() == null || place.title().isBlank() ? null : place.title().strip();
+            names.add(name != null ? name : place.page() ? "Seite " + place.pageId()
+                    : place.spaceKey() != null ? place.spaceKey() : place.sourceId());
+        }
+        return names;
     }
 
     /**
@@ -3985,11 +4014,6 @@ public final class PageDetailPanel extends JPanel {
     /** Der Zurück-Knopf (Tests). */
     javax.swing.JButton backButton() {
         return backButton;
-    }
-
-    /** Der Vor-Knopf (Tests). */
-    javax.swing.JButton forwardButton() {
-        return forwardButton;
     }
 
     /** Lädt den Pfad der angezeigten Seite; ohne Seitenbaum der Quelle bleibt er leer. */
@@ -5744,12 +5768,11 @@ public final class PageDetailPanel extends JPanel {
                 standingHelp, glossaryHelp, graphHelp, star, more);
     }
 
-    /** Zurück und Vor für die Statuszeile des Hauptfensters. */
+    /** Zurück und Vor links an der Suchleiste des Hauptfensters. */
     JComponent navigation() {
         JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 2, 0));
         row.setOpaque(false);
-        row.add(backButton.compact());
-        row.add(forwardButton.compact());
+        row.add(backButton);
         return row;
     }
 

@@ -6,7 +6,7 @@ Unveränderte Kopie der Swing-/Java2D-Comic-Bibliothek `comic-controls` aus
 ohne dessen Oberfläche oder Fachlogik zu kopieren.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`1e8bf8c43401f0a460d92f80abaa9cdf3c405c03`, derselbe Stand wie `enterprise-ai-sources`.
+`64b5950c1cf132140f4473a9c69d4081edad571d` (Kopierknopf der Blasenkopfzeile in comic-controls, EAC #239).
 
 ## Inhalt und Lizenz
 

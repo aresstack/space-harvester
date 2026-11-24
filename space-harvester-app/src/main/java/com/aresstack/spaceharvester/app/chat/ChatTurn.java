@@ -137,8 +137,8 @@ public final class ChatTurn {
         }
 
         /**
-         * Fortschritt der Arbeit vor der Antwort, für den Balken der Gedankenblase: {@code done} von {@code total}
-         * Schritten (mit Werkzeugen die Runden, sonst Suchen und Antworten).
+         * Fortschritt der Arbeit vor der Antwort, für den Balken der Gedankenblase: {@code done} gelesene Seiten von
+         * {@code total} gefundenen und gelesenen Seiten dieses Turns; beide wachsen, keine feste Höchstzahl.
          */
         default void progress(int done, int total) {
         }
@@ -210,6 +210,20 @@ public final class ChatTurn {
     private final Map<PageKey, Integer> numbers = new HashMap<>();
     private Releases releases = Releases.NONE;
     private final Set<PageKey> releasedHere = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Was die Suchen dieses Turns als Treffer nannten, für den Balken der Gedankenblase. */
+    private final Set<PageKey> foundHere = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Der Balken der Gedankenblase (Angelo 24.11.2026, keine feste Höchstzahl): gelesene Seiten von allen gefundenen
+     * und gelesenen dieses Turns; beide Zahlen wachsen mit der Arbeit.
+     */
+    private void reportProgress() {
+        Set<PageKey> all = new java.util.HashSet<>(foundHere);
+        all.addAll(releasedHere);
+        int done = releasedHere.size();
+        int total = all.size();
+        onUi(() -> listener.progress(done, total));
+    }
     /** Bestand je Space für {@link #spaceOf}, je Turn einmal gelesen. */
     private final Map<String, Map<String, PageHolding>> spacePages = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -480,7 +494,6 @@ public final class ChatTurn {
             context = ChatKnowledge.assemble(changes.excerpts());
             asked = whatsNewQuestion(question, changes.total(), context.accepted().size(), changes.since());
         } else {
-            onUi(() -> listener.progress(0, 2));
             try {
                 context = gather();
             } catch (RuntimeException e) {
@@ -497,7 +510,6 @@ public final class ChatTurn {
         context = releaseDelivered(context);
         ChatKnowledge.Context chosen = context;
         onUi(() -> listener.context(chosen));
-        onUi(() -> listener.progress(1, 2));
         // Ohne Bereich gibt es kein Wissen aus dem Bestand: dann aus eigenem Wissen (Angelo 24.11.2026).
         String system = scope == null && kind == Kind.QUESTION ? ChatKnowledge.OWN_KNOWLEDGE_PROMPT
                 : ChatKnowledge.systemMessage(area, context);
@@ -578,6 +590,13 @@ public final class ChatTurn {
             @Override
             public void delivered(String spaceKey, PageKey key) {
                 releasePageOrThrow(spaceKey, key);
+            }
+
+            @Override
+            public void found(PageKey key) {
+                if (foundHere.add(key)) {
+                    reportProgress();
+                }
             }
         }).neighbors(neighbors).glossarySynonyms(glossarySynonyms).collection(collection);
         if (termLookup != null) {
@@ -669,8 +688,6 @@ public final class ChatTurn {
             return;
         }
         List<AiChat.Tool> offered = round < maxToolRounds() ? toolset.definitions() : List.of();
-        int rounds = maxToolRounds();
-        onUi(() -> listener.progress(round, rounds));
         int roundStart;
         synchronized (received) {
             roundStart = received.length();
@@ -828,6 +845,7 @@ public final class ChatTurn {
             if (added > 0) {
                 onUi(() -> listener.released(added));
             }
+            reportProgress();
         } catch (RuntimeException e) {
             releasedHere.remove(key);
             onUi(() -> listener.releaseFailed(e));

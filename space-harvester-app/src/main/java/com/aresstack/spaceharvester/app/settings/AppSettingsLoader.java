@@ -731,7 +731,9 @@ public final class AppSettingsLoader {
                     + SyncSettings.MAX_BACKGROUND_PARALLELISM);
             parallelism = SyncSettings.DEFAULT_BACKGROUND_PARALLELISM;
         }
-        boolean background = flag(get(sync, "background-fill"), true, "space-harvester." + SyncSettings.BACKGROUND_FILL,
+        // In der App aus, solange niemand sie einschaltet (Angelo 24.11.2026: synchronisiert wird nur per Klick, je
+        // Quelle; der Unterschiedsbericht soll genau das zeigen). Im Dienst bleibt sie an (ADR 0016).
+        boolean background = flag(get(sync, "background-fill"), false, "space-harvester." + SyncSettings.BACKGROUND_FILL,
                 problems);
         return new SyncSettings(
                 flag(get(sync, "events"), false, prefix + SyncSettings.EVENTS, problems),
@@ -889,15 +891,8 @@ public final class AppSettingsLoader {
             problems.add("space-harvester." + ChangeLogSettings.RETENTION + ": " + e.getMessage());
             settings = ChangeLogSettings.DEFAULT;
         }
-        settings = settings.withShowAfterUpdate(flag(get(changeLog, "show-after-update"), false,
+        return settings.withShowAfterUpdate(flag(get(changeLog, "show-after-update"), false,
                 "space-harvester." + ChangeLogSettings.SHOW_AFTER_UPDATE, problems));
-        int areaPages = integer(get(changeLog, "area-pages"), ChangeLogSettings.DEFAULT_AREA_PAGES,
-                "space-harvester." + ChangeLogSettings.AREA_PAGES, problems);
-        if (areaPages < 1) {
-            problems.add("space-harvester." + ChangeLogSettings.AREA_PAGES + " muss mindestens 1 sein");
-            areaPages = ChangeLogSettings.DEFAULT_AREA_PAGES;
-        }
-        return settings.withAreaPages(areaPages);
     }
 
     /**

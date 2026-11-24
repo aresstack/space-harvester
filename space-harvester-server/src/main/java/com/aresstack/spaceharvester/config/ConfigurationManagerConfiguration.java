@@ -137,7 +137,7 @@ class ConfigurationManagerConfiguration {
                 TermSettings.SYNONYMS_GLOSSARY_TERMS_ONLY, TermSettings.GLOSSARY_AUTOMATIC,
                 EnrichmentSettings.DOCUMENTS_ENABLED,
                 EnrichmentSettings.DOCUMENTS_EMBEDDING_MAX_CHARS, ChangeLogSettings.RETENTION,
-                ChangeLogSettings.SHOW_AFTER_UPDATE, ChangeLogSettings.AREA_PAGES, SimplificationSettings.MODE,
+                ChangeLogSettings.SHOW_AFTER_UPDATE, SimplificationSettings.MODE,
                 SimplificationSettings.PARALLEL,
                 SimplificationSettings.MODEL, CheckSettings.SCOPE, CheckSettings.PARALLEL, CheckSettings.MODEL,
                 GlossaryRuleSettings.MAX_TERMS, ImageSettings.AUTOMATIC, ImageSettings.MAX_PER_RUN,

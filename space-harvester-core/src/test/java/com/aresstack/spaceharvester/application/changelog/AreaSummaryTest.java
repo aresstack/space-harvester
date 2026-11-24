@@ -43,7 +43,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Bereichszusammenfassung (ADR 0034 §7, Paket 4b; Angelo 24.11.2026: Umschalter „Änderungen | Bereich“): Bestand einer
- * Auswahl statt Änderungen, Seitenbudget mit den oberen Seiten zuerst, KI-Freigabe je Seite, Ablage je Aufrufer,
+ * Auswahl statt Änderungen, alle Seiten ohne Seitenbudget, KI-Freigabe je Seite, Ablage je Aufrufer,
  * „veraltet“ über den Fingerabdruck und kein Modellaufruf für einen leeren Bereich.
  */
 class AreaSummaryTest {
@@ -92,7 +92,7 @@ class AreaSummaryTest {
     private final List<String> marked = new CopyOnWriteArrayList<>();
     private Consumer<String> recorded = ignored -> {
     };
-    private int budget = 10;
+    private RuntimeException failure;
     private String answer = """
             {"zusammenfassung": "Der Bereich DEV beschreibt die Entwicklung.",
              "themen": [{"titel": "Einstieg", "text": "Wozu es DEV gibt.", "details": "Ausführlich.",
@@ -152,6 +152,9 @@ class AreaSummaryTest {
 
         @Override
         public String complete(String given, String input) {
+            if (failure != null) {
+                throw failure;
+            }
             instructions.add(given);
             inputs.add(input);
             return answer;
@@ -174,7 +177,7 @@ class AreaSummaryTest {
                 public Optional<String> spaceName(PageKey page, String spaceKey) {
                     return Optional.of("Entwicklung");
                 }
-            })).areas(holdings, () -> budget);
+            })).areas(holdings);
 
     @AfterEach
     void close() {
@@ -250,15 +253,40 @@ class AreaSummaryTest {
         assertThat(marked).contains("wiki");
     }
 
+    /**
+     * Angelo 24.11.2026: „nicht pauschal 300 Seiten und dann ist Schluss“. Ein großer Bereich geht vollständig ein, in
+     * mehreren Teilen, die danach zusammengeführt werden; keine Seite fällt einem Budget zum Opfer.
+     */
     @Test
-    void theBudgetKeepsTheTopPagesAndCountsTheRest() {
-        devSpace();
-        budget = 2;
+    void everyPageOfALargeAreaReachesTheModelInPartsWithoutAPageBudget() {
+        int count = 400;
+        List<CatalogPage> pages = new ArrayList<>();
+        pages.add(new CatalogPage("1", null, true, "1", "1"));
+        page("1", null, "Startseite");
+        texts.put("1", "Inhalt von Seite 1");
+        released.add("1");
+        for (int i = 2; i <= count; i++) {
+            String id = String.valueOf(i);
+            pages.add(new CatalogPage(id, "1", true, "1", "1"));
+            page(id, "1", "Thema " + id);
+            texts.put(id, "Inhalt von Seite " + id + ". " + "Erklärung ".repeat(20));
+            released.add(id);
+        }
+        stocks.put("wiki/DEV", new Stock(CONFIRMED, pages, Set.of(), List.of()));
+
         log.summarizeArea(CALLER, SPACE, false);
         runHeld();
-        assertThat(inputs.getFirst()).contains("Startseite", "Inhalt von Seite 1").doesNotContain("Freigabe")
-                // 4 abgeschnitten, eine der beiden Seiten unter 1 auch, dazu die nicht gespeicherte 5.
-                .contains("\"nichtLesbar\":3");
+
+        List<String> parts = instructions.stream().filter(AreaSummarizer.INSTRUCTIONS::equals).toList();
+        assertThat(parts).hasSizeGreaterThan(1);
+        assertThat(instructions).anyMatch(given -> given.startsWith(AreaSummarizer.COMBINE));
+        String all = String.join("\n", inputs);
+        for (int i = 2; i <= count; i++) {
+            assertThat(all).contains("\"titel\":\"Thema " + i + "\"");
+        }
+        assertThat(inputs).noneMatch(input -> input.contains("\"nichtLesbar\":") && !input.contains(
+                "\"nichtLesbar\":0"));
+        assertThat(log.areaSummary(CALLER, SPACE)).isPresent();
     }
 
     @Test
@@ -297,5 +325,38 @@ class AreaSummaryTest {
         assertThatThrownBy(() -> log.summarizeArea(CALLER, Selection.of(Selection.Root.space("wiki", "OPS")), true))
                 .isInstanceOfSatisfying(SummaryUnavailableException.class, e ->
                         assertThat(e.reason()).isEqualTo(SummaryUnavailableException.Reason.EMPTY_AREA));
+    }
+
+    /**
+     * Fehler 24.11.2026 (Angelo: „Zusammenfassen“ unter „Bereich“ endet sofort ohne Überblick): Ohne geladene oder ohne
+     * freigegebene Seite bekam das Modell nur {@code "seiten":[]}. Jetzt nennt der Start den Grund, ohne Modellaufruf.
+     */
+    @Test
+    void withoutAReleasedOrLoadedPageTheStartSaysWhyAndNeverAsksTheModel() {
+        devSpace();
+        released.clear();
+        assertThatThrownBy(() -> log.summarizeArea(CALLER, SPACE, true))
+                .isInstanceOfSatisfying(SummaryUnavailableException.class, e -> assertThat(e.reason())
+                        .isEqualTo(SummaryUnavailableException.Reason.AREA_NOT_RELEASED));
+        stocks.put("wiki/OPS", new Stock(CONFIRMED, List.of(new CatalogPage("9", null, false, "1", null)),
+                Set.of(), List.of()));
+        assertThatThrownBy(() -> log.summarizeArea(CALLER, Selection.of(Selection.Root.space("wiki", "OPS")), true))
+                .isInstanceOfSatisfying(SummaryUnavailableException.class, e -> assertThat(e.reason())
+                        .isEqualTo(SummaryUnavailableException.Reason.AREA_NOT_LOADED));
+        assertThat(inputs).isEmpty();
+    }
+
+    /** Scheitert der KI-Dienst, nennt der Auftrag den Grund statt „Unerwarteter Fehler (AiServiceException)“. */
+    @Test
+    void aFailingModelEndsTheRunWithAReadableReason() {
+        devSpace();
+        failure = new com.aresstack.spaceharvester.ai.AiServiceException(
+                com.aresstack.spaceharvester.ai.AiServiceException.Reason.UNAUTHORIZED, "HTTP 403 vom Dienst");
+        JobStatus job = log.summarizeArea(CALLER, SPACE, true);
+        runHeld();
+        JobStatus ended = jobs.status(job.id());
+        assertThat(ended.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.FAILED);
+        assertThat(ended.error().code()).isEqualTo("AI_UNAUTHORIZED");
+        assertThat(ended.error().message()).isEqualTo("Der KI-Dienst lehnt den Zugang ab (HTTP 403)");
     }
 }

@@ -71,7 +71,7 @@ public final class ContentView implements View {
             renderCrumbs();
             positionListener.accept(shown);
         });
-        // Zurück/Vor (Statuszeile, Maustasten): Bereichsanzeige und Baum folgen dem wieder gezeigten Ort.
+        // Zurück/Vor (an der Suchleiste, Maustasten): Bereichsanzeige und Baum folgen dem wieder gezeigten Ort.
         detail.onNavigated(place -> {
             sourceId = place.sourceId();
             spaceKey = place.page() ? null : place.spaceKey();
@@ -419,7 +419,7 @@ public final class ContentView implements View {
         detail.showExport();
     }
 
-    /** Zurück und Vor der Seitenansicht für die Statuszeile des Hauptfensters (Angelo, 16.11.2026). */
+    /** Zurück und Vor der Seitenansicht links an der Suchleiste des Hauptfensters (Angelo, 24.11.2026). */
     public JComponent navigation() {
         return detail.navigation();
     }

@@ -63,6 +63,11 @@ final class FtpDatasetsView extends JPanel {
     private final Runnable showJobs;
     private final PlaceholderField path = new PlaceholderField(30, "HLQ oder Dataset, etwa 'HLQ.JCL'");
     private final PlaceholderField filter = new PlaceholderField(12, "Filtern");
+    /** Erster Reiter der Seitenleiste. */
+    static final String SIDE_DATASETS = "Datasets";
+    /** Zuletzt gewählter Reiter der Seitenleiste. */
+    static final String SIDE_TAB_KEY = "deck.ftp.side-tab";
+    private EditorSideBar sideBar;
     private final Entries model = new Entries();
     private final JTable table = Comic.table(new JTable(model));
     private static final String HINT = "hint";
@@ -94,8 +99,8 @@ final class FtpDatasetsView extends JPanel {
     private final IconButton newDataset;
     private final IconButton delete;
     private final IconButton submit;
-    private final IconButton back = new IconButton(Glyph.BACK, "Zurück (zum vorher gezeigten Pfad, Pfeil links)");
-    private final IconButton forward = new IconButton(new Mirrored(Glyph.BACK), "Vor (Pfeil rechts)");
+    /** Das eine Zurück wie im Space Harvester; gedrückt halten zeigt den Verlauf, Vor per Pfeil rechts/Maustaste. */
+    private final com.aresstack.spaceharvester.app.ui.controls.BackButton back = new com.aresstack.spaceharvester.app.ui.controls.BackButton("Zurück (zum vorher gezeigten Pfad, Pfeil links)");
     private final Deque<String> history = new ArrayDeque<>();
     private final Deque<String> future = new ArrayDeque<>();
     static final String SORT_KEY = "deck.ftp.sort";
@@ -141,14 +146,12 @@ final class FtpDatasetsView extends JPanel {
 
         // Kopf: Pfad mit seinen Knöpfen im Feld, rechts der Filter.
         InputFrame pathFrame = new InputFrame(path);
-        back.addActionListener(e -> back());
+        back.navigator(com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator.of(
+                () -> new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(List.copyOf(future), List.copyOf(history)), this::go));
         var up = InputFrame.flatButton("↑", "Eine Ebene höher");
         up.addActionListener(e -> up());
         IconButton reload = new IconButton(Glyph.REFRESH, "Neu laden");
         reload.addActionListener(e -> navigate(path.getText(), false));
-        forward.addActionListener(e -> forward());
-        pathFrame.addButton(back);
-        pathFrame.addButton(forward);
         pathFrame.addButton(up);
         pathFrame.addButton(reload);
         path.addActionListener(e -> navigate(path.getText(), true));
@@ -198,6 +201,7 @@ final class FtpDatasetsView extends JPanel {
         JPanel head = new JPanel(new BorderLayout(10, 0));
         head.setOpaque(false);
         head.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+        head.add(back, BorderLayout.WEST);
         head.add(pathFrame, BorderLayout.CENTER);
 
         // „Neu …“ als Zeile über der Liste, mit ✕ (Meldungskästen oben mit ✕).
@@ -316,16 +320,17 @@ final class FtpDatasetsView extends JPanel {
         messagePanel.add(listMessage, BorderLayout.CENTER);
         listArea.add(messagePanel, MESSAGE);
         message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
-        // Seitenleiste wie der Explorer im Space Harvester: Kopf mit Überschrift und Filter, unten die gemeinsame
-        // Fußleiste; unter der Arbeitsfläche rechts die Leiste mit der Lupe (DeckBars.withFind).
-        JPanel side = new JPanel(new BorderLayout(0, 6));
-        side.setOpaque(false);
-        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead("Datasets", filter)
-                .actions(sortButton, detailsButton, groupButton), BorderLayout.NORTH);
-        side.add(listArea, BorderLayout.CENTER);
-        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
-                com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll), null, null),
-                BorderLayout.SOUTH);
+        // Seitenleiste wie in NDV (EditorSideBar, Angelo 24.11.2026): erster Reiter die Datasets mit Kopf und Filter,
+        // dann Ressourcen, Callees/Caller, Gliederung des gezeigten Editors und in der Diagramm-Ansicht deren
+        // Werkzeuge; unten die gemeinsame Fußleiste mit den Reitern. Unter der Arbeitsfläche rechts die Leiste mit der
+        // Lupe (DeckBars.withFind); nichts steht rechts neben Quelltext oder Diagramm.
+        sideBar = new EditorSideBar(new EditorSideBar.Home(SIDE_DATASETS, FilesIcons.folder(), "Datasets",
+                new com.aresstack.spaceharvester.app.ui.controls.SideHead(SIDE_DATASETS, filter)
+                        .actions(sortButton, detailsButton, groupButton),
+                listArea, com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll)),
+                List.of(), AppState.shared().get(SIDE_TAB_KEY),
+                name -> AppState.shared().put(SIDE_TAB_KEY, name));
+        javax.swing.JComponent side = sideBar;
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, side, DeckBars.withFind(documentPanel));
         ComicDivider.install(split, Comic.PALETTE);
         split.setResizeWeight(0.42);
@@ -396,15 +401,6 @@ final class FtpDatasetsView extends JPanel {
     }
 
     private void navigate(String target, Move move) {
-        navigate(target, move, null);
-    }
-
-    /**
-     * Listet einen Pfad. Mit {@code opened} kam der Pfad per Doppelklick/Enter von einem Dataset: Zeigt die Liste dann
-     * nur das Dataset selbst (sequenziell) oder nichts, wird es wie eine Datei im Editor geöffnet statt als leerer
-     * Ordner stehen zu bleiben.
-     */
-    private void navigate(String target, Move move, RemoteEntry opened) {
         FtpSession session = owner.session();
         if (session.mvs() && (target == null || target.isBlank() || MvsPath.ROOT.equals(MvsPath.absolute(target)))) {
             message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
@@ -425,11 +421,6 @@ final class FtpDatasetsView extends JPanel {
                                 && error.getCause() != null ? error.getCause() : error;
                         owner.status("Liste von " + resolved + " nicht geladen – " + FtpWorkspace.describe(cause), true);
                         message("Fehler: " + FtpWorkspace.describe(cause), true);
-                        return;
-                    }
-                    if (opened != null && session.mvs() && readsAsFile(opened, resolved, list)) {
-                        owner.status(current + " · " + opened.name() + " geöffnet", false);
-                        openDocument(opened.path());
                         return;
                     }
                     if (!from.isEmpty() && !from.equals(resolved)) {
@@ -464,6 +455,35 @@ final class FtpDatasetsView extends JPanel {
         if (!future.isEmpty()) {
             navigate(future.pop(), Move.FORWARD);
         }
+    }
+
+    /**
+     * Springt {@code steps} Pfade weit im Verlauf (negativ zurück, positiv vor); die übersprungenen wandern wie im
+     * Browser in die Gegenrichtung.
+     */
+    void go(int steps) {
+        if (steps == -1) {
+            back();
+            return;
+        }
+        if (steps == 1) {
+            forward();
+            return;
+        }
+        Deque<String> from = steps < 0 ? history : future;
+        Deque<String> to = steps < 0 ? future : history;
+        int count = Math.abs(steps);
+        if (count == 0 || from.size() < count) {
+            return;
+        }
+        String now = current;
+        for (int i = 0; i < count; i++) {
+            if (!now.isEmpty()) {
+                to.push(now);
+            }
+            now = from.pop();
+        }
+        navigate(now, Move.STAY);
     }
 
     /** Liste, Baum oder Hinweis zeigen und den Stand „n Einträge“ bzw. „x / y Einträge“ setzen. */
@@ -678,33 +698,30 @@ final class FtpDatasetsView extends JPanel {
         if (entry == null) {
             return;
         }
-        if (entry.directory()) {
-            navigate(entry.path(), Move.NEW, entry);
+        if (!owner.session().mvs()) {
+            if (entry.directory()) {
+                navigate(entry.path(), true);
+            } else {
+                openDocument(entry.path());
+            }
             return;
         }
-        openDocument(entry.path());
+        // Wie MainframeMate (MvsConnectionTab.handleDoubleClick → MvsBrowserController.openResource): HLQ/Qualifier
+        // und partitionierte Datasets öffnen als Liste, sequenzielle Datasets und Member im Editor.
+        owner.run(owner.session().files(files -> files.opensAsFolder(entry)), "Öffnen von " + entry.path()
+                + " fehlgeschlagen", folder -> {
+                    if (folder) {
+                        navigate(entry.path(), true);
+                    } else {
+                        openDocument(entry.path());
+                    }
+                });
     }
 
     private void openDocument(String remotePath) {
         EditorSession session = editors.open(store, remotePath, FtpDocumentStore.name(remotePath));
         added(session);
         showDocument(session);
-    }
-
-    /**
-     * Ob ein geöffnetes Dataset eine Datei ist: Die Liste zeigt nur das Dataset selbst als Datei (sequenziell), oder
-     * sie ist leer und das Dataset ist laut Dsorg nicht partitioniert (ein leeres PDS bleibt eine leere Liste).
-     */
-    static boolean readsAsFile(RemoteEntry opened, String resolved, List<RemoteEntry> list) {
-        if (MvsPath.isMember(opened.path())) {
-            return false;
-        }
-        if (list.isEmpty()) {
-            return !partitioned(opened);
-        }
-        String self = MvsPath.unquote(resolved);
-        return list.size() == 1 && !list.get(0).directory()
-                && MvsPath.unquote(list.get(0).path()).equalsIgnoreCase(self);
     }
 
     private static boolean partitioned(RemoteEntry entry) {
@@ -733,6 +750,7 @@ final class FtpDatasetsView extends JPanel {
             return;
         }
         DocumentEditor editor = new DocumentEditor(session);
+        sideBar.attach(editor);
         if (owner.session().mvs()) {
             // Wie MainframeMate (FileTabImpl „▶ Ausführen“, nur FTP + MVS + JCL): den Editor-Inhalt einreichen,
             // auch ungespeichert.
@@ -761,6 +779,7 @@ final class FtpDatasetsView extends JPanel {
         if (session != null) {
             DocumentEditor editor = editorOf.get(session);
             if (editor != null) {
+                sideBar.show(editor);
                 SwingUtilities.invokeLater(editor::focusText);
             }
             documentStatus();
@@ -901,8 +920,7 @@ final class FtpDatasetsView extends JPanel {
                 : "Neue Datei … – leere Datei in diesem Ordner anlegen");
         newDataset.setToolTipText(mvs ? "Neues Dataset … – unter diesem Pfad anlegen (mit DSORG, RECFM, LRECL …)"
                 : "Neuer Ordner … – Ordner unter diesem Pfad anlegen");
-        back.setEnabled(!history.isEmpty());
-        forward.setEnabled(!future.isEmpty());
+        back.refresh();
         boolean showing = document != null;
         save.setVisible(showing);
         reloadDocument.setVisible(showing);
@@ -1346,31 +1364,6 @@ final class FtpDatasetsView extends JPanel {
 
     private static final java.time.format.DateTimeFormatter DATE =
             java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY);
-
-    /** Ein Symbol gespiegelt (Vor = gespiegeltes Zurück). */
-    private record Mirrored(javax.swing.Icon icon) implements javax.swing.Icon {
-        @Override
-        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
-            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
-            try {
-                g2.translate(x + icon.getIconWidth(), y);
-                g2.scale(-1, 1);
-                icon.paintIcon(c, g2, 0, 0);
-            } finally {
-                g2.dispose();
-            }
-        }
-
-        @Override
-        public int getIconWidth() {
-            return icon.getIconWidth();
-        }
-
-        @Override
-        public int getIconHeight() {
-            return icon.getIconHeight();
-        }
-    }
 
     /** Dreieck „Ausführen“ als 16-px-Symbol. */
     record PlayIcon() implements javax.swing.Icon {

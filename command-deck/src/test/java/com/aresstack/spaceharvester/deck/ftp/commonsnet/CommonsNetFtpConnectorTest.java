@@ -74,11 +74,34 @@ class CommonsNetFtpConnectorTest {
         try (FileConnection files = files()) {
             List<RemoteEntry> data = files.list("'KKR.DATA'");
             assertThat(data).extracting(RemoteEntry::name).containsExactly("LOG");
-            assertThat(data.get(0).directory()).isFalse();
+            // Wie MainframeMate: ein Dataset steht als Dataset da; erst beim Öffnen entscheidet NLST 'DS(*)'.
+            assertThat(data.get(0).directory()).isTrue();
+            assertThat(files.opensAsFolder(data.get(0))).isFalse();
             assertThat(files.read(data.get(0).path()).text()).isEqualTo("Grüße an Bord\nZeile zwei");
-            // Partitionierte Datasets bleiben Ordner
-            assertThat(files.list("'KKR.SRC'")).extracting(RemoteEntry::name, RemoteEntry::directory)
+            // Partitionierte Datasets öffnen als Liste ihrer Members
+            List<RemoteEntry> src = files.list("'KKR.SRC'");
+            assertThat(src).extracting(RemoteEntry::name, RemoteEntry::directory)
                     .containsExactly(org.assertj.core.groups.Tuple.tuple("COBOL", true));
+            assertThat(files.opensAsFolder(src.get(0))).isTrue();
+            assertThat(files.list(src.get(0).path())).extracting(RemoteEntry::directory).containsOnly(false);
+        }
+    }
+
+    @Test
+    void aPartitionedDatasetOpensLikeAFolderOfItsMembersAsInMainframeMate() throws Exception {
+        // Der Scheinhost antwortet wie der echte: NLST 'KKR.JCL' ohne (*) nennt nur das Dataset selbst. Früher stand
+        // dann „KKR.JCL“ als einziger Eintrag da; wie MvsListingService fragt die Liste zuerst NLST 'KKR.JCL(*)'.
+        try (FileConnection files = files()) {
+            RemoteEntry jcl = files.list("'KKR'").stream().filter(entry -> entry.name().equals("JCL")).findFirst()
+                    .orElseThrow();
+            assertThat(jcl.path()).isEqualTo("'KKR.JCL'");
+            assertThat(files.opensAsFolder(jcl)).isTrue();
+            List<RemoteEntry> members = files.list(jcl.path());
+            assertThat(members).extracting(RemoteEntry::name).containsExactly("BUILD", "STERNE");
+            assertThat(members).extracting(RemoteEntry::path)
+                    .containsExactly("'KKR.JCL(BUILD)'", "'KKR.JCL(STERNE)'");
+            assertThat(members).extracting(RemoteEntry::directory).containsOnly(false);
+            assertThat(files.opensAsFolder(members.get(0))).isFalse();
         }
     }
 
