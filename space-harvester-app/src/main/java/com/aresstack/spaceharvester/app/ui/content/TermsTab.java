@@ -102,6 +102,10 @@ final class TermsTab extends JPanel {
             return totals();
         }
 
+        /** Lässt den Core die verwalteten Zahlen dieser Auswahl samt Unterknoten verwerfen; ohne Core nichts. */
+        default void rebuild() {
+        }
+
         /** Schlüssel, unter dem die Gesamtzahlen gemerkt werden; {@code null}: nicht merken. */
         default Object key() {
             return null;
@@ -521,6 +525,20 @@ final class TermsTab extends JPanel {
         for (CountTile tile : tiles()) {
             tile.counting(on);
         }
+    }
+
+    /**
+     * Von Hand neu aufbauen, für den Fehlerfall (Angelo 24.11.2026): verwirft alle gemerkten Zahlen, lässt den Core
+     * den Knoten samt Unterknoten neu lesen und zählt sichtbar neu.
+     */
+    void rebuild() {
+        if (selection == null) {
+            return;
+        }
+        remembered.clear();
+        selection.rebuild();
+        totals(null, null, null);
+        count(true);
     }
 
     /**

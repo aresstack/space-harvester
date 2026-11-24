@@ -224,6 +224,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private final Directory directory;
     private final IndexWriter writer;
     private final SearcherManager searchers;
+    private final com.aresstack.spaceharvester.application.terms.TermChanges termChanges =
+            new com.aresstack.spaceharvester.application.terms.TermChanges();
     private int uncommitted;
     private volatile boolean closed;
 
@@ -307,6 +309,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             writer.addDocuments(terms(enrichment));
             writer.addDocuments(facts(enrichment));
             changed();
+            termChanges.fire(enrichment.key().sourceId(), enrichment.key().pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -430,6 +433,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                 }
             }
             changed();
+            termChanges.fire(document.page().sourceId(), document.page().pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -457,6 +461,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                         new Term(TERM_DOCUMENT_ATTACHMENT, attachment(document)));
             }
             changed();
+            termChanges.fire(document.page().sourceId(), document.page().pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -475,6 +480,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                     new Term(TERM_PAGE, page(key)), new Term(FACT_PAGE, page(key)),
                     new Term(DOCUMENT_PAGE, page(key)));
             changed();
+            termChanges.fire(key.sourceId(), key.pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -504,6 +510,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                         .add(new TermQuery(new Term(VECTOR_DOCUMENT, "1")), BooleanClause.Occur.FILTER).build());
             }
             changed();
+            termChanges.fire(key.sourceId(), key.pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -521,6 +528,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             writer.commit();
             uncommitted = 0;
             searchers.maybeRefreshBlocking();
+            termChanges.fire(sourceId, null);
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -603,6 +611,11 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht gelesen werden", e);
         }
+    }
+
+    @Override
+    public Runnable subscribe(java.util.function.Consumer<Change> listener) {
+        return termChanges.subscribe(listener);
     }
 
     @Override

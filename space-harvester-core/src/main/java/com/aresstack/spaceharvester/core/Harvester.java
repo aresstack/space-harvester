@@ -731,8 +731,6 @@ public final class Harvester implements AutoCloseable {
             this.pageLinks = new PageLinks(new LucenePageLinkPages(cache), linkIndex,
                     List.of(new ConfluenceStorageLinks()), access);
             opened.add(pageLinks);
-            HoldingsChanges cacheChanges = HoldingsChanges.all(holdings, pageLinks);
-            cache.changes(cacheChanges);
             // Abgleich beim Start als Hintergrundauftrag „Verweise abgleichen“; nach einem Abgleich eines Space und
             // für einzelne Seiten bleibt es beim Bündler.
             pageLinks.background(backgroundJobs);
@@ -798,6 +796,9 @@ public final class Harvester implements AutoCloseable {
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
                     termProcessor.version(), documentTexts);
+            // Die Verwalter der Begriffszahlen hören wie Bestand und Verweise auf jeden Commit des Seiten-Caches.
+            HoldingsChanges cacheChanges = HoldingsChanges.all(holdings, pageLinks, terms.managedTotals());
+            cache.changes(cacheChanges);
             FileResolutionCache resolutionCache = new FileResolutionCache(builder.dataDirectory.resolve("term-relations"));
             this.termRelations = new TermRelations(catalog,
                     new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
