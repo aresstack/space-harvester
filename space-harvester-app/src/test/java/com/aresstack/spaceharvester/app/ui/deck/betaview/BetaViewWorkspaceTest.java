@@ -286,18 +286,77 @@ class BetaViewWorkspaceTest {
     }
 
     @Test
-    void theFirstLoginFormShowsTheMainframeMateAddress() throws Exception {
+    void theFirstLoginFormHasNoBuiltInAddress() throws Exception {
         String before = com.aresstack.spaceharvester.app.ui.AppState.shared().get(BetaViewConnectForm.ADDRESS_KEY);
         try {
             com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ADDRESS_KEY, (String) null);
             build(ServerAccounts.NONE, new FakePrompts(folder.resolve("x.txt")));
-            assertThat(onEdt(() -> workspace.form().address.getText()))
-                    .isEqualTo(com.aresstack.spaceharvester.deck.betaview.BetaViewProfile.DEFAULT_ADDRESS)
-                    .isEqualTo("https://webenabler.zivit.iv.bfinv.de/betaview/");
+            // Keine internen Adressen im Programm (Angelo, 24.11.): weder vorbelegt noch als Platzhalter.
+            assertThat(onEdt(() -> workspace.form().address.getText())).isEmpty();
             assertThat(onEdt(() -> workspace.form().address.placeholder()))
-                    .isEqualTo(com.aresstack.spaceharvester.deck.betaview.BetaViewProfile.DEFAULT_ADDRESS);
+                    .isEqualTo(BetaViewConnectForm.ADDRESS_HINT)
+                    .doesNotContain("://");
         } finally {
             com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ADDRESS_KEY, before);
+        }
+    }
+
+    @Test
+    void withAnEmptyAddressFieldTheUrlOfTheKeePassEntryIsUsed() throws Exception {
+        try (FakeBetaViewServer server = new FakeBetaViewServer()) {
+            ServerAccount account = new ServerAccount("BetaView", server.address().toString(),
+                    FakeBetaViewServer.USER);
+            ServerAccounts shared = new ServerAccounts() {
+                @Override
+                public List<ServerAccount> accounts() {
+                    return List.of(account);
+                }
+
+                @Override
+                public ServerCredentials credentials(String entry) {
+                    return new ServerCredentials(account, FakeBetaViewServer.PASSWORD.toCharArray());
+                }
+            };
+            clearLoginState();
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(BetaViewConnectForm.ENTRY_KEY, "BetaView");
+            build(shared, new FakePrompts(folder.resolve("x")));
+            SwingUtilities.invokeAndWait(workspace::newLogin);
+            connected();
+            assertThat(onEdt(() -> workspace.form().address.getText())).isEmpty();
+        } finally {
+            clearLoginState();
+        }
+    }
+
+    @Test
+    void aKeePassEntryWithoutUrlAsksForTheAddress() throws Exception {
+        ServerAccount account = new ServerAccount("Ohne URL", "", "U1");
+        ServerAccounts shared = new ServerAccounts() {
+            @Override
+            public List<ServerAccount> accounts() {
+                return List.of(account);
+            }
+
+            @Override
+            public ServerCredentials credentials(String entry) {
+                return new ServerCredentials(account, "geheim".toCharArray());
+            }
+        };
+        try {
+            clearLoginState();
+            build(shared, new FakePrompts(folder.resolve("x")));
+            SwingUtilities.invokeAndWait(() -> {
+                BetaViewConnectForm form = workspace.form();
+                form.login.select(BetaViewConnectForm.KEEPASS);
+                form.entries(List.of("Ohne URL"));
+                form.entry.setSelectedItem("Ohne URL");
+                form.address.setText("");
+                form.submit();
+            });
+            await(() -> workspace.form().problemText().contains("Keine BetaView-Adresse"), "Hinweis im Formular");
+            assertThat(onEdt(workspace::sessionCount)).isZero();
+        } finally {
+            clearLoginState();
         }
     }
 

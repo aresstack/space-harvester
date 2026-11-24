@@ -10,14 +10,11 @@ import java.util.Locale;
  *
  * @param address Basisadresse, immer mit {@code /} am Ende, etwa {@code https://host/betaview/}
  * @param user    Benutzername
+ *
+ * <p>Eine Vorgabe für die Adresse gibt es bewusst nicht: Interne Adressen stehen nirgends im Programm, sondern im
+ * URL-Feld des KeePass-Eintrags oder im Formular (Angelo, 24.11.2026).
  */
 public record BetaViewProfile(URI address, String user) {
-
-    /**
-     * Vorgabe der Adresse wie MainframeMate ({@code betaview-integration/src/main/resources/betaview.properties},
-     * Schlüssel {@code url}): der BetaView-Webserver (Web Enabler) vor dem Host.
-     */
-    public static final String DEFAULT_ADDRESS = "https://webenabler.zivit.iv.bfinv.de/betaview/";
 
     public BetaViewProfile {
         if (address == null) {

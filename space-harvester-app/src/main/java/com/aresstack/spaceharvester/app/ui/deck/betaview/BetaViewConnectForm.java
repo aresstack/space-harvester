@@ -28,11 +28,11 @@ import javax.swing.JPasswordField;
 
 /**
  * „Neue Anmeldung“ am BetaView-Server: Adresse und Anmeldung. Mit „KeePass“ kommen Benutzer und Kennwort aus einem
- * Eintrag der vorhandenen KeePass-Kopplung der App, mit „Manuell“ aus den Feldern. Ein leeres Adressfeld gilt als die
- * Vorgabe von MainframeMate, die auch als Platzhalter im Feld steht. Die Adresse ist beim ersten Mal mit der Vorgabe von MainframeMate belegt
- * ({@link com.aresstack.spaceharvester.deck.betaview.BetaViewProfile#DEFAULT_ADDRESS}), sonst nichts; die zuletzt
- * benutzte Adresse, Anmeldeart, der Eintrag bzw. Benutzer stehen
- * beim nächsten Mal wieder da, nie ein Kennwort. Angemeldet wird erst auf „Anmelden“ (oder Eingabe).
+ * Eintrag der vorhandenen KeePass-Kopplung der App, mit „Manuell“ aus den Feldern. Bei „KeePass“ gilt ein leeres
+ * Adressfeld wie bei Terminal, FTP, NDV und E-Akte als das URL-Feld des Eintrags; bei „Manuell“ ist die Adresse Pflicht.
+ * Im Programm steht keine Adresse vor (Angelo, 24.11.2026: keine internen Adressen als Vorgabe oder Platzhalter). Die
+ * zuletzt benutzte Adresse, Anmeldeart, der Eintrag bzw. Benutzer stehen beim nächsten Mal wieder da, nie ein
+ * Kennwort. Angemeldet wird erst auf „Anmelden“ (oder Eingabe).
  */
 final class BetaViewConnectForm extends JPanel {
 
@@ -48,7 +48,10 @@ final class BetaViewConnectForm extends JPanel {
     static final String KEEPASS = "KeePass";
     static final String MANUAL = "Manuell";
 
-    final PlaceholderField address = new PlaceholderField(28, BetaViewProfile.DEFAULT_ADDRESS);
+    /** Platzhalter des Adressfelds, solange der gewählte KeePass-Eintrag keine Adresse hat. */
+    static final String ADDRESS_HINT = "BetaView-Adresse (sonst aus KeePass)";
+
+    final PlaceholderField address = new PlaceholderField(28, ADDRESS_HINT);
     final SegmentedToggle login = new SegmentedToggle().segment(KEEPASS).segment(MANUAL);
     final JComboBox<String> entry = Comic.combo();
     final PlaceholderField user = new PlaceholderField(20, "Benutzer");
@@ -62,6 +65,8 @@ final class BetaViewConnectForm extends JPanel {
     private final BiConsumer<BetaViewProfile, char[]> connect;
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton submit;
     private boolean entriesLoaded;
+    /** URL-Feld je KeePass-Eintrag (wie E-Akte); zeigt sich als Vorschlag im Adressfeld. */
+    private final Map<String, String> locations = new java.util.HashMap<>();
 
     /**
      * @param accounts die gemeinsamen Host-Zugänge des Command Deck (dieselbe KeePass-Kopplung wie Terminal, FTP, NDV)
@@ -105,6 +110,7 @@ final class BetaViewConnectForm extends JPanel {
         address.addActionListener(e -> submit());
         user.addActionListener(e -> submit());
         password.addActionListener(e -> submit());
+        entry.addActionListener(e -> entryChanged());
         login.onSelect(choice -> {
             updateLogin();
             if (KEEPASS.equals(choice)) {
@@ -149,6 +155,8 @@ final class BetaViewConnectForm extends JPanel {
         String keep = entryTitle();
         keePassHint.setText("Lese KeePass …");
         Background.run(accounts::accounts, found -> {
+            locations.clear();
+            found.forEach(account -> locations.put(account.entry(), account.location()));
             List<String> titles = found.stream().map(ServerAccount::entry).toList();
             entry.removeAllItems();
             titles.forEach(entry::addItem);
@@ -169,16 +177,14 @@ final class BetaViewConnectForm extends JPanel {
     /** Prüft die Felder, holt bei KeePass Benutzer und Kennwort im Hintergrund und meldet dann an. */
     void submit() {
         problem.setText(" ");
-        // Leeres Feld = Vorgabe von MainframeMate (steht als Platzhalter im Feld).
-        String typedAddress = address.getText().isBlank() ? BetaViewProfile.DEFAULT_ADDRESS
-                : address.getText().strip();
+        String typedAddress = address.getText().strip();
         if (KEEPASS.equals(login.selected())) {
             String title = entryTitle();
             if (title.isEmpty()) {
                 problem.setText("KeePass-Eintrag fehlt");
                 return;
             }
-            if (!validAddress(typedAddress)) {
+            if (!typedAddress.isEmpty() && !validAddress(typedAddress)) {
                 return;
             }
             submit.setEnabled(false);
@@ -187,7 +193,13 @@ final class BetaViewConnectForm extends JPanel {
                 submit.setEnabled(true);
                 keePassHint.setText(" ");
                 try (read) {
-                    start(typedAddress, read.user(), read.copyPassword(), Map.of(ENTRY_KEY, title));
+                    // Wie die anderen Bereiche: leeres Feld = die Adresse aus dem URL-Feld des KeePass-Eintrags.
+                    String where = typedAddress.isEmpty() ? read.account().location() : typedAddress;
+                    if (where.isBlank()) {
+                        failed("Keine BetaView-Adresse (URL) im KeePass-Eintrag; bitte oben eintragen");
+                        return;
+                    }
+                    start(where, read.user(), read.copyPassword(), Map.of(ENTRY_KEY, title));
                 }
             }, error -> {
                 submit.setEnabled(true);
@@ -255,7 +267,7 @@ final class BetaViewConnectForm extends JPanel {
     }
 
     /**
-     * Anmelden ohne Formular: gemerkte Adresse (sonst die Vorgabe) und der gemerkte oder geteilte KeePass-Eintrag. Scheitert schon das Lesen aus
+     * Anmelden ohne Formular: gemerkte Adresse (sonst das URL-Feld des Eintrags) und der gemerkte oder geteilte KeePass-Eintrag. Scheitert schon das Lesen aus
      * KeePass, meldet {@code failed} den Grund; das Formular zeigt ihn dann.
      */
     void connectDirectly(java.util.function.Consumer<String> failed) {
@@ -337,10 +349,7 @@ final class BetaViewConnectForm extends JPanel {
 
     private void recall() {
         AppState state = AppState.shared();
-        // Noch nie angemeldet: die Adresse von MainframeMate (betaview.properties) steht schon da.
-        String remembered = state.get(ADDRESS_KEY);
-        address.setText(remembered == null ? BetaViewProfile.DEFAULT_ADDRESS
-                : remembered);
+        address.setText(nonNull(state.get(ADDRESS_KEY)));
         String mode = state.get(LOGIN_KEY);
         login.select(MANUAL.equals(mode) ? MANUAL : KEEPASS);
         String title = nonNull(state.get(ENTRY_KEY));
@@ -349,6 +358,12 @@ final class BetaViewConnectForm extends JPanel {
             entry.setSelectedItem(title);
         }
         user.setText(nonNull(state.get(USER_KEY)));
+    }
+
+    /** Wie {@code EakteConnectForm.entryChanged}: die Adresse des Eintrags als Vorschlag im leeren Adressfeld. */
+    private void entryChanged() {
+        String location = locations.getOrDefault(entryTitle(), "");
+        address.setPlaceholder(location.isBlank() ? ADDRESS_HINT : location);
     }
 
     /** Für Tests: Titel ins Auswahlfeld legen, ohne KeePass. */
