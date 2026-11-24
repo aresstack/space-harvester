@@ -94,7 +94,7 @@ final class EakteBrowser extends JPanel {
     private final CardLayout previewCards = new CardLayout();
     private final JPanel previewStage = new JPanel(previewCards);
     /** Kurz warten, bevor ein gewähltes Dokument geladen wird (Pfeiltasten durch den Baum laden nicht alles). */
-    private final javax.swing.Timer previewDelay = new javax.swing.Timer(250, e -> previewSelected());
+    private final javax.swing.Timer previewDelay = new javax.swing.Timer(250, e -> previewChosen());
     private final JPanel footTools;
     /** Was die Mappen zuletzt enthielten ({@code DAV:href} → Einträge); Aktualisieren liest neu. */
     private final Map<String, List<EakteEntry>> listing = new HashMap<>();
@@ -104,6 +104,10 @@ final class EakteBrowser extends JPanel {
     private Consumer<StatusNote> status = note -> { };
     private StatusNote current = StatusNote.plain(" ");
     private EditorSession shownPreview;
+    /** {@code href} des gezeigten Dokuments (auch einer Anlage), sonst {@code null}. */
+    private String shownHref;
+    /** Solange der Baum seine Auswahl nach einem Umbau nur wiederherstellt: nichts neu laden. */
+    private boolean restoring;
     /** Das gezeigte Dokument formatiert, mit den Anhang-Viewern der Leseansicht (Jira, Confluence): PDF, Word, … */
     private AttachmentViewerPanel viewer;
     static final String FOLDERS = "Ordner";
@@ -500,6 +504,9 @@ final class EakteBrowser extends JPanel {
 
     /** Ein Dokument im Baum gewählt: rechts zeigen; eine Mappe: lesen. */
     private void selectionChanged() {
+        if (restoring) {
+            return;
+        }
         TreePath path = tree.getSelectionPath();
         if (path != null && !revisiting) {
             visits.add(path);
@@ -576,6 +583,18 @@ final class EakteBrowser extends JPanel {
     // ---- Dokumente ------------------------------------------------------------------------------------------------
 
     /** Vorschau mit den Viewern der App; es gibt immer nur eine, die vorige und ihre Kopie verschwinden. */
+    /**
+     * Nach der Wahl im Baum: zeigen, aber nicht dasselbe Dokument noch einmal holen (die Auswahl kommt auch nach einem
+     * Umbau des Baums wieder, etwa wenn die Anlagen einer E-Mail erscheinen).
+     */
+    private void previewChosen() {
+        EakteEntry entry = selected();
+        if (entry != null && shownPreview != null && entry.href().equals(shownHref)) {
+            return;
+        }
+        previewSelected();
+    }
+
     void previewSelected() {
         EakteEntry entry = document();
         if (entry == null) {
@@ -589,6 +608,7 @@ final class EakteBrowser extends JPanel {
         EditorSession opened = editors.open(preview, file.toString(), entry.name());
         previewFiles.put(opened, file);
         shownPreview = opened;
+        shownHref = entry.href();
         DocumentEditor editor = new DocumentEditor(opened);
         editor.readOnlyView(); // ganze Fläche fürs Dokument; gesucht wird nur mit der Lupe des Deck
         previewStage.add(editor, opened.location());
@@ -634,14 +654,14 @@ final class EakteBrowser extends JPanel {
             parts.put(part.href(), attachment.data());
             doc.add(new Part(part));
         }
-        revisiting = true;
+        restoring = true;
         try {
             treeModel.nodeStructureChanged(doc);
             if (chosen != null) {
                 tree.setSelectionPath(chosen);
             }
         } finally {
-            revisiting = false;
+            restoring = false;
         }
         tree.expandPath(new TreePath(doc.getPath()));
     }
@@ -680,6 +700,7 @@ final class EakteBrowser extends JPanel {
         }
         EditorSession old = shownPreview;
         shownPreview = null;
+        shownHref = null;
         for (Component component : previewStage.getComponents()) {
             if (component instanceof DocumentEditor || component instanceof DeckFileViewer) {
                 previewStage.remove(component);
