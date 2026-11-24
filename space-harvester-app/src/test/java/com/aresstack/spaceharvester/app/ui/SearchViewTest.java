@@ -489,6 +489,10 @@ class SearchViewTest {
         });
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta");
         assertThat(view[0].covered).containsExactly("beta");
+        // Wie beim Benutzer: die Treffer von Beta sind da, bevor links gefiltert wird. Läuft die Suche noch, sucht
+        // ein anderer Bereich bewusst ganz neu, denn ihre Antwort fiele sonst weg (CI 24.11.2026, rot je nach Tempo).
+        JTable table = find(whole(view[0]), JTable.class).get(0);
+        await(() -> table.getRowCount() > 0 && !view[0].overlay.isBusy());
         SwingUtilities.invokeAndWait(() -> view[0].scope(List.of(new Explorer.Scope("beta", "DEV"))));
         assertThat(view[0].heading.titleText()).isEqualTo("Suche in Beta › DEV");
         assertThat(view[0].covered).as("nur gefiltert, nicht neu gesucht").containsExactly("beta");
