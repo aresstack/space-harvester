@@ -71,19 +71,12 @@ class JobStatusLineTest {
         return count;
     }
 
-    /** „Fertig“ bleibt nicht dauerhaft stehen (Angelo, 16.11.2026); Zurück und Vor der Seitenansicht stehen mittig. */
+    /** „Fertig“ bleibt nicht dauerhaft stehen (Angelo, 16.11.2026). */
     @Test
-    void doneFadesAndTheMiddleCarriesTheNavigation() throws Exception {
+    void doneFades() throws Exception {
         ApplicationEventBus bus = new ApplicationEventBus();
         SwingUtilities.invokeAndWait(() -> {
             JobStatusLine line = new JobStatusLine(bus);
-            javax.swing.JPanel navigation = new javax.swing.JPanel();
-            navigation.add(new javax.swing.JButton("<"));
-            line.navigation(navigation);
-            assertThat(SwingUtilities.isDescendingFrom(navigation, line)).isTrue();
-            line.navigationVisible(false);
-            assertThat(navigation.isVisible()).isFalse();
-
             JobProgressEvent done = new JobProgressEvent("Aufträge: 3 fertig", 0, 0, false, Outcome.COMPLETED);
             bus.publish(done);
             assertThat(line.endState.isVisible()).isTrue();
@@ -102,22 +95,18 @@ class JobStatusLineTest {
     }
 
     @Test
-    void aLongJobTextShortensInsteadOfPushingTheNavigationOut() throws Exception {
+    void aLongJobTextShortensInsteadOfPushingTheEndStateOut() throws Exception {
         ApplicationEventBus bus = new ApplicationEventBus();
         SwingUtilities.invokeAndWait(() -> {
             JobStatusLine line = new JobStatusLine(bus);
-            javax.swing.JPanel navigation = new javax.swing.JPanel();
-            navigation.add(new javax.swing.JButton("<"));
-            navigation.add(new javax.swing.JButton(">"));
-            line.navigation(navigation);
             bus.publish(new JobProgressEvent("Aufträge: 3 laufen, 2 warten · 41 % · noch ≈ 12 min, sehr langer Text",
-                    41, 100, false, Outcome.RUNNING));
+                    41, 100, false, Outcome.PAUSED));
             line.setSize(200, 24);
             line.doLayout();
-            navigation.getParent().doLayout();
-            assertThat(navigation.getWidth()).isEqualTo(navigation.getPreferredSize().width);
+            line.endState.getParent().doLayout();
+            assertThat(line.endState.getWidth()).isEqualTo(line.endState.getPreferredSize().width);
             assertThat(line.text.getWidth()).isLessThan(line.text.getPreferredSize().width);
-            assertThat(line.text.getWidth() + navigation.getParent().getWidth()).isEqualTo(200);
+            assertThat(line.text.getWidth() + line.endState.getParent().getWidth()).isEqualTo(200);
         });
     }
 }

@@ -699,6 +699,49 @@ class MainWindowTest {
     }
 
     /**
+     * Angelo 24.11.2026: Zurück und Vor kleben direkt links an der Suchleiste (der freie Platz liegt links davor),
+     * sichtbar in der Seitenansicht und in der Suche, ohne das Feld unter seine Mindestbreite zu drücken.
+     */
+    @Test
+    void backAndForwardSitDirectlyLeftOfTheSearchBar() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            javax.swing.JPanel surface = window.content(() -> { }, () -> { });
+            javax.swing.JComponent bar = window.searchView().searchBar();
+            javax.swing.JComponent nav = window.backForward();
+            java.awt.Container top = bar.getParent().getParent();
+            for (AppContext.Section section : new AppContext.Section[] {AppContext.Section.SEARCH,
+                    AppContext.Section.CONTENT}) {
+                window.show(section);
+                for (int width : new int[] {960, 1280, 1920}) {
+                    surface.setSize(width, 600);
+                    layout(surface);
+                    assertThat(nav.isVisible() && nav.getParent().isVisible()).as("sichtbar in %s bei %d", section, width)
+                            .isTrue();
+                    assertThat(nav.getParent()).isSameAs(bar.getParent());
+                    assertThat(nav.getWidth()).as("Knöpfe da in %s", section).isPositive();
+                    assertThat(nav.getX() + nav.getWidth() + SearchBarLayout.LEADING_GAP)
+                            .as("klebt links am Feld bei %d", width).isEqualTo(bar.getX());
+                    assertThat(bar.getWidth()).isBetween(SearchBarLayout.MIN_WIDTH, SearchBarLayout.MAX_WIDTH);
+                    java.awt.Component west = ((java.awt.BorderLayout) top.getLayout())
+                            .getLayoutComponent(java.awt.BorderLayout.WEST);
+                    java.awt.Rectangle knobs = SwingUtilities.convertRectangle(nav.getParent(), nav.getBounds(), top);
+                    assertThat(knobs.x).as("Platz links davor bei %d", width)
+                            .isGreaterThanOrEqualTo(west.getX() + west.getWidth());
+                }
+            }
+            window.show(AppContext.Section.SETTINGS);
+            assertThat(nav.isVisible()).as("Einstellungen ohne Zurück/Vor").isFalse();
+        });
+    }
+
+    /**
      * #515: Ein Suchfeld für das ganze Fenster steht mittig zwischen den Icon-Gruppen der Kopfzeile, ohne sie bei
      * 960, 1280 oder 1920 px zu überdecken; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder
      * breitere Schriften), kürzt die Kopfzeile den Titel, nie das Suchfeld und nie die Knöpfe.

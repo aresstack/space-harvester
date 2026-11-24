@@ -4,7 +4,6 @@ import com.aresstack.spaceharvester.app.event.ApplicationEventBus;
 import com.aresstack.spaceharvester.app.event.JobProgressEvent;
 
 import javax.swing.BorderFactory;
-import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
@@ -27,7 +26,6 @@ final class JobStatusLine extends JPanel {
     private final JPanel center = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
     private final javax.swing.Timer done = new javax.swing.Timer(StatusLine.FADE_DELAY_MS,
             e -> endState.setVisible(false));
-    private JComponent navigation;
 
     JobStatusLine(ApplicationEventBus events) {
         super(new BorderLayout());
@@ -53,21 +51,8 @@ final class JobStatusLine extends JPanel {
     }
 
     /**
-     * Setzt Zurück und Vor der Seitenansicht in die Mitte der Statuszeile, vor den Endzustand; neben der Suchleiste
-     * ist bei schmalem Fenster kein Platz (Angelo, 16.11.2026).
-     */
-    void navigation(JComponent buttons) {
-        if (navigation != null) {
-            center.remove(navigation);
-        }
-        navigation = buttons;
-        center.add(buttons, 0);
-        center.revalidate();
-    }
-
-    /**
-     * Die Mitte (Zurück, Vor, Endzustand) behält ihren Platz; wird es eng, kürzt sich der Auftragstext mit „…“
-     * (der volle Text steht im Tooltip), statt die Knöpfe aus der Zeile zu drängen.
+     * Die Mitte (Endzustand) behält ihren Platz; wird es eng, kürzt sich der Auftragstext mit „…“ (der volle Text
+     * steht im Tooltip). Zurück und Vor stehen seit 24.11.2026 links an der Suchleiste der Kopfzeile.
      */
     @Override
     public void doLayout() {
@@ -77,13 +62,6 @@ final class JobStatusLine extends JPanel {
         if (text.getWidth() > textWidth) {
             text.setBounds(text.getX(), text.getY(), textWidth, text.getHeight());
             center.setBounds(text.getX() + textWidth, center.getY(), width - textWidth, center.getHeight());
-        }
-    }
-
-    /** Zeigt Zurück und Vor nur, solange die Mitte des Fensters die Seitenansicht zeigt. */
-    void navigationVisible(boolean visible) {
-        if (navigation != null) {
-            navigation.setVisible(visible);
         }
     }
 
