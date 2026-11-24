@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
 import com.aresstack.spaceharvester.app.ui.extraction.ExtractionView;
 import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider;
 import com.aresstack.spaceharvester.application.extraction.DocumentRef;
+import com.aresstack.spaceharvester.application.extraction.SourceReference;
 import com.aresstack.spaceharvester.deck.editor.DocumentStore;
 import com.aresstack.spaceharvester.deck.editor.EditorSession;
 import com.aresstack.spaceharvester.deck.editor.EditorSessions;
@@ -110,6 +111,10 @@ final class EakteBrowser extends JPanel {
     private boolean restoring;
     /** Das gezeigte Dokument formatiert, mit den Anhang-Viewern der Leseansicht (Jira, Confluence): PDF, Word, … */
     private AttachmentViewerPanel viewer;
+    /** Der Editor der Textansicht des gezeigten Dokuments; {@code null} ohne. */
+    private DocumentEditor shownEditor;
+    /** Ob der Viewer für das gezeigte Dokument eine Vorschau hat ({@link DeckFileViewer#shows}). */
+    private boolean viewerShows;
     static final String FOLDERS = "Ordner";
     static final String OUTLINE = "Gliederung";
     private final SegmentedToggle leftToggle = new SegmentedToggle();
@@ -182,7 +187,7 @@ final class EakteBrowser extends JPanel {
         viewToggle.getAccessibleContext().setAccessibleName("Vorschau, Text oder Extraktion");
         viewToggle.setVisible(false);
         viewToggle.onSelect(view -> showView());
-        extraction.onSource(source -> viewToggle.select(PREVIEW));
+        extraction.onSource(this::showSource);
         extraction.onStatus(note -> {
             if (extractionShown()) {
                 report(note);
@@ -345,6 +350,42 @@ final class EakteBrowser extends JPanel {
     /** Die Überschriften, wie die Gliederung sie zeigt. */
     List<AttachmentViewerPanel.Heading> outline() {
         return java.util.Collections.list(outlineModel.elements());
+    }
+
+    /**
+     * Klick auf eine Fundstelle der Extraktion: zeigt das Dokument, springt zur Stelle und markiert sie (Angelo
+     * 24.11.2026). Zuerst in der Vorschau (PDF-Seite, Word-Dokument); findet sie sich dort nicht, etwa ohne wörtlichen
+     * Auszug, in der Textansicht über Auszug oder Zeichenbereich. Sonst sagt die Statuszeile, dass sie fehlt.
+     */
+    void showSource(SourceReference source) {
+        if (viewer != null && viewerShows) {
+            viewToggle.select(PREVIEW);
+            final AttachmentViewerPanel asked = viewer;
+            viewer.showPassage(source.excerpt(), found -> {
+                if (!found && asked == viewer) {
+                    showSourceInText(source);
+                }
+            });
+            return;
+        }
+        showSourceInText(source);
+    }
+
+    private void showSourceInText(SourceReference source) {
+        if (shownEditor == null) {
+            return;
+        }
+        viewToggle.select(TEXT);
+        if (!shownEditor.showPassage(source.excerpt(), source.start(), source.end())) {
+            report(new StatusNote("Fundstelle im Dokument nicht gefunden"
+                    + (source.excerpt().isEmpty() ? "" : ": „" + source.excerpt() + "“"),
+                    StatusNote.Tone.WARNING, null, null));
+        }
+    }
+
+    /** Der Editor der Textansicht; {@code null} ohne. Für Tests. */
+    DocumentEditor shownEditor() {
+        return shownEditor;
     }
 
     /** Für Tests: den gezeigten Viewer. */
@@ -610,6 +651,8 @@ final class EakteBrowser extends JPanel {
         shownPreview = opened;
         shownHref = entry.href();
         DocumentEditor editor = new DocumentEditor(opened);
+        shownEditor = editor;
+        viewerShows = DeckFileViewer.shows(entry.name());
         editor.readOnlyView(); // ganze Fläche fürs Dokument; gesucht wird nur mit der Lupe des Deck
         previewStage.add(editor, opened.location());
         // Gemeinsamer Viewer für lokale Dateien im Deck (wie im Bereich Dateien); Umschalter unten in der Leiste
@@ -701,6 +744,7 @@ final class EakteBrowser extends JPanel {
         EditorSession old = shownPreview;
         shownPreview = null;
         shownHref = null;
+        shownEditor = null;
         for (Component component : previewStage.getComponents()) {
             if (component instanceof DocumentEditor || component instanceof DeckFileViewer) {
                 previewStage.remove(component);
