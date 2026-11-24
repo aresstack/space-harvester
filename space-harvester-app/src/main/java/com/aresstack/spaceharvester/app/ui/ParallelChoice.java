@@ -95,6 +95,31 @@ public final class ParallelChoice {
     }
 
     public static final String CUSTOM = "Benutzerdefiniert …";
+    /** Die Stufen der Grenzen in den Menüs am Dreieck (Chat, Podcast); darunter „Benutzerdefiniert …“. */
+    public static final List<Integer> STEPS = List.of(1, 2, 4, 8, 16, 32, 64);
+    /** Größte freie Eingabe unter „Benutzerdefiniert …“ (das Feld nimmt vier Ziffern). */
+    public static final int CUSTOM_MAX = 9999;
+
+    /** Der in der App gemerkte Wert einer Grenze ({@link AppState}), 1 bis {@link #CUSTOM_MAX}. */
+    public static int stored(String key, int fallback) {
+        return Math.max(1, Math.min(CUSTOM_MAX, AppState.shared().getInt(key, fallback)));
+    }
+
+    /**
+     * Eine Grenze, die die App selbst merkt ({@link AppState}, nicht in den Einstellungen), mit {@link #STEPS} und
+     * „Benutzerdefiniert …“: dieselbe Form im Chat und beim Podcast (Angelo 24.11.2026).
+     *
+     * @param tip     was die Grenze begrenzt; steht im Tooltip und in der Abfrage „Benutzerdefiniert …“
+     * @param key     Schlüssel im Zustand der App
+     * @param invalid bekommt die Meldung zu einer ungültigen Eingabe
+     */
+    public static ParallelChoice stored(java.awt.Component owner, String tip, String key, int fallback,
+                                        Consumer<String> invalid) {
+        ParallelChoice choice = new ParallelChoice(tip + " (1 bis " + CUSTOM_MAX + ").", 1, CUSTOM_MAX, STEPS,
+                stored(key, fallback), value -> AppState.shared().put(key, value), invalid);
+        choice.ask = current -> Dialogs.askNumber(owner, "Benutzerdefiniert", tip, 1, CUSTOM_MAX, current);
+        return choice;
+    }
 
     /**
      * Die Auswahl als Untermenü (Angelo 22.11.2026: statt der Auswahlfelder in der Kopfzeile): je Vorschlag ein
