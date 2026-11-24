@@ -142,6 +142,46 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void picturesRunInTheirOwnPoolWithTheirOwnLimit() throws Exception {
+        UpdatePodcasts podcasts = podcasts(new FakeModel(), new FakeSpeech(voice -> false));
+        java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger most = new java.util.concurrent.atomic.AtomicInteger();
+        StepModel drawer = new StepModel() {
+            @Override
+            public String version() {
+                return "t";
+            }
+
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public String complete(String instructions, String input) {
+                most.accumulateAndGet(running.incrementAndGet(), Math::max);
+                try {
+                    Thread.sleep(20);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    running.decrementAndGet();
+                }
+                return instructions.equals(DiagramComposer.PLAN_SYSTEM) ? DiagramComposerTest.PLAN
+                        : DiagramComposerTest.ICON;
+            }
+        };
+        podcasts.pictures(drawer, PodcastPictures.PageImageSource.NONE);
+        podcasts.parallel(() -> 1, () -> 2);
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+
+        assertThat(jobs.status(podcasts.start(caller, summary).id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(podcasts.podcast(summary).orElseThrow().parts()).allSatisfy(part ->
+                assertThat(part.picture()).isNotNull());
+        assertThat(most.get()).as("Bilder-Pool: höchstens 2 zugleich, unabhängig von den Texten").isBetween(1, 2);
+    }
+
+    @Test
     void aSecondRunReusesEverythingOnDisk() throws Exception {
         FakeModel model = new FakeModel();
         FakeSpeech speech = new FakeSpeech(voice -> false);

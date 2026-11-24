@@ -5642,6 +5642,7 @@ public final class PageDetailPanel extends JPanel {
         if (sourceMenuShown() && READING.equals(tabs.selected())) {
             menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", sourceView.hasSummary(),
                     this::saveSummary));
+            addPodcastParallel(menu);
             return menu;
         }
         if (sourceMenuShown()) {
@@ -5650,6 +5651,7 @@ public final class PageDetailPanel extends JPanel {
                     sourceChanges.podcast().hasTranscript(), () -> saveTranscript(sourceChanges.podcast())));
             menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceChanges.podcastRenewable(),
                     sourceChanges::renewPodcast));
+            addPodcastParallel(menu);
             return menu;
         }
         for (ComposerButton action : List.of(bookmark, browse)) {
@@ -5660,6 +5662,14 @@ public final class PageDetailPanel extends JPanel {
                     () -> saveTranscript(pagePodcast)));
         }
         return menu;
+    }
+
+    /** Unter einer Linie die Grenzen der Parallelität beim Erzeugen des Podcasts (Angelo 24.11.2026). */
+    private void addPodcastParallel(javax.swing.JPopupMenu menu) {
+        menu.addSeparator();
+        for (javax.swing.JMenu parallel : PodcastParallel.menus(this, text -> tabStatus(tabs.selected(), text))) {
+            menu.add(parallel);
+        }
     }
 
     private static javax.swing.JMenuItem menuItem(String text, String tooltip, boolean enabled, Runnable action) {
@@ -5813,7 +5823,7 @@ public final class PageDetailPanel extends JPanel {
 
             @Override
             public com.aresstack.spaceharvester.application.jobs.JobStatus start(PodcastPage page) {
-                return workspace.startPagePodcast(page.sourceId(), page.pageId());
+                return PodcastParallel.apply(workspace).startPagePodcast(page.sourceId(), page.pageId());
             }
 
             @Override

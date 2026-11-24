@@ -281,6 +281,16 @@ public final class PagePodcasts {
         }
     }
 
+    /**
+     * Eigene Grenzen der Parallelität aus der Ansicht (Angelo 24.11.2026); gelten ab dem nächsten Lauf.
+     *
+     * @param texts    wie viele Abschnitte, Texte und Audios zugleich entstehen
+     * @param pictures wie viele Modellaufrufe der Bilder zugleich laufen
+     */
+    public void parallel(java.util.function.IntSupplier texts, java.util.function.IntSupplier pictures) {
+        production.parallel(texts, pictures);
+    }
+
     /** Meldet jede abgelegte Stufe dieses Podcasts. */
     public Subscription subscribe(String key, Runnable listener) {
         return production.subscribe(key, listener);

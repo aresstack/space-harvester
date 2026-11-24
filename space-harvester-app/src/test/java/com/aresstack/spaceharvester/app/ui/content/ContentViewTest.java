@@ -504,7 +504,7 @@ class ContentViewTest {
         // in der Podcast-Ansicht (Angelo 23.11.2026), seine Einträge also dort.
         assertThat(onEdt(() -> view.detail().moreButton().isEnabled())).isTrue();
         assertThat(onEdt(() -> menuEntries(view.detail())))
-                .containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)");
+                .containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)", "—", PODCAST_TEXTS, PODCAST_PICTURES);
         assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
                 .isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().sourceId())).isEqualTo("handbuch");
@@ -518,7 +518,8 @@ class ContentViewTest {
         // Podcast-Ansicht: Transkript und „Podcast neu erstellen“ hinter dem Dreieck, ohne Podcast gesperrt; neben der
         // Lupe der Platz für „Transkript kopieren“, ohne Podcast bleibt der Knopf weg.
         assertThat(onEdt(() -> menuEntries(view.detail()))).containsExactly(
-                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)");
+                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)", "—",
+                PODCAST_TEXTS, PODCAST_PICTURES);
         assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
                 view.detail().sourceChanges().podcast().transcriptCopy(), view.tools()))).isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().podcast().transcriptCopy().isVisible())).isFalse();
@@ -580,10 +581,15 @@ class ContentViewTest {
         return !chips.isEmpty() && chips.stream().allMatch(javax.swing.AbstractButton::isEnabled);
     }
 
+    /** Die Grenzen des Podcasts im Menü am Dreieck beider Reiter (Angelo 24.11.2026), mit ihren Standards. */
+    private static final String PODCAST_TEXTS = PodcastParallel.TEXTS + ": " + PodcastParallel.TEXTS_DEFAULT;
+    private static final String PODCAST_PICTURES = PodcastParallel.PICTURES + ": " + PodcastParallel.PICTURES_DEFAULT;
+
     private static List<String> menuEntries(PageDetailPanel detail) {
         List<String> entries = new java.util.ArrayList<>();
         for (java.awt.Component item : detail.moreMenu().getComponents()) {
-            entries.add(((javax.swing.JMenuItem) item).getText() + (item.isEnabled() ? "" : " (gesperrt)"));
+            entries.add(item instanceof javax.swing.JMenuItem entry
+                    ? entry.getText() + (item.isEnabled() ? "" : " (gesperrt)") : "—");
         }
         return entries;
     }
