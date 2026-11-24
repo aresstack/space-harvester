@@ -2649,7 +2649,7 @@ public final class PageDetailPanel extends JPanel {
             }
             return;
         }
-        if (!PageMetadata.FILE_KIND.equals(metadata.attributes().get(PageMetadata.RESOURCE_KIND))) {
+        if (!isOriginalFile(metadata, payload)) {
             return;
         }
         readingPane.clear(" ");
@@ -3060,6 +3060,13 @@ public final class PageDetailPanel extends JPanel {
                 || REMOTE_MEDIA_FORMAT.equals(snapshot.payload().nativeFormat());
     }
 
+    /** Recognize original file snapshots even when older cached metadata lacks the resource kind. */
+    private static boolean isOriginalFile(PageMetadata metadata, NativePayload payload) {
+        String kind = metadata.attributes().get(PageMetadata.RESOURCE_KIND);
+        return PageMetadata.FILE_KIND.equals(kind)
+                || (kind == null && "file".equals(payload.nativeFormat()));
+    }
+
     /** Identify original images before running any optional text-analysis preparation. */
     private static boolean isNativePreview(PageSnapshot snapshot) {
         String kind = snapshot.metadata().attributes().get(PageMetadata.RESOURCE_KIND);
@@ -3067,7 +3074,7 @@ public final class PageDetailPanel extends JPanel {
                 ? com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(snapshot.metadata()) : null;
         return PageMetadata.LINK_KIND.equals(kind)
                 || "true".equals(snapshot.metadata().attributes().get(PageMetadata.REMOTE_MEDIA))
-                || PageMetadata.FILE_KIND.equals(kind)
+                || isOriginalFile(snapshot.metadata(), snapshot.payload())
                 && (originalMediaType(snapshot.payload()).startsWith("image/")
                 || largeType != null && largeType.startsWith("image/"));
     }

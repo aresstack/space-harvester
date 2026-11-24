@@ -16,10 +16,20 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Map;
+import java.util.List;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.SwingUtilities;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -36,6 +46,81 @@ final class OriginalContentViewerTest {
         if (context != null) {
             context.shutdown();
         }
+    }
+
+    @Test
+    void localPdfUsesTheSharedOriginalViewerAndRetainsTextAfterReopeningFromCache() throws Exception {
+        Path directory = Files.createDirectories(home.resolve("documents"));
+        try (PDDocument document = new PDDocument()) {
+            PDPage page = new PDPage();
+            document.addPage(page);
+            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                content.beginText();
+                content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                content.newLineAtOffset(72, 700);
+                content.showText("Lokaler PDF Beleg");
+                content.endText();
+            }
+            document.save(directory.resolve("Beleg.pdf").toFile());
+        }
+        Files.writeString(directory.resolve("Tabelle.csv"), "name,value\nNord,12\n");
+        try (XWPFDocument document = new XWPFDocument();
+                java.io.OutputStream output = Files.newOutputStream(directory.resolve("Bericht.docx"))) {
+            document.createParagraph().createRun().setText("Lokaler Word Beleg");
+            document.write(output);
+        }
+        PageDetailPanel panel = panel("""
+                space-harvester:
+                  sources:
+                    - id: docs
+                      type: files
+                      options:
+                        directory: %s
+                """.formatted(directory.toString().replace('\\', '/')));
+        List<HarvestSource.PageNode> nodes = context.runtime().workspace().children("docs", "docs", null, null).pages();
+        String id = nodes.stream().filter(node -> node.title().equals("Beleg.pdf")).findFirst().orElseThrow().pageId();
+        String csvId = nodes.stream().filter(node -> node.title().equals("Tabelle.csv")).findFirst().orElseThrow().pageId();
+        String wordId = nodes.stream().filter(node -> node.title().equals("Bericht.docx")).findFirst().orElseThrow().pageId();
+        onEdt(() -> {
+            panel.tabs().select("Leseansicht");
+            panel.load("docs", id, false);
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null && panel.originalViewer().pageCount() == 1
+                && panel.originalViewer().showsPicture()));
+        PageSnapshot snapshot = context.runtime().workspace().cachedPage("docs", id).orElseThrow().snapshot();
+        assertThat(snapshot.metadata().attributes()).containsEntry(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND);
+        assertThat(new LocalFilesTextProjector().project(snapshot).orElseThrow().text()).contains("Lokaler PDF Beleg");
+        onEdt(() -> {
+            panel.load("docs", csvId, false);
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null && panel.originalViewer().isShowingSpreadsheet()));
+        onEdt(() -> {
+            panel.load("docs", wordId, false);
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null && panel.originalViewer().documentImages() >= 0));
+        assertThat(onEdt(() -> panel.originalViewer().textContent())).contains("Lokaler Word Beleg");
+        onEdt(() -> {
+            panel.load("docs", id, false);
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null && panel.originalViewer().pageCount() == 1
+                && panel.originalViewer().showsPicture()));
+    }
+
+    @Test
+    void cachedOriginalWithoutResourceKindStillUsesTheSharedViewer() throws Exception {
+        PageDetailPanel panel = panel();
+        PageMetadata legacy = new PageMetadata("node-id", "source:node-id", "Tabelle.csv", "space", null,
+                "1", Instant.now(), null, PageMetadata.sorted(Map.of()));
+        onEdt(() -> {
+            panel.showOriginalContent(legacy, new NativePayload("name,value\nNord,12\n".getBytes(StandardCharsets.UTF_8),
+                    "text/csv", "file"));
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null && panel.originalViewer().isShowingSpreadsheet()));
     }
 
     @Test
@@ -151,9 +236,13 @@ final class OriginalContentViewerTest {
     }
 
     private PageDetailPanel panel() throws Exception {
+        return panel("");
+    }
+
+    private PageDetailPanel panel(String sources) throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: "
-                + home.resolve("data").toString().replace('\\', '/') + "\n");
+                + home.resolve("data").toString().replace('\\', '/') + "\n" + sources);
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));

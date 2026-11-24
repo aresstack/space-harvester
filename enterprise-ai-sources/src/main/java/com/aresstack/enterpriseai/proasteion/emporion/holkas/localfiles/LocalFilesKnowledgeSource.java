@@ -53,6 +53,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.function.BiFunction;
+import java.util.function.Predicate;
+import java.util.Optional;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 
 /**
  * Ein lokales Verzeichnis als {@link KnowledgeSourcePort}.
@@ -124,6 +131,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     private final long maxFileBytes;
     private final Supplier<LocalFileAccessPolicy> access;
     private final FilePatterns patterns;
+    private final BiFunction<String, String, String> streamingType;
 
     public LocalFilesKnowledgeSource(SourceAddress sourceId, Path root, ContentDetector detector,
                                      ExtractionRegistry extractors, long maxFileBytes) {
@@ -140,6 +148,13 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
                                      ExtractionRegistry extractors, long maxFileBytes,
                                      Supplier<LocalFileAccessPolicy> access, List<String> includes,
                                      List<String> excludes) {
+        this(sourceId, root, detector, extractors, maxFileBytes, access, includes, excludes, (name, type) -> null);
+    }
+
+    public LocalFilesKnowledgeSource(SourceAddress sourceId, Path root, ContentDetector detector,
+                                     ExtractionRegistry extractors, long maxFileBytes,
+                                     Supplier<LocalFileAccessPolicy> access, List<String> includes,
+                                     List<String> excludes, BiFunction<String, String, String> streamingType) {
         if (sourceId == null || root == null || detector == null || extractors == null) {
             throw new IllegalArgumentException("sourceId, root, detector and extractors are required");
         }
@@ -152,6 +167,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         this.detector = detector;
         this.extractors = extractors;
         this.maxFileBytes = maxFileBytes;
+        this.streamingType = java.util.Objects.requireNonNull(streamingType, "streamingType");
         this.access = access == null ? LocalFileAccessPolicy::none : access;
         this.patterns = new FilePatterns(includes == null ? Collections.<String>emptyList() : includes,
                 excludes == null ? Collections.<String>emptyList() : excludes);
@@ -257,6 +273,9 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         Path file = fileOf(resourceId);
         byte[] bytes;
         try {
+            if (streamType(file) != null) {
+                return KnowledgeDocument.of(resource(file, typeByName(file), true), "");
+            }
             if (Files.size(file) > maxFileBytes) {
                 throw new KnowledgeSourceException(Kind.UNSUPPORTED, resourceId + " ist größer als " + maxFileBytes + " Bytes");
             }
@@ -452,13 +471,84 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
             }
         }
         try {
-            if (Files.isHidden(file) || Files.size(file) > maxFileBytes || Files.size(file) == 0) {
+            long size = Files.size(file);
+            if (Files.isHidden(file) || size == 0) {
                 return false;
             }
+            if (streamType(file) != null) {
+                return true;
+            }
+            return size <= maxFileBytes && (ownType(file) != null || INDEXABLE.contains(typeByName(file).category()));
         } catch (IOException e) {
             return false;
         }
-        return ownType(file) != null || INDEXABLE.contains(typeByName(file).category());
+    }
+
+    private String streamType(Path file) {
+        return streamingType.apply(file.getFileName().toString(), typeByName(file).mimeType());
+    }
+
+    /** Read only a bounded byte range of an admitted streaming file using the normal access policy. */
+    public byte[] readMediaRange(String localId, long offset, int maximumBytes) throws KnowledgeSourceException {
+        if (offset < 0 || maximumBytes < 1 || maximumBytes > 262144) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Ungültiger Medienbereich");
+        }
+        Path file = readable(localId);
+        if (streamType(file) == null) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Keine streambare Mediendatei");
+        }
+        try (SeekableByteChannel channel = Files.newByteChannel(file)) {
+            long available = channel.size() - offset;
+            if (available <= 0) {
+                return new byte[0];
+            }
+            ByteBuffer buffer = ByteBuffer.allocate((int) Math.min(maximumBytes, available));
+            channel.position(offset);
+            while (buffer.hasRemaining() && channel.read(buffer) > 0) {
+                // Read at most the requested range.
+            }
+            return Arrays.copyOf(buffer.array(), buffer.position());
+        } catch (IOException e) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, localId + " nicht lesbar", e);
+        }
+    }
+
+    /** Copy an admitted document directly to a file without materializing it in memory. */
+    public Optional<String> copyOriginal(String localId, Path target, Predicate<String> wanted, long maxBytes)
+            throws KnowledgeSourceException {
+        Path file = readable(localId);
+        String type = typeByName(file).mimeType();
+        if (streamType(file) != null || !wanted.test(type)) {
+            return Optional.empty();
+        }
+        long limit = maxBytes > 0 ? Math.min(maxFileBytes, maxBytes) : maxFileBytes;
+        try {
+            long size = Files.size(file);
+            if (size > limit) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Datei größer als die erlaubte Grenze");
+            }
+            if (Files.exists(target) && Files.isSameFile(file, target)) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Quelle und Zieldatei sind identisch");
+            }
+            try (InputStream in = Files.newInputStream(file); OutputStream out = Files.newOutputStream(target)) {
+                byte[] buffer = new byte[65536];
+                long copied = 0;
+                int count;
+                while ((count = in.read(buffer)) != -1) {
+                    copied += count;
+                    if (copied > limit || copied > size) {
+                        throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Datei ist während des Lesens gewachsen");
+                    }
+                    out.write(buffer, 0, count);
+                }
+                if (copied != size) {
+                    throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Datei hat sich beim Lesen geändert");
+                }
+            }
+            return Optional.of(type);
+        } catch (IOException e) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, localId + " nicht lesbar", e);
+        }
     }
 
     private DetectedContentType typeByName(Path file) {
