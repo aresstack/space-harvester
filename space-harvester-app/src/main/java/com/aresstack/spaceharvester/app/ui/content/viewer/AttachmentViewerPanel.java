@@ -402,6 +402,15 @@ public final class AttachmentViewerPanel extends JPanel {
         }
     }
 
+    /** Ob der Viewer {@code attachment} selbst zeigt (sonst „keine Vorschau“ bzw. nur über die Vorschau der Quelle). */
+    public static boolean showsFormatted(ReaderAttachment attachment) {
+        return switch (attachment.kind()) {
+            case PDF, IMAGE, TEXT, PRESENTATION, SPREADSHEET -> true;
+            case OFFICE -> WordDocumentPreview.supports(attachment.fileName(), attachment.mediaType());
+            default -> false;
+        };
+    }
+
     /** Der gezeigte Anhang. */
     public ReaderAttachment attachment() {
         return attachment;

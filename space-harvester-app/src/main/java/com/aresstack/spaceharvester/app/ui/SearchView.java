@@ -342,26 +342,8 @@ public final class SearchView implements View {
         repeat.setEnabled(false);
         backVisit.setEnabled(false);
         forwardVisit.setEnabled(false);
-        frame.putClientProperty(com.aresstack.spaceharvester.app.ui.content.PageDetailPanel.OWN_MOUSE_NAVIGATION,
-                Boolean.TRUE);
-        frame.addHierarchyListener(e -> {
-            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) {
-                // Solange die Suche zu sehen ist, gehören die Maustasten 4/5 im ganzen Fenster ihr.
-                javax.swing.JRootPane root = SwingUtilities.getRootPane(frame);
-                if (root != null) {
-                    root.putClientProperty(com.aresstack.spaceharvester.app.ui.content.PageDetailPanel
-                            .OWN_MOUSE_NAVIGATION, frame.isShowing() ? Boolean.TRUE : null);
-                }
-            }
-            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) != 0) {
-                if (frame.isDisplayable()) {
-                    java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(mouseNavigation,
-                            java.awt.AWTEvent.MOUSE_EVENT_MASK);
-                } else {
-                    java.awt.Toolkit.getDefaultToolkit().removeAWTEventListener(mouseNavigation);
-                }
-            }
-        });
+        // Solange die Suche zu sehen ist, gehören die Maustasten 4/5 im ganzen Fenster ihr.
+        com.aresstack.spaceharvester.app.ui.controls.MouseNavigation.install(frame, this::back, this::forward);
         heading.onSelect(() -> {
             table.clearSelection();
             pinned.clearSelection();
@@ -1297,19 +1279,6 @@ public final class SearchView implements View {
         backVisit.setEnabled(canGoBack());
         forwardVisit.setEnabled(canGoForward());
     }
-
-    /** Die Maustasten Zurück (4) und Vor (5) über der sichtbaren Suche, wie im Lesebereich. */
-    private final java.awt.event.AWTEventListener mouseNavigation = event -> {
-        if (event instanceof MouseEvent mouse && event.getID() == MouseEvent.MOUSE_RELEASED && frame.isShowing()
-                && (mouse.getButton() == 4 || mouse.getButton() == 5) && mouse.getComponent() != null
-                && SwingUtilities.getWindowAncestor(mouse.getComponent()) == SwingUtilities.getWindowAncestor(frame)) {
-            if (mouse.getButton() == 4) {
-                back();
-            } else {
-                forward();
-            }
-        }
-    };
 
     /** Übernimmt den Umfang; die Häkchen setzt {@link #syncBoxesToScope}. */
     private void applyScope(List<Explorer.Scope> selection) {
