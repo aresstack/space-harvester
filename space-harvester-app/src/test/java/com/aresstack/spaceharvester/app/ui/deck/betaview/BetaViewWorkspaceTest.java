@@ -96,6 +96,57 @@ class BetaViewWorkspaceTest {
     }
 
     @Test
+    void everySearchGetsItsOwnClosableHitListAndAnOlderListIsSearchedAgainBeforeOpening() throws Exception {
+        try (FakeBetaViewServer server = new FakeBetaViewServer()) {
+            build(ServerAccounts.NONE, new FakePrompts(folder.resolve("x.txt")));
+            SwingUtilities.invokeAndWait(() -> {
+                BetaViewConnectForm form = workspace.form();
+                form.login.select(BetaViewConnectForm.MANUAL);
+                form.address.setText(server.address().toString());
+                form.user.setText(FakeBetaViewServer.USER);
+                form.password.setText(FakeBetaViewServer.PASSWORD);
+                form.submit();
+            });
+            BetaViewSession session = connected();
+            SessionPanel panel = onEdt(() -> workspace.panel(session));
+            SwingUtilities.invokeAndWait(() -> {
+                assertThat(panel.search.shownList()).as("am Anfang die Suchmaske").isNull();
+                panel.search.favorite.setText(FakeBetaViewServer.FAVORITE);
+                panel.search.form.apply("*");
+                panel.search.search();
+            });
+            await(() -> panel.search.hitLists.size() == 1 && panel.search.table.getRowCount() == 3, "erste Liste");
+            SwingUtilities.invokeAndWait(panel.search::search);
+            await(() -> panel.search.hitLists.size() == 2, "zweite Liste");
+            SearchPane.HitList older = onEdt(() -> panel.search.hitLists.get(0));
+            SearchPane.HitList newer = onEdt(() -> panel.search.hitLists.get(1));
+            assertThat(onEdt(panel.search::shownList)).isSameAs(newer);
+            assertThat(java.util.Arrays.asList(onEdt(() -> panel.search.footTabs().getComponents())))
+                    .containsExactly(panel.search.maskTab, older.tab, newer.tab);
+
+            // Ältere Liste: der Server kennt nur die letzte, also erst neu suchen, dann öffnen.
+            long before = server.requests().stream().filter(r -> r.endsWith("result.action")).count();
+            SwingUtilities.invokeAndWait(() -> {
+                older.tab.doClick();
+                panel.search.table.setRowSelectionInterval(0, 0);
+            });
+            await(() -> panel.documents.text.getText().contains("LAUF"), "Dokument aus der älteren Liste");
+            assertThat(server.requests().stream().filter(r -> r.endsWith("result.action")).count())
+                    .isEqualTo(before + 1);
+
+            SwingUtilities.invokeAndWait(() -> {
+                newer.tab.cross().doClick();
+                assertThat(panel.search.hitLists).containsExactly(older);
+                assertThat(panel.search.shownList()).isSameAs(older);
+                older.tab.cross().doClick();
+                assertThat(panel.search.hitLists).isEmpty();
+                assertThat(panel.search.shownList()).as("zurück zur Suchmaske").isNull();
+                assertThat(panel.search.maskTab.isSelected()).isTrue();
+            });
+        }
+    }
+
+    @Test
     void theSharedKeePassAccountsLogIn() throws Exception {
         try (FakeBetaViewServer server = new FakeBetaViewServer()) {
             AtomicReference<String> asked = new AtomicReference<>();
