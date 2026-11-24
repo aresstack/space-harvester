@@ -248,6 +248,34 @@ class ExportPanelTest {
 
     /** Stand = jüngster fertiger Download genau dieser Auswahl; ein Seiten-Download zählt nicht für den Space. */
     @Test
+    void aFolderResolvesToItsDirectFavoritesOrWithSubfoldersToAllBelow() {
+        // ADR 0034 §6: aus = die direkten Favoriten des Ordners, an = samt Unterordnern rekursiv; je Favorit eine
+        // Wurzel wie im Baum (Seite samt Unterseiten, Space oder Quelle), ohne Doppelte.
+        com.aresstack.spaceharvester.app.ui.Favorites favorites = new com.aresstack.spaceharvester.app.ui.Favorites(
+                () -> null);
+        String top = favorites.createFolder("Betrieb", null);
+        String below = favorites.createFolder("Notfall", top);
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite page =
+                new com.aresstack.spaceharvester.app.ui.Favorites.Favorite("wiki", "OPS", "4711", "Runbook", null,
+                        null);
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite space =
+                com.aresstack.spaceharvester.app.ui.Favorites.Favorite.space("wiki", "DEV", "Entwicklung", "Wiki");
+        favorites.toggle(page, top);
+        favorites.toggle(space, below);
+
+        ExportPanel.Selection.Collection direct = ExportPanel.Selection.Collection.of(favorites, top, "Betrieb", false);
+        ExportPanel.Selection.Collection all = direct.withSubfolders(favorites, true);
+
+        assertThat(direct.roots(null)).containsExactly(page.root());
+        assertThat(direct.withSubfolders()).isFalse();
+        // Baumreihenfolge: der Unterordner „Notfall“ steht vor dem später gesetzten Favoriten.
+        assertThat(all.roots(null)).containsExactly(space.root(), page.root());
+        assertThat(all.withSubfolders()).isTrue();
+        assertThat(all.title()).isEqualTo("Betrieb");
+        assertThat(all).isNotEqualTo(direct);
+    }
+
+    @Test
     void aCollectionIsNeverTheGlobalSelectionAndCoversOnlyItsRoots() {
         // ADR 0034 §3: „global“ heißt All, nie „ohne Quelle“; eine Sammlung gilt sonst als „Alle Wissensquellen“.
         com.aresstack.spaceharvester.application.holdings.Selection.Root page =
@@ -379,6 +407,36 @@ class ExportPanelTest {
                 Seite 102: fehlendes Diagramm „mermaid“ (Darstellung fehlgeschlagen)
                 Seite 103: fehlender Anhang „liste.xlsx“
                 … und 2 weitere Hinweise""");
+    }
+
+    /**
+     * ADR 0034 (3c): Ein Favoriten-Ordner exportiert wie eine Quelle, je Favorit eine Zeile und eine Wurzel (eine Quelle
+     * darin je Space); ein veralteter Favorit fällt still weg, ein leerer Ordner sperrt die Format-Knöpfe.
+     */
+    @Test
+    void aFavoritesFolderExportsOneRowAndRootPerFavoriteLikeASource() throws Exception {
+        startTwo();
+        ExportPanel[] panel = new ExportPanel[1];
+        com.aresstack.spaceharvester.application.holdings.Selection.Root anhang =
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.source("anhang");
+        com.aresstack.spaceharvester.application.holdings.Selection.Root gone =
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.source("gibt-es-nicht");
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ExportPanel(context);
+            panel[0].selection(new ExportPanel.Selection.Collection("f1", "Betrieb", List.of(anhang, gone), true));
+        });
+        await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).contains(ExportPanel.NOTHING_YET));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].coreSelectionForTest().roots()).as("je Space der Favoriten-Quelle eine Wurzel")
+                    .hasSize(1).allMatch(root -> root.sourceId().equals("anhang") && root.spaceKey() != null);
+            assertThat(panel[0].exportBlocked("pdf")).as("Format-Knöpfe frei wie bei einer Quelle").isNull();
+            panel[0].selection(new ExportPanel.Selection.Collection("f2", "Leer", List.of(), true));
+        });
+        await(() -> texts(panel[0].spaces).contains(ExportPanel.NO_FAVORITES));
+        SwingUtilities.invokeAndWait(() -> assertThat(panel[0].exportBlocked("pdf"))
+                .isEqualTo(ExportPanel.NO_FAVORITES));
+        assertThat(ExportPanel.perPart(new ExportPanel.Selection.Collection("f1", null, List.of(), true)))
+                .isEqualTo("je Favorit");
     }
 
     /**

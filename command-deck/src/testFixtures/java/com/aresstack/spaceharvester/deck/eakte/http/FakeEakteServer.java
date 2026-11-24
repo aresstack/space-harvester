@@ -49,7 +49,7 @@ public final class FakeEakteServer implements AutoCloseable {
     /** Erfundene Outlook-Nachricht (264 KiB, OLE-Kopf und danach deterministische Bytes), wie die echte .msg. */
     public static final String MESSAGE_PATH = "/Arbeitsvorrat/Vorgang 4711/Anfrage Frachtraum #7 (Kopie).msg";
     public static final String MESSAGE_TYPE = "application/vnd.ms-outlook";
-    public static final String MESSAGE_ADDRESS = "COO.7169.100.8.4711";
+    public static final String MESSAGE_ADDRESS = "COO.1.2.3.4711";
     public static final byte[] MESSAGE = message();
     /** Mappe ohne Berechtigung (PROPFIND → 403). */
     public static final String FORBIDDEN_FOLDER = "/Gesperrt/";
@@ -99,10 +99,12 @@ public final class FakeEakteServer implements AutoCloseable {
     private final Map<String, String> providerPending = new ConcurrentHashMap<>(); // provider session -> redirect
     private final Set<String> providerLoggedIn = ConcurrentHashMap.newKeySet();
     private final AtomicInteger passwordPosts = new AtomicInteger();
+    private final List<String> loginReferers = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final AtomicInteger restPasswordAnswers = new AtomicInteger();
     private final List<String> requests = new CopyOnWriteArrayList<>();
     private volatile boolean separateWebDavSession;
     private volatile boolean nameCallbacks;
+    private volatile boolean foreignFormAction;
 
     public FakeEakteServer() throws IOException {
         InetAddress loopback = InetAddress.getLoopbackAddress();
@@ -124,6 +126,12 @@ public final class FakeEakteServer implements AutoCloseable {
     }
 
     /** OpenAM fragt direkt nach Benutzer und Kennwort (NameCallback/PasswordCallback) statt umzuleiten. */
+    /** Das Anmeldeformular des Identitätsdienstes zielt auf einen anderen Server (OpenAM) als die Formularseite. */
+    public FakeEakteServer foreignFormAction(boolean on) {
+        this.foreignFormAction = on;
+        return this;
+    }
+
     public FakeEakteServer nameCallbacks(boolean direct) {
         this.nameCallbacks = direct;
         return this;
@@ -137,9 +145,9 @@ public final class FakeEakteServer implements AutoCloseable {
         return URI.create(base(eakte) + START + "?bx=COO.1.2.3&venv_view=COO.4.5.6");
     }
 
-    /** Die Anmeldedienste als Host:Port. */
-    public Set<String> loginHosts() {
-        return Set.of(authority(idp), authority(provider));
+    /** Der {@code Referer} jedes Kennwort-POST am Formular des Identitätsdienstes ({@code "null"} ohne). */
+    public List<String> loginReferers() {
+        return List.copyOf(loginReferers);
     }
 
     /** Wie oft ein Kennwort ans Anmeldeformular ging. */
@@ -354,6 +362,16 @@ public final class FakeEakteServer implements AutoCloseable {
             authenticate(exchange, query);
             return;
         }
+        if (path.equals("/openam/")) {
+            // Die feste Startseite von OpenAM nach der Rückkehr vom Identitätsdienst (wie im Selbsttest von v2.0).
+            send(exchange, 200, "text/html", "<html><head><title>Please Wait While Redirecting to Login page</title>"
+                    + "<script>function redirectToAuth(){ var params=getQueryParameters(); "
+                    + "var url = 'UI/Login'; if(params != ''){url += params;} "
+                    + "top.location.replace(url); } "
+                    + "function getQueryParameters() {return location.search;}</script></head>"
+                    + "<body onLoad='redirectToAuth();'></body></html>");
+            return;
+        }
         if (path.equals("/openam/UI/Login")) {
             redirect(exchange, base(idp) + "/openam/XUI/?" + uri.getRawQuery());
             return;
@@ -452,6 +470,7 @@ public final class FakeEakteServer implements AutoCloseable {
         if (path.equals("/eai/mapz/login")) {
             if (exchange.getRequestMethod().equals("POST")) {
                 passwordPosts.incrementAndGet();
+                loginReferers.add(String.valueOf(exchange.getRequestHeaders().getFirst("Referer")));
                 Map<String, String> form = form(exchange);
                 if (USER.equals(form.get("uid")) && PASSWORD.equals(form.get("password"))
                         && "Anmelden".equals(form.get("doLogin")) && session != null) {
@@ -461,7 +480,8 @@ public final class FakeEakteServer implements AutoCloseable {
                 }
             }
             send(exchange, 200, "text/html", "<html><head><title>Anmelden</title><script></script></head><body>"
-                    + "<form id=\"loginForm\" method=\"post\" action=\"/eai/mapz/login\">"
+                    + "<form id=\"loginForm\" method=\"post\" action=\"" + (foreignFormAction ? base(idp) : "")
+                    + "/eai/mapz/login\">"
                     + "<input id=\"username\" name=\"uid\" type=\"text\"/>"
                     + "<input id=\"pw\" name=\"password\" type=\"password\"/>"
                     + "<input type=\"checkbox\" name=\"merken\"/>"

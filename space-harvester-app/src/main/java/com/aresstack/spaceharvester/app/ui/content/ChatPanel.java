@@ -327,7 +327,7 @@ public final class ChatPanel extends JPanel {
     /** Anmeldung bei den Bestandsmeldungen des Core für Quelle und Space der Auswahl. */
     /** Anmeldungen bei den Bestandsmeldungen: eine je Quelle und Space der Auswahl, global eine je Quelle. */
     private final List<Subscription> subscriptions = new ArrayList<>();
-    private String subscribedKey;
+    private List<com.aresstack.spaceharvester.application.holdings.Selection.Root> subscribedAreas;
     private AppRuntime subscribed;
     private boolean refreshPending;
     private int request;
@@ -1007,6 +1007,7 @@ public final class ChatPanel extends JPanel {
         this.selection = selection;
         ChatNode next = selection == null ? null
                 : selection.global() ? ChatNode.ALL
+                : selection instanceof Selection.Collection collection ? ChatNode.collection(collection.folderId())
                 : new ChatNode(selection.sourceId(), selection.spaceKey(), selection.pageId());
         if (!Objects.equals(node, next)) {
             switchNode(next);
@@ -1038,13 +1039,15 @@ public final class ChatPanel extends JPanel {
         showChatName();
     }
 
-    /** Meldet sich für Quelle und Space der Auswahl an; eine andere Auswahl oder Laufzeit meldet neu an. */
+    /**
+     * Meldet sich beim Bestand jeder Wurzel der Auswahl an ({@link SelectionHoldings}: Quelle samt Space, „Wissensquellen“
+     * jede Quelle, ein Favoriten-Ordner jeder Favorit); eine andere Auswahl oder Laufzeit meldet neu an.
+     */
     private void subscribe() {
         AppRuntime runtime = context.runtime();
-        Selection current = selection;
-        String key = runtime == null || current == null ? null
-                : current.sourceId() + "\u0000" + (current.spaceKey() == null ? "" : current.spaceKey());
-        if (runtime == subscribed && Objects.equals(key, subscribedKey)) {
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> areas =
+                SelectionHoldings.areas(runtime, selection);
+        if (runtime == subscribed && areas.equals(subscribedAreas)) {
             return;
         }
         for (Subscription subscription : subscriptions) {
@@ -1052,41 +1055,23 @@ public final class ChatPanel extends JPanel {
         }
         subscriptions.clear();
         subscribed = runtime;
-        subscribedKey = key;
-        if (key == null) {
-            return;
-        }
-        // Die globale Auswahl hört auf jede Wissensquelle der Laufzeit.
-        List<String> sourceIds = current.global()
-                ? runtime.workspace().sources().stream().map(HarvestSource::id).toList()
-                : List.of(current.sourceId());
-        for (String sourceId : sourceIds) {
-            subscribe(runtime, sourceId, current.spaceKey() == null ? "" : current.spaceKey());
-        }
-    }
+        subscribedAreas = areas;
+        subscriptions.addAll(SelectionHoldings.watch(runtime, areas, new HoldingsListener() {
+            @Override
+            public void pagesChanged(String sourceId, String spaceKey, Set<String> pageIds) {
+                scheduleRefresh();
+            }
 
-    private void subscribe(AppRuntime runtime, String sourceId, String spaceKey) {
-        try {
-            subscriptions.add(runtime.workspace().subscribeHoldings(sourceId, spaceKey, new HoldingsListener() {
-                    @Override
-                    public void pagesChanged(String sourceId, String spaceKey, Set<String> pageIds) {
-                        scheduleRefresh();
-                    }
+            @Override
+            public void spaceChanged(String sourceId, String spaceKey) {
+                scheduleRefresh();
+            }
 
-                    @Override
-                    public void spaceChanged(String sourceId, String spaceKey) {
-                        scheduleRefresh();
-                    }
-
-                    @Override
-                    public void loading(String sourceId, String spaceKey, Set<String> pageIds) {
-                        scheduleRefresh();
-                    }
-                }));
-        } catch (RuntimeException gone) {
-            // Die gewählte Quelle gibt es in dieser Laufzeit nicht mehr (etwa entfernt): der Baum räumt die Auswahl
-            // gleich weg; bis dahin ohne Meldungen, das Lesen meldet den Fehler selbst.
-        }
+            @Override
+            public void loading(String sourceId, String spaceKey, Set<String> pageIds) {
+                scheduleRefresh();
+            }
+        }));
     }
 
     /** Vom Zustell-Thread des Core: einmal auf dem EDT auffrischen, auch bei mehreren Meldungen hintereinander. */
@@ -1117,9 +1102,10 @@ public final class ChatPanel extends JPanel {
         }
         // Bis die neue Auswahl aufgelöst ist, gilt die alte nicht mehr: Senden wartet, sonst gingen fremde Seiten mit.
         renderKnowledge(current, null, false);
-        Background.run(() -> runtime.workspace().resolveSelection(current.toCore(runtime)), resolved -> {
+        // Ein Favoriten-Ordner nachsichtig (ADR 0034 §4): ein veralteter Favorit fällt heraus und wird nur gezählt.
+        Background.run(() -> SelectionHoldings.lenient(runtime, current), lenient -> {
             if (ticket == request) {
-                renderKnowledge(current, resolved, true);
+                renderKnowledge(current, lenient, true);
             }
         }, error -> {
             if (ticket == request) {
@@ -1141,16 +1127,24 @@ public final class ChatPanel extends JPanel {
         return resolved;
     }
 
-    /** @param settled ob der Core die Auswahl aufgelöst hat (auch ergebnislos); vorher ist Senden gesperrt */
-    private void renderKnowledge(Selection current, PageSelection resolved, boolean settled) {
+    /**
+     * @param lenient die aufgelöste Auswahl samt übersprungener Favoriten; {@code null}, solange (oder wenn) sie nicht
+     *                aufgelöst ist
+     * @param settled ob der Core die Auswahl aufgelöst hat (auch ergebnislos); vorher ist Senden gesperrt
+     */
+    private void renderKnowledge(Selection current,
+                                 com.aresstack.spaceharvester.application.holdings.Holdings.Lenient lenient,
+                                 boolean settled) {
+        PageSelection resolved = lenient == null ? null : lenient.selection();
         this.resolved = resolved;
         this.settled = settled;
-        boolean allowed = current == null || (current.global() ? allowedAll(context.settings(), context.runtime())
-                : allowed(context.settings(), current.sourceId()));
+        boolean allowed = current == null || allowed(context.settings(), context.runtime(), current);
         HoldingCounts counts = resolved == null ? null : resolved.counts();
-        knowledge.setText(knowledgeText(current, counts, resolved == null || resolved.complete(), allowed));
-        // Nachladen je Quelle, Space oder Seite; die globale Auswahl lädt man links je Wissensquelle.
-        load.setVisible(current != null && !current.global() && (counts == null || counts.stored() < counts.pages()
+        knowledge.setText(knowledgeText(current, counts, resolved == null || resolved.complete(), allowed,
+                lenient == null ? 0 : lenient.skippedRoots().size()));
+        // Nachladen je Quelle, Space oder Seite; die globale Auswahl lädt man links je Wissensquelle, einen
+        // Favoriten-Ordner je Favorit im Baum.
+        load.setVisible(current instanceof Selection.Node && (counts == null || counts.stored() < counts.pages()
                 || counts.pages() == 0));
         if (toolScope != null) {
             // Im Command Deck gilt nicht die Auswahl links, sondern der gewählte Bereich (#1151).
@@ -1180,7 +1174,7 @@ public final class ChatPanel extends JPanel {
             onResolved.accept(null);
             return;
         }
-        Background.run(() -> runtime.workspace().resolveSelection(tree.toCore(runtime)), resolved -> {
+        Background.run(() -> SelectionHoldings.resolve(runtime, tree), resolved -> {
             if (ticket == treeRequest && onResolved != null) {
                 onResolved.accept(resolved);
             }
@@ -1285,10 +1279,15 @@ public final class ChatPanel extends JPanel {
                 resolved.spaces(), resolved.complete());
     }
 
-    /** Für die globale Auswahl: ob jede Wissensquelle der Laufzeit Inhalte an den KI-Dienst geben darf. */
-    static boolean allowedAll(AppSettings settings, AppRuntime runtime) {
-        return runtime == null || runtime.workspace().sources().stream()
-                .allMatch(source -> allowed(settings, source.id()));
+    /**
+     * Ob jede Quelle der Auswahl Inhalte an den KI-Dienst geben darf: je Wurzel ihre Quelle, für „Wissensquellen“ jede
+     * Wissensquelle der Laufzeit, für einen Favoriten-Ordner die Quelle jedes Favoriten.
+     */
+    static boolean allowed(AppSettings settings, AppRuntime runtime, Selection selection) {
+        if (runtime == null && selection.global()) {
+            return true;
+        }
+        return selection.roots(runtime).stream().allMatch(root -> allowed(settings, root.sourceId()));
     }
 
     /** Ob die Quelle Inhalte an den KI-Dienst geben darf ({@code ai.external-processing-sources}). */
@@ -1301,7 +1300,8 @@ public final class ChatPanel extends JPanel {
      * Die Statuszeile des Wissens: „Wissen: ‹Seite› samt Unterseiten · n Seiten“, für einen Space „Space ‹Name›“,
      * für eine Quelle „‹Quelle› · alle Spaces“; dazu, was nicht geladen ist, und ob die Quelle für KI freigegeben ist.
      */
-    static String knowledgeText(Selection selection, HoldingCounts counts, boolean complete, boolean allowed) {
+    static String knowledgeText(Selection selection, HoldingCounts counts, boolean complete, boolean allowed,
+                                int skipped) {
         if (selection == null) {
             return NO_SELECTION;
         }
@@ -1309,6 +1309,10 @@ public final class ChatPanel extends JPanel {
         if (!complete) {
             // Ein Space ohne Inventur: der Cache kennt nur einzeln geladene Seiten, Unterseiten fehlen womöglich.
             text.append(" · ").append(ExportPanel.INCOMPLETE);
+        }
+        if (skipped > 0) {
+            // ADR 0034 §4: veraltete oder nicht sichtbare Favoriten fallen heraus, statt den Ordner zu brechen.
+            text.append(" · ").append(Texts.count(skipped, "Favorit", "Favoriten")).append(" nicht verfügbar");
         }
         if (!allowed) {
             text.append(" · ").append(NOT_ALLOWED);
@@ -1324,6 +1328,10 @@ public final class ChatPanel extends JPanel {
         StringBuilder text = new StringBuilder();
         if (selection.global()) {
             text.append("alle Wissensquellen");
+        } else if (selection instanceof Selection.Collection collection) {
+            // ADR 0034 §5: nur die Bereichszeile, Ordnername und Seitenzahl.
+            text.append("Ordner ").append(collection.title()).append(collection.withSubfolders()
+                    ? " samt Unterordnern" : "");
         } else if (selection.pageId() != null) {
             text.append(selection.title()).append(" samt Unterseiten");
         } else if (selection.spaceKey() != null) {
@@ -1921,6 +1929,10 @@ public final class ChatPanel extends JPanel {
                     : new com.aresstack.spaceharvester.application.snapshot.PageKey(open.sourceId(),
                             open.pageId()));
             turn.releasing(releases(runtime, open));
+            // ADR 0034 §5: Ein Favoriten-Ordner nennt seine Unterordner und Favoriten in seiten_auflisten.
+            if (open instanceof Selection.Collection collection) {
+                turn.collection(collectionNodes(context.favorites(), collection));
+            }
             // R2/C1: Der Chat folgt der Suchmethode „Nachbarseiten“ der Suchoptionen, wie sie beim Senden steht.
             turn.searchingNeighbors(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
             // Interne Suche: die globale Suche über die freigegebenen Wissensquellen, gelesen beim Aufruf.

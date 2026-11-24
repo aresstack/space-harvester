@@ -12,7 +12,6 @@ import com.aresstack.spaceharvester.deck.http.HttpClientFactory;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,8 +36,7 @@ class HttpEakteServerTest {
     }
 
     private EakteProfile profile(boolean withStart) {
-        return new EakteProfile(fake.webdav(), withStart ? fake.start() : null, FakeEakteServer.USER,
-                fake.loginHosts());
+        return new EakteProfile(fake.webdav(), withStart ? fake.start() : null, FakeEakteServer.USER);
     }
 
     @Test
@@ -84,6 +82,9 @@ class HttpEakteServerTest {
         }
         assertThat(fake.passwordPosts()).isEqualTo(1);
         assertThat(trace).anyMatch(line -> line.contains("zur Anmeldung um"));
+        // v2.0 (completeWebDavSamlChallenge): nach der SAML-Antwort kein GET auf den WebDAV-Endpunkt, sondern PROPFIND
+        assertThat(fake.requests()).noneMatch(line -> line.startsWith("eakte GET /fsc/webdav"));
+        assertThat(trace).anyMatch(line -> line.contains("wiederhole die Anfrage statt der Weiterleitung"));
     }
 
     @Test
@@ -130,14 +131,22 @@ class HttpEakteServerTest {
         assertThat(fake.restPasswordAnswers()).isEqualTo(1);
     }
 
+    /** Wie v2.0: Zugangsdaten nur an ein Formularziel auf demselben Server wie die Formularseite. */
     @Test
-    void neverSendsCredentialsToAHostThatIsNoLoginService() {
-        EakteProfile untrusted = new EakteProfile(fake.webdav(), fake.start(), FakeEakteServer.USER,
-                Set.of("anmeldung.example.org"));
-        assertThatThrownBy(() -> server.connect(untrusted, FakeEakteServer.PASSWORD.toCharArray()))
-                .hasMessageContaining("fremden Server");
+    void neverSendsCredentialsToAFormTargetOnAnotherServer() {
+        fake.foreignFormAction(true);
+        assertThatThrownBy(() -> server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray()))
+                .hasMessageContaining("Zugangsdaten nicht gesendet");
         assertThat(fake.passwordPosts()).isZero();
-        assertThat(fake.requests()).noneMatch(line -> line.startsWith("openam") || line.startsWith("provider"));
+    }
+
+    /** Anmeldedienste stehen nirgends fest: erlaubt wird nur, wohin die Weiterleitungen ab der E-Akte führten. */
+    @Test
+    void learnsTheLoginServicesFromTheRedirects() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            assertThat(connection.list(connection.rootHref())).isNotEmpty();
+        }
+        assertThat(trace).anyMatch(line -> line.startsWith("Weiterleitung zu ") && line.contains("(von "));
     }
 
     @Test
@@ -199,5 +208,46 @@ class HttpEakteServerTest {
                     .isInstanceOf(SessionExpiredException.class);
         }
         assertThat(fake.passwordPosts()).isEqualTo(1);
+    }
+
+    /** Wie im Protokoll von v2.0: /openam/ (Startseite mit Skript) → UI/Login → XUI/, dann REST-Fortsetzung. */
+    @Test
+    void followsTheOpenAmLandingPageLikeTheTestProgram() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            assertThat(connection.list(connection.rootHref())).hasSize(5);
+        }
+        List<String> openam = fake.requests().stream().filter(line -> line.startsWith("openam ")).toList();
+        int landing = openam.indexOf("openam GET /openam/");
+        assertThat(landing).isNotNegative();
+        assertThat(openam.subList(landing, landing + 4)).containsExactly("openam GET /openam/",
+                "openam GET /openam/UI/Login", "openam GET /openam/XUI/", "openam POST /openam/json/authenticate");
+        assertThat(trace).anyMatch(line -> line.contains("JavaScript-Weiterleitung erkannt"));
+        assertThat(String.join("\n", trace)).doesNotContain("code=");
+    }
+
+    /** Wie v2.0: auf der Zwischenseite erst loginUrl (→ XUI/), dann REST; das Formular mit Referer der Seite. */
+    @Test
+    void visitsLoginUrlBeforeRestAndPostsTheFormWithReferer() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            connection.list(connection.rootHref());
+        }
+        List<String> openam = fake.requests().stream().filter(line -> line.startsWith("openam ")).toList();
+        int rest = openam.indexOf("openam POST /openam/json/authenticate");
+        assertThat(openam.subList(rest - 2, rest + 1)).containsExactly("openam GET /openam/UI/Login",
+                "openam GET /openam/XUI/", "openam POST /openam/json/authenticate");
+        assertThat(fake.loginReferers()).hasSize(1);
+        assertThat(fake.loginReferers().get(0)).contains("/eai/mapz/login");
+    }
+
+    /** Live mit v2.0 belegt: Einstieg = WebDAV-Adresse; die Anmeldung läuft über den WebDAV-Endpunkt selbst. */
+    @Test
+    void entryAndWebDavAreTheSameAddressLikeTheLiveTest() throws Exception {
+        EakteProfile same = EakteProfile.fromAddress(fake.webdav().resolve("/").toString(), "", FakeEakteServer.USER);
+        assertThat(same.start()).isEqualTo(same.webdav());
+        try (EakteConnection connection = server.connect(same, FakeEakteServer.PASSWORD.toCharArray())) {
+            assertThat(connection.list(connection.rootHref())).hasSize(5);
+        }
+        assertThat(fake.passwordPosts()).isEqualTo(1);
+        assertThat(fake.requests()).contains("openam GET /openam/", "openam GET /openam/XUI/");
     }
 }
