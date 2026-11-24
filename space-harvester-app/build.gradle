@@ -84,6 +84,8 @@ dependencies {
     // Reuse the published Ask AI Java DSP/VAD pipeline, without Silero or an ONNX runtime.
     implementation 'com.aresstack:directml-whisper-audio:0.3.2'
     implementation "org.apache.poi:poi-scratchpad:${libs.versions.poi.get()}"
+    // E-Mails im Anhang-Viewer: Outlook (.msg) über POI HSMF (scratchpad), .eml über Mime4j wie in Tika
+    implementation libs.mime4j.dom
     // Protokoll auf Konsole und in <Benutzerordner>/.space-harvester/logs; Version aus der Boot-BOM wie beim Dienst.
     // Schon zum Übersetzen nötig: Der Filter der Terminal-Ausgabe (ConsoleThreshold) ist ein Logback-Filter.
     implementation platform(libs.spring.boot.dependencies)

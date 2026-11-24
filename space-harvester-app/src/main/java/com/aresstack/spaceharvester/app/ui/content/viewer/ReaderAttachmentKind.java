@@ -8,7 +8,7 @@ import java.util.Set;
 /**
  * Wie das Anhang-Overlay einen Anhang zeigt, aus Medientyp und Dateiendung: Bild (auch SVG, über den Bildweg),
  * PDF (Seiten über PDFBox), Text (Textansicht), PowerPoint (lokal über Apache POI),
- * Office (Vorschau der Quelle) oder sonstige Dateien (Name, Typ, Größe, Speichern und Öffnen). Die Endung zählt, wenn der Medientyp nichts sagt
+ * Office (Vorschau der Quelle), E-Mail (.msg/.eml, lokal) oder sonstige Dateien (Name, Typ, Größe, Speichern und Öffnen). Die Endung zählt, wenn der Medientyp nichts sagt
  * ({@code application/octet-stream}). Die Listen sind eine Auswahl gängiger Typen (kannst du kippen); was nicht
  * erkannt wird, bleibt trotzdem in der Liste und öffnet das Overlay.
  *
@@ -16,7 +16,7 @@ import java.util.Set;
  * Keep source-based previews for the remaining Office formats.</p>
  */
 public enum ReaderAttachmentKind {
-    IMAGE, PDF, TEXT, PRESENTATION, SPREADSHEET, OFFICE, OTHER;
+    IMAGE, PDF, TEXT, PRESENTATION, SPREADSHEET, OFFICE, MAIL, OTHER;
 
     private static final Set<String> IMAGE_EXTENSIONS = set("png", "jpg", "jpeg", "gif", "bmp", "svg", "webp");
     private static final Set<String> TEXT_EXTENSIONS = set("txt", "log", "md", "csv", "tsv", "json", "xml", "yml",
@@ -25,7 +25,7 @@ public enum ReaderAttachmentKind {
             "cs", "go", "rs", "toml", "wsdl", "xsd");
     private static final Set<String> PRESENTATION_EXTENSIONS = set("ppt", "pptx", "pptm", "pps", "ppsx");
     private static final Set<String> OFFICE_EXTENSIONS = set("doc", "docx", "docm", "dot", "dotx", "xls", "xlsx",
-            "xlsm", "xlsb", "ppt", "pptx", "pptm", "pps", "ppsx", "odt", "ods", "odp", "rtf", "vsd", "vsdx", "msg");
+            "xlsm", "xlsb", "ppt", "pptx", "pptm", "pps", "ppsx", "odt", "ods", "odp", "rtf", "vsd", "vsdx");
 
     static ReaderAttachmentKind of(String mediaType, String fileName) {
         String type = baseType(mediaType);
@@ -35,6 +35,9 @@ public enum ReaderAttachmentKind {
         }
         if ("application/pdf".equals(type) || "pdf".equals(extension)) {
             return PDF;
+        }
+        if (MailMessage.supports(fileName, mediaType)) {
+            return MAIL; // Outlook (.msg) und .eml: Kopf, Text und Anlagen im Viewer selbst
         }
         if (SpreadsheetPreviewData.supports(fileName) || "text/csv".equals(type)
                 || "text/tab-separated-values".equals(type)
@@ -79,6 +82,12 @@ public enum ReaderAttachmentKind {
         }
         if ("application/pdf".equals(type) || "pdf".equals(extension)) {
             return "PDF";
+        }
+        if ("msg".equals(extension) || type.equals("application/vnd.ms-outlook")) {
+            return "Outlook-Nachricht";
+        }
+        if ("eml".equals(extension) || type.equals("message/rfc822")) {
+            return "E-Mail";
         }
         if (type.contains("wordprocessing") || type.equals("application/msword") || extension.startsWith("doc")
                 || "odt".equals(extension) || "rtf".equals(extension)) {

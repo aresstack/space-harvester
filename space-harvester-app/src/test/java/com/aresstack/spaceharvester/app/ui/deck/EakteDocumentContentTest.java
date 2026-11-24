@@ -63,6 +63,26 @@ class EakteDocumentContentTest {
         assertThatThrownBy(() -> content.read(older)).isInstanceOf(IOException.class).hasMessageContaining("ETag");
     }
 
+    /** Der Erlass als PDF in einer archivierten E-Mail: die Analyse liest die Anlage, nicht die E-Mail. */
+    @Test
+    void readsAnAttachmentOfAnArchivedMail() throws Exception {
+        DocumentContent content = new EakteDocumentContent(sessions);
+        EakteSession session = connect();
+        EakteEntry folder = session.list(session.rootHref().orElseThrow()).get(10, TimeUnit.SECONDS).stream()
+                .filter(e -> e.name().equals("Arbeitsvorrat")).findFirst().orElseThrow();
+        EakteEntry vorgang = session.list(folder.href()).get(10, TimeUnit.SECONDS).stream()
+                .filter(e -> e.name().equals("Vorgang 4711")).findFirst().orElseThrow();
+        EakteEntry entry = session.list(vorgang.href()).get(10, TimeUnit.SECONDS).stream()
+                .filter(e -> !e.folder()).findFirst().orElseThrow();
+        DocumentContent.Content read = content.read(new DocumentRef(EakteBrowser.ORIGIN,
+                entry.href() + EakteBrowser.PART + "0", entry.etag()));
+        assertThat(read.title()).isEqualTo(com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.ATTACHMENT);
+        assertThat(read.mediaType()).isEqualTo("application/pdf");
+        assertThat(read.bytes()).isEqualTo(com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.PDF);
+        assertThatThrownBy(() -> content.read(new DocumentRef(EakteBrowser.ORIGIN, entry.href() + EakteBrowser.PART
+                + "9", entry.etag()))).isInstanceOf(IOException.class).hasMessageContaining("keine Anlage");
+    }
+
     @Test
     void theFolderOfADocumentEndsWithASlash() {
         assertThat(EakteDocumentContent.parent("/fsc/webdav/Ablage/Logbuch%202026.txt")).isEqualTo("/fsc/webdav/Ablage/");

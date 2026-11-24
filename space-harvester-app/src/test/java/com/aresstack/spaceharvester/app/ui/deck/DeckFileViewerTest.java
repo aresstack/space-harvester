@@ -56,6 +56,8 @@ class DeckFileViewerTest {
         assertThat(DeckFileViewer.shows("a.pptx")).isTrue();
         assertThat(DeckFileViewer.shows("a.xlsx")).isTrue();
         assertThat(DeckFileViewer.shows("a.rtf")).isFalse();
-        assertThat(DeckFileViewer.shows("a.msg")).isFalse();
+        // E-Mails kann der eine Viewer überall (Angelo 24.11.2026): Outlook und .eml
+        assertThat(DeckFileViewer.shows("a.msg")).isTrue();
+        assertThat(DeckFileViewer.shows("a.eml")).isTrue();
     }
 }
