@@ -257,7 +257,7 @@ final class UpdateSummarizer {
     }
 
     /** Leerraum zusammengezogen, damit der Auszug Inhalt trägt statt Einrückung. */
-    private static String compact(String text) {
+    static String compact(String text) {
         return text.replaceAll("[ \\t\\x0B\\f\\r]+", " ").replaceAll("\\s*\\n\\s*", "\n").strip();
     }
 

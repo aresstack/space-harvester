@@ -54,6 +54,14 @@ public final class TermLedger implements HoldingsChanges {
     private final Map<String, Set<String>> staleSpaces = new HashMap<>();
     /** Unter {@link #marks}: alles verwerfen. */
     private boolean staleAll;
+    /** Unter {@link #marks}: geänderte Seiten seit dem letzten Blick auf die gemerkten Auswahlen. */
+    private final Set<PageKey> selectionPages = new HashSet<>();
+    /** Unter {@link #marks}: Quellen, deren gemerkte Auswahlen nicht mehr gelten. */
+    private final Set<String> selectionSources = new HashSet<>();
+    /** Unter {@link #marks}: keine gemerkte Auswahl gilt mehr. */
+    private boolean selectionsStale;
+    /** Unter {@link #marks}: zählt jede Meldung, damit eine Zählung von vor der Meldung nicht gemerkt wird. */
+    private long changes;
 
     private SoftReference<State> state = new SoftReference<>(null);
 
@@ -82,6 +90,14 @@ public final class TermLedger implements HoldingsChanges {
     @Override
     public void pagesChanged(String sourceId, String spaceKey, Collection<String> pageIds) {
         synchronized (marks) {
+            changes++;
+            if (!selectionsStale && !selectionSources.contains(sourceId)) {
+                pageIds.forEach(pageId -> selectionPages.add(new PageKey(sourceId, pageId)));
+                if (selectionPages.size() > MAX_DIRTY_PAGES) {
+                    selectionsStale = true;
+                    selectionPages.clear();
+                }
+            }
             if (!staleSources.contains(sourceId)) {
                 Set<String> pages = stalePages.computeIfAbsent(sourceId, id -> new HashSet<>());
                 pages.addAll(pageIds);
@@ -95,6 +111,8 @@ public final class TermLedger implements HoldingsChanges {
     @Override
     public void spaceChanged(String sourceId, String spaceKey) {
         synchronized (marks) {
+            changes++;
+            selectionSources.add(sourceId);
             if (!staleSources.contains(sourceId)) {
                 staleSpaces.computeIfAbsent(sourceId, id -> new HashSet<>()).add(spaceKey == null ? "" : spaceKey);
             }
@@ -104,6 +122,8 @@ public final class TermLedger implements HoldingsChanges {
     @Override
     public void sourceChanged(String sourceId) {
         synchronized (marks) {
+            changes++;
+            selectionSources.add(sourceId);
             staleSources.add(sourceId);
             stalePages.remove(sourceId);
             staleSpaces.remove(sourceId);
@@ -121,6 +141,8 @@ public final class TermLedger implements HoldingsChanges {
      */
     public void rebuild(String sourceId) {
         synchronized (marks) {
+            changes++;
+            selectionsStale = true;
             if (sourceId == null) {
                 staleAll = true;
                 staleSources.clear();
@@ -195,6 +217,62 @@ public final class TermLedger implements HoldingsChanges {
             }
         }
         return Optional.of(counts(held.root.refs.keySet()));
+    }
+
+    /**
+     * Die Zahlen einer beliebigen Auswahl aus Seiten (Ordner, Seite samt Unterseiten): Jede gefragte Auswahl merkt
+     * sich ihr Ergebnis. Ändert sich eine ihrer Seiten oder ihre Quelle, gilt es als veraltet, und {@code count} zählt
+     * beim nächsten Fragen neu. Gemerkt werden nur die Zahlen, nie die Begriffe: Ein Verwalter je Seite mit den
+     * Begriffen seines ganzen Teilbaums würde den Speicher mit der Tiefe des Baums vervielfachen.
+     *
+     * @param count zählt die Auswahl über ihre Einträge
+     */
+    public Map<TermKind, Integer> selection(PageSet pages, Supplier<Map<TermKind, Integer>> count) {
+        if (!notified) {
+            return count.get();
+        }
+        String id = pages.fingerprint();
+        long before;
+        synchronized (this) {
+            State held = state.get();
+            synchronized (marks) {
+                before = changes;
+                if (held != null) {
+                    if (selectionsStale) {
+                        held.selections.clear();
+                    } else {
+                        held.selections.values().removeIf(known -> selectionSources.stream().anyMatch(
+                                known.pages().sourceIds()::contains)
+                                || selectionPages.stream().anyMatch(known.pages()::contains));
+                    }
+                }
+                // Ohne gemerkten Stand (neu oder freigegeben) gibt es nichts zu verwerfen.
+                selectionsStale = false;
+                selectionSources.clear();
+                selectionPages.clear();
+            }
+            Selection known = held == null ? null : held.selections.get(id);
+            if (known != null && known.pages().equals(pages)) {
+                return known.counts();
+            }
+        }
+        // Gezählt wird ohne Sperre: Eine große Auswahl hält die Knoten nicht auf.
+        Map<TermKind, Integer> counted = Map.copyOf(count.get());
+        synchronized (this) {
+            boolean unchanged;
+            synchronized (marks) {
+                unchanged = before == changes;
+            }
+            if (unchanged) {
+                State held = state.get();
+                if (held == null) {
+                    held = new State();
+                    state = new SoftReference<>(held);
+                }
+                held.selections.put(id, new Selection(pages, counted));
+            }
+        }
+        return counted;
     }
 
     private SourceNode ensure(State held, String sourceId, boolean stale, Set<String> pages, Set<String> spaces,
@@ -323,9 +401,21 @@ public final class TermLedger implements HoldingsChanges {
         return counts;
     }
 
+    /** Höchstens so viele Auswahlen bleiben gemerkt; die am längsten nicht gefragte fällt heraus. */
+    static final int MAX_SELECTIONS = 500;
+
+    private record Selection(PageSet pages, Map<TermKind, Integer> counts) {
+    }
+
     private static final class State {
         final Children root = new Children();
         final Map<String, SourceNode> sources = new HashMap<>();
+        final Map<String, Selection> selections = new java.util.LinkedHashMap<>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, Selection> eldest) {
+                return size() > MAX_SELECTIONS;
+            }
+        };
     }
 
     private static final class SourceNode {

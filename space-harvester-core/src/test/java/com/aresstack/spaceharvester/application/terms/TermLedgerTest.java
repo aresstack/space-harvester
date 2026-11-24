@@ -137,14 +137,33 @@ class TermLedgerTest {
         return terms.totals(CALLER, new TermQueries.TermSearch(sourceId, spaceKey, null, null, false, 10, null));
     }
 
-    /** Dieselbe Frage über die Einträge gezählt: Eine Seitenmenge umgeht die Verwalter. */
-    private TermQueries.TermTotals counted(String sourceId, String spaceKey) {
-        List<PageKey> pages = cache.values().stream()
+    private PageSet pagesOf(String sourceId, String spaceKey) {
+        return PageSet.ofKeys(cache.values().stream()
                 .filter(page -> sourceId == null || page.key().sourceId().equals(sourceId))
                 .filter(page -> spaceKey == null || spaceKey.equals(page.metadata().partitionKey()))
-                .map(PageSnapshot::key).toList();
+                .map(PageSnapshot::key).toList());
+    }
+
+    /** Dieselbe Frage unabhängig gezählt: die Begriffsliste der Seiten vollständig durchgeblättert. */
+    private TermQueries.TermTotals counted(String sourceId, String spaceKey) {
+        return listed(pagesOf(sourceId, spaceKey));
+    }
+
+    private TermQueries.TermTotals listed(PageSet pages) {
+        Map<TermKind, Integer> counts = new java.util.EnumMap<>(TermKind.class);
+        String cursor = null;
+        do {
+            TermQueries.TermList list = terms.terms(CALLER, new TermQueries.TermSearch(null, null, null, null, false,
+                    2, cursor).within(pages));
+            list.terms().forEach(term -> counts.merge(term.kind(), 1, Integer::sum));
+            cursor = list.nextCursor();
+        } while (cursor != null);
+        return new TermQueries.TermTotals(counts);
+    }
+
+    private TermQueries.TermTotals selection(PageSet pages) {
         return terms.totals(CALLER, new TermQueries.TermSearch(null, null, null, null, false, 10, null)
-                .within(PageSet.ofKeys(pages)));
+                .within(pages));
     }
 
     private void assertEveryNodeMatches() {
@@ -253,5 +272,37 @@ class TermLedgerTest {
 
         sourceWide = true;
         assertThat(root).isEqualTo(node(null, null));
+    }
+
+    @Test
+    void aSelectionOfPagesRemembersItsCountsUntilOneOfItsPagesChanges() {
+        PageSet tree = PageSet.ofKeys(List.of(new PageKey("wiki", "1"), new PageKey("wiki", "3")));
+        assertThat(selection(tree)).isEqualTo(listed(tree));
+        keyReads.set(0);
+
+        assertThat(selection(tree)).isEqualTo(listed(tree));
+        assertThat(keyReads).as("gemerkt, nichts gelesen").hasValue(0);
+
+        // Eine Seite außerhalb der Auswahl lässt sie gelten.
+        page("wiki", "DEV", "2", "Die Buchung braucht jetzt eine Mahnung.");
+        selection(tree);
+        assertThat(keyReads).hasValue(0);
+
+        // Eine Seite der Auswahl ändert sich: veraltet, beim nächsten Fragen neu gezählt und wieder gemerkt.
+        page("wiki", "OPS", "3", "Die ZV meldet sich. Neu ist der Mahnlauf.");
+        assertThat(selection(tree)).isEqualTo(listed(tree));
+        assertThat(keyReads.get()).isPositive();
+        keyReads.set(0);
+        selection(tree);
+        assertThat(keyReads).hasValue(0);
+
+        // Quelle als Ganzes geändert oder von Hand neu aufgebaut: ebenfalls veraltet.
+        cacheChanges.sourceChanged("wiki");
+        selection(tree);
+        assertThat(keyReads.get()).isPositive();
+        keyReads.set(0);
+        terms.rebuildTotals(null);
+        assertThat(selection(tree)).isEqualTo(listed(tree));
+        assertThat(keyReads.get()).isPositive();
     }
 }

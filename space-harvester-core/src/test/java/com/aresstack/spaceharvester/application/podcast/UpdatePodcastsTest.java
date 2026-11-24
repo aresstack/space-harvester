@@ -486,6 +486,23 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void anAreaSummaryIsExplainedUnderItsOwnAreaAndShow() {
+        UpdateSummary area = new UpdateSummary("wiki", UpdateSummary.AREA, "DEMO", "Wozu es DEMO gibt.", List.of(
+                new SummaryStatement("Einstieg", List.of(new SummaryPage("p-1", "Start", "DEMO")), "Einstieg",
+                        "So ist der Bereich aufgebaut.")), "test", Instant.parse("2026-11-24T10:00:00Z"), 0, false,
+                java.util.Map.of(), "selection-abc");
+
+        // Ein Bereich wird erklärt, nicht als Neuigkeit erzählt; die Sendung heißt „…-Überblick“ (Angelo 24.11.2026).
+        assertThat(UpdatePodcasts.material(area, page -> "").format()).isEqualTo(PodcastWriter.Format.AREA);
+        assertThat(UpdatePodcasts.show("confluence", true)).isEqualTo("Confluence-Überblick");
+        assertThat(UpdatePodcasts.show("confluence")).isEqualTo("Confluence-Update");
+        assertThat(PodcastArea.of(area).key()).isEqualTo("selection-abc");
+        assertThat(PodcastArea.of(area).updateId()).isNull();
+        assertThat(UpdatePodcasts.key(area)).isNotEqualTo(UpdatePodcasts.key(new UpdateSummary("wiki", "u-1", "DEMO",
+                area.text(), area.statements(), "test", area.createdAt(), 0, false)));
+    }
+
+    @Test
     void theScriptOfATopicCarriesItsContentButNeitherItsPlaceNorTheOverview() throws Exception {
         FakeModel model = new FakeModel();
         UpdateSummary summary = new UpdateSummary("wiki", "u-1", "DEMO", "Hundert neue Seiten im Basissystem.",

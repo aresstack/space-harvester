@@ -17,10 +17,19 @@ import java.util.Objects;
  * @param unreadableChanges geänderte Seiten, die das Modell nicht lesen durfte (ohne KI-Freigabe, ADR 0028)
  * @param stale             der Bericht hat sich seither geändert (nur beim offenen Update möglich); neu erstellen
  * @param spaceNames        Anzeigenamen der Spaces im Bericht, soweit bekannt; Schlüssel ist der Space-Schlüssel
+ * @param area              bei einer Bereichszusammenfassung (Bestand einer Auswahl, ADR 0034 §7) der Schlüssel ihres
+ *                          Platzes ({@link SummaryScope#key()}), dann ist {@code updateId} {@link #AREA}; {@code null}
+ *                          bei einem Update
  */
 public record UpdateSummary(String sourceId, String updateId, String spaceKey, String text,
                             List<SummaryStatement> statements, String model, Instant createdAt, int unreadableChanges,
-                            boolean stale, Map<String, String> spaceNames) {
+                            boolean stale, Map<String, String> spaceNames, String area) {
+
+    /**
+     * {@link #updateId()} einer Bereichszusammenfassung: Sie gehört zu keinem Update, sondern fasst den ganzen Bestand
+     * eines Bereichs zusammen (Angelo 24.11.2026, Umschalter „Änderungen | Bereich“).
+     */
+    public static final String AREA = "bereich";
 
     public UpdateSummary {
         Objects.requireNonNull(sourceId, "sourceId");
@@ -29,6 +38,22 @@ public record UpdateSummary(String sourceId, String updateId, String spaceKey, S
         statements = List.copyOf(statements);
         Objects.requireNonNull(createdAt, "createdAt");
         spaceNames = spaceNames == null ? Map.of() : Map.copyOf(spaceNames);
+        if (area != null && !AREA.equals(updateId)) {
+            throw new IllegalArgumentException("Eine Bereichszusammenfassung hat die Update-Kennung " + AREA);
+        }
+    }
+
+    /** Die Zusammenfassung eines Updates. */
+    public UpdateSummary(String sourceId, String updateId, String spaceKey, String text,
+                         List<SummaryStatement> statements, String model, Instant createdAt, int unreadableChanges,
+                         boolean stale, Map<String, String> spaceNames) {
+        this(sourceId, updateId, spaceKey, text, statements, model, createdAt, unreadableChanges, stale, spaceNames,
+                null);
+    }
+
+    /** Ob sie einen ganzen Bereich zusammenfasst statt der Änderungen eines Updates. */
+    public boolean isArea() {
+        return area != null;
     }
 
     /** Ohne Namen der Spaces. */

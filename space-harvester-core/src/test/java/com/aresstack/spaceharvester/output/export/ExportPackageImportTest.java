@@ -357,6 +357,8 @@ class ExportPackageImportTest {
     void anUploadedPackageOfAnImportCancelledWhileWaitingGoesWithTheNextImport() throws Exception {
         List<Runnable> pending = new ArrayList<>();
         Jobs held = new Jobs(new InMemoryJobStore(), pending::add, new JobLimits(1, 5, Duration.ofHours(1)), clock);
+        // Ein Import ist lokale Arbeit (JobType#local): ein lokaler Platz, damit der zweite wartet.
+        held.localSlots(1);
         ExportPackageImport waiting = new ExportPackageImport(held,
                 new ZipExportPackageReader(1024 * 1024, 1024 * 1024), store, Set.of("laptop")::contains, null, null,
                 null, List.of(), clock);

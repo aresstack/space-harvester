@@ -314,16 +314,13 @@ class SourceWithdrawalTest {
             JobStatus withdrawal = purge.startWithdrawal("altwiki", "app", SourceDataPurge.REMOVED);
             eventually(() -> jobs.status(withdrawal.id()).state() == JobState.FAILED);
             // Die Warteschlange ist voll: Der nächste Versuch wird trotzdem angenommen (angenommene Arbeit, Abnahme
-            // #1090) und wartet auf einen Platz, statt abgelehnt zu werden.
+            // #1090), statt abgelehnt zu werden. Bereinigen ist lokale Arbeit (JobType#local, Angelo 24.11.2026): Es
+            // wartet nicht, bis die Abgleiche ihren Platz freigeben.
             for (int i = 0; i < 2; i++) {
                 jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "andere", null, "app",
                         com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context ->
                                 blockers.await(10, TimeUnit.SECONDS)));
             }
-            eventually(() -> jobs.status(withdrawal.id()).state() == JobState.QUEUED);
-            assertThat(purge.withdrawing("altwiki")).isPresent();
-
-            blockers.countDown();
             eventually(() -> jobs.status(withdrawal.id()).state() == JobState.COMPLETED);
             assertThat(cleared).containsExactly("altwiki");
         } finally {

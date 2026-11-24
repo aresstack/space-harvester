@@ -225,9 +225,12 @@ public final class ChatPanel extends JPanel {
     /** Nur der Pfeil, durchsichtig: öffnet die Chats dieses Bereichs. */
     private final ComposerButton chats = ComposerButton.iconButton(ComposerIcons.chevronDown(),
             "Chats dieses Bereichs");
-    /** Oben rechts in der Kopfzeile des Inhaltsbereichs, als Symbole (Angelo, 17.11.2026): Plus und Papierkorb. */
-    private final IconButton newChat = new IconButton(ComposerIcons.plus(16), NEW_CHAT).compact();
-    private final IconButton deleteChat = new IconButton(Glyph.TRASH, DELETE).compact();
+    /**
+     * Oben rechts in der Kopfzeile, als Symbole (Angelo, 17.11.2026): Plus und Papierkorb, in voller Größe, damit sie
+     * die Kopfzeile füllen und gut zu treffen sind (Angelo 24.11.2026).
+     */
+    private final IconButton newChat = new IconButton(ComposerIcons.plus(16), NEW_CHAT);
+    private final IconButton deleteChat = new IconButton(Glyph.TRASH, DELETE);
     /** Die „wirklich“-Rückfrage (Ja/Nein) vor dem Löschen; Tests antworten selbst. */
     java.util.function.BiPredicate<String, String> confirm = (title, question) -> Dialogs.confirm(this, title,
             question);

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.spaceharvester.application.jobs.JobStage;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import java.util.List;
 import java.util.Optional;
@@ -13,7 +14,7 @@ import java.util.Optional;
  * „Vorbereitung“ nach denselben Regeln, nach denen der Core den nächsten startet ({@code Jobs#next}): Downloads haben
  * eigene Plätze für die Vorbereitung; Folgeaufträge (Anreicherung, Zusammenfassen …) und Hintergrundaufträge belegen
  * zusammen höchstens alle Plätze bis auf einen; Hintergrund startet nur, wenn kein anderer Auftrag wartet; ein Teil
- * mit Vorgänger wartet, bis dieser fertig ist.
+ * mit Vorgänger wartet, bis dieser fertig ist; lokale Arbeit ({@link JobType#local()}) hat eine eigene Spur.
  */
 final class WaitReason {
 
@@ -45,16 +46,24 @@ final class WaitReason {
                 return Optional.of("wartet auf den vorigen Teil (" + Texts.state(before.get()) + ")");
             }
         }
+        if (job.type().local()) {
+            // Eigene Spur für lokale Arbeit (Angelo 24.11.2026): wartet nur auf andere lokale Aufträge.
+            long local = all.stream().filter(other -> other.state() == JobState.RUNNING && other.type().local())
+                    .count();
+            return Optional.of("lokale Arbeit am PC: " + Texts.count(local, "lokaler Auftrag läuft",
+                    "lokale Aufträge laufen") + ", höchstens halb so viele wie Prozessorkerne; belegt keinen Platz "
+                    + "unter „Vorbereitung“");
+        }
         int slots = Math.max(1, preparations);
         long running = all.stream().filter(other -> other.state() == JobState.RUNNING && !other.type().download()
-                && !ownLane(other)).count();
+                && !ownLane(other) && !other.type().local()).count();
         if (job.type().download()) {
             long preparing = all.stream().filter(other -> other.state() == JobState.RUNNING
                     && other.stage() == JobStage.PREPARING).count();
             return Optional.of(occupied("Plätze für die Vorbereitung", preparing, slots));
         }
         long followUps = all.stream().filter(other -> other.state() == JobState.RUNNING && !ownLane(other)
-                && (other.type().followUp() || other.type().background())).count();
+                && !other.type().local() && (other.type().followUp() || other.type().background())).count();
         int spare = Math.max(1, slots - 1);
         if (job.type().background()) {
             if (slots <= 1) {

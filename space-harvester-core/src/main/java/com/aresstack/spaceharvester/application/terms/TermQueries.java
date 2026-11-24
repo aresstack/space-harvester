@@ -417,6 +417,27 @@ public class TermQueries {
         if (managed.isPresent()) {
             return managed.get();
         }
+        if (rememberable(caller, search, q, startsWith, sourceIds)) {
+            return new TermTotals(ledger.selection(search.pages(),
+                    () -> count(caller, search, filter, progress).byKind()));
+        }
+        return count(caller, search, filter, progress);
+    }
+
+    /**
+     * Ob die Zahlen dieser Auswahl gemerkt werden dürfen ({@link TermLedger#selection}): eine reine Seitenmenge ohne
+     * Suchtext, und der Aufrufer darf in ihren Quellen alles lesen (die gemerkte Zahl kennt keinen Aufrufer).
+     */
+    private boolean rememberable(AccessContext caller, TermSearch search, String q, String startsWith,
+                                 Set<String> sourceIds) {
+        return managed && q == null && startsWith == null && search.kind() == null
+                && search.origin() == TermOrigin.PAGES && search.pages() != null && search.sourceId() == null
+                && search.spaceKey() == null && sourceIds.containsAll(search.pages().sourceIds())
+                && sourceIds.stream().allMatch(id -> access.permitsSourceWide(caller, id, AccessKind.CONTENT));
+    }
+
+    private TermTotals count(AccessContext caller, TermSearch search, TermIndex.Filter filter,
+                             java.util.function.Consumer<TermTotals> progress) {
         Visibility visibility = new Visibility(caller, search.spaceKey());
         Map<TermKind, Integer> counts = new java.util.EnumMap<>(TermKind.class);
         String group = null;

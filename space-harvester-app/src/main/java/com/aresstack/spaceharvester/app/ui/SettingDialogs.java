@@ -872,6 +872,7 @@ final class SettingDialogs {
     static final String UNLIMITED = "Unbegrenzt";
     /** ADR 0030, Abschnitt 6: öffnet nach einem Update dessen Änderungen, fasst nie von selbst zusammen. */
     static final String SHOW_AFTER_UPDATE = "Nach dem Update Änderungen anzeigen";
+    static final String AREA_PAGES = "Bereichszusammenfassung – Seiten";
 
     /** „1 Jahr“, „90 Tage“ oder „unbegrenzt“ für die Übersicht unter Einstellungen › Cache. */
     static String changeLogRetention(com.aresstack.spaceharvester.application.configuration.ChangeLogSettings log) {
@@ -948,6 +949,11 @@ final class SettingDialogs {
         DurationField changeLog = DurationField.withYears(UNLIMITED, MAX_AMOUNT);
         changeLog.value(cache.changeLog().retention());
         JComboBox<String> showAfterUpdate = onOff(cache.changeLog().showAfterUpdate());
+        // Seitenbudget der Bereichszusammenfassung (Umschalter „Änderungen | Bereich“, ADR 0034 §7).
+        int areaBudget = cache.changeLog().areaPages();
+        javax.swing.JSpinner areaPages = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(areaBudget, 1,
+                Math.max(areaBudget, com.aresstack.spaceharvester.application.configuration.ChangeLogSettings
+                        .MAX_AREA_PAGES_OFFERED), 1));
 
         String globally = global ? "" : "; wie global: ";
         Rows rows = new Rows();
@@ -987,6 +993,8 @@ final class SettingDialogs {
                     + "betrifft das nicht");
             rows.add(SHOW_AFTER_UPDATE, showAfterUpdate, "Öffnet nach jeder manuellen Synchronisierung die "
                     + "Updates der Quelle; zusammengefasst wird nur auf Wunsch");
+            rows.add(AREA_PAGES, areaPages, "So viele Seiten liest die KI höchstens für die Zusammenfassung eines "
+                    + "ganzen Bereichs (Umschalter „Bereich“), die oberen zuerst; weitere zählt sie nur");
         }
         rows.visible(parallel, global);
         if (global) {
@@ -1016,7 +1024,7 @@ final class SettingDialogs {
             return new AppSettings.Cache(always ? java.time.Duration.ZERO : maxAge.value(),
                     always || chosenStrategy.get() == RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK, retention.value(),
                     new com.aresstack.spaceharvester.application.configuration.ChangeLogSettings(changeLog.value(),
-                            ON.equals(showAfterUpdate.getSelectedItem())));
+                            ON.equals(showAfterUpdate.getSelectedItem()), (Integer) areaPages.getValue()));
         };
         Supplier<SyncSettings> syncDraft = () -> new SyncSettings(ON.equals(events.getSelectedItem()),
                 changeSearch.value(), sync.spaces(), ON.equals(beforeSearch.getSelectedItem()), retention.value(),
