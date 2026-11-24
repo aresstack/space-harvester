@@ -118,20 +118,34 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
 
     static ReadAloud readAloud(SpeechSynthesisPort port, TextAnalysisService analysis, String model, String voice,
                                ReadAloud.Playback playback) {
-        ReadAloudService service = new ReadAloudService(port, model, voice, new Played(playback),
+        Played played = new Played(playback);
+        ReadAloudService service = new ReadAloudService(port, model, voice, played,
                 SpeechChunking.PARAGRAPHS, ReadAloudService.DEFAULT_SYNTHESIS_WORKERS,
                 ReadAloudService.DEFAULT_SYNTHESIS_ATTEMPTS, analysis, null, true);
         return new ReadAloud() {
             @Override
             public boolean speak(String text, ReadAloud.Listener listener) {
-                return service.speak(text, new ReadAloudService.Listener() {
-                    @Override
-                    public void failed(String message) {
-                        if (listener != null) {
-                            listener.failed(message);
+                Progress progress = new Progress(text == null ? 0 : text.length(), listener);
+                played.progress = progress;
+                try {
+                    return service.speak(text, new ReadAloudService.Listener() {
+                        @Override
+                        public void failed(String message) {
+                            if (listener != null) {
+                                listener.failed(message);
+                            }
                         }
+
+                        @Override
+                        public void chunkRequested(ReadAloudService.ChunkTrace trace) {
+                            progress.requested(trace.index(), trace.count(), trace.characters());
+                        }
+                    });
+                } finally {
+                    if (played.progress == progress) {
+                        played.progress = null;
                     }
-                });
+                }
             }
 
             @Override
@@ -176,8 +190,99 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
         };
     }
 
-    /** Die Wiedergabe der App als {@link AudioPlayback} des Vorlese-Ablaufs. */
-    private record Played(ReadAloud.Playback playback) implements AudioPlayback {
+    /**
+     * Wo das Vorlesen ungefähr steht (Angelo 23.11.2026, grobe Hervorhebung im Chat): Der Ablauf meldet je Stück nur
+     * dessen Länge, die Stücke folgen lückenlos in Lesereihenfolge und erklingen in dieser Reihenfolge. Das n-te
+     * gespielte Stück deckt also ungefähr die Zeichen hinter den n-1 vorherigen ab (je Stückgrenze ein getilgter
+     * Trenner).
+     */
+    static final class Progress {
+
+        private final int length;
+        private final ReadAloud.Listener listener;
+        private int[] characters = new int[0];
+        private int played;
+
+        Progress(int length, ReadAloud.Listener listener) {
+            this.length = length;
+            this.listener = listener;
+        }
+
+        /** Stück {@code index} (ab 1) von {@code count} hat {@code characters} Zeichen. */
+        synchronized void requested(int index, int count, int characters) {
+            if (this.characters.length < count) {
+                this.characters = java.util.Arrays.copyOf(this.characters, count);
+            }
+            if (index >= 1 && index <= this.characters.length) {
+                this.characters[index - 1] = characters;
+            }
+        }
+
+        /** Das nächste Stück beginnt zu erklingen und dauert etwa {@code millis}. */
+        void playing(long millis) {
+            int from;
+            int to;
+            synchronized (this) {
+                int index = played++;
+                int start = 0;
+                for (int i = 0; i < index && i < characters.length; i++) {
+                    start += characters[i] + 1;
+                }
+                int size = index < characters.length ? characters[index] : 0;
+                from = Math.min(start, length);
+                to = Math.min(start + size, length);
+            }
+            if (listener != null && to > from) {
+                listener.playing(from, to, millis);
+            }
+        }
+    }
+
+    /**
+     * Ungefähre Spieldauer eines WAV-Stücks in Millisekunden aus seinem Kopf ({@code fmt}: Bytes je Sekunde,
+     * {@code data}: Länge); 0, wenn der Kopf nicht zu lesen ist.
+     */
+    static long wavMillis(byte[] wav, double rate) {
+        if (wav == null || wav.length < 12 || wav[0] != 'R' || wav[1] != 'I' || wav[2] != 'F' || wav[3] != 'F') {
+            return 0;
+        }
+        long byteRate = 0;
+        long data = -1;
+        int at = 12;
+        while (at + 8 <= wav.length) {
+            String id = new String(wav, at, 4, java.nio.charset.StandardCharsets.US_ASCII);
+            long size = littleEndian(wav, at + 4);
+            int body = at + 8;
+            if ("fmt ".equals(id) && body + 12 <= wav.length) {
+                byteRate = littleEndian(wav, body + 8);
+            } else if ("data".equals(id)) {
+                data = Math.min(size, wav.length - body);
+                break;
+            }
+            at = (int) Math.min(Integer.MAX_VALUE, body + size + (size & 1));
+        }
+        if (byteRate <= 0 || data < 0) {
+            return 0;
+        }
+        return Math.round(data * 1000.0 / byteRate / (rate > 0 ? rate : 1));
+    }
+
+    private static long littleEndian(byte[] bytes, int at) {
+        return (bytes[at] & 0xffL) | (bytes[at + 1] & 0xffL) << 8 | (bytes[at + 2] & 0xffL) << 16
+                | (bytes[at + 3] & 0xffL) << 24;
+    }
+
+    /** Die Wiedergabe der App als {@link AudioPlayback} des Vorlese-Ablaufs; meldet, welches Stück gerade erklingt. */
+    private static final class Played implements AudioPlayback {
+
+        private final ReadAloud.Playback playback;
+        /** Der Stand des laufenden Vorlesens; {@code null} dazwischen. */
+        volatile Progress progress;
+        private volatile double rate = 1;
+
+        Played(ReadAloud.Playback playback) {
+            this.playback = playback;
+        }
 
         @Override
         public void begin() {
@@ -186,6 +291,10 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
 
         @Override
         public void play(byte[] wav) throws IOException {
+            Progress current = progress;
+            if (current != null) {
+                current.playing(wavMillis(wav, rate));
+            }
             playback.play(wav);
         }
 
@@ -211,6 +320,7 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
 
         @Override
         public void setRate(double rate) {
+            this.rate = rate;
             playback.setRate(rate);
         }
     }

@@ -82,6 +82,56 @@ class RemotePodcastSpeechTest {
     }
 
     @Test
+    void reportsWhichParagraphIsPlayingForARoughHighlight() {
+        List<int[]> playing = Collections.synchronizedList(new ArrayList<>());
+        String text = "Der Nachtlauf Nordlicht startet um zwei Uhr.\n\nVorher prüft er den Spool-Bereich.";
+        com.aresstack.spaceharvester.application.podcast.ReadAloud reading = RemotePodcastSpeech.readAloud(
+                port(new ArrayList<>(), false), null, "orpheus-3b-german", "Jana",
+                new com.aresstack.spaceharvester.application.podcast.ReadAloud.Playback() {
+                    @Override
+                    public void play(byte[] wav) {
+                    }
+
+                    @Override
+                    public void finish() {
+                    }
+
+                    @Override
+                    public void stop() {
+                    }
+                });
+
+        reading.speak(text, new com.aresstack.spaceharvester.application.podcast.ReadAloud.Listener() {
+            @Override
+            public void playing(int from, int to, long millis) {
+                playing.add(new int[] {from, to});
+            }
+        });
+
+        // „es muss nicht unbedingt Wort für Wort sein“: je Absatz einmal, in Sprechreihenfolge, ungefähr an seiner Stelle
+        assertThat(playing).hasSize(2);
+        assertThat(text.substring(playing.get(0)[0], playing.get(0)[1]))
+                .isEqualTo("Der Nachtlauf Nordlicht startet um zwei Uhr.");
+        assertThat(text.substring(playing.get(1)[0], playing.get(1)[1])).contains("Vorher prüft er");
+    }
+
+    @Test
+    void theDurationOfAPieceComesFromItsWavHeader() {
+        // 16 kHz, mono, 16 Bit: 32000 Bytes je Sekunde, 16000 Bytes Daten = eine halbe Sekunde
+        byte[] wav = new byte[44 + 16000];
+        java.nio.ByteBuffer header = java.nio.ByteBuffer.wrap(wav).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        header.put("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(36 + 16000)
+                .put("WAVE".getBytes(java.nio.charset.StandardCharsets.US_ASCII))
+                .put("fmt ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(16).putShort((short) 1)
+                .putShort((short) 1).putInt(16000).putInt(32000).putShort((short) 2).putShort((short) 16)
+                .put("data".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(16000);
+
+        assertThat(RemotePodcastSpeech.wavMillis(wav, 1)).isEqualTo(500);
+        assertThat(RemotePodcastSpeech.wavMillis(wav, 2)).isEqualTo(250);
+        assertThat(RemotePodcastSpeech.wavMillis(new byte[] {1}, 1)).isZero();
+    }
+
+    @Test
     void aFailedPieceIsReportedWithoutTheText() {
         List<String> problems = new ArrayList<>();
         com.aresstack.spaceharvester.application.podcast.ReadAloud reading = RemotePodcastSpeech.readAloud(

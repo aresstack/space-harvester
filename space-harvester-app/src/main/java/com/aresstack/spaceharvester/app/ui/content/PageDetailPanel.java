@@ -608,6 +608,9 @@ public final class PageDetailPanel extends JPanel {
         sourceFoot.add(Comic.row(sourceView.podcast().transcriptCopy()), BorderLayout.WEST);
         sourceFoot.add(Comic.row(sourceView.podcast().subtitleToggle()), BorderLayout.EAST);
         readerPage.setOrb(pagePodcast.orb());
+        // Der Chat liest mit derselben Sprachausgabe vor; sein Knopf steht auf der Höhe dieser Knöpfe (Angelo 23.11.2026).
+        chat.useReadAloud(this::readAloudBinding);
+        chat.alignReadAloudWith(readingPane.readAloud().orb(), pagePodcast.orb());
         textBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(readerPage);
         textBusy.setHighlight(Comic.BLUE);
         textBusy.setVeilColor(Comic.SURFACE);

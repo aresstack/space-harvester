@@ -46,6 +46,14 @@ public interface ReadAloud {
         /** Ein Stück war nicht zu sprechen; die Meldung nennt nie Text oder Schlüssel. */
         default void failed(String message) {
         }
+
+        /**
+         * Ein Stück beginnt zu erklingen: ungefähr die Zeichen {@code [from, to)} des übergebenen Texts, etwa
+         * {@code millis} lang. Für eine grobe Hervorhebung des gerade gelesenen Abschnitts (Angelo 23.11.2026: „es
+         * muss nicht unbedingt Wort für Wort sein“), nie wortgenau; läuft auf dem Thread des Vorlesens.
+         */
+        default void playing(int from, int to, long millis) {
+        }
     }
 
     /**
