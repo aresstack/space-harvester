@@ -64,6 +64,11 @@ final class ChatTools {
     static final String TERM = "begriff_nachschlagen";
     /** Nur mit dem Schalter „Interne Suche“ im Composer: die globale Suche der App über alle Wissensquellen. */
     static final String APP_SEARCH = "wissensquellen_durchsuchen";
+    /**
+     * Nur für den Suchagenten mit Wissen: mehrere Treffer gleichzeitig von Unteragenten im Volltext auswerten lassen
+     * (Angelo 24.11.2026, „Parallele Agenten (intern)“ im ▾-Menü des Chats).
+     */
+    static final String EVALUATE = "treffer_auswerten";
     /** Präfix der virtuellen Ordnerknoten einer Sammlung in {@value #LIST} (ADR 0034 §5). */
     static final String FOLDER = "ordner/";
 
@@ -215,6 +220,18 @@ final class ChatTools {
                 + "Quellennummer, mit der du die Seite zitierst.",
                 "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"},"
                         + "\"versatz\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"kennung\"]}");
+    }
+
+    /** {@value #EVALUATE}: je Kennung ein Unteragent, der die Seite liest und nur ihren Beitrag zur Frage liefert. */
+    static AiChat.Tool evaluateDefinition() {
+        return new AiChat.Tool(EVALUATE, "Lässt mehrere Treffer gleichzeitig von Unteragenten auswerten: Jeder liest "
+                + "eine Seite im Volltext und liefert, was sie zur Frage beiträgt, samt Quellennummer. Schneller als "
+                + "jede Seite einzeln mit " + READ + " zu lesen; für Einzelheiten danach " + READ + " verwenden.",
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"frage\":{\"type\":\"string\",\"description\":\"Worauf die Seiten geprüft werden; leer "
+                        + "für die Frage des Nutzers\"},"
+                        + "\"kennungen\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":"
+                        + "\"Kennungen der Treffer aus den Suchwerkzeugen\"}},\"required\":[\"kennungen\"]}");
     }
 
     static AiChat.Tool appSearchDefinition() {

@@ -48,7 +48,6 @@ import java.util.function.IntConsumer;
 final class WebSearchPopup extends JPopupMenu {
 
     static final String TITLE = "Werkzeugrunden je Antwort mit Browser";
-    static final String TABS_TITLE = "Parallele Tabs";
     static final String DELAY_TITLE = "Zufällige Verzögerung je Tab (max. ms)";
     static final String HUMAN_TITLE = "Human Emulation";
     static final String HUMAN_TIP = "Unregelmäßiges Tippen, Scrollen in Etappen und Lesepausen (nur im Browser)";

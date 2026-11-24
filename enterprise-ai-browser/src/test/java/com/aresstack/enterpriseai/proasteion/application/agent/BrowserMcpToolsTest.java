@@ -186,6 +186,24 @@ public class BrowserMcpToolsTest {
     }
 
     @Test
+    public void anIdOutsideTheLastControlListFailsAtOnceWithoutAskingTheUser() {
+        final List<String> asked = new ArrayList<String>();
+        ToolApprovalGate gate = new ToolApprovalGate(ApprovalRules::none, (request, timeout) -> {
+            asked.add(request.target().description());
+            return ApprovalDecision.of(request, ApprovalDecision.Outcome.APPROVED);
+        }, 1000);
+        ChatConversationId a = new ChatConversationId("chat-unknown-id");
+        List<McpToolContribution> bound = new BrowserMcpTools(port, null, gate).contributionsFor(a);
+
+        McpToolResult blind = invoke(bound, BrowserMcpTools.ACT, "control", "ctl-1", "action", "submit",
+                "value", "Reise");
+        assertTrue(blind.getText(), blind.isError());
+        assertTrue(blind.getText(), blind.getText().contains("Zuerst " + BrowserMcpTools.CONTROLS));
+        assertTrue(asked.toString(), asked.isEmpty());
+        assertFalse(port.browser(a).calls.toString(), port.browser(a).calls.toString().contains("act ctl-1"));
+    }
+
+    @Test
     public void approvedSubmitRunsAndSettingsCanAllowIt() {
         ToolApprovalGate approving = new ToolApprovalGate(ApprovalRules::none,
                 (request, timeout) -> ApprovalDecision.of(request, ApprovalDecision.Outcome.APPROVED), 1000);
