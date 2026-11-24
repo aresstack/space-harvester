@@ -224,6 +224,10 @@ public final class CommandDeck {
                 findBar.focus();
             }
         });
+        // Maustasten Zurück/Vor im ganzen Fenster, solange das Deck zu sehen ist (wie im Space Harvester und in
+        // MainframeMate): Sie wirken im Verlauf des gezeigten Bereichs.
+        com.aresstack.spaceharvester.app.ui.controls.MouseNavigation.install(stage, () -> navigate(true),
+                () -> navigate(false));
         show(DeckArea.HOME);
         // Angelo, 23.11.2026: Wer ins Deck wechselt, landet auf Home. Die Bereiche verbinden beim Öffnen sofort; das
         // soll erst passieren, wenn man einen davon anklickt. Schon beim Verlassen auf Home zurück: Beim Wiederkommen
@@ -450,6 +454,37 @@ public final class CommandDeck {
         findBar.areaChanged();
         if (areaObservers != null) {
             areaObservers.forEach(Runnable::run);
+        }
+    }
+
+    /** Zurück ({@code true}) oder Vor im Verlauf des gezeigten Bereichs; Bereiche ohne Verlauf bleiben stehen. */
+    void navigate(boolean back) {
+        switch (area) {
+            case FILES -> {
+                if (back) {
+                    files.navigateBack();
+                } else {
+                    files.navigateForward();
+                }
+            }
+            case FTP -> {
+                if (back) {
+                    ftp.navigateBack();
+                } else {
+                    ftp.navigateForward();
+                }
+            }
+            case NDV -> {
+                if (back) {
+                    ndv.navigateBack();
+                } else {
+                    ndv.navigateForward();
+                }
+            }
+            default -> {
+                // Terminal belegt die Seitentasten selbst mit F-Tasten (Einstellungen › Maus); die übrigen haben
+                // keinen Verlauf.
+            }
         }
     }
 

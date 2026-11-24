@@ -1575,4 +1575,18 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             return label;
         }
     }
+
+    /** Maustaste Zurück (wie Alt+Links): im gezeigten Reiter einen Schritt zurück. */
+    void navigateBack() {
+        if (browser != null) {
+            browser.back();
+        }
+    }
+
+    /** Maustaste Vor (wie Alt+Rechts). */
+    void navigateForward() {
+        if (browser != null) {
+            browser.forward();
+        }
+    }
 }
