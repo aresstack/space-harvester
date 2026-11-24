@@ -156,8 +156,6 @@ public final class MainWindow implements AppContext.Navigator {
     /** Platz einer Fläche über dem Inhaltsbereich ({@code ContentOverlayEvent}); sichtbar nur unter „Inhalte“. */
     private final JPanel overlaySlot = new JPanel(new BorderLayout());
     private AppContext.Section current = AppContext.Section.CONTENT;
-    /** Die Auswahl links beim letzten Verlassen der Suche; zurück in der Suche gilt sie wieder. */
-    private Explorer.Remembered searchSelection;
     /** Der zuletzt gezeigte Arbeitsbereich vor den Einstellungen: dorthin führt „Zurück“ im Drawer. */
     private AppContext.Section beforeSettings = AppContext.Section.CONTENT;
     /**
@@ -284,8 +282,8 @@ public final class MainWindow implements AppContext.Navigator {
         settings.onLeave(this::leaveSettings);
         explorer = new Explorer(context);
         // Die Auswahl links ist der Bereich der Suche, aber nur, solange die Suche zu sehen ist. Was man woanders
-        // anklickt (etwa einen Treffer), ändert ihn nicht; zurück in der Suche gilt die gemerkte Auswahl
-        // (Angelo, 21.11.2026).
+        // anklickt (etwa einen Treffer), ändert ihn nicht; die Lupe hebt die Auswahl beim Betreten der Suche auf
+        // (Angelo, 24.11.2026).
         explorer.onScope(scopes -> {
             if (current == AppContext.Section.SEARCH) {
                 searchView.scope(scopes);
@@ -395,8 +393,8 @@ public final class MainWindow implements AppContext.Navigator {
         frame.setVisible(true);
         WindowPlacement.maximizeIfRemembered(frame);
         WindowPlacement.track(frame);
-        // Die App startet in der Leseansicht; zur Suche geht es erst mit einer Eingabe oben (Angelo, 21.11.2026).
-        show(AppContext.Section.CONTENT);
+        // Die App startet auf dem Suchreiter, ohne Auswahl, mit dem Chat als Suchagent (Angelo, 24.11.2026).
+        openSearchTab();
         return frame;
     }
 
@@ -717,8 +715,28 @@ public final class MainWindow implements AppContext.Navigator {
                 section.title() + " (Strg+" + number + ")");
         button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         button.getAccessibleContext().setAccessibleName(section.title());
-        button.addActionListener(e -> show(section));
+        button.addActionListener(e -> showByHand(section));
         return button;
+    }
+
+    /** Ein Bereich, den der Benutzer selbst wählt (Knopf oder Strg+Zahl): der Suchreiter hebt die Auswahl auf. */
+    private void showByHand(AppContext.Section section) {
+        if (section == AppContext.Section.SEARCH) {
+            openSearchTab();
+        } else {
+            show(section);
+        }
+    }
+
+    /**
+     * Der Suchreiter von Hand (Angelo, 24.11.2026): Die Auswahl der Wissensquellen verschwindet ganz, auch die globale;
+     * gesucht wird überall, und der Chat arbeitet ohne Bereich nur mit den zugeschalteten Suchen, ohne die langsame
+     * Suche im Bereich. Die Suche in der Titelleiste lässt die Auswahl dagegen stehen.
+     */
+    void openSearchTab() {
+        show(AppContext.Section.SEARCH);
+        explorer.clearSelection();
+        searchView.scope(explorer.scopes());
     }
 
     private void installShortcuts(JComponent surface) {
@@ -733,7 +751,7 @@ public final class MainWindow implements AppContext.Navigator {
             surface.getActionMap().put(key, new javax.swing.AbstractAction() {
                 @Override
                 public void actionPerformed(java.awt.event.ActionEvent e) {
-                    show(section);
+                    showByHand(section);
                 }
             });
         }
@@ -1068,22 +1086,21 @@ public final class MainWindow implements AppContext.Navigator {
         if (changed && current != AppContext.Section.SETTINGS && settingsOver == null) {
             beforeSettings = current;
         }
-        if (changed && current == AppContext.Section.SEARCH) {
-            searchSelection = explorer.remember();
-        }
+        boolean leftSearch = changed && current == AppContext.Section.SEARCH;
         current = section;
+        if (leftSearch && explorer.scopes().isEmpty() && !explorer.allSelected()) {
+            // Raus aus der Suche ohne Auswahl: „Wissensquellen“ wird gewählt und gelb markiert, als hätte man es
+            // angeklickt (Angelo, 24.11.2026).
+            explorer.selectAll();
+        }
         // Zurück und Vor unten blättern in der Suche zwischen ihren Suchen und Filtern, sonst in den Seiten.
         if (jobStatus != null) {
             jobStatus.navigation(section == AppContext.Section.SEARCH ? searchView.navigation() : content.navigation());
         }
         placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
-            if (searchSelection == null) {
-                // Zum ersten Mal in der Suche: gesucht wird in dem, was links gewählt ist.
-                searchView.scope(explorer.scopes());
-            } else {
-                explorer.restore(searchSelection);
-            }
+            // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
+            searchView.scope(explorer.scopes());
         }
         // Keine zweite Leiste: Die Quellenkarten bzw. die Bereiche der Einstellungen ersetzen im Drawer den Explorer,
         // solange der Bereich offen ist.
@@ -1108,6 +1125,7 @@ public final class MainWindow implements AppContext.Navigator {
         // Die Reiter in der Leiste zeigen ihre Auswahl nur, solange die Mitte die Seitenansicht zeigt.
         content.tabsActive(section == AppContext.Section.CONTENT);
         // ADR 0033: Der Chat bezieht sich auf die Ansicht, die vorne ist (Leseansicht: offene Seite; Suche: Filter).
+        content.chatSidebar().chat().searchFront(section == AppContext.Section.SEARCH);
         content.chatSidebar().chat().readingFront(section == AppContext.Section.CONTENT);
         jobStatus.navigationVisible(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());

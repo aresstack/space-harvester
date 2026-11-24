@@ -309,6 +309,25 @@ class ChatPanelTest {
     }
 
     @Test
+    void withoutSelectionTheChatStillSendsAndOffersANewChat() throws Exception {
+        // Angelo 24.11.2026: Die Lupe hebt die Auswahl auf, und der Chat arbeitet trotzdem weiter.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        boolean[] state = new boolean[4];
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            panel.selection(new Selection.Node("handbuch", "HB", null, "Handbuch"));
+            panel.selection(null);
+            state[0] = panel.sendButton().isEnabled();
+            state[1] = panel.newChatEnabled();
+            state[2] = ChatPanel.NO_SELECTION.equals(panel.knowledge());
+            state[3] = panel.quickActionLabels().isEmpty();
+        });
+        assertThat(state).containsExactly(true, true, true, true);
+    }
+
+    @Test
     void withWebSearchAndInternalSearchBothOnTheMessageAboveWarnsAndGoesAwayWhenOneIsOff() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));

@@ -179,7 +179,12 @@ public final class ChatPanel extends JPanel {
     static final String REJECT_ALWAYS_TEXT = "Immer verbieten";
     static final String NO_MODEL = "Kein Chat-Modell";
     static final String MODEL_TIP = "Chat-Modell aus Einstellungen › KI";
-    static final String NO_SELECTION = "Links eine Wissensquelle, einen Space oder eine Seite wählen";
+    /**
+     * Ohne Auswahl antwortet der Chat trotzdem (Angelo 24.11.2026): nur mit den zugeschalteten Suchen und Anhängen,
+     * sonst aus dem eigenen Wissen des Modells.
+     */
+    static final String NO_SELECTION = "Keine Wissensquelle gewählt: Der Chat nutzt nur Websuche, interne Suche und "
+            + "Anhänge, sonst sein eigenes Wissen";
     static final String NOT_LOADED = "Seiten noch nicht erfasst";
     static final String LOAD = "Laden";
     static final String NOT_ALLOWED = "Quelle nicht für KI freigegeben; Senden gibt die offene Seite und die Seiten, "
@@ -993,6 +998,14 @@ public final class ChatPanel extends JPanel {
         apply(scope());
     }
 
+    /** Ob die Suche vorne ist: Dort arbeitet der Chat als Suchagent (Angelo 24.11.2026). */
+    private boolean searchFront;
+
+    /** Ob die Suche vorne ist (Hauptfenster beim Wechsel der Ansicht). */
+    public void searchFront(boolean front) {
+        searchFront = front;
+    }
+
     /** Ob die Leseansicht vorne ist (Hauptfenster beim Wechsel der Ansicht). */
     public void readingFront(boolean front) {
         readingFront = front;
@@ -1031,10 +1044,10 @@ public final class ChatPanel extends JPanel {
             showChatName();
             return;
         }
-        home = store.folder(node);
+        home = store.folder(stored());
         if (!resumed && node != null) {
             resumed = true;
-            List<ChatRecord> saved = store.list(node);
+            List<ChatRecord> saved = store.list(stored());
             if (!saved.isEmpty()) {
                 open(saved.get(0));
                 return;
@@ -1191,10 +1204,11 @@ public final class ChatPanel extends JPanel {
 
     /**
      * Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird (der
-     * Chat bleibt beim Navigieren stehen); Senden braucht eine aufgelöste Auswahl.
+     * Chat bleibt beim Navigieren stehen); Senden braucht eine aufgelöste Auswahl oder gar keine (dann antwortet der
+     * Chat ohne Bereich, Angelo 24.11.2026).
      */
     private void updateSend() {
-        send.setEnabled(turn != null || toolScope != null || (selection != null && settled));
+        send.setEnabled(turn != null || toolScope != null || selection == null || settled);
     }
 
     // ------------------------------------------------------------------ Schnellaktionen
@@ -1669,7 +1683,7 @@ public final class ChatPanel extends JPanel {
         java.util.concurrent.atomic.AtomicLong begun = new java.util.concurrent.atomic.AtomicLong(-1);
         return new ChatTurn.WebSearch(new com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools(
                 browser.tools(chatId), call -> browser.asking(prompt, call)), rules,
-                Math.max(WEB_BUDGET_MIN, Math.min(WEB_BUDGET_MAX, webInt("budget", WEB_BUDGET_DEFAULT))),
+                researchBudget(),
                 () -> begun.set(browser.beginTurn(chatId,
                         progress -> SwingUtilities.invokeLater(() -> card.update(progress)))),
                 () -> {
@@ -1915,7 +1929,7 @@ public final class ChatPanel extends JPanel {
         addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question);
         long now = System.currentTimeMillis();
         if (home == null) {
-            home = store.folder(node);
+            home = store.folder(stored());
         }
         chat = chat.plus(ChatRecord.Message.user(question, now, area, scopeKey), now);
         List<ChatRecord.Message> history = chat.messages().subList(0, chat.messages().size() - 1);
@@ -1959,6 +1973,11 @@ public final class ChatPanel extends JPanel {
             // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
             turn.searchingGlossarySynonyms(
                     com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
+            // Angelo 24.11.2026: In der Suche, und ohne Auswahl überhaupt, recherchiert der Chat als Suchagent über
+            // mehrere Runden mit dem Budget aus dem Menü am Pfeil; anderswo bleibt er, wie er ist.
+            if (searchFront || open == null) {
+                turn.searchAgent(researchBudget());
+            }
         }
         // Websuche (Composer-Knopf): die Browser-Werkzeuge des Chats dazu, mit Karte „Browserrecherche“.
         WebSearchCard card = new WebSearchCard(body -> addActivity(WebSearchCard.TITLE, body));
@@ -1974,6 +1993,11 @@ public final class ChatPanel extends JPanel {
         updateHeaderActions();
         send.setToolTipText("Antwort abbrechen");
         turn.start();
+    }
+
+    /** Die Werkzeugrunden je Antwort aus dem Menü am Pfeil der Websuche, in den erlaubten Grenzen. */
+    private int researchBudget() {
+        return Math.max(WEB_BUDGET_MIN, Math.min(WEB_BUDGET_MAX, webInt("budget", WEB_BUDGET_DEFAULT)));
     }
 
     /** {@code low}, {@code medium}, {@code high} aus der Wahl im Composer. */
@@ -2454,13 +2478,13 @@ public final class ChatPanel extends JPanel {
         if (turn != null) {
             detachTurn();
         }
-        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(node));
+        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(stored()));
         editor.requestFocusInWindow();
     }
 
     /** Zeigt einen Chat des gewählten Bereichs. */
     private void open(ChatRecord record) {
-        open(record, store.folder(node));
+        open(record, store.folder(stored()));
     }
 
     /** Zeigt einen Chat aus seinem Ordner: Verlauf als Blasen samt Marken beim Bereichswechsel, Name in der Kopfzeile. */
@@ -2498,7 +2522,7 @@ public final class ChatPanel extends JPanel {
 
     private void showChatName() {
         chatName.setText(chat.title());
-        chats.setEnabled(node != null || home != null);
+        chats.setEnabled(true);
         updateHeaderActions();
     }
 
@@ -2507,7 +2531,7 @@ public final class ChatPanel extends JPanel {
      * eine Antwort läuft; die Antwort wird dann abgebrochen und nicht mehr gespeichert.
      */
     private void updateHeaderActions() {
-        newChat.setEnabled(node != null);
+        newChat.setEnabled(true);
         deleteChat.setEnabled(true);
         updateQuickActions();
     }
@@ -2542,7 +2566,7 @@ public final class ChatPanel extends JPanel {
     /** Die Einträge des Menüs unter ▾; für Tests ohne geöffnetes Popup. */
     List<Component> chatMenuItems() {
         List<Component> items = new ArrayList<>();
-        Path here = store.folder(node);
+        Path here = store.folder(stored());
         List<ChatStore.Entry> all = new ArrayList<>(store.all());
         // Vorläufig gelöschte Chats stehen bis zum Neustart durchgestrichen dabei (Angelo 24.11.2026).
         java.util.Set<String> deletedIds = new java.util.HashSet<>();
@@ -2630,6 +2654,14 @@ public final class ChatPanel extends JPanel {
      * Favoriten-Ordner einer Sammlung. Zwei gleich benannte Spaces, Seiten oder Ordner sind damit verschiedene Bereiche;
      * {@code null} ohne Auswahl.
      */
+    /**
+     * Wo die Chats des Bereichs liegen: ohne Auswahl (etwa in der Suche nach der Lupe, Angelo 24.11.2026) bei denen
+     * zu allen Wissensquellen.
+     */
+    private ChatNode stored() {
+        return node == null ? ChatNode.ALL : node;
+    }
+
     static String scopeKey(ChatNode node, boolean pageOnly) {
         if (node == null) {
             return null;
@@ -2881,8 +2913,8 @@ public final class ChatPanel extends JPanel {
         if (home != null && !chat.isEmpty()) {
             store.trash(home, chat.id());
         }
-        List<ChatRecord> saved = store.list(node);
-        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0), store.folder(node));
+        List<ChatRecord> saved = store.list(stored());
+        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0), store.folder(stored()));
     }
 
     /**
@@ -2897,7 +2929,7 @@ public final class ChatPanel extends JPanel {
         List<String> ids = new ArrayList<>(store.deleteAll());
         ids.add(chat.id());
         deleteBrowserProfiles(ids);
-        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(node));
+        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(stored()));
     }
 
     /** Bricht eine laufende Antwort ab, deren Chat gelöscht wird: Sie schreibt ihn nicht wieder auf die Platte. */
@@ -2929,6 +2961,11 @@ public final class ChatPanel extends JPanel {
 
     String knowledge() {
         return knowledge.getText();
+    }
+
+    /** Ob „Neuer Chat“ geht (für Tests). */
+    boolean newChatEnabled() {
+        return newChat.isEnabled();
     }
 
     String status() {

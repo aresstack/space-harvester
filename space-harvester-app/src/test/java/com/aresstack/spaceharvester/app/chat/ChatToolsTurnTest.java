@@ -392,6 +392,50 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void withoutAreaAndWithoutAnySearchTheAgentAnswersFromItsOwnKnowledge() throws Exception {
+        // Angelo 24.11.2026: Ohne Auswahl und ohne zugeschaltete Suche antwortet der Chat aus eigenem Wissen.
+        ScriptedChat port = new ScriptedChat(List.of((request, listener) -> listener.completed("Aus dem Kopf.")));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist JCL?", null, null, events, Runnable::run)
+                .knowledgeByTools(null).searchAgent(20).releasing(releases()).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests).singleElement().satisfies(request -> {
+            assertThat(request.tools()).isEmpty();
+            assertThat(request.messages().get(0).text()).isEqualTo(ChatKnowledge.OWN_KNOWLEDGE_PROMPT);
+        });
+        assertThat(events.completed).isEqualTo("Aus dem Kopf.");
+    }
+
+    @Test
+    void withoutAreaTheInternalSearchAgentOnlySearchesAndReadsAndKeepsGoingForItsBudget() throws Exception {
+        // Ohne Bereich keine Bereichswerkzeuge (keine langsame Suche im Bereich); die interne Suche recherchiert über
+        // das Budget hinaus, das ein normaler Chat hat.
+        int budget = ChatTurn.MAX_TOOL_ROUNDS + 4;
+        List<BiConsumer<AiChat.Request, AiChat.Listener>> script = new ArrayList<>();
+        for (int i = 0; i < budget; i++) {
+            script.add((request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c",
+                    ChatTools.APP_SEARCH, "{\"text\":\"Spool\",\"quellen\":[\"fremd\"]}"))));
+        }
+        script.add((request, listener) -> listener.completed("Gefunden."));
+        ScriptedChat port = new ScriptedChat(script);
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", null, null,
+                events, Runnable::run).knowledgeByTools(null).appSearch(() -> java.util.Set.of("handbuch"))
+                .searchAgent(budget).releasing(releases()).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+        AiChat.Request first = port.requests.get(0);
+        assertThat(first.tools()).extracting(AiChat.Tool::name).containsExactly(ChatTools.READ, ChatTools.APP_SEARCH);
+        assertThat(first.messages().get(0).text()).startsWith(ChatKnowledge.AGENT_PROMPT)
+                .contains(ChatKnowledge.AGENT_APP_SEARCH_PROMPT).contains(ChatKnowledge.ATTACHMENTS_PROMPT)
+                .doesNotContain(ChatKnowledge.AGENT_AREA_PROMPT);
+        assertThat(port.requests).hasSize(budget + 1);
+        assertThat(port.requests.get(budget).tools()).isEmpty();
+        assertThat(events.completed).isEqualTo("Gefunden.");
+    }
+
+    @Test
     void aServiceThatRejectsToolsFallsBackToTheSearchAndIsRemembered() throws Exception {
         ScriptedChat port = new ScriptedChat(List.of(
                 (request, listener) -> listener.failed(new AiChatException(AiChatException.Kind.INVALID_REQUEST, 400,
