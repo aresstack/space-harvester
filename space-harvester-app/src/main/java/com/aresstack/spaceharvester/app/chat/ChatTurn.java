@@ -335,6 +335,19 @@ public final class ChatTurn {
     private java.util.function.Supplier<Set<String>> appSources;
 
     /**
+     * Suchagent (Angelo 24.11.2026): In der Suche, und ohne gewählten Bereich, recherchiert das Modell mit den
+     * zugeschalteten Werkzeugen (Bereich als Filter, interne Suche, Websuche) gründlich über bis zu {@code rounds}
+     * Werkzeugrunden, statt nach einer Suche aufzugeben; ohne jedes Werkzeug antwortet es aus eigenem Wissen.
+     */
+    public ChatTurn searchAgent(int rounds) {
+        this.agentRounds = rounds;
+        return this;
+    }
+
+    /** Werkzeugrunden des Suchagenten; 0, wenn der Turn kein Suchagent ist. */
+    private int agentRounds;
+
+    /**
      * Ein Favoriten-Ordner ist der Bereich (ADR 0034 §5): {@code nodes} liefert seine Unterordner und Favoriten für
      * {@value ChatTools#LIST}; {@code null} für jeden anderen Bereich.
      */
@@ -426,7 +439,10 @@ public final class ChatTurn {
         context = releaseDelivered(context);
         ChatKnowledge.Context chosen = context;
         onUi(() -> listener.context(chosen));
-        List<AiChat.Message> messages = conversation(ChatKnowledge.systemMessage(area, context), asked);
+        // Ohne Bereich gibt es kein Wissen aus dem Bestand: dann aus eigenem Wissen (Angelo 24.11.2026).
+        String system = scope == null && kind == Kind.QUESTION ? ChatKnowledge.OWN_KNOWLEDGE_PROMPT
+                : ChatKnowledge.systemMessage(area, context);
+        List<AiChat.Message> messages = conversation(system, asked);
         task = port.stream(new AiChat.Request(messages, model, effort), new AiChat.Listener() {
             @Override
             public void delta(String text) {
@@ -575,8 +591,11 @@ public final class ChatTurn {
             sourcesAnnounced = true;
         }
         reportSources();
-        List<AiChat.Message> messages = conversation(withWebSearchRules(
-                ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef, appSources != null)), question);
+        String system = agentRounds > 0
+                ? ChatKnowledge.agentSystemMessage(area, scope != null, appSources != null,
+                        !toolset.definitions().isEmpty(), open, shown, total, openRef)
+                : ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef, appSources != null);
+        List<AiChat.Message> messages = conversation(withWebSearchRules(system), question);
         round(messages, 0);
     }
 
@@ -1076,9 +1095,10 @@ public final class ChatTurn {
 
     // ------------------------------------------------------------------ Zustellung
 
-    /** Werkzeugrunden dieses Turns: mit Websuche das Browser-Budget, nie weniger als ohne. */
+    /** Werkzeugrunden dieses Turns: als Suchagent oder mit Websuche das Budget, nie weniger als ohne. */
     int maxToolRounds() {
-        return webSearch == null ? MAX_TOOL_ROUNDS : Math.max(MAX_TOOL_ROUNDS, webSearch.rounds());
+        int rounds = Math.max(MAX_TOOL_ROUNDS, agentRounds);
+        return webSearch == null ? rounds : Math.max(rounds, webSearch.rounds());
     }
 
     /** Die Werkzeuge {@code base} samt den Browser-Werkzeugen, wenn die Websuche an ist. */

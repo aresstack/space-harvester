@@ -113,8 +113,8 @@ class ChatTurnTest {
         new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", null, null, events, Runnable::run).start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(events.context.isEmpty()).isTrue();
-        assertThat(port.lastRequest.messages().get(0).text()).startsWith(ChatKnowledge.SYSTEM_PROMPT)
-                .endsWith(ChatKnowledge.NO_CONTEXT).doesNotContain("Gewählter Bereich");
+        // Ohne Bereich antwortet das Modell aus eigenem Wissen (Angelo 24.11.2026).
+        assertThat(port.lastRequest.messages().get(0).text()).isEqualTo(ChatKnowledge.OWN_KNOWLEDGE_PROMPT);
         assertThat(port.lastRequest.reasoningEffort()).isNull();
         assertThat(events.failed).startsWith("Der KI-Dienst ist nicht erreichbar. (Status 503)")
                 .contains("Technische Ursache: HTTP 503");

@@ -585,7 +585,8 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         ChatPanel chat = detail.chat();
         assertThat(onEdt(chat::knowledge)).isEqualTo(ChatPanel.NO_SELECTION);
-        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isFalse();
+        // Ohne Auswahl antwortet der Chat trotzdem (Angelo 24.11.2026).
+        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isTrue();
         // Der Chat ist kein Reiter mehr, sondern eine Seitenleiste (Angelo, 21.11.2026): die Seitenansicht behält ihre
         // Überschrift, „Chat: ‹Name› ▾“ samt Neuer Chat, Chat löschen und Einklappen steht im Kopf der Leiste.
         ChatSidebar sidebar = onEdt(view::chatSidebar);
