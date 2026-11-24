@@ -88,6 +88,7 @@ class ContentViewTest {
             javax.swing.JPanel page = new javax.swing.JPanel(new java.awt.BorderLayout());
             page.add(view.tabBar(), java.awt.BorderLayout.NORTH);
             page.add(view.component(), java.awt.BorderLayout.CENTER);
+            page.add(detail.footTools(), java.awt.BorderLayout.SOUTH);
             AnalysisTabsScreenshotTest.write(page, Path.of(directory, "analysen-quelle-1280.png"), 640);
             return null;
         });
@@ -122,7 +123,12 @@ class ContentViewTest {
 
         assertThat(onEdt(() -> detail.folderSubfolders().isSelected())).isTrue();
         assertThat(onEdt(() -> detail.folderSubfolders().isEnabled())).isTrue();
-        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.folderFoot());
+        // Unter „Analysen“ trägt die Leiste die Unterreiter des Stands (Angelo 24.11.2026), die Checkbox rechts daneben.
+        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.standingFoot())))
+                .isTrue();
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.standing().tabs().button("Aussagen"),
+                detail.standingFoot()))).as("Reiterzeile unten, nicht mehr über dem Inhalt").isTrue();
         assertThat(onEdt(() -> detail.export().selection().roots(null)))
                 .containsExactly(notes.root(), handbook.root()); // Baumreihenfolge: Unterordner zuerst angelegt
 
@@ -142,12 +148,13 @@ class ContentViewTest {
                 "Handbuch", "handbuch"), below);
         await(() -> detail.export().selection().roots(null).size() == 2);
 
-        // Eine Quelle ist kein Ordner: die Leiste ohne Checkbox.
+        // Eine Quelle ist kein Ordner: die Unterreiter ohne Checkbox.
         onEdt(() -> {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
-        assertThat(onEdt(() -> detail.footTools().getComponentCount())).isZero();
+        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
+        assertThat(onEdt(() -> detail.standingFoot().trailing().isVisible())).isFalse();
     }
 
     @Test

@@ -233,6 +233,12 @@ public final class Workspace {
         return harvester.terms().totals(caller, search);
     }
 
+    /** Wie {@link #termTotals(TermQueries.TermSearch)}; {@code progress} erfährt die Zwischenstände. */
+    public TermQueries.TermTotals termTotals(TermQueries.TermSearch search,
+                                             java.util.function.Consumer<TermQueries.TermTotals> progress) {
+        return harvester.terms().totals(caller, search, progress);
+    }
+
     /**
      * Zahl der Beziehungen je Art ({@code TermRelations.counts}, BG1b), ohne Status ohne die abgelehnten; mit
      * {@code pages} nur Beziehungen mit einem Begriff auf diesen Seiten, {@code null} ohne Grenze. Nie auf dem EDT.

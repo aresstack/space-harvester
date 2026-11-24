@@ -413,6 +413,12 @@ public final class PageDetailPanel extends JPanel {
      */
     private final JCheckBox folderSubfolders = Subpages.checkBox();
     private final TabFoot folderFoot = new TabFoot(javax.swing.Box.createHorizontalBox(), folderSubfolders);
+    /**
+     * Die Unterreiter von „Analysen“ ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner) in der unteren Leiste, wie
+     * auf einer Seite (Angelo 24.11.2026); rechts steht am Ordner „mit Unterseiten“.
+     */
+    private TabFoot standingFoot;
+    private final JPanel standingTrailing = new JPanel(new BorderLayout());
     /** Der gewählte Ordner, sonst {@code null}; seine Stellung zeigt {@link #folderSubfolders}. */
     private ExportPanel.Selection.Collection folder;
     /** Bekommt die Stellung, die der Benutzer an {@link #folderSubfolders} wählt. */
@@ -929,6 +935,9 @@ public final class PageDetailPanel extends JPanel {
                 wideAnalysis.createButton());
         glossaryHelp.setVisible(false);
         graphHelp.setVisible(false);
+        standingTrailing.setOpaque(false);
+        standingTrailing.setVisible(false);
+        standingFoot = new TabFoot(standing.tabs().detachBar(), standingTrailing);
         deck.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
@@ -1272,6 +1281,10 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Für Tests: der Fuß der breiten Ebene mit „mit Unterseiten“ eines Ordners. */
+    TabFoot standingFoot() {
+        return standingFoot;
+    }
+
     TabFoot folderFoot() {
         return folderFoot;
     }
@@ -2983,7 +2996,17 @@ public final class PageDetailPanel extends JPanel {
     /** Setzt in {@link #footTools}, was zum Reiter {@code selected} gehört; nichts, wenn er keine Werkzeuge hat. */
     private void updateFootTools(String selected) {
         // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
-        JComponent shown = ANALYSES.equals(selected) && PAGE.equals(pageCard) && !wide ? analysisFoot
+        boolean standingFootShown = ANALYSES.equals(selected) && wide && standingFoot != null;
+        if (standingFootShown && folder != null) {
+            if (folderSubfolders.getParent() != standingTrailing) {
+                standingTrailing.add(folderSubfolders, BorderLayout.CENTER);
+            }
+        } else {
+            folderFoot.reclaimTrailing();
+        }
+        standingTrailing.setVisible(standingFootShown && folder != null);
+        JComponent shown = standingFootShown ? standingFoot
+                : ANALYSES.equals(selected) && PAGE.equals(pageCard) && !wide ? analysisFoot
                 : ADVANCED.equals(selected) && wide ? wideAdvancedFoot
                 : ADVANCED.equals(selected) && PAGE.equals(pageCard) ? advancedFoot
                 : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
