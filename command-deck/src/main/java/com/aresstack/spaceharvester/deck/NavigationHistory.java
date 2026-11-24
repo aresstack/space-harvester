@@ -49,4 +49,28 @@ public class NavigationHistory<T> {
         }
         return Optional.of(entries.get(++index));
     }
+
+    /** Springt {@code steps} Einträge weit (negativ zurück, positiv vor), etwa aus dem Verlauf des Zurück-Knopfs. */
+    public Optional<T> go(int steps) {
+        int target = index + steps;
+        if (steps == 0 || target < 0 || target >= entries.size()) {
+            return Optional.empty();
+        }
+        index = target;
+        return Optional.of(entries.get(target));
+    }
+
+    /** Die Einträge zurück, der vorige zuerst. */
+    public List<T> backEntries() {
+        List<T> back = new ArrayList<>();
+        for (int i = index - 1; i >= 0; i--) {
+            back.add(entries.get(i));
+        }
+        return back;
+    }
+
+    /** Die Einträge vor, der nächste zuerst. */
+    public List<T> forwardEntries() {
+        return index < 0 ? List.of() : List.copyOf(entries.subList(index + 1, entries.size()));
+    }
 }

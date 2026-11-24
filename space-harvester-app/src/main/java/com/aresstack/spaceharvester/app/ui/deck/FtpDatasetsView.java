@@ -94,8 +94,8 @@ final class FtpDatasetsView extends JPanel {
     private final IconButton newDataset;
     private final IconButton delete;
     private final IconButton submit;
-    private final IconButton back = new IconButton(Glyph.BACK, "Zurück (zum vorher gezeigten Pfad, Pfeil links)");
-    private final IconButton forward = new IconButton(new Mirrored(Glyph.BACK), "Vor (Pfeil rechts)");
+    /** Das eine Zurück wie im Space Harvester; gedrückt halten zeigt den Verlauf, Vor per Pfeil rechts/Maustaste. */
+    private final com.aresstack.spaceharvester.app.ui.controls.BackButton back = new com.aresstack.spaceharvester.app.ui.controls.BackButton("Zurück (zum vorher gezeigten Pfad, Pfeil links)");
     private final Deque<String> history = new ArrayDeque<>();
     private final Deque<String> future = new ArrayDeque<>();
     static final String SORT_KEY = "deck.ftp.sort";
@@ -141,14 +141,12 @@ final class FtpDatasetsView extends JPanel {
 
         // Kopf: Pfad mit seinen Knöpfen im Feld, rechts der Filter.
         InputFrame pathFrame = new InputFrame(path);
-        back.addActionListener(e -> back());
+        back.navigator(com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator.of(
+                () -> new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(List.copyOf(future), List.copyOf(history)), this::go));
         var up = InputFrame.flatButton("↑", "Eine Ebene höher");
         up.addActionListener(e -> up());
         IconButton reload = new IconButton(Glyph.REFRESH, "Neu laden");
         reload.addActionListener(e -> navigate(path.getText(), false));
-        forward.addActionListener(e -> forward());
-        pathFrame.addButton(back);
-        pathFrame.addButton(forward);
         pathFrame.addButton(up);
         pathFrame.addButton(reload);
         path.addActionListener(e -> navigate(path.getText(), true));
@@ -198,6 +196,7 @@ final class FtpDatasetsView extends JPanel {
         JPanel head = new JPanel(new BorderLayout(10, 0));
         head.setOpaque(false);
         head.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+        head.add(back, BorderLayout.WEST);
         head.add(pathFrame, BorderLayout.CENTER);
 
         // „Neu …“ als Zeile über der Liste, mit ✕ (Meldungskästen oben mit ✕).
@@ -464,6 +463,35 @@ final class FtpDatasetsView extends JPanel {
         if (!future.isEmpty()) {
             navigate(future.pop(), Move.FORWARD);
         }
+    }
+
+    /**
+     * Springt {@code steps} Pfade weit im Verlauf (negativ zurück, positiv vor); die übersprungenen wandern wie im
+     * Browser in die Gegenrichtung.
+     */
+    void go(int steps) {
+        if (steps == -1) {
+            back();
+            return;
+        }
+        if (steps == 1) {
+            forward();
+            return;
+        }
+        Deque<String> from = steps < 0 ? history : future;
+        Deque<String> to = steps < 0 ? future : history;
+        int count = Math.abs(steps);
+        if (count == 0 || from.size() < count) {
+            return;
+        }
+        String now = current;
+        for (int i = 0; i < count; i++) {
+            if (!now.isEmpty()) {
+                to.push(now);
+            }
+            now = from.pop();
+        }
+        navigate(now, Move.STAY);
     }
 
     /** Liste, Baum oder Hinweis zeigen und den Stand „n Einträge“ bzw. „x / y Einträge“ setzen. */
@@ -901,8 +929,7 @@ final class FtpDatasetsView extends JPanel {
                 : "Neue Datei … – leere Datei in diesem Ordner anlegen");
         newDataset.setToolTipText(mvs ? "Neues Dataset … – unter diesem Pfad anlegen (mit DSORG, RECFM, LRECL …)"
                 : "Neuer Ordner … – Ordner unter diesem Pfad anlegen");
-        back.setEnabled(!history.isEmpty());
-        forward.setEnabled(!future.isEmpty());
+        back.refresh();
         boolean showing = document != null;
         save.setVisible(showing);
         reloadDocument.setVisible(showing);
@@ -1346,31 +1373,6 @@ final class FtpDatasetsView extends JPanel {
 
     private static final java.time.format.DateTimeFormatter DATE =
             java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.GERMANY);
-
-    /** Ein Symbol gespiegelt (Vor = gespiegeltes Zurück). */
-    private record Mirrored(javax.swing.Icon icon) implements javax.swing.Icon {
-        @Override
-        public void paintIcon(java.awt.Component c, java.awt.Graphics g, int x, int y) {
-            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
-            try {
-                g2.translate(x + icon.getIconWidth(), y);
-                g2.scale(-1, 1);
-                icon.paintIcon(c, g2, 0, 0);
-            } finally {
-                g2.dispose();
-            }
-        }
-
-        @Override
-        public int getIconWidth() {
-            return icon.getIconWidth();
-        }
-
-        @Override
-        public int getIconHeight() {
-            return icon.getIconHeight();
-        }
-    }
 
     /** Dreieck „Ausführen“ als 16-px-Symbol. */
     record PlayIcon() implements javax.swing.Icon {

@@ -70,6 +70,23 @@ public final class BackButton extends JButton {
 
         /** Springt {@code steps} Schritte: negativ zurück, positiv vor. */
         void go(int steps);
+
+        /** Ein Navigator aus Verlauf und Sprung, etwa für die Bereiche des Command Deck. */
+        static Navigator of(java.util.function.Supplier<History> history, java.util.function.IntConsumer go) {
+            Objects.requireNonNull(history, "history");
+            Objects.requireNonNull(go, "go");
+            return new Navigator() {
+                @Override
+                public History history() {
+                    return history.get();
+                }
+
+                @Override
+                public void go(int steps) {
+                    go.accept(steps);
+                }
+            };
+        }
     }
 
     private Navigator navigator;
