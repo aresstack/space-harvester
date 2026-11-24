@@ -5,6 +5,7 @@ import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubblePalette;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
 import com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton;
+import com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
 import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownBubble;
 import com.aresstack.spaceharvester.app.ui.markdown.CachingMermaidImageRenderer;
@@ -2714,15 +2715,15 @@ public final class ChatPanel extends JPanel {
     }
 
     /**
-     * Eine Sprechblase wie im EAC ({@code ChatTranscriptPanel.createRow}): Datum und Uhrzeit oben rechts, der
-     * Kopierknopf hinter dem Namen.
+     * Eine Sprechblase wie im EAC ({@code ChatTranscriptPanel.createRow}): Datum und Uhrzeit oben rechts, links davon
+     * QR- und Kopierknopf.
      */
     private SpeechBubblePanel addBubble(BubbleSide side, Color background, Color foreground, String header,
                                         String text, long at) {
         SpeechBubblePanel bubble = new SpeechBubblePanel(side, background, foreground, header, text);
         bubble.setMaximumBubbleWidth(640);
         bubble.setHeaderTimestamp(at);
-        bubble.setHeaderAccessory(copyButton(foreground, () -> text));
+        bubble.setHeaderTrailingAccessory(headerButtons(foreground, header, () -> text));
         BubbleMessageRow row = new BubbleMessageRow(bubble, side);
         row.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
@@ -2747,7 +2748,8 @@ public final class ChatPanel extends JPanel {
         AssistantMarkdownBubble bubble = new AssistantMarkdownBubble(BubbleSide.LEFT, bubbles, ASSISTANT, view);
         bubble.setHeaderTimestamp(at);
         // Wie im EAC der Markdown-Quelltext, beim Klick gelesen: auch eine Antwort, die noch geschrieben wird.
-        bubble.setHeaderAccessory(copyButton(bubbles.getAssistantForeground(), view::getMarkdown));
+        bubble.setHeaderTrailingAccessory(headerButtons(bubbles.getAssistantForeground(), ASSISTANT,
+                view::getMarkdown));
         BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
         OrbClearance clearance = new OrbClearance(row, readAloud.orb());
         clearance.setAlignmentX(LEFT_ALIGNMENT);
@@ -2763,10 +2765,28 @@ public final class ChatPanel extends JPanel {
         return bubble;
     }
 
-    /** Der Kopierknopf des EAC ({@code ChatTranscriptPanel.copyButton}): Vordergrund mit Alpha 200. */
-    private MessageCopyButton copyButton(Color foreground, java.util.function.Supplier<String> text) {
-        return new MessageCopyButton(new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 200),
-                text, value -> clipboard.accept(value));
+    /**
+     * Rechts in der Kopfzeile, direkt links vom Zeitstempel (Angelo 24.11.2026): der QR-Knopf (Nachricht als QR-Code,
+     * zum Lesen mit dem Diensttelefon), daneben der Kopierknopf des EAC ({@code ChatTranscriptPanel.copyButton}).
+     * Vordergrund mit Alpha 200; beide lesen den Text erst beim Klick.
+     */
+    private JComponent headerButtons(Color foreground, String name, java.util.function.Supplier<String> text) {
+        Color ink = new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 200);
+        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+        buttons.setOpaque(false);
+        buttons.add(new MessageQrButton(ink, () -> qrCodes.accept(name, text.get())));
+        MessageCopyButton copy = new MessageCopyButton(ink, text, value -> clipboard.accept(value));
+        copy.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+        buttons.add(copy);
+        return buttons;
+    }
+
+    /** Was der QR-Knopf öffnet; für Tests ohne Fenster austauschbar. */
+    private java.util.function.BiConsumer<String, String> qrCodes =
+            (name, text) -> com.aresstack.spaceharvester.app.ui.QrCodesView.openText(this, name, text);
+
+    void setQrCodes(java.util.function.BiConsumer<String, String> qrCodes) {
+        this.qrCodes = qrCodes;
     }
 
     /** Wohin der Kopierknopf schreibt; für Tests ohne Systemzwischenablage austauschbar. */
