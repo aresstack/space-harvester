@@ -161,6 +161,13 @@ class MainWindowPerspectiveTest {
             assertThat(window.settingsOverPerspective()).isFalse();
             assertThat(window.navSelected(AppContext.Section.SETTINGS)).as("Zahnrad nicht mehr gedrückt").isFalse();
             assertThat(visible(window.stage())).isSameAs(window.commandDeck().perspective().workspace());
+            // Wechselt das Deck seinen Bereich ohne Knopf (Kachel auf Home, Chat), gehen die Einstellungen ebenso zu.
+            window.show(AppContext.Section.SETTINGS);
+            assertThat(window.navSelected(AppContext.Section.SETTINGS)).isTrue();
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.TERMINAL);
+            assertThat(window.settingsOverPerspective()).isFalse();
+            assertThat(window.navSelected(AppContext.Section.SETTINGS)).as("Zahnrad nicht mehr gedrückt").isFalse();
+            assertThat(visible(window.stage())).isSameAs(window.commandDeck().perspective().workspace());
             // Direkt in eine andere Perspektive gewechselt: Ein zugeklappter Explorer bleibt zu.
             perspectives.select(Perspectives.HARVESTER);
             window.toggleDrawer();

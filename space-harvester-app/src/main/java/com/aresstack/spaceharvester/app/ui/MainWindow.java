@@ -609,6 +609,15 @@ public final class MainWindow implements AppContext.Navigator {
                 leaveSettingsOn(perspective.navigation());
             }
         }
+        // Wechselt das Deck seinen Bereich auf anderem Weg (Kachel auf Home, Chat, Verbinden), gehen die Einstellungen
+        // ebenso zu; sonst bliebe das Zahnrad gedrückt, obwohl links ein Deck-Bereich gewählt ist (Angelo, 24.11.).
+        if (commandDeck != null) {
+            commandDeck.onAreaChanged(() -> {
+                if (settingsOver != null && Perspectives.COMMAND_DECK.equals(settingsOver.id())) {
+                    leaveSettings();
+                }
+            });
+        }
         chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, stage, sideDeck);
         chatSplit.setBorder(null);
         chatSplit.setBackground(Comic.SURFACE);
