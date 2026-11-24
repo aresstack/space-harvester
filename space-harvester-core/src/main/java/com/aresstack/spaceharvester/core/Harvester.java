@@ -1630,8 +1630,10 @@ public final class Harvester implements AutoCloseable {
             jobActions.background(backgroundJobs);
             // ADR 0025 Punkt 17: Wiederanlauf nach Verbindungsabbruch und nachgeholtes „Nur Fehler“ wie ein Klick,
             // mit derselben Lese- und Exportprüfung wie beim Start.
+            // Ohne Wiederanlauf beim Start (App, Angelo 24.11.2026) bleiben beim Beenden angehaltene Aufträge stehen, bis
+            // jemand sie fortsetzt; ein Verbindungsabbruch zur Laufzeit läuft weiter von selbst wieder an.
             jobs.recovery((status, action) -> jobActions.perform(status.id(), status.owner(), action,
-                    exportAccess()));
+                    exportAccess()), null, builder.autoStart);
             // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
             FileInventoryLog inventoryLog = new FileInventoryLog(cacheDirectory);
             KnowledgeGraph graph = this.knowledgeGraph;
@@ -1722,12 +1724,28 @@ public final class Harvester implements AutoCloseable {
             }
             // ADR 0026, Punkt 11 (AP5c): nach einem Wechsel der Extraktor-Version oder geänderten Grenzen liest ein
             // eigener Auftrag die abgelegten Dokumente neu, ohne den Start aufzuhalten.
-            rereads.afterChange(catalog.configs().stream().map(SourceSettingsConfig::id).toList(), OWNER);
+            // Ohne Start ohne Klick (App) entfällt das; neu gelesen wird beim nächsten Abruf oder Synchronisieren.
+            if (builder.autoStart) {
+                rereads.afterChange(catalog.configs().stream().map(SourceSettingsConfig::id).toList(), OWNER);
+            }
             // Hintergrundaufträge, die das Beenden unterbrochen hat, laufen von selbst weiter; erst jetzt, da alle Arten
             // angemeldet sind.
-            backgroundJobs.resumeInterrupted();
-            // Danach die Abgleiche beim Start; Quellen mit fortgesetztem Teil derselben Art fallen heraus.
-            startScans.forEach(Runnable::run);
+            if (builder.autoStart) {
+                backgroundJobs.resumeInterrupted();
+            } else {
+                // Angelo 24.11.2026: „frisch gestartet, nichts angeklickt“ liefen schon 12 Aufträge. Unterbrochene
+                // bleiben sichtbar stehen und laufen erst weiter, wenn jemand sie fortsetzt.
+                backgroundJobs.keepInterrupted();
+            }
+            // Danach die Abgleiche beim Start; Quellen mit fortgesetztem Teil derselben Art fallen heraus. Ohne Start ohne
+            // Klick (App, Angelo 24.11.2026) laufen „Verweise abgleichen“, „KI-Freigabe prüfen“ und „Analysen nach Update
+            // nachrechnen“ nicht über alle Seiten an; nur ein unterbrochener Entzug einer KI-Freigabe läuft zu Ende,
+            // damit die Ergebnisse entzogener Seiten nicht stehen bleiben.
+            if (builder.autoStart) {
+                startScans.forEach(Runnable::run);
+            } else if (releaseRecomputation != null) {
+                releaseRecomputation.resumeWithdrawals();
+            }
             start.step("Zeitpläne und Nachholen");
             this.resources = List.copyOf(opened);
             start.done();
@@ -3445,6 +3463,8 @@ public final class Harvester implements AutoCloseable {
         private boolean searchLoadsSet;
         private CandidateSelectionStrategy.Kind selectionKind;
         private CandidateSelectionStrategy selection;
+        /** Ob beim Start Aufträge ohne Klick anlaufen ({@link #autoStart}). */
+        private boolean autoStart = true;
         private boolean backgroundFill = true;
         private int backgroundParallelism = BackgroundFill.DEFAULT_PARALLELISM;
         private boolean backgroundFillFixed;
@@ -3998,6 +4018,19 @@ public final class Harvester implements AutoCloseable {
             }
             return searchLoadsSet ? CandidateSelectionStrategy.topN(searchLoads)
                     : CandidateSelectionStrategy.of(CandidateSelectionStrategy.Kind.ADAPTIVE, searchLoads);
+        }
+
+        /**
+         * Ob beim Start Aufträge ohne Klick anlaufen (Standard {@code true}, wie im Dienst): Fortsetzen der vom Beenden
+         * unterbrochenen und ohne Verbindung angehaltenen Aufträge, die Abgleiche über alle Seiten („Verweise
+         * abgleichen“, „KI-Freigabe prüfen“, „Analysen nach Update nachrechnen“) und „Neu lesen“ nach einem Wechsel der
+         * Extraktion. Die App schaltet das ab (Angelo 24.11.2026: beim Start läuft nichts ohne Klick): Unterbrochene
+         * Aufträge bleiben sichtbar stehen, bis jemand sie fortsetzt; nur ein unterbrochener Entzug einer KI-Freigabe
+         * läuft zu Ende. Eingestellte Zeitpläne ({@code sync.interval}, {@code sync.catch-up-on-start}) gelten weiter.
+         */
+        public Builder autoStart(boolean autoStart) {
+            this.autoStart = autoStart;
+            return this;
         }
 
         /**

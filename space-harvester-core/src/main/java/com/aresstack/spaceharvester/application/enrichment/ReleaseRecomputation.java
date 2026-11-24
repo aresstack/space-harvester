@@ -532,6 +532,17 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     }
 
     /**
+     * Nur der Entzug aus {@link #reconcileOnStart}, ohne Prüfung aller Seiten: für einen Start ohne Aufträge ohne Klick
+     * (App). Ein Entzug geht so auch dort nie still verloren.
+     */
+    public void resumeWithdrawals() {
+        BackgroundJobs hosted = background;
+        if (hosted != null) {
+            resumeUnfinishedWithdrawals(hosted);
+        }
+    }
+
+    /**
      * Setzt jeden Teil fort, der zurücknimmt und abgebrochen oder gescheitert ist (auch nach Überschreiten der
      * Laufzeit): der Art {@value #BACKGROUND_KIND} mit Entzug oder nur Bildbeschreibungen, der Art {@value #PAGES_KIND}
      * mit entfernten Seiten (Abnahme #1073). Ein Entzug geht so nie still verloren; fortgesetzt prüft er gegen die

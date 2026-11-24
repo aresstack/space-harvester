@@ -1055,8 +1055,8 @@ public final class AppContext {
             }
             fire();
             if (runtime != null && restarted) {
-                // Verbindungen gleich prüfen, damit Spaces und Zustand ohne weiteren Klick da sind.
-                runtime.workspace().sources().forEach(source -> checkConnection(source.id(), () -> { }));
+                // Keine Verbindungsprüfung beim Start (Angelo 24.11.2026: nichts ohne Klick): Jede Ansicht, die Spaces
+                // braucht, prüft eine noch nicht geprüfte Quelle selbst (SourcePicker, Quellenansicht).
                 // Antwortete KeePass beim Start nicht, holt die App die Zugangsdaten nach, ohne dass neu zu starten ist.
                 if (!keePassWaiting(settings, runtime).isEmpty()) {
                     recheckKeePass(runtime);

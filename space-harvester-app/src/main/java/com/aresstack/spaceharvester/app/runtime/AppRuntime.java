@@ -230,7 +230,10 @@ public final class AppRuntime implements AutoCloseable {
                 .maxTreeNodes(storage.maxTreeNodes())
                 .pdfFont(storage.pdfFont())
                 .cacheFreshness(new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()))
-                .withheldRetention(settings.cache().withheldRetention());
+                .withheldRetention(settings.cache().withheldRetention())
+                // Angelo 24.11.2026: beim Start läuft kein Auftrag ohne Klick; Unterbrochene warten auf „Fortsetzen“,
+                // keine Abgleiche über alle Seiten, synchronisiert wird nur auf Klick.
+                .autoStart(false);
         AppSettings.AiSettings ai = settings.ai();
         if (ai.chunkTokens() != null || ai.chunkOverlapSentences() != null) {
             builder.embeddingChunking(ai.chunkTokens() == null ? KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS
