@@ -240,6 +240,15 @@ public final class Workspace {
     }
 
     /**
+     * Die verwalteten Gesamtzahlen der Begriffe einer Quelle samt ihren Spaces von Hand neu aufbauen, {@code null}
+     * für alle Quellen, und die gemerkten Verben verwerfen; die nächste Abfrage liest neu. Für den Fehlerfall.
+     */
+    public void rebuildTermTotals(String sourceId) {
+        harvester.terms().rebuildTotals(sourceId);
+        harvester.verbQueries().invalidate();
+    }
+
+    /**
      * Zahl der Beziehungen je Art ({@code TermRelations.counts}, BG1b), ohne Status ohne die abgelehnten; mit
      * {@code pages} nur Beziehungen mit einem Begriff auf diesen Seiten, {@code null} ohne Grenze. Nie auf dem EDT.
      */
@@ -3399,6 +3408,15 @@ public final class Workspace {
     public java.util.Optional<com.aresstack.spaceharvester.application.podcast.Podcast> podcast(
             com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
         return harvester.podcasts().podcast(summary);
+    }
+
+    /**
+     * Die Grenzen der Parallelität beider Podcast-Arten aus dem Menü der Ansicht (Angelo 24.11.2026): Texte und Audio,
+     * und der eigene Pool der Bilder; je Lauf frisch gelesen.
+     */
+    public void podcastParallel(java.util.function.IntSupplier texts, java.util.function.IntSupplier pictures) {
+        harvester.podcasts().parallel(texts, pictures);
+        harvester.pagePodcasts().parallel(texts, pictures);
     }
 
     /** Startet den Auftrag „Podcast erzeugen“ oder setzt ihn fort; ein offener Auftrag desselben Podcasts ist die Antwort. */

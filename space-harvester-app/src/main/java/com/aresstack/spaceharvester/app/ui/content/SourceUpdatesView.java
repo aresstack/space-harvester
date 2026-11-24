@@ -2076,7 +2076,7 @@ final class SourceUpdatesView extends JPanel {
 
                         @Override
                         public JobStatus start(UpdateSummary summary) {
-                            return workspace.startPodcast(summary);
+                            return PodcastParallel.apply(workspace).startPodcast(summary);
                         }
 
                         @Override
@@ -2091,7 +2091,7 @@ final class SourceUpdatesView extends JPanel {
 
                         @Override
                         public JobStatus renew(UpdateSummary summary) {
-                            return workspace.renewPodcast(summary);
+                            return PodcastParallel.apply(workspace).renewPodcast(summary);
                         }
 
                         @Override

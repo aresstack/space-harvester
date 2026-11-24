@@ -731,8 +731,6 @@ public final class Harvester implements AutoCloseable {
             this.pageLinks = new PageLinks(new LucenePageLinkPages(cache), linkIndex,
                     List.of(new ConfluenceStorageLinks()), access);
             opened.add(pageLinks);
-            HoldingsChanges cacheChanges = HoldingsChanges.all(holdings, pageLinks);
-            cache.changes(cacheChanges);
             // Abgleich beim Start als Hintergrundauftrag „Verweise abgleichen“; nach einem Abgleich eines Space und
             // für einzelne Seiten bleibt es beim Bündler.
             pageLinks.background(backgroundJobs);
@@ -798,6 +796,13 @@ public final class Harvester implements AutoCloseable {
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
                     termProcessor.version(), documentTexts);
+            // Die Verwalter der Begriffszahlen hören wie Bestand und Verweise auf jeden Commit des Seiten-Caches.
+            // Die gemerkten Verben je Seite (VerbQueries) entstehen erst später; bis dahin geht die Meldung ins Leere.
+            java.util.concurrent.atomic.AtomicReference<Runnable> verbsStale =
+                    new java.util.concurrent.atomic.AtomicReference<>(() -> { });
+            HoldingsChanges cacheChanges = HoldingsChanges.all(holdings, pageLinks, terms.managedTotals())
+                    .andThen(() -> verbsStale.get().run());
+            cache.changes(cacheChanges);
             FileResolutionCache resolutionCache = new FileResolutionCache(builder.dataDirectory.resolve("term-relations"));
             this.termRelations = new TermRelations(catalog,
                     new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
@@ -1430,13 +1435,18 @@ public final class Harvester implements AutoCloseable {
                     access, cache::find, (who, choice, key) -> byAnalyzer.get(choice).page(who, key),
                     graphStore::selected);
             this.verbQueries = new com.aresstack.spaceharvester.application.knowledge.VerbQueries(
-                    this.knowledgeGraph);
+                    this.knowledgeGraph).remembering();
+            // Geänderte Analysen und Prüfungen sowie jeder Commit des Seiten-Caches machen die gemerkten Verben
+            // ungültig; die nächste Abfrage liest neu (kein Polling).
+            this.knowledgeGraph.subscribe(verbQueries::invalidate);
+            verbsStale.set(verbQueries::invalidate);
             // Ein neues Transkript ändert den Text einer Videoseite, nicht ihre Payload: Der Graph vergisst den
             // gemerkten Eingabe-Hash, die Analysen rechnen neu.
             KnowledgeGraph transcriptGraph = this.knowledgeGraph;
             com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses analyses = this.transcriptAnalyses;
             this.assets.transcriptChanges(key -> {
                 transcriptGraph.forgetInput(key);
+                verbQueries.invalidate();
                 analyses.changed(key);
             });
             // ADR 0032, FL6: Stand und Status-quo-Sicht aus gespeicherten Aussagen; Entscheidungen als Nutzerdaten.

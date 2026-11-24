@@ -98,6 +98,9 @@ public class JiraKnowledgeSource implements SearchableKnowledgeSource, PageViewS
     private static final Pattern PARTITION_CURSOR = Pattern.compile("p1\\.([A-Z][A-Z0-9_]{0,254})\\.([0-9]{1,9})");
     private static final Pattern BROWSE = Pattern.compile("/browse/([A-Z][A-Z0-9_]*-[0-9]{1,12})(?:/.*)?");
     private static final Pattern PROJECT_ISSUE = Pattern.compile("/projects/[^/]+/issues/([A-Z][A-Z0-9_]*-[0-9]{1,12})(?:/.*)?");
+    /** Kundenportal des Service Desk: {@code /servicedesk/customer/portal/<Portal-Nr.>/<KEY-1>}. */
+    private static final Pattern PORTAL_ISSUE = Pattern.compile(
+            "/servicedesk/customer/portal/[0-9]{1,9}/([A-Z][A-Z0-9_]*-[0-9]{1,12})(?:/.*)?");
     private static final Pattern SELECTED_ISSUE = Pattern.compile("(?:^|&)selectedIssue=([A-Z][A-Z0-9_]*-[0-9]{1,12})(?:&|$)");
 
     private final SourceAddress sourceId;
@@ -423,6 +426,10 @@ public class JiraKnowledgeSource implements SearchableKnowledgeSource, PageViewS
         Matcher project = PROJECT_ISSUE.matcher(path);
         if (project.matches()) {
             return project.group(1);
+        }
+        Matcher portal = PORTAL_ISSUE.matcher(path);
+        if (portal.matches()) {
+            return portal.group(1);
         }
         if (uri.getRawQuery() != null) {
             Matcher selected = SELECTED_ISSUE.matcher(uri.getRawQuery());

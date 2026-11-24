@@ -38,6 +38,25 @@ public interface TermIndex {
      */
     List<TermPosting> postings(Filter filter, String from, boolean inclusive, int max);
 
+    /**
+     * Meldet, wenn sich die Einträge einer Seite oder Quelle geändert haben können (Observer, kein Polling). Die
+     * Meldung kommt im schreibenden Thread. Ablagen ohne Meldungen liefern {@code null}: Wer mitzählt, darf sich
+     * dann auf nichts Gemerktes verlassen.
+     *
+     * @return Abmelden oder {@code null}, wenn die Ablage nichts meldet
+     */
+    default Runnable subscribe(java.util.function.Consumer<Change> listener) {
+        return null;
+    }
+
+    /**
+     * Was sich geändert haben kann.
+     *
+     * @param pageId die Seite samt ihren Dokumenten oder {@code null} für die ganze Quelle
+     */
+    record Change(String sourceId, String pageId) {
+    }
+
     /** Höchstens so viele Schlüssel je Aufruf von {@link #keys}; sie sind klein, der Stapel darf groß sein. */
     int MAX_KEY_BATCH = 50_000;
 
@@ -98,14 +117,27 @@ public interface TermIndex {
      * @param startsWith       nur der ganze Suchwert beginnt so (etwa ein Buchstabe der A–Z-Leiste), oder {@code null}
      * @param origin           Seiten, Dokumente oder beides (ADR 0026, AP9b)
      * @param pages            nur diese Seiten samt ihren Dokumenten (ADR 0029) oder {@code null} ohne diese Grenze
+     * @param anyOf            nur diese Suchwerte oder {@code null} ohne diese Grenze; leer ergibt nichts
      */
     record Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix, String processorVersion,
-                  String startsWith, TermOrigin origin, PageSet pages) {
+                  String startsWith, TermOrigin origin, PageSet pages, Set<String> anyOf) {
 
         public Filter {
             sourceIds = Set.copyOf(sourceIds);
             Objects.requireNonNull(processorVersion, "processorVersion");
             Objects.requireNonNull(origin, "origin");
+            anyOf = anyOf == null ? null : Set.copyOf(anyOf);
+        }
+
+        public Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix,
+                      String processorVersion, String startsWith, TermOrigin origin, PageSet pages) {
+            this(sourceIds, kind, normalized, prefix, processorVersion, startsWith, origin, pages, null);
+        }
+
+        /** Dieselbe Auswahl, begrenzt auf diese Suchwerte: eine Abfrage für viele Begriffe statt einer je Begriff. */
+        public Filter anyOf(Set<String> normalized) {
+            return new Filter(sourceIds, kind, this.normalized, prefix, processorVersion, startsWith, origin, pages,
+                    normalized);
         }
 
         public Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix,
@@ -131,6 +163,7 @@ public interface TermIndex {
                     || pages != null && !pages.contains(posting.page())
                     || kind != null && posting.kind() != kind
                     || normalized != null && !posting.normalized().equals(normalized)
+                    || anyOf != null && !anyOf.contains(posting.normalized())
                     || !posting.processorVersion().equals(processorVersion)
                     || startsWith != null && !posting.normalized().startsWith(startsWith)) {
                 return false;

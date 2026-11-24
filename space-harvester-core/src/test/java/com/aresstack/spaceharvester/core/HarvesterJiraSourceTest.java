@@ -137,6 +137,12 @@ class HarvesterJiraSourceTest {
                 assertThat(match.title()).contains("Drucker streikt");
             });
 
+            // Ein Link aus dem Kundenportal des Service Desk führt zum selben Vorgang.
+            PageAddresses.Resolution portal = harvester.addresses().resolve(harvester.caller(),
+                    baseUrl() + "/servicedesk/customer/portal/4/ABC-1");
+            assertThat(portal.matches()).singleElement().satisfies(match ->
+                    assertThat(match.sourceId()).isEqualTo("jira"));
+
             PageAddresses.Resolution foreign = harvester.addresses().resolve(harvester.caller(),
                     "https://www.example.org/browse/ABC-1");
             assertThat(foreign.matches()).isEmpty();

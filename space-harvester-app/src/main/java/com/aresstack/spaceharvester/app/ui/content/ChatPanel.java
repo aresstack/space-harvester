@@ -179,9 +179,9 @@ public final class ChatPanel extends JPanel {
     static final int AGENTS_DEFAULT = 32;
     static final int FILES_DEFAULT = 8;
     /** Die Stufen im Menü; darunter „Benutzerdefiniert …“. */
-    static final List<Integer> PARALLEL_STEPS = List.of(1, 2, 4, 8, 16, 32, 64);
+    static final List<Integer> PARALLEL_STEPS = com.aresstack.spaceharvester.app.ui.ParallelChoice.STEPS;
     /** Größte freie Eingabe unter „Benutzerdefiniert …“ (das Feld nimmt vier Ziffern). */
-    static final int PARALLEL_MAX = 9999;
+    static final int PARALLEL_MAX = com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM_MAX;
     static final int WEB_DELAY_MAX = 10000;
     static final int WEB_DELAY_SLIDER_MAX = 2000;
     private static final String WEB_KEY = "chat.web.";
@@ -1681,17 +1681,13 @@ public final class ChatPanel extends JPanel {
     }
 
     private com.aresstack.spaceharvester.app.ui.ParallelChoice parallelChoice(String tip, String key, int fallback) {
-        var choice = new com.aresstack.spaceharvester.app.ui.ParallelChoice(tip + " (1 bis " + PARALLEL_MAX + ").",
-                1, PARALLEL_MAX, PARALLEL_STEPS, parallel(key, fallback), value -> webPut(key, value),
+        return com.aresstack.spaceharvester.app.ui.ParallelChoice.stored(this, tip, WEB_KEY + key, fallback,
                 text -> feedback.warning(text, null));
-        choice.ask = current -> com.aresstack.spaceharvester.app.ui.Dialogs.askNumber(this, "Benutzerdefiniert",
-                tip, 1, PARALLEL_MAX, current);
-        return choice;
     }
 
     /** Eine der Grenzen der Parallelität, mindestens 1. */
     static int parallel(String key, int fallback) {
-        return Math.max(1, Math.min(PARALLEL_MAX, webInt(key, fallback)));
+        return com.aresstack.spaceharvester.app.ui.ParallelChoice.stored(WEB_KEY + key, fallback);
     }
 
     /** Öffnet das Menü am Pfeil: Profil, Werkzeugrunden, Verzögerung, Human Emulation, Maus. */
@@ -2044,6 +2040,8 @@ public final class ChatPanel extends JPanel {
         ChatTurn.WebSearch web = webSearchFor(chat.id(), card, listener);
         if (web != null) {
             turn.webSearch(web);
+            // Angelo 24.11.2026: Webtreffer wertet je Seite ein eigener Agent aus, so viele gleichzeitig wie Tabs.
+            context.webBrowser().pageEvaluator(chat.id(), turn::evaluatePage, parallel("tabs", WEB_TABS_DEFAULT));
             listener.webCard = card;
             listener.browserTools = web.tools();
         }

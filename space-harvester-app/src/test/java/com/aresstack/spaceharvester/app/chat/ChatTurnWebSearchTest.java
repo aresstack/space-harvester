@@ -153,6 +153,26 @@ class ChatTurnWebSearchTest {
         assertThat(events.cancelled).isNotNull();
     }
 
+    @Test
+    void aWebPageIsEvaluatedByASubAgentForTheGivenQuestionOrTheUsersQuestion() throws Exception {
+        // Angelo 24.11.2026: Webtreffer wertet je Seite ein eigener Agent aus (browser_open_many mit question).
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.completed(" Regen am Nachmittag. "),
+                (request, listener) -> listener.completed("Trägt nichts bei.")));
+        ChatTurn turn = new ChatTurn(workspace(), port, "modell", null, List.of(), "Wie ist das Wetter?", null,
+                "Test", new TerminalMaskFixture.Events(), Runnable::run);
+
+        assertThat(turn.evaluatePage("Regnet es?", "Wetter", "https://wetter.example/", "Regen ab 14 Uhr"))
+                .isEqualTo("Regen am Nachmittag.");
+        assertThat(turn.evaluatePage("", "", "https://leer.example/", "Impressum")).isEqualTo("Trägt nichts bei.");
+
+        assertThat(port.requests.get(0).messages().get(0).text()).isEqualTo(ChatKnowledge.SUB_AGENT_PROMPT);
+        assertThat(port.requests.get(0).messages().get(1).text()).contains("Frage: Regnet es?")
+                .contains("Wetter (https://wetter.example/)").contains("Regen ab 14 Uhr");
+        assertThat(port.requests.get(1).messages().get(1).text()).contains("Frage: Wie ist das Wetter?")
+                .contains("(ohne Titel)");
+    }
+
     private static final class ScriptedChat implements AiChat {
         private final List<BiConsumer<Request, Listener>> script;
         final List<Request> requests = new CopyOnWriteArrayList<>();

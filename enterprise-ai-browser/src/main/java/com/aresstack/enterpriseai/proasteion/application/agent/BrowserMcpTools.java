@@ -38,6 +38,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Consumer;
 
@@ -77,6 +82,10 @@ public final class BrowserMcpTools {
     static final int DEFAULT_MANY_CHARS = 3000;
     /** Characters of text of all entries of one {@value #OPEN_MANY} call together. */
     static final int MAX_MANY_TOTAL_CHARS = 60000;
+    /** Optional question of {@value #OPEN_MANY}: with a page evaluator, every loaded page is evaluated for it. */
+    static final String PARAM_QUESTION = "question";
+    /** Characters of text one page evaluator gets at most; not counted against {@link #MAX_MANY_TOTAL_CHARS}. */
+    public static final int EVALUATE_CHARS = 12000;
     /** Tabs {@value #OPEN_MANY} loads at the same time unless the chat sets it. */
     public static final int DEFAULT_PARALLEL_TABS = 4;
     static final String PARAM_MARKS = "marks";
@@ -107,6 +116,9 @@ public final class BrowserMcpTools {
     private final ToolApprovalGate approvals;
     /** Per chat: tabs at the same time and maximum random delay before a tab, for {@value #OPEN_MANY}. */
     private final ConcurrentMap<ChatConversationId, int[]> batchLoads = new ConcurrentHashMap<ChatConversationId, int[]>();
+    /** Per chat: the sub-agents that evaluate pages of {@value #OPEN_MANY}, and how many at the same time. */
+    private final ConcurrentMap<ChatConversationId, Evaluation> evaluations =
+            new ConcurrentHashMap<ChatConversationId, Evaluation>();
     private final ConcurrentMap<ChatConversationId, WebExplorationRun> runs =
             new ConcurrentHashMap<ChatConversationId, WebExplorationRun>();
 
@@ -154,7 +166,8 @@ public final class BrowserMcpTools {
                 controls(tracked(run, call -> controls(browser, run, call))),
                 act(tracked(run, call -> act(browser, run, approvals, call))),
                 screenshot(tracked(run, call -> screenshot(browser, run, call))),
-                openMany(tracked(run, call -> openMany(browser, documents, run, batchLoadOf(conversation), call))),
+                openMany(tracked(run, call -> openMany(browser, documents, run, batchLoadOf(conversation),
+                        evaluations.get(conversation), call))),
                 mark(tracked(run, call -> mark(run, call))),
                 close(tracked(run, call -> close(browser, run)))));
     }
@@ -174,6 +187,33 @@ public final class BrowserMcpTools {
      */
     public void setHumanEmulation(ChatConversationId conversation, boolean keys, boolean mouse) {
         browsers.browserOf(conversation).setHumanEmulation(keys, mouse);
+    }
+
+    /**
+     * Lets {@value #OPEN_MANY} in {@code conversation} evaluate every loaded page by its own sub-agent when the model
+     * gives a question: at most {@code parallel} evaluations at the same time (at least 1). {@code null} switches it
+     * off; then pages come back as text as before.
+     */
+    public void setPageEvaluator(ChatConversationId conversation, BrowserPageEvaluator evaluator, int parallel) {
+        if (conversation == null) {
+            throw new IllegalArgumentException("conversation must not be null");
+        }
+        if (evaluator == null) {
+            evaluations.remove(conversation);
+        } else {
+            evaluations.put(conversation, new Evaluation(evaluator, Math.max(1, parallel)));
+        }
+    }
+
+    /** A page evaluator and how many evaluations run at the same time. */
+    static final class Evaluation {
+        final BrowserPageEvaluator evaluator;
+        final int parallel;
+
+        Evaluation(BrowserPageEvaluator evaluator, int parallel) {
+            this.evaluator = evaluator;
+            this.parallel = parallel;
+        }
     }
 
     private int[] batchLoadOf(ChatConversationId conversation) {
@@ -370,14 +410,18 @@ public final class BrowserMcpTools {
                         + "(opens the content links of the current page whose text or address contains the word; "
                         + "\"*\" for all content links, at most " + MAX_FROM_PAGE + ") without listing them first. "
                         + "Tabs are closed again; the current tab stays. Only captcha, login and consent pages need "
-                        + "the single-page tools.",
+                        + "the single-page tools. With question, and where the chat offers it, every loaded page is "
+                        + "read in full by its own sub-agent at the same time and only what it contributes to the "
+                        + "question comes back.",
                 handler,
                 McpToolParameter.stringArray(PARAM_LINKS, false, "Link ids from the last " + LINKS + " list."),
                 McpToolParameter.stringArray(PARAM_URLS, false, "http(s) addresses, in order."),
                 McpToolParameter.string(PARAM_FROM_PAGE, false, "Word the link text or address must contain, or "
                         + "* for all content links of the current page (navigation, header and footer left out)."),
                 McpToolParameter.integer(PARAM_MAX_CHARS, false, "Maximum characters of text per page (default "
-                        + DEFAULT_MANY_CHARS + "; all pages together at most " + MAX_MANY_TOTAL_CHARS + ")."));
+                        + DEFAULT_MANY_CHARS + "; all pages together at most " + MAX_MANY_TOTAL_CHARS + ")."),
+                McpToolParameter.string(PARAM_QUESTION, false, "What to look for on the pages: each page is then "
+                        + "evaluated for it by its own sub-agent instead of returning its text (where offered)."));
     }
 
     private static McpToolContribution close(McpToolHandler handler) {
@@ -613,7 +657,7 @@ public final class BrowserMcpTools {
     }
 
     static McpToolResult openMany(ChatBrowser browser, AttachmentTextExtractor documents, WebExplorationRun run,
-                                  int[] load, McpToolCall call) {
+                                  int[] load, Evaluation evaluation, McpToolCall call) {
         List<String> urls = new ArrayList<String>();
         for (String id : call.getStrings(PARAM_LINKS)) {
             String target = run.linkTarget(id);
@@ -642,21 +686,23 @@ public final class BrowserMcpTools {
         } catch (BrowserException e) {
             return refused(run, null, e);
         }
-        int budget = MAX_MANY_TOTAL_CHARS;
+        String question = evaluation == null ? null : blankToNull(call.getString(PARAM_QUESTION));
+        // First every entry with its status and full text, then (with a question) the evaluations at the same time,
+        // then the list in order.
+        String[] headers = new String[pages.size()];
+        String[] texts = new String[pages.size()];
         int loaded = 0;
-        StringBuilder out = new StringBuilder();
         for (int i = 0; i < pages.size(); i++) {
             BrowserBatchPage entry = pages.get(i);
-            out.append(i + 1).append(". ");
             if (entry.status() != BrowserBatchPage.Status.LOADED) {
                 if (entry.status() == BrowserBatchPage.Status.SKIPPED) {
                     run.skipped(entry.requestedUrl());
                 } else {
                     run.failed(entry.requestedUrl(), entry.reason());
                 }
-                out.append(entry.requestedUrl()).append(" | ")
-                        .append(entry.status() == BrowserBatchPage.Status.SKIPPED ? "übersprungen" : "fehlgeschlagen")
-                        .append(": ").append(entry.reason()).append("\n\n");
+                headers[i] = entry.requestedUrl() + " | "
+                        + (entry.status() == BrowserBatchPage.Status.SKIPPED ? "übersprungen" : "fehlgeschlagen")
+                        + ": " + entry.reason();
                 continue;
             }
             loaded++;
@@ -676,8 +722,25 @@ public final class BrowserMcpTools {
             } else {
                 run.opened(page.url(), page.title(), false);
             }
-            out.append(page.title().isEmpty() ? "(ohne Titel)" : page.title()).append(" | ").append(page.url())
-                    .append(" | ").append(status).append('\n');
+            headers[i] = (page.title().isEmpty() ? "(ohne Titel)" : page.title()) + " | " + page.url() + " | "
+                    + status;
+            texts[i] = text == null ? "" : text;
+        }
+        String[] evaluated = question == null ? null : evaluate(evaluation, question, pages, texts);
+        int budget = MAX_MANY_TOTAL_CHARS;
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < pages.size(); i++) {
+            out.append(i + 1).append(". ").append(headers[i]);
+            if (texts[i] == null) {
+                out.append("\n\n");
+                continue;
+            }
+            out.append('\n');
+            if (evaluated != null) {
+                out.append("Auswertung: ").append(evaluated[i]).append("\n\n");
+                continue;
+            }
+            String text = texts[i];
             int room = Math.min(maxChars, budget);
             if (room <= 0) {
                 out.append("[Text ausgelassen, Gesamtgrenze erreicht; einzeln mit ").append(NAVIGATE)
@@ -693,6 +756,72 @@ public final class BrowserMcpTools {
             out.append("\n\n");
         }
         return McpToolResult.ok(loaded + " von " + pages.size() + " Adressen geladen.\n\n" + out.toString().trim());
+    }
+
+    /**
+     * Evaluates every loaded page ({@code texts[i]} not null) for {@code question}, at most
+     * {@code evaluation.parallel} at the same time; a failing or interrupted evaluation names its reason.
+     */
+    private static String[] evaluate(final Evaluation evaluation, final String question,
+                                     final List<BrowserBatchPage> pages, final String[] texts) {
+        final String[] results = new String[texts.length];
+        List<Integer> loaded = new ArrayList<Integer>();
+        for (int i = 0; i < texts.length; i++) {
+            if (texts[i] != null) {
+                loaded.add(i);
+            }
+        }
+        if (loaded.isEmpty()) {
+            return results;
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(evaluation.parallel, loaded.size()),
+                new ThreadFactory() {
+                    @Override
+                    public Thread newThread(Runnable work) {
+                        Thread thread = new Thread(work, "browser-page-evaluation");
+                        thread.setDaemon(true);
+                        return thread;
+                    }
+                });
+        try {
+            List<Future<?>> running = new ArrayList<Future<?>>();
+            for (final int index : loaded) {
+                running.add(pool.submit(new Runnable() {
+                    @Override
+                    public void run() {
+                        BrowserPage page = pages.get(index).page();
+                        String text = texts[index];
+                        try {
+                            String answer = evaluation.evaluator.evaluate(question, page.title(), page.url(),
+                                    text.length() > EVALUATE_CHARS ? text.substring(0, EVALUATE_CHARS) : text);
+                            results[index] = answer == null || answer.trim().isEmpty() ? "(keine Auswertung)"
+                                    : answer.trim();
+                        } catch (Exception e) {
+                            results[index] = "fehlgeschlagen: " + (e.getMessage() == null
+                                    ? e.getClass().getSimpleName() : e.getMessage());
+                        }
+                    }
+                }));
+            }
+            for (Future<?> future : running) {
+                try {
+                    future.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (ExecutionException e) {
+                    // The entry stays without result and is named below.
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        for (int index : loaded) {
+            if (results[index] == null) {
+                results[index] = "abgebrochen";
+            }
+        }
+        return results;
     }
 
     /** The content links of the current page matching {@code filter} (all when null), recorded as a link list. */

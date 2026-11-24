@@ -224,6 +224,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private final Directory directory;
     private final IndexWriter writer;
     private final SearcherManager searchers;
+    private final com.aresstack.spaceharvester.application.terms.TermChanges termChanges =
+            new com.aresstack.spaceharvester.application.terms.TermChanges();
     private int uncommitted;
     private volatile boolean closed;
 
@@ -307,6 +309,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             writer.addDocuments(terms(enrichment));
             writer.addDocuments(facts(enrichment));
             changed();
+            termChanges.fire(enrichment.key().sourceId(), enrichment.key().pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -430,6 +433,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                 }
             }
             changed();
+            termChanges.fire(document.page().sourceId(), document.page().pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -457,6 +461,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                         new Term(TERM_DOCUMENT_ATTACHMENT, attachment(document)));
             }
             changed();
+            termChanges.fire(document.page().sourceId(), document.page().pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -475,6 +480,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                     new Term(TERM_PAGE, page(key)), new Term(FACT_PAGE, page(key)),
                     new Term(DOCUMENT_PAGE, page(key)));
             changed();
+            termChanges.fire(key.sourceId(), key.pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -504,6 +510,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                         .add(new TermQuery(new Term(VECTOR_DOCUMENT, "1")), BooleanClause.Occur.FILTER).build());
             }
             changed();
+            termChanges.fire(key.sourceId(), key.pageId());
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -521,6 +528,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             writer.commit();
             uncommitted = 0;
             searchers.maybeRefreshBlocking();
+            termChanges.fire(sourceId, null);
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
@@ -606,13 +614,19 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     }
 
     @Override
+    public Runnable subscribe(java.util.function.Consumer<Change> listener) {
+        return termChanges.subscribe(listener);
+    }
+
+    @Override
     public List<TermPosting> postings(Filter filter, String from, boolean inclusive, int max) {
         Objects.requireNonNull(filter, "filter");
         if (max < 1 || max > MAX_BATCH) {
             throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_BATCH + " liegen");
         }
         requireOpen();
-        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()) {
+        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()
+                || filter.anyOf() != null && filter.anyOf().isEmpty()) {
             return List.of();
         }
         org.apache.lucene.search.Query query = termQuery(filter, from, inclusive);
@@ -646,7 +660,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_KEY_BATCH + " liegen");
         }
         requireOpen();
-        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()) {
+        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()
+                || filter.anyOf() != null && filter.anyOf().isEmpty()) {
             return List.of();
         }
         org.apache.lucene.search.Query query = termQuery(filter, from, false);
@@ -728,6 +743,10 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         }
         if (filter.normalized() != null) {
             query.add(new TermQuery(new Term(TERM_NORMALIZED, filter.normalized())), BooleanClause.Occur.FILTER);
+        }
+        if (filter.anyOf() != null) {
+            query.add(new TermInSetQuery(TERM_NORMALIZED, filter.anyOf().stream().map(BytesRef::new).toList()),
+                    BooleanClause.Occur.FILTER);
         }
         if (filter.startsWith() != null) {
             query.add(new PrefixQuery(new Term(TERM_NORMALIZED, filter.startsWith())), BooleanClause.Occur.FILTER);

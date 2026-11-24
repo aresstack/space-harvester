@@ -83,6 +83,26 @@ class JobsPriorityTest {
     }
 
     @Test
+    void localWorkOfALeftViewTakesALocalPlace() {
+        Jobs jobs = jobs(1);
+        jobs.localSlots(1);
+        JobStatus reread = jobs.submit(JobType.REREAD, "wiki", "DEV", "client-a", blocking());
+        Foreground.open("ansicht-6");
+        JobStatus analysis = inView("ansicht-6", () -> jobs.submit(JobType.STATEMENT_ANALYSIS, "wiki", "DEV",
+                "client-a", blocking()));
+        JobStatus conversion = jobs.submit(JobType.CONVERSION, "wiki", "DEV", "client-a", blocking());
+        assertThat(jobs.status(analysis.id()).state()).as("Vorrang auch auf der lokalen Spur")
+                .isEqualTo(JobState.RUNNING);
+        assertThat(jobs.status(conversion.id()).state()).isEqualTo(JobState.QUEUED);
+
+        Foreground.close("ansicht-6");
+        jobs.cancel(reread.id(), "client-a");
+        executor.runNext();
+        assertThat(jobs.status(conversion.id()).state()).as("die Analyse belegt jetzt den lokalen Platz")
+                .isEqualTo(JobState.QUEUED);
+    }
+
+    @Test
     void downloadsNeverTakePriority() {
         Jobs jobs = jobs(1);
         Foreground.open("ansicht-3");

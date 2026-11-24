@@ -53,6 +53,66 @@ public final class VerbQueries {
     }
 
     /**
+     * Was eine analysierte Seite (oder eines ihrer Dokumente) zu den Verben beiträgt: Die Seite ist der unterste
+     * Verwalter, jede Auswahl darüber addiert nur noch diese Einträge (Angelo 24.11.2026).
+     */
+    private record PageDigest(PageKey key, boolean current, Map<Key, Integer> statements) {
+    }
+
+    /** Die Einträge eines Aufrufers, gültig bis zur nächsten Meldung ({@link #invalidate}). */
+    private record Digest(AccessContext caller, List<PageDigest> pages) {
+    }
+
+    /**
+     * Gemerkt an einer {@link java.lang.ref.SoftReference}: Wird der Speicher knapp, gibt die Laufzeit die Einträge
+     * frei, und die nächste Abfrage liest die Analysen neu.
+     */
+    private volatile java.lang.ref.SoftReference<Digest> digest = new java.lang.ref.SoftReference<>(null);
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
+    private volatile boolean remembering;
+
+    /**
+     * Schaltet das Merken ein: Wer die Meldungen anschließt (geänderte Analysen und Prüfungen, geschriebene oder
+     * entfernte Seiten), ruft bei jeder {@link #invalidate}. Ohne diesen Anschluss liest jede Abfrage die Analysen neu.
+     */
+    public VerbQueries remembering() {
+        remembering = true;
+        return this;
+    }
+
+    /** Die gemerkten Einträge gelten nicht mehr; die nächste Abfrage liest neu. Kostet den Melder nichts. */
+    public void invalidate() {
+        generation.incrementAndGet();
+        digest = new java.lang.ref.SoftReference<>(null);
+    }
+
+    private List<PageDigest> digest(AccessContext caller) {
+        Digest held = remembering ? digest.get() : null;
+        if (held != null && Objects.equals(held.caller(), caller)) {
+            return held.pages();
+        }
+        long before = generation.get();
+        List<PageDigest> pages = new ArrayList<>();
+        for (KnowledgeGraph.AnalysedPage analysed : analysed.apply(caller)) {
+            boolean current = analysed.page().state() == PageStatements.State.CURRENT;
+            Map<Key, Integer> statements = new HashMap<>();
+            if (current) {
+                for (ParsedStatements.Statement statement : analysed.analysis().result().statements()) {
+                    if (VerbForms.counts(statement)) {
+                        statements.merge(new Key(VerbForms.lemma(statement), VerbForms.fromText(statement)), 1,
+                                Integer::sum);
+                    }
+                }
+            }
+            pages.add(new PageDigest(analysed.page().key(), current, Map.copyOf(statements)));
+        }
+        if (remembering && before == generation.get()) {
+            digest = new java.lang.ref.SoftReference<>(new Digest(caller, pages));
+        }
+        return pages;
+    }
+
+    /**
      * Ein Verb.
      *
      * @param lemma      Grundform in Kleinschreibung ({@link VerbForms#lemma})
@@ -113,29 +173,23 @@ public final class VerbQueries {
         Map<Key, Counter> counters = new HashMap<>();
         Set<PageKey> current = new HashSet<>();
         Set<PageKey> stale = new HashSet<>();
-        for (KnowledgeGraph.AnalysedPage analysed : analysed.apply(caller)) {
-            PageKey key = analysed.page().key();
+        for (PageDigest page : digest(caller)) {
+            PageKey key = page.key();
             if (within != null && !within.contains(key)) {
                 continue;
             }
-            if (analysed.page().state() != PageStatements.State.CURRENT) {
+            if (!page.current()) {
                 stale.add(key);
                 continue;
             }
             current.add(key);
-            for (ParsedStatements.Statement statement : analysed.analysis().result().statements()) {
-                if (!VerbForms.counts(statement)) {
-                    continue;
+            page.statements().forEach((verb, statements) -> {
+                if (needle.isEmpty() || verb.lemma().contains(needle)) {
+                    Counter counter = counters.computeIfAbsent(verb, k -> new Counter());
+                    counter.statements += statements;
+                    counter.pages.add(key);
                 }
-                String lemma = VerbForms.lemma(statement);
-                if (!needle.isEmpty() && !lemma.contains(needle)) {
-                    continue;
-                }
-                Counter counter = counters.computeIfAbsent(new Key(lemma, VerbForms.fromText(statement)),
-                        k -> new Counter());
-                counter.statements++;
-                counter.pages.add(key);
-            }
+            });
         }
         stale.removeAll(current);
         List<Verb> all = new ArrayList<>(counters.size());

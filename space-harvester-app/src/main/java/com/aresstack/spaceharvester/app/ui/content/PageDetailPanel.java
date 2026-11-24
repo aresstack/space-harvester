@@ -1073,9 +1073,9 @@ public final class PageDetailPanel extends JPanel {
         standing.shown(standingShown);
         showOverviewHelp();
         updateFootTools(selected);
-        if (sourceMenuShown()) {
+        if (sourceMenuShown() || standingShown) {
             more.setEnabled(true);
-        } else if (SOURCE_CARD.equals(pageCard)) {
+        } else if (SOURCE_CARD.equals(pageCard) || wide && pageId == null) {
             more.setEnabled(false);
         }
         heading.revalidate();
@@ -5574,7 +5574,7 @@ public final class PageDetailPanel extends JPanel {
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
         bookmark.setEnabled(enabled);
-        more.setEnabled(enabled || sourceMenuShown());
+        more.setEnabled(enabled || sourceMenuShown() || standingShown());
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
         updatePreviewEnabled();
@@ -5617,6 +5617,10 @@ public final class PageDetailPanel extends JPanel {
     static final String RENEW_PODCAST = "Podcast neu erstellen";
     static final String RENEW_PODCAST_TIP = "Verwirft Texte, Audio und Bilder des Podcasts und erzeugt ihn neu";
 
+    static final String REBUILD_COUNTS = "Kennzahlen neu aufbauen";
+    static final String REBUILD_COUNTS_TIP = "Liest die Begriffe dieses Knotens und aller Unterknoten neu. Das kann bei "
+            + "großen Beständen länger dauern und ist nur nötig, wenn Zahlen falsch wirken.";
+
     /** Auf der Quellenseite in der Leseansicht hat das Dreieck die Speicher-Einträge der Zusammenfassung. */
     private boolean sourceMenuShown() {
         return SOURCE_CARD.equals(pageCard) && (READING.equals(tabs.selected()) || READ.equals(tabs.selected()))
@@ -5630,9 +5634,15 @@ public final class PageDetailPanel extends JPanel {
      */
     javax.swing.JPopupMenu moreMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        if (standingShown()) {
+            // Nur für den Fehlerfall und deshalb hier versteckt (Angelo 24.11.2026).
+            menu.add(menuItem(REBUILD_COUNTS, REBUILD_COUNTS_TIP, true, overviewTerms::rebuild));
+            return menu;
+        }
         if (sourceMenuShown() && READING.equals(tabs.selected())) {
             menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", sourceView.hasSummary(),
                     this::saveSummary));
+            addPodcastParallel(menu);
             return menu;
         }
         if (sourceMenuShown()) {
@@ -5641,6 +5651,7 @@ public final class PageDetailPanel extends JPanel {
                     sourceChanges.podcast().hasTranscript(), () -> saveTranscript(sourceChanges.podcast())));
             menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceChanges.podcastRenewable(),
                     sourceChanges::renewPodcast));
+            addPodcastParallel(menu);
             return menu;
         }
         for (ComposerButton action : List.of(bookmark, browse)) {
@@ -5651,6 +5662,14 @@ public final class PageDetailPanel extends JPanel {
                     () -> saveTranscript(pagePodcast)));
         }
         return menu;
+    }
+
+    /** Unter einer Linie die Grenzen der Parallelität beim Erzeugen des Podcasts (Angelo 24.11.2026). */
+    private void addPodcastParallel(javax.swing.JPopupMenu menu) {
+        menu.addSeparator();
+        for (javax.swing.JMenu parallel : PodcastParallel.menus(this, text -> tabStatus(tabs.selected(), text))) {
+            menu.add(parallel);
+        }
     }
 
     private static javax.swing.JMenuItem menuItem(String text, String tooltip, boolean enabled, Runnable action) {
@@ -5804,7 +5823,7 @@ public final class PageDetailPanel extends JPanel {
 
             @Override
             public com.aresstack.spaceharvester.application.jobs.JobStatus start(PodcastPage page) {
-                return workspace.startPagePodcast(page.sourceId(), page.pageId());
+                return PodcastParallel.apply(workspace).startPagePodcast(page.sourceId(), page.pageId());
             }
 
             @Override

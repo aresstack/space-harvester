@@ -37,8 +37,17 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
      */
     private final Map<DocumentKey, TreeMap<String, Enrichment>> documents = new ConcurrentHashMap<>();
 
+    private final com.aresstack.spaceharvester.application.terms.TermChanges termChanges =
+            new com.aresstack.spaceharvester.application.terms.TermChanges();
+
+    @Override
+    public Runnable subscribe(java.util.function.Consumer<Change> listener) {
+        return termChanges.subscribe(listener);
+    }
+
     @Override
     public synchronized void save(Enrichment enrichment) {
+        termChanges.fire(enrichment.key().sourceId(), enrichment.key().pageId());
         if (enrichment.ofDocument()) {
             documents.computeIfAbsent(enrichment.document(), key -> new TreeMap<>())
                     .put(documentEntry(enrichment.section(), enrichment.processorId()), enrichment);
@@ -85,6 +94,7 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
         if (Objects.requireNonNull(document, "document").isPage()) {
             throw new IllegalArgumentException("Seiten haben keine Abschnitte");
         }
+        termChanges.fire(document.page().sourceId(), document.page().pageId());
         TreeMap<String, Enrichment> entries = documents.get(document);
         if (entries != null) {
             entries.values().removeIf(result -> result.section() == section);
@@ -96,6 +106,7 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
 
     @Override
     public synchronized void removeDocument(DocumentKey document) {
+        termChanges.fire(document.page().sourceId(), document.page().pageId());
         if (Objects.requireNonNull(document, "document").isPage()) {
             results.remove(document.page());
             return;
@@ -117,12 +128,14 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
 
     @Override
     public synchronized void removeAll(PageKey key) {
+        termChanges.fire(key.sourceId(), key.pageId());
         results.remove(key);
         documents.keySet().removeIf(document -> document.page().equals(key));
     }
 
     @Override
     public synchronized void remove(PageKey key, String processorId) {
+        termChanges.fire(key.sourceId(), key.pageId());
         TreeMap<String, Enrichment> found = results.get(Objects.requireNonNull(key, "key"));
         if (found != null) {
             found.remove(processorId);
