@@ -169,7 +169,7 @@ final class NavigableDocumentPage extends JLayeredPane {
     }
 
     /** Oberkante des Knopfs: mittig auf der Wolkenreihe des Himmels. */
-    private static int orbTop(int height) {
+    static int orbTop(int height) {
         int top = com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics.SKY_PADDING_TOP
                 + (com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics.CLOUD_CHIP_HEIGHT - height) / 2;
         return Math.max(2, top);

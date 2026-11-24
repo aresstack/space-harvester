@@ -460,6 +460,25 @@ public final class ChatPanel extends JPanel {
         };
         transcriptLayers.add(transcriptScroll, JLayeredPane.DEFAULT_LAYER);
         transcriptLayers.add(readAloud.orb(), JLayeredPane.MODAL_LAYER);
+        // Der Knopf folgt dem sichtbaren Vorlese-Knopf der großen Ansicht (Podcast, Leseansicht, Zusammenfassung):
+        // erscheint, verschwindet oder wandert einer, liegt der Knopf des Chats neu (Ereignis, kein Abfragen).
+        java.awt.event.AWTEventListener bigOrbs = event -> {
+            if (event.getSource() instanceof com.aresstack.spaceharvester.app.ui.controls.PodcastOrb
+                    && event.getSource() != readAloud.orb()) {
+                SwingUtilities.invokeLater(this::relayoutOrb);
+            }
+        };
+        transcriptLayers.addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) == 0) {
+                return;
+            }
+            java.awt.Toolkit toolkit = java.awt.Toolkit.getDefaultToolkit();
+            toolkit.removeAWTEventListener(bigOrbs);
+            if (transcriptLayers.isShowing()) {
+                toolkit.addAWTEventListener(bigOrbs, java.awt.AWTEvent.COMPONENT_EVENT_MASK
+                        | java.awt.AWTEvent.HIERARCHY_EVENT_MASK);
+            }
+        });
         transcriptScroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent event) {
@@ -3218,13 +3237,6 @@ public final class ChatPanel extends JPanel {
         }
     }
 
-    /**
-     * Ohne sichtbaren Knopf in der großen Ansicht: Oberkante des Knopfs über dem Verlauf. Gemessen im Hauptfenster
-     * (Leseansicht neben der Seitenleiste, 23.11.2026): so weit steht der Knopf der Leseansicht unter der Oberkante des
-     * Verlaufs.
-     */
-    static final int ORB_TOP = 45;
-
     private void layoutTranscript() {
         int width = transcriptLayers.getWidth();
         int height = transcriptLayers.getHeight();
@@ -3232,23 +3244,58 @@ public final class ChatPanel extends JPanel {
         javax.swing.JScrollBar bar = transcriptScroll.getVerticalScrollBar();
         int barWidth = bar.isVisible() ? bar.getWidth() : 0;
         int size = com.aresstack.spaceharvester.app.ui.controls.PodcastOrb.SIZE;
-        readAloud.orb().setBounds(width - barWidth - NavigableDocumentPage.ORB_INSET - size, orbTop(size, height),
-                size, size);
+        // Angelo 24.11.2026 („zu tief, sieht schief aus“): dieselbe Höhe und derselbe Abstand vom rechten Rand wie
+        // der sichtbare Knopf der großen Ansicht; ohne ihn die Lage, die er dort hätte (NavigableDocumentPage).
+        int top = NavigableDocumentPage.orbTop(size);
+        int gap = NavigableDocumentPage.ORB_INSET;
+        JComponent big = bigOrb();
+        if (big != null) {
+            top = SwingUtilities.convertPoint(big.getParent(), big.getLocation(), transcriptLayers).y;
+            gap = big.getParent().getWidth() - big.getX() - big.getWidth();
+        }
+        top = Math.max(0, Math.min(top, height - size));
+        gap = Math.max(gap, barWidth + NavigableDocumentPage.ORB_INSET);
+        readAloud.orb().setBounds(width - gap - size, top, size, size);
     }
 
-    /** Die Höhe des sichtbaren Knopfs der großen Ansicht, umgerechnet auf den Verlauf; sonst {@link #ORB_TOP}. */
-    private int orbTop(int size, int height) {
-        if (transcriptLayers.isShowing()) {
-            for (JComponent anchor : orbAnchors) {
-                if (anchor.isShowing() && anchor.getParent() != null) {
-                    int top = SwingUtilities.convertPoint(anchor.getParent(), anchor.getLocation(), transcriptLayers).y;
-                    if (top >= 0 && top + size <= height) {
-                        return top;
-                    }
-                }
+    /**
+     * Der sichtbare Vorlese-Knopf der großen Ansicht im selben Fenster: der rechteste links vom Chat, dessen Höhe
+     * in den Verlauf passt; sonst {@code null}.
+     */
+    private JComponent bigOrb() {
+        if (!transcriptLayers.isShowing()) {
+            return null;
+        }
+        java.awt.Window window = SwingUtilities.getWindowAncestor(transcriptLayers);
+        if (window == null) {
+            return null;
+        }
+        int left = transcriptLayers.getLocationOnScreen().x;
+        JComponent best = null;
+        int bestX = Integer.MIN_VALUE;
+        for (JComponent orb : orbs(window, new ArrayList<>())) {
+            if (orb == readAloud.orb() || !orb.isShowing() || orb.getParent() == null) {
+                continue;
+            }
+            int x = orb.getLocationOnScreen().x;
+            int top = SwingUtilities.convertPoint(orb.getParent(), orb.getLocation(), transcriptLayers).y;
+            if (x < left && x > bestX && top >= 0 && top + orb.getHeight() <= transcriptLayers.getHeight()) {
+                best = orb;
+                bestX = x;
             }
         }
-        return Math.max(0, Math.min(ORB_TOP, height - size));
+        return best;
+    }
+
+    private static List<JComponent> orbs(java.awt.Container container, List<JComponent> found) {
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof com.aresstack.spaceharvester.app.ui.controls.PodcastOrb orb) {
+                found.add(orb);
+            } else if (child instanceof java.awt.Container inner) {
+                orbs(inner, found);
+            }
+        }
+        return found;
     }
 
     /**
