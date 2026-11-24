@@ -200,4 +200,19 @@ class HttpEakteServerTest {
         }
         assertThat(fake.passwordPosts()).isEqualTo(1);
     }
+
+    /** Wie im Protokoll von v2.0: /openam/ (Startseite mit Skript) → UI/Login → XUI/, dann REST-Fortsetzung. */
+    @Test
+    void followsTheOpenAmLandingPageLikeTheTestProgram() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            assertThat(connection.list(connection.rootHref())).hasSize(5);
+        }
+        List<String> openam = fake.requests().stream().filter(line -> line.startsWith("openam ")).toList();
+        int landing = openam.indexOf("openam GET /openam/");
+        assertThat(landing).isNotNegative();
+        assertThat(openam.subList(landing, landing + 4)).containsExactly("openam GET /openam/",
+                "openam GET /openam/UI/Login", "openam GET /openam/XUI/", "openam POST /openam/json/authenticate");
+        assertThat(trace).anyMatch(line -> line.contains("JavaScript-Weiterleitung erkannt"));
+        assertThat(String.join("\n", trace)).doesNotContain("code=");
+    }
 }

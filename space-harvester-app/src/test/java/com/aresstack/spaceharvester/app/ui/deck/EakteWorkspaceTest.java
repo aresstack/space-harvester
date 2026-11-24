@@ -201,6 +201,26 @@ class EakteWorkspaceTest {
         }
     }
 
+    /** Angelo: nur eine Start-URL; WebDAV und Anmeldedienste füllt das Formular selbst (unter „Erweitert“). */
+    @Test
+    void onlyTheStartUrlIsNeededTheRestIsFilledIn() throws Exception {
+        build(FakeEakteServer.PASSWORD);
+        SwingUtilities.invokeAndWait(() -> {
+            EakteConnectForm form = workspace.form();
+            assertThat(form.start.getText()).as("keine vorbelegte Adresse").isEmpty();
+            form.entries(List.of(ENTRY));
+            form.entry.setSelectedItem(ENTRY);
+            form.start.setText(fake.start().toString());
+            assertThat(form.webdav.getText()).isEqualTo(fake.webdav().toString().replaceAll("/$", ""));
+            assertThat(form.loginHosts.getText()).isNotBlank();
+            form.loginHosts.setText(String.join(", ", fake.loginHosts()));
+            form.submit();
+        });
+        await(() -> onEdt(() -> workspace.selected() != null
+                && workspace.selected().state() == EakteState.CONNECTED), "angemeldet nur mit Start-URL");
+        assertThat(fake.passwordPosts()).isEqualTo(1);
+    }
+
     @Test
     void refusedLoginLocksTheEntryAndNoAutomaticAttemptFollows() throws Exception {
         build("falsch");

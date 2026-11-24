@@ -20,16 +20,6 @@ import java.util.Set;
  */
 public record EakteProfile(URI webdav, URI start, String user, Set<String> loginHosts) {
 
-    /** WebDAV der E-Akte, wie im Testprogramm von Angelo (23.11.2026). */
-    public static final String DEFAULT_WEBDAV = "https://eakte.zoll.in.bund.de/fsc/webdav";
-
-    /**
-     * Startseite aus dem Testprogramm v2.0 (Angelo, 23.11.2026): Über sie lief die Anmeldung auf dem echten System
-     * vollständig durch, danach lieferte PROPFIND sofort 207.
-     */
-    public static final String DEFAULT_START = "https://eakte.zoll.in.bund.de/fsc/fscasp/content/bin/fscvext.dll"
-            + "?bx=COO.7169.100.8.2186717&venv_view=COO.1.1001.1.439101";
-
     /**
      * Die Anmeldedienste aus dem Testprogramm: OpenAM (ZBV) und der Identitätsdienst mit dem Anmeldeformular. Nur sie
      * bekommen Benutzer und Kennwort.
@@ -56,12 +46,6 @@ public record EakteProfile(URI webdav, URI start, String user, Set<String> login
             throw new IllegalArgumentException("Kein Anmeldedienst angegeben");
         }
         loginHosts = Set.copyOf(hosts);
-    }
-
-    /** Mit den Vorgaben für WebDAV, Startseite und Anmeldedienste. */
-    public static EakteProfile withDefaults(String user) {
-        return new EakteProfile(URI.create(DEFAULT_WEBDAV), URI.create(DEFAULT_START), user,
-                Set.copyOf(DEFAULT_LOGIN_HOSTS));
     }
 
     /** Ob {@code target} ein Anmeldedienst ist, der Zugangsdaten bekommen darf (nur über HTTPS, lokal auch HTTP). */

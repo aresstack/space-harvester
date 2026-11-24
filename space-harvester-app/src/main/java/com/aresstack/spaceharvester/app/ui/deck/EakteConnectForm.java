@@ -44,20 +44,25 @@ final class EakteConnectForm extends JPanel {
     static final String USE_PROXY_KEY = "deck.eakte.use-proxy";
 
     final JComboBox<String> entry = Comic.combo();
-    final PlaceholderField webdav = new PlaceholderField(30, EakteProfile.DEFAULT_WEBDAV);
-    final PlaceholderField start = new PlaceholderField(30, "ohne Startseite: Anmeldung über WebDAV");
-    final PlaceholderField loginHosts = new PlaceholderField(30, String.join(", ", EakteProfile.DEFAULT_LOGIN_HOSTS));
+    /** Die eine Adresse, die man sonst im Browser öffnet; alles Weitere ergibt sich aus den Weiterleitungen. */
+    final PlaceholderField start = new PlaceholderField(30, "Adresse, die du sonst im Browser öffnest");
+    /** Erweitert, automatisch aus der Start-URL befüllt ({@code <Server>/fsc/webdav}). */
+    final PlaceholderField webdav = new PlaceholderField(30, "ergibt sich aus der Start-URL");
+    /** Erweitert, automatisch befüllt: wohin Weiterleitungen und Zugangsdaten gehen dürfen. */
+    final PlaceholderField loginHosts = new PlaceholderField(30, "");
     final JCheckBox useProxy = Comic.checkBox("Proxy der App verwenden");
     private final JLabel keePassHint = Comic.muted(" ");
     private final JLabel problem = new JLabel(" ");
     private final JPanel advanced = new JPanel(new GridBagLayout());
-    private final JButton disclosure = Comic.disclosure("Erweitert", "Adressen, Anmeldedienste und Proxy");
+    private final JButton disclosure = Comic.disclosure("Erweitert", "WebDAV-Adresse, Anmeldedienste und Proxy (automatisch befüllt)");
     private final ServerAccounts accounts;
     private final BiConsumer<EakteProfile, char[]> connect;
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton submit;
     private boolean entriesLoaded;
     private Consumer<String> direct;
     private String attemptEntry = "";
+    /** Was zuletzt automatisch in „WebDAV“ stand; hat man es selbst geändert, bleibt es. */
+    private String derivedWebdav = "";
 
     /** @param connect meldet mit Profil und Kennwort an (auf dem EDT); das Kennwort gehört danach dem Empfänger */
     EakteConnectForm(ServerAccounts accounts, BiConsumer<EakteProfile, char[]> connect) {
@@ -71,11 +76,28 @@ final class EakteConnectForm extends JPanel {
         top.setOpaque(false);
         row(top, 0, "KeePass-Eintrag", entry);
         row(top, 1, "", keePassHint);
+        row(top, 2, "Start-URL", start);
         advanced.setOpaque(false);
         row(advanced, 0, "WebDAV", webdav);
-        row(advanced, 1, "Startseite", start);
-        row(advanced, 2, "Anmeldedienste", loginHosts);
-        row(advanced, 3, "", useProxy);
+        row(advanced, 1, "Anmeldedienste", loginHosts);
+        row(advanced, 2, "", useProxy);
+        loginHosts.setText(String.join(", ", EakteProfile.DEFAULT_LOGIN_HOSTS));
+        start.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                deriveWebdav();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                deriveWebdav();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                deriveWebdav();
+            }
+        });
         advanced.setVisible(false);
         disclosure.addActionListener(e -> {
             boolean open = !Comic.disclosed(disclosure);
@@ -89,6 +111,7 @@ final class EakteConnectForm extends JPanel {
         submit = Comic.primary("Verbinden", "An der E-Akte anmelden (Eingabe)");
         submit.addActionListener(e -> submit());
         entry.getEditor().addActionListener(e -> submit());
+        start.addActionListener(e -> submit());
 
         JPanel body = new JPanel();
         body.setOpaque(false);
@@ -111,7 +134,8 @@ final class EakteConnectForm extends JPanel {
 
     /** Ob ohne Formular verbunden werden darf: Es gibt einen eigenen gemerkten KeePass-Eintrag der E-Akte. */
     static boolean isConfigured() {
-        return !savedEntry().isEmpty();
+        String start = AppState.shared().get(START_KEY);
+        return !savedEntry().isEmpty() && start != null && !start.isBlank();
     }
 
     /** Der eigene KeePass-Eintrag der E-Akte; nie der von Terminal, FTP oder NDV. */
@@ -221,17 +245,42 @@ final class EakteConnectForm extends JPanel {
         entry.requestFocusInWindow();
     }
 
-    private EakteProfile profile(String user) {
-        URI webdavUri = EakteProfile.normaliseWebdav(webdav.getText().isBlank() ? EakteProfile.DEFAULT_WEBDAV
-                : webdav.getText());
-        URI startUri = null;
-        if (!start.getText().isBlank()) {
-            try {
-                startUri = URI.create(start.getText().strip());
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("Startseite: keine gültige Adresse");
+    /** {@code <Schema>://<Server>/fsc/webdav} aus der Start-URL, leer wenn sie (noch) keine Adresse ist. */
+    static String webdavFor(String startText) {
+        try {
+            URI uri = URI.create(startText.strip());
+            if (uri.getScheme() == null || uri.getRawAuthority() == null) {
+                return "";
             }
+            return uri.getScheme() + "://" + uri.getRawAuthority() + "/fsc/webdav";
+        } catch (IllegalArgumentException e) {
+            return "";
         }
+    }
+
+    private void deriveWebdav() {
+        String next = webdavFor(start.getText());
+        if (webdav.getText().isBlank() || webdav.getText().strip().equals(derivedWebdav)) {
+            webdav.setText(next);
+        }
+        derivedWebdav = next;
+    }
+
+    private EakteProfile profile(String user) {
+        if (start.getText().isBlank()) {
+            throw new IllegalArgumentException("Start-URL fehlt: die Adresse, die du sonst im Browser öffnest");
+        }
+        URI startUri;
+        try {
+            startUri = URI.create(start.getText().strip());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Start-URL: keine gültige Adresse");
+        }
+        String webdavText = webdav.getText().isBlank() ? webdavFor(start.getText()) : webdav.getText();
+        if (webdavText.isBlank()) {
+            throw new IllegalArgumentException("Start-URL: keine gültige Adresse");
+        }
+        URI webdavUri = EakteProfile.normaliseWebdav(webdavText);
         Set<String> hosts = new LinkedHashSet<>();
         String typedHosts = loginHosts.getText().isBlank() ? String.join(",", EakteProfile.DEFAULT_LOGIN_HOSTS)
                 : loginHosts.getText();
@@ -256,10 +305,11 @@ final class EakteConnectForm extends JPanel {
             entry.addItem(title);
             entry.setSelectedItem(title);
         }
-        webdav.setText(value(state.get(WEBDAV_KEY), ""));
-        // Noch nie verbunden: die Startseite aus dem Testprogramm, über die die Anmeldung belegt durchlief.
-        start.setText(value(state.get(START_KEY), EakteProfile.DEFAULT_START));
-        loginHosts.setText(value(state.get(LOGIN_HOSTS_KEY), ""));
+        start.setText(value(state.get(START_KEY), ""));
+        String savedWebdav = value(state.get(WEBDAV_KEY), "");
+        webdav.setText(savedWebdav.isBlank() ? webdavFor(start.getText()) : savedWebdav);
+        String savedHosts = value(state.get(LOGIN_HOSTS_KEY), "");
+        loginHosts.setText(savedHosts.isBlank() ? String.join(", ", EakteProfile.DEFAULT_LOGIN_HOSTS) : savedHosts);
         useProxy.setSelected(proxyWanted());
     }
 

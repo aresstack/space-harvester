@@ -27,9 +27,9 @@ import org.jsoup.nodes.Document;
  * diese beantwortet, ebenfalls höchstens einmal. Zugangsdaten gehen nur an Hosts aus
  * {@link com.aresstack.spaceharvester.deck.eakte.EakteProfile#loginHosts()}.
  *
- * <p>Die JavaScript-Zwischenseiten von OpenAM ({@code /openam/}, {@code UI/Login}, {@code XUI/}) werden nicht geladen:
- * Sie setzen laut Protokoll des Testprogramms keine Cookies (Zahl bleibt gleich) und dienen nur dazu, {@code code} und
- * {@code state} weiterzureichen.
+ * <p>Nach dem Identitätsdienst geht es wie in v2.0 weiter: {@code /openam/?code…} liefert die feste Startseite
+ * „Please Wait While Redirecting to Login page“, deren Skript {@code UI/Login} mit derselben Abfrage lädt
+ * ({@link #landingRedirect}); das leitet zu {@code XUI/}, und dort wird der REST-Schritt fortgesetzt.
  */
 final class OpenAmLogin {
 
@@ -143,14 +143,10 @@ final class OpenAmLogin {
         SsoHttp.Response response = http.get(current);
         for (int step2 = 1; step2 <= MAX_STEPS; step2++) {
             if (response.redirect()) {
-                URI next = response.next();
-                if (returnsToOpenAm(api, next)) {
-                    resume(api, step, next);
-                    return;
-                }
-                response = http.get(next);
+                response = http.get(response.next());
                 continue;
             }
+            // Wie das Testprogramm v2.0: erst auf /openam/XUI/ mit code/state den REST-Schritt fortsetzen.
             if (returnsToOpenAm(api, response.uri())) {
                 resume(api, step, response.uri());
                 return;
@@ -164,6 +160,13 @@ final class OpenAmLogin {
                 throw new IOException("Identitätsdienst liefert keine Seite (" + response.contentType() + ")");
             }
             Document page = SsoPages.parse(response);
+            URI scripted = landingRedirect(api, response.uri(), page);
+            if (scripted != null) {
+                http.trace("OpenAM-Startseite: dokumentierte JavaScript-Weiterleitung erkannt; übernehme die "
+                        + "Rückgabeparameter unverändert an " + SsoHttp.safe(scripted) + " (Werte verborgen)");
+                response = http.get(scripted);
+                continue;
+            }
             var form = SsoPages.login(page);
             if (form.isEmpty()) {
                 throw new IOException("Unerwartete Seite des Identitätsdienstes: „" + SsoPages.title(page) + "“ auf "
@@ -235,9 +238,40 @@ final class OpenAmLogin {
         }
     }
 
+    /** Die Rückkehr vom Identitätsdienst, wie v2.0 sie erkennt: {@code <Kontext>/XUI/} bei OpenAM mit code/state. */
     private boolean returnsToOpenAm(URI api, URI target) {
-        return origin(target).equalsIgnoreCase(origin(api)) && query(target, "code") != null
-                && query(target, "state") != null;
+        return origin(target).equalsIgnoreCase(origin(api))
+                && (context(api) + "/XUI/").equals(target.getRawPath())
+                && query(target, "code") != null && query(target, "state") != null;
+    }
+
+    /**
+     * Die feste Startseite von OpenAM nach der Rückkehr vom Identitätsdienst („Please Wait While Redirecting to Login
+     * page“), wie in v2.0 ({@code OpenAmJavascriptRedirect}): nur genau diese Vorlage wird gedeutet, kein JavaScript
+     * ausgeführt. Ihr Skript lädt {@code UI/Login} mit derselben Abfrage; das Ergebnis ist diese Adresse oder
+     * {@code null}.
+     */
+    static URI landingRedirect(URI api, URI current, Document page) {
+        if (!origin(current).equalsIgnoreCase(origin(api)) || !(context(api) + "/").equals(current.getRawPath())
+                || !"Please Wait While Redirecting to Login page".equalsIgnoreCase(SsoPages.title(page).strip())) {
+            return null;
+        }
+        String html = page.html();
+        if (!html.contains("redirectToAuth") || !html.contains("getQueryParameters")
+                || !html.contains("top.location.replace(url)")
+                || !html.matches("(?s).*\\bvar\\s+url\\s*=\\s*['\"]UI/Login['\"].*")) {
+            return null;
+        }
+        String rawQuery = current.getRawQuery();
+        if (rawQuery == null || rawQuery.isEmpty() || isBlank(query(current, "code"))
+                || isBlank(query(current, "state"))) {
+            return null;
+        }
+        return URI.create(origin(current) + context(api) + "/UI/Login?" + rawQuery);
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isEmpty();
     }
 
     @SuppressWarnings("unchecked")
@@ -256,8 +290,16 @@ final class OpenAmLogin {
         return false;
     }
 
+    /**
+     * Schema, Host und Port ohne Standardport: {@code https://host:443} und {@code https://host} sind derselbe Server.
+     * (Die Zwischenseite nennt {@code loginUrl} mit {@code :443}, der Identitätsdienst leitet ohne Port zurück; v2.0
+     * baut die REST-Adresse deshalb ohne Port.)
+     */
     static String origin(URI uri) {
-        return uri.getScheme() + "://" + uri.getRawAuthority();
+        String scheme = uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        int port = uri.getPort();
+        boolean standard = port < 0 || ("https".equals(scheme) && port == 443) || ("http".equals(scheme) && port == 80);
+        return scheme + "://" + uri.getHost().toLowerCase(java.util.Locale.ROOT) + (standard ? "" : ":" + port);
     }
 
     /** Der Kontextpfad von OpenAM: der erste Abschnitt des Pfads, etwa {@code /openam}. */

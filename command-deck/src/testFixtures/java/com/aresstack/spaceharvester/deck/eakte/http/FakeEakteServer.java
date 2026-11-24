@@ -354,6 +354,16 @@ public final class FakeEakteServer implements AutoCloseable {
             authenticate(exchange, query);
             return;
         }
+        if (path.equals("/openam/")) {
+            // Die feste Startseite von OpenAM nach der Rückkehr vom Identitätsdienst (wie im Selbsttest von v2.0).
+            send(exchange, 200, "text/html", "<html><head><title>Please Wait While Redirecting to Login page</title>"
+                    + "<script>function redirectToAuth(){ var params=getQueryParameters(); "
+                    + "var url = 'UI/Login'; if(params != ''){url += params;} "
+                    + "top.location.replace(url); } "
+                    + "function getQueryParameters() {return location.search;}</script></head>"
+                    + "<body onLoad='redirectToAuth();'></body></html>");
+            return;
+        }
         if (path.equals("/openam/UI/Login")) {
             redirect(exchange, base(idp) + "/openam/XUI/?" + uri.getRawQuery());
             return;
