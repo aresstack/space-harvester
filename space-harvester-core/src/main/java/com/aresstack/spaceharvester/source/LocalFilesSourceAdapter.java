@@ -5,10 +5,13 @@ import com.aresstack.enterpriseai.astu.source.SourceSettingField;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
+import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.SourceSettingsReader;
 import com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.sources.SourceField;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,7 +24,8 @@ import java.util.function.Supplier;
  * Quellentyp {@code files}: ein lokales Verzeichnis über {@code LocalFilesSourceProvider} aus
  * {@code enterprise-ai-sources} (#18). Eine Partition je Quelle (Schlüssel = Quellen-ID), darin alle lesbaren
  * Dokumente nach relativem Pfad; die Seiten-ID ist der relative Pfad als Base64url, der Inhalt die Datei Byte für
- * Byte. Ohne Netz, Anmeldung und Zertifikat.
+ * Byte. Ohne Netz, Anmeldung und Zertifikat. Die Unterordner stehen als eigene Einträge mit Elternverweis darin
+ * ({@link LocalFolderHierarchy}), damit der Seitenbaum die Ordnergliederung zeigt.
  *
  * <p>Erkennung und Extraktion wie im Enterprise AI Client (#183): {@link DocumentExtraction#detector()} (Endung, sonst
  * Apache Tika am Inhalt) und {@link DocumentExtraction#registry()} (Markdown, Klartext, sonst Tika für PDF, Office,
@@ -127,7 +131,11 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
     @Override
     public OpenedSource open(SourceSettingsConfig config, Context context) {
         try {
-            return new OpenedSource(provider.open(SourceAddress.of(config.id()), settings(config)), null);
+            SourceSettings settings = settings(config);
+            KnowledgeSourcePort files = provider.open(SourceAddress.of(config.id()), settings);
+            // Dasselbe Verzeichnis wie in der Quelle, mit demselben Leser bestimmt.
+            Path root = new SourceSettingsReader(provider.type(), settings).path("directory", null);
+            return new OpenedSource(new LocalFolderHierarchy(files, root), null);
         } catch (IllegalArgumentException e) {
             throw new InvalidSourceConfigurationException(List.of(e.getMessage()));
         }
