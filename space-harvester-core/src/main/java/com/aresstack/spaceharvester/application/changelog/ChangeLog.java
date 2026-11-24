@@ -65,6 +65,11 @@ public final class ChangeLog implements AutoCloseable {
     private volatile ZoneId days;
     /** Hält „schon offen?“ und Einreihen von „Zusammenfassen“ zusammen. */
     private final Object summarizing = new Object();
+    /** Bestand für Bereichszusammenfassungen ({@link #areas}); {@code null} ohne. */
+    private volatile com.aresstack.spaceharvester.application.holdings.Holdings holdings;
+    /** Seitenbudget der Bereichszusammenfassung, gelesen beim Start jedes Laufs. */
+    private volatile java.util.function.IntSupplier areaPages =
+            () -> com.aresstack.spaceharvester.application.configuration.ChangeLogSettings.DEFAULT_AREA_PAGES;
     /** Entscheidungen „Erstbefüllung“ je Quelle, Marke und Seitenzahl; ändern sich erst mit neuen Seiten. */
     private final Map<String, Boolean> inventories = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -103,6 +108,13 @@ public final class ChangeLog implements AutoCloseable {
     public static final String UPDATE_PARAMETER = "update";
     /** Parameter des Auftrags {@link JobType#UPDATE_SUMMARY}: Space der Ebene, fehlt für die ganze Quelle. */
     public static final String SPACE_PARAMETER = "space";
+    /**
+     * Parameter des Auftrags „Zusammenfassen“ eines Bereichs (Bestand einer Auswahl, ADR 0034 §7): der Schlüssel seines
+     * Platzes ({@link SummaryScope#key()}); fehlt bei Updates.
+     */
+    public static final String AREA_PARAMETER = "summary.area";
+    /** Fassung des Stands einer Bereichszusammenfassung; eine neue Fassung macht alle abgelegten veraltet. */
+    static final String AREA_STATE_VERSION = "area-summary-v1";
     /** Parameter eines Unterauftrags von „Zusammenfassen“: die ID des Oberauftrags (Angelo 22.11.2026). */
     public static final String PARENT_PARAMETER = "summary.parent";
     /** Parameter eines Unterauftrags von „Zusammenfassen“: sein Schritt, etwa „Teil 2 von 5“. */
@@ -672,6 +684,193 @@ public final class ChangeLog implements AutoCloseable {
         return state.toString();
     }
 
+    // --- Bereichszusammenfassung (ADR 0034 §7, Paket 4b; Angelo 24.11.2026: „Änderungen | Bereich“) -----------------
+
+    /**
+     * Schaltet Bereichszusammenfassungen ein: Bestand einer Auswahl statt Änderungen eines Updates.
+     *
+     * @param holdings  löst die Auswahl nachsichtig zu Seiten auf und liefert den Fingerabdruck für „veraltet“
+     * @param areaPages Seitenbudget ({@code space-harvester.cache.change-log.area-pages}), je Lauf gelesen
+     * @return dieses Protokoll
+     */
+    public ChangeLog areas(com.aresstack.spaceharvester.application.holdings.Holdings holdings,
+                           java.util.function.IntSupplier areaPages) {
+        this.holdings = Objects.requireNonNull(holdings, "holdings");
+        this.areaPages = Objects.requireNonNull(areaPages, "areaPages");
+        return this;
+    }
+
+    /** Ob Bereichszusammenfassungen gehen: Chat-Modell eingestellt und Bestand angeschlossen. */
+    public boolean areasAvailable() {
+        return holdings != null && summariesAvailable();
+    }
+
+    /**
+     * Die Bereichszusammenfassung einer Auswahl (etwa einer Quelle oder eines Space), wie der Aufrufer sie sehen darf;
+     * leer, wenn keine erstellt ist, wenn eine eingegangene Seite die KI-Freigabe verloren hat oder der Aufrufer nicht
+     * alle eingegangenen Seiten sehen darf. Sie liegt je Aufrufer ({@link SummaryScope#selection}). {@code stale}, wenn
+     * sich der Bestand der Auswahl seither geändert hat; neu erstellt wird sie dann nur auf Wunsch.
+     *
+     * @throws IllegalStateException  ohne angeschlossenen Bestand ({@link #areas})
+     * @throws UnknownSourceException wenn die erste Quelle der Auswahl nicht konfiguriert ist
+     */
+    public Optional<UpdateSummary> areaSummary(AccessContext caller,
+                                               com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        com.aresstack.spaceharvester.application.holdings.Holdings stock = requireAreas();
+        String sourceId = selection.roots().getFirst().sourceId();
+        requireReadable(caller, sourceId);
+        SummaryScope.Selected scope = SummaryScope.selection(caller, selection);
+        Visibility visible = new Visibility(caller);
+        Optional<StoredSummary> stored = store.summary(scope).filter(found -> valid(found, visible));
+        if (stored.isEmpty()) {
+            return Optional.empty();
+        }
+        Map<PageKey, String> aliases = ThematicSummarizer.aliases(stored.get().inputPages().stream()
+                .map(page -> new PageKey(page.sourceIdOr(sourceId), page.pageId())).toList());
+        Map<String, StoredSummary.InputPage> byAlias = new HashMap<>();
+        for (StoredSummary.InputPage page : stored.get().inputPages()) {
+            byAlias.put(aliases.get(new PageKey(page.sourceIdOr(sourceId), page.pageId())), page);
+        }
+        List<SummaryStatement> statements = new ArrayList<>();
+        Map<String, Map<String, String>> pageSpaces = new TreeMap<>();
+        for (StoredSummary.Statement statement : stored.get().statements()) {
+            List<SummaryPage> pages = new ArrayList<>();
+            for (String alias : statement.pageIds()) {
+                StoredSummary.InputPage input = byAlias.get(alias);
+                String pageSource = input == null ? sourceId : input.sourceIdOr(sourceId);
+                String pageId = input == null ? alias : input.pageId();
+                String spaceKey = input == null ? null : input.spaceKey();
+                String title = headers.apply(new PageKey(pageSource, pageId)).map(found -> found.metadata().title())
+                        .orElse(null);
+                pages.add(new SummaryPage(pageId, title, spaceKey));
+                pageSpaces.computeIfAbsent(pageSource, ignored -> new HashMap<>()).put(pageId, spaceKey);
+            }
+            statements.add(new SummaryStatement(statement.text(), pages, statement.title(), statement.details()));
+        }
+        Map<String, String> spaceNames = new HashMap<>();
+        pageSpaces.forEach((source, spaces) -> spaceNames.putAll(spaceNames(source, spaces)));
+        boolean stale = !areaState(caller, stock, selection).equals(stored.get().reportSha256());
+        return Optional.of(new UpdateSummary(sourceId, UpdateSummary.AREA, areaSpace(selection), stored.get().text(),
+                statements, stored.get().model(), stored.get().createdAt(), stored.get().unreadableChanges(), stale,
+                spaceNames, scope.key()));
+    }
+
+    /**
+     * Startet „Zusammenfassen“ für den Bestand einer Auswahl als Auftrag; die vorige Zusammenfassung desselben Platzes
+     * wird ersetzt. Das Ergebnis meldet {@link #subscribe} für jede Quelle der Auswahl.
+     *
+     * @param interactive ein Klick auf „Zusammenfassen“ ({@link Jobs#submitInteractive}); {@code false} für den Lauf, den
+     *                    die Ansicht beim Öffnen selbst anstößt (ADR 0034 §7)
+     * @return der neue Auftrag; wartet oder läuft für diesen Platz schon einer (ohne angeforderten Abbruch), dieser
+     * @throws IllegalStateException       ohne angeschlossenen Bestand ({@link #areas})
+     * @throws SummaryUnavailableException ohne Modell oder wenn die Auswahl keine Seite hat
+     */
+    public JobStatus summarizeArea(AccessContext caller,
+                                   com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                   boolean interactive) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        com.aresstack.spaceharvester.application.holdings.Holdings stock = requireAreas();
+        String sourceId = selection.roots().getFirst().sourceId();
+        requireReadable(caller, sourceId);
+        if (!summariesAvailable()) {
+            throw new SummaryUnavailableException(SummaryUnavailableException.Reason.NO_MODEL, sourceId);
+        }
+        // Leerer Bereich: Hinweis, kein Modellaufruf (ADR 0034 §7).
+        if (stock.resolveLenient(caller, selection).selection().unlockedSize() == 0) {
+            throw new SummaryUnavailableException(SummaryUnavailableException.Reason.EMPTY_AREA, sourceId);
+        }
+        Summaries runtime = summaries;
+        SummaryScope.Selected scope = SummaryScope.selection(caller, selection);
+        String spaceKey = areaSpace(selection);
+        Map<String, String> parameters = Map.of(AREA_PARAMETER, scope.key());
+        synchronized (summarizing) {
+            for (JobStatus open : runtime.jobs().listAll(JobType.UPDATE_SUMMARY)) {
+                if (!open.state().terminal() && !open.cancelRequested()
+                        && scope.key().equals(open.parameters().get(AREA_PARAMETER))) {
+                    return open;
+                }
+            }
+            com.aresstack.spaceharvester.application.jobs.JobTask task = JobTask.blocking(context -> {
+                Visibility visible = new Visibility(caller);
+                com.aresstack.spaceharvester.application.holdings.Holdings.Lenient resolved =
+                        stock.resolveLenient(caller, selection);
+                List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots =
+                        new ArrayList<>(selection.roots());
+                roots.removeAll(resolved.skippedRoots());
+                List<com.aresstack.spaceharvester.application.holdings.Holdings.StoredPage> stored = roots.isEmpty()
+                        ? List.of() : stock.storedPages(caller,
+                        new com.aresstack.spaceharvester.application.holdings.Selection(roots));
+                List<AreaSummarizer.Page> pages = new ArrayList<>(stored.size());
+                Map<String, Map<String, String>> pageSpaces = new TreeMap<>();
+                for (com.aresstack.spaceharvester.application.holdings.Holdings.StoredPage page : stored) {
+                    PageKey key = page.key();
+                    String title = headers.apply(key).map(found -> found.metadata().title()).orElse(null);
+                    pages.add(new AreaSummarizer.Page(key, page.spaceKey(), title,
+                            ancestors(visible, runtime.released(), key.sourceId(), key.pageId())));
+                    pageSpaces.computeIfAbsent(key.sourceId(), ignored -> new LinkedHashMap<>())
+                            .put(key.pageId(), page.spaceKey());
+                }
+                Map<String, String> names = new HashMap<>();
+                pageSpaces.forEach((source, spaces) -> names.putAll(spaceNames(source, spaces)));
+                Function<AreaSummarizer.Page, Optional<String>> text = page -> {
+                    if (!access.permits(caller, ResourceScope.page(page.page().sourceId(), page.spaceKey(),
+                            page.page().pageId()), AccessKind.CONTENT)) {
+                        return Optional.empty();
+                    }
+                    try {
+                        return runtime.material().text(page.page());
+                    } catch (RuntimeException e) {
+                        return Optional.empty();
+                    }
+                };
+                // Was nur aus der Quelle bekannt ist (kein gespeicherter Inhalt), zählt als nicht lesbar.
+                int unstored = Math.max(0, resolved.selection().unlockedSize() - stored.size());
+                String state = areaState(caller, stock, selection);
+                ThematicSummarizer.Result result = new AreaSummarizer(runtime.model(), runtime.released(),
+                        new SummaryChildJobs(runtime.jobs(), runtime.model(), runtime.clock(), JobType.UPDATE_SUMMARY,
+                                context.jobId(), sourceId, spaceKey, caller.jobOwner()), runtime.planner())
+                        .summarize(pages, text, names, Math.max(1, areaPages.getAsInt()), unstored, context);
+                Instant now = runtime.clock().instant();
+                store.saveSummary(new StoredSummary(scope.key(), SummaryScope.Selected.STORED_UPDATE, null,
+                        result.text(), result.statements(), runtime.model().version(), now, now, result.unreadable(),
+                        state + (result.lost() > 0 ? "+unvollstaendig:" + result.lost() : ""), result.inputPages(),
+                        null));
+                // Die Ablage meldet den Platz; die Ansichten hören auf ihre Quellen.
+                selection.roots().stream().map(com.aresstack.spaceharvester.application.holdings.Selection.Root
+                        ::sourceId).distinct().forEach(coalescer::mark);
+                context.written(1);
+            });
+            return interactive
+                    ? runtime.jobs().submitInteractive(JobType.UPDATE_SUMMARY, sourceId, spaceKey, null,
+                    caller.jobOwner(), parameters, task)
+                    : runtime.jobs().submit(JobType.UPDATE_SUMMARY, sourceId, spaceKey, null, caller.jobOwner(),
+                    parameters, task);
+        }
+    }
+
+    /** Der Space einer Auswahl aus einer Wurzel mit Space, sonst {@code null} (ganze Quelle oder mehrere Wurzeln). */
+    private static String areaSpace(com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return selection.roots().size() == 1 ? selection.roots().getFirst().spaceKey() : null;
+    }
+
+    /** Stand des Bestands einer Auswahl für „veraltet“: Fassung, Budget und Fingerabdruck des Katalogs. */
+    private String areaState(AccessContext caller, com.aresstack.spaceharvester.application.holdings.Holdings stock,
+                             com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return AREA_STATE_VERSION + '|' + Math.max(1, areaPages.getAsInt()) + '|'
+                + stock.fingerprint(caller, stock.resolveLenient(caller, selection).selection());
+    }
+
+    private com.aresstack.spaceharvester.application.holdings.Holdings requireAreas() {
+        com.aresstack.spaceharvester.application.holdings.Holdings stock = holdings;
+        if (stock == null) {
+            throw new IllegalStateException("Bereichszusammenfassungen sind nicht angeschlossen");
+        }
+        return stock;
+    }
+
     /**
      * Verlieren Seiten die KI-Freigabe (ADR 0028), entfallen die Zusammenfassungen, in die eine von ihnen einging; die
      * Quelle wird danach gemeldet.
@@ -898,8 +1097,11 @@ public final class ChangeLog implements AutoCloseable {
         if (summaries == null || sourceId == null || pageId == null) {
             return List.of();
         }
-        Visibility visible = new Visibility(caller);
-        Predicate<PageKey> released = summaries.released();
+        return ancestors(new Visibility(caller), summaries.released(), sourceId, pageId);
+    }
+
+    /** Wie {@link #ancestors(AccessContext, String, String)} mit gegebenen Rechten und Freigabe. */
+    private List<String> ancestors(Visibility visible, Predicate<PageKey> released, String sourceId, String pageId) {
         List<String> path = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         String parent = headers.apply(new PageKey(sourceId, pageId)).map(found -> found.metadata().parentPageId())

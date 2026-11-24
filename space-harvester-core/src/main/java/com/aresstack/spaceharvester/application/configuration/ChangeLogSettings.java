@@ -18,13 +18,23 @@ import java.util.regex.Pattern;
  * anzeigen“ (Abschnitt 6, Standard aus): Sie öffnet nach einem Update die Updates der Quelle und erstellt nie von selbst
  * eine Zusammenfassung.
  *
+ * <p>Und unter {@code space-harvester.cache.change-log.area-pages} das Seitenbudget der Bereichszusammenfassung (ADR
+ * 0034 §7, „Bestand einer Auswahl“; Angelo 24.11.2026: Umschalter „Änderungen | Bereich“): höchstens so viele Seiten
+ * gehen mit Auszug an das Modell, weitere nur als Zahl.
+ *
  * @param retention       wie lange Zeilen bleiben; {@code null} heißt unbegrenzt
  * @param showAfterUpdate ob die App nach einem Update die Updates der Quelle öffnet
+ * @param areaPages       Seitenbudget der Bereichszusammenfassung, mindestens 1
  */
-public record ChangeLogSettings(Duration retention, boolean showAfterUpdate) {
+public record ChangeLogSettings(Duration retention, boolean showAfterUpdate, int areaPages) {
 
     public static final String RETENTION = "cache.change-log.retention";
     public static final String SHOW_AFTER_UPDATE = "cache.change-log.show-after-update";
+    public static final String AREA_PAGES = "cache.change-log.area-pages";
+    /** Vorgabe des Seitenbudgets der Bereichszusammenfassung, wenn die YAML nichts sagt. */
+    public static final int DEFAULT_AREA_PAGES = 300;
+    /** Obergrenze, die die Einstellungen anbieten; die YAML darf mehr. */
+    public static final int MAX_AREA_PAGES_OFFERED = 5_000;
     /** Ein Jahr (Angelo 16.11.2026), als 365 Tage. */
     public static final Duration DEFAULT_RETENTION = Duration.ofDays(365);
     public static final ChangeLogSettings DEFAULT = new ChangeLogSettings(DEFAULT_RETENTION);
@@ -37,16 +47,29 @@ public record ChangeLogSettings(Duration retention, boolean showAfterUpdate) {
         this(retention, false);
     }
 
+    /** Mit der Vorgabe des Seitenbudgets. */
+    public ChangeLogSettings(Duration retention, boolean showAfterUpdate) {
+        this(retention, showAfterUpdate, DEFAULT_AREA_PAGES);
+    }
+
     public ChangeLogSettings {
         if (retention != null && retention.isNegative()) {
             throw new IllegalArgumentException("Die Aufbewahrung darf nicht negativ sein (0 = unbegrenzt)");
+        }
+        if (areaPages < 1) {
+            throw new IllegalArgumentException("Das Seitenbudget der Bereichszusammenfassung muss mindestens 1 sein");
         }
         retention = retention == null || retention.isZero() ? null : retention;
     }
 
     /** Dieselbe Aufbewahrung mit {@code value} für „Nach dem Update Änderungen anzeigen“. */
     public ChangeLogSettings withShowAfterUpdate(boolean value) {
-        return new ChangeLogSettings(retention, value);
+        return new ChangeLogSettings(retention, value, areaPages);
+    }
+
+    /** Dieselben Werte mit dem Seitenbudget {@code value} der Bereichszusammenfassung. */
+    public ChangeLogSettings withAreaPages(int value) {
+        return new ChangeLogSettings(retention, showAfterUpdate, value);
     }
 
     /** Ob nichts aufgeräumt wird. */

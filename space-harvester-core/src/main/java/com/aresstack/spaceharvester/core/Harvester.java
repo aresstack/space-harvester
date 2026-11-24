@@ -1093,7 +1093,13 @@ public final class Harvester implements AutoCloseable {
                             ChatUpdateSummaryModel.plan(() -> liveAi ? this.settings.ai() : startAi, catalog,
                                     trustBundles, builder.userAgent)))
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
-                    .perDay(java.time.ZoneId.systemDefault());
+                    .perDay(java.time.ZoneId.systemDefault())
+                    // Bereichszusammenfassung (ADR 0034 §7, Angelo 24.11.2026): Bestand statt Änderungen, mit dem
+                    // Seitenbudget aus der YAML, je Lauf gelesen.
+                    .areas(holdings, () -> {
+                        HarvesterConfiguration current = this.settings;
+                        return (current != null ? current.changeLog() : ChangeLogSettings.DEFAULT).areaPages();
+                    });
             opened.add(changeLog);
             // Podcast der Update-Zusammenfassung (Angelo 21.11.2026): Plan und Texte über ai.chat-model, Audio über die
             // TTS-Modelle des Dienstes; Ablage unter data/podcasts, damit ein neuer Lauf dort weitermacht.
