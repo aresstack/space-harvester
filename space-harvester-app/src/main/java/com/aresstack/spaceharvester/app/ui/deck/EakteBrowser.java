@@ -7,6 +7,9 @@ import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.SaveChooser;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
+import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
 import com.aresstack.spaceharvester.app.ui.extraction.ExtractionView;
 import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider;
@@ -45,15 +48,11 @@ import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JPanel;
 import javax.swing.JSplitPane;
-import javax.swing.JTable;
 import javax.swing.JTree;
 import javax.swing.KeyStroke;
-import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
 import javax.swing.event.TreeExpansionEvent;
 import javax.swing.event.TreeWillExpandListener;
-import javax.swing.table.AbstractTableModel;
-import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.DefaultTreeModel;
@@ -61,11 +60,11 @@ import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
 
 /**
- * Eine E-Akte-Sitzung, nur lesend: links die Mappen als Baum (eine Mappe wird erst beim Aufklappen oder Wählen mit
- * {@code PROPFIND Depth: 1} gelesen, nie die ganze E-Akte), rechts der Inhalt der gewählten Mappe als Tabelle (Name,
- * Typ, Größe, Geändert; nur was der Server liefert), darunter die Vorschau mit den Viewern der App (wie im Bereich
- * Dateien: PDF, Word, Outlook-Nachricht … als Text). Aktionen in der Fußleiste des Deck ({@link #footTools()}), Stand und
- * Fehler in der Statuszeile der App; ein Fehler leert die Tabelle nie stillschweigend zu „leer“, er steht als Fehler da.
+ * Eine E-Akte-Sitzung, nur lesend: links der Baum mit Mappen und Dokumenten (eine Mappe wird erst beim Aufklappen oder
+ * Wählen mit {@code PROPFIND Depth: 1} gelesen, nie die ganze E-Akte), rechts auf ganzer Fläche das gewählte Dokument
+ * mit den Viewern der App (wie im Bereich Dateien: PDF, Word, Outlook-Nachricht …). Keine zweite Liste neben dem Baum
+ * (Angelo 24.11.): Typ, Größe, Datum stehen im Tooltip. Aktionen in der Fußleiste des Deck ({@link #footTools()}), Stand
+ * und Fehler in der Statuszeile der App; ein Fehler wird nie stillschweigend zu „leer“, er steht als Fehler da.
  * Kennung jedes Eintrags ist das vom Server gelieferte {@code DAV:href}, nie ein Name.
  *
  * <p>Zum gezeigten Dokument gibt es zwei Sichten, umgeschaltet über „Vorschau | Extraktion“ in der Titelleiste
@@ -79,7 +78,9 @@ final class EakteBrowser extends JPanel {
     private static final String READ_ONLY = "nur lesen";
     private static final String NO_PREVIEW = "keine";
     private static final String EXTRACTION_CARD = "extraktion";
+    private static final String VIEWER_CARD = "viewer";
     static final String PREVIEW = "Vorschau";
+    static final String TEXT = "Text";
     static final String EXTRACTION = "Extraktion";
     /** Herkunft der Dokumentreferenzen der Extraktion. */
     static final String ORIGIN = "eakte";
@@ -90,11 +91,10 @@ final class EakteBrowser extends JPanel {
     private final Folder root = new Folder(null, "E-Akte (" + READ_ONLY + ")");
     private final DefaultTreeModel treeModel = new DefaultTreeModel(root, true);
     private final JTree tree = new JTree(treeModel);
-    private final Model model = new Model();
-    private final JTable table = Comic.table(new JTable(model));
     private final CardLayout previewCards = new CardLayout();
     private final JPanel previewStage = new JPanel(previewCards);
-    private final JSplitPane right;
+    /** Kurz warten, bevor ein gewähltes Dokument geladen wird (Pfeiltasten durch den Baum laden nicht alles). */
+    private final javax.swing.Timer previewDelay = new javax.swing.Timer(250, e -> previewSelected());
     private final JPanel footTools;
     /** Was die Mappen zuletzt enthielten ({@code DAV:href} → Einträge); Aktualisieren liest neu. */
     private final Map<String, List<EakteEntry>> listing = new HashMap<>();
@@ -102,6 +102,8 @@ final class EakteBrowser extends JPanel {
     private Consumer<StatusNote> status = note -> { };
     private StatusNote current = StatusNote.plain(" ");
     private EditorSession shownPreview;
+    /** Das gezeigte Dokument formatiert, mit den Anhang-Viewern der Leseansicht (Jira, Confluence): PDF, Word, … */
+    private AttachmentViewerPanel viewer;
     private final SegmentedToggle viewToggle = new SegmentedToggle();
     private final ExtractionView extraction = new ExtractionView(DocumentAnalysisProvider.NONE);
     private Path temp;
@@ -137,33 +139,21 @@ final class EakteBrowser extends JPanel {
             public void treeWillCollapse(TreeExpansionEvent event) {
             }
         });
-        tree.addTreeSelectionListener(event -> folderChosen());
+        tree.addTreeSelectionListener(event -> selectionChanged());
         bind(tree, "BACK_SPACE", "up", this::up);
-
-        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        table.getColumnModel().getColumn(0).setPreferredWidth(380);
-        table.getColumnModel().getColumn(1).setPreferredWidth(150);
-        table.getColumnModel().getColumn(0).setCellRenderer(new NameRenderer());
-        table.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
-                    openSelected();
-                }
-            }
-        });
-        bind(table, "ENTER", "open", this::openSelected);
-        bind(table, "BACK_SPACE", "up", this::up);
-        table.getAccessibleContext().setAccessibleName("Inhalt der Mappe");
+        bind(tree, "ENTER", "open", this::openSelected);
+        previewDelay.setRepeats(false);
 
         previewStage.setOpaque(false);
-        JPanel none = new JPanel();
+        JPanel none = new JPanel(new java.awt.GridBagLayout());
         none.setOpaque(false);
+        none.add(Comic.muted("Dokument im Baum wählen, es erscheint hier"));
         previewStage.add(none, NO_PREVIEW);
         previewStage.add(extraction, EXTRACTION_CARD);
-        viewToggle.segment(PREVIEW).segment(EXTRACTION);
-        viewToggle.setToolTipText("Sicht auf das gezeigte Dokument: Vorschau oder experimentelle Extraktion");
-        viewToggle.getAccessibleContext().setAccessibleName("Vorschau oder Extraktion");
+        viewToggle.segment(PREVIEW).segment(TEXT).segment(EXTRACTION);
+        viewToggle.setToolTipText("Sicht auf das gezeigte Dokument: formatiert (Viewer wie bei Jira-Anhängen), "
+                + "als Text oder experimentelle Extraktion");
+        viewToggle.getAccessibleContext().setAccessibleName("Vorschau, Text oder Extraktion");
         viewToggle.setVisible(false);
         viewToggle.onSelect(view -> showView());
         extraction.onSource(source -> viewToggle.select(PREVIEW));
@@ -172,14 +162,10 @@ final class EakteBrowser extends JPanel {
                 report(note);
             }
         });
-        right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, Comic.scroll(table), previewStage);
-        right.setResizeWeight(1.0);
-        right.setOpaque(false);
-        right.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 0));
-        ComicDivider.install(right);
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, Comic.scroll(tree), right);
-        split.setResizeWeight(0.25);
-        split.setDividerLocation(260);
+        previewStage.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 0));
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, Comic.scroll(tree), previewStage);
+        split.setResizeWeight(0.0);
+        split.setDividerLocation(300);
         split.setOpaque(false);
         split.setBorder(BorderFactory.createEmptyBorder());
         ComicDivider.install(split);
@@ -223,7 +209,8 @@ final class EakteBrowser extends JPanel {
             previewCards.show(previewStage, NO_PREVIEW);
             return;
         }
-        previewCards.show(previewStage, extracting ? EXTRACTION_CARD : shownPreview.location());
+        previewCards.show(previewStage, extracting ? EXTRACTION_CARD
+                : TEXT.equals(viewToggle.selected()) || viewer == null ? shownPreview.location() : VIEWER_CARD);
         if (extracting) {
             report(extraction.currentStatus());
         }
@@ -251,9 +238,10 @@ final class EakteBrowser extends JPanel {
         }
     }
 
-    /** Inhalt der gewählten Mappe, wie die Tabelle ihn zeigt. */
+    /** Inhalt der gewählten Mappe (bzw. der Mappe des gewählten Dokuments), wie der Baum ihn zeigt. */
     List<EakteEntry> entries() {
-        return model.entries;
+        Folder chosen = chosenFolder();
+        return chosen == null || chosen.href == null ? List.of() : listing.getOrDefault(chosen.href, List.of());
     }
 
     /** {@code DAV:href} der gewählten Mappe. */
@@ -262,7 +250,7 @@ final class EakteBrowser extends JPanel {
         return chosen == null ? null : chosen.href;
     }
 
-    /** Wählt die Mappe mit diesem {@code DAV:href} unter der gewählten (aus der Tabelle) oder die Wurzel. */
+    /** Wählt die Mappe mit diesem {@code DAV:href} unter der gewählten oder die Wurzel. */
     void show(String href) {
         Folder parent = chosenFolder();
         Folder target = href.equals(root.href) ? root : parent == null ? null : parent.child(href);
@@ -274,13 +262,14 @@ final class EakteBrowser extends JPanel {
         }
     }
 
-    /** Wählt den Eintrag mit diesem {@code DAV:href} in der Tabelle. */
+    /** Wählt den Eintrag mit diesem {@code DAV:href} in der gewählten Mappe im Baum. */
     void selectEntry(String href) {
-        for (int row = 0; row < table.getRowCount(); row++) {
-            if (model.entries.get(table.convertRowIndexToModel(row)).href().equals(href)) {
-                table.setRowSelectionInterval(row, row);
-                return;
-            }
+        Folder chosen = chosenFolder();
+        DefaultMutableTreeNode node = chosen == null ? null : chosen.node(href);
+        if (node != null) {
+            TreePath path = new TreePath(node.getPath());
+            tree.setSelectionPath(path);
+            tree.scrollPathToVisible(path);
         }
     }
 
@@ -303,16 +292,28 @@ final class EakteBrowser extends JPanel {
         load(chosen);
     }
 
-    /** Doppelklick/Eingabe: Mappe öffnen, Dokument als Vorschau. */
+    /** Eingabe: Mappe auf-/zuklappen, Dokument (neu) zeigen. */
     void openSelected() {
-        EakteEntry entry = selected();
-        if (entry == null) {
+        TreePath path = tree.getSelectionPath();
+        if (path == null) {
             return;
         }
-        if (entry.folder()) {
-            show(entry.href());
-        } else {
+        if (path.getLastPathComponent() instanceof Doc) {
             previewSelected();
+        } else if (tree.isExpanded(path)) {
+            tree.collapsePath(path);
+        } else {
+            tree.expandPath(path);
+        }
+    }
+
+    /** Ein Dokument im Baum gewählt: rechts zeigen; eine Mappe: lesen. */
+    private void selectionChanged() {
+        if (selected() != null) {
+            previewDelay.restart();
+        } else {
+            previewDelay.stop();
+            folderChosen();
         }
     }
 
@@ -325,7 +326,6 @@ final class EakteBrowser extends JPanel {
         if (known != null) {
             showEntries(chosen, known);
         } else {
-            model.set(List.of());
             load(chosen);
         }
     }
@@ -347,7 +347,6 @@ final class EakteBrowser extends JPanel {
                 folder.error = EakteSessions.describe(error);
                 treeModel.nodeChanged(folder);
                 if (folder == chosenFolder()) {
-                    model.set(List.of());
                     report(new StatusNote(label(folder) + ": " + folder.error, StatusNote.Tone.ERROR, null, null));
                 }
                 return;
@@ -358,7 +357,7 @@ final class EakteBrowser extends JPanel {
             TreePath chosenPath = tree.getSelectionPath();
             folder.fill(sorted);
             treeModel.nodeStructureChanged(folder);
-            if (chosenPath != null && chosenPath.getLastPathComponent() instanceof Folder still
+            if (chosenPath != null && chosenPath.getLastPathComponent() instanceof DefaultMutableTreeNode still
                     && (still == folder || still.isNodeAncestor(folder))) {
                 tree.setSelectionPath(chosenPath);
             }
@@ -370,10 +369,6 @@ final class EakteBrowser extends JPanel {
     }
 
     private void showEntries(Folder folder, List<EakteEntry> entries) {
-        model.set(entries);
-        if (!entries.isEmpty()) {
-            table.setRowSelectionInterval(0, 0);
-        }
         long folders = entries.stream().filter(EakteEntry::folder).count();
         long documents = entries.size() - folders;
         String content = entries.isEmpty() ? "leer"
@@ -399,13 +394,20 @@ final class EakteBrowser extends JPanel {
         EditorSession opened = editors.open(preview, file.toString(), entry.name());
         previewFiles.put(opened, file);
         shownPreview = opened;
-        previewStage.add(new DocumentEditor(opened), opened.location());
+        DocumentEditor editor = new DocumentEditor(opened);
+        editor.readOnlyView(); // ganze Fläche fürs Dokument; gesucht wird nur mit der Lupe des Deck
+        previewStage.add(editor, opened.location());
+        ReaderAttachment attachment = new ReaderAttachment(entry.href(), entry.name(), entry.contentType(),
+                entry.size());
+        viewer = new AttachmentViewerPanel(attachment, fileLoader(file), null, null);
+        viewer.detachFooter(); // Speichern/Öffnen stehen schon in der Fußleiste des Deck
+        previewStage.add(viewer, VIEWER_CARD);
+        if (!AttachmentViewerPanel.showsFormatted(attachment) && PREVIEW.equals(viewToggle.selected())) {
+            viewToggle.select(TEXT); // etwa Outlook-Nachrichten: dafür hat der Viewer keine Vorschau, der Text schon
+        }
         extraction.show(documentRef(entry));
         viewToggle.setVisible(true);
         showView();
-        if (right.getDividerLocation() > right.getHeight() - 60) {
-            right.setDividerLocation(0.4);
-        }
         if (!extractionShown()) {
             report(StatusNote.plain("Vorschau: „" + entry.name() + "“ · " + READ_ONLY));
         }
@@ -418,15 +420,36 @@ final class EakteBrowser extends JPanel {
         EditorSession old = shownPreview;
         shownPreview = null;
         for (Component component : previewStage.getComponents()) {
-            if (component instanceof DocumentEditor) {
+            if (component instanceof DocumentEditor || component instanceof AttachmentViewerPanel) {
                 previewStage.remove(component);
             }
+        }
+        if (viewer != null) {
+            viewer.close();
+            viewer = null;
         }
         extraction.show(null);
         viewToggle.setVisible(false);
         showView();
         editors.close(old);
         deleteQuietly(previewFiles.remove(old));
+    }
+
+    /** Liefert dem Viewer die schon geholte Kopie im temporären Ordner (gelesen abseits des EDT). */
+    private static ReaderAttachmentLoader fileLoader(Path file) {
+        return (attachment, done, failed) -> CompletableFuture.supplyAsync(() -> {
+            try {
+                return Files.readAllBytes(file);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }).whenComplete((bytes, error) -> SwingUtilities.invokeLater(() -> {
+            if (error != null) {
+                failed.accept(EakteSessions.describe(error));
+            } else {
+                done.accept(bytes);
+            }
+        }));
     }
 
     /** Öffnen mit dem zugehörigen Programm über eine Kopie im temporären Ordner dieser Sitzung. */
@@ -560,14 +583,23 @@ final class EakteBrowser extends JPanel {
         return entry;
     }
 
+    /** Das im Baum gewählte Dokument, sonst {@code null}. */
     private EakteEntry selected() {
-        int row = table.getSelectedRow();
-        return row < 0 ? null : model.entries.get(table.convertRowIndexToModel(row));
+        TreePath path = tree.getSelectionPath();
+        return path != null && path.getLastPathComponent() instanceof Doc doc ? doc.entry : null;
     }
 
+    /** Die gewählte Mappe; ist ein Dokument gewählt, seine Mappe. */
     private Folder chosenFolder() {
         TreePath path = tree.getSelectionPath();
-        return path != null && path.getLastPathComponent() instanceof Folder folder ? folder : null;
+        if (path == null) {
+            return null;
+        }
+        Object last = path.getLastPathComponent();
+        if (last instanceof Doc doc) {
+            last = doc.getParent();
+        }
+        return last instanceof Folder folder ? folder : null;
     }
 
     private static String label(Folder folder) {
@@ -658,7 +690,20 @@ final class EakteBrowser extends JPanel {
             return null;
         }
 
-        /** Übernimmt die gelesenen Untermappen; schon gelesene behalten ihren Inhalt. */
+        /** Ein Kind (Mappe oder Dokument) mit diesem {@code DAV:href}. */
+        DefaultMutableTreeNode node(String href) {
+            for (int i = 0; i < getChildCount(); i++) {
+                if (getChildAt(i) instanceof Folder folder && href.equals(folder.href)) {
+                    return folder;
+                }
+                if (getChildAt(i) instanceof Doc doc && href.equals(doc.entry.href())) {
+                    return doc;
+                }
+            }
+            return null;
+        }
+
+        /** Übernimmt Untermappen und Dokumente (Reihenfolge wie gelesen); schon gelesene Mappen behalten ihren Inhalt. */
         void fill(List<EakteEntry> entries) {
             Map<String, Folder> known = new HashMap<>();
             for (int i = 0; i < getChildCount(); i++) {
@@ -667,11 +712,10 @@ final class EakteBrowser extends JPanel {
                 }
             }
             removeAllChildren();
-            List<Folder> next = new ArrayList<>();
+            List<DefaultMutableTreeNode> next = new ArrayList<>();
             for (EakteEntry entry : entries) {
-                if (entry.folder()) {
-                    next.add(known.getOrDefault(entry.href(), new Folder(entry.href(), entry.name())));
-                }
+                next.add(entry.folder() ? known.getOrDefault(entry.href(), new Folder(entry.href(), entry.name()))
+                        : new Doc(entry));
             }
             next.forEach(this::add);
             loaded = true;
@@ -683,6 +727,17 @@ final class EakteBrowser extends JPanel {
         }
     }
 
+    /** Ein Dokument im Baum (Blatt). */
+    private static final class Doc extends DefaultMutableTreeNode {
+
+        private final EakteEntry entry;
+
+        Doc(EakteEntry entry) {
+            super(entry.name(), false);
+            this.entry = entry;
+        }
+    }
+
     private final class FolderRenderer extends DefaultTreeCellRenderer {
 
         @Override
@@ -690,7 +745,11 @@ final class EakteBrowser extends JPanel {
                                                       boolean leaf, int row, boolean focus) {
             super.getTreeCellRendererComponent(t, value, selected, expanded, leaf, row, focus);
             setBackgroundNonSelectionColor(null);
-            if (value instanceof Folder folder) {
+            if (value instanceof Doc doc) {
+                setIcon(FilesIcons.forName(doc.entry.name()));
+                setText(doc.entry.name());
+                setToolTipText(details(doc.entry));
+            } else if (value instanceof Folder folder) {
                 setIcon(FilesIcons.folder());
                 setText(folder.loading ? folder.name + " …" : folder.name);
                 if (folder.error != null) {
@@ -704,21 +763,16 @@ final class EakteBrowser extends JPanel {
         }
     }
 
-    private final class NameRenderer extends DefaultTableCellRenderer {
-
-        @Override
-        public Component getTableCellRendererComponent(JTable t, Object value, boolean selected, boolean focus,
-                                                       int row, int column) {
-            super.getTableCellRendererComponent(t, value, selected, focus, row, column);
-            EakteEntry entry = model.entries.get(t.convertRowIndexToModel(row));
-            setIcon(entry.folder() ? FilesIcons.folder() : FilesIcons.forName(entry.name()));
-            setToolTipText(details(entry));
-            return this;
-        }
-
-        /** Was der Server sonst noch geliefert hat (nur Vorhandenes). */
-        private static String details(EakteEntry entry) {
+    /** Typ, Größe, Datum und was der Server sonst noch geliefert hat (nur Vorhandenes). */
+    private static String details(EakteEntry entry) {
             List<String> lines = new ArrayList<>();
+            lines.add("Typ: " + type(entry));
+            if (entry.size() >= 0) {
+                lines.add("Größe: " + size(entry.size()));
+            }
+            if (entry.modified() != null) {
+                lines.add("Geändert: " + WHEN.format(entry.modified()));
+            }
             if (!entry.objectAddress().isEmpty()) {
                 lines.add("Objektadresse: " + entry.objectAddress());
             }
@@ -734,47 +788,6 @@ final class EakteBrowser extends JPanel {
             return lines.isEmpty() ? null : "<html>" + String.join("<br>", lines.stream()
                     .map(line -> line.replace("&", "&amp;").replace("<", "&lt;")).toList()) + "</html>";
         }
-    }
-
-    private static final class Model extends AbstractTableModel {
-
-        private List<EakteEntry> entries = List.of();
-
-        void set(List<EakteEntry> next) {
-            entries = List.copyOf(next);
-            fireTableDataChanged();
-        }
-
-        @Override
-        public int getRowCount() {
-            return entries.size();
-        }
-
-        @Override
-        public int getColumnCount() {
-            return 4;
-        }
-
-        @Override
-        public String getColumnName(int column) {
-            return switch (column) {
-                case 0 -> "Name";
-                case 1 -> "Typ";
-                case 2 -> "Größe";
-                default -> "Geändert";
-            };
-        }
-
-        @Override
-        public Object getValueAt(int row, int column) {
-            EakteEntry entry = entries.get(row);
-            return switch (column) {
-                case 0 -> entry.name();
-                case 1 -> type(entry);
-                case 2 -> entry.folder() || entry.size() < 0 ? "" : size(entry.size());
-                default -> entry.modified() == null ? "" : WHEN.format(entry.modified());
-            };
-        }
 
         private static String size(long bytes) {
             if (bytes < 1024) {
@@ -785,5 +798,4 @@ final class EakteBrowser extends JPanel {
             }
             return String.format(Locale.GERMANY, "%.1f MB", bytes / (1024.0 * 1024));
         }
-    }
 }
