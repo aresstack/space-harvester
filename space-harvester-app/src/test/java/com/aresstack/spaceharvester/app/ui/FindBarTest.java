@@ -61,6 +61,21 @@ class FindBarTest {
         }
     }
 
+    /** Eine selbst suchende Ansicht wird gezeigt: die Leiste darüber erfährt es über ihren Träger. */
+    @Test
+    void aShownViewReachesTheBarOverItsHost() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        JPanel host = new JPanel();
+        JPanel inner = new JPanel();
+        JLabel view = new JLabel("Editor");
+        host.add(inner);
+        inner.add(view);
+        host.putClientProperty(FindBar.VIEW_HOST, (Runnable) calls::incrementAndGet);
+        SwingUtilities.invokeAndWait(() -> FindBar.viewChanged(view));
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(calls.get()).isEqualTo(1);
+    }
+
     @Test
     void highlightsCountsAndCyclesThroughHits() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
