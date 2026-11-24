@@ -249,10 +249,15 @@ public class Jobs implements AutoCloseable {
         Foreground.onLeave(leaving);
     }
 
-    /** Die Angaben, dazu {@link #PRIORITY}, wenn der Aufrufer für eine offene Ansicht arbeitet (außer Downloads). */
+    /**
+     * Die Angaben, dazu {@link #PRIORITY}, wenn der Aufrufer für eine offene Ansicht arbeitet (außer Downloads und
+     * Hintergrundteilen).
+     */
     private static Map<String, String> withView(JobType type, Map<String, String> parameters) {
         String view = Foreground.view();
-        if (view == null || type.download() || parameters.containsKey(PRIORITY)) {
+        // Hintergrundteile nie: Ein Teil der KI-Anreicherung rechnet alles seiner Quelle, nicht nur, was die Ansicht
+        // ihm gab; mit Vorrang hielte er alle übrigen KI-Anfragen auf.
+        if (view == null || type.download() || type.background() || parameters.containsKey(PRIORITY)) {
             return Map.copyOf(parameters);
         }
         Map<String, String> marked = new java.util.HashMap<>(parameters);

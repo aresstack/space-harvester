@@ -15,7 +15,6 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
-import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
@@ -50,12 +49,12 @@ class SemanticPreparationTest {
     }
 
     @Test
-    void afterTheDeadlineWhatHasNotStartedGoesToAVisibleJobOfTheCaller() throws Exception {
-        // Fundstelle 11, Abnahme #1078: Nach der Frist rechnet ein gewöhnlicher Auftrag „Suchtreffer vorbereiten“
-        // weiter, ungezwungen und nicht hinter der Warteschlange der KI-Anreicherung.
+    void afterTheDeadlineWhatHasNotStartedGoesToTheEnrichmentQueueAndNoJobIsCreated() throws Exception {
+        // Angelo 24.11.2026: keine Aufträge „Suchtreffer vorbereiten“ mehr, die Plätze belegen und alles aufhalten;
+        // der Rest geht an die KI-Anreicherung (eine Seite einmal, mit Wiederholung und Grund).
         found(new KeywordSearch.Results(null, List.of(HIT, HIT), List.of(searched()), null, true, 0));
         when(enrichments.view(snapshot)).thenReturn(List.of());
-        when(enrichments.recompute(snapshot, "embedding")).thenReturn(new Enrichments.Run(true, 1, 0, 0));
+        when(enrichments.recomputeInBackground(any(), any())).thenReturn(1);
         java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
         Jobs jobs = new Jobs(new InMemoryJobStore(), held::add, new JobLimits(2, 10, Duration.ofHours(1)),
                 Clock.systemUTC());
@@ -65,22 +64,28 @@ class SemanticPreparationTest {
 
         assertThat(pending).as("diese Suche ist unvollständig").isEqualTo(1);
         verify(enrichments, never()).recompute(snapshot, "embedding");
-        assertThat(jobs.listAll(JobType.ENRICHMENT)).singleElement().satisfies(job -> {
-            assertThat(job.owner()).isEqualTo(APP.jobOwner());
-            assertThat(job.parameter("task")).isEqualTo(SemanticPreparation.TASK);
-        });
+        verify(enrichments, times(1)).recomputeInBackground(snapshot, List.of("embedding"));
+        assertThat(jobs.listAll(JobType.ENRICHMENT)).as("kein Auftrag je Suche").isEmpty();
+        assertThat(held).isEmpty();
+    }
 
-        Runnable next;
-        while ((next = held.poll()) != null) {
-            next.run();
-        }
+    @Test
+    void interruptedJobsOfEarlierVersionsAreForgottenAndOthersStay() {
+        InMemoryJobStore store = new InMemoryJobStore();
+        Jobs before = new Jobs(store, task -> { }, new JobLimits(2, 10, Duration.ofHours(1)), Clock.systemUTC());
+        String old = before.submitInteractive(JobType.ENRICHMENT, "wiki", null, null, APP.jobOwner(),
+                java.util.Map.of("task", SemanticPreparation.TASK),
+                com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> { })).id();
+        String other = before.submit(JobType.ENRICHMENT, "wiki", "DEV", null, APP.jobOwner(),
+                java.util.Map.of("task", "after-sync"),
+                com.aresstack.spaceharvester.application.jobs.JobTask.blocking(context -> { })).id();
 
-        verify(enrichments, times(1)).recompute(snapshot, "embedding");
-        verify(enrichments, never()).recomputeInBackground(any(), any());
-        assertThat(jobs.listAll(JobType.ENRICHMENT).getFirst()).satisfies(job -> {
-            assertThat(job.state()).isEqualTo(JobState.COMPLETED);
-            assertThat(job.progress().written()).isEqualTo(1);
-        });
+        // Neustart: beide gelten als unterbrochen.
+        Jobs restarted = new Jobs(store, task -> { }, new JobLimits(2, 10, Duration.ofHours(1)), Clock.systemUTC());
+        assertThat(SemanticPreparation.forgetInterrupted(restarted)).isEqualTo(1);
+
+        assertThat(restarted.listAll(JobType.ENRICHMENT)).extracting(
+                com.aresstack.spaceharvester.application.jobs.JobStatus::id).containsExactly(other).doesNotContain(old);
     }
 
     @Test
