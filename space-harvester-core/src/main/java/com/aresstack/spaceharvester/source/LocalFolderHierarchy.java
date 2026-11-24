@@ -194,8 +194,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
         String path = parentPath(parent);
         String after = navigationAfter(path, cursor);
         List<NavigationNode> nodes = new ArrayList<>();
-        addDirectories(path, nodes);
-        addFiles(path, nodes);
+        addDirectChildren(path, nodes);
         nodes.sort(Comparator.comparing(LocalFolderHierarchy::navigationOrder));
         List<NavigationNode> remaining = nodes.stream()
                 .filter(node -> after == null || navigationOrder(node).compareTo(after) > 0).toList();
@@ -221,22 +220,28 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
         return path;
     }
 
-    private void addDirectories(String path, List<NavigationNode> nodes) throws KnowledgeSourceException {
+    private void addDirectChildren(String path, List<NavigationNode> nodes) throws KnowledgeSourceException {
         Path directory = ".".equals(path) ? root : root.resolve(path);
         try (Stream<Path> children = Files.list(directory)) {
-            children.filter(child -> Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS))
-                    .map(this::relativePath).filter(this::visibleFolder)
-                    .map(this::folder).map(this::navigationNode).forEach(nodes::add);
+            children.forEach(child -> addChild(child, nodes));
         } catch (IOException | UncheckedIOException | SecurityException failure) {
             throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Ordner nicht lesbar: " + path, failure);
         }
     }
 
-    private void addFiles(String path, List<NavigationNode> nodes) throws KnowledgeSourceException {
-        SourceScope scope = SourceScope.builder().startPoints(path).maxDepth(0)
-                .maxResources(Integer.MAX_VALUE).ignoringSelection().build();
-        for (KnowledgeResource file : port.discover(scope)) {
-            nodes.add(navigationNode(withParent(file)));
+    private void addChild(Path child, List<NavigationNode> nodes) {
+        String relative = relativePath(child);
+        if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) {
+            if (visibleFolder(relative)) {
+                nodes.add(navigationNode(folder(relative)));
+            }
+        } else if (Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)) {
+            try {
+                // Keep document eligibility and access checks in the existing file source.
+                nodes.add(navigationNode(withParent(metadata.resourceMetadata(encode(relative)))));
+            } catch (KnowledgeSourceException ignored) {
+                // Skip files rejected by the source, or files removed during enumeration.
+            }
         }
     }
 

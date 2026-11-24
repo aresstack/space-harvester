@@ -115,6 +115,23 @@ class LocalFolderHierarchyTest {
         assertThat(titles).hasSize(205).doesNotHaveDuplicates();
     }
 
+    @Test
+    void navigationRespectsExclusionsAndDocumentFilters() throws IOException {
+        write("Handbuch/ignoriert.txt", "Excluded");
+        Files.createDirectories(directory.resolve("Ausgeschlossen/Unterordner"));
+        write("Ausgeschlossen/Unterordner/geheim.md", "Excluded");
+        SourceSettingsConfig config = new SourceSettingsConfig("docs", "files", null, null, null,
+                Map.of("directory", directory.toString(), "include", "*.md", "exclude", "Ausgeschlossen/**"));
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("docs", "files", "docs",
+                new LocalFilesSourceAdapter().open(config, null).port());
+
+        assertThat(source.children("docs", null, null).pages())
+                .extracting(HarvestSource.PageNode::title)
+                .containsExactlyInAnyOrder("Handbuch", "Handbuch-Anhang.md", "Leer", "Protokolle");
+        assertThat(source.children("docs", id("Handbuch"), null).pages())
+                .extracting(HarvestSource.PageNode::title).containsExactlyInAnyOrder("Betrieb", "Einleitung.md");
+    }
+
     private Map<String, PageMetadata> list(KnowledgeSourceHarvestSource source, int limit) {
         Map<String, PageMetadata> pages = new LinkedHashMap<>();
         String cursor = null;
