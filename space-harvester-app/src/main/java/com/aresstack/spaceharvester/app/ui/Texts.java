@@ -239,7 +239,7 @@ public final class Texts {
             Map.entry("Suchtreffer laden", "Seiten der Suchtreffer laden"),
             Map.entry("Funde katalogisieren", "Gefundene Seiten in den Katalog aufnehmen"),
             Map.entry("Verweise abgleichen", "Verweise zwischen Seiten abgleichen"),
-            Map.entry("Analysen nach Update nachrechnen", "Analysen geänderter Seiten neu berechnen"),
+            Map.entry("Analysen nach Update nachrechnen", "Analysen nach einem Programm-Update neu berechnen"),
             Map.entry("Verbindung prüfen", "Verbindung zur Quelle prüfen"),
             Map.entry("Synonyme erkennen", "Synonyme der Fachbegriffe erkennen"),
             Map.entry("Anhänge vorladen", "Weitere Anhänge vorladen"));
