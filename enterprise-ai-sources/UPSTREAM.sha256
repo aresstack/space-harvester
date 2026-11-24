@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git 9b66718a4a646c901be219a61825a07191bb06c6
+# upstream https://github.com/aresstack/enterprise-ai-client.git df278fb1de239fa3a453cbae7d299a04d50a1cb9
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 09426dae09fca081ecbd3ce1d43ae3f1697bdffd6b615599c3e294aebac58b94  src/main/java/com/aresstack/enterpriseai/adyton/SecretEntry.java
 56bd1f03e6f1c152ec55b70cac06a5cf77164dd32772445fcc938a00692bb865  src/main/java/com/aresstack/enterpriseai/adyton/SecretFunction.java
@@ -212,7 +212,7 @@ dc4d211eff2fe4cdb4c1111113041a9be4672cb52952630ac478ce9203ff471c  src/main/java/
 13db474c8d5de02779360960fd63003e3a6d72dbe6861924a9df1df23bf24d43  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraIssueOperations.java
 f572662dcc0ec923d225ab16d1e0043e9fe0c7c9b17d8164f98b469f91453c7f  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraIssueText.java
 657e70db7b8c0e78e8205a2c5a0c9da5a61edf3586d570df26a8d9d0aa33b54a  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraIssueView.java
-dc528b949b56e0e9715638ffc1ba93b3169c544d342d72011053fbdd46512071  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraKnowledgeSource.java
+bf4051586ebaaa68254125906db3ad71c33a72fd5a639372774a964bbc03a69e  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraKnowledgeSource.java
 057f16f1cbc62d035d9fe035553fc2cbcf8fcdcadbbcb95c052d7861b606bdd4  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraResponseTooLargeException.java
 3c88c3854d0f3360cc3148093613cc935187ba345757d3eff50acdeab70552d1  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraRestClient.java
 099cd35bb7e893cce4a57d3f2b4c7169abafcbcbec4098b69381d4671b2b1954  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraSourceProvider.java
@@ -556,7 +556,7 @@ f99e39df875ab2b51e05462fa445783ccda40ea042670aaf83a8bfe8edc2469e  src/test/java/
 42a84a73dc81fdb6b29c18cd43ccd08feed34c2c203e106162f800692b5ce5ad  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraIdsTest.java
 c12cecddf157cefc5b78f9c336cdccfa15fde1b0d64f377855399afc5bdb02f5  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraIssueOperationsTest.java
 cdda5bdd88f58e19fb1ecf6100b8b4d1395901fb08907bf7664c09c6b79d6098  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraKnowledgeSourceContractTest.java
-407c7ea13e807945670d3f92b13a3bf62bf737d703c4315a13473de3168dd694  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraKnowledgeSourceTest.java
+80dce82b270673e6137c2e5114dad0e3e0e441b0a60ffc3321d06e7f125fe7e4  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraKnowledgeSourceTest.java
 57f0726294ee820dd656a444246c3b2999c7c64cbac91e51e93b6feb7e4e8e78  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/JiraSourceProviderTest.java
 de23568f99fdc5391d220a98377e1d422f89a3e75a51969eaa2558dce62fbf25  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/RecordingSecretProvider.java
 8368b5a18e9b5cac1aaf48cd143ec16a2ea6d007d26d2910eb24db3c830ff790  src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/localfiles/LocalFilesAccessTest.java
