@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git df278fb1de239fa3a453cbae7d299a04d50a1cb9
+# upstream https://github.com/aresstack/enterprise-ai-client.git b409a93ff416d827b0c65004e1899c2f1be22c36
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 09426dae09fca081ecbd3ce1d43ae3f1697bdffd6b615599c3e294aebac58b94  src/main/java/com/aresstack/enterpriseai/adyton/SecretEntry.java
 56bd1f03e6f1c152ec55b70cac06a5cf77164dd32772445fcc938a00692bb865  src/main/java/com/aresstack/enterpriseai/adyton/SecretFunction.java
@@ -221,8 +221,8 @@ a5a70be721d8aeddd5c46cf168bd5d8ec75fc9e01a0860bb40193e4df258f8d5  src/main/java/
 8d5f7bc3152387f2b91a4ec27f114a39b95e1a60936e3232eb50d7cff77f6e74  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/UrlConnectionJiraTransport.java
 014b53da1e3ef9816230dfe45ab52a069a19030c8bd77940eafbebfe05382e9c  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/VaultEntryOptions.java
 2fab1d739c732bcc9e581db8d128debc7f3d919e0535d40a9bbb9aae3c37c615  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/jira/package-info.java
-840e03ba25093bb01060bb77b932e309c0a1eb6773211142cc7f18175c3148df  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/localfiles/LocalFilesKnowledgeSource.java
-f0f4ecaffebb5585e0e5119cb5d16b1598ffb37dcd10b0991bbbd055124c831e  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/localfiles/LocalFilesSourceProvider.java
+634f5393d648b6caa30a8a59ff366499703c7d738e039628e322b4d2c0ef4726  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/localfiles/LocalFilesKnowledgeSource.java
+a217441dc93838686ec1318075a133832644e3c080ba606fa970fe6ecb1873d6  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/localfiles/LocalFilesSourceProvider.java
 b17f69d6f482873759327b4fa6afb528452a055e777c85c95ce6b4934920e0c6  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/localfiles/package-info.java
 775f9bdf546ec4f04c5dd0cb1fc7ba81c98627b48f310a4c01b7be8d4346be07  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/MediaWikiClient.java
 10e071103524b715b9815d1432ec7e62decb9a154105e627fbf366b8d6049e7c  src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/mediawiki/MediaWikiCredentials.java

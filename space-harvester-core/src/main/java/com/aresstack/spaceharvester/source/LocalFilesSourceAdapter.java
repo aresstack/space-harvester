@@ -77,7 +77,7 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
                     return granted == null ? LocalFileAccessPolicy.none()
                             : LocalFileAccessPolicy.of(granted.allowAll(),
                                     granted.roots().stream().filter(Files::isDirectory).toList());
-                });
+                }, VideoFileTypes::streamableType);
     }
 
     @Override
