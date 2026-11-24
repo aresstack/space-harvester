@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.ui.controls.CopyButton;
 import com.aresstack.spaceharvester.app.ui.controls.ViewerWheel;
 import com.aresstack.spaceharvester.application.sources.CertificateCode;
+import com.aresstack.spaceharvester.source.network.QrCodes;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -29,30 +30,56 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 
 /**
- * Die vertrauten Zertifikate einer Quelle als QR-Codes am Bildschirm, zum Abscannen mit dem Telefon (Strang ZX): ein
- * Code groß und mittig auf weißem Feld mit Ruhezone, ◀ ▶ links und rechts, Mausrad und Pfeiltasten blättern; darunter
- * „2 von 5“, Name, Rolle und SHA-1 mit Kopierknopf. Schließen nur über den Esc-Kreis.
+ * QR-Codes am Bildschirm, zum Abscannen mit dem Telefon: die vertrauten Zertifikate einer Quelle (Strang ZX) oder eine
+ * Chat-Nachricht, die nicht in einen Code passt, in mehreren Teilen. Ein Code groß und mittig auf weißem Feld mit
+ * Ruhezone, ◀ ▶ links und rechts, Mausrad und Pfeiltasten blättern; darunter „2 von 5“, Name, Rolle und eine Angabe mit
+ * Kopierknopf (z. B. SHA-1). Schließen nur über den Esc-Kreis.
  */
-final class CertificateCodesView {
+public final class QrCodesView {
 
     static final String TITLE = "Zertifikate als QR-Code";
     static final String TOO_LARGE = "passt nicht in einen Code; bitte das Archiv nutzen";
+    public static final String MESSAGE_TITLE = "Nachricht als QR-Code";
 
-    private final List<CertificateCode> codes;
+    /** Ein Code: Name und Rolle als Beschriftung, {@code detail} mit Kopierknopf für {@code copy} (leer = keine Zeile). */
+    public record Code(String name, String role, String detail, String copy, BufferedImage image) {
+    }
+
+    /** Die Texte einer Ansicht: leere Liste, Blättern-Tooltips und Hinweis bei einem fehlenden Code. */
+    record Texts(String empty, String previous, String next, String tooLarge) {
+        static final Texts CERTIFICATES = new Texts("Keine vertrauten Zertifikate", "Voriges Zertifikat (←)",
+                "Nächstes Zertifikat (→)", TOO_LARGE);
+        static final Texts MESSAGE = new Texts("Leere Nachricht", "Voriger Teil (←)", "Nächster Teil (→)",
+                "passt nicht in einen Code");
+    }
+
+    private final List<Code> codes;
+    private final Texts texts;
     private final JPanel body = new JPanel(new BorderLayout(8, 8));
     private final CodePanel code = new CodePanel();
-    private final IconButton previous = new IconButton(ComposerIcons.chevronLeft(), "Voriges Zertifikat (←)");
-    private final IconButton next = new IconButton(ComposerIcons.chevronRight(), "Nächstes Zertifikat (→)");
+    private final IconButton previous;
+    private final IconButton next;
     private final JLabel position = new JLabel("", SwingConstants.CENTER);
     private final JLabel name = new JLabel("", SwingConstants.CENTER);
     private final JLabel role = new JLabel("", SwingConstants.CENTER);
     /** „passt nicht in einen Code“, gelb wie „bewusst ausgelassen“ (UX-Manager); sonst unsichtbar. */
-    private final JLabel tooLarge = new JLabel(TOO_LARGE, SwingConstants.CENTER);
+    private final JLabel tooLarge;
     private final JLabel sha1 = new JLabel();
+    private final JPanel fingerprint = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
     private int index;
 
-    CertificateCodesView(List<CertificateCode> codes) {
+    /** Die Zertifikate einer Quelle (Strang ZX). */
+    QrCodesView(List<CertificateCode> codes) {
+        this(Texts.CERTIFICATES, Objects.requireNonNull(codes, "codes").stream()
+                .map(c -> new Code(c.name(), c.role(), "SHA-1 " + c.sha1(), c.sha1(), c.image())).toList());
+    }
+
+    QrCodesView(Texts texts, List<Code> codes) {
+        this.texts = Objects.requireNonNull(texts, "texts");
         this.codes = List.copyOf(Objects.requireNonNull(codes, "codes"));
+        previous = new IconButton(ComposerIcons.chevronLeft(), texts.previous());
+        next = new IconButton(ComposerIcons.chevronRight(), texts.next());
+        tooLarge = new JLabel(texts.tooLarge(), SwingConstants.CENTER);
         body.setOpaque(false);
         previous.addActionListener(e -> step(-1));
         next.addActionListener(e -> step(1));
@@ -66,10 +93,9 @@ final class CertificateCodesView {
         position.setForeground(Comic.MUTED);
         sha1.setForeground(Comic.MUTED);
         sha1.setFont(Comic.regular(12f));
-        JPanel fingerprint = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
         fingerprint.setOpaque(false);
         fingerprint.add(sha1);
-        fingerprint.add(new CopyButton(() -> codes.isEmpty() ? "" : current().sha1()));
+        fingerprint.add(new CopyButton(() -> codes.isEmpty() ? "" : current().copy()));
         JPanel caption = new JPanel();
         caption.setOpaque(false);
         caption.setLayout(new javax.swing.BoxLayout(caption, javax.swing.BoxLayout.Y_AXIS));
@@ -109,13 +135,43 @@ final class CertificateCodesView {
         show();
     }
 
-    /** Öffnet die Ansicht als Overlay über {@code parent}. */
+    /** Öffnet die Zertifikate einer Quelle als Overlay über {@code parent}. */
     static void open(Component parent, String source, List<CertificateCode> codes) {
-        CertificateCodesView view = new CertificateCodesView(codes);
+        present(parent, TITLE + " · " + source, new QrCodesView(codes));
+    }
+
+    /**
+     * Öffnet eine Nachricht als QR-Code über {@code parent}; passt sie nicht in einen Code, in mehreren Teilen zum
+     * Blättern, nie gekürzt. Ein Telefon liest die Teile nacheinander und hängt sie aneinander.
+     */
+    public static void openText(Component parent, String name, String text) {
+        present(parent, MESSAGE_TITLE + " · " + name, forText(name, text));
+    }
+
+    /** Die Ansicht einer Nachricht, für Tests ohne Fenster. */
+    static QrCodesView forText(String name, String text) {
+        List<BufferedImage> images = QrCodes.textImages(text, 1);
+        List<Code> codes = new java.util.ArrayList<>();
+        for (int i = 0; i < images.size(); i++) {
+            String role = images.size() > 1 ? "Teil " + (i + 1) + " von " + images.size() : "";
+            codes.add(new Code(name, role, "", "", images.get(i)));
+        }
+        return new QrCodesView(Texts.MESSAGE, codes);
+    }
+
+    private static void present(Component parent, String title, QrCodesView view) {
         Window owner = parent == null ? null : javax.swing.SwingUtilities.getWindowAncestor(parent);
-        JDialog dialog = Dialogs.dialog(owner, TITLE + " · " + source);
-        Dialogs.escFrame(dialog, TITLE + " · " + source, view.component(), dialog::dispose);
+        JDialog dialog = Dialogs.dialog(owner, title);
+        Dialogs.escFrame(dialog, title, view.component(), dialog::dispose);
         Dialogs.present(dialog, new Dimension(560, 0));
+    }
+
+    int size() {
+        return codes.size();
+    }
+
+    BufferedImage image() {
+        return codes.isEmpty() ? null : current().image();
     }
 
     JComponent component() {
@@ -142,7 +198,7 @@ final class CertificateCodesView {
         show();
     }
 
-    private CertificateCode current() {
+    private Code current() {
         return codes.get(index);
     }
 
@@ -152,20 +208,22 @@ final class CertificateCodesView {
         next.setEnabled(several);
         if (codes.isEmpty()) {
             position.setText("");
-            name.setText("Keine vertrauten Zertifikate");
+            name.setText(texts.empty());
             tooLarge.setVisible(false);
             role.setText("");
             sha1.setText("");
+            fingerprint.setVisible(false);
             code.image = null;
             code.repaint();
             return;
         }
-        CertificateCode shown = current();
+        Code shown = current();
         position.setText((index + 1) + " von " + codes.size());
         name.setText(shown.name());
         role.setText(shown.role());
         tooLarge.setVisible(shown.image() == null);
-        sha1.setText("SHA-1 " + shown.sha1());
+        sha1.setText(shown.detail());
+        fingerprint.setVisible(!shown.detail().isEmpty());
         code.image = shown.image();
         code.repaint();
     }

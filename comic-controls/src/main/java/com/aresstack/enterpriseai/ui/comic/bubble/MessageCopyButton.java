@@ -40,25 +40,12 @@ public final class MessageCopyButton extends JButton {
     public MessageCopyButton(Color foreground, final Supplier<String> text, final Consumer<String> clipboard) {
         setIcon(clipboardIcon);
         setForeground(foreground);
-        this.overlay = new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 36);
+        this.overlay = overlay(foreground);
         setName("transcript.copyMessage");
         setToolTipText(TOOLTIP);
         getAccessibleContext().setAccessibleName(TOOLTIP);
         setHorizontalAlignment(SwingConstants.LEFT);
-        setIconTextGap(3);
-        setFocusable(true);
-        setRequestFocusEnabled(false);
-        setFocusPainted(false);
-        setBorderPainted(false);
-        setContentAreaFilled(false);
-        setRolloverEnabled(true);
-        setOpaque(false);
-        setMargin(new Insets(0, 2, 0, 2));
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        Font base = getFont();
-        if (base != null) {
-            setFont(base.deriveFont(Font.PLAIN, Math.max(9f, base.getSize2D() - 2f)));
-        }
+        style(this);
         // Feste Breite für Haken + „Kopiert“: die Bestätigung verschiebt weder Kopfzeile noch Blasenbreite.
         setText(COPIED);
         setIcon(checkIcon);
@@ -86,6 +73,43 @@ public final class MessageCopyButton extends JButton {
         });
     }
 
+    /** Das gemeinsame Aussehen der kleinen Kopfzeilenknöpfe (auch {@link MessageQrButton}): flach, ohne Fokus-Klau. */
+    static void style(JButton button) {
+        button.setIconTextGap(3);
+        button.setFocusable(true);
+        button.setRequestFocusEnabled(false);
+        button.setFocusPainted(false);
+        button.setBorderPainted(false);
+        button.setContentAreaFilled(false);
+        button.setRolloverEnabled(true);
+        button.setOpaque(false);
+        button.setMargin(new Insets(0, 2, 0, 2));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Font base = button.getFont();
+        if (base != null) {
+            button.setFont(base.deriveFont(Font.PLAIN, Math.max(9f, base.getSize2D() - 2f)));
+        }
+    }
+
+    /** Die Hover-/Druckfläche der Kopfzeilenknöpfe, bündig mit der Seite, an der das Symbol steht. */
+    static void paintOverlay(JButton button, Graphics graphics, Color overlay, int width) {
+        if (button.getModel().isPressed() || button.getModel().isRollover() || button.isFocusOwner()) {
+            Graphics2D g2 = (Graphics2D) graphics.create();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(button.getModel().isPressed() ? overlay.darker() : overlay);
+                int x = button.getHorizontalAlignment() == SwingConstants.RIGHT ? button.getWidth() - width : 0;
+                g2.fillRoundRect(x, 0, width, button.getHeight(), 8, 8);
+            } finally {
+                g2.dispose();
+            }
+        }
+    }
+
+    static Color overlay(Color foreground) {
+        return new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 36);
+    }
+
     /** Ob gerade die Bestätigung „Kopiert“ steht. */
     public boolean isConfirming() {
         return COPIED.equals(getText());
@@ -109,17 +133,7 @@ public final class MessageCopyButton extends JButton {
 
     @Override
     protected void paintComponent(Graphics graphics) {
-        if (getModel().isPressed() || getModel().isRollover() || isFocusOwner()) {
-            Graphics2D g2 = (Graphics2D) graphics.create();
-            try {
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g2.setColor(getModel().isPressed() ? overlay.darker() : overlay);
-                int width = isConfirming() ? getWidth() : Math.min(getWidth(), getHeight() + 2);
-                g2.fillRoundRect(0, 0, width, getHeight(), 8, 8);
-            } finally {
-                g2.dispose();
-            }
-        }
+        paintOverlay(this, graphics, overlay, isConfirming() ? getWidth() : Math.min(getWidth(), getHeight() + 2));
         super.paintComponent(graphics);
     }
 

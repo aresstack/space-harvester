@@ -51,6 +51,9 @@ public final class AssistantMarkdownBubble extends JPanel implements WidthAwareH
     private final MarkdownMessageView body;
     private final JLabel headerLabel;
     private final JPanel headerRow = new JPanel();
+    /** Rechter Teil der Kopfzeile: optionale Knöpfe, dann der Zeitstempel. */
+    private final JPanel trailing = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+    private JComponent trailingAccessory;
     private final boolean headerShown;
     private JLabel timestampLabel;
 
@@ -75,6 +78,8 @@ public final class AssistantMarkdownBubble extends JPanel implements WidthAwareH
             // WEST/EAST statt Box mit Glue: der Zeitstempel sitzt rechts, egal wie breit die Zeile wirklich wird.
             headerRow.setLayout(new BorderLayout(6, 0));
             headerRow.add(headerLabel, BorderLayout.WEST);
+            trailing.setOpaque(false);
+            headerRow.add(trailing, BorderLayout.EAST);
             add(headerRow, BorderLayout.NORTH);
         }
         add(body, BorderLayout.CENTER);
@@ -130,7 +135,7 @@ public final class AssistantMarkdownBubble extends JPanel implements WidthAwareH
             timestampLabel = new JLabel();
             Font base = headerLabel.getFont();
             timestampLabel.setFont(base.deriveFont(Font.PLAIN, Math.max(6f, base.getSize2D() * 0.5f)));
-            headerRow.add(timestampLabel, BorderLayout.EAST);
+            trailing.add(timestampLabel);
         }
         timestampLabel.setForeground(withAlpha(headerForeground, 190));
         timestampLabel.setText(BubbleTimestamps.stackedHtml(epochMillis));
@@ -140,25 +145,28 @@ public final class AssistantMarkdownBubble extends JPanel implements WidthAwareH
         repaint();
     }
 
-    /** Ein kleines Bedienelement (Kopierknopf) direkt hinter dem Namen in der Kopfzeile; der Markdown-Körper bleibt unberührt. */
-    public void setHeaderAccessory(JComponent accessory) {
+    /**
+     * Kleine Bedienelemente (QR- und Kopierknopf) am rechten Rand der Kopfzeile, direkt links vom Zeitstempel wie
+     * {@code SpeechBubblePanel.setHeaderTrailingAccessory}; der Markdown-Körper bleibt unberührt. Ersetzt vorherige.
+     */
+    public void setHeaderTrailingAccessory(JComponent accessory) {
         if (!headerShown) {
             return;
         }
-        headerRow.remove(headerLabel);
-        JPanel name = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        name.setOpaque(false);
-        name.add(headerLabel);
+        if (trailingAccessory != null) {
+            trailing.remove(trailingAccessory);
+            trailing.remove(0); // die Lücke dahinter
+        }
+        trailingAccessory = accessory;
         if (accessory != null) {
             // nie höher als der Name: die Kopfzeile und damit die Blasenhöhe bleiben wie ohne Knopf
             java.awt.Dimension size = new java.awt.Dimension(accessory.getPreferredSize().width,
                     Math.min(accessory.getPreferredSize().height, headerLabel.getPreferredSize().height));
             accessory.setPreferredSize(size);
             accessory.setMaximumSize(size);
-            name.add(Box.createHorizontalStrut(4));
-            name.add(accessory);
+            trailing.add(accessory, 0);
+            trailing.add(Box.createHorizontalStrut(4), 1);
         }
-        headerRow.add(name, BorderLayout.WEST);
         revalidate();
         repaint();
     }
