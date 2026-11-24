@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.terms;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -156,5 +157,26 @@ public abstract class TermIndexContract {
         assertThat(index().postings(new TermIndex.Filter(BOTH, null, null, null, "1"),
                 TermIndex.afterGroup(all.get(1).groupKey()), false, 10))
                 .extracting(TermPosting::normalized).containsExactly("belege");
+    }
+
+    @Test
+    void keysAreThePostingsWithoutContentAlsoForDocuments() {
+        store().save(terms(B1, "7", payload(term("Beleg", "noun", null, 0, 5), term("API", "acronym", null, 6, 9))));
+        store().save(terms(A1, "1", payload(term("Beleg", "noun", null, 0, 5))));
+        DocumentKey attachment = DocumentKey.attachment(A1, "att-1");
+        store().save(new Enrichment(A1, TermPayload.PROCESSOR, "1", "sha256:doc", "sha256:rev", Enrichment.Status.OK,
+                payload(term("Beleg", "noun", null, 0, 5), term("Konto", "noun", null, 6, 11)), List.of(), null,
+                Instant.parse("2026-10-19T00:00:00Z"), attachment, 2, "x1"));
+        TermIndex.Filter everything = new TermIndex.Filter(BOTH, null, null, null, "1", null, TermOrigin.ALL);
+
+        List<TermIndex.TermKey> expected = index().postings(everything, null, false, TermIndex.MAX_BATCH).stream()
+                .map(TermIndex.TermKey::of).toList();
+        assertThat(expected).hasSize(5);
+        assertThat(index().keys(everything, null, TermIndex.MAX_KEY_BATCH)).containsExactlyElementsOf(expected);
+        assertThat(index().keys(everything, expected.get(1).sortKey(), 2))
+                .containsExactly(expected.get(2), expected.get(3));
+        assertThat(index().keys(everything, null, TermIndex.MAX_KEY_BATCH))
+                .filteredOn(TermIndex.TermKey::ofDocument).extracting(TermIndex.TermKey::extraction)
+                .containsOnly("x1");
     }
 }
