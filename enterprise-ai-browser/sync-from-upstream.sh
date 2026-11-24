@@ -52,6 +52,7 @@ module_classes=(
   proasteion/katagogion:com/aresstack/enterpriseai/proasteion/katagogion/McpToolType
   proasteion/katagogion:com/aresstack/enterpriseai/proasteion/katagogion/McpContextResource
   proasteion/application:$app/agent/BrowserMcpTools
+  proasteion/application:$app/agent/BrowserPageEvaluator
   proasteion/application:$app/browser/BrowserAccessService
   proasteion/application:$app/browser/BrowserActApproval
   proasteion/application:$app/browser/BrowserPolicyStore
