@@ -136,6 +136,36 @@ class CommandDeckTest {
         });
     }
 
+    /**
+     * Jeder Bereich hat seine eigene Suchleiste mit eigenem Text: Was im Terminal gesucht wird, steht nicht unter FTP,
+     * NDV, BetaView, Dateien oder E-Akte (Angelo 24.11.2026: gemeinsame Klasse, nie gemeinsame Instanz).
+     */
+    @Test
+    void everyAreaHasItsOwnSearchBarAndText() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            deck = new CommandDeck();
+            javax.swing.JComponent stage = (javax.swing.JComponent) deck.perspective().workspace();
+            java.util.Set<com.aresstack.spaceharvester.app.ui.FindBar> bars = java.util.Collections.newSetFromMap(
+                    new java.util.IdentityHashMap<>());
+            for (DeckArea area : DeckArea.values()) {
+                bars.add(deck.findBar(area));
+            }
+            assertThat(bars).hasSize(DeckArea.values().length);
+            deck.show(DeckArea.TERMINAL);
+            deck.findBar().search("JOB4711");
+            for (DeckArea area : DeckArea.values()) {
+                deck.show(area);
+                assertThat(deck.findBar()).isSameAs(deck.findBar(area));
+                assertThat(deck.findBar().query()).as(area.name())
+                        .isEqualTo(area == DeckArea.TERMINAL ? "JOB4711" : "");
+                for (DeckArea other : DeckArea.values()) {
+                    assertThat(SwingUtilities.isDescendingFrom(deck.findBar(other), stage)).as(area + "/" + other)
+                            .isEqualTo(other == area);
+                }
+            }
+        });
+    }
+
     @Test
     void homeIsChosenOnEveryArrivalAndItsTilesOpenTheAreaWithoutConnecting() throws Exception {
         SwingUtilities.invokeAndWait(() -> {

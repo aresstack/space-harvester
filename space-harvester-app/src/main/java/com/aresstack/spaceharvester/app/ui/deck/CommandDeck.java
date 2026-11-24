@@ -44,9 +44,13 @@ public final class CommandDeck {
     private final TerminalSessions sessions;
     private final CardLayout cards = new CardLayout();
     private final JPanel workspace = new JPanel(cards);
-    /** Die Fußleiste wie im Space Harvester: links die Lupe (Strg+F), mittig die Bedienelemente des Bereichs. */
-    private final com.aresstack.spaceharvester.app.ui.FindBar findBar =
-            new com.aresstack.spaceharvester.app.ui.FindBar(() -> areaView(this.area));
+    /**
+     * Die Fußleiste wie im Space Harvester: links die Lupe (Strg+F), mittig die Bedienelemente des Bereichs. Jeder
+     * Bereich hat seine eigene Leiste mit eigenem Suchtext (Angelo 24.11.2026: gemeinsame Klasse, nie gemeinsame
+     * Instanz); sie sucht nur in ihrem Bereich.
+     */
+    private final java.util.Map<DeckArea, com.aresstack.spaceharvester.app.ui.FindBar> findBars =
+            new java.util.EnumMap<>(DeckArea.class);
     /** Arbeitsfläche samt Fußleiste. */
     private final JPanel stage = new JPanel(new BorderLayout());
     private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
@@ -215,18 +219,26 @@ public final class CommandDeck {
         status.setOpaque(false);
         stage.setOpaque(false);
         stage.add(workspace, BorderLayout.CENTER);
-        stage.add(findBar, BorderLayout.SOUTH);
+        for (DeckArea each : DeckArea.values()) {
+            com.aresstack.spaceharvester.app.ui.FindBar bar =
+                    new com.aresstack.spaceharvester.app.ui.FindBar(() -> areaView(each));
+            if (areaView(each) instanceof DeckBars.FootTools with) {
+                bar.tools(with.footTools());
+            }
+            findBars.put(each, bar);
+        }
+        stage.add(findBar(), BorderLayout.SOUTH);
         // Bereiche mit Seitenleiste nehmen die Lupe unter ihre Arbeitsfläche (DeckBars.FindSlot), wie im Space Harvester.
         stage.putClientProperty(DeckBars.FIND_HOST, (Runnable) this::placeFindBar);
         // Ein Editor wird gezeigt oder verdeckt: Falt-Umschalter, Sprachauswahl und Treffer folgen ihm.
         stage.putClientProperty(com.aresstack.spaceharvester.app.ui.FindBar.VIEW_HOST,
-                (Runnable) findBar::viewChanged);
+                (Runnable) () -> findBar().viewChanged());
         stage.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke(
                 java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
         stage.getActionMap().put("find", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
-                findBar.focus();
+                findBar().focus();
             }
         });
         // Maustasten Zurück/Vor im ganzen Fenster, solange das Deck zu sehen ist (wie im Space Harvester und in
@@ -264,9 +276,14 @@ public final class CommandDeck {
         return home;
     }
 
-    /** Die Fußleiste mit der Lupe (für Tests). */
+    /** Die Fußleiste mit der Lupe des gezeigten Bereichs. */
     com.aresstack.spaceharvester.app.ui.FindBar findBar() {
-        return findBar;
+        return findBars.get(area);
+    }
+
+    /** Die Fußleiste mit der Lupe von {@code which} (für Tests). */
+    com.aresstack.spaceharvester.app.ui.FindBar findBar(DeckArea which) {
+        return findBars.get(which);
     }
 
     /** Der Stand des gewählten Bereichs für die Statuszeile (für Tests). */
@@ -452,10 +469,9 @@ public final class CommandDeck {
         }
         tools.revalidate();
         tools.repaint();
-        // Die Suche gilt dem gezeigten Bereich: Markierungen des vorigen weg, seine Bedienelemente neben die Lupe.
-        findBar.tools(areaView(next) instanceof DeckBars.FootTools with ? with.footTools() : null);
-        findBar.areaChanged();
+        // Jeder Bereich hat seine eigene Leiste mit eigenem Suchtext und seinen Bedienelementen neben der Lupe.
         placeFindBar();
+        findBar().areaChanged();
         if (areaObservers != null) {
             areaObservers.forEach(Runnable::run);
         }
@@ -467,6 +483,15 @@ public final class CommandDeck {
      * 24.11.2026): Unter der Seitenleiste steht deren eigene Fußleiste.
      */
     void placeFindBar() {
+        com.aresstack.spaceharvester.app.ui.FindBar findBar = findBar();
+        for (com.aresstack.spaceharvester.app.ui.FindBar other : findBars.values()) {
+            java.awt.Container parent = other.getParent();
+            if (other != findBar && parent != null) {
+                parent.remove(other);
+                parent.revalidate();
+                parent.repaint();
+            }
+        }
         java.awt.Container target = DeckBars.showingSlot(workspace);
         if (target == null) {
             target = stage;
