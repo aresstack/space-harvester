@@ -238,12 +238,21 @@ final class CommonsNetFiles implements FileConnection {
         }
         FTPFile[] files = ftp.listFiles(resolved);
         if (files != null) {
+            String self = unquoted.toUpperCase(Locale.ROOT);
             for (FTPFile file : files) {
                 if (file == null || file.getName() == null || file.getName().isEmpty()) {
                     continue;
                 }
                 String name = file.getName();
                 Calendar time = file.getTimestamp();
+                String full = MvsPath.unquote(name.trim()).toUpperCase(Locale.ROOT);
+                if (full.equals(self) || self.endsWith("." + full)) {
+                    // LIST eines sequenziellen Datasets liefert das Dataset selbst (Dsorg PS): eine Datei unter
+                    // seinem eigenen Pfad, kein Ordner, der wieder nur sich selbst enthält.
+                    entries.add(new RemoteEntry(MvsPath.unquote(name.trim()), resolved, file.isDirectory(),
+                            file.getSize(), time == null ? Optional.empty() : Optional.of(time.toInstant())));
+                    continue;
+                }
                 entries.add(new RemoteEntry(name, MvsPath.child(resolved, name),
                         file.isDirectory() || !name.contains("("), file.getSize(),
                         time == null ? Optional.empty() : Optional.of(time.toInstant())));
