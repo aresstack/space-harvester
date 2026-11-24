@@ -978,23 +978,9 @@ public final class PageDetailPanel extends JPanel {
         if (spaceKey == null) {
             return;
         }
-        String title = page.header().metadata().title();
-        java.util.List<String> path = new java.util.ArrayList<>();
-        java.util.List<String> ancestors = new java.util.ArrayList<>();
-        path.add(sourceTitle(sourceId));
-        if (shownPosition != null) {
-            path.add(shownPosition.spaceName() == null || shownPosition.spaceName().isBlank() ? spaceKey
-                    : shownPosition.spaceName());
-            for (com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode ancestor
-                    : shownPosition.ancestors()) {
-                path.add(ancestor.title());
-                ancestors.add(ancestor.pageId());
-            }
-        } else {
-            path.add(spaceKey);
-        }
-        context.favorites().toggle(new com.aresstack.spaceharvester.app.ui.Favorites.Favorite(sourceId, spaceKey,
-                pageId, title, path, ancestors));
+        // Derselbe Weg wie der Stern im Baum (ADR 0034): Pfad aus der Position, Zielordner aus der Favoritenansicht.
+        context.favorites().toggle(com.aresstack.spaceharvester.app.ui.Favorites.Favorite.page(sourceId, spaceKey,
+                pageId, page.header().metadata().title(), shownPosition, sourceTitle(sourceId)));
     }
 
     private String sourceTitle(String id) {

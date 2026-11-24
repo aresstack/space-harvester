@@ -1,118 +1,221 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons;
+import com.aresstack.spaceharvester.app.ui.controls.FolderTree;
 
 import javax.swing.BorderFactory;
-import javax.swing.DefaultListCellRenderer;
-import javax.swing.DefaultListModel;
 import javax.swing.JComponent;
-import javax.swing.JList;
+import javax.swing.JPanel;
+import javax.swing.JTree;
 import javax.swing.JScrollPane;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
+import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Die Favoritenansicht des Explorers (ADR 0034, Paket 2a): heute die flache Liste mit Pfad, die der Stern-Umschalter
- * unten rechts an Stelle des Baums zeigt. Aus dem Explorer gelöst, damit der Ordnerbaum (Paket 2b) sie ersetzen kann,
- * ohne den Explorer anzufassen. Verhalten unverändert: ein Klick oder Enter öffnet den Favoriten, die Liste markiert
- * den Favoriten des im Baum gewählten Knotens.
+ * Die Favoritenansicht des Explorers (ADR 0034): der Ordnerbaum der Favoriten, den der Stern-Umschalter unten rechts an
+ * Stelle des Seitenbaums zeigt. Darstellung und Bedienung über das generische {@link FolderTree} (Ziehen mit
+ * Einfügemarke, „Verschieben nach …“, F2, Entf, Rückfrage nur bei Ordnern mit Inhalt); jede Änderung geht an
+ * {@link Favorites}, der Baum baut sich auf dessen Meldung neu auf. „Neuer Ordner“ als Symbolknopf oben rechts.
+ *
+ * <p>Ein Klick oder Enter auf einen Favoriten öffnet ihn wie bisher; auf einen Ordner wählt ihn als Sammlung (die
+ * Mitte und rechts folgen, {@link #onFolder}). Ein neuer Stern landet im gewählten Ordner ({@link Favorites#target}),
+ * sonst oben. Der Baum markiert den Favoriten des im Seitenbaum gewählten Knotens.
  */
 final class FavoritesView {
 
+    static final String NEW_FOLDER_TIP = "Neuer Ordner";
+
     private final AppContext context;
-    /** Der im Baum gewählte Knoten, damit die Liste dessen Favoriten markiert; null ohne Auswahl. */
+    /** Der im Baum gewählte Knoten, damit die Ansicht dessen Favoriten markiert; null ohne Auswahl. */
     private final Supplier<Explorer.Item> current;
     /** Zeigt eine ganze Quelle im Baum; Mitte und rechts folgen der Auswahl. */
     private final Consumer<String> revealSource;
-    private final DefaultListModel<Favorites.Favorite> model = new DefaultListModel<>();
-    private final JList<Favorites.Favorite> list = new JList<>(model);
-    private final JScrollPane component;
+    private final FolderTree<Favorites.Entry> tree;
+    private final IconButton newFolder = new IconButton(Glyph.PLUS, NEW_FOLDER_TIP);
+    private final JPanel component = new JPanel(new BorderLayout());
+    /** Ordner gewählt: ID und Name; die Auswahl als Sammlung baut der Empfänger (ADR 0034, eine Auflösung). */
+    private BiConsumer<String, String> onFolder = (id, name) -> { };
 
     FavoritesView(AppContext context, Supplier<Explorer.Item> current, Consumer<String> revealSource) {
         this.context = Objects.requireNonNull(context, "context");
         this.current = Objects.requireNonNull(current, "current");
         this.revealSource = Objects.requireNonNull(revealSource, "revealSource");
-        list.setFont(Comic.regular(13f));
-        list.setOpaque(false);
-        list.setSelectionBackground(Comic.YELLOW);
-        list.setSelectionForeground(Comic.INK);
-        list.setCellRenderer(new DefaultListCellRenderer() {
+        Favorites favorites = context.favorites();
+        tree = new FolderTree<>(new FolderTree.Shape<>() {
             @Override
-            public Component getListCellRendererComponent(JList<?> owner, Object value, int index,
-                                                          boolean selected, boolean focus) {
-                super.getListCellRendererComponent(owner, value, index, selected, focus);
-                if (value instanceof Favorites.Favorite favorite) {
-                    // Der Favorit selbst in Tinte, seine Eltern als Pfad gedämpft darunter.
-                    setText("<html>" + Explorer.escape(favorite.title()) + "<br><font color='#7a7a7a'>"
-                            + Explorer.escape(favorite.where()) + "</font></html>");
-                    setIcon(favorite.isSource() ? MainWindow.database()
-                            : favorite.pageId() == null ? SidebarIcons.folder() : SidebarIcons.page());
+            public String id(Favorites.Entry entry) {
+                return entry.id();
+            }
+
+            @Override
+            public boolean isFolder(Favorites.Entry entry) {
+                return entry instanceof Favorites.Folder;
+            }
+
+            @Override
+            public List<Favorites.Entry> children(Favorites.Entry entry) {
+                return entry instanceof Favorites.Folder folder ? folder.children() : List.of();
+            }
+
+            @Override
+            public String name(Favorites.Entry entry) {
+                return switch (entry) {
+                    case Favorites.Folder folder -> folder.name();
+                    case Favorites.Bookmark bookmark -> bookmark.favorite().title();
+                };
+            }
+        }, new FolderTree.Actions() {
+            @Override
+            public String createFolder(String parentId, String name) {
+                return favorites.createFolder(name, parentId);
+            }
+
+            @Override
+            public void renameFolder(String id, String name) {
+                favorites.renameFolder(id, name);
+            }
+
+            @Override
+            public void remove(String id) {
+                favorites.remove(id);
+            }
+
+            @Override
+            public boolean move(List<String> ids, String targetFolderId, int index) {
+                return favorites.moveAll(ids, targetFolderId, index);
+            }
+        });
+        favorites.target(() -> SwingUtilities.isEventDispatchThread() ? tree.targetFolderId() : null);
+        JTree view = tree.component();
+        view.getAccessibleContext().setAccessibleName("Favoriten");
+        tree.setCellRenderer(new javax.swing.tree.DefaultTreeCellRenderer() {
+            @Override
+            public Component getTreeCellRendererComponent(JTree owner, Object value, boolean selected,
+                                                          boolean expanded, boolean leaf, int row, boolean focus) {
+                super.getTreeCellRendererComponent(owner, value, selected, expanded, leaf, row, focus);
+                switch (tree.entryOf(value)) {
+                    case Favorites.Folder folder -> {
+                        setText(folder.name());
+                        setIcon(SidebarIcons.folder());
+                    }
+                    case Favorites.Bookmark bookmark -> {
+                        Favorites.Favorite favorite = bookmark.favorite();
+                        // Der Favorit selbst in Tinte, seine Eltern als Pfad gedämpft darunter.
+                        setText("<html>" + Explorer.escape(favorite.title()) + "<br><font color='#7a7a7a'>"
+                                + Explorer.escape(favorite.where()) + "</font></html>");
+                        setIcon(favorite.isSource() ? MainWindow.database()
+                                : favorite.pageId() == null ? SidebarIcons.folder() : SidebarIcons.page());
+                    }
+                    case null -> setText("");
                 }
+                setFont(Comic.regular(13f));
+                setBackgroundSelectionColor(Comic.YELLOW);
+                setTextSelectionColor(Comic.INK);
+                setBorderSelectionColor(null);
                 setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 2));
-                setOpaque(selected);
                 return this;
             }
         });
-        list.getAccessibleContext().setAccessibleName("Favoriten");
-        list.addMouseListener(new MouseAdapter() {
+        view.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
-                if (SwingUtilities.isLeftMouseButton(event)) {
+                if (SwingUtilities.isLeftMouseButton(event) && event.getClickCount() == 1
+                        && !event.isControlDown() && !event.isShiftDown()
+                        && view.getRowForLocation(event.getX(), event.getY()) >= 0) {
                     open();
                 }
             }
         });
-        list.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "favorite-open");
-        list.getActionMap().put("favorite-open", new javax.swing.AbstractAction() {
+        view.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "favorite-open");
+        view.getActionMap().put("favorite-open", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 open();
             }
         });
-        component = Comic.scroll(list);
-        component.setBorder(BorderFactory.createEmptyBorder());
+        newFolder.addActionListener(e -> tree.createFolder());
+        JPanel bar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+        bar.setOpaque(false);
+        bar.add(newFolder);
+        component.setOpaque(false);
+        component.add(bar, BorderLayout.NORTH);
+        JScrollPane scroll = Comic.scroll(view);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        component.add(scroll, BorderLayout.CENTER);
     }
 
     JComponent component() {
         return component;
     }
 
-    /** Liest die Favoriten neu ein und markiert den aktuellen; liefert, ob es keine Favoriten gibt. */
+    /** Ordner gewählt: bekommt ID und Namen, um die Sammlung zu wählen (ADR 0034 Abschnitt 3). */
+    void onFolder(BiConsumer<String, String> listener) {
+        this.onFolder = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Liest den Baum neu ein und markiert den aktuellen Favoriten; liefert, ob es keine Favoriten gibt. */
     boolean reload() {
-        List<Favorites.Favorite> all = context.favorites().all();
-        model.clear();
-        all.forEach(model::addElement);
+        List<Favorites.Entry> entries = context.favorites().tree();
+        tree.setRoots(entries);
         markCurrent();
-        return all.isEmpty();
+        return entries.isEmpty();
     }
 
     boolean isEmpty() {
-        return model.isEmpty();
+        return context.favorites().tree().isEmpty();
     }
 
     /**
      * Markiert den Favoriten des im Baum gewählten Knotens, also der geöffneten Seite. Ohne diese Markierung sah ein
-     * Klick auf den Favoriten der schon offenen Seite so aus, als passiere nichts.
+     * Klick auf den Favoriten der schon offenen Seite so aus, als passiere nichts. Ein gewählter Ordner bleibt
+     * gewählt, solange der Seitenbaum nichts markiert, das ein Favorit ist.
      */
     void markCurrent() {
         Explorer.Item item = current.get();
-        for (int index = 0; item != null && index < model.size(); index++) {
-            if (matches(model.get(index), item)) {
-                list.setSelectedIndex(index);
-                list.ensureIndexIsVisible(index);
-                return;
+        if (item == null) {
+            if (!(selected() instanceof Favorites.Folder)) {
+                tree.component().clearSelection();
+            }
+            return;
+        }
+        String id = find(context.favorites().tree(), item);
+        if (id != null) {
+            tree.select(List.of(id));
+        } else if (!(selected() instanceof Favorites.Folder)) {
+            tree.component().clearSelection();
+        }
+    }
+
+    private static String find(List<Favorites.Entry> entries, Explorer.Item item) {
+        for (Favorites.Entry entry : entries) {
+            switch (entry) {
+                case Favorites.Bookmark bookmark -> {
+                    if (matches(bookmark.favorite(), item)) {
+                        return bookmark.id();
+                    }
+                }
+                case Favorites.Folder folder -> {
+                    String found = find(folder.children(), item);
+                    if (found != null) {
+                        return found;
+                    }
+                }
             }
         }
-        list.clearSelection();
+        return null;
     }
 
     static boolean matches(Favorites.Favorite favorite, Explorer.Item item) {
@@ -127,23 +230,53 @@ final class FavoritesView {
         };
     }
 
-    /** Ein Favorit: die Seite öffnen bzw. den Space zeigen; der Baum folgt der geöffneten Seite. */
+    private Favorites.Entry selected() {
+        List<Favorites.Entry> selection = tree.selection();
+        return selection.size() == 1 ? selection.get(0) : null;
+    }
+
+    /** Ein Favorit: die Seite öffnen bzw. den Space zeigen; ein Ordner: als Sammlung wählen. */
     private void open() {
-        Favorites.Favorite favorite = list.getSelectedValue();
-        if (favorite == null) {
-            return;
-        }
-        if (favorite.isSource()) {
-            revealSource.accept(favorite.sourceId());
-        } else if (favorite.pageId() == null) {
-            context.navigator().openSpace(favorite.sourceId(), favorite.spaceKey());
-        } else {
-            context.navigator().openPage(favorite.sourceId(), favorite.pageId());
+        switch (selected()) {
+            case Favorites.Folder folder -> onFolder.accept(folder.id(), folder.name());
+            case Favorites.Bookmark bookmark -> {
+                Favorites.Favorite favorite = bookmark.favorite();
+                if (favorite.isSource()) {
+                    revealSource.accept(favorite.sourceId());
+                } else if (favorite.pageId() == null) {
+                    context.navigator().openSpace(favorite.sourceId(), favorite.spaceKey());
+                } else {
+                    context.navigator().openPage(favorite.sourceId(), favorite.pageId());
+                }
+            }
+            case null -> {
+            }
         }
     }
 
-    /** Für Tests: die Liste selbst. */
-    JList<Favorites.Favorite> list() {
-        return list;
+    /** Für Tests: der Ordnerbaum. */
+    FolderTree<Favorites.Entry> tree() {
+        return tree;
+    }
+
+    /** Für Tests: die Favoriten in Baumreihenfolge, wie die Ansicht sie zeigt. */
+    List<Favorites.Favorite> shown() {
+        List<Favorites.Favorite> out = new ArrayList<>();
+        collect(context.favorites().tree(), out);
+        return out;
+    }
+
+    private static void collect(List<Favorites.Entry> entries, List<Favorites.Favorite> out) {
+        for (Favorites.Entry entry : entries) {
+            switch (entry) {
+                case Favorites.Bookmark bookmark -> out.add(bookmark.favorite());
+                case Favorites.Folder folder -> collect(folder.children(), out);
+            }
+        }
+    }
+
+    /** Für Tests: der markierte Favorit, null ohne oder bei einem Ordner. */
+    Favorites.Favorite marked() {
+        return selected() instanceof Favorites.Bookmark bookmark ? bookmark.favorite() : null;
     }
 }
