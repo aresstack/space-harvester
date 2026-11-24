@@ -515,4 +515,20 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
             case FAILED -> SessionState.FAILED;
         });
     }
+
+    /** Maustaste Zurück: im Browser der gewählten Sitzung einen Schritt zurück, wie sein Zurück-Knopf. */
+    void navigateBack() {
+        NdvBrowser browser = selectedBrowser();
+        if (browser != null) {
+            browser.navigateBack();
+        }
+    }
+
+    /** Maustaste Vor. */
+    void navigateForward() {
+        NdvBrowser browser = selectedBrowser();
+        if (browser != null) {
+            browser.navigateForward();
+        }
+    }
 }

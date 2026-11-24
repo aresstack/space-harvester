@@ -392,4 +392,20 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     static String describe(Throwable error) {
         return FtpSession.describe(error);
     }
+
+    /** Maustaste Zurück: in den Datasets der gewählten Sitzung zum vorher gezeigten Pfad (wie Pfeil links). */
+    void navigateBack() {
+        FtpSessionView view = selected == null ? null : viewOf.get(selected);
+        if (view != null && FtpSessionView.DATASETS.equals(view.view())) {
+            view.datasets().back();
+        }
+    }
+
+    /** Maustaste Vor (wie Pfeil rechts). */
+    void navigateForward() {
+        FtpSessionView view = selected == null ? null : viewOf.get(selected);
+        if (view != null && FtpSessionView.DATASETS.equals(view.view())) {
+            view.datasets().forward();
+        }
+    }
 }
