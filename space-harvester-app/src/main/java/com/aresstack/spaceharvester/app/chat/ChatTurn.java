@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.chat;
 
+import com.aresstack.spaceharvester.application.jobs.Foreground;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 import com.aresstack.spaceharvester.ai.AiChat;
@@ -382,9 +383,33 @@ public final class ChatTurn {
 
     private CollectionNodes collection;
 
+    /** Die offene Ansicht, für die der Turn arbeitet ({@link Foreground}), oder {@code null}. */
+    private volatile String view;
+    /** Solange der Turn arbeitet, lassen KI-Anfragen gewöhnlicher Aufträge ihm den Vortritt. */
+    private volatile Foreground.Hold busy = () -> { };
+
+    /**
+     * Der Turn arbeitet für die offene Ansicht (Angelo 24.11.2026): Vom Senden bis zur Antwort warten die KI-Anfragen
+     * gewöhnlicher Aufträge, und was er an Aufträgen anlegt (etwa „Suchtreffer vorbereiten“), startet vor allen anderen.
+     * Wird die Ansicht verlassen, verliert beides den Vorrang.
+     */
+    public ChatTurn inView(String view) {
+        this.view = view;
+        return this;
+    }
+
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
     public void start() {
-        Thread worker = new Thread(this::run, "chat-turn");
+        String working = view;
+        busy = Foreground.busy(working);
+        Thread worker = new Thread(() -> Foreground.run(working, () -> {
+            try {
+                run();
+            } catch (RuntimeException | Error e) {
+                busy.close();
+                throw e;
+            }
+        }), "chat-turn");
         worker.setDaemon(true);
         worker.start();
     }
@@ -1455,6 +1480,7 @@ public final class ChatTurn {
     }
 
     private void finish(Runnable terminal) {
+        busy.close();
         endWebSearch();
         onUi(() -> {
             if (!closed) {

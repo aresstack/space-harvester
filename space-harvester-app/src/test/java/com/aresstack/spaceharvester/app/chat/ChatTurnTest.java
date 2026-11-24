@@ -121,6 +121,41 @@ class ChatTurnTest {
     }
 
     @Test
+    void aTurnOfTheOpenViewHoldsBackOrdinaryJobsUntilItsAnswerIsThere() throws Exception {
+        // Angelo 24.11.2026: Das Fenster, auf das ich warte, hat immer Vorrang.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: " + home.resolve("data") + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        Workspace workspace = context.runtime().workspace();
+        java.util.concurrent.atomic.AtomicBoolean workingDuringTheCall = new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<String> viewDuringTheCall =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        AiChat port = (request, listener) -> {
+            workingDuringTheCall.set(com.aresstack.spaceharvester.application.jobs.Foreground.working());
+            viewDuringTheCall.set(com.aresstack.spaceharvester.application.jobs.Foreground.view());
+            listener.completed("Antwort");
+            return () -> { };
+        };
+        com.aresstack.spaceharvester.application.jobs.Foreground.open("ansicht-test");
+        try {
+            Events events = new Events();
+            new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", null, null, events, Runnable::run)
+                    .inView("ansicht-test").start();
+            assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+            assertThat(workingDuringTheCall).as("KI-Anfragen gewöhnlicher Aufträge warten").isTrue();
+            assertThat(viewDuringTheCall.get()).as("Aufträge des Turns bekommen Vorrang").isEqualTo("ansicht-test");
+            assertThat(com.aresstack.spaceharvester.application.jobs.Foreground.working())
+                    .as("nach der Antwort nicht mehr").isFalse();
+        } finally {
+            com.aresstack.spaceharvester.application.jobs.Foreground.close("ansicht-test");
+        }
+    }
+
+    @Test
     void anOverviewQuestionWithoutHitsGetsTheStartPagesOfTheArea() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
         for (int i = 1; i <= 5; i++) {
