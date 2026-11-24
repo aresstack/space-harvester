@@ -62,6 +62,23 @@ public final class PodcastVoices {
         return new PodcastVoices(properties);
     }
 
+    /**
+     * Die Stimmen zur Auswahl in den Einstellungen: die der Familie des Modells, Standardstimme zuerst; ohne Modell
+     * oder bei unbekannter Familie die Stimmen aller Familien.
+     */
+    public List<String> voices(String modelId) {
+        List<Family> chosen = family(modelId).map(List::of).orElse(families);
+        java.util.LinkedHashSet<String> voices = new java.util.LinkedHashSet<>();
+        for (Family family : chosen) {
+            if (!family.fallback().isEmpty()) {
+                voices.add(family.fallback());
+            }
+            voices.addAll(family.female());
+            voices.addAll(family.male());
+        }
+        return List.copyOf(voices);
+    }
+
     /** Ob das Modell einer bekannten Familie angehört. */
     public boolean knows(String modelId) {
         return family(modelId).isPresent();

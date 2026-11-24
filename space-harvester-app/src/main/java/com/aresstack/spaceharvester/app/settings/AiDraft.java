@@ -56,6 +56,7 @@ import java.util.List;
  * @param podcast                   Zeile „Podcast“ ({@code podcast-*})
  * @param imagePlan                 Zeile „Bildgenerierung – Plan“ ({@code image-plan-*})
  * @param deadline                  Zeile „Fristen“ ({@code deadline-*}, ADR 0035)
+ * @param speech                    Sprachausgabe: Modell und Stimmen für Podcast und Vorlesen, je leer: automatisch
  */
 public record AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
                       Duration timeout, List<String> externalProcessingSources, String rerankModel,
@@ -63,7 +64,8 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                       AiProvider provider, String contextTokens, String loadTimeout, String retries,
                       String loadPollInterval, String stepThinking, String parallel, String visionMaxTokens,
                       String imageModel, String imageMaxTokens, String visionThinking, String imageThinking,
-                      Use summary, Use summaryPlan, Use podcast, Use imagePlan, Use deadline) {
+                      Use summary, Use summaryPlan, Use podcast, Use imagePlan, Use deadline,
+                      AiServiceSettings.Speech speech) {
 
     /**
      * Eingaben einer eigenen Modellzeile (Modell, Tokenlänge, Nachdenken) als Text, wie die Felder sie zeigen; leer
@@ -166,6 +168,21 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         podcast = podcast == null ? Use.EMPTY : podcast;
         imagePlan = imagePlan == null ? Use.EMPTY : imagePlan;
         deadline = deadline == null ? Use.EMPTY : deadline;
+        speech = speech == null ? AiServiceSettings.Speech.AUTOMATIC : speech;
+    }
+
+    /** Ohne eigene Sprachausgabe. */
+    public AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
+                   Duration timeout, List<String> externalProcessingSources, String rerankModel, String chunkTokens,
+                   String chunkOverlapSentences, String visionModel, String chatMaxTokens, AiProvider provider,
+                   String contextTokens, String loadTimeout, String retries, String loadPollInterval,
+                   String stepThinking, String parallel, String visionMaxTokens, String imageModel,
+                   String imageMaxTokens, String visionThinking, String imageThinking, Use summary, Use summaryPlan,
+                   Use podcast, Use imagePlan, Use deadline) {
+        this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources, rerankModel,
+                chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
+                visionThinking, imageThinking, summary, summaryPlan, podcast, imagePlan, deadline, null);
     }
 
     /** Ohne eigene Zeile der Fristenextraktion. */
@@ -306,7 +323,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 settings.imageMaxTokens() == null ? null : String.valueOf(settings.imageMaxTokens()),
                 settings.visionThinking(), settings.imageThinking(), Use.of(settings.summary()),
                 Use.of(settings.summaryPlan()), Use.of(settings.podcast()), Use.of(settings.imagePlan()),
-                Use.of(settings.deadline()));
+                Use.of(settings.deadline()), settings.speech());
     }
 
     /**
@@ -318,7 +335,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderem Vision-Modell. */
@@ -327,7 +344,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderem Ausgabelimit des Text-Modells. */
@@ -336,7 +353,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Modelle mit anderem Dienst und anderen Freigaben (Reiter „KI-Dienst“). */
@@ -345,7 +362,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben für eine andere Art von Dienst. */
@@ -354,7 +371,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderer Kontextlänge bei Ollama. */
@@ -363,7 +380,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderer Ladefrist bei Ollama (Sekunden). */
@@ -372,7 +389,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderer Zahl an Wiederholungen. */
@@ -381,7 +398,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderem Abstand der Frage nach dem Laden (Sekunden). */
@@ -390,7 +407,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Ob der Dienst ein Ollama-Server ist. */
@@ -407,7 +424,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 && retries == null && loadPollInterval == null && stepThinking == null && parallel == null
                 && visionMaxTokens == null && imageModel == null && imageMaxTokens == null && visionThinking == null
                 && imageThinking == null && summary.empty() && summaryPlan.empty() && podcast.empty()
-                && imagePlan.empty() && deadline.empty();
+                && imagePlan.empty() && deadline.empty() && speech.automatic();
     }
 
     /** Das Nachdenken bei Analyseschritten, wenn gültig; sonst {@code null}. */
@@ -442,7 +459,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                     || retries != null || loadPollInterval != null || parallel != null || visionMaxTokens != null
                     || imageModel != null || imageMaxTokens != null || visionThinking != null
                     || imageThinking != null || !summary.empty() || !summaryPlan.empty() || !podcast.empty()
-                    || !imagePlan.empty() || !deadline.empty()) {
+                    || !imagePlan.empty() || !deadline.empty() || !speech.automatic()) {
                 problems.add("Die Basisadresse des KI-Dienstes fehlt.");
             }
         } else if (looksLikeKey(baseUrl)) {
@@ -571,7 +588,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderer Bildgenerierung (Modell und Ausgabelimit). */
@@ -580,7 +597,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderen eigenen Zeilen für Zusammenfassung, Plan und Podcast. */
@@ -589,7 +606,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan,
-                podcast, imagePlan, deadline);
+                podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderer Zeile „Bildgenerierung – Plan“. */
@@ -598,7 +615,16 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan,
-                podcast, imagePlan, deadline);
+                podcast, imagePlan, deadline, speech);
+    }
+
+    /** Dieselben Eingaben mit anderer Sprachausgabe für Podcast und Vorlesen. */
+    public AiDraft withSpeech(AiServiceSettings.Speech speech) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
+                chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
+                visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan,
+                podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderer Zeile „Fristen“. */
@@ -607,7 +633,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan,
-                podcast, imagePlan, deadline);
+                podcast, imagePlan, deadline, speech);
     }
 
     /** Dieselben Eingaben mit anderem Nachdenken für Vision-Modell und Bildgenerierung (leer: wie Text-Modell). */
@@ -616,7 +642,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     /** Die Kontextlänge als Zahl oder {@code null}, wenn leer oder ungültig. */
@@ -671,7 +697,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel,
                 chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking, imageThinking, summary,
-                summaryPlan, podcast, imagePlan, deadline);
+                summaryPlan, podcast, imagePlan, deadline, speech);
     }
 
     private static Integer number(String text) {
@@ -726,6 +752,11 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         podcast.yaml(yaml, inner, "podcast");
         imagePlan.yaml(yaml, inner, "image-plan");
         deadline.yaml(yaml, inner, "deadline");
+        append(yaml, inner, AiServiceSettings.PODCAST_SPEECH_MODEL, speech.podcastModel());
+        append(yaml, inner, AiServiceSettings.PODCAST_VOICE_HOST, speech.podcastHost());
+        append(yaml, inner, AiServiceSettings.PODCAST_VOICE_COHOST, speech.podcastCohost());
+        append(yaml, inner, AiServiceSettings.READ_ALOUD_MODEL, speech.readAloudModel());
+        append(yaml, inner, AiServiceSettings.READ_ALOUD_VOICE, speech.readAloudVoice());
         if (retryCount() != null) {
             yaml.append(inner).append("retries: ").append(retryCount()).append('\n');
         }

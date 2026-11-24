@@ -135,9 +135,9 @@ public final class PagePodcasts {
     }
 
     /**
-     * Vorlesen über die Sprachausgabe mit demselben Modell und derselben Stimme wie der Podcast: das bevorzugte
-     * TTS-Modell des Dienstes ({@link PodcastVoices#ranked}) mit der Stimme des Gastgebers. Fragt den Dienst, nie auf
-     * dem EDT.
+     * Vorlesen über die Sprachausgabe mit Modell und Stimme der Einstellung „Vorlesen“ ({@code ai.read-aloud-model},
+     * {@code ai.read-aloud-voice}); leer das bevorzugte TTS-Modell des Dienstes ({@link PodcastVoices#ranked}) mit der
+     * Standardstimme seiner Familie. Fragt den Dienst, nie auf dem EDT.
      *
      * @throws IllegalStateException ohne Sprachausgabe oder ohne TTS-Modell beim Dienst
      */
@@ -146,12 +146,18 @@ public final class PagePodcasts {
         if (!speech.available()) {
             throw new IllegalStateException("Keine Sprachausgabe eingerichtet");
         }
-        List<String> models = voices.ranked(speech.models());
-        if (models.isEmpty()) {
-            throw new IllegalStateException("Der KI-Dienst bietet kein Sprachmodell (TTS) an");
+        // Eigene Einstellung „Vorlesen“ (Angelo 24.11.2026); leer: das bevorzugte TTS-Modell und seine Standardstimme.
+        com.aresstack.spaceharvester.ai.AiServiceSettings.Speech chosen = speech.choice();
+        String model = chosen.readAloudModel();
+        if (model == null) {
+            List<String> models = voices.ranked(speech.models());
+            if (models.isEmpty()) {
+                throw new IllegalStateException("Der KI-Dienst bietet kein Sprachmodell (TTS) an");
+            }
+            model = models.get(0);
         }
-        String model = models.get(0);
-        return speech.readAloud(model, voices.pair(model).host(), playback);
+        String voice = chosen.readAloudVoice() != null ? chosen.readAloudVoice() : voices.pair(model).host();
+        return speech.readAloud(model, voice, playback);
     }
 
     /** Eine Stelle im Text der Seite ({@link PageText#text()}), {@code [start, end)}. */

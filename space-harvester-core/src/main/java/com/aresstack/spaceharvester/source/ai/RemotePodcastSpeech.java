@@ -72,6 +72,12 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
     }
 
     @Override
+    public AiServiceSettings.Speech choice() {
+        AiServiceSettings current = settings.get();
+        return current == null ? AiServiceSettings.Speech.AUTOMATIC : current.speech();
+    }
+
+    @Override
     public List<String> models() {
         AiServiceSettings current = settings.get();
         if (!available()) {
