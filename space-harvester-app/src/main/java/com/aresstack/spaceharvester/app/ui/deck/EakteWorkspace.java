@@ -83,6 +83,7 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neue Verbindung", "Mit der E-Akte verbinden");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         newPill.addActionListener(e -> connect());
+        DeckCredentials.menu(newPill, this::editCredentials);
         pillGroup.add(newPill);
         pills.add(newPill);
         JPanel formHolder = new JPanel(new GridBagLayout());
@@ -95,7 +96,7 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         none.setOpaque(false);
         footTools.add(none, FORM);
         headTools.setOpaque(false);
-        add(DeckBars.head(pills, null), BorderLayout.NORTH);
+        add(DeckBars.head(pills, DeckCredentials.button(this::editCredentials)), BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
         sessions.all().forEach(this::added);
@@ -134,6 +135,16 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
     /** Wie viele Verbindungen offen sind (Kachel auf der Startseite). */
     public long connectedCount() {
         return sessions.all().stream().filter(s -> s.state() == EakteState.CONNECTED).count();
+    }
+
+    /**
+     * „Zugangsdaten ändern“ ({@link DeckCredentials}): das Formular ohne automatische Anmeldung, die Einträge neu aus
+     * KeePass, eine Sperre nach einem Fehlschlag als Grund.
+     */
+    void editCredentials() {
+        form.loadEntries();
+        select(null);
+        DeckCredentials.showLock(EakteConnectForm.savedEntry(), form::notice);
     }
 
     /**
@@ -190,6 +201,7 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
                 session.state().label(), "Trennen und schließen (auch Mittelklick auf den Reiter)",
                 () -> close(session));
         pill.addActionListener(e -> select(session));
+        DeckCredentials.menu(pill, this::editCredentials);
         pillGroup.add(pill);
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
@@ -234,11 +246,14 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         }
         if (session.state() == EakteState.FAILED) {
             String reason = session.failure().orElse("Anmeldung gescheitert");
-            if (loggingIn.remove(session) != null && reason.startsWith("Anmeldung abgelehnt")) {
+            boolean refused = loggingIn.remove(session) != null && reason.startsWith("Anmeldung abgelehnt");
+            if (refused) {
                 // Der Anmeldedienst hat abgelehnt: Eintrag sperren, überall, bis eine Anmeldung klappt.
                 DeckLogin.guard().failed(entry, reason);
             }
-            if (direct.remove(session)) {
+            // Direkte Anmeldung gescheitert oder Zugang abgelehnt: sofort das Formular mit dem Grund, damit die
+            // Zugangsdaten geändert werden können (Angelo, 24.11.2026), keine tote Sitzung.
+            if (direct.remove(session) | refused) {
                 close(session);
                 select(null);
                 form.failed(reason);

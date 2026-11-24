@@ -87,21 +87,11 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neue Verbindung", "Neue FTP-Verbindung öffnen");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         newPill.addActionListener(e -> newConnection());
-        // Rechtsklick: das Formular trotzdem zeigen, für einen anderen Server oder andere Einstellungen.
-        newPill.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mousePressed(java.awt.event.MouseEvent event) {
-                formMenu(event);
-            }
-
-            @Override
-            public void mouseReleased(java.awt.event.MouseEvent event) {
-                formMenu(event);
-            }
-        });
+        // Rechtsklick: Zugangsdaten ändern (Formular trotz eingerichteter Verbindung, anderer Server).
+        DeckCredentials.menu(newPill, this::editCredentials);
         pillGroup.add(newPill);
         pills.add(newPill);
-        JPanel head = DeckBars.head(pills, null);
+        JPanel head = DeckBars.head(pills, DeckCredentials.button(this::editCredentials));
 
         JPanel formHolder = new JPanel(new GridBagLayout());
         formHolder.setBackground(Comic.SURFACE);
@@ -197,16 +187,14 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         select(null);
     }
 
-    private void formMenu(java.awt.event.MouseEvent event) {
-        if (!event.isPopupTrigger()) {
-            return;
-        }
-        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
-        javax.swing.JMenuItem item = new javax.swing.JMenuItem("Verbindung wählen … (anderer Server, Einstellungen)");
-        item.setFont(Comic.regular(13f));
-        item.addActionListener(e -> showForm());
-        menu.add(item);
-        menu.show(event.getComponent(), event.getX(), event.getY());
+    /**
+     * „Zugangsdaten ändern“ ({@link DeckCredentials}): das Formular ohne automatische Anmeldung, die Einträge neu aus
+     * KeePass, eine Sperre nach einem Fehlschlag als Grund.
+     */
+    void editCredentials() {
+        form.load();
+        showForm();
+        DeckCredentials.showLock(FtpConnectForm.rememberedEntry(), form::problem);
     }
 
     /** Der Stand des FTP-Bereichs für die Statuszeile der App: Meldungen der gewählten Sitzung, Fehler rot. */
@@ -267,6 +255,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.label(), session.state().label(),
                 "Trennen und schließen (auch Mittelklick auf den Reiter)", () -> closeTab(session));
         pill.addActionListener(e -> select(session));
+        DeckCredentials.menu(pill, this::editCredentials);
         pillGroup.add(pill);
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);

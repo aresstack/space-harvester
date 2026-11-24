@@ -89,9 +89,11 @@ public final class BetaViewWorkspace extends JPanel {
                 "Bei einem BetaView-Server anmelden");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         newPill.addActionListener(e -> newLogin());
+        com.aresstack.spaceharvester.app.ui.deck.DeckCredentials.menu(newPill, this::editCredentials);
         pillGroup.add(newPill);
         pills.add(newPill);
-        JPanel head = com.aresstack.spaceharvester.app.ui.deck.DeckBars.head(pills, null);
+        JPanel head = com.aresstack.spaceharvester.app.ui.deck.DeckBars.head(pills,
+                com.aresstack.spaceharvester.app.ui.deck.DeckCredentials.button(this::editCredentials));
 
         JPanel formHolder = new JPanel(new GridBagLayout());
         formHolder.setOpaque(false);
@@ -119,6 +121,19 @@ public final class BetaViewWorkspace extends JPanel {
 
     /** Die automatische Anmeldung beim ersten Zeigen ist schon gelaufen. */
     private boolean autoTried;
+
+    /**
+     * „Zugangsdaten ändern“ ({@code DeckCredentials}): das Formular ohne automatische Anmeldung, die Einträge neu aus
+     * KeePass, eine Sperre nach einem Fehlschlag als Grund. Wer zuletzt „Manuell“ gewählt hatte, gibt dort Benutzer
+     * und neues Kennwort ein.
+     */
+    void editCredentials() {
+        autoTried = true;
+        form.loadEntries();
+        select(null);
+        com.aresstack.spaceharvester.app.ui.deck.DeckCredentials.showLock(BetaViewConnectForm.savedEntry(),
+                form::notice);
+    }
 
     /**
      * „Neue Anmeldung“ (und das erste Zeigen): Sind Zugangsdaten da (KeePass-Eintrag), meldet sie direkt an; das
@@ -169,6 +184,7 @@ public final class BetaViewWorkspace extends JPanel {
                 session.state().label(), "Abmelden und schließen (auch Mittelklick auf den Reiter)",
                 () -> close(session));
         pill.addActionListener(e -> select(session));
+        com.aresstack.spaceharvester.app.ui.deck.DeckCredentials.menu(pill, this::editCredentials);
         pillGroup.add(pill);
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
@@ -202,6 +218,7 @@ public final class BetaViewWorkspace extends JPanel {
             panel.stateChanged();
         }
         String entry = loggingIn.get(session);
+        boolean refused = false;
         if (session.state() == ConnectionState.CONNECTED) {
             direct.remove(session);
             if (loggingIn.remove(session) != null) {
@@ -216,9 +233,11 @@ public final class BetaViewWorkspace extends JPanel {
                 && rejected(session.failure().orElse(""))) {
             // Der Server hat die Anmeldung abgelehnt: Eintrag sperren, überall, bis eine Anmeldung klappt.
             DeckLogin.guard().failed(entry, session.failure().orElse("Anmeldung abgelehnt"));
+            refused = true;
         }
-        if (session.state() == ConnectionState.FAILED && direct.remove(session)) {
-            // Direkte Anmeldung gescheitert: keine tote Sitzung stehen lassen, sondern das Formular mit dem Grund.
+        if (session.state() == ConnectionState.FAILED && (direct.remove(session) | refused)) {
+            // Direkte Anmeldung gescheitert oder Zugang abgelehnt: keine tote Sitzung stehen lassen, sondern sofort
+            // das Formular mit dem Grund, damit die Zugangsdaten geändert werden können (Angelo, 24.11.2026).
             String reason = session.failure().orElse("Anmeldung gescheitert");
             close(session);
             select(null);

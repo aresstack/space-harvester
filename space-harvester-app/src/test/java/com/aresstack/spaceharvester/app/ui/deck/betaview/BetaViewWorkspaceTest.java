@@ -257,6 +257,44 @@ class BetaViewWorkspaceTest {
     }
 
     @Test
+    void changingCredentialsShowsTheFormAndReadsKeePassAgainWithoutLoggingIn() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        ServerAccount account = new ServerAccount("Host", "https://betaview.example/", "U1");
+        ServerAccounts counting = new ServerAccounts() {
+            @Override
+            public List<ServerAccount> accounts() {
+                return List.of(account);
+            }
+
+            @Override
+            public ServerCredentials credentials(String entry) {
+                reads.incrementAndGet();
+                return new ServerCredentials(account, "neu".toCharArray());
+            }
+        };
+        try {
+            clearLoginState();
+            // Eingerichtet: „Neue Anmeldung“ würde direkt anmelden. „Zugangsdaten ändern“ zeigt trotzdem das Formular.
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put("deck.terminal.entry", "Host");
+            build(counting, new FakePrompts(folder.resolve("x")));
+            assertThat(BetaViewConnectForm.isConfigured()).isTrue();
+            SwingUtilities.invokeAndWait(workspace::editCredentials);
+            await(() -> workspace.form().entry.getItemCount() == 1, "Einträge neu aus KeePass");
+            Thread.sleep(200);
+            assertThat(reads.get()).as("kein Anmeldeversuch").isZero();
+            assertThat(onEdt(workspace::sessionCount)).isZero();
+            assertThat(onEdt(workspace::selected)).isNull();
+
+            // Mit gesperrtem Eintrag nennt das Formular den Grund.
+            com.aresstack.spaceharvester.app.ui.deck.DeckLogin.guard().failed("Host", "Kennwort abgelaufen");
+            SwingUtilities.invokeAndWait(workspace::editCredentials);
+            assertThat(onEdt(() -> workspace.form().problemText())).contains("Kennwort abgelaufen");
+        } finally {
+            clearLoginState();
+        }
+    }
+
+    @Test
     void onlyARejectionByTheServerLocksTheEntry() {
         assertThat(BetaViewWorkspace.rejected("Anmeldung abgelehnt: Benutzer oder Kennwort falsch")).isTrue();
         assertThat(BetaViewWorkspace.rejected("Anmeldung abgelehnt: HTTP 401")).isTrue();

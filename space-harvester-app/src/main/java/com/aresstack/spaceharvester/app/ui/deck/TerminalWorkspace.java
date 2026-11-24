@@ -162,18 +162,8 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
                 "Neue TN3270-Verbindung öffnen");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         newPill.addActionListener(e -> newConnection());
-        // Rechtsklick: das Formular trotzdem zeigen, für Lesezeichen oder einen anderen Server.
-        newPill.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mousePressed(java.awt.event.MouseEvent event) {
-                formMenu(event);
-            }
-
-            @Override
-            public void mouseReleased(java.awt.event.MouseEvent event) {
-                formMenu(event);
-            }
-        });
+        // Rechtsklick: Zugangsdaten ändern (Formular trotz eingerichteter Verbindung, Lesezeichen, anderer Server).
+        DeckCredentials.menu(newPill, this::editCredentials);
         pillGroup.add(newPill);
         pills.add(newPill);
         // Kopfzeile wie die der übrigen Perspektiven: Reiter links, Tasten mittig, Aktionen rechts (Angelo, 23.11.).
@@ -244,7 +234,9 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         undoAssist.setVisible(false);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
         actions.setOpaque(false);
-        for (JComponent part : new JComponent[] {undoAssist, copy, paste, star, more}) {
+        // Der Schlüssel: Zugangsdaten ändern, ohne dass vorher automatisch angemeldet wird (Angelo, 24.11.2026).
+        JComponent key = DeckCredentials.button(this::editCredentials);
+        for (JComponent part : new JComponent[] {undoAssist, copy, paste, star, key, more}) {
             actions.add(part);
         }
         JPanel headBar = DeckBars.head(head, actions);
@@ -345,16 +337,15 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
         form.connectDirectly(reason -> showForm());
     }
 
-    private void formMenu(java.awt.event.MouseEvent event) {
-        if (!event.isPopupTrigger()) {
-            return;
-        }
-        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
-        javax.swing.JMenuItem item = new javax.swing.JMenuItem("Verbindung wählen … (Lesezeichen, anderer Server)");
-        item.setFont(Comic.regular(13f));
-        item.addActionListener(e -> showForm());
-        menu.add(item);
-        menu.show(event.getComponent(), event.getX(), event.getY());
+    /**
+     * „Zugangsdaten ändern“ ({@link DeckCredentials}): das Formular ohne automatische Anmeldung, die Einträge neu aus
+     * KeePass, eine Sperre nach einem Fehlschlag als Grund.
+     */
+    void editCredentials() {
+        form.load();
+        showForm();
+        DeckCredentials.showLock(com.aresstack.spaceharvester.app.ui.AppState.shared().get(ConnectForm.ENTRY_KEY),
+                form::problem);
     }
 
     /** Das Formular „Neue Verbindung“ auch, wenn die Verbindung eingerichtet ist (Lesezeichen, anderer Server). */
@@ -421,6 +412,7 @@ public final class TerminalWorkspace extends JPanel implements DeckBars.FootTool
                 session.state().label(), "Trennen und schließen (auch Mittelklick auf den Reiter)",
                 () -> askClose(session));
         pill.addActionListener(e -> select(session));
+        DeckCredentials.menu(pill, this::editCredentials);
         pillGroup.add(pill);
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
