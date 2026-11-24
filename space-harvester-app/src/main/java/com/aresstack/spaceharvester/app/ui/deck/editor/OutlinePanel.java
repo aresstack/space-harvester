@@ -117,6 +117,14 @@ final class OutlinePanel extends JPanel {
         build();
     }
 
+    private String query = "";
+
+    /** Suche der Seitenleiste: nur passende Einträge (mit ihren Kindern) bleiben stehen. */
+    void query(String text) {
+        query = text == null ? "" : text;
+        build();
+    }
+
     private void build() {
         root.removeAllChildren();
         if (outline == null) {
@@ -141,6 +149,8 @@ final class OutlinePanel extends JPanel {
                 }
             }
             status.setText(outline.status());
+            TreeQuery.prune(root, query, item -> item instanceof JclElement element ? element.getDisplayText()
+                    : String.valueOf(item));
         }
         model.reload();
         for (int row = 0; row < tree.getRowCount(); row++) {

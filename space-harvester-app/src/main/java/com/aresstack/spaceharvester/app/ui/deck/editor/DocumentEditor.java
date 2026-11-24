@@ -383,7 +383,7 @@ public final class DocumentEditor extends JPanel {
     public void showInCenter(JComponent view) {
         centerSearch = view instanceof CenterSearch search ? search : null;
         for (java.awt.Component component : center.getComponents()) {
-            if (component != textAndOutline) {
+            if (component != textAndOutline && component != textAndCompare) {
                 center.remove(component);
             }
         }
@@ -893,6 +893,10 @@ public final class DocumentEditor extends JPanel {
     }
 
     private void showRelations(boolean show) {
+        if (sidePanels != null) {
+            relationsToggle.setVisible(false);
+            return;
+        }
         relationsToggle.marked(show);
         boolean visible = show && effective.parser().isPresent();
         relationsToggle.setVisible(effective.parser().isPresent());
@@ -932,6 +936,10 @@ public final class DocumentEditor extends JPanel {
     }
 
     private void showOutline(boolean show) {
+        if (sidePanels != null) {
+            outlineToggle.setVisible(false);
+            return;
+        }
         outlineToggle.marked(show);
         outlinePanel.setVisible(show);
         AppState.shared().put(OUTLINE_KEY, show);
@@ -1144,6 +1152,54 @@ public final class DocumentEditor extends JPanel {
 
     RelationsPanel relationsPanel() {
         return relationsPanel;
+    }
+
+    /** Ressourcen, Aufrufhierarchie (Callees/Caller) und Gliederung für die Seitenleiste eines Arbeitsbereichs. */
+    public record SidePanels(JComponent resources, JComponent calls, JComponent outline) {
+    }
+
+    private SidePanels sidePanels;
+
+    /**
+     * Nimmt Ressourcen, Callees/Caller und Gliederung aus der Mitte; der Text bekommt die ganze Fläche (Angelo 24.11.:
+     * „es bleibt nur noch ein Mini-Quadrat“). Der Arbeitsbereich zeigt sie in seiner Seitenleiste, je einen als Reiter.
+     * Die Schalter dafür verschwinden aus der Werkzeugleiste. Mehrfach aufgerufen: dieselben Bausteine.
+     */
+    public SidePanels detachSidePanels() {
+        if (sidePanels == null) {
+            center.remove(textAndOutline);
+            textAndOutline.removeAll();
+            relationsAndText.removeAll();
+            center.add(textAndCompare, TEXT_CARD, 0);
+            JComponent[] relations = relationsPanel.detach();
+            relationsPanel.setVisible(true);
+            outlinePanel.setVisible(true);
+            outlinePanel.setBorder(BorderFactory.createEmptyBorder());
+            sidePanels = new SidePanels(relations[0], relations[1], outlinePanel);
+            relationsToggle.setVisible(false);
+            outlineToggle.setVisible(false);
+            if (centerSearch == null) {
+                centerCards.show(center, TEXT_CARD);
+            }
+            center.revalidate();
+            center.repaint();
+        }
+        return sidePanels;
+    }
+
+    /** Filtert Callees und Caller nach Namen (Suche der Seitenleiste); leer zeigt alle. */
+    public void filterCalls(String regex) {
+        relationsPanel.names(regex);
+    }
+
+    /** Filtert die Ressourcen (Suche der Seitenleiste). */
+    public void filterResources(String query) {
+        relationsPanel.resources(query);
+    }
+
+    /** Filtert die Gliederung (Suche der Seitenleiste). */
+    public void filterOutline(String query) {
+        outlinePanel.query(query);
     }
 
     public boolean relationsShown() {
