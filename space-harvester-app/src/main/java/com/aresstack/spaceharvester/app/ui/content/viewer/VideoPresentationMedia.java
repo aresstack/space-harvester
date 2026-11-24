@@ -34,13 +34,9 @@ public final class VideoPresentationMedia implements VideoMedia {
     /** Das Whisper-Modell dieser Transkription (Angelo 20.11.2026: je Modell ein Original). */
     private final com.aresstack.spaceharvester.app.transcription.WhisperModel whisper;
 
-    /** Die Länge der Videodatei laut Quelle ({@code dav.contentLength}); {@code -1} ohne brauchbare Angabe. */
+    /** Read the media length from the common file metadata, independent of the source. */
     public static long size(com.aresstack.spaceharvester.application.sources.PageMetadata metadata) {
-        try {
-            return Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength", "-1"));
-        } catch (NumberFormatException unavailable) {
-            return -1;
-        }
+        return com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
     }
 
     /**

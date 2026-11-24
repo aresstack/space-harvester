@@ -16,6 +16,7 @@ import com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Supplier;
+import java.util.function.BiFunction;
 
 /**
  * Quelltyp „Lokale Dateien“ ({@code source.<n>.type=files}, Ressourcenschema {@code file}): ein Verzeichnis,
@@ -53,6 +54,7 @@ public final class LocalFilesSourceProvider implements KnowledgeSourceProvider {
     private final ContentDetector detector;
     private final ExtractionRegistry extraction;
     private final Supplier<LocalFileAccessPolicy> access;
+    private final BiFunction<String, String, String> streamingType;
 
     public LocalFilesSourceProvider(ContentDetector detector, ExtractionRegistry extraction) {
         this(detector, extraction, LocalFileAccessPolicy::none);
@@ -61,11 +63,18 @@ public final class LocalFilesSourceProvider implements KnowledgeSourceProvider {
     /** @param access the user's folder grants, read on every file access (changes apply without restart) */
     public LocalFilesSourceProvider(ContentDetector detector, ExtractionRegistry extraction,
                                     Supplier<LocalFileAccessPolicy> access) {
+        this(detector, extraction, access, (name, type) -> null);
+    }
+
+    public LocalFilesSourceProvider(ContentDetector detector, ExtractionRegistry extraction,
+                                    Supplier<LocalFileAccessPolicy> access,
+                                    BiFunction<String, String, String> streamingType) {
         if (detector == null || extraction == null) {
             throw new IllegalArgumentException("detector and extraction must not be null");
         }
         this.detector = detector;
         this.extraction = extraction;
+        this.streamingType = java.util.Objects.requireNonNull(streamingType, "streamingType");
         this.access = access == null ? LocalFileAccessPolicy::none : access;
     }
 
@@ -102,7 +111,7 @@ public final class LocalFilesSourceProvider implements KnowledgeSourceProvider {
             throw new IllegalArgumentException("Dateiquelle " + sourceId + " ist fehlerhaft: " + reader.problems());
         }
         return new LocalFilesKnowledgeSource(sourceId, directory, detector, extraction, maxFileBytes, access,
-                FilePatterns.split(reader.text("include", null)), FilePatterns.split(reader.text("exclude", null)));
+                FilePatterns.split(reader.text("include", null)), FilePatterns.split(reader.text("exclude", null)), streamingType);
     }
 
     /** Das Verzeichnis absolut mit {@code /} ({@code file:/C:/Daten/Doku/sub/a.txt}). */

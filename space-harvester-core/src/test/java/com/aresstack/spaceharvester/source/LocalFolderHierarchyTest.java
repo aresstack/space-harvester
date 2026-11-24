@@ -147,6 +147,43 @@ class LocalFolderHierarchyTest {
         assertThat(batch.pages()).isNotEmpty();
     }
 
+    @Test
+    void localVideoUsesTheSameMetadataAndBoundedRangesAsBscw() throws IOException {
+        byte[] video = new byte[2 * 1024 * 1024];
+        video[100] = 11;
+        video[101] = 22;
+        Files.write(directory.resolve("aufnahme.mp4"), video);
+        SourceSettingsConfig config = new SourceSettingsConfig("docs", "files", null, null, null,
+                Map.of("directory", directory.toString(), "maxFileMegabytes", "1"));
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("docs", "files", "docs",
+                new LocalFilesSourceAdapter().open(config, null).port());
+        String id = id("aufnahme.mp4");
+        assertThat(source.children("docs", null, null).pages()).extracting(HarvestSource.PageNode::title)
+                .contains("aufnahme.mp4");
+        assertThat(source.pageMetadata(id).attributes())
+                .containsEntry(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND)
+                .containsEntry(PageMetadata.REMOTE_MEDIA, "true")
+                .containsEntry(PageMetadata.REMOTE_MEDIA_TYPE, "video/mp4")
+                .containsEntry("file.size", String.valueOf(video.length));
+        assertThat(source.storedPage(id).nativeFormat()).isEqualTo("remote-media-metadata");
+        assertThat(source.storedPage(id).payload()).isEmpty();
+        assertThat(source.mediaRange(id, 100, 2)).containsExactly((byte) 11, (byte) 22);
+        assertThat(source.mediaRange(id, video.length, 2)).isEmpty();
+    }
+
+    @Test
+    void eligibleOriginalCanBeCopiedDirectlyWithoutUsingTheSnapshot() throws IOException {
+        KnowledgeSourceHarvestSource source = open();
+        Path target = Files.createTempFile("local-original-", ".txt");
+        try {
+            assertThat(source.downloadOriginal(id("notiz.txt"), target, type -> true, 1024)).isPresent();
+            assertThat(Files.readString(target)).isEqualTo("Eine Datei an der Wurzel");
+            assertThat(source.downloadOriginal(id("notiz.txt"), target, type -> false, 1024)).isEmpty();
+        } finally {
+            Files.deleteIfExists(target);
+        }
+    }
+
     private Map<String, PageMetadata> list(KnowledgeSourceHarvestSource source, int limit) {
         Map<String, PageMetadata> pages = new LinkedHashMap<>();
         String cursor = null;

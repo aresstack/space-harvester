@@ -1,6 +1,9 @@
 package com.aresstack.spaceharvester.source;
 
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesKnowledgeSource;
+import java.util.Optional;
+import java.util.function.Predicate;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeMetadata;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
@@ -58,7 +61,7 @@ import java.util.Objects;
  * The navigation reads only immediate children and never traverses unopened directories.
  */
 final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListingSource, ResourceMetadataSource,
-        StoredContentSource, PageNavigationSource, ResourceNodeKindSource {
+        StoredContentSource, PageNavigationSource, ResourceNodeKindSource, OriginalFileSource, SourceMediaRange {
 
     /** {@link StoredContent#nativeFormat()} eines Ordners: kein Inhalt. */
     static final String FOLDER_FORMAT = "local-folder";
@@ -69,7 +72,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
     /** Eigener Cursor: {@code lh1.<letzter Dateipfad als Base64url>.<Cursor der Quelle>}. */
     private static final String CURSOR_PREFIX = "lh1.";
 
-    private final KnowledgeSourcePort port;
+    private final LocalFilesKnowledgeSource port;
     private final PartitionListingSource listing;
     private final ResourceMetadataSource metadata;
     private final StoredContentSource stored;
@@ -82,14 +85,13 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
 
     LocalFolderHierarchy(KnowledgeSourcePort port, Path root, FilePatterns patterns) {
         Objects.requireNonNull(port, "port");
-        if (!(port instanceof PartitionListingSource listing) || !(port instanceof ResourceMetadataSource metadata)
-                || !(port instanceof StoredContentSource stored)) {
+        if (!(port instanceof LocalFilesKnowledgeSource files)) {
             throw new IllegalArgumentException("Ordner-Quelle ohne Partition, Metadaten oder Original: " + port);
         }
-        this.port = port;
-        this.listing = listing;
-        this.metadata = metadata;
-        this.stored = stored;
+        this.port = files;
+        this.listing = files;
+        this.metadata = files;
+        this.stored = files;
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
         this.patterns = Objects.requireNonNull(patterns, "patterns");
         this.prefix = "file:" + SourceLocators.path(this.root.toString()) + "/";
@@ -184,9 +186,28 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
         if (folder != null) {
             return new StoredContent(folder(folder), new byte[0], "text/plain", FOLDER_FORMAT, Instant.now());
         }
+        KnowledgeResource resource = resourceMetadata(localId);
+        if ("true".equals(resource.metadata().asMap().get(PageMetadata.REMOTE_MEDIA))) {
+            return new StoredContent(resource, new byte[0], "application/x-space-harvester-remote-media",
+                    "remote-media-metadata", Instant.now());
+        }
         StoredContent content = stored.storedContent(localId);
         return new StoredContent(describeFile(content.resource()), content.payload(), content.mediaType(),
                 content.nativeFormat(), content.retrievedAt());
+    }
+
+    @Override
+    public Optional<String> downloadOriginal(String localId, Path target, Predicate<String> wanted, long maxBytes)
+            throws KnowledgeSourceException {
+        if (folderOf(localId) != null) {
+            return Optional.empty();
+        }
+        return port.copyOriginal(localId, target, wanted, maxBytes);
+    }
+
+    @Override
+    public byte[] readRange(String localId, long offset, int maximumBytes) throws KnowledgeSourceException {
+        return port.readMediaRange(localId, offset, maximumBytes);
     }
 
     @Override
@@ -307,8 +328,13 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
 
     /** Describe a file for the shared original-document reader and preserve its parent. */
     private KnowledgeResource describeFile(KnowledgeResource file) {
-        KnowledgeResource.Builder builder = file.toBuilder()
-                .metadata(file.metadata().with(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND));
+        KnowledgeMetadata attributes = file.metadata().with(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND);
+        String videoType = VideoFileTypes.streamableType(file.title(), file.contentType());
+        if (videoType != null) {
+            attributes = attributes.with(PageMetadata.REMOTE_MEDIA, "true")
+                    .with(PageMetadata.REMOTE_MEDIA_TYPE, videoType);
+        }
+        KnowledgeResource.Builder builder = file.toBuilder().metadata(attributes);
         String path = pathOf(file);
         String parent = path == null ? null : parentOf(path);
         if (parent != null) {

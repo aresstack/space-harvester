@@ -392,7 +392,7 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
     }
 
     private String playbackMessage() {
-        return audioOnly ? "Nur Audio über BSCW-Streaming" : "Wiedergabe über BSCW-Streaming";
+        return audioOnly ? "Nur Audio aus der Quelle" : "Wiedergabe aus der Quelle";
     }
 
     /** Stop native rendering before AWT replaces the video Canvas window handle. */
