@@ -111,6 +111,11 @@ final class EakteBrowser extends JPanel {
             new javax.swing.DefaultListModel<>();
     private final javax.swing.JList<AttachmentViewerPanel.Heading> outlineList = new javax.swing.JList<>(outlineModel);
     private final javax.swing.JLabel outlineEmpty = Comic.muted(" ");
+    /** „Titel filtern …“ im Kopf der Seitenleiste: zeigt in den gelesenen Mappen nur passende Dokumente. */
+    final com.aresstack.spaceharvester.app.ui.PlaceholderField filter =
+            new com.aresstack.spaceharvester.app.ui.PlaceholderField(12, "Titel filtern …");
+    private final com.aresstack.spaceharvester.app.ui.IconButton collapseAll =
+            new com.aresstack.spaceharvester.app.ui.IconButton(Glyph.COLLAPSE_ALL, "Alle Mappen zuklappen");
     private final SegmentedToggle viewToggle = new SegmentedToggle();
     private final ExtractionView extraction = new ExtractionView(DocumentAnalysisProvider.NONE);
     private Path temp;
@@ -176,11 +181,13 @@ final class EakteBrowser extends JPanel {
             }
         });
         previewStage.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 0));
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPane(), previewStage);
+        // Seitenleiste wie der Explorer: Kopf mit Überschrift und Filter, unten die gemeinsame Fußleiste; rechts die
+        // Arbeitsfläche mit dem Platz für die Leiste mit der Lupe (DeckBars.withFind), beide Leisten auf einer Linie.
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPane(), DeckBars.withFind(previewStage));
         split.setResizeWeight(0.0);
         split.setDividerLocation(300);
         split.setOpaque(false);
-        split.setBorder(BorderFactory.createEmptyBorder());
+        split.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         ComicDivider.install(split);
         add(split, BorderLayout.CENTER);
 
@@ -240,12 +247,75 @@ final class EakteBrowser extends JPanel {
         leftStage.setOpaque(false);
         leftStage.add(Comic.scroll(tree), FOLDERS);
         leftStage.add(outline, OUTLINE);
-        JPanel left = new JPanel(new BorderLayout());
+        filter.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                applyFilter();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                applyFilter();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+            }
+        });
+        collapseAll.addActionListener(e -> {
+            for (int row = tree.getRowCount() - 1; row > 0; row--) {
+                tree.collapseRow(row);
+            }
+        });
+        JPanel left = new JPanel(new BorderLayout(0, 6));
         left.setOpaque(false);
+        left.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead("E-Akte", filter), BorderLayout.NORTH);
         left.add(leftStage, BorderLayout.CENTER);
         // Angelo 24.11.: der Umschalter einer Seitenleiste steht unten in ihrer Fußleiste, überall gleich hoch
-        left.add(DeckBars.foot(leftToggle, null), BorderLayout.SOUTH);
+        left.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
+                com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll),
+                com.aresstack.spaceharvester.app.ui.controls.SideFoot.centered(leftToggle), null), BorderLayout.SOUTH);
         return left;
+    }
+
+    /** Filtert die Dokumente aller gelesenen Mappen nach dem Titel; aufgeklappte Mappen bleiben aufgeklappt. */
+    private void applyFilter() {
+        java.util.List<TreePath> open = new ArrayList<>();
+        java.util.Enumeration<TreePath> expanded = tree.getExpandedDescendants(new TreePath(root));
+        if (expanded != null) {
+            expanded.asIterator().forEachRemaining(open::add);
+        }
+        TreePath chosen = tree.getSelectionPath();
+        java.util.Enumeration<javax.swing.tree.TreeNode> nodes = root.depthFirstEnumeration();
+        List<Folder> folders = new ArrayList<>();
+        nodes.asIterator().forEachRemaining(node -> {
+            if (node instanceof Folder folder && folder.href != null && listing.containsKey(folder.href)) {
+                folders.add(folder);
+            }
+        });
+        for (Folder folder : folders) {
+            folder.fill(listing.get(folder.href), this::matches);
+            treeModel.nodeStructureChanged(folder);
+        }
+        open.forEach(tree::expandPath);
+        if (chosen != null && chosen.getLastPathComponent() instanceof Folder) {
+            tree.setSelectionPath(chosen);
+        }
+    }
+
+    /** Für Tests: die Namen der Knoten, die der Baum gerade zeigt. */
+    List<String> visibleNames() {
+        List<String> names = new ArrayList<>();
+        for (int row = 0; row < tree.getRowCount(); row++) {
+            names.add(String.valueOf(tree.getPathForRow(row).getLastPathComponent()));
+        }
+        return names;
+    }
+
+    /** Ob ein Dokument zum Filter passt (ohne Groß/klein). */
+    private boolean matches(EakteEntry entry) {
+        String needle = filter.getText().strip().toLowerCase(Locale.GERMANY);
+        return needle.isEmpty() || entry.name().toLowerCase(Locale.GERMANY).contains(needle);
     }
 
     /** Überschriften des gezeigten Dokuments in die Gliederung; ohne sagt sie, warum sie leer ist. */
@@ -475,7 +545,7 @@ final class EakteBrowser extends JPanel {
             listing.put(folder.href, sorted);
             // Ein Strukturwechsel nimmt dem Baum die Auswahl (an der Wurzel ganz): danach wiederherstellen.
             TreePath chosenPath = tree.getSelectionPath();
-            folder.fill(sorted);
+            folder.fill(sorted, this::matches);
             treeModel.nodeStructureChanged(folder);
             if (chosenPath != null && chosenPath.getLastPathComponent() instanceof DefaultMutableTreeNode still
                     && (still == folder || still.isNodeAncestor(folder))) {
@@ -825,7 +895,7 @@ final class EakteBrowser extends JPanel {
         }
 
         /** Übernimmt Untermappen und Dokumente (Reihenfolge wie gelesen); schon gelesene Mappen behalten ihren Inhalt. */
-        void fill(List<EakteEntry> entries) {
+        void fill(List<EakteEntry> entries, java.util.function.Predicate<EakteEntry> shown) {
             Map<String, Folder> known = new HashMap<>();
             for (int i = 0; i < getChildCount(); i++) {
                 if (getChildAt(i) instanceof Folder folder) {
@@ -835,8 +905,11 @@ final class EakteBrowser extends JPanel {
             removeAllChildren();
             List<DefaultMutableTreeNode> next = new ArrayList<>();
             for (EakteEntry entry : entries) {
-                next.add(entry.folder() ? known.getOrDefault(entry.href(), new Folder(entry.href(), entry.name()))
-                        : new Doc(entry));
+                if (entry.folder()) {
+                    next.add(known.getOrDefault(entry.href(), new Folder(entry.href(), entry.name())));
+                } else if (shown.test(entry)) {
+                    next.add(new Doc(entry));
+                }
             }
             next.forEach(this::add);
             loaded = true;
