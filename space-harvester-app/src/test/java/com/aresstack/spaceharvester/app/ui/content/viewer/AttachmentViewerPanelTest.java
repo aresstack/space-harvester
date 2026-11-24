@@ -304,6 +304,55 @@ class AttachmentViewerPanelTest {
         });
     }
 
+    /** Gliederung der E-Akte: die Überschriften (Formatvorlagen) des Word-Dokuments, Sprung an ihre Stelle. */
+    @Test
+    void wordHeadingsAreListedAndCanBeJumpedTo() throws Exception {
+        byte[] original;
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument word = new org.apache.poi.xwpf.usermodel.XWPFDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            var title = word.createParagraph();
+            title.setStyle("Heading1");
+            title.createRun().setText("Frachtraum");
+            word.createParagraph().createRun().setText("Ladung geprüft.");
+            var sub = word.createParagraph();
+            sub.setStyle("berschrift2");
+            sub.createRun().setText("Ballast");
+            word.createParagraph().createRun().setText("Ohne Befund.");
+            word.write(output);
+            original = output.toByteArray();
+        }
+        FakeLoader loader = new FakeLoader().file("docx", original).withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("docx", "Bericht.docx", "application/octet-stream", original.length),
+                    loader, null, Runnable::run);
+            assertThat(viewer.headings()).extracting(AttachmentViewerPanel.Heading::level,
+                    AttachmentViewerPanel.Heading::text)
+                    .containsExactly(org.assertj.core.groups.Tuple.tuple(1, "Frachtraum"),
+                            org.assertj.core.groups.Tuple.tuple(2, "Ballast"));
+            viewer.showHeading(viewer.headings().get(1));
+            viewer.close();
+        });
+        FakeLoader letter = new FakeLoader().file("brief", wordWithText("Sehr geehrte Damen und Herren"))
+                .withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("brief", "Brief.docx", "application/octet-stream", -1), letter, null,
+                    Runnable::run);
+            assertThat(viewer.headings()).as("ein Brief ohne Überschriften").isEmpty();
+            viewer.close();
+        });
+    }
+
+    private static byte[] wordWithText(String text) throws java.io.IOException {
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument word = new org.apache.poi.xwpf.usermodel.XWPFDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            word.createParagraph().createRun().setText(text);
+            word.write(output);
+            return output.toByteArray();
+        }
+    }
+
     @Test
     void excelShowsLocalSpreadsheetInsteadOfRequiringAnOnlinePreview() throws Exception {
         byte[] bytes;

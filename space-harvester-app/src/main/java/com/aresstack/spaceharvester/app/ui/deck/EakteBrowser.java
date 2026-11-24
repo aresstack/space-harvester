@@ -8,8 +8,6 @@ import com.aresstack.spaceharvester.app.ui.controls.SaveChooser;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
-import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
-import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
 import com.aresstack.spaceharvester.app.ui.extraction.ExtractionView;
 import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider;
@@ -104,9 +102,20 @@ final class EakteBrowser extends JPanel {
     private EditorSession shownPreview;
     /** Das gezeigte Dokument formatiert, mit den Anhang-Viewern der Leseansicht (Jira, Confluence): PDF, Word, … */
     private AttachmentViewerPanel viewer;
+    static final String FOLDERS = "Ordner";
+    static final String OUTLINE = "Gliederung";
+    private final SegmentedToggle leftToggle = new SegmentedToggle();
+    private final CardLayout leftCards = new CardLayout();
+    private final JPanel leftStage = new JPanel(leftCards);
+    private final javax.swing.DefaultListModel<AttachmentViewerPanel.Heading> outlineModel =
+            new javax.swing.DefaultListModel<>();
+    private final javax.swing.JList<AttachmentViewerPanel.Heading> outlineList = new javax.swing.JList<>(outlineModel);
+    private final javax.swing.JLabel outlineEmpty = Comic.muted(" ");
     private final SegmentedToggle viewToggle = new SegmentedToggle();
     private final ExtractionView extraction = new ExtractionView(DocumentAnalysisProvider.NONE);
     private Path temp;
+    /** Reiter geschlossen: nichts mehr laden, späte Kopien gleich wieder löschen. */
+    private boolean disposed;
     /** Zurück/Vor über die gewählten Mappen und Dokumente (Maustasten 4/5), wie in den anderen Deck-Bereichen. */
     private final com.aresstack.spaceharvester.deck.NavigationHistory<TreePath> visits =
             new com.aresstack.spaceharvester.deck.NavigationHistory<>();
@@ -167,7 +176,7 @@ final class EakteBrowser extends JPanel {
             }
         });
         previewStage.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 0));
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, Comic.scroll(tree), previewStage);
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPane(), previewStage);
         split.setResizeWeight(0.0);
         split.setDividerLocation(300);
         split.setOpaque(false);
@@ -184,6 +193,84 @@ final class EakteBrowser extends JPanel {
                 DeckBars.action(ComposerIcons.download(), "Speichern unter …", this::saveSelected),
                 extraction.actions());
         extraction.actions().setVisible(false);
+    }
+
+    /**
+     * Links „Ordner | Gliederung“ in der Fußleiste der Seitenleiste (Angelo 24.11.): die Gliederung steht an Stelle
+     * des Baums, nie neben dem Text.
+     */
+    private JComponent leftPane() {
+        leftToggle.segment(FOLDERS).segment(OUTLINE);
+        leftToggle.select(FOLDERS);
+        leftToggle.setToolTipText("Links die Mappen oder die Überschriften des gezeigten Dokuments");
+        leftToggle.getAccessibleContext().setAccessibleName("Ordner oder Gliederung");
+        leftToggle.onSelect(choice -> leftCards.show(leftStage, choice));
+        outlineList.setOpaque(false);
+        outlineList.setFont(Comic.regular(13f));
+        outlineList.getAccessibleContext().setAccessibleName("Gliederung des Dokuments");
+        outlineList.setCellRenderer(new javax.swing.DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(javax.swing.JList<?> list, Object value, int index,
+                                                          boolean selected, boolean focus) {
+                super.getListCellRendererComponent(list, value, index, selected, focus);
+                if (value instanceof AttachmentViewerPanel.Heading heading) {
+                    setText(heading.text());
+                    setBorder(BorderFactory.createEmptyBorder(3, 6 + 16 * (heading.level() - 1), 3, 6));
+                    setFont(Comic.regular(13f).deriveFont(heading.level() == 1 ? java.awt.Font.BOLD : java.awt.Font.PLAIN));
+                }
+                if (!selected) {
+                    setOpaque(false);
+                }
+                return this;
+            }
+        });
+        outlineList.addListSelectionListener(event -> {
+            AttachmentViewerPanel.Heading heading = outlineList.getSelectedValue();
+            if (!event.getValueIsAdjusting() && heading != null && viewer != null) {
+                viewToggle.select(PREVIEW);
+                viewer.showHeading(heading);
+            }
+        });
+        outlineEmpty.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
+        JPanel outline = new JPanel(new BorderLayout());
+        outline.setOpaque(false);
+        outline.add(Comic.scroll(outlineList), BorderLayout.CENTER);
+        outline.add(outlineEmpty, BorderLayout.NORTH);
+        refreshOutline();
+        leftStage.setOpaque(false);
+        leftStage.add(Comic.scroll(tree), FOLDERS);
+        leftStage.add(outline, OUTLINE);
+        JPanel left = new JPanel(new BorderLayout());
+        left.setOpaque(false);
+        left.add(leftStage, BorderLayout.CENTER);
+        // Angelo 24.11.: der Umschalter einer Seitenleiste steht unten in ihrer Fußleiste, überall gleich hoch
+        left.add(DeckBars.foot(leftToggle, null), BorderLayout.SOUTH);
+        return left;
+    }
+
+    /** Überschriften des gezeigten Dokuments in die Gliederung; ohne sagt sie, warum sie leer ist. */
+    private void refreshOutline() {
+        java.util.List<AttachmentViewerPanel.Heading> headings = viewer == null ? List.of() : viewer.headings();
+        outlineModel.clear();
+        headings.forEach(outlineModel::addElement);
+        outlineEmpty.setText(headings.isEmpty() ? viewer == null ? "Kein Dokument gezeigt"
+                : "Keine Überschriften (Word-Formatvorlagen „Überschrift 1–3“)" : "");
+        outlineEmpty.setVisible(headings.isEmpty());
+    }
+
+    /** „Ordner | Gliederung“ unten in der Seitenleiste. */
+    JComponent leftToggle() {
+        return leftToggle;
+    }
+
+    /** Die Überschriften, wie die Gliederung sie zeigt. */
+    List<AttachmentViewerPanel.Heading> outline() {
+        return java.util.Collections.list(outlineModel.elements());
+    }
+
+    /** Für Tests: den gezeigten Viewer. */
+    AttachmentViewerPanel viewer() {
+        return viewer;
     }
 
     /** Der Umschalter „Vorschau | Extraktion“ für die Titelleiste des Bereichs. */
@@ -430,12 +517,13 @@ final class EakteBrowser extends JPanel {
         DocumentEditor editor = new DocumentEditor(opened);
         editor.readOnlyView(); // ganze Fläche fürs Dokument; gesucht wird nur mit der Lupe des Deck
         previewStage.add(editor, opened.location());
-        ReaderAttachment attachment = new ReaderAttachment(entry.href(), entry.name(), entry.contentType(),
-                entry.size());
-        viewer = new AttachmentViewerPanel(attachment, fileLoader(file), null, null);
+        // Gemeinsamer Viewer für lokale Dateien im Deck (wie im Bereich Dateien); Umschalter in der Titelleiste
+        DeckFileViewer fileViewer = new DeckFileViewer(file, entry.name(), null);
+        viewer = fileViewer.viewer();
         viewer.detachFooter(); // Speichern/Öffnen stehen schon in der Fußleiste des Deck
-        previewStage.add(viewer, VIEWER_CARD);
-        if (!AttachmentViewerPanel.showsFormatted(attachment) && PREVIEW.equals(viewToggle.selected())) {
+        viewer.onHeadings(this::refreshOutline);
+        previewStage.add(fileViewer, VIEWER_CARD);
+        if (!DeckFileViewer.shows(entry.name()) && PREVIEW.equals(viewToggle.selected())) {
             viewToggle.select(TEXT); // etwa Outlook-Nachrichten: dafür hat der Viewer keine Vorschau, der Text schon
         }
         extraction.show(documentRef(entry));
@@ -453,36 +541,20 @@ final class EakteBrowser extends JPanel {
         EditorSession old = shownPreview;
         shownPreview = null;
         for (Component component : previewStage.getComponents()) {
-            if (component instanceof DocumentEditor || component instanceof AttachmentViewerPanel) {
+            if (component instanceof DocumentEditor || component instanceof DeckFileViewer) {
                 previewStage.remove(component);
             }
         }
         if (viewer != null) {
             viewer.close();
             viewer = null;
+            refreshOutline();
         }
         extraction.show(null);
         viewToggle.setVisible(false);
         showView();
         editors.close(old);
         deleteQuietly(previewFiles.remove(old));
-    }
-
-    /** Liefert dem Viewer die schon geholte Kopie im temporären Ordner (gelesen abseits des EDT). */
-    private static ReaderAttachmentLoader fileLoader(Path file) {
-        return (attachment, done, failed) -> CompletableFuture.supplyAsync(() -> {
-            try {
-                return Files.readAllBytes(file);
-            } catch (IOException e) {
-                throw new java.io.UncheckedIOException(e);
-            }
-        }).whenComplete((bytes, error) -> SwingUtilities.invokeLater(() -> {
-            if (error != null) {
-                failed.accept(EakteSessions.describe(error));
-            } else {
-                done.accept(bytes);
-            }
-        }));
     }
 
     /** Öffnen mit dem zugehörigen Programm über eine Kopie im temporären Ordner dieser Sitzung. */
@@ -526,6 +598,9 @@ final class EakteBrowser extends JPanel {
     }
 
     private CompletableFuture<Path> fetchToTemp(EakteEntry entry) {
+        if (disposed) {
+            return new CompletableFuture<>();
+        }
         try {
             if (temp == null) {
                 temp = Files.createTempDirectory("space-harvester-eakte-");
@@ -536,7 +611,18 @@ final class EakteBrowser extends JPanel {
             folder.toFile().deleteOnExit();
             Path file = folder.resolve(safeName(entry.name()));
             file.toFile().deleteOnExit();
-            return fetch(entry, file);
+            Path root = temp;
+            CompletableFuture<Path> fetched = new CompletableFuture<>();
+            fetch(entry, file).thenAccept(path -> SwingUtilities.invokeLater(() -> {
+                if (disposed) { // Reiter inzwischen zu: die späte Kopie nicht liegen lassen
+                    deleteQuietly(path);
+                    deleteQuietly(folder);
+                    deleteQuietly(root);
+                } else {
+                    fetched.complete(path);
+                }
+            }));
+            return fetched;
         } catch (IOException e) {
             report(new StatusNote("Kein temporärer Ordner: " + EakteSessions.describe(e), StatusNote.Tone.ERROR,
                     null, null));
@@ -585,6 +671,8 @@ final class EakteBrowser extends JPanel {
 
     /** Schließt die Vorschau und löscht den temporären Ordner dieser Sitzung (Reiter zu, Programmende). */
     void dispose() {
+        disposed = true;
+        previewDelay.stop();
         dropPreview();
         extraction.close();
         if (temp != null) {

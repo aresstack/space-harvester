@@ -171,6 +171,12 @@ class EakteWorkspaceTest {
                 .selected())).isEqualTo(EakteBrowser.TEXT);
         assertThat(onEdt(() -> components(browser,
                 com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel.class))).hasSize(1);
+        // Links „Ordner | Gliederung“: eine Outlook-Nachricht hat keine Überschriften, das steht dort.
+        SwingUtilities.invokeAndWait(() -> ((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle)
+                browser.leftToggle()).select(EakteBrowser.OUTLINE));
+        assertThat(onEdt(browser::outline)).isEmpty();
+        SwingUtilities.invokeAndWait(() -> ((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle)
+                browser.leftToggle()).select(EakteBrowser.FOLDERS));
         // Umschalter „Vorschau | Extraktion“ in der Titelleiste; Extraktion ohne Analysedienst: nicht analysiert
         assertThat(onEdt(() -> browser.viewToggle().isVisible())).isTrue();
         assertThat(onEdt(() -> workspace.tools().getComponent(0) == browser.viewToggle())).isTrue();
