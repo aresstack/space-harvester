@@ -352,6 +352,26 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void eachToolCallStartsAndFinishesOnTheEventThreadSoTheChatCanShowACloud() throws Exception {
+        // Wie die Werkzeugwolken im EAC: Beginn und Ende jedes Aufrufs, in dieser Reihenfolge, mit derselben Kennung.
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c1", ChatTools.LIST, "{}"),
+                        new AiChat.ToolCall("c2", ChatTools.LIST, "{}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(events.tools).hasSize(4);
+        String first = events.tools.get(0).substring(("start " + ChatTools.LIST + " ").length());
+        String second = events.tools.get(2).substring(("start " + ChatTools.LIST + " ").length());
+        assertThat(events.tools).containsExactly("start " + ChatTools.LIST + " " + first, "end " + first,
+                "start " + ChatTools.LIST + " " + second, "end " + second);
+        assertThat(first).isNotEqualTo(second);
+    }
+
+    @Test
     void theLastRoundGoesWithoutToolsSoThatAnAnswerComes() throws Exception {
         List<BiConsumer<AiChat.Request, AiChat.Listener>> script = new ArrayList<>();
         for (int i = 0; i < ChatTurn.MAX_TOOL_ROUNDS; i++) {
@@ -1073,6 +1093,18 @@ class ChatToolsTurnTest {
         @Override
         public void released(int count) {
             released += count;
+        }
+
+        final List<String> tools = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void toolStarted(String key, String name, String what) {
+            tools.add("start " + name + " " + key);
+        }
+
+        @Override
+        public void toolFinished(String key) {
+            tools.add("end " + key);
         }
 
         @Override

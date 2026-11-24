@@ -116,6 +116,17 @@ public final class ChatTurn {
         default void using(String what) {
         }
 
+        /**
+         * Ein Werkzeugaufruf beginnt (wie {@code onToolActivity} im EAC): {@code key} kennzeichnet ihn bis
+         * {@link #toolFinished}, {@code name} ist der Werkzeugname, {@code what} der kurze Text dazu.
+         */
+        default void toolStarted(String key, String name, String what) {
+        }
+
+        /** Der Werkzeugaufruf {@code key} ist fertig. */
+        default void toolFinished(String key) {
+        }
+
         /** So viele Seiten kamen eben neu auf die Liste freigegebener Seiten (ADR 0028/0033). */
         default void released(int count) {
         }
@@ -681,8 +692,16 @@ public final class ChatTurn {
                 break;
             }
             String what = toolset.describe(call);
-            onUi(() -> listener.using(what));
-            next.add(AiChat.Message.tool(call.id(), toolset.run(call)));
+            String key = round + ":" + next.size() + ":" + call.id();
+            onUi(() -> {
+                listener.using(what);
+                listener.toolStarted(key, call.name(), what);
+            });
+            try {
+                next.add(AiChat.Message.tool(call.id(), toolset.run(call)));
+            } finally {
+                onUi(() -> listener.toolFinished(key));
+            }
         }
         round(next, round + 1);
     }

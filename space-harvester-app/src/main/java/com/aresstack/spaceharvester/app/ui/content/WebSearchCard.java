@@ -15,6 +15,8 @@ final class WebSearchCard {
 
     static final String TITLE = "Browserrecherche";
     static final String WORKING = "Browser arbeitet …";
+    /** Die Wolke, solange der erste Browser-Aufruf Firefox startet (wie im EAC). */
+    static final String STARTING = "Browser wird gestartet";
 
     /** Legt die Blase mit Titel und Text im Verlauf an. */
     private final Function<String, AgentActivityBubblePanel> open;
