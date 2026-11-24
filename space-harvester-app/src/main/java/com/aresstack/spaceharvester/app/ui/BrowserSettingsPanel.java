@@ -107,6 +107,18 @@ public final class BrowserSettingsPanel {
         }
     }
 
+    /** Überschrift der gemerkten Antworten auf ändernde Aktionen. */
+    public static final String CHANGES_HEADING = "Ändernde Aktionen";
+    static final String CHANGES_HINT = "Formular absenden, Speichern, Senden …: auf diesen Websites ohne Rückfrage "
+            + "bzw. nie. „Immer erlauben“ und „Immer verbieten“ der Rückfrage im Chat tragen den Host hier ein.";
+
+    /** Die gemerkten Antworten auf ändernde Aktionen ({@code browser_act}), für beide Profile. */
+    final JTextArea changesAllowed = area();
+    final JTextArea changesBlocked = area();
+    private final JPanel changes = new JPanel(new BorderLayout(0, 6));
+    private List<String> loadedAllowed = List.of();
+    private List<String> loadedBlocked = List.of();
+
     private final BrowserSettings settings;
     final Profile external;
     final Profile internal;
@@ -121,6 +133,19 @@ public final class BrowserSettingsPanel {
         this.settings = settings;
         external = new Profile(BrowserProfile.EXTERNAL);
         internal = new Profile(BrowserProfile.INTERNAL);
+        SettingDialogs.Rows rows = new SettingDialogs.Rows();
+        rows.add("Immer erlauben", scroll(changesAllowed, "Ändernde Aktionen immer erlauben"), CHANGES_HINT);
+        rows.add("Immer verbieten", scroll(changesBlocked, "Ändernde Aktionen immer verbieten"), RULE_HINT);
+        changes.setOpaque(false);
+        changes.add(rows, BorderLayout.CENTER);
+        for (JTextArea area : new JTextArea[] {changesAllowed, changesBlocked}) {
+            area.addFocusListener(new java.awt.event.FocusAdapter() {
+                @Override
+                public void focusLost(java.awt.event.FocusEvent e) {
+                    saveChanges();
+                }
+            });
+        }
         load();
     }
 
@@ -129,6 +154,36 @@ public final class BrowserSettingsPanel {
         BrowserAccessConfig config = settings.load();
         external.load(config.profile(BrowserProfile.EXTERNAL));
         internal.load(config.profile(BrowserProfile.INTERNAL));
+        var remembered = settings.changes();
+        loading = true;
+        try {
+            changesAllowed.setText(lines(remembered.allow()));
+            changesBlocked.setText(lines(remembered.block()));
+        } finally {
+            loading = false;
+        }
+        loadedAllowed = rules(changesAllowed.getText());
+        loadedBlocked = rules(changesBlocked.getText());
+    }
+
+    /** Wie {@link #save(Profile)}: nur echte Änderungen überschreiben, was der Chat inzwischen gemerkt hat. */
+    private void saveChanges() {
+        if (loading) {
+            return;
+        }
+        List<String> allowed = rules(changesAllowed.getText());
+        List<String> blocked = rules(changesBlocked.getText());
+        if (allowed.equals(loadedAllowed) && blocked.equals(loadedBlocked)) {
+            return;
+        }
+        settings.saveChanges(allowed, blocked);
+        loadedAllowed = allowed;
+        loadedBlocked = blocked;
+    }
+
+    /** Die gemerkten Antworten auf ändernde Aktionen. */
+    public JComponent changes() {
+        return changes;
     }
 
     /**

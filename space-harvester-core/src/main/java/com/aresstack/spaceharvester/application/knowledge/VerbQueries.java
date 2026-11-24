@@ -32,24 +32,93 @@ public final class VerbQueries {
             analysed;
     private final java.util.function.BiFunction<AccessContext, PageKey,
             java.util.Optional<KnowledgeGraph.AnalysedPage>> page;
+    /** Nur die Analysen dieser Seiten samt ihren Dokumenten, in derselben Reihenfolge wie {@link #analysed}. */
+    private final java.util.function.BiFunction<AccessContext, PageSet,
+            ? extends java.util.Collection<KnowledgeGraph.AnalysedPage>> some;
 
     public VerbQueries(KnowledgeGraph graph) {
-        this(Objects.requireNonNull(graph, "graph")::analysed, graph::page);
+        this(caller -> Objects.requireNonNull(graph, "graph").analysed(caller), graph::page,
+                (caller, pages) -> graph.analysed(caller, pages));
     }
 
     /** Über die sichtbaren analysierten Seiten, die {@code analysed} je Aufrufer liefert (in Tests erfunden). */
     public VerbQueries(java.util.function.Function<AccessContext,
             ? extends java.util.Collection<KnowledgeGraph.AnalysedPage>> analysed) {
         this(analysed, (caller, key) -> analysed.apply(caller).stream()
-                .filter(one -> one.page().document().equals(com.aresstack.spaceharvester.application.assets.DocumentKey.page(key))).findFirst().map(one -> (KnowledgeGraph.AnalysedPage) one));
+                .filter(one -> one.page().document().equals(com.aresstack.spaceharvester.application.assets.DocumentKey.page(key))).findFirst().map(one -> (KnowledgeGraph.AnalysedPage) one),
+                (caller, pages) -> analysed.apply(caller).stream()
+                        .filter(one -> pages.contains(one.page().key())).toList());
     }
 
     private VerbQueries(java.util.function.Function<AccessContext,
             ? extends java.util.Collection<KnowledgeGraph.AnalysedPage>> analysed,
                         java.util.function.BiFunction<AccessContext, PageKey,
-                                java.util.Optional<KnowledgeGraph.AnalysedPage>> page) {
+                                java.util.Optional<KnowledgeGraph.AnalysedPage>> page,
+                        java.util.function.BiFunction<AccessContext, PageSet,
+                                ? extends java.util.Collection<KnowledgeGraph.AnalysedPage>> some) {
         this.analysed = Objects.requireNonNull(analysed, "analysed");
         this.page = Objects.requireNonNull(page, "page");
+        this.some = Objects.requireNonNull(some, "some");
+    }
+
+    /**
+     * Was eine analysierte Seite (oder eines ihrer Dokumente) zu den Verben beiträgt: Die Seite ist der unterste
+     * Verwalter, jede Auswahl darüber addiert nur noch diese Einträge (Angelo 24.11.2026).
+     */
+    private record PageDigest(PageKey key, boolean current, Map<Key, Integer> statements) {
+    }
+
+    /** Die Einträge eines Aufrufers, gültig bis zur nächsten Meldung ({@link #invalidate}). */
+    private record Digest(AccessContext caller, List<PageDigest> pages) {
+    }
+
+    /**
+     * Gemerkt an einer {@link java.lang.ref.SoftReference}: Wird der Speicher knapp, gibt die Laufzeit die Einträge
+     * frei, und die nächste Abfrage liest die Analysen neu.
+     */
+    private volatile java.lang.ref.SoftReference<Digest> digest = new java.lang.ref.SoftReference<>(null);
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
+    private volatile boolean remembering;
+
+    /**
+     * Schaltet das Merken ein: Wer die Meldungen anschließt (geänderte Analysen und Prüfungen, geschriebene oder
+     * entfernte Seiten), ruft bei jeder {@link #invalidate}. Ohne diesen Anschluss liest jede Abfrage die Analysen neu.
+     */
+    public VerbQueries remembering() {
+        remembering = true;
+        return this;
+    }
+
+    /** Die gemerkten Einträge gelten nicht mehr; die nächste Abfrage liest neu. Kostet den Melder nichts. */
+    public void invalidate() {
+        generation.incrementAndGet();
+        digest = new java.lang.ref.SoftReference<>(null);
+    }
+
+    private List<PageDigest> digest(AccessContext caller) {
+        Digest held = remembering ? digest.get() : null;
+        if (held != null && Objects.equals(held.caller(), caller)) {
+            return held.pages();
+        }
+        long before = generation.get();
+        List<PageDigest> pages = new ArrayList<>();
+        for (KnowledgeGraph.AnalysedPage analysed : analysed.apply(caller)) {
+            boolean current = analysed.page().state() == PageStatements.State.CURRENT;
+            Map<Key, Integer> statements = new HashMap<>();
+            if (current) {
+                for (ParsedStatements.Statement statement : analysed.analysis().result().statements()) {
+                    if (VerbForms.counts(statement)) {
+                        statements.merge(new Key(VerbForms.lemma(statement), VerbForms.fromText(statement)), 1,
+                                Integer::sum);
+                    }
+                }
+            }
+            pages.add(new PageDigest(analysed.page().key(), current, Map.copyOf(statements)));
+        }
+        if (remembering && before == generation.get()) {
+            digest = new java.lang.ref.SoftReference<>(new Digest(caller, pages));
+        }
+        return pages;
     }
 
     /**
@@ -113,29 +182,23 @@ public final class VerbQueries {
         Map<Key, Counter> counters = new HashMap<>();
         Set<PageKey> current = new HashSet<>();
         Set<PageKey> stale = new HashSet<>();
-        for (KnowledgeGraph.AnalysedPage analysed : analysed.apply(caller)) {
-            PageKey key = analysed.page().key();
+        for (PageDigest page : digest(caller)) {
+            PageKey key = page.key();
             if (within != null && !within.contains(key)) {
                 continue;
             }
-            if (analysed.page().state() != PageStatements.State.CURRENT) {
+            if (!page.current()) {
                 stale.add(key);
                 continue;
             }
             current.add(key);
-            for (ParsedStatements.Statement statement : analysed.analysis().result().statements()) {
-                if (!VerbForms.counts(statement)) {
-                    continue;
+            page.statements().forEach((verb, statements) -> {
+                if (needle.isEmpty() || verb.lemma().contains(needle)) {
+                    Counter counter = counters.computeIfAbsent(verb, k -> new Counter());
+                    counter.statements += statements;
+                    counter.pages.add(key);
                 }
-                String lemma = VerbForms.lemma(statement);
-                if (!needle.isEmpty() && !lemma.contains(needle)) {
-                    continue;
-                }
-                Counter counter = counters.computeIfAbsent(new Key(lemma, VerbForms.fromText(statement)),
-                        k -> new Counter());
-                counter.statements++;
-                counter.pages.add(key);
-            }
+            });
         }
         stale.removeAll(current);
         List<Verb> all = new ArrayList<>(counters.size());
@@ -161,7 +224,7 @@ public final class VerbQueries {
         int max = Math.max(1, Math.min(limit, MAX_LIMIT));
         String wanted = lemma.strip().toLowerCase(Locale.ROOT);
         List<Occurrence> found = new ArrayList<>();
-        for (KnowledgeGraph.AnalysedPage analysed : analysed.apply(caller)) {
+        for (KnowledgeGraph.AnalysedPage analysed : holders(caller, within, new Key(wanted, fromText))) {
             if (within != null && !within.contains(analysed.page().key())
                     || analysed.page().state() != PageStatements.State.CURRENT) {
                 continue;
@@ -178,6 +241,25 @@ public final class VerbQueries {
             }
         }
         return found;
+    }
+
+    /**
+     * Die Analysen, in denen das Verb stehen kann: mit gemerkten Einträgen nur die Seiten, die es wirklich tragen,
+     * statt aller Analysen samt ihren Seiten; sonst alle.
+     */
+    private java.util.Collection<? extends KnowledgeGraph.AnalysedPage> holders(AccessContext caller, PageSet within,
+                                                                                Key verb) {
+        if (!remembering) {
+            return analysed.apply(caller);
+        }
+        List<PageKey> holding = new ArrayList<>();
+        for (PageDigest page : digest(caller)) {
+            if (page.current() && page.statements().containsKey(verb)
+                    && (within == null || within.contains(page.key()))) {
+                holding.add(page.key());
+            }
+        }
+        return holding.isEmpty() ? List.of() : some.apply(caller, PageSet.ofKeys(holding));
     }
 
     /**

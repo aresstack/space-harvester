@@ -80,7 +80,20 @@ public final class PodcastWriter {
             + "über Metadaten reden: keine Anzahl von Seiten, keine Größen, Versionsnummern oder Zeitstempel. "
             + SPOKEN + " Antworte nur mit gültigem JSON, ohne Markdown.";
 
-    /** Wofür eine Folge entsteht: Neuigkeiten eines Updates oder die Erklärung einer Seite. */
+    /**
+     * Der Erklär-Podcast eines ganzen Bereichs (Angelo 24.11.2026, Umschalter „Änderungen | Bereich“): für Neue, die die
+     * Seiten noch nie besucht haben; erzählt die Bereichszusammenfassung der Leseansicht didaktisch nach.
+     */
+    static final String AREA_STYLE = "Du schreibst einen lockeren deutschen Erklär-Podcast im Stil von NotebookLM: zwei "
+            + "Stimmen führen gut gelaunt durch einen ganzen Bereich einer Wissensquelle, als würden sie neuen "
+            + "Kolleginnen und Kollegen am ersten Tag zeigen, worum es dort geht. Sie erklären didaktisch: erst wozu der "
+            + "Bereich da ist und wie er aufgebaut ist, dann die wichtigsten Themen mit Beispielen aus dem Material, "
+            + "Fachbegriffe in einfachen Worten, und am Ende, wo man am besten anfängt. Regeln: Überblick statt "
+            + "Vollständigkeit; nur Fakten aus dem Material, nichts erfinden, keine Namen von Personen. Nie über "
+            + "Metadaten reden: keine Anzahl von Seiten, keine Größen, Versionsnummern oder Zeitstempel. " + SPOKEN
+            + " Antworte nur mit gültigem JSON, ohne Markdown.";
+
+    /** Wofür eine Folge entsteht: Neuigkeiten eines Updates, die Erklärung einer Seite oder eines Bereichs. */
     public enum Format {
         /** Was es Neues gibt: jede Meldung genau einmal, Reihenfolge nach Spannung. */
         NEWS(STYLE, "Neuigkeiten", "Meldung", "Meldungen", "Was gibt es Neues bei uns",
@@ -99,7 +112,15 @@ public final class PodcastWriter {
                 "erklären: das Wesentliche verständlich und mit Beispielen aus dem Material, statt alles aufzuzählen",
                 "Heute erklären wir, worum es auf dieser Seite geht.",
                 "Steht etwas auf einer Unterseite, nennt sie einmal knapp; die erklärte Seite selbst nennt ihr nicht "
-                        + "immer wieder. ", false, true);
+                        + "immer wieder. ", false, true),
+        /** Was ein ganzer Bereich enthält, für Neue: erst das Große und Ganze, dann die Themen. */
+        AREA(AREA_STYLE, "Bereich zum Erklären", "Thema", "Themen", "Kurz erklärt",
+                "Das erste Thema ist ein kurzer Einstieg: wozu es den Bereich gibt und was man dort findet.",
+                "jedes Thema kommt höchstens einmal vor; Themen ohne wesentliche Aussage lässt du weg. Ordne so, dass "
+                        + "man den Bereich gut versteht: erst das Große und Ganze, dann die Einzelheiten.",
+                "erklären: das Wesentliche verständlich und mit Beispielen aus dem Material, statt alles aufzuzählen",
+                "Heute erklären wir, worum es in diesem Bereich geht.",
+                "Nennt eine Stelle nur, wenn sie beim Zurechtfinden hilft, und dann knapp. ", false, true);
 
         final String style;
         final String heading;

@@ -78,6 +78,8 @@ public class TermQueries {
     private final String processorVersion;
     private final DocumentTexts documentTexts;
     private final SecretKey cursorKey = newCursorKey();
+    private final TermLedger ledger;
+    private volatile boolean managed;
 
     /**
      * @param headers          Kopfdaten einer Seite im Cache; leer, wenn sie dort nicht (mehr) liegt
@@ -108,6 +110,25 @@ public class TermQueries {
         this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
         this.projector = Objects.requireNonNull(projector, "projector");
         this.processorVersion = Objects.requireNonNull(processorVersion, "processorVersion");
+        this.ledger = new TermLedger(index, processorVersion, headers, () -> new Visibility(null, null)::current);
+    }
+
+    /**
+     * Schaltet die Verwalter der Gesamtzahlen ein ({@link TermLedger}) und liefert, was der Seiten-Cache ihnen melden
+     * muss, damit keine alte Zahl stehen bleibt (verschobene, entfernte, neu geschriebene Seiten). Ohne diesen
+     * Anschluss zählt {@link #totals} immer über die Einträge.
+     */
+    public com.aresstack.spaceharvester.application.holdings.HoldingsChanges managedTotals() {
+        managed = true;
+        return ledger;
+    }
+
+    /**
+     * Die Verwalter ({@link TermLedger}) von Hand neu aufbauen, für den Fehlerfall: Die nächste Gesamtzahl dieser
+     * Quelle und aller ihrer Spaces wird neu gelesen. {@code null}: alle Quellen.
+     */
+    public void rebuildTotals(String sourceId) {
+        ledger.rebuild(sourceId);
     }
 
     /**
@@ -376,6 +397,15 @@ public class TermQueries {
      * @throws UnknownSourceException bei unbekannter {@code sourceId}
      */
     public TermTotals totals(AccessContext caller, TermSearch search) {
+        return totals(caller, search, null);
+    }
+
+    /**
+     * Wie {@link #totals(AccessContext, TermSearch)}; {@code progress} erfährt nach jedem gelesenen Stapel den
+     * Zwischenstand (im aufrufenden Thread), damit eine Oberfläche mitzählen kann. {@code null}: keine Meldungen.
+     */
+    public TermTotals totals(AccessContext caller, TermSearch search,
+                             java.util.function.Consumer<TermTotals> progress) {
         Objects.requireNonNull(search, "search");
         String q = search.q() == null || search.q().isBlank() ? null : TermText.normalize(search.q());
         String startsWith = search.startsWith() == null || search.startsWith().isBlank() ? null
@@ -383,30 +413,88 @@ public class TermQueries {
         Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey()), search.pages());
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), search.exact() ? q : null,
                 search.exact() ? null : q, processorVersion, startsWith, search.origin(), search.pages());
+        Optional<TermTotals> managed = managed(caller, search, q, startsWith, sourceIds, progress);
+        if (managed.isPresent()) {
+            return managed.get();
+        }
+        if (rememberable(caller, search, q, startsWith, sourceIds)) {
+            return new TermTotals(ledger.selection(search.pages(),
+                    () -> count(caller, search, filter, progress).byKind()));
+        }
+        return count(caller, search, filter, progress);
+    }
+
+    /**
+     * Ob die Zahlen dieser Auswahl gemerkt werden dürfen ({@link TermLedger#selection}): eine reine Seitenmenge ohne
+     * Suchtext, und der Aufrufer darf in ihren Quellen alles lesen (die gemerkte Zahl kennt keinen Aufrufer).
+     */
+    private boolean rememberable(AccessContext caller, TermSearch search, String q, String startsWith,
+                                 Set<String> sourceIds) {
+        return managed && q == null && startsWith == null && search.kind() == null
+                && search.origin() == TermOrigin.PAGES && search.pages() != null && search.sourceId() == null
+                && search.spaceKey() == null && sourceIds.containsAll(search.pages().sourceIds())
+                && sourceIds.stream().allMatch(id -> access.permitsSourceWide(caller, id, AccessKind.CONTENT));
+    }
+
+    private TermTotals count(AccessContext caller, TermSearch search, TermIndex.Filter filter,
+                             java.util.function.Consumer<TermTotals> progress) {
         Visibility visibility = new Visibility(caller, search.spaceKey());
         Map<TermKind, Integer> counts = new java.util.EnumMap<>(TermKind.class);
         String group = null;
         boolean counted = false;
         String from = null;
         while (true) {
-            List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
-            for (TermPosting posting : batch) {
-                if (!posting.groupKey().equals(group)) {
-                    group = posting.groupKey();
+            // Nur Schlüssel: Zählen braucht weder Fundstellen noch Wortlaut (gemessen: der teure Teil des Zählens).
+            List<TermIndex.TermKey> batch = index.keys(filter, from, TermIndex.MAX_KEY_BATCH);
+            for (TermIndex.TermKey key : batch) {
+                if (!key.groupKey().equals(group)) {
+                    group = key.groupKey();
                     counted = false;
                 }
                 // Ein Begriff zählt, sobald er auf einer sichtbaren Seite oder in einem ihrer Dokumente vorkommt.
-                if (!counted && visibility.current(posting).isPresent()) {
+                if (!counted && visibility.current(key).isPresent()) {
                     counted = true;
-                    counts.merge(posting.kind(), 1, Integer::sum);
+                    counts.merge(key.kind(), 1, Integer::sum);
                 }
             }
-            if (batch.size() < TermIndex.MAX_BATCH) {
+            if (batch.size() < TermIndex.MAX_KEY_BATCH) {
                 break;
+            }
+            if (progress != null) {
+                progress.accept(new TermTotals(counts));
             }
             from = batch.get(batch.size() - 1).sortKey();
         }
         return new TermTotals(counts);
+    }
+
+    /**
+     * Die Gesamtzahl aus den Verwaltern ({@link TermLedger}), wenn die Frage genau einen Knoten meint (alle Quellen,
+     * eine Quelle, ein Space, ohne Suchtext und Seitenmenge) und der Aufrufer dort alles lesen darf; sonst leer.
+     */
+    private Optional<TermTotals> managed(AccessContext caller, TermSearch search, String q, String startsWith,
+                                         Set<String> sourceIds, java.util.function.Consumer<TermTotals> progress) {
+        if (!managed || q != null || startsWith != null || search.origin() != TermOrigin.PAGES || search.pages() != null
+                || search.sourceId() == null && search.spaceKey() != null) {
+            return Optional.empty();
+        }
+        List<String> all = catalog.all().stream().map(HarvestSource::id).toList();
+        List<String> asked = search.sourceId() != null ? List.of(search.sourceId()) : all;
+        if (!sourceIds.containsAll(asked)
+                || !asked.stream().allMatch(id -> access.permitsSourceWide(caller, id, AccessKind.CONTENT))) {
+            return Optional.empty();
+        }
+        return ledger.totals(all, search.sourceId(), search.spaceKey(),
+                progress == null ? null : sofar -> progress.accept(new TermTotals(only(sofar, search.kind()))))
+                .map(counts -> new TermTotals(only(counts, search.kind())));
+    }
+
+    private static Map<TermKind, Integer> only(Map<TermKind, Integer> counts, TermKind kind) {
+        if (kind == null) {
+            return counts;
+        }
+        Integer count = counts.get(kind);
+        return count == null ? Map.of() : Map.of(kind, count);
     }
 
     /**
@@ -801,10 +889,15 @@ public class TermQueries {
 
         /** Die Kopfdaten, wenn die Seite im Cache liegt, sichtbar ist und der Eintrag zu ihrer Revision passt. */
         Optional<PageHeader> current(TermPosting posting) {
+            return current(TermIndex.TermKey.of(posting));
+        }
+
+        Optional<PageHeader> current(TermIndex.TermKey posting) {
             Optional<PageHeader> header = checked.computeIfAbsent(posting.page(), key -> headers.apply(key)
                     .filter(found -> spaceKey == null || spaceKey.equals(found.metadata().partitionKey()))
-                    .filter(found -> access.canRead(caller, key.sourceId(), found.metadata().partitionKey(),
-                            key.pageId())));
+                    // Ohne Aufrufer (Verwalter) zählt nur der Stand; die Rechte prüft, wer die Zahl herausgibt.
+                    .filter(found -> caller == null || access.canRead(caller, key.sourceId(),
+                            found.metadata().partitionKey(), key.pageId())));
             if (posting.ofDocument()) {
                 // Ein Dokument hat die Rechte seiner Seite; aktuell ist sein Stand, wenn der Lauf durch ist.
                 return header.filter(found -> posting.extraction() != null);

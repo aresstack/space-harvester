@@ -213,7 +213,8 @@ class ChatToolsTurnTest {
         assertThat(events.completed).isEqualTo("Bei vollem Spool [2].");
         AiChat.Request first = port.requests.get(0);
         assertThat(first.tools()).extracting(AiChat.Tool::name)
-                .containsExactlyInAnyOrder(ChatTools.SEARCH, ChatTools.LIST, ChatTools.READ, ChatTools.TERM);
+                .containsExactlyInAnyOrder(ChatTools.SEARCH, ChatTools.LIST, ChatTools.READ, ChatTools.TERM,
+                        ChatTools.EVALUATE);
         assertThat(first.messages().get(0).text()).startsWith(ChatKnowledge.TOOL_PROMPT)
                 .contains("[1] ").contains("Berechtigungsmanagement").contains(ChatTools.ref(open))
                 .doesNotContain("vollem Spool");
@@ -352,6 +353,26 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void eachToolCallStartsAndFinishesOnTheEventThreadSoTheChatCanShowACloud() throws Exception {
+        // Wie die Werkzeugwolken im EAC: Beginn und Ende jedes Aufrufs, in dieser Reihenfolge, mit derselben Kennung.
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c1", ChatTools.LIST, "{}"),
+                        new AiChat.ToolCall("c2", ChatTools.LIST, "{}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(events.tools).hasSize(4);
+        String first = events.tools.get(0).substring(("start " + ChatTools.LIST + " ").length());
+        String second = events.tools.get(2).substring(("start " + ChatTools.LIST + " ").length());
+        assertThat(events.tools).containsExactly("start " + ChatTools.LIST + " " + first, "end " + first,
+                "start " + ChatTools.LIST + " " + second, "end " + second);
+        assertThat(first).isNotEqualTo(second);
+    }
+
+    @Test
     void theLastRoundGoesWithoutToolsSoThatAnAnswerComes() throws Exception {
         List<BiConsumer<AiChat.Request, AiChat.Listener>> script = new ArrayList<>();
         for (int i = 0; i < ChatTurn.MAX_TOOL_ROUNDS; i++) {
@@ -369,6 +390,131 @@ class ChatToolsTurnTest {
         assertThat(port.requests).hasSize(ChatTurn.MAX_TOOL_ROUNDS + 1);
         assertThat(port.requests.get(ChatTurn.MAX_TOOL_ROUNDS).tools()).isEmpty();
         assertThat(events.completed).isEqualTo("Fertig.");
+    }
+
+    @Test
+    void withoutAreaAndWithoutAnySearchTheAgentAnswersFromItsOwnKnowledge() throws Exception {
+        // Angelo 24.11.2026: Ohne Auswahl und ohne zugeschaltete Suche antwortet der Chat aus eigenem Wissen.
+        ScriptedChat port = new ScriptedChat(List.of((request, listener) -> listener.completed("Aus dem Kopf.")));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist JCL?", null, null, events, Runnable::run)
+                .knowledgeByTools(null).searchAgent(20).releasing(releases()).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests).singleElement().satisfies(request -> {
+            assertThat(request.tools()).isEmpty();
+            assertThat(request.messages().get(0).text()).isEqualTo(ChatKnowledge.OWN_KNOWLEDGE_PROMPT);
+        });
+        assertThat(events.completed).isEqualTo("Aus dem Kopf.");
+    }
+
+    @Test
+    void withoutAreaTheInternalSearchAgentOnlySearchesAndReadsAndKeepsGoingForItsBudget() throws Exception {
+        // Ohne Bereich keine Bereichswerkzeuge (keine langsame Suche im Bereich); die interne Suche recherchiert über
+        // das Budget hinaus, das ein normaler Chat hat.
+        int budget = ChatTurn.MAX_TOOL_ROUNDS + 4;
+        List<BiConsumer<AiChat.Request, AiChat.Listener>> script = new ArrayList<>();
+        for (int i = 0; i < budget; i++) {
+            script.add((request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c",
+                    ChatTools.APP_SEARCH, "{\"text\":\"Spool\",\"quellen\":[\"fremd\"]}"))));
+        }
+        script.add((request, listener) -> listener.completed("Gefunden."));
+        ScriptedChat port = new ScriptedChat(script);
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", null, null,
+                events, Runnable::run).knowledgeByTools(null).appSearch(() -> java.util.Set.of("handbuch"))
+                .searchAgent(budget).releasing(releases()).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+        AiChat.Request first = port.requests.get(0);
+        assertThat(first.tools()).extracting(AiChat.Tool::name)
+                .containsExactly(ChatTools.READ, ChatTools.APP_SEARCH, ChatTools.EVALUATE);
+        assertThat(first.messages().get(0).text()).startsWith(ChatKnowledge.AGENT_PROMPT)
+                .contains(ChatKnowledge.AGENT_APP_SEARCH_PROMPT).contains(ChatKnowledge.ATTACHMENTS_PROMPT)
+                .doesNotContain(ChatKnowledge.AGENT_AREA_PROMPT);
+        assertThat(port.requests).hasSize(budget + 1);
+        assertThat(port.requests.get(budget).tools()).isEmpty();
+        assertThat(events.completed).isEqualTo("Gefunden.");
+    }
+
+    @Test
+    void theSearchAgentLetsSubAgentsEvaluateSeveralHitsAtOnceEachReadingItsReleasedPage() throws Exception {
+        // Angelo 24.11.2026: Jeder Treffer wird von einem eigenen Agenten im Hintergrund ausgewertet, gleichzeitig bis
+        // „Parallele Agenten (intern)“.
+        PageKey night = page("nachtlauf");
+        PageKey house = page("datenhaus");
+        CountDownLatch bothRunning = new CountDownLatch(2);
+        List<AiChat.Request> requests = new CopyOnWriteArrayList<>();
+        java.util.concurrent.atomic.AtomicInteger mainRound = new java.util.concurrent.atomic.AtomicInteger();
+        AiChat port = (request, listener) -> {
+            requests.add(request);
+            if (ChatKnowledge.SUB_AGENT_PROMPT.equals(request.messages().get(0).text())) {
+                bothRunning.countDown();
+                try {
+                    // Erst antworten, wenn beide Unteragenten gleichzeitig laufen.
+                    assertThat(bothRunning.await(30, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                String page = request.messages().get(1).text();
+                listener.completed(page.contains("vollem Spool") ? "Bricht bei vollem Spool ab." : "Trägt nichts bei.");
+                return () -> { };
+            }
+            if (mainRound.getAndIncrement() == 0) {
+                listener.toolCalls("", List.of(new AiChat.ToolCall("c1", ChatTools.EVALUATE,
+                        "{\"kennungen\":[\"" + ChatTools.ref(night) + "\",\"" + ChatTools.ref(house) + "\"]}")));
+            } else {
+                listener.completed("Fertig [1].");
+            }
+            return () -> { };
+        };
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", space, "Handbuch",
+                events, Runnable::run).knowledgeByTools(null).searchAgent(5).parallelAgents(4)
+                .releasing(releases()).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(events.completed).isEqualTo("Fertig [1].");
+        AiChat.Request first = requests.get(0);
+        assertThat(first.tools()).extracting(AiChat.Tool::name).contains(ChatTools.EVALUATE);
+        assertThat(first.messages().get(0).text()).contains(ChatKnowledge.AGENT_EVALUATE_PROMPT);
+        AiChat.Request last = requests.get(requests.size() - 1);
+        AiChat.Message result = last.messages().get(last.messages().size() - 1);
+        assertThat(result.toolCallId()).isEqualTo("c1");
+        assertThat(result.text()).contains("Bricht bei vollem Spool ab.").contains("Trägt nichts bei.")
+                .contains(ChatTools.ref(night)).contains(ChatTools.ref(house)).contains("Quelle [");
+        assertThat(result.text().indexOf(ChatTools.ref(night)))
+                .as("die Auswertungen in der Reihenfolge der Kennungen")
+                .isLessThan(result.text().indexOf(ChatTools.ref(house)));
+        assertThat(released()).as("was ans Modell ging, ist freigegeben").contains(night, house);
+        assertThat(events.context.accepted()).hasSize(2);
+    }
+
+    @Test
+    void theAreaSearchOutsideTheSearchTabAlsoHasSubAgentsAndSeveralCallsOfARoundKeepTheirOrder() throws Exception {
+        // Angelo 24.11.2026: Bereichssuche und interne Suche verhalten sich gleich, beide mit Hintergrund-Agenten.
+        PageKey night = page("nachtlauf");
+        PageKey house = page("datenhaus");
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.READ, "{\"kennung\":\"" + ChatTools.ref(night) + "\"}"),
+                        new AiChat.ToolCall("c2", ChatTools.READ, "{\"kennung\":\"" + ChatTools.ref(house) + "\"}"))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).parallelAgents(4).releasing(releases()).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests.get(0).tools()).extracting(AiChat.Tool::name).contains(ChatTools.EVALUATE);
+        assertThat(port.requests.get(0).messages().get(0).text()).contains(ChatKnowledge.AGENT_EVALUATE_PROMPT);
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        assertThat(messages.subList(messages.size() - 2, messages.size()))
+                .satisfiesExactly(a -> assertThat(a.toolCallId()).isEqualTo("c1"),
+                        b -> assertThat(b.toolCallId()).isEqualTo("c2"));
+        assertThat(messages.get(messages.size() - 2).text()).contains("vollem Spool");
+        assertThat(messages.get(messages.size() - 1).text()).contains("Berechtigungsmanagement");
     }
 
     @Test
@@ -1050,7 +1196,7 @@ class ChatToolsTurnTest {
     private static final class Events implements ChatTurn.Listener {
 
         final CountDownLatch done = new CountDownLatch(1);
-        final List<String> using = new ArrayList<>();
+        final List<String> using = new CopyOnWriteArrayList<>();
         final List<Thread> usingThreads = new CopyOnWriteArrayList<>();
         int released;
         final List<String> deltas = new CopyOnWriteArrayList<>();
@@ -1073,6 +1219,18 @@ class ChatToolsTurnTest {
         @Override
         public void released(int count) {
             released += count;
+        }
+
+        final List<String> tools = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void toolStarted(String key, String name, String what) {
+            tools.add("start " + name + " " + key);
+        }
+
+        @Override
+        public void toolFinished(String key) {
+            tools.add("end " + key);
         }
 
         @Override

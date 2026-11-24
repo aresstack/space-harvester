@@ -17,7 +17,7 @@ import java.util.function.IntConsumer;
  * Aufträge (Angelo 11.11.2026): Vorschläge in der Liste, freie Eingabe nur aus Ziffern. Ein Wert außerhalb der
  * Grenzen wird nicht übernommen; die Auswahl springt auf den gültigen Wert zurück und sagt, warum.
  */
-final class ParallelChoice {
+public final class ParallelChoice {
 
     private final JComboBox<String> box = Comic.combo();
     private final int min;
@@ -28,7 +28,7 @@ final class ParallelChoice {
     private int value;
     private boolean updating;
     /** Fragt den eigenen Wert ab (aktueller Wert hinein, neuer oder {@code null} heraus); Tests setzen einen Ersatz. */
-    java.util.function.IntFunction<Integer> ask = current -> null;
+    public java.util.function.IntFunction<Integer> ask = current -> null;
 
     /**
      * @param suggestions Werte in der Liste
@@ -36,7 +36,7 @@ final class ParallelChoice {
      * @param apply       bekommt jeden neuen, gültigen Wert
      * @param invalid     bekommt die Meldung zu einer ungültigen Eingabe
      */
-    ParallelChoice(String tooltip, int min, int max, List<Integer> suggestions, int initial, IntConsumer apply,
+    public ParallelChoice(String tooltip, int min, int max, List<Integer> suggestions, int initial, IntConsumer apply,
                    Consumer<String> invalid) {
         this.min = min;
         this.max = max;
@@ -67,12 +67,12 @@ final class ParallelChoice {
         });
     }
 
-    JComboBox<String> box() {
+    public JComboBox<String> box() {
         return box;
     }
 
     /** Der zuletzt übernommene Wert. */
-    int value() {
+    public int value() {
         return value;
     }
 
@@ -94,7 +94,32 @@ final class ParallelChoice {
         }
     }
 
-    static final String CUSTOM = "Benutzerdefiniert …";
+    public static final String CUSTOM = "Benutzerdefiniert …";
+    /** Die Stufen der Grenzen in den Menüs am Dreieck (Chat, Podcast); darunter „Benutzerdefiniert …“. */
+    public static final List<Integer> STEPS = List.of(1, 2, 4, 8, 16, 32, 64);
+    /** Größte freie Eingabe unter „Benutzerdefiniert …“ (das Feld nimmt vier Ziffern). */
+    public static final int CUSTOM_MAX = 9999;
+
+    /** Der in der App gemerkte Wert einer Grenze ({@link AppState}), 1 bis {@link #CUSTOM_MAX}. */
+    public static int stored(String key, int fallback) {
+        return Math.max(1, Math.min(CUSTOM_MAX, AppState.shared().getInt(key, fallback)));
+    }
+
+    /**
+     * Eine Grenze, die die App selbst merkt ({@link AppState}, nicht in den Einstellungen), mit {@link #STEPS} und
+     * „Benutzerdefiniert …“: dieselbe Form im Chat und beim Podcast (Angelo 24.11.2026).
+     *
+     * @param tip     was die Grenze begrenzt; steht im Tooltip und in der Abfrage „Benutzerdefiniert …“
+     * @param key     Schlüssel im Zustand der App
+     * @param invalid bekommt die Meldung zu einer ungültigen Eingabe
+     */
+    public static ParallelChoice stored(java.awt.Component owner, String tip, String key, int fallback,
+                                        Consumer<String> invalid) {
+        ParallelChoice choice = new ParallelChoice(tip + " (1 bis " + CUSTOM_MAX + ").", 1, CUSTOM_MAX, STEPS,
+                stored(key, fallback), value -> AppState.shared().put(key, value), invalid);
+        choice.ask = current -> Dialogs.askNumber(owner, "Benutzerdefiniert", tip, 1, CUSTOM_MAX, current);
+        return choice;
+    }
 
     /**
      * Die Auswahl als Untermenü (Angelo 22.11.2026: statt der Auswahlfelder in der Kopfzeile): je Vorschlag ein
@@ -103,7 +128,7 @@ final class ParallelChoice {
      *
      * @param title was eingestellt wird, etwa „Parallele Downloads“; der geltende Wert steht dahinter
      */
-    javax.swing.JMenu menu(String title) {
+    public javax.swing.JMenu menu(String title) {
         javax.swing.JMenu menu = new javax.swing.JMenu(title + ": " + value);
         menu.setFont(Comic.regular(13f));
         menu.setToolTipText(box.getToolTipText());
@@ -130,11 +155,11 @@ final class ParallelChoice {
         return menu;
     }
 
-    int min() {
+    public int min() {
         return min;
     }
 
-    int max() {
+    public int max() {
         return max;
     }
 

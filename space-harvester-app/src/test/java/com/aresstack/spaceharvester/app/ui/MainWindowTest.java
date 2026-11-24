@@ -671,6 +671,33 @@ class MainWindowTest {
         });
     }
 
+    @Test
+    void theSearchTabByHandClearsTheSelectionAndLeavingItSelectsAllSources() throws Exception {
+        // Angelo 24.11.2026: Der Suchreiter von Hand hebt die Auswahl auf, die Suche in der Titelleiste nicht; wer die
+        // Suche ohne Auswahl verlässt, hat „Wissensquellen“ gewählt.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        boolean[] global = new boolean[4];
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            window.content(() -> { }, () -> { });
+            window.explorer().selectAll();
+            window.openSearchTab();
+            global[0] = window.explorer().allSelected();
+            window.show(AppContext.Section.CONTENT);
+            global[1] = window.explorer().allSelected();
+            window.search("betrieb");
+            global[2] = window.explorer().allSelected();
+            window.openSearchTab();
+            global[3] = window.explorer().allSelected();
+        });
+        assertThat(global).containsExactly(false, true, true, false);
+    }
+
     /**
      * #515: Ein Suchfeld für das ganze Fenster steht mittig zwischen den Icon-Gruppen der Kopfzeile, ohne sie bei
      * 960, 1280 oder 1920 px zu überdecken; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder

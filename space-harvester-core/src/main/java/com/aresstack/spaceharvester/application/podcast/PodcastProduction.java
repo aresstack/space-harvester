@@ -40,6 +40,14 @@ final class PodcastProduction {
     private final PodcastStore store;
     private final PodcastVoices voices;
     private final IntSupplier parallel;
+    /**
+     * Eigene Grenzen (Angelo 24.11.2026): wie viele Texte und Audios zugleich entstehen und, in einem eigenen Pool, wie
+     * viele Modellaufrufe der Bilder; {@code null} = ai.parallel für die Texte, {@link #DEFAULT_PICTURES} für Bilder.
+     */
+    private volatile IntSupplier texts;
+    private volatile IntSupplier pictureCalls;
+    /** Standard des Bilder-Pools: sonst kommen die Bilder nach dem ersten meist zu spät (Angelo 24.11.2026). */
+    static final int DEFAULT_PICTURES = 8;
     /** Wartet vor einem weiteren Versuch; in Tests ohne Pause. */
     private final ObjIntConsumer<JobContext> waits;
     private final Listeners<Runnable> listeners = new Listeners<>("Podcast");
@@ -72,6 +80,30 @@ final class PodcastProduction {
 
     PodcastStore store() {
         return store;
+    }
+
+    /**
+     * Die eigenen Grenzen der Parallelität; gelten ab dem nächsten Lauf. Der Plan entsteht immer zuerst und allein,
+     * danach laufen Texte und Audio im einen, die Bilder im anderen Pool.
+     *
+     * @param texts    wie viele Abschnitte, Texte und Audios zugleich entstehen
+     * @param pictures wie viele Modellaufrufe der Bilder (Auswahl, Plan, Symbole) zugleich laufen
+     */
+    void parallel(IntSupplier texts, IntSupplier pictures) {
+        this.texts = Objects.requireNonNull(texts, "texts");
+        this.pictureCalls = Objects.requireNonNull(pictures, "pictures");
+    }
+
+    /** Die Größe des Pools für Texte und Audio. */
+    int textThreads() {
+        IntSupplier own = texts;
+        return Math.max(1, (own == null ? parallel : own).getAsInt());
+    }
+
+    /** Die Größe des Pools für die Bilder. */
+    int pictureThreads() {
+        IntSupplier own = pictureCalls;
+        return Math.max(1, own == null ? DEFAULT_PICTURES : own.getAsInt());
     }
 
     /** Schaltet die Bilder je Thema ein. */
@@ -251,8 +283,9 @@ final class PodcastProduction {
         context.checkpoint();
         int topics = plan.topics().size();
         context.discovered(topics);
-        int threads = Math.max(1, parallel.getAsInt());
+        int threads = textThreads();
         RankedPool pool = new RankedPool(threads, "space-harvester-podcast-" + key.substring(0, 6));
+        RankedPool picturePool = null;
         Future<?> drawing = null;
         java.util.concurrent.atomic.AtomicBoolean ended = new java.util.concurrent.atomic.AtomicBoolean();
         // Jedes Ablegen geht durch diesen Zaun: Nach dem Ende des Laufs (oder dem Zurückziehen) legt kein Faden aus dem
@@ -300,8 +333,10 @@ final class PodcastProduction {
             if (configured != null && topics > 0) {
                 CompletableFuture<?> firstAudio = chapters.get(0).thenCompose(audio -> audio.isEmpty()
                         ? CompletableFuture.completedFuture(Boolean.FALSE) : audio.get(0));
-                drawing = picturesThread(key, origin.sourceId(), material, planned, configured, pool, firstAudio,
-                        context, repairs, fence);
+                // Eigener Pool für die Bilder, damit sie nicht hinter allen Texten warten (Angelo 24.11.2026).
+                picturePool = new RankedPool(pictureThreads(), "space-harvester-podcast-bild-" + key.substring(0, 6));
+                drawing = picturesThread(key, origin.sourceId(), material, planned, configured, picturePool,
+                        firstAudio, context, repairs, fence);
             }
             context.phase("Podcast", "Texte und Sprachausgabe");
             List<int[]> failed = new ArrayList<>();
@@ -346,6 +381,9 @@ final class PodcastProduction {
                 drawing.cancel(true);
             }
             pool.close();
+            if (picturePool != null) {
+                picturePool.close();
+            }
         }
     }
 

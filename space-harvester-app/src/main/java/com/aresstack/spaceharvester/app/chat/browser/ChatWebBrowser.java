@@ -64,8 +64,11 @@ public final class ChatWebBrowser {
         guard.delegateTo(new BrowserAccessService(this::profile,
                 profile -> BrowserAccessService.policyOf(settings.load().profile(profile)), () -> current, settings,
                 ToolApprovalGate.DEFAULT_TIMEOUT_MILLIS));
+        // Ändernde Aktionen fragen mit „Immer erlauben/verbieten“ je Website und merken die Antwort (Angelo 24.11.2026);
+        // vorher fragte jede Aktion jedes Mal, weil es keine gemerkten Regeln gab.
+        ChangeApprovals changes = new ChangeApprovals(settings, () -> current);
         this.tools = new BrowserMcpTools(browsers, documents(),
-                new ToolApprovalGate(ApprovalRules::none, current, ToolApprovalGate.DEFAULT_TIMEOUT_MILLIS));
+                new ToolApprovalGate(ApprovalRules::none, changes, ToolApprovalGate.DEFAULT_TIMEOUT_MILLIS));
     }
 
     /**
@@ -147,6 +150,16 @@ public final class ChatWebBrowser {
     /** Parallele Tabs und größte zufällige Verzögerung von {@code browser_open_many} im Chat. */
     public void load(String chatId, int tabs, int delayMillis) {
         tools.setBatchLoad(new ChatConversationId(chatId), tabs, delayMillis);
+    }
+
+    /**
+     * Unteragenten für {@code browser_open_many} mit Frage: je geladener Seite eine Auswertung, höchstens
+     * {@code parallel} gleichzeitig (Angelo 24.11.2026); {@code null} schaltet sie ab.
+     */
+    public void pageEvaluator(String chatId,
+                              com.aresstack.enterpriseai.proasteion.application.agent.BrowserPageEvaluator evaluator,
+                              int parallel) {
+        tools.setPageEvaluator(new ChatConversationId(chatId), evaluator, parallel);
     }
 
     /** Menschliche Eingabe (Tasten, Lesepausen) und Mausbewegungen im Browser des Chats. */

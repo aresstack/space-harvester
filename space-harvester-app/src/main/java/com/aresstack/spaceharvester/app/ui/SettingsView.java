@@ -341,7 +341,8 @@ public final class SettingsView implements View {
         page(BROWSER, Comic.column(
                 Comic.plate(BrowserSettingsPanel.HEADING, Comic.ORANGE, browser.note()),
                 Comic.plate("Profil Extern", Comic.BLUE, browser.external()),
-                Comic.plate("Profil Intern", Comic.ORANGE, browser.internal())));
+                Comic.plate("Profil Intern", Comic.ORANGE, browser.internal()),
+                Comic.plate(BrowserSettingsPanel.CHANGES_HEADING, Comic.RED, browser.changes())));
         var deck = new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel();
         page(DIAGRAMS, Comic.column(
                 Comic.plate(com.aresstack.spaceharvester.app.ui.deck.visual.DiagramSettingsPanel.DIAGRAM_HEADING,
@@ -734,6 +735,7 @@ public final class SettingsView implements View {
                     ? "an · " + settings.sync().backgroundParallelism() + " gleichzeitig" : "aus");
             cache.add(SettingDialogs.CHANGE_LOG_RETENTION, SettingDialogs.changeLogRetention(c.changeLog()));
             cache.add(SettingDialogs.SHOW_AFTER_UPDATE, c.changeLog().showAfterUpdate() ? "an" : "aus");
+            cache.add(SettingDialogs.AREA_PAGES, Texts.count(c.changeLog().areaPages(), "Seite", "Seiten"));
         }
         runtime.reset();
         AppRuntime current = context.runtime();

@@ -16,6 +16,8 @@ import javax.swing.SwingUtilities;
 import java.awt.Component;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -306,6 +308,88 @@ class ChatPanelTest {
         assertThat(graphUpdates[2]).isEqualTo(graphUpdates[1]);
         assertThat(quick[0]).as("Vorschläge folgen dem Bereich").contains(ChatPanel.SUMMARIZE_PAGE)
                 .doesNotContain(ChatPanel.SUMMARIZE_AREA);
+    }
+
+    @Test
+    void withoutSelectionTheChatStillSendsAndOffersANewChat() throws Exception {
+        // Angelo 24.11.2026: Die Lupe hebt die Auswahl auf, und der Chat arbeitet trotzdem weiter.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        boolean[] state = new boolean[4];
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            panel.selection(new Selection.Node("handbuch", "HB", null, "Handbuch"));
+            panel.selection(null);
+            state[0] = panel.sendButton().isEnabled();
+            state[1] = panel.newChatEnabled();
+            state[2] = ChatPanel.NO_SELECTION.equals(panel.knowledge());
+            state[3] = panel.quickActionLabels().isEmpty();
+        });
+        assertThat(state).containsExactly(true, true, true, true);
+    }
+
+    @Test
+    void theMenuAtTheTriangleOffersThreeSeparateParallelLimitsWithTheChoicesOfTheJobs() throws Exception {
+        // Angelo 24.11.2026: nicht in den Einstellungen, sondern im Dreieck-Menü, mit dem Code der Aufträge.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        List<List<String>> menus = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            for (javax.swing.JMenu menu : new ChatPanel(context).parallelMenus()) {
+                List<String> labels = new ArrayList<>(List.of(menu.getText()));
+                for (int i = 0; i < menu.getItemCount(); i++) {
+                    if (menu.getItem(i) != null) {
+                        labels.add(menu.getItem(i).getText());
+                    }
+                }
+                menus.add(labels);
+            }
+        });
+        assertThat(menus).extracting(labels -> labels.get(0).substring(0, labels.get(0).indexOf(':')))
+                .containsExactly(ChatPanel.PARALLEL_TABS, ChatPanel.PARALLEL_AGENTS, ChatPanel.PARALLEL_FILES);
+        assertThat(menus).allSatisfy(labels -> assertThat(labels.subList(1, 8))
+                .containsExactly("1", "2", "4", "8", "16", "32", "64"))
+                .allSatisfy(labels -> assertThat(labels.get(8))
+                        .startsWith(com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM));
+    }
+
+    @Test
+    void theButtonsOfTheHeadSitVerticallyCenteredInFullSize() throws Exception {
+        // Angelo 24.11.2026: Neuer Chat, Löschen und Groß anzeigen klebten oben, darunter war Luft.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        List<java.awt.Rectangle> buttons = new ArrayList<>();
+        int[] head = new int[1];
+        SwingUtilities.invokeAndWait(() -> {
+            ChatSidebar sidebar = new ChatSidebar(new ChatPanel(context));
+            sidebar.setSize(ChatSidebar.DEFAULT_WIDTH, 400);
+            layoutAll(sidebar);
+            java.awt.Component top = ((java.awt.BorderLayout) sidebar.getLayout())
+                    .getLayoutComponent(java.awt.BorderLayout.NORTH);
+            head[0] = top.getHeight() - 1;
+            List<java.awt.Component> parts = new ArrayList<>(List.of(
+                    sidebar.chat().headerActions().getComponents()));
+            parts.add(sidebar.enlargeButton());
+            for (java.awt.Component part : parts) {
+                buttons.add(SwingUtilities.convertRectangle(part.getParent(), part.getBounds(), top));
+            }
+        });
+        assertThat(buttons).hasSize(3).allSatisfy(bounds -> {
+            assertThat(bounds.height).isEqualTo(com.aresstack.spaceharvester.app.ui.RoundHover.SIZE);
+            assertThat(Math.abs(bounds.y + bounds.height / 2 - head[0] / 2)).isLessThanOrEqualTo(1);
+        });
+    }
+
+    private static void layoutAll(java.awt.Container container) {
+        container.doLayout();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof java.awt.Container inner) {
+                layoutAll(inner);
+            }
+        }
     }
 
     @Test

@@ -84,6 +84,37 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     als abgebrochen, ohne dass das Werkzeug läuft. Nach jeder Antwort schließt der Browser, das Profil bleibt. Ohne
     Firefox ist der Knopf gesperrt und sagt warum. Websuche und interne Suche sind unabhängig voneinander; sind beide
     an, warnt die Meldung oben, dass Inhalte aus Wissensquellen in Browseraufrufe einfließen können.
+    Nachtrag 24.11.2026: Ändernde Aktionen (`browser_act`, etwa ein Formular absenden) fragen mit „Immer erlauben“ und
+    „Immer verbieten“ je Website; die Antwort steht unter Einstellungen › Browser › Ändernde Aktionen (vorher fragte
+    jede Aktion jedes Mal, weil Space Harvester keine gemerkten Regeln hatte). Ablauf wie im EAC: eine Wolke je
+    Werkzeugaufruf, beim ersten Browser-Aufruf „Browser wird gestartet“, danach die Karte „Browserrecherche“; die
+    Antwortblase wartet unsichtbar hinter den Wolken und erscheint mit ihrem ersten Text.
+12. **Suche ohne Auswahl, Suchagent** (Nachtrag, Angelo 24.11.2026): Die App startet auf dem Suchreiter. Ein Klick
+    auf den Suchreiter (oder Strg+Zahl) hebt die Auswahl der Wissensquellen ganz auf, auch die globale; die Suche in
+    der Titelleiste lässt sie stehen. Wer die Suche ohne Auswahl verlässt, hat „Wissensquellen“ gewählt. Ohne Auswahl antwortet der Chat trotzdem: Er hat dann keine Bereichswerkzeuge (und
+    keine langsame Suche im Bereich), nur die zugeschalteten (interne Suche samt `seite_lesen` ihrer Treffer,
+    Websuche) und die Anhänge in der Frage; ohne jedes Werkzeug antwortet das Modell aus eigenem Wissen. Seine Chats
+    liegen bei denen zu allen Wissensquellen. In der Suche, und ohne Auswahl, arbeitet der Chat als Suchagent: eigene
+    Rolle (gründlich über mehrere Runden recherchieren, umformulieren, Treffer im Volltext lesen, Anhänge gründlich
+    auswerten) und so viele Werkzeugrunden wie das Budget am Pfeil der Websuche. Anderswo bleibt der Chat, wie er ist.
+13. **Hintergrund-Agenten, Parallelität im Menü** (Nachtrag, Angelo 24.11.2026): Die Grenzen stehen nicht in den
+    Einstellungen, sondern im Dreieck-Menü der Chat-Leiste, mit dem Code der Aufträge (`ParallelChoice`: 1 bis 64 oder
+    „Benutzerdefiniert …“ ohne praktische Obergrenze): „Parallele Tabs“ (Websuche, Vorgabe 16), „Parallele Agenten
+    (intern)“ (Vorgabe 32) und „Parallele Dateien“ (Anhänge samt PDF, Vorgabe 8). Der Suchagent mit Bereich oder
+    interner Suche hat zusätzlich `treffer_auswerten`: Je Kennung liest ein Unteragent die Seite im Volltext (nach der
+    KI-Freigabe, mit Quellennummer) und liefert in einer eigenen, gestreamten Anfrage nur ihren Beitrag zur Frage;
+    höchstens „Parallele Agenten“ gleichzeitig, Stopp bricht alle ab. Mehrere Werkzeugaufrufe einer Runde laufen
+    ebenso gleichzeitig, Browser-Aufrufe nacheinander; die Antworten bleiben in der Reihenfolge der Aufrufe. Die
+    Grenze der Tabs gilt ohne die frühere feste 8 des EAC-Browserwerkzeugs. Webtreffer: `browser_open_many` mit
+    `question` lässt je geladener Seite einen Unteragenten (dieselbe Rolle wie intern) den Volltext auswerten,
+    höchstens „Parallele Tabs“ gleichzeitig; zurück kommt nur der Beitrag jeder Seite (EAC #236).
+14. **Gedankenblase statt Statuszeilen** (Nachtrag, Angelo 24.11.2026): Mit dem Senden erscheint eine gelbe Blase
+    (`KnowledgeCard`, wie `ChatResearchCard` im EAC): „Internes Wissen durchsuchen“ bei Bereichssuche und interner
+    Suche gleich, sonst „Antwort wird vorbereitet“. Sie zeigt die Wissenszeile samt „Laden“, die Schritte der
+    Werkzeuge (keine eigenen Wolken mehr außer dem Browser), die Quellen, freigegebene Seiten und einen Balken über
+    die Werkzeugrunden; sie platzt mit dem ersten Antworttext. Die Antwortblase wartet bis dahin unsichtbar (kein „…“).
+    Über dem Eingabefeld stehen nur noch Aktionsknöpfe, Text und Anhänge. `treffer_auswerten` gibt es bei jeder
+    Frage mit Bereich oder interner Suche, nicht nur auf dem Suchreiter.
 
 ## Folgen
 

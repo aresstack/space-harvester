@@ -371,7 +371,8 @@ public final class ConfigFileEditor {
         if (!settings.cache().changeLog().equals(cache.changeLog())) {
             String retention = cache.changeLog().unlimited() ? "0" : duration(cache.changeLog().retention());
             text = nested(text, "cache", "change-log", indent -> indent + "change-log:\n" + indent + "  retention: "
-                    + retention + "\n" + indent + "  show-after-update: " + cache.changeLog().showAfterUpdate() + "\n");
+                    + retention + "\n" + indent + "  show-after-update: " + cache.changeLog().showAfterUpdate() + "\n"
+                    + indent + "  area-pages: " + cache.changeLog().areaPages() + "\n");
             settings = loader.read(file, text);
         }
         if (!settings.cache().equals(cache)) {

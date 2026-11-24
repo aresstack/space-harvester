@@ -233,6 +233,21 @@ public final class Workspace {
         return harvester.terms().totals(caller, search);
     }
 
+    /** Wie {@link #termTotals(TermQueries.TermSearch)}; {@code progress} erfährt die Zwischenstände. */
+    public TermQueries.TermTotals termTotals(TermQueries.TermSearch search,
+                                             java.util.function.Consumer<TermQueries.TermTotals> progress) {
+        return harvester.terms().totals(caller, search, progress);
+    }
+
+    /**
+     * Die verwalteten Gesamtzahlen der Begriffe einer Quelle samt ihren Spaces von Hand neu aufbauen, {@code null}
+     * für alle Quellen, und die gemerkten Verben verwerfen; die nächste Abfrage liest neu. Für den Fehlerfall.
+     */
+    public void rebuildTermTotals(String sourceId) {
+        harvester.terms().rebuildTotals(sourceId);
+        harvester.verbQueries().invalidate();
+    }
+
     /**
      * Zahl der Beziehungen je Art ({@code TermRelations.counts}, BG1b), ohne Status ohne die abgelehnten; mit
      * {@code pages} nur Beziehungen mit einem Begriff auf diesen Seiten, {@code null} ohne Grenze. Nie auf dem EDT.
@@ -2010,6 +2025,11 @@ public final class Workspace {
         return harvester.aiModels(settings);
     }
 
+    /** Die Modelle des KI-Dienstes mit den gespeicherten Einstellungen (Modellwahl im Menü am Dreieck); ohne Dienst leer. */
+    public List<AiModel> aiModels() {
+        return harvester.aiModels();
+    }
+
     /** Misst die Vektordimension eines Embedding-Modells für {@code embedding-dimensions}. */
     public int aiEmbeddingDimension(AiServiceSettings settings, String embeddingModel) {
         return harvester.aiEmbeddingDimension(settings, embeddingModel);
@@ -3395,6 +3415,15 @@ public final class Workspace {
         return harvester.podcasts().podcast(summary);
     }
 
+    /**
+     * Die Grenzen der Parallelität beider Podcast-Arten aus dem Menü der Ansicht (Angelo 24.11.2026): Texte und Audio,
+     * und der eigene Pool der Bilder; je Lauf frisch gelesen.
+     */
+    public void podcastParallel(java.util.function.IntSupplier texts, java.util.function.IntSupplier pictures) {
+        harvester.podcasts().parallel(texts, pictures);
+        harvester.pagePodcasts().parallel(texts, pictures);
+    }
+
     /** Startet den Auftrag „Podcast erzeugen“ oder setzt ihn fort; ein offener Auftrag desselben Podcasts ist die Antwort. */
     public JobStatus startPodcast(com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
         return harvester.podcasts().start(caller, summary);
@@ -3510,6 +3539,35 @@ public final class Workspace {
     /** Startet „Zusammenfassen“ für ein Update in einer Ebene (ADR 0031); {@code spaceKey == null} die ganze Quelle. */
     public JobStatus summarizeUpdate(String sourceId, String updateId, String spaceKey) {
         return harvester.changeLog().summarize(caller, sourceId, updateId, spaceKey);
+    }
+
+    /**
+     * Die Bereichszusammenfassung einer Quelle ({@code spaceKey == null}) oder eines Space (Angelo 24.11.2026: Umschalter
+     * „Änderungen | Bereich“, ADR 0034 §7): der ganze Bestand statt der Änderungen. Nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> areaSummary(
+            String sourceId, String spaceKey) {
+        return harvester.changeLog().areaSummary(caller, area(sourceId, spaceKey));
+    }
+
+    /** Ob Bereichszusammenfassungen gehen (Chat-Modell eingestellt). */
+    public boolean areaSummariesAvailable() {
+        return harvester.changeLog().areasAvailable();
+    }
+
+    /**
+     * Startet „Zusammenfassen“ für den Bestand einer Quelle oder eines Space.
+     *
+     * @param interactive ein Klick auf „Zusammenfassen“; {@code false} für den Lauf beim Öffnen
+     */
+    public JobStatus summarizeArea(String sourceId, String spaceKey, boolean interactive) {
+        return harvester.changeLog().summarizeArea(caller, area(sourceId, spaceKey), interactive);
+    }
+
+    private static com.aresstack.spaceharvester.application.holdings.Selection area(String sourceId, String spaceKey) {
+        return com.aresstack.spaceharvester.application.holdings.Selection.of(spaceKey == null
+                ? com.aresstack.spaceharvester.application.holdings.Selection.Root.source(sourceId)
+                : com.aresstack.spaceharvester.application.holdings.Selection.Root.space(sourceId, spaceKey));
     }
 
     /**

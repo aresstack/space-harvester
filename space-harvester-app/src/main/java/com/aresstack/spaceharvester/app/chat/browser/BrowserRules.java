@@ -19,7 +19,9 @@ public final class BrowserRules {
             + "from_page), nicht nacheinander mit " + BrowserMcpTools.FOLLOW + ". Trefferlisten und Teaser zeigen nur "
             + "Ausschnitte: öffne die relevanten Seiten, bevor du antwortest. " + BrowserMcpTools.FOLLOW
             + " nur für eine einzelne Seite oder wenn du auf der Seite etwas bedienen musst; Captcha-, Anmelde- und "
-            + "Einwilligungsseiten bleiben einzeln.";
+            + "Einwilligungsseiten bleiben einzeln. Gib " + BrowserMcpTools.OPEN_MANY + " dabei question mit, worauf du "
+            + "die Seiten prüfst: Dann liest je Seite ein Unteragent gleichzeitig den Volltext und liefert nur ihren "
+            + "Beitrag; für Einzelheiten danach die Seite einzeln lesen.";
 
     private BrowserRules() {
     }

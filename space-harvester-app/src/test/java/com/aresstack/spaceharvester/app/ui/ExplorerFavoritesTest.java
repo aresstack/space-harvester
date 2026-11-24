@@ -143,6 +143,17 @@ class ExplorerFavoritesTest {
             com.aresstack.spaceharvester.app.ui.controls.FolderTree<Favorites.Entry> tree = view.tree();
             // Ordner zuerst angelegt? Nein: der Space-Favorit kam zuerst, der Ordner steht dahinter.
             assertThat(tree.component().getRowCount()).isEqualTo(2);
+            // „Neuer Ordner“ steht unten in der Fußleiste, nicht in einer eigenen Leiste über den Favoriten, und nur
+            // solange die Favoriten gezeigt werden (Angelo 24.11.2026).
+            javax.swing.JComponent newFolder = view.newFolderButton();
+            assertThat(SwingUtilities.isDescendingFrom(newFolder, view.component())).isFalse();
+            assertThat(SwingUtilities.getAncestorOfClass(
+                    com.aresstack.spaceharvester.app.ui.controls.SideFoot.class, newFolder)).isNotNull();
+            assertThat(newFolder.isVisible()).isFalse();
+            explorer.showOnlyFavorites(true);
+            assertThat(newFolder.isVisible()).isTrue();
+            explorer.showOnlyFavorites(false);
+            assertThat(newFolder.isVisible()).isFalse();
             // Ein Ordner gewählt: ein neuer Stern landet darin, gemeldet wird die Sammlung.
             tree.select(java.util.List.of(projects));
             favorites.toggle(jira);

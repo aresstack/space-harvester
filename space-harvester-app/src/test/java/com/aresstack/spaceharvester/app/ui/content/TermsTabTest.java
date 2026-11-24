@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.ui.Pager;
+import com.aresstack.spaceharvester.app.ui.Relation;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -716,5 +719,105 @@ class TermsTabTest {
                 new com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph.PageRef(key, "DEV", title,
                         com.aresstack.spaceharvester.application.knowledge.PageStatements.State.CURRENT, null),
                 "s" + id, "prüft", 0, 3, 9);
+    }
+
+    /** Angelo 24.11.2026: Die Kacheln zählen hoch und atmen dabei; ein zweiter Klick zeigt die Zahlen sofort. */
+    @Test
+    void selectionCountsUpBreathesAndRemembersTotals() throws Exception {
+        List<Runnable> finish = new ArrayList<>();
+        List<java.util.function.Consumer<TermsTab.Partial>> progress = new ArrayList<>();
+        List<Integer> rebuilt = new ArrayList<>();
+        class Counted implements TermsTab.Selection {
+            @Override
+            public String title() {
+                return "Alle Wissensquellen";
+            }
+
+            @Override
+            public Pager<TermQueries.TermSummary> acronyms(String q) {
+                return new Pager<>((a, b) -> 0, List.of());
+            }
+
+            @Override
+            public Pager<TermQueries.TermSummary> identifiers(String q) {
+                return new Pager<>((a, b) -> 0, List.of());
+            }
+
+            @Override
+            public Pager<Relation> relations(String q) {
+                return new Pager<>((a, b) -> 0, List.of());
+            }
+
+            @Override
+            public TermQueries.OccurrenceList occurrences(TermQueries.TermSummary term) {
+                return new TermQueries.OccurrenceList(term.normalized(), List.of(), null);
+            }
+
+            @Override
+            public Object key() {
+                return "alle";
+            }
+
+            @Override
+            public void rebuild() {
+                rebuilt.add(progress.size());
+            }
+
+            @Override
+            public TermsTab.Totals totals(java.util.function.Consumer<TermsTab.Partial> seen) {
+                progress.add(seen);
+                return new TermsTab.Totals(112, 789, 353);
+            }
+        }
+        TermsTab[] tab = new TermsTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new TermsTab();
+            tab[0].runner(new TermsTab.Runner() {
+                @Override
+                public <T> void run(java.util.concurrent.Callable<T> work, java.util.function.Consumer<T> onSuccess,
+                                    java.util.function.Consumer<Throwable> onFailure) {
+                    try {
+                        T result = work.call();
+                        if (result instanceof TermsTab.Totals) {
+                            finish.add(() -> onSuccess.accept(result));
+                        } else {
+                            onSuccess.accept(result);
+                        }
+                    } catch (Exception e) {
+                        onFailure.accept(e);
+                    }
+                }
+            });
+            tab[0].selection(new Counted());
+            assertThat(tab[0].countTiles()).allMatch(tile -> tile.counting());
+            progress.get(0).accept(new TermsTab.Partial(40, 300, null, null));
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(tab[0].counts()).as("Zwischenstand, Beziehungen noch offen").containsExactly("40", "300", "…");
+            finish.remove(0).run();
+            assertThat(tab[0].counts()).containsExactly("112", "789", "353");
+            assertThat(tab[0].countTiles()).noneMatch(tile -> tile.counting());
+            // Dieselbe Auswahl noch einmal: sofort die gemerkten Zahlen, ohne Atmen; gezählt wird still nach.
+            tab[0].selection(new Counted());
+            assertThat(tab[0].counts()).containsExactly("112", "789", "353");
+            assertThat(tab[0].countTiles()).noneMatch(tile -> tile.counting());
+            progress.get(1).accept(new TermsTab.Partial(1, 1, null, null));
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(tab[0].counts()).as("stilles Nachzählen zählt nicht sichtbar von vorn")
+                    .containsExactly("112", "789", "353");
+            finish.remove(0).run();
+            // Von Hand neu aufbauen: Der Core verwirft zuerst, dann wird sichtbar neu gezählt.
+            tab[0].rebuild();
+            assertThat(rebuilt).as("verworfen vor der neuen Zählung").containsExactly(2);
+            assertThat(progress).hasSize(3);
+            assertThat(tab[0].counts()).containsExactly("…", "…", "…");
+            assertThat(tab[0].countTiles()).allMatch(tile -> tile.counting());
+            finish.remove(0).run();
+            assertThat(tab[0].counts()).containsExactly("112", "789", "353");
+            assertThat(tab[0].countTiles()).noneMatch(tile -> tile.counting());
+        });
     }
 }

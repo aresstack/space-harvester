@@ -85,6 +85,11 @@ public sealed interface SummaryScope permits SummaryScope.Update, SummaryScope.S
 
         /** Fassung des Schlüssels; eine neue Fassung legt neue Plätze an, alte verfallen über die Aufbewahrung. */
         static final String VERSION = "selection-summary-v1";
+        /**
+         * Update-Kennung der Ablage einer Auswahl: Sie liegt unter {@code (key(), STORED_UPDATE, ohne Space)} in derselben
+         * Ablage wie Updates; {@link StoredSummary#sourceId()} ist dann der Schlüssel, die Quellen nennen ihre Seiten.
+         */
+        public static final String STORED_UPDATE = "auswahl";
 
         public Selected {
             Objects.requireNonNull(owner, "owner");
@@ -99,6 +104,11 @@ public sealed interface SummaryScope permits SummaryScope.Update, SummaryScope.S
         @Override
         public String key() {
             return "selection-" + sha256;
+        }
+
+        /** Ob {@code summary} die abgelegte Zusammenfassung einer Auswahl ist. */
+        public static boolean stored(StoredSummary summary) {
+            return STORED_UPDATE.equals(summary.updateId()) && summary.sourceId().startsWith("selection-");
         }
     }
 }

@@ -39,6 +39,74 @@ public interface TermIndex {
     List<TermPosting> postings(Filter filter, String from, boolean inclusive, int max);
 
     /**
+     * Meldet, wenn sich die Einträge einer Seite oder Quelle geändert haben können (Observer, kein Polling). Die
+     * Meldung kommt im schreibenden Thread. Ablagen ohne Meldungen liefern {@code null}: Wer mitzählt, darf sich
+     * dann auf nichts Gemerktes verlassen.
+     *
+     * @return Abmelden oder {@code null}, wenn die Ablage nichts meldet
+     */
+    default Runnable subscribe(java.util.function.Consumer<Change> listener) {
+        return null;
+    }
+
+    /**
+     * Was sich geändert haben kann.
+     *
+     * @param pageId die Seite samt ihren Dokumenten oder {@code null} für die ganze Quelle
+     */
+    record Change(String sourceId, String pageId) {
+    }
+
+    /** Höchstens so viele Schlüssel je Aufruf von {@link #keys}; sie sind klein, der Stapel darf groß sein. */
+    int MAX_KEY_BATCH = 50_000;
+
+    /**
+     * Wie {@link #postings}, aber nur das, was Zählen braucht: keine Fundstellen, kein Wortlaut. Eine Ablage mit
+     * eigenem Index liest dafür keine ganzen Einträge.
+     *
+     * @param from nur Schlüssel hinter diesem oder {@code null} für den Anfang
+     * @param max  1 bis {@link #MAX_KEY_BATCH}
+     */
+    default List<TermKey> keys(Filter filter, String from, int max) {
+        if (max < 1 || max > MAX_KEY_BATCH) {
+            throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_KEY_BATCH + " liegen");
+        }
+        List<TermKey> keys = new java.util.ArrayList<>();
+        String after = from;
+        while (keys.size() < max) {
+            int want = Math.min(MAX_BATCH, max - keys.size());
+            List<TermPosting> batch = postings(filter, after, false, want);
+            batch.forEach(posting -> keys.add(TermKey.of(posting)));
+            if (batch.size() < want) {
+                break;
+            }
+            after = batch.get(batch.size() - 1).sortKey();
+        }
+        return keys;
+    }
+
+    /**
+     * Ein Eintrag ohne Inhalt: wozu er gehört und auf welchem Stand er ist.
+     *
+     * @param revision    wie {@link TermPosting#revision()}
+     * @param inputSha256 wie {@link TermPosting#inputSha256()}
+     * @param ofDocument  ob er aus einem Anhang oder einer enthaltenen Datei stammt
+     * @param extraction  wie {@link TermPosting#extraction()}
+     */
+    record TermKey(PageKey page, TermKind kind, String normalized, String revision, String inputSha256,
+                   boolean ofDocument, String extraction, String sortKey) {
+
+        public static TermKey of(TermPosting posting) {
+            return new TermKey(posting.page(), posting.kind(), posting.normalized(), posting.revision(),
+                    posting.inputSha256(), posting.ofDocument(), posting.extraction(), posting.sortKey());
+        }
+
+        public String groupKey() {
+            return TermIndex.groupKey(normalized, kind);
+        }
+    }
+
+    /**
      * Auswahl im Index.
      *
      * @param sourceIds        nur diese Quellen; leer ergibt nichts
@@ -49,14 +117,27 @@ public interface TermIndex {
      * @param startsWith       nur der ganze Suchwert beginnt so (etwa ein Buchstabe der A–Z-Leiste), oder {@code null}
      * @param origin           Seiten, Dokumente oder beides (ADR 0026, AP9b)
      * @param pages            nur diese Seiten samt ihren Dokumenten (ADR 0029) oder {@code null} ohne diese Grenze
+     * @param anyOf            nur diese Suchwerte oder {@code null} ohne diese Grenze; leer ergibt nichts
      */
     record Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix, String processorVersion,
-                  String startsWith, TermOrigin origin, PageSet pages) {
+                  String startsWith, TermOrigin origin, PageSet pages, Set<String> anyOf) {
 
         public Filter {
             sourceIds = Set.copyOf(sourceIds);
             Objects.requireNonNull(processorVersion, "processorVersion");
             Objects.requireNonNull(origin, "origin");
+            anyOf = anyOf == null ? null : Set.copyOf(anyOf);
+        }
+
+        public Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix,
+                      String processorVersion, String startsWith, TermOrigin origin, PageSet pages) {
+            this(sourceIds, kind, normalized, prefix, processorVersion, startsWith, origin, pages, null);
+        }
+
+        /** Dieselbe Auswahl, begrenzt auf diese Suchwerte: eine Abfrage für viele Begriffe statt einer je Begriff. */
+        public Filter anyOf(Set<String> normalized) {
+            return new Filter(sourceIds, kind, this.normalized, prefix, processorVersion, startsWith, origin, pages,
+                    normalized);
         }
 
         public Filter(Set<String> sourceIds, TermKind kind, String normalized, String prefix,
@@ -82,6 +163,7 @@ public interface TermIndex {
                     || pages != null && !pages.contains(posting.page())
                     || kind != null && posting.kind() != kind
                     || normalized != null && !posting.normalized().equals(normalized)
+                    || anyOf != null && !anyOf.contains(posting.normalized())
                     || !posting.processorVersion().equals(processorVersion)
                     || startsWith != null && !posting.normalized().startsWith(startsWith)) {
                 return false;

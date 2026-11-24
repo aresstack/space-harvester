@@ -632,14 +632,25 @@ public final class AppContext {
      * Datei; danach übernimmt der Core die Freigabe ohne Neustart ({@link #reload}).
      */
     public void releaseSource(String sourceId, Runnable done, Consumer<Throwable> failed) {
+        changeAi(settings -> SourceForm.withRelease(settings, sourceId, true), done, failed);
+    }
+
+    /**
+     * Ändert Werte des KI-Dienstes in derselben Datei wie die Einstellungen ({@code space-harvester.ai.*}), etwa die
+     * Modellwahl im Menü am Dreieck (Angelo 24.11.2026); danach übernimmt der Core sie ohne Neustart ({@link #reload}).
+     *
+     * @param change aus den gelesenen Einstellungen die neuen Eingaben des KI-Dienstes
+     */
+    public void changeAi(java.util.function.Function<AppSettings, com.aresstack.spaceharvester.app.settings.AiDraft> change,
+                         Runnable done, Consumer<Throwable> failed) {
         Background.run(() -> {
             ConfigFileEditor editor = new ConfigFileEditor(loader);
             String text = Files.isRegularFile(configFile)
                     ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
             ConfigFileEditor.Draft base = new ConfigFileEditor.Draft(text, loader.read(configFile, text));
-            editor.save(configFile, editor.withAi(configFile, base,
-                    SourceForm.withRelease(base.settings(), sourceId, true)), !editor.fileHasPlaintextSecret(configFile));
-            return sourceId;
+            editor.save(configFile, editor.withAi(configFile, base, change.apply(base.settings())),
+                    !editor.fileHasPlaintextSecret(configFile));
+            return base;
         }, saved -> reload(done), failed);
     }
 

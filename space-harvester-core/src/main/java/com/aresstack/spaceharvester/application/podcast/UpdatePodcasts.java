@@ -108,21 +108,30 @@ public final class UpdatePodcasts {
 
     /** Der Name der Sendung zur Art der Quelle; nie ein Servername. */
     static String show(String sourceType) {
+        return show(sourceType, false);
+    }
+
+    /**
+     * Wie {@link #show(String)}; für eine Bereichszusammenfassung heißt die Sendung „…-Überblick“ statt „…-Update“
+     * (Angelo 24.11.2026: Umschalter „Änderungen | Bereich“).
+     */
+    static String show(String sourceType, boolean area) {
         String type = sourceType == null ? "" : sourceType.strip().toLowerCase(java.util.Locale.ROOT);
-        return switch (type) {
-            case "confluence" -> "Confluence-Update";
-            case "bscw" -> "BSCW-Update";
-            case "jira" -> "Jira-Update";
-            case "git" -> "Git-Update";
-            default -> "Update";
+        String prefix = switch (type) {
+            case "confluence" -> "Confluence-";
+            case "bscw" -> "BSCW-";
+            case "jira" -> "Jira-";
+            case "git" -> "Git-";
+            default -> "";
         };
+        return prefix + (area ? "Überblick" : "Update");
     }
 
     private String show(UpdateSummary summary) {
         try {
-            return show(sourceTypes.apply(summary.sourceId()));
+            return show(sourceTypes.apply(summary.sourceId()), summary.isArea());
         } catch (RuntimeException e) {
-            return show((String) null);
+            return show(null, summary.isArea());
         }
     }
 
@@ -247,7 +256,8 @@ public final class UpdatePodcasts {
             }
             // Ein neuer Podcast desselben Bereichs ersetzt den vorigen.
             store.delete(meta -> !meta.key().equals(key) && area.key().equals(meta.area()));
-            Map<String, String> parameters = Map.of(PODCAST_PARAMETER, key, UPDATE_PARAMETER, summary.updateId());
+            Map<String, String> parameters = summary.isArea() ? Map.of(PODCAST_PARAMETER, key)
+                    : Map.of(PODCAST_PARAMETER, key, UPDATE_PARAMETER, summary.updateId());
             return jobs.submit(JobType.UPDATE_PODCAST, summary.sourceId(), summary.spaceKey(), null,
                     caller.jobOwner(), parameters, JobTask.blocking(context -> production.run(context,
                             new PodcastStore.Meta(key, area, material.pageIds()), material)));
@@ -332,6 +342,16 @@ public final class UpdatePodcasts {
         }
         production.notify(key);
         return start(caller, summary);
+    }
+
+    /**
+     * Eigene Grenzen der Parallelität aus der Ansicht (Angelo 24.11.2026); gelten ab dem nächsten Lauf.
+     *
+     * @param texts    wie viele Abschnitte, Texte und Audios zugleich entstehen
+     * @param pictures wie viele Modellaufrufe der Bilder zugleich laufen
+     */
+    public void parallel(java.util.function.IntSupplier texts, java.util.function.IntSupplier pictures) {
+        production.parallel(texts, pictures);
     }
 
     /** Meldet jede abgelegte Stufe dieses Podcasts. */
@@ -422,8 +442,10 @@ public final class UpdatePodcasts {
             }
         }
         String space = summary.spaceKey() == null ? null : summary.spaceName(summary.spaceKey());
+        // Ein ganzer Bereich wird erklärt, nicht als Neuigkeit erzählt (Angelo 24.11.2026).
         return new PodcastWriter.Material(summary.text(), stories,
-                summary.spaceKey() == null ? null : "Space " + (blank(space) ? summary.spaceKey() : space));
+                summary.spaceKey() == null ? null : "Space " + (blank(space) ? summary.spaceKey() : space),
+                summary.isArea() ? PodcastWriter.Format.AREA : PodcastWriter.Format.NEWS);
     }
 
     /** „auf der Seite „Titel“ im Space Name, unter Eltern › Seite“; der Space fehlt, wenn die Ebene ein Space ist. */

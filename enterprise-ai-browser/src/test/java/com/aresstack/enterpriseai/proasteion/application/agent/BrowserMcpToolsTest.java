@@ -186,6 +186,24 @@ public class BrowserMcpToolsTest {
     }
 
     @Test
+    public void anIdOutsideTheLastControlListFailsAtOnceWithoutAskingTheUser() {
+        final List<String> asked = new ArrayList<String>();
+        ToolApprovalGate gate = new ToolApprovalGate(ApprovalRules::none, (request, timeout) -> {
+            asked.add(request.target().description());
+            return ApprovalDecision.of(request, ApprovalDecision.Outcome.APPROVED);
+        }, 1000);
+        ChatConversationId a = new ChatConversationId("chat-unknown-id");
+        List<McpToolContribution> bound = new BrowserMcpTools(port, null, gate).contributionsFor(a);
+
+        McpToolResult blind = invoke(bound, BrowserMcpTools.ACT, "control", "ctl-1", "action", "submit",
+                "value", "Reise");
+        assertTrue(blind.getText(), blind.isError());
+        assertTrue(blind.getText(), blind.getText().contains("Zuerst " + BrowserMcpTools.CONTROLS));
+        assertTrue(asked.toString(), asked.isEmpty());
+        assertFalse(port.browser(a).calls.toString(), port.browser(a).calls.toString().contains("act ctl-1"));
+    }
+
+    @Test
     public void approvedSubmitRunsAndSettingsCanAllowIt() {
         ToolApprovalGate approving = new ToolApprovalGate(ApprovalRules::none,
                 (request, timeout) -> ApprovalDecision.of(request, ApprovalDecision.Outcome.APPROVED), 1000);
@@ -251,6 +269,46 @@ public class BrowserMcpToolsTest {
         assertTrue(text, text.contains("2. https://blocked.example/ | übersprungen: gesperrt"));
         assertTrue(text, text.contains("3. https://down.example/ | fehlgeschlagen: weg"));
         assertTrue(port.browser(chat).calls.contains("openMany 3 3 250"));
+    }
+
+    @Test
+    public void openManyWithAQuestionLetsTheChatsSubAgentEvaluateEveryLoadedPage() throws Exception {
+        RecordingPort port = new RecordingPort();
+        BrowserMcpTools tools = new BrowserMcpTools(port);
+        ChatConversationId chat = new ChatConversationId("chat-evaluate");
+        final List<String> asked = Collections.synchronizedList(new ArrayList<String>());
+        tools.setPageEvaluator(chat, new BrowserPageEvaluator() {
+            @Override
+            public String evaluate(String question, String title, String url, String text) {
+                asked.add(question + "|" + title + "|" + url + "|" + text);
+                return "Beitrag von " + title;
+            }
+        }, 4);
+        Map<String, Object> values = new HashMap<String, Object>();
+        values.put("urls", Arrays.asList("https://a.example/", "https://blocked.example/", "https://down.example/"));
+        values.put("question", "Was steht da?");
+        McpToolResult result = null;
+        for (McpToolContribution tool : tools.contributionsFor(chat)) {
+            if (tool.getName().equals(BrowserMcpTools.OPEN_MANY)) {
+                result = tool.getHandler().invoke(new McpToolCall(BrowserMcpTools.OPEN_MANY, values));
+            }
+        }
+
+        assertFalse(result.isError());
+        String text = result.getText();
+        assertEquals(Collections.singletonList("Was steht da?|Seite A|https://a.example/|Inhalt A"), asked);
+        assertTrue(text, text.contains("1. Seite A | https://a.example/ | geladen\nAuswertung: Beitrag von Seite A"));
+        assertFalse("statt des Textes die Auswertung", text.contains("Inhalt A"));
+        assertTrue(text, text.contains("2. https://blocked.example/ | übersprungen: gesperrt"));
+
+        tools.setPageEvaluator(chat, null, 4);
+        for (McpToolContribution tool : tools.contributionsFor(chat)) {
+            if (tool.getName().equals(BrowserMcpTools.OPEN_MANY)) {
+                result = tool.getHandler().invoke(new McpToolCall(BrowserMcpTools.OPEN_MANY, values));
+            }
+        }
+        assertTrue("ohne Unteragenten wie bisher der Text", result.getText().contains("Inhalt A"));
+        assertEquals(1, asked.size());
     }
 
     @Test

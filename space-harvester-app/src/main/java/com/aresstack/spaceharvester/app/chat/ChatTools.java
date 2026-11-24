@@ -64,6 +64,11 @@ final class ChatTools {
     static final String TERM = "begriff_nachschlagen";
     /** Nur mit dem Schalter „Interne Suche“ im Composer: die globale Suche der App über alle Wissensquellen. */
     static final String APP_SEARCH = "wissensquellen_durchsuchen";
+    /**
+     * Nur für den Suchagenten mit Wissen: mehrere Treffer gleichzeitig von Unteragenten im Volltext auswerten lassen
+     * (Angelo 24.11.2026, „Parallele Agenten (intern)“ im ▾-Menü des Chats).
+     */
+    static final String EVALUATE = "treffer_auswerten";
     /** Präfix der virtuellen Ordnerknoten einer Sammlung in {@value #LIST} (ADR 0034 §5). */
     static final String FOLDER = "ordner/";
 
@@ -196,12 +201,37 @@ final class ChatTools {
 
     /** Die Werkzeuge dieses Turns: die vier des Bereichs, mit „Interne Suche“ dazu {@value #APP_SEARCH}. */
     List<AiChat.Tool> toolDefinitions() {
+        if (scope == null) {
+            // Ohne Bereich (Angelo 24.11.2026): nur die interne Suche samt Lesen ihrer Treffer, wenn sie an ist.
+            return appSources == null ? List.of() : List.of(readDefinition(), appSearchDefinition());
+        }
         if (appSources == null) {
             return definitions(nodes != null);
         }
         List<AiChat.Tool> all = new ArrayList<>(definitions(nodes != null));
         all.add(appSearchDefinition());
         return List.copyOf(all);
+    }
+
+    /** {@value #READ}: liest eine Seite des Bereichs oder einen Treffer der internen Suche im Volltext. */
+    static AiChat.Tool readDefinition() {
+        return new AiChat.Tool(READ, "Liest den Text einer Seite des gewählten Bereichs oder eines Suchtreffers, "
+                + "höchstens " + READ_CHARS + " Zeichen je Aufruf; lange Seiten mit versatz weiterlesen. Liefert die "
+                + "Quellennummer, mit der du die Seite zitierst.",
+                "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"},"
+                        + "\"versatz\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"kennung\"]}");
+    }
+
+    /** {@value #EVALUATE}: je Kennung ein Unteragent, der die Seite liest und nur ihren Beitrag zur Frage liefert. */
+    static AiChat.Tool evaluateDefinition() {
+        return new AiChat.Tool(EVALUATE, "Lässt mehrere Treffer gleichzeitig von Unteragenten auswerten: Jeder liest "
+                + "eine Seite im Volltext und liefert, was sie zur Frage beiträgt, samt Quellennummer. Schneller als "
+                + "jede Seite einzeln mit " + READ + " zu lesen; für Einzelheiten danach " + READ + " verwenden.",
+                "{\"type\":\"object\",\"properties\":{"
+                        + "\"frage\":{\"type\":\"string\",\"description\":\"Worauf die Seiten geprüft werden; leer "
+                        + "für die Frage des Nutzers\"},"
+                        + "\"kennungen\":{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"description\":"
+                        + "\"Kennungen der Treffer aus den Suchwerkzeugen\"}},\"required\":[\"kennungen\"]}");
     }
 
     static AiChat.Tool appSearchDefinition() {
@@ -262,11 +292,7 @@ final class ChatTools {
                                 : "Kennung einer Seite") + "; leer für die Startseiten\"},"
                                 + "\"blatt\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Blattnummer, "
                                 + "ab 1\"}}}"),
-                new AiChat.Tool(READ, "Liest den Text einer Seite des gewählten Bereichs, höchstens " + READ_CHARS
-                        + " Zeichen je Aufruf; lange Seiten mit versatz weiterlesen. Liefert die Quellennummer, "
-                        + "mit der du die Seite zitierst.",
-                        "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"},"
-                                + "\"versatz\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"kennung\"]}"),
+                readDefinition(),
                 new AiChat.Tool(TERM, "Schlägt einen Fachbegriff im gewählten Bereich nach: was der Wissensgraph "
                         + "dort über ihn weiß, als Aussagen mit Verb, Vertrauensstufe und Belegseiten, dazu seine "
                         + "Synonyme und verwandte Begriffe. Ist das Wort dort kein bestätigter Fachbegriff, nennt es "
@@ -849,9 +875,32 @@ final class ChatTools {
 
     /** Die progressive Suche nur in den Seiten des Bereichs, wie die Suche mit Auswahl links. */
     List<KeywordSearch.Hit> hits(String query) {
-        KeywordSearch.Query search = new KeywordSearch.Query(query, null, Set.of(), Set.of()).within(scope.pages())
-                .withGlossarySynonyms(glossarySynonyms);
-        return ranked(search, neighbors, false);
+        return ranked(areaQuery(query, scope).withGlossarySynonyms(glossarySynonyms), neighbors, false);
+    }
+
+    /**
+     * Die Anfrage für einen Bereich im selben Umfang wie die Suchleiste mit derselben Auswahl: Quelle(n) und Spaces des
+     * Bereichs, dazu seine Seiten. Ohne die Spaces fragte eine Quelle mit eigener Suche (Confluence) das ganze Wiki,
+     * lieferte nur ihre ersten Treffer, und alle außerhalb des Bereichs fielen danach weg; eine Seite im Bereich, die
+     * die Suchleiste im Space als Erstes findet, kam so nie an (Angelo 24.11.2026, „Team 10“). Kennt die Auswahl den
+     * Space einer ihrer Quellen nicht, bleibt es ohne Space-Filter, damit keine Seite verloren geht.
+     */
+    static KeywordSearch.Query areaQuery(String text, PageSelection scope) {
+        Set<String> sources = scope.pages().sourceIds();
+        Set<String> spaces = new java.util.TreeSet<>();
+        Set<String> withSpace = new java.util.HashSet<>();
+        for (com.aresstack.spaceharvester.application.holdings.SpaceSummary space : scope.spaces()) {
+            if (sources.contains(space.sourceId())) {
+                spaces.add(space.spaceKey());
+                withSpace.add(space.sourceId());
+            }
+        }
+        if (!withSpace.containsAll(sources)) {
+            spaces.clear();
+        }
+        String single = sources.size() == 1 ? sources.iterator().next() : null;
+        return new KeywordSearch.Query(text, single, single == null ? sources : Set.of(), spaces)
+                .within(scope.pages());
     }
 
     // ------------------------------------------------------------------ Interne Suche

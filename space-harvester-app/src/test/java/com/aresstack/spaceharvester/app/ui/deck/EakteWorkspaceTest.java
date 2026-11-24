@@ -182,8 +182,9 @@ class EakteWorkspaceTest {
         await(() -> onEdt(() -> browser.partsOf(mailHref).equals(java.util.List.of(
                 com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.ATTACHMENT, "Messwerte.bin"))),
                 "Anlagen unter der E-Mail");
-        assertThat(onEdt(() -> browser.viewer().textContent()))
-                .contains(com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.SUBJECT);
+        // Der Viewer liest die E-Mail im Hintergrund: auf den Text warten, nicht sofort prüfen.
+        await(() -> onEdt(() -> browser.viewer() != null && browser.viewer().textContent()
+                .contains(com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.SUBJECT)), "Text der E-Mail");
         assertThat(onEdt(() -> components(browser,
                 com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel.class))).hasSize(1);
         // Links „Ordner | Gliederung“: eine Outlook-Nachricht hat keine Überschriften, das steht dort.

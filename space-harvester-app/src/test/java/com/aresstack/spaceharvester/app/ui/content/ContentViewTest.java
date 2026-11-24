@@ -88,6 +88,7 @@ class ContentViewTest {
             javax.swing.JPanel page = new javax.swing.JPanel(new java.awt.BorderLayout());
             page.add(view.tabBar(), java.awt.BorderLayout.NORTH);
             page.add(view.component(), java.awt.BorderLayout.CENTER);
+            page.add(detail.footTools(), java.awt.BorderLayout.SOUTH);
             AnalysisTabsScreenshotTest.write(page, Path.of(directory, "analysen-quelle-1280.png"), 640);
             return null;
         });
@@ -122,7 +123,12 @@ class ContentViewTest {
 
         assertThat(onEdt(() -> detail.folderSubfolders().isSelected())).isTrue();
         assertThat(onEdt(() -> detail.folderSubfolders().isEnabled())).isTrue();
-        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.folderFoot());
+        // Unter „Analysen“ trägt die Leiste die Unterreiter des Stands (Angelo 24.11.2026), die Checkbox rechts daneben.
+        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.standingFoot())))
+                .isTrue();
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.standing().tabs().button("Aussagen"),
+                detail.standingFoot()))).as("Reiterzeile unten, nicht mehr über dem Inhalt").isTrue();
         assertThat(onEdt(() -> detail.export().selection().roots(null)))
                 .containsExactly(notes.root(), handbook.root()); // Baumreihenfolge: Unterordner zuerst angelegt
 
@@ -142,12 +148,18 @@ class ContentViewTest {
                 "Handbuch", "handbuch"), below);
         await(() -> detail.export().selection().roots(null).size() == 2);
 
-        // Eine Quelle ist kein Ordner: die Leiste ohne Checkbox.
+        // Eine Quelle ist kein Ordner: die Unterreiter ohne Checkbox.
         onEdt(() -> {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
-        assertThat(onEdt(() -> detail.footTools().getComponentCount())).isZero();
+        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
+        assertThat(onEdt(() -> detail.standingFoot().trailing().isVisible())).isFalse();
+        // Für den Fehlerfall, versteckt hinter dem Dreieck: die Kennzahlen des Knotens neu aufbauen.
+        assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> java.util.Arrays.stream(detail.moreMenu().getComponents())
+                .map(item -> ((javax.swing.JMenuItem) item).getText()).toList()))
+                .containsExactly(PageDetailPanel.REBUILD_COUNTS);
     }
 
     @Test
@@ -492,7 +504,7 @@ class ContentViewTest {
         // in der Podcast-Ansicht (Angelo 23.11.2026), seine Einträge also dort.
         assertThat(onEdt(() -> view.detail().moreButton().isEnabled())).isTrue();
         assertThat(onEdt(() -> menuEntries(view.detail())))
-                .containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)");
+                .containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)", "—", PODCAST_TEXTS, PODCAST_PICTURES, "—", MODEL_ROWS[0], MODEL_ROWS[1], MODEL_ROWS[2], MODEL_ROWS[3]);
         assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
                 .isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().sourceId())).isEqualTo("handbuch");
@@ -506,7 +518,8 @@ class ContentViewTest {
         // Podcast-Ansicht: Transkript und „Podcast neu erstellen“ hinter dem Dreieck, ohne Podcast gesperrt; neben der
         // Lupe der Platz für „Transkript kopieren“, ohne Podcast bleibt der Knopf weg.
         assertThat(onEdt(() -> menuEntries(view.detail()))).containsExactly(
-                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)");
+                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)", "—",
+                PODCAST_TEXTS, PODCAST_PICTURES, "—", MODEL_ROWS[0], MODEL_ROWS[1], MODEL_ROWS[2], MODEL_ROWS[3]);
         assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
                 view.detail().sourceChanges().podcast().transcriptCopy(), view.tools()))).isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().podcast().transcriptCopy().isVisible())).isFalse();
@@ -568,10 +581,19 @@ class ContentViewTest {
         return !chips.isEmpty() && chips.stream().allMatch(javax.swing.AbstractButton::isEnabled);
     }
 
+    /** Die Grenzen des Podcasts im Menü am Dreieck beider Reiter (Angelo 24.11.2026), mit ihren Standards. */
+    private static final String PODCAST_TEXTS = PodcastParallel.TEXTS + ": " + PodcastParallel.TEXTS_DEFAULT;
+    private static final String PODCAST_PICTURES = PodcastParallel.PICTURES + ": " + PodcastParallel.PICTURES_DEFAULT;
+
+    /** Darunter die Modelle der Podcast-Schritte, ohne Eintrag in den Einstellungen „Standard“ (Angelo 24.11.2026). */
+    private static final String[] MODEL_ROWS = {"Modell Podcast: Standard", "Modell Bildgenerierung – Plan: Standard",
+            "Modell Bildgenerierung – Einzelteile: Standard", "Modell Podcast – Sprache: Standard"};
+
     private static List<String> menuEntries(PageDetailPanel detail) {
         List<String> entries = new java.util.ArrayList<>();
         for (java.awt.Component item : detail.moreMenu().getComponents()) {
-            entries.add(((javax.swing.JMenuItem) item).getText() + (item.isEnabled() ? "" : " (gesperrt)"));
+            entries.add(item instanceof javax.swing.JMenuItem entry
+                    ? entry.getText() + (item.isEnabled() ? "" : " (gesperrt)") : "—");
         }
         return entries;
     }
@@ -585,7 +607,8 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         ChatPanel chat = detail.chat();
         assertThat(onEdt(chat::knowledge)).isEqualTo(ChatPanel.NO_SELECTION);
-        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isFalse();
+        // Ohne Auswahl antwortet der Chat trotzdem (Angelo 24.11.2026).
+        assertThat(onEdt(() -> chat.sendButton().isEnabled())).isTrue();
         // Der Chat ist kein Reiter mehr, sondern eine Seitenleiste (Angelo, 21.11.2026): die Seitenansicht behält ihre
         // Überschrift, „Chat: ‹Name› ▾“ samt Neuer Chat, Chat löschen und Einklappen steht im Kopf der Leiste.
         ChatSidebar sidebar = onEdt(view::chatSidebar);
@@ -785,6 +808,72 @@ class ContentViewTest {
         });
         await(() -> shown(detail, pages.get(1)));
         assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+    }
+
+    @Test
+    void theScopeToggleSwitchesBothViewsToTheAreaOverviewAndIsRememberedForEveryPage() throws Exception {
+        String before = onEdt(() -> com.aresstack.spaceharvester.app.ui.AppState.shared()
+                .get(AreaSummaryView.SCOPE_KEY));
+        try {
+            onEdt(() -> {
+                AreaSummaryView.choose(false);
+                view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
+                return null;
+            });
+            assertThat(onEdt(() -> view.detail().showsSource())).isTrue();
+            // Vorgabe „Änderungen“: die Leseansicht zeigt die Updates, unten mittig der Umschalter.
+            assertThat(onEdt(() -> view.detail().sourceView().isVisible())).isTrue();
+            assertThat(onEdt(() -> view.detail().scopeToggles())).hasSize(3)
+                    .allSatisfy(toggle -> assertThat(toggle.selected()).isEqualTo(AreaSummaryView.CHANGES));
+            assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(view.detail().scopeToggles().get(1),
+                    view.tools()))).as("Leseansicht: Umschalter in der Leiste unten").isTrue();
+
+            onEdt(() -> {
+                view.detail().scopeToggles().get(1).button(AreaSummaryView.AREA).doClick();
+                return null;
+            });
+            assertThat(onEdt(AreaSummaryView::areaChosen)).isTrue();
+            assertThat(onEdt(() -> view.detail().scopeToggles()))
+                    .allSatisfy(toggle -> assertThat(toggle.selected()).isEqualTo(AreaSummaryView.AREA));
+            assertThat(onEdt(() -> view.detail().areaView().isVisible())).as("Leseansicht: der Überblick").isTrue();
+            assertThat(onEdt(() -> view.detail().sourceView().isVisible())).isFalse();
+            assertThat(onEdt(() -> view.detail().areaView().sourceId())).isEqualTo("handbuch");
+            assertThat(onEdt(() -> view.detail().areaView().tools().isVisible())).isTrue();
+            assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
+
+            onEdt(() -> {
+                view.detail().tabs().select("Podcast-Ansicht");
+                return null;
+            });
+            assertThat(onEdt(() -> view.detail().areaPodcast().isVisible())).as("Podcast zum Überblick").isTrue();
+            assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).isFalse();
+            assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(view.detail().scopeToggles().get(2),
+                    view.tools()))).isTrue();
+            assertThat(onEdt(() -> menuEntries(view.detail())))
+                    .containsExactly(PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", "—", PODCAST_TEXTS,
+                            PODCAST_PICTURES, "—", MODEL_ROWS[0], MODEL_ROWS[1], MODEL_ROWS[2], MODEL_ROWS[3]);
+
+            // Eine andere Wurzel behält die Wahl (global, nicht je Seite).
+            String space = space("handbuch");
+            onEdt(() -> {
+                view.selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
+                return null;
+            });
+            assertThat(onEdt(() -> view.detail().areaPodcast().spaceKey())).isEqualTo(space);
+            assertThat(onEdt(() -> view.detail().areaPodcast().isVisible())).isTrue();
+
+            onEdt(() -> {
+                view.detail().scopeToggles().get(2).button(AreaSummaryView.CHANGES).doClick();
+                return null;
+            });
+            assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).isTrue();
+            assertThat(onEdt(AreaSummaryView::areaChosen)).isFalse();
+        } finally {
+            onEdt(() -> {
+                com.aresstack.spaceharvester.app.ui.AppState.shared().put(AreaSummaryView.SCOPE_KEY, before);
+                return null;
+            });
+        }
     }
 
     @Test

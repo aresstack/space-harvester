@@ -13,7 +13,6 @@ import com.aresstack.spaceharvester.app.ui.controls.ScrollColumn;
 import com.aresstack.spaceharvester.app.ui.controls.ImageViewer;
 import com.aresstack.spaceharvester.app.ui.controls.PictureStage;
 import com.aresstack.spaceharvester.app.ui.controls.TextWithPicture;
-import com.aresstack.spaceharvester.app.ui.controls.ViewerPopup;
 import com.aresstack.spaceharvester.app.ui.controls.WrappedText;
 import com.aresstack.spaceharvester.application.changelog.ChangeKind;
 import com.aresstack.spaceharvester.application.changelog.ChangeLogListener;
@@ -216,16 +215,8 @@ final class SourceUpdatesView extends JPanel {
     private JComponent reportTitle;
     /** Podcast-Ansicht: die Bilder neben den Seitenzeilen, um sie beim Neuzeichnen wieder abzunehmen. */
     private final List<Runnable> unpicture = new ArrayList<>();
-    /** Die Bilder des Podcasts, wie sie im Bericht stehen, in seiner Reihenfolge. */
-    private List<SummaryReport.PlacedPicture> placed = List.of();
-    /** Die zuletzt gelesenen Bilder des Podcasts von {@link #picturesOf}. */
-    private List<SummaryReport.LoadedPicture> loadedPictures = List.of();
-    private UpdateSummary picturesOf;
-    private int pictureLoads;
-    /** Gelesene Bilder je Datei und Stand: ein neu gezeichneter Bericht liest nichts erneut. */
-    private final Map<String, PictureStage.Picture> pictureCache = new java.util.concurrent.ConcurrentHashMap<>();
-    /** Der Betrachter, den der Podcast selbst geöffnet hat (und wieder schließt). */
-    private ViewerPopup cuePopup;
+    /** Die Bilder des Podcasts im Bericht: gelesen, gesetzt, im Betrachter geöffnet. */
+    private final ReportPictures pictures;
     private Consumer<String> onSelected = id -> { };
 
     SourceUpdatesView(Supplier<Workspace> workspace, Mode mode) {
@@ -246,6 +237,7 @@ final class SourceUpdatesView extends JPanel {
             Actions current = actions.get();
             return current == null ? null : current.podcasts();
         }, runner);
+        this.pictures = new ReportPictures(this, runner, () -> onStatus, podcast::pictureClosed);
         podcast.follow(statements -> {
             followPodcast(statements);
             onFollow.accept(statements);
@@ -255,16 +247,12 @@ final class SourceUpdatesView extends JPanel {
             podcast.cue(new PodcastControl.Cue() {
                 @Override
                 public boolean open(int topic) {
-                    return openTopicPicture(topic);
+                    return pictures.openTopic(topic);
                 }
 
                 @Override
                 public void close() {
-                    ViewerPopup open = cuePopup;
-                    cuePopup = null;
-                    if (open != null) {
-                        open.close();
-                    }
+                    pictures.closeCue();
                 }
             });
             podcast.stored(this::loadPictures);
@@ -1017,7 +1005,7 @@ final class SourceUpdatesView extends JPanel {
         reportRenders++;
         reportBody.removeAll();
         summaryReport.clear();
-        placed = List.of();
+        pictures.placed(List.of());
         pageParts.clear();
         unpicture.clear();
         reportTitle = null;
@@ -1521,47 +1509,7 @@ final class SourceUpdatesView extends JPanel {
         if (current == null || of == null || (mode == Mode.SUMMARY ? !summaryReport.hasBodies() : pageParts.isEmpty())) {
             return;
         }
-        if (picturesOf != null && !SummaryReport.samePodcast(picturesOf, of)) {
-            pictureCache.clear();
-        }
-        int mine = ++pictureLoads;
-        runner.run(() -> readPictures(current, of), loaded -> {
-            if (mine == pictureLoads && SummaryReport.samePodcast(pictured(), of)) {
-                picturesOf = of;
-                loadedPictures = loaded;
-                showPictures();
-            }
-        }, failure -> {
-            // Bilder sind Beiwerk: der Bericht bleibt ohne sie stehen, der Grund steht in der Statuszeile.
-            if (mine == pictureLoads) {
-                onStatus.accept("Bilder des Podcasts nicht geladen: " + Problems.describe(failure).title());
-            }
-        });
-    }
-
-    private List<SummaryReport.LoadedPicture> readPictures(Actions current, UpdateSummary of) {
-        List<SummaryReport.LoadedPicture> loaded = new ArrayList<>();
-        for (TopicPicture topic : current.podcastPictures(of)) {
-            java.nio.file.Path file = topic.picture().file();
-            String key;
-            try {
-                key = file + "|" + java.nio.file.Files.getLastModifiedTime(file).toMillis();
-            } catch (java.io.IOException | RuntimeException e) {
-                continue;
-            }
-            PictureStage.Picture read = pictureCache.get(key);
-            if (read == null) {
-                try {
-                    read = PodcastControl.read(topic.picture());
-                } catch (java.io.IOException | RuntimeException e) {
-                    // ein unlesbares Bild fehlt im Bericht; die übrigen stehen da
-                    continue;
-                }
-                pictureCache.put(key, read);
-            }
-            loaded.add(new SummaryReport.LoadedPicture(topic, read));
-        }
-        return loaded;
+        pictures.load(current::podcastPictures, of, this::pictured, this::showPictures);
     }
 
     /** Stellt die gelesenen Bilder neben ihre Meldungen; was keine Stelle findet, fehlt. */
@@ -1570,9 +1518,8 @@ final class SourceUpdatesView extends JPanel {
             showRowPictures();
             return;
         }
-        List<SummaryReport.LoadedPicture> loaded = SummaryReport.samePodcast(summaryReport.rendered(), picturesOf)
-                ? loadedPictures : List.of();
-        placed = summaryReport.showPictures(loaded, position -> openPicture(position, false));
+        pictures.placed(summaryReport.showPictures(pictures.loaded(summaryReport.rendered()),
+                position -> pictures.open(position, false)));
     }
 
     /**
@@ -1583,9 +1530,9 @@ final class SourceUpdatesView extends JPanel {
         unpicture.forEach(Runnable::run);
         unpicture.clear();
         UpdateSummary told = spoken;
-        List<SummaryReport.LoadedPicture> loaded = SummaryReport.samePodcast(told, picturesOf) ? loadedPictures : List.of();
+        List<SummaryReport.LoadedPicture> loaded = pictures.loaded(told);
         if (told == null || loaded.isEmpty()) {
-            placed = List.of();
+            pictures.placed(List.of());
             return;
         }
         // Die Themen in der Reihenfolge ihrer ersten Seite im Bericht.
@@ -1621,7 +1568,7 @@ final class SourceUpdatesView extends JPanel {
             picture.setBorder(BorderFactory.createEmptyBorder(2, 12, 2, 0));
             picture.setVerticalAlignment(javax.swing.SwingConstants.TOP);
             int position = now.size();
-            clickable(() -> openPicture(position, false), read.caption() == null ? "Bild öffnen" : read.caption(),
+            clickable(() -> pictures.open(position, false), read.caption() == null ? "Bild öffnen" : read.caption(),
                     picture);
             row.add(picture, BorderLayout.EAST);
             unpicture.add(() -> row.remove(picture));
@@ -1629,64 +1576,24 @@ final class SourceUpdatesView extends JPanel {
                     () -> new java.awt.Rectangle(0, 0, picture.getWidth(), picture.getHeight()), read.caption(),
                     new ImageViewer.Picture(image, read.caption(), read.vector())));
         }
-        placed = List.copyOf(now);
+        pictures.placed(now);
         reportBody.revalidate();
         reportBody.repaint();
     }
 
-    /** Öffnet das Bild von Kapitel {@code topic} des Podcasts, wenn es im Bericht steht. */
-    private boolean openTopicPicture(int topic) {
-        for (int i = 0; i < placed.size(); i++) {
-            if (placed.get(i).topic() == topic) {
-                JComponent anchor = placed.get(i).anchor();
-                anchor.scrollRectToVisible(placed.get(i).bounds().get());
-                return openPicture(i, true);
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Öffnet das Bild an Stelle {@code position} im rahmenlosen Betrachter, der aus der Bildstelle im Text aufwächst;
-     * blättern geht durch alle Bilder des Berichts. Hat der Podcast es geöffnet und schließt der Benutzer es selbst,
-     * bleibt es in diesem Kapitel zu.
-     */
-    private boolean openPicture(int position, boolean cued) {
-        if (position < 0 || position >= placed.size() || SwingUtilities.getRootPane(this) == null) {
-            return false;
-        }
-        SummaryReport.PlacedPicture at = placed.get(position);
-        JComponent anchor = at.anchor();
-        ViewerPopup popup = ViewerPopup.open(this, new ImageViewer(placed.stream().map(SummaryReport.PlacedPicture::viewer)
-                        .toList(), position, Comic.viewerLook(
-                        com.aresstack.spaceharvester.app.settings.ViewerBackground.DEFAULT)),
-                () -> SwingUtilities.isDescendingFrom(anchor, this)
-                        ? SwingUtilities.convertRectangle(anchor, at.bounds().get(), this) : null);
-        if (cued) {
-            cuePopup = popup;
-            popup.onClosed(() -> {
-                if (cuePopup == popup) {
-                    cuePopup = null;
-                    podcast.pictureClosed();
-                }
-            });
-        }
-        return true;
-    }
-
     /** Die Bilder im Bericht, als Bildunterschriften in seiner Reihenfolge (für Tests). */
     List<String> reportPictures() {
-        return placed.stream().map(SummaryReport.PlacedPicture::caption).toList();
+        return pictures.captions();
     }
 
     /** Klickt das Bild an Stelle {@code position} im Bericht an (für Tests). */
     boolean clickReportPicture(int position) {
-        return openPicture(position, false);
+        return pictures.open(position, false);
     }
 
     /** Öffnet das Bild eines Kapitels, wie es der Podcast tut (für Tests). */
     boolean cuePicture(int topic) {
-        return openTopicPicture(topic);
+        return pictures.openTopic(topic);
     }
 
     private JPanel pageRow(ReportedPage page) {
@@ -1877,7 +1784,7 @@ final class SourceUpdatesView extends JPanel {
     private void message(String text) {
         reportBody.removeAll();
         summaryReport.clear();
-        placed = List.of();
+        pictures.placed(List.of());
         SummaryReport.add(reportBody, Comic.wrapped(text, Comic.MUTED, 13.5f));
         reportBody.revalidate();
         reportBody.repaint();
@@ -2076,7 +1983,7 @@ final class SourceUpdatesView extends JPanel {
 
                         @Override
                         public JobStatus start(UpdateSummary summary) {
-                            return workspace.startPodcast(summary);
+                            return PodcastParallel.apply(workspace).startPodcast(summary);
                         }
 
                         @Override
@@ -2091,7 +1998,7 @@ final class SourceUpdatesView extends JPanel {
 
                         @Override
                         public JobStatus renew(UpdateSummary summary) {
-                            return workspace.renewPodcast(summary);
+                            return PodcastParallel.apply(workspace).renewPodcast(summary);
                         }
 
                         @Override

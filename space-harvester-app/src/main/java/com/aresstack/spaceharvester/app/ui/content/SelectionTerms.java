@@ -114,14 +114,53 @@ final class SelectionTerms implements TermsTab.Selection {
     /** Die Gesamtzahlen aus dem Core (BG1b): Bezeichner sind Nomen und Kennungen wie in der Liste. */
     @Override
     public TermsTab.Totals totals() {
+        return totals(partial -> { });
+    }
+
+    /**
+     * Die Frage nach den Gesamtzahlen: „Wissensquellen“, eine Quelle und ein Space sind Knoten, deren Zahlen der Core
+     * verwaltet (Angelo 24.11.2026) und ohne Seitenmenge beantwortet; alles andere zählt über seine Seiten.
+     */
+    private TermQueries.TermSearch node(PageSet within) {
+        boolean managed = fixed == null && selection instanceof ExportPanel.Selection.Node node
+                && node.pageId() == null;
+        if (managed) {
+            return new TermQueries.TermSearch(selection.sourceId(), selection.spaceKey(), null, null, false,
+                    TermsTab.STEP, null, null);
+        }
+        return new TermQueries.TermSearch(null, null, null, null, false, TermsTab.STEP, null, null).within(within);
+    }
+
+    /** Von Hand neu aufbauen: die Quelle der Auswahl samt ihren Spaces, bei „Wissensquellen“ alle Quellen. */
+    @Override
+    public void rebuild() {
+        workspace.rebuildTermTotals(selection == null ? null : selection.sourceId());
+    }
+
+    /** Ohne Titel dieselbe Auswahl; eine fest aufgelöste Seitenmenge hat keinen Schlüssel. */
+    @Override
+    public Object key() {
+        return fixed != null ? null : List.of(runtime, selection.normalized());
+    }
+
+    @Override
+    public TermsTab.Totals totals(java.util.function.Consumer<TermsTab.Partial> progress) {
+        progress.accept(new TermsTab.Partial(0, 0, null, null));
         PageSet within = pages();
+        // Begriffe zuerst und mit Zwischenständen: Sie dauern bei großen Auswahlen am längsten.
+        TermQueries.TermTotals terms = workspace.termTotals(node(within), sofar -> progress.accept(
+                new TermsTab.Partial(sofar.of(TermKind.ACRONYM),
+                        sofar.of(TermKind.NOUN) + sofar.of(TermKind.IDENTIFIER), null, null)));
+        int acronyms = terms.of(TermKind.ACRONYM);
+        int identifiers = terms.of(TermKind.NOUN) + terms.of(TermKind.IDENTIFIER);
+        progress.accept(new TermsTab.Partial(acronyms, identifiers, null, null));
+        int relations = workspace.termRelationCounts(within).values().stream().mapToInt(Integer::intValue).sum();
+        progress.accept(new TermsTab.Partial(acronyms, identifiers, null, relations));
+        VerbQueries.VerbList verbs = workspace.verbs(within, null, 1, null);
+        progress.accept(new TermsTab.Partial(acronyms, identifiers, verbs.total(), relations));
         // Der Bestand der Auswahl, wie ihn der Export-Reiter zeigt: lokal gespeicherte von allen Seiten.
         com.aresstack.spaceharvester.application.holdings.PageSelection holdings = fixed != null ? fixed
                 : SelectionHoldings.resolve(runtime, selection);
-        TermQueries.TermTotals terms = workspace.termTotals(new TermQueries.TermSearch(null, null, null, null, false,
-                TermsTab.STEP, null, null).within(within));
-        int relations = workspace.termRelationCounts(within).values().stream().mapToInt(Integer::intValue).sum();
-        VerbQueries.VerbList verbs = workspace.verbs(within, null, 1, null);
         return new TermsTab.Totals(terms.of(TermKind.ACRONYM), terms.of(TermKind.NOUN) + terms.of(TermKind.IDENTIFIER),
                 relations, holdings.counts().stored(), holdings.size(), verbs.total(), verbs.unanalysed(),
                 verbs.stalePages());

@@ -38,7 +38,7 @@ public final class ChatSidebar extends JPanel {
      */
     private final IconButton more = new IconButton(
             new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), MORE).compact();
-    private final IconButton enlarge = new IconButton(enlargeIcon(false), ENLARGE).compact();
+    private final IconButton enlarge = new IconButton(enlargeIcon(false), ENLARGE);
     private Runnable collapse = () -> { };
 
     ChatSidebar(ChatPanel chat) {
@@ -57,7 +57,11 @@ public final class ChatSidebar extends JPanel {
                 BorderFactory.createEmptyBorder(0, 12, 0, 8)));
         head.setPreferredSize(new java.awt.Dimension(0, HEAD_HEIGHT));
         head.add(chat.header(), BorderLayout.CENTER);
-        head.add(actions, BorderLayout.EAST);
+        // Senkrecht mittig in der Kopfzeile statt oben angeklebt (Angelo 24.11.2026).
+        JPanel centered = new JPanel(new java.awt.GridBagLayout());
+        centered.setOpaque(false);
+        centered.add(actions);
+        head.add(centered, BorderLayout.EAST);
         add(head, BorderLayout.NORTH);
         add(chat, BorderLayout.CENTER);
         setMinimumSize(new Dimension(MIN_WIDTH, 0));
@@ -88,7 +92,10 @@ public final class ChatSidebar extends JPanel {
         return more;
     }
 
-    /** Das Menü hinter dem Dreieck: „Seitenleiste einklappen“ und „Alle Chats löschen“ (mit Ja/Nein-Rückfrage). */
+    /**
+     * Das Menü hinter dem Dreieck: „Seitenleiste einklappen“, „Alle Chats löschen“ (mit Ja/Nein-Rückfrage) und die
+     * Grenzen der Parallelität.
+     */
     public javax.swing.JPopupMenu moreMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
         javax.swing.JMenuItem item = new javax.swing.JMenuItem(COLLAPSE, collapseIcon());
@@ -100,6 +107,11 @@ public final class ChatSidebar extends JPanel {
         deleteAll.setFont(Comic.regular(13f));
         deleteAll.addActionListener(e -> chat.deleteAllChats());
         menu.add(deleteAll);
+        // Die Grenzen der Parallelität wie im Menü der Aufträge (Angelo 24.11.2026).
+        menu.addSeparator();
+        for (javax.swing.JMenu parallel : chat.parallelMenus()) {
+            menu.add(parallel);
+        }
         return menu;
     }
 

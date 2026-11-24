@@ -129,10 +129,8 @@ public final class ChatPanel extends JPanel {
     static final String DELETED_TIP = "Gelöscht, bis zum Neustart wiederherstellbar: Klick öffnet ihn wieder";
     static final String DELETE_ALL_QUESTION = "Wirklich alle Chats aller Bereiche löschen?";
     static final String ASSISTANT = "Assistent";
-    static final String ANSWERING = "Antwort wird geschrieben …";
-    /** Wie in AskAI: solange Ollama das Modell lädt, steht das in der Blase und in der Statuszeile. */
+    /** Wie in AskAI: solange Ollama das Modell lädt, steht das in der gelben Blase. */
     static final String MODEL_LOADING = "Modell wird geladen …";
-    static final String SEARCHING = "Wissen wird gesucht …";
     static final String CANCELLED = "Abgebrochen";
     static final String DOWNLOAD_DONE = "abgeschlossen";
     static final String DOWNLOAD_FAILED = "fehlgeschlagen";
@@ -167,8 +165,21 @@ public final class ChatPanel extends JPanel {
     static final int WEB_BUDGET_MAX = 999;
     static final int WEB_BUDGET_SLIDER_MIN = 4;
     static final int WEB_BUDGET_SLIDER_MAX = 60;
-    static final int WEB_TABS_DEFAULT = 4;
-    static final int WEB_TABS_MAX = 8;
+    /**
+     * Die drei Grenzen der Parallelität im Menü am Dreieck der Chat-Leiste (Angelo 24.11.2026), mit denselben Stufen
+     * und „Benutzerdefiniert …“ wie bei den Aufträgen: Tabs der Websuche, Agenten der internen Suche, Dateien und
+     * Anhänge.
+     */
+    static final String PARALLEL_TABS = "Parallele Tabs";
+    static final String PARALLEL_AGENTS = "Parallele Agenten (intern)";
+    static final String PARALLEL_FILES = "Parallele Dateien";
+    static final int WEB_TABS_DEFAULT = 16;
+    static final int AGENTS_DEFAULT = 32;
+    static final int FILES_DEFAULT = 8;
+    /** Die Stufen im Menü; darunter „Benutzerdefiniert …“. */
+    static final List<Integer> PARALLEL_STEPS = com.aresstack.spaceharvester.app.ui.ParallelChoice.STEPS;
+    /** Größte freie Eingabe unter „Benutzerdefiniert …“ (das Feld nimmt vier Ziffern). */
+    static final int PARALLEL_MAX = com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM_MAX;
     static final int WEB_DELAY_MAX = 10000;
     static final int WEB_DELAY_SLIDER_MAX = 2000;
     private static final String WEB_KEY = "chat.web.";
@@ -179,7 +190,12 @@ public final class ChatPanel extends JPanel {
     static final String REJECT_ALWAYS_TEXT = "Immer verbieten";
     static final String NO_MODEL = "Kein Chat-Modell";
     static final String MODEL_TIP = "Chat-Modell aus Einstellungen › KI";
-    static final String NO_SELECTION = "Links eine Wissensquelle, einen Space oder eine Seite wählen";
+    /**
+     * Ohne Auswahl antwortet der Chat trotzdem (Angelo 24.11.2026): nur mit den zugeschalteten Suchen und Anhängen,
+     * sonst aus dem eigenen Wissen des Modells.
+     */
+    static final String NO_SELECTION = "Keine Wissensquelle gewählt: Der Chat nutzt nur Websuche, interne Suche und "
+            + "Anhänge, sonst sein eigenes Wissen";
     static final String NOT_LOADED = "Seiten noch nicht erfasst";
     static final String LOAD = "Laden";
     static final String NOT_ALLOWED = "Quelle nicht für KI freigegeben; Senden gibt die offene Seite und die Seiten, "
@@ -207,9 +223,12 @@ public final class ChatPanel extends JPanel {
     /** Nur der Pfeil, durchsichtig: öffnet die Chats dieses Bereichs. */
     private final ComposerButton chats = ComposerButton.iconButton(ComposerIcons.chevronDown(),
             "Chats dieses Bereichs");
-    /** Oben rechts in der Kopfzeile des Inhaltsbereichs, als Symbole (Angelo, 17.11.2026): Plus und Papierkorb. */
-    private final IconButton newChat = new IconButton(ComposerIcons.plus(16), NEW_CHAT).compact();
-    private final IconButton deleteChat = new IconButton(Glyph.TRASH, DELETE).compact();
+    /**
+     * Oben rechts in der Kopfzeile, als Symbole (Angelo, 17.11.2026): Plus und Papierkorb, in voller Größe, damit sie
+     * die Kopfzeile füllen und gut zu treffen sind (Angelo 24.11.2026).
+     */
+    private final IconButton newChat = new IconButton(ComposerIcons.plus(16), NEW_CHAT);
+    private final IconButton deleteChat = new IconButton(Glyph.TRASH, DELETE);
     /** Die „wirklich“-Rückfrage (Ja/Nein) vor dem Löschen; Tests antworten selbst. */
     java.util.function.BiPredicate<String, String> confirm = (title, question) -> Dialogs.confirm(this, title,
             question);
@@ -325,6 +344,12 @@ public final class ChatPanel extends JPanel {
     private boolean editorFocused;
 
     private Selection selection;
+    /**
+     * Die offene Ansicht des Chats für den Vorrang ({@code Foreground}, Angelo 24.11.2026): je gewählter Seite bzw.
+     * Bereich eine neue Kennung; beim Wechsel wird die alte verlassen, ihre Arbeit verliert den Vorrang.
+     */
+    private String view;
+    private static final java.util.concurrent.atomic.AtomicLong VIEWS = new java.util.concurrent.atomic.AtomicLong();
     /** Die Schnellaktionen für die untere Leiste; sichtbar nur im Reiter Chat. */
     private final JPanel quickActions = new JPanel(
             new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 6, 4));
@@ -435,6 +460,25 @@ public final class ChatPanel extends JPanel {
         };
         transcriptLayers.add(transcriptScroll, JLayeredPane.DEFAULT_LAYER);
         transcriptLayers.add(readAloud.orb(), JLayeredPane.MODAL_LAYER);
+        // Der Knopf folgt dem sichtbaren Vorlese-Knopf der großen Ansicht (Podcast, Leseansicht, Zusammenfassung):
+        // erscheint, verschwindet oder wandert einer, liegt der Knopf des Chats neu (Ereignis, kein Abfragen).
+        java.awt.event.AWTEventListener bigOrbs = event -> {
+            if (event.getSource() instanceof com.aresstack.spaceharvester.app.ui.controls.PodcastOrb
+                    && event.getSource() != readAloud.orb()) {
+                SwingUtilities.invokeLater(this::relayoutOrb);
+            }
+        };
+        transcriptLayers.addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) == 0) {
+                return;
+            }
+            java.awt.Toolkit toolkit = java.awt.Toolkit.getDefaultToolkit();
+            toolkit.removeAWTEventListener(bigOrbs);
+            if (transcriptLayers.isShowing()) {
+                toolkit.addAWTEventListener(bigOrbs, java.awt.AWTEvent.COMPONENT_EVENT_MASK
+                        | java.awt.AWTEvent.HIERARCHY_EVENT_MASK);
+            }
+        });
         transcriptScroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent event) {
@@ -444,11 +488,9 @@ public final class ChatPanel extends JPanel {
         add(transcriptLayers, BorderLayout.CENTER);
 
         composer = buildComposer();
-        JPanel knowledgeRow = new JPanel(new BorderLayout(8, 0));
-        knowledgeRow.setOpaque(false);
+        // Angelo 24.11.2026: Über dem Eingabefeld stehen nur Aktionsknöpfe, Text und Anhänge. Die Wissenszeile samt
+        // „Laden“ steht in der gelben Blase der Antwort (KnowledgeCard).
         knowledge.setForeground(Comic.MUTED);
-        knowledgeRow.add(knowledge, BorderLayout.CENTER);
-        knowledgeRow.add(load, BorderLayout.EAST);
         load.setVisible(false);
         load.addActionListener(e -> load());
         // Die Schnellaktionen stehen direkt über der Wissen-Zeile und brechen in der schmalen Leiste um.
@@ -459,7 +501,6 @@ public final class ChatPanel extends JPanel {
         JPanel south = new JPanel(new BorderLayout(0, 4));
         south.setOpaque(false);
         south.add(above, BorderLayout.NORTH);
-        south.add(knowledgeRow, BorderLayout.CENTER);
         south.add(composer, BorderLayout.SOUTH);
         add(south, BorderLayout.SOUTH);
 
@@ -993,10 +1034,32 @@ public final class ChatPanel extends JPanel {
         apply(scope());
     }
 
+    /** Ob die Suche vorne ist: Dort arbeitet der Chat als Suchagent (Angelo 24.11.2026). */
+    private boolean searchFront;
+
+    /** Ob die Suche vorne ist (Hauptfenster beim Wechsel der Ansicht). */
+    public void searchFront(boolean front) {
+        searchFront = front;
+    }
+
     /** Ob die Leseansicht vorne ist (Hauptfenster beim Wechsel der Ansicht). */
     public void readingFront(boolean front) {
         readingFront = front;
         apply(scope());
+    }
+
+    /** Verlässt die bisherige Ansicht und öffnet die neue; ohne Auswahl keine. */
+    private void openView(Selection selection) {
+        com.aresstack.spaceharvester.application.jobs.Foreground.close(view);
+        view = selection == null ? null : "ansicht-" + VIEWS.incrementAndGet();
+        if (view != null) {
+            com.aresstack.spaceharvester.application.jobs.Foreground.open(view);
+        }
+    }
+
+    /** Für Tests: die offene Ansicht. */
+    String view() {
+        return view;
     }
 
     /** Was der Chat als Bereich nimmt: vorne die Leseansicht mit offener Seite, sonst die Auswahl im Baum. */
@@ -1009,6 +1072,7 @@ public final class ChatPanel extends JPanel {
             return;
         }
         this.selection = selection;
+        openView(selection);
         ChatNode next = selection == null ? null
                 : selection.global() ? ChatNode.ALL
                 : selection instanceof Selection.Collection collection ? ChatNode.collection(collection.folderId())
@@ -1031,10 +1095,10 @@ public final class ChatPanel extends JPanel {
             showChatName();
             return;
         }
-        home = store.folder(node);
+        home = store.folder(stored());
         if (!resumed && node != null) {
             resumed = true;
-            List<ChatRecord> saved = store.list(node);
+            List<ChatRecord> saved = store.list(stored());
             if (!saved.isEmpty()) {
                 open(saved.get(0));
                 return;
@@ -1191,10 +1255,11 @@ public final class ChatPanel extends JPanel {
 
     /**
      * Abbrechen geht, solange eine Antwort läuft, auch ohne Auswahl oder während die neue noch aufgelöst wird (der
-     * Chat bleibt beim Navigieren stehen); Senden braucht eine aufgelöste Auswahl.
+     * Chat bleibt beim Navigieren stehen); Senden braucht eine aufgelöste Auswahl oder gar keine (dann antwortet der
+     * Chat ohne Bereich, Angelo 24.11.2026).
      */
     private void updateSend() {
-        send.setEnabled(turn != null || toolScope != null || (selection != null && settled));
+        send.setEnabled(turn != null || toolScope != null || selection == null || settled);
     }
 
     // ------------------------------------------------------------------ Schnellaktionen
@@ -1619,7 +1684,30 @@ public final class ChatPanel extends JPanel {
         com.aresstack.spaceharvester.app.ui.AppState.shared().put(WEB_KEY + key, value);
     }
 
-    /** Öffnet das Menü am Pfeil: Profil, Werkzeugrunden, parallele Tabs, Verzögerung, Human Emulation, Maus. */
+    /**
+     * Die Einträge „Parallele Tabs“, „Parallele Agenten (intern)“ und „Parallele Dateien“ für das Menü am Dreieck der
+     * Chat-Leiste, mit dem Code der Aufträge ({@link com.aresstack.spaceharvester.app.ui.ParallelChoice}).
+     */
+    public List<javax.swing.JMenu> parallelMenus() {
+        return List.of(parallelChoice("Parallele Tabs: wie viele Seiten die Websuche gleichzeitig "
+                        + "öffnet und auswertet", "tabs", WEB_TABS_DEFAULT).menu(PARALLEL_TABS),
+                parallelChoice("Parallele Agenten (intern): wie viele Agenten Treffer der internen "
+                        + "Suche gleichzeitig lesen und auswerten", "agents", AGENTS_DEFAULT).menu(PARALLEL_AGENTS),
+                parallelChoice("Parallele Dateien: wie viele lokale Dateien und Anhänge (auch PDF) "
+                        + "gleichzeitig gelesen werden", "files", FILES_DEFAULT).menu(PARALLEL_FILES));
+    }
+
+    private com.aresstack.spaceharvester.app.ui.ParallelChoice parallelChoice(String tip, String key, int fallback) {
+        return com.aresstack.spaceharvester.app.ui.ParallelChoice.stored(this, tip, WEB_KEY + key, fallback,
+                text -> feedback.warning(text, null));
+    }
+
+    /** Eine der Grenzen der Parallelität, mindestens 1. */
+    static int parallel(String key, int fallback) {
+        return com.aresstack.spaceharvester.app.ui.ParallelChoice.stored(WEB_KEY + key, fallback);
+    }
+
+    /** Öffnet das Menü am Pfeil: Profil, Werkzeugrunden, Verzögerung, Human Emulation, Maus. */
     private void openWebPopup() {
         java.util.List<WebSearchPopup.Row> rows = new ArrayList<>();
         rows.add(new WebSearchPopup.Row(WebSearchPopup.TITLE, webInt("budget", WEB_BUDGET_DEFAULT), WEB_BUDGET_MIN,
@@ -1627,8 +1715,6 @@ public final class ChatPanel extends JPanel {
                     webPut("budget", value);
                     showWebState();
                 }));
-        rows.add(new WebSearchPopup.Row(WebSearchPopup.TABS_TITLE, webInt("tabs", WEB_TABS_DEFAULT), 1, WEB_TABS_MAX,
-                1, WEB_TABS_MAX, value -> webPut("tabs", value)));
         rows.add(new WebSearchPopup.Row(WebSearchPopup.DELAY_TITLE, webInt("delay", 0), 0, WEB_DELAY_MAX, 0,
                 WEB_DELAY_SLIDER_MAX, value -> webPut("delay", value)));
         java.util.List<WebSearchPopup.Check> checks = new ArrayList<>();
@@ -1658,7 +1744,7 @@ public final class ChatPanel extends JPanel {
             return null;
         }
         browser.profile(chatId, webFlag("internal"));
-        browser.load(chatId, webInt("tabs", WEB_TABS_DEFAULT), webInt("delay", 0));
+        browser.load(chatId, parallel("tabs", WEB_TABS_DEFAULT), webInt("delay", 0));
         browser.humanEmulation(chatId, webFlag("human"), webFlag("mouse"));
         // Rückfragen gehören zu diesem Chat und dieser Antwort, nie zum gerade sichtbaren Verlauf.
         com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt prompt =
@@ -1669,7 +1755,7 @@ public final class ChatPanel extends JPanel {
         java.util.concurrent.atomic.AtomicLong begun = new java.util.concurrent.atomic.AtomicLong(-1);
         return new ChatTurn.WebSearch(new com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools(
                 browser.tools(chatId), call -> browser.asking(prompt, call)), rules,
-                Math.max(WEB_BUDGET_MIN, Math.min(WEB_BUDGET_MAX, webInt("budget", WEB_BUDGET_DEFAULT))),
+                researchBudget(),
                 () -> begun.set(browser.beginTurn(chatId,
                         progress -> SwingUtilities.invokeLater(() -> card.update(progress)))),
                 () -> {
@@ -1689,6 +1775,9 @@ public final class ChatPanel extends JPanel {
     com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt.Handle showApproval(String title,
             String description, boolean offersAlways,
             java.util.function.Consumer<com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome> answer) {
+        if (listening != null) {
+            listening.behindActivity();
+        }
         com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel thought =
                 new com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel(BubbleSide.LEFT, bubbles,
                         title, description);
@@ -1713,16 +1802,7 @@ public final class ChatPanel extends JPanel {
         }
         outcomes.put(Comic.button(REJECT_TEXT, null),
                 com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.REJECTED);
-        // Umbrechend: In der schmalen Leiste rutschen Knöpfe in eine zweite Zeile, statt abgeschnitten zu werden.
-        JPanel buttons = new JPanel(
-                new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 8, 4)) {
-            @Override
-            public Dimension getMaximumSize() {
-                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-            }
-        };
-        buttons.setOpaque(false);
-        buttons.setBorder(BorderFactory.createEmptyBorder(0, 22, 0, 12));
+        JPanel buttons = buttonPanel();
         boolean[] answered = {false};
         for (var entry : outcomes.entrySet()) {
             buttons.add(entry.getKey());
@@ -1735,7 +1815,6 @@ public final class ChatPanel extends JPanel {
                 answer.accept(entry.getValue());
             });
         }
-        buttons.setAlignmentX(LEFT_ALIGNMENT);
         row.add(buttons);
         row.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
@@ -1760,16 +1839,52 @@ public final class ChatPanel extends JPanel {
         };
     }
 
-    /** Die Karte „Browserrecherche“ als Aktivitätsblase im Verlauf. */
+    /** Die Knopfzeile unter einer gelben Blase; umbrechend, damit in der schmalen Leiste nichts abgeschnitten wird. */
+    private static JPanel buttonPanel() {
+        JPanel buttons = new JPanel(
+                new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 8, 4)) {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        buttons.setOpaque(false);
+        buttons.setBorder(BorderFactory.createEmptyBorder(0, 22, 0, 12));
+        buttons.setAlignmentX(LEFT_ALIGNMENT);
+        return buttons;
+    }
+
+    /** Eine Aktivitätsblase im Verlauf: die Karte „Browserrecherche“ oder die Wolke eines Werkzeugaufrufs. */
     private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
                                                                                          String body) {
+        return addActivity(title, body, List.of());
+    }
+
+    /** Wie oben, mit Knöpfen unter der Blase (etwa „Laden“ in der Gedankenblase), umbrechend wie bei Rückfragen. */
+    private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
+            String body, List<? extends JComponent> buttons) {
+        if (listening != null) {
+            listening.behindActivity();
+        }
         com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel bubble =
                 new com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel(BubbleSide.LEFT, bubbles,
                         title, body);
         bubble.setHeaderTimestamp(System.currentTimeMillis());
         bubble.setMaximumBubbleWidth(640);
-        BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
-        row.setAlignmentX(LEFT_ALIGNMENT);
+        BubbleMessageRow bubbleRow = new BubbleMessageRow(bubble, BubbleSide.LEFT);
+        bubbleRow.setAlignmentX(LEFT_ALIGNMENT);
+        JComponent row = bubbleRow;
+        if (!buttons.isEmpty()) {
+            JPanel both = new JPanel();
+            both.setOpaque(false);
+            both.setLayout(new javax.swing.BoxLayout(both, javax.swing.BoxLayout.Y_AXIS));
+            both.add(bubbleRow);
+            JPanel panel = buttonPanel();
+            buttons.forEach(panel::add);
+            both.add(panel);
+            both.setAlignmentX(LEFT_ALIGNMENT);
+            row = both;
+        }
         emptyNote.setVisible(false);
         transcript.add(row);
         transcript.revalidate();
@@ -1909,7 +2024,7 @@ public final class ChatPanel extends JPanel {
         addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question);
         long now = System.currentTimeMillis();
         if (home == null) {
-            home = store.folder(node);
+            home = store.folder(stored());
         }
         chat = chat.plus(ChatRecord.Message.user(question, now, area, scopeKey), now);
         List<ChatRecord.Message> history = chat.messages().subList(0, chat.messages().size() - 1);
@@ -1920,7 +2035,6 @@ public final class ChatPanel extends JPanel {
         chips.removeAll();
         chips.setVisible(false);
         attach.setToolTipText(ATTACH);
-        status.setText(SEARCHING);
         composer.revalidate();
         composer.repaint();
         answering = addAnswer("…");
@@ -1928,6 +2042,25 @@ public final class ChatPanel extends JPanel {
         Path targetNode = home;
         TurnListener listener = new TurnListener(target, targetNode, answering, answeringSources);
         listening = listener;
+        // Die gelbe Blase gleich mit dem Senden (Angelo 24.11.2026): Bereichssuche und interne Suche gleich, mit
+        // Wissenszeile und „Laden“; die Antwortblase wartet unsichtbar dahinter, bis Text kommt.
+        boolean withKnowledge = custom == null && (scope != null || appSearchOn);
+        List<JComponent> cardButtons = new ArrayList<>();
+        if (withKnowledge && load.isVisible() && load.isEnabled()) {
+            ComposerButton loadNow = Comic.button(LOAD, load.getToolTipText());
+            loadNow.addActionListener(e -> {
+                loadNow.setEnabled(false);
+                load();
+            });
+            cardButtons.add(loadNow);
+        }
+        KnowledgeCard thinking = new KnowledgeCard(withKnowledge,
+                (title, body) -> addActivity(title, body, cardButtons));
+        if (withKnowledge) {
+            thinking.knowledge(knowledge.getText());
+        }
+        listener.card = thinking;
+        thinking.open();
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
                 listener, SwingUtilities::invokeLater);
         if (custom != null) {
@@ -1953,20 +2086,35 @@ public final class ChatPanel extends JPanel {
             // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
             turn.searchingGlossarySynonyms(
                     com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
+            // Angelo 24.11.2026: In der Suche, und ohne Auswahl überhaupt, recherchiert der Chat als Suchagent über
+            // mehrere Runden mit dem Budget aus dem Menü am Pfeil; anderswo bleibt er, wie er ist.
+            if (searchFront || open == null) {
+                turn.searchAgent(researchBudget());
+            }
+            turn.parallelAgents(parallel("agents", AGENTS_DEFAULT));
         }
         // Websuche (Composer-Knopf): die Browser-Werkzeuge des Chats dazu, mit Karte „Browserrecherche“.
         WebSearchCard card = new WebSearchCard(body -> addActivity(WebSearchCard.TITLE, body));
         ChatTurn.WebSearch web = webSearchFor(chat.id(), card, listener);
         if (web != null) {
             turn.webSearch(web);
+            // Angelo 24.11.2026: Webtreffer wertet je Seite ein eigener Agent aus, so viele gleichzeitig wie Tabs.
+            context.webBrowser().pageEvaluator(chat.id(), turn::evaluatePage, parallel("tabs", WEB_TABS_DEFAULT));
             listener.webCard = card;
+            listener.browserTools = web.tools();
         }
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());
         updateHeaderActions();
         send.setToolTipText("Antwort abbrechen");
+        turn.inView(view);
         turn.start();
+    }
+
+    /** Die Werkzeugrunden je Antwort aus dem Menü am Pfeil der Websuche, in den erlaubten Grenzen. */
+    private int researchBudget() {
+        return Math.max(WEB_BUDGET_MIN, Math.min(WEB_BUDGET_MAX, webInt("budget", WEB_BUDGET_DEFAULT)));
     }
 
     /** {@code low}, {@code medium}, {@code high} aus der Wahl im Composer. */
@@ -1978,27 +2126,65 @@ public final class ChatPanel extends JPanel {
         };
     }
 
-    /** Hängt lesbare Textdateien und Dokumente (PDF, Word …) aus den Chips an; Binäres wird nur genannt. */
+    /**
+     * Hängt lesbare Textdateien und Dokumente (PDF, Word …) aus den Chips an; Binäres wird nur genannt. Die Dateien
+     * werden gleichzeitig gelesen, höchstens „Parallele Dateien“ auf einmal (Angelo 24.11.2026); die Reihenfolge der
+     * Chips bleibt.
+     */
     private String withAttachments(String text) {
         if (attachments.isEmpty()) {
             return text;
         }
-        StringBuilder b = new StringBuilder(text);
-        for (Path file : attachments) {
-            b.append("\n\n--- Anhang: ").append(file.getFileName()).append(" ---\n");
-            try {
-                // Dokumente (PDF, Word, Excel …) wie die Vorschau im Command Deck über den Tika-Adapter des Core.
-                String name = file.getFileName() == null ? "" : file.getFileName().toString();
-                String content = com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(name)
-                        ? new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().load(file.toString()).text()
-                        : Files.readString(file, StandardCharsets.UTF_8);
-                b.append(ChatKnowledge.excerpt(content, ChatKnowledge.MAX_PAGE_CHARS));
-            } catch (java.io.IOException | RuntimeException
-                     | com.aresstack.spaceharvester.deck.editor.DocumentException unreadable) {
-                b.append("(nicht als Text lesbar)");
+        List<Path> files = List.copyOf(attachments);
+        String[] contents = new String[files.size()];
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
+                Math.min(parallel("files", FILES_DEFAULT), files.size()), work -> {
+                    Thread thread = new Thread(work, "chat-anhang");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+        try {
+            List<java.util.concurrent.Future<?>> running = new ArrayList<>();
+            for (int i = 0; i < files.size(); i++) {
+                int index = i;
+                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index))));
             }
+            for (java.util.concurrent.Future<?> future : running) {
+                try {
+                    future.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (java.util.concurrent.ExecutionException e) {
+                    // Dann fehlt nur der Text dieser Datei; sie gilt unten als nicht lesbar.
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        StringBuilder b = new StringBuilder(text);
+        for (int i = 0; i < files.size(); i++) {
+            b.append("\n\n--- Anhang: ").append(files.get(i).getFileName()).append(" ---\n")
+                    .append(contents[i] == null ? UNREADABLE : contents[i]);
         }
         return b.toString();
+    }
+
+    private static final String UNREADABLE = "(nicht als Text lesbar)";
+
+    /** Der Text einer angehängten Datei, auf das Budget einer Seite gekürzt. */
+    private static String attachmentText(Path file) {
+        try {
+            // Dokumente (PDF, Word, Excel …) wie die Vorschau im Command Deck über den Tika-Adapter des Core.
+            String name = file.getFileName() == null ? "" : file.getFileName().toString();
+            String content = com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(name)
+                    ? new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().load(file.toString()).text()
+                    : Files.readString(file, StandardCharsets.UTF_8);
+            return ChatKnowledge.excerpt(content, ChatKnowledge.MAX_PAGE_CHARS);
+        } catch (java.io.IOException | RuntimeException
+                 | com.aresstack.spaceharvester.deck.editor.DocumentException unreadable) {
+            return UNREADABLE;
+        }
     }
 
     /** Nimmt die Ereignisse eines Turns entgegen; nach dem Ende speichert er den Chat, zu dem der Turn gehört. */
@@ -2018,6 +2204,23 @@ public final class ChatPanel extends JPanel {
         volatile boolean discarded;
         /** Die Karte „Browserrecherche“ dieser Antwort, {@code null} ohne Websuche. */
         WebSearchCard webCard;
+        /** Die gelbe Gedankenblase dieser Antwort (Wissen, Schritte, Quellen, Balken); {@code null} nur in Tests. */
+        KnowledgeCard card;
+        /** Laufende Werkzeugaufrufe außer dem Browser: Kennung und Text, für die Schritte der Gedankenblase. */
+        private final java.util.Map<String, String> steps = new java.util.HashMap<>();
+        /** Die Browser-Werkzeuge dieser Antwort, {@code null} ohne Websuche. */
+        com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools browserTools;
+        /** Die Zeile der Antwortblase; wartet unsichtbar hinter den Wolken, bis Text kommt (EAC). */
+        private final JComponent row;
+        private boolean waiting;
+        /** Die laufenden Wolken der Werkzeugaufrufe; alle Wolken verschwinden mit dem Ende der Antwort (EAC). */
+        private final java.util.Map<String, com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel> clouds =
+                new java.util.HashMap<>();
+        private final List<com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel> shownClouds =
+                new ArrayList<>();
+        /** Die Wolke „Browser wird gestartet“, bis das erste Browser-Werkzeug fertig ist. */
+        private String browserStart;
+        private boolean browserSeen;
         /** Offene Rückfragen der Websuche dieser Antwort (nur EDT). */
         private final List<java.util.function.Consumer<
                 com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome>> approvals = new ArrayList<>();
@@ -2053,6 +2256,7 @@ public final class ChatPanel extends JPanel {
             this.startedNode = startedNode;
             this.bubble = bubble;
             this.links = links;
+            this.row = answeringRow;
             // Die Markdown-Ansicht rendert gedrosselt: erst wenn die Blase dadurch wächst, nach unten rollen (Codex-
             // Befund zu #966), auch nach dem letzten Delta und beim Abschluss.
             follow = new java.awt.event.ComponentAdapter() {
@@ -2068,6 +2272,10 @@ public final class ChatPanel extends JPanel {
 
         /** Ersetzt den ganzen Text der Antwortblase (Platzhalter, Fehler, Abschluss) und beendet das Streaming. */
         private void show(String markdown) {
+            if (!detached) {
+                clearClouds();
+            }
+            reveal();
             MarkdownMessageView view = bubble.view();
             if (view.isStreaming()) {
                 view.finishStreaming();
@@ -2077,21 +2285,116 @@ public final class ChatPanel extends JPanel {
             bubble.repaint();
         }
 
+        /**
+         * Wie {@code ChatShellModel.startActivity} im EAC: Eine noch leere Antwort rückt hinter die neue Wolke und
+         * bleibt unsichtbar, bis ihr erster Text kommt; der „…“-Platzhalter steht so nie über der Recherche.
+         */
+        void behindActivity() {
+            if (detached || !text.isEmpty() || row == null) {
+                return;
+            }
+            waiting = true;
+            row.setVisible(false);
+            links.setVisible(false);
+        }
+
+        /** Der erste Text (oder das Ende): die Antwort erscheint hinter den Wolken. */
+        private void reveal() {
+            if (!waiting || detached) {
+                return;
+            }
+            waiting = false;
+            transcript.remove(row);
+            transcript.remove(links);
+            transcript.add(row);
+            transcript.add(links);
+            row.setVisible(true);
+            links.setVisible(links.getComponentCount() > 0);
+            transcript.revalidate();
+            transcript.repaint();
+            scrollDown();
+        }
+
+        /**
+         * Eine Wolke je Werkzeugaufruf wie im EAC. Der erste Browser-Aufruf startet Firefox: seine Wolke heißt
+         * „Browser wird gestartet“ und verschwindet, sobald er fertig ist; alle weiteren Browser-Schritte zeigt die
+         * Karte „Browserrecherche“.
+         */
+        @Override
+        public void toolStarted(String key, String name, String what) {
+            if (detached) {
+                return;
+            }
+            String title = what;
+            if (browserTools != null && browserTools.handles(name)) {
+                if (browserSeen) {
+                    return;
+                }
+                browserSeen = true;
+                browserStart = key;
+                title = WebSearchCard.STARTING;
+            } else if (card != null && !card.finished()) {
+                // Suchen und Lesen im Wissen zeigt die eine Gedankenblase als Schritte, keine eigenen Wolken.
+                steps.put(key, what);
+                card.step(what);
+                return;
+            }
+            var cloud = addActivity(title, "");
+            clouds.put(key, cloud);
+            shownClouds.add(cloud);
+        }
+
+        @Override
+        public void toolFinished(String key) {
+            String step = steps.remove(key);
+            if (step != null && card != null && !detached) {
+                card.stepDone(step);
+            }
+            var cloud = clouds.remove(key);
+            if (cloud == null || detached) {
+                return;
+            }
+            if (key.equals(browserStart)) {
+                removeCloud(cloud);
+                return;
+            }
+            if (cloud.getVisualState()
+                    == com.aresstack.enterpriseai.ui.comic.bubble.AnimatedThoughtBubblePanel.VisualState.RUNNING) {
+                cloud.completeSuccessfully("", null);
+            }
+        }
+
+        private void removeCloud(com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel cloud) {
+            shownClouds.remove(cloud);
+            if (cloud.getParent() != null) {
+                transcript.remove(cloud.getParent());
+                transcript.revalidate();
+                transcript.repaint();
+            }
+        }
+
+        /** Mit dem Ende der Antwort verschwinden die Wolken der Werkzeugaufrufe (EAC: transiente Wolken). */
+        private void clearClouds() {
+            clouds.clear();
+            for (var cloud : List.copyOf(shownClouds)) {
+                removeCloud(cloud);
+            }
+        }
+
         @Override
         public void loading() {
             if (text.isEmpty()) {
                 bubble.view().setMarkdown(MODEL_LOADING);
             }
-            if (!detached) {
-                status.setText(MODEL_LOADING);
+            if (!detached && card != null) {
+                card.step(MODEL_LOADING);
             }
         }
 
         @Override
         public void released(int count) {
-            if (!detached) {
-                status.setText(status.getText().strip() + " · " + Texts.count(count, "Seite", "Seiten")
-                        + " für KI freigegeben");
+            if (!detached && card != null) {
+                card.released(count);
             }
         }
 
@@ -2104,8 +2407,8 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void using(String what) {
-            if (!detached) {
-                status.setText(ANSWERING + " · " + what);
+            if (!detached && card != null) {
+                card.step(what);
             }
         }
 
@@ -2114,15 +2417,25 @@ public final class ChatPanel extends JPanel {
             sources = context.accepted().stream().map(ChatRecord.Source::of).toList();
             // Die Quellen stehen schon während der Antwort unter der Blase und wachsen mit jeder neuen.
             links.show(sources);
-            if (!detached) {
-                status.setText(context.isEmpty() ? ANSWERING + " · ohne Auszüge aus dem Bestand"
-                        : ANSWERING + " · " + Texts.count(context.accepted().size(), "Auszug", "Auszüge")
-                        + " aus dem Bestand");
+            if (!detached && card != null) {
+                card.sources(sources.stream().map(ChatRecord.Source::title).toList());
+            }
+        }
+
+        @Override
+        public void progress(int done, int total) {
+            if (!detached && card != null) {
+                card.progress(done, total);
             }
         }
 
         @Override
         public void delta(String delta) {
+            // Die Antwort schreibt: Die Gedankenblase platzt mit ihrer Bilanz (wie im EAC).
+            if (card != null && !detached) {
+                card.finish(false);
+            }
+            reveal();
             MarkdownMessageView view = bubble.view();
             if (text.isEmpty()) {
                 // Der Platzhalter „…“ weicht dem ersten Delta; danach wird nur angehängt (gedrosselt gerendert).
@@ -2178,6 +2491,9 @@ public final class ChatPanel extends JPanel {
         private void finishWebCard(boolean cancelled) {
             if (webCard != null) {
                 webCard.finish(null, cancelled);
+            }
+            if (card != null && !detached) {
+                card.finish(cancelled);
             }
         }
 
@@ -2300,6 +2616,9 @@ public final class ChatPanel extends JPanel {
         return bubble;
     }
 
+    /** Die Zeile der Antwortblase, die gerade geschrieben wird (für das Warten hinter den Wolken). */
+    private JComponent answeringRow;
+
     /** Eine Antwortblase mit Markdown-Körper wie im EAC ({@code ChatTranscriptPanel.createMarkdownBubble}). */
     private AssistantMarkdownBubble addAnswer(String markdown) {
         if (mermaid == null) {
@@ -2314,6 +2633,7 @@ public final class ChatPanel extends JPanel {
         clearance.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
         transcript.add(clearance);
+        answeringRow = clearance;
         answeringSources = new SourceLinks(this::openSource);
         answeringSources.setAlignmentX(LEFT_ALIGNMENT);
         transcript.add(answeringSources);
@@ -2337,13 +2657,13 @@ public final class ChatPanel extends JPanel {
         if (turn != null) {
             detachTurn();
         }
-        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(node));
+        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(stored()));
         editor.requestFocusInWindow();
     }
 
     /** Zeigt einen Chat des gewählten Bereichs. */
     private void open(ChatRecord record) {
-        open(record, store.folder(node));
+        open(record, store.folder(stored()));
     }
 
     /** Zeigt einen Chat aus seinem Ordner: Verlauf als Blasen samt Marken beim Bereichswechsel, Name in der Kopfzeile. */
@@ -2381,7 +2701,7 @@ public final class ChatPanel extends JPanel {
 
     private void showChatName() {
         chatName.setText(chat.title());
-        chats.setEnabled(node != null || home != null);
+        chats.setEnabled(true);
         updateHeaderActions();
     }
 
@@ -2390,7 +2710,7 @@ public final class ChatPanel extends JPanel {
      * eine Antwort läuft; die Antwort wird dann abgebrochen und nicht mehr gespeichert.
      */
     private void updateHeaderActions() {
-        newChat.setEnabled(node != null);
+        newChat.setEnabled(true);
         deleteChat.setEnabled(true);
         updateQuickActions();
     }
@@ -2425,7 +2745,7 @@ public final class ChatPanel extends JPanel {
     /** Die Einträge des Menüs unter ▾; für Tests ohne geöffnetes Popup. */
     List<Component> chatMenuItems() {
         List<Component> items = new ArrayList<>();
-        Path here = store.folder(node);
+        Path here = store.folder(stored());
         List<ChatStore.Entry> all = new ArrayList<>(store.all());
         // Vorläufig gelöschte Chats stehen bis zum Neustart durchgestrichen dabei (Angelo 24.11.2026).
         java.util.Set<String> deletedIds = new java.util.HashSet<>();
@@ -2513,6 +2833,14 @@ public final class ChatPanel extends JPanel {
      * Favoriten-Ordner einer Sammlung. Zwei gleich benannte Spaces, Seiten oder Ordner sind damit verschiedene Bereiche;
      * {@code null} ohne Auswahl.
      */
+    /**
+     * Wo die Chats des Bereichs liegen: ohne Auswahl (etwa in der Suche nach der Lupe, Angelo 24.11.2026) bei denen
+     * zu allen Wissensquellen.
+     */
+    private ChatNode stored() {
+        return node == null ? ChatNode.ALL : node;
+    }
+
     static String scopeKey(ChatNode node, boolean pageOnly) {
         if (node == null) {
             return null;
@@ -2764,8 +3092,8 @@ public final class ChatPanel extends JPanel {
         if (home != null && !chat.isEmpty()) {
             store.trash(home, chat.id());
         }
-        List<ChatRecord> saved = store.list(node);
-        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0), store.folder(node));
+        List<ChatRecord> saved = store.list(stored());
+        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0), store.folder(stored()));
     }
 
     /**
@@ -2780,7 +3108,7 @@ public final class ChatPanel extends JPanel {
         List<String> ids = new ArrayList<>(store.deleteAll());
         ids.add(chat.id());
         deleteBrowserProfiles(ids);
-        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(node));
+        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(stored()));
     }
 
     /** Bricht eine laufende Antwort ab, deren Chat gelöscht wird: Sie schreibt ihn nicht wieder auf die Platte. */
@@ -2812,6 +3140,11 @@ public final class ChatPanel extends JPanel {
 
     String knowledge() {
         return knowledge.getText();
+    }
+
+    /** Ob „Neuer Chat“ geht (für Tests). */
+    boolean newChatEnabled() {
+        return newChat.isEnabled();
     }
 
     String status() {
@@ -2904,13 +3237,6 @@ public final class ChatPanel extends JPanel {
         }
     }
 
-    /**
-     * Ohne sichtbaren Knopf in der großen Ansicht: Oberkante des Knopfs über dem Verlauf. Gemessen im Hauptfenster
-     * (Leseansicht neben der Seitenleiste, 23.11.2026): so weit steht der Knopf der Leseansicht unter der Oberkante des
-     * Verlaufs.
-     */
-    static final int ORB_TOP = 45;
-
     private void layoutTranscript() {
         int width = transcriptLayers.getWidth();
         int height = transcriptLayers.getHeight();
@@ -2918,23 +3244,58 @@ public final class ChatPanel extends JPanel {
         javax.swing.JScrollBar bar = transcriptScroll.getVerticalScrollBar();
         int barWidth = bar.isVisible() ? bar.getWidth() : 0;
         int size = com.aresstack.spaceharvester.app.ui.controls.PodcastOrb.SIZE;
-        readAloud.orb().setBounds(width - barWidth - NavigableDocumentPage.ORB_INSET - size, orbTop(size, height),
-                size, size);
+        // Angelo 24.11.2026 („zu tief, sieht schief aus“): dieselbe Höhe und derselbe Abstand vom rechten Rand wie
+        // der sichtbare Knopf der großen Ansicht; ohne ihn die Lage, die er dort hätte (NavigableDocumentPage).
+        int top = NavigableDocumentPage.orbTop(size);
+        int gap = NavigableDocumentPage.ORB_INSET;
+        JComponent big = bigOrb();
+        if (big != null) {
+            top = SwingUtilities.convertPoint(big.getParent(), big.getLocation(), transcriptLayers).y;
+            gap = big.getParent().getWidth() - big.getX() - big.getWidth();
+        }
+        top = Math.max(0, Math.min(top, height - size));
+        gap = Math.max(gap, barWidth + NavigableDocumentPage.ORB_INSET);
+        readAloud.orb().setBounds(width - gap - size, top, size, size);
     }
 
-    /** Die Höhe des sichtbaren Knopfs der großen Ansicht, umgerechnet auf den Verlauf; sonst {@link #ORB_TOP}. */
-    private int orbTop(int size, int height) {
-        if (transcriptLayers.isShowing()) {
-            for (JComponent anchor : orbAnchors) {
-                if (anchor.isShowing() && anchor.getParent() != null) {
-                    int top = SwingUtilities.convertPoint(anchor.getParent(), anchor.getLocation(), transcriptLayers).y;
-                    if (top >= 0 && top + size <= height) {
-                        return top;
-                    }
-                }
+    /**
+     * Der sichtbare Vorlese-Knopf der großen Ansicht im selben Fenster: der rechteste links vom Chat, dessen Höhe
+     * in den Verlauf passt; sonst {@code null}.
+     */
+    private JComponent bigOrb() {
+        if (!transcriptLayers.isShowing()) {
+            return null;
+        }
+        java.awt.Window window = SwingUtilities.getWindowAncestor(transcriptLayers);
+        if (window == null) {
+            return null;
+        }
+        int left = transcriptLayers.getLocationOnScreen().x;
+        JComponent best = null;
+        int bestX = Integer.MIN_VALUE;
+        for (JComponent orb : orbs(window, new ArrayList<>())) {
+            if (orb == readAloud.orb() || !orb.isShowing() || orb.getParent() == null) {
+                continue;
+            }
+            int x = orb.getLocationOnScreen().x;
+            int top = SwingUtilities.convertPoint(orb.getParent(), orb.getLocation(), transcriptLayers).y;
+            if (x < left && x > bestX && top >= 0 && top + orb.getHeight() <= transcriptLayers.getHeight()) {
+                best = orb;
+                bestX = x;
             }
         }
-        return Math.max(0, Math.min(ORB_TOP, height - size));
+        return best;
+    }
+
+    private static List<JComponent> orbs(java.awt.Container container, List<JComponent> found) {
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof com.aresstack.spaceharvester.app.ui.controls.PodcastOrb orb) {
+                found.add(orb);
+            } else if (child instanceof java.awt.Container inner) {
+                orbs(inner, found);
+            }
+        }
+        return found;
     }
 
     /**
