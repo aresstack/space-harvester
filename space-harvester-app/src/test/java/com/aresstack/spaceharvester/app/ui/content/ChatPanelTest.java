@@ -356,6 +356,43 @@ class ChatPanelTest {
     }
 
     @Test
+    void theButtonsOfTheHeadSitVerticallyCenteredInFullSize() throws Exception {
+        // Angelo 24.11.2026: Neuer Chat, Löschen und Groß anzeigen klebten oben, darunter war Luft.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        List<java.awt.Rectangle> buttons = new ArrayList<>();
+        int[] head = new int[1];
+        SwingUtilities.invokeAndWait(() -> {
+            ChatSidebar sidebar = new ChatSidebar(new ChatPanel(context));
+            sidebar.setSize(ChatSidebar.DEFAULT_WIDTH, 400);
+            layoutAll(sidebar);
+            java.awt.Component top = ((java.awt.BorderLayout) sidebar.getLayout())
+                    .getLayoutComponent(java.awt.BorderLayout.NORTH);
+            head[0] = top.getHeight() - 1;
+            List<java.awt.Component> parts = new ArrayList<>(List.of(
+                    sidebar.chat().headerActions().getComponents()));
+            parts.add(sidebar.enlargeButton());
+            for (java.awt.Component part : parts) {
+                buttons.add(SwingUtilities.convertRectangle(part.getParent(), part.getBounds(), top));
+            }
+        });
+        assertThat(buttons).hasSize(3).allSatisfy(bounds -> {
+            assertThat(bounds.height).isEqualTo(com.aresstack.spaceharvester.app.ui.RoundHover.SIZE);
+            assertThat(Math.abs(bounds.y + bounds.height / 2 - head[0] / 2)).isLessThanOrEqualTo(1);
+        });
+    }
+
+    private static void layoutAll(java.awt.Container container) {
+        container.doLayout();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof java.awt.Container inner) {
+                layoutAll(inner);
+            }
+        }
+    }
+
+    @Test
     void withWebSearchAndInternalSearchBothOnTheMessageAboveWarnsAndGoesAwayWhenOneIsOff() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));

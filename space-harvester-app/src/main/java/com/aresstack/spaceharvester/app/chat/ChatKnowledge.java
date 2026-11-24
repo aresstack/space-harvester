@@ -144,6 +144,7 @@ public final class ChatKnowledge {
         if (appSearch) {
             text.append(' ').append(APP_SEARCH_PROMPT);
         }
+        text.append(' ').append(AGENT_EVALUATE_PROMPT);
         if (area != null && !area.isBlank()) {
             text.append("\n\nGewählter Bereich: ").append(oneLine(area));
         }

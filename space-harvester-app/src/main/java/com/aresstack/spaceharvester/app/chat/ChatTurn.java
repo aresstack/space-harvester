@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.chat;
 
+import com.aresstack.spaceharvester.application.jobs.Foreground;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 import com.aresstack.spaceharvester.ai.AiChat;
@@ -133,6 +134,13 @@ public final class ChatTurn {
 
         /** Die Liste freigegebener Seiten ließ sich nicht schreiben. */
         default void releaseFailed(RuntimeException error) {
+        }
+
+        /**
+         * Fortschritt der Arbeit vor der Antwort, für den Balken der Gedankenblase: {@code done} von {@code total}
+         * Schritten (mit Werkzeugen die Runden, sonst Suchen und Antworten).
+         */
+        default void progress(int done, int total) {
         }
     }
 
@@ -382,9 +390,33 @@ public final class ChatTurn {
 
     private CollectionNodes collection;
 
+    /** Die offene Ansicht, für die der Turn arbeitet ({@link Foreground}), oder {@code null}. */
+    private volatile String view;
+    /** Solange der Turn arbeitet, lassen KI-Anfragen gewöhnlicher Aufträge ihm den Vortritt. */
+    private volatile Foreground.Hold busy = () -> { };
+
+    /**
+     * Der Turn arbeitet für die offene Ansicht (Angelo 24.11.2026): Vom Senden bis zur Antwort warten die KI-Anfragen
+     * gewöhnlicher Aufträge, und was er an Aufträgen anlegt (etwa „Suchtreffer vorbereiten“), startet vor allen anderen.
+     * Wird die Ansicht verlassen, verliert beides den Vorrang.
+     */
+    public ChatTurn inView(String view) {
+        this.view = view;
+        return this;
+    }
+
     /** Startet den Turn auf einem eigenen Thread; kehrt sofort zurück. */
     public void start() {
-        Thread worker = new Thread(this::run, "chat-turn");
+        String working = view;
+        busy = Foreground.busy(working);
+        Thread worker = new Thread(() -> Foreground.run(working, () -> {
+            try {
+                run();
+            } catch (RuntimeException | Error e) {
+                busy.close();
+                throw e;
+            }
+        }), "chat-turn");
         worker.setDaemon(true);
         worker.start();
     }
@@ -448,6 +480,7 @@ public final class ChatTurn {
             context = ChatKnowledge.assemble(changes.excerpts());
             asked = whatsNewQuestion(question, changes.total(), context.accepted().size(), changes.since());
         } else {
+            onUi(() -> listener.progress(0, 2));
             try {
                 context = gather();
             } catch (RuntimeException e) {
@@ -464,6 +497,7 @@ public final class ChatTurn {
         context = releaseDelivered(context);
         ChatKnowledge.Context chosen = context;
         onUi(() -> listener.context(chosen));
+        onUi(() -> listener.progress(1, 2));
         // Ohne Bereich gibt es kein Wissen aus dem Bestand: dann aus eigenem Wissen (Angelo 24.11.2026).
         String system = scope == null && kind == Kind.QUESTION ? ChatKnowledge.OWN_KNOWLEDGE_PROMPT
                 : ChatKnowledge.systemMessage(area, context);
@@ -635,6 +669,8 @@ public final class ChatTurn {
             return;
         }
         List<AiChat.Tool> offered = round < maxToolRounds() ? toolset.definitions() : List.of();
+        int rounds = maxToolRounds();
+        onUi(() -> listener.progress(round, rounds));
         int roundStart;
         synchronized (received) {
             roundStart = received.length();
@@ -1258,12 +1294,13 @@ public final class ChatTurn {
     static final int SUB_AGENT_CHARS = ChatKnowledge.MAX_PAGE_CHARS;
 
     /**
-     * Die Werkzeuge {@code base} samt {@value ChatTools#EVALUATE}, wenn der Turn ein Suchagent mit Wissen ist (Bereich
-     * oder interne Suche): mehrere Treffer gehen gleichzeitig an Unteragenten, jeder liest seine Seite im Volltext und
+     * Die Werkzeuge {@code base} samt {@value ChatTools#EVALUATE}, wenn der Turn Wissen hat (Bereich oder interne
+     * Suche, auch außerhalb des Suchreiters): mehrere Treffer gehen gleichzeitig an Unteragenten, jeder liest seine Seite im Volltext und
      * liefert nur, was sie zur Frage beiträgt.
      */
     private ChatToolset withSubAgents(ChatToolset base) {
-        if (agentRounds <= 0 || (scope == null && appSources == null)) {
+        // Bereichssuche und interne Suche gleich (Angelo 24.11.2026): beide mit Unteragenten, nicht nur der Suchagent.
+        if (scope == null && appSources == null) {
             return base;
         }
         return new ChatToolset() {
@@ -1455,6 +1492,7 @@ public final class ChatTurn {
     }
 
     private void finish(Runnable terminal) {
+        busy.close();
         endWebSearch();
         onUi(() -> {
             if (!closed) {

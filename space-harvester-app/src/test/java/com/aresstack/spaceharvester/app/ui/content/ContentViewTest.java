@@ -504,7 +504,7 @@ class ContentViewTest {
         // in der Podcast-Ansicht (Angelo 23.11.2026), seine Einträge also dort.
         assertThat(onEdt(() -> view.detail().moreButton().isEnabled())).isTrue();
         assertThat(onEdt(() -> menuEntries(view.detail())))
-                .containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)", "—", PODCAST_TEXTS, PODCAST_PICTURES);
+                .containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)", "—", PODCAST_TEXTS, PODCAST_PICTURES, "—", MODEL_ROWS[0], MODEL_ROWS[1], MODEL_ROWS[2], MODEL_ROWS[3]);
         assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
                 .isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().sourceId())).isEqualTo("handbuch");
@@ -519,7 +519,7 @@ class ContentViewTest {
         // Lupe der Platz für „Transkript kopieren“, ohne Podcast bleibt der Knopf weg.
         assertThat(onEdt(() -> menuEntries(view.detail()))).containsExactly(
                 PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)", "—",
-                PODCAST_TEXTS, PODCAST_PICTURES);
+                PODCAST_TEXTS, PODCAST_PICTURES, "—", MODEL_ROWS[0], MODEL_ROWS[1], MODEL_ROWS[2], MODEL_ROWS[3]);
         assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
                 view.detail().sourceChanges().podcast().transcriptCopy(), view.tools()))).isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().podcast().transcriptCopy().isVisible())).isFalse();
@@ -584,6 +584,10 @@ class ContentViewTest {
     /** Die Grenzen des Podcasts im Menü am Dreieck beider Reiter (Angelo 24.11.2026), mit ihren Standards. */
     private static final String PODCAST_TEXTS = PodcastParallel.TEXTS + ": " + PodcastParallel.TEXTS_DEFAULT;
     private static final String PODCAST_PICTURES = PodcastParallel.PICTURES + ": " + PodcastParallel.PICTURES_DEFAULT;
+
+    /** Darunter die Modelle der Podcast-Schritte, ohne Eintrag in den Einstellungen „Standard“ (Angelo 24.11.2026). */
+    private static final String[] MODEL_ROWS = {"Modell Podcast: Standard", "Modell Bildgenerierung – Plan: Standard",
+            "Modell Bildgenerierung – Einzelteile: Standard", "Modell Podcast – Sprache: Standard"};
 
     private static List<String> menuEntries(PageDetailPanel detail) {
         List<String> entries = new java.util.ArrayList<>();
@@ -847,7 +851,7 @@ class ContentViewTest {
                     view.tools()))).isTrue();
             assertThat(onEdt(() -> menuEntries(view.detail())))
                     .containsExactly(PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", "—", PODCAST_TEXTS,
-                            PODCAST_PICTURES);
+                            PODCAST_PICTURES, "—", MODEL_ROWS[0], MODEL_ROWS[1], MODEL_ROWS[2], MODEL_ROWS[3]);
 
             // Eine andere Wurzel behält die Wahl (global, nicht je Seite).
             String space = space("handbuch");

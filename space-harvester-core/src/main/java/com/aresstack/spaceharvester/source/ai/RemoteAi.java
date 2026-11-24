@@ -40,6 +40,7 @@ import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.jobs.Foreground;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementChat;
 import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
@@ -873,6 +874,14 @@ public final class RemoteAi {
         return new ChatCompletionPort() {
             @Override
             public ChatResponse complete(ChatRequest request) {
+                // Vorrang der offenen Ansicht (Angelo 24.11.2026): Anfragen gewöhnlicher Aufträge warten, solange
+                // sie arbeitet.
+                try (Foreground.Hold hold = Foreground.aiCall()) {
+                    return completeLimited(request);
+                }
+            }
+
+            private ChatResponse completeLimited(ChatRequest request) {
                 String effort = openAiEffort(thinking);
                 while (true) {
                     ChatRequest limited = withLimit(request, maxTokens, effort);
@@ -889,8 +898,44 @@ public final class RemoteAi {
 
             @Override
             public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
+                // Wie complete: der Griff hält, bis der Strom endet, gleich wie.
+                Foreground.Hold hold = Foreground.aiCall();
+                ChatStreamListener releasing = new ChatStreamListener() {
+                    @Override
+                    public void onStart() {
+                        listener.onStart();
+                    }
+
+                    @Override
+                    public void onDelta(String text) {
+                        listener.onDelta(text);
+                    }
+
+                    @Override
+                    public void onComplete(ChatResponse response) {
+                        hold.close();
+                        listener.onComplete(response);
+                    }
+
+                    @Override
+                    public void onError(ChatCompletionException error) {
+                        hold.close();
+                        listener.onError(error);
+                    }
+
+                    @Override
+                    public void onCancelled() {
+                        hold.close();
+                        listener.onCancelled();
+                    }
+                };
                 Handoff handoff = new Handoff();
-                start(request, listener, openAiEffort(thinking), handoff);
+                try {
+                    start(request, releasing, openAiEffort(thinking), handoff);
+                } catch (RuntimeException e) {
+                    hold.close();
+                    throw e;
+                }
                 return handoff;
             }
 
@@ -1128,7 +1173,8 @@ public final class RemoteAi {
 
     private static List<float[]> vectors(java.util.function.Supplier<EmbeddingBatch> call) {
         EmbeddingBatch batch;
-        try {
+        // Vorrang der offenen Ansicht: Embeddings gewöhnlicher Aufträge warten, solange sie arbeitet.
+        try (Foreground.Hold hold = Foreground.aiCall()) {
             batch = call.get();
         } catch (EmbeddingException e) {
             // Nur die Art: Meldungen können den Endpunkt nennen, nie Texte oder den Key.

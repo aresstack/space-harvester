@@ -5741,13 +5741,13 @@ public final class PageDetailPanel extends JPanel {
         if (sourceMenuShown() && READING.equals(tabs.selected())) {
             menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", areaShown()
                     ? areaView.hasSummary() : sourceView.hasSummary(), this::saveSummary));
-            addPodcastParallel(menu);
+            addPodcastSettings(menu);
             return menu;
         }
         if (sourceMenuShown() && areaShown()) {
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
                     areaPodcast.podcast().hasTranscript(), () -> saveTranscript(areaPodcast.podcast())));
-            addPodcastParallel(menu);
+            addPodcastSettings(menu);
             return menu;
         }
         if (sourceMenuShown()) {
@@ -5756,7 +5756,7 @@ public final class PageDetailPanel extends JPanel {
                     sourceChanges.podcast().hasTranscript(), () -> saveTranscript(sourceChanges.podcast())));
             menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceChanges.podcastRenewable(),
                     sourceChanges::renewPodcast));
-            addPodcastParallel(menu);
+            addPodcastSettings(menu);
             return menu;
         }
         for (ComposerButton action : List.of(bookmark, browse)) {
@@ -5769,12 +5769,31 @@ public final class PageDetailPanel extends JPanel {
         return menu;
     }
 
-    /** Unter einer Linie die Grenzen der Parallelität beim Erzeugen des Podcasts (Angelo 24.11.2026). */
-    private void addPodcastParallel(javax.swing.JPopupMenu menu) {
+    /**
+     * Unter einer Linie die Grenzen der Parallelität und darunter die Modelle der Podcast-Schritte (Angelo 24.11.2026):
+     * Grenzen merkt die App, die Modelle stehen direkt in den Einstellungen.
+     */
+    private void addPodcastSettings(javax.swing.JPopupMenu menu) {
+        java.util.function.Consumer<String> status = text -> tabStatus(tabs.selected(), text);
         menu.addSeparator();
-        for (javax.swing.JMenu parallel : PodcastParallel.menus(this, text -> tabStatus(tabs.selected(), text))) {
+        for (javax.swing.JMenu parallel : PodcastParallel.menus(this, status)) {
             menu.add(parallel);
         }
+        List<javax.swing.JMenu> models = com.aresstack.spaceharvester.app.ui.PodcastModels.menus(this, context,
+                podcastModels, status);
+        if (!models.isEmpty()) {
+            menu.addSeparator();
+            models.forEach(menu::add);
+        }
+    }
+
+    /** Die Modelle des KI-Dienstes für die Modellwahl am Dreieck; einmal je Ansicht, beim Öffnen neu gefragt. */
+    private final com.aresstack.spaceharvester.app.ui.ModelChoice.Catalog podcastModels =
+            new com.aresstack.spaceharvester.app.ui.ModelChoice.Catalog(this::aiModels);
+
+    private List<com.aresstack.spaceharvester.ai.AiModel> aiModels() {
+        com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
+        return runtime == null ? List.of() : runtime.workspace().aiModels();
     }
 
     private static javax.swing.JMenuItem menuItem(String text, String tooltip, boolean enabled, Runnable action) {

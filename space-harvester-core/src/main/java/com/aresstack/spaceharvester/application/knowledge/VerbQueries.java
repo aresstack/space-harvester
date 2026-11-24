@@ -32,24 +32,33 @@ public final class VerbQueries {
             analysed;
     private final java.util.function.BiFunction<AccessContext, PageKey,
             java.util.Optional<KnowledgeGraph.AnalysedPage>> page;
+    /** Nur die Analysen dieser Seiten samt ihren Dokumenten, in derselben Reihenfolge wie {@link #analysed}. */
+    private final java.util.function.BiFunction<AccessContext, PageSet,
+            ? extends java.util.Collection<KnowledgeGraph.AnalysedPage>> some;
 
     public VerbQueries(KnowledgeGraph graph) {
-        this(Objects.requireNonNull(graph, "graph")::analysed, graph::page);
+        this(caller -> Objects.requireNonNull(graph, "graph").analysed(caller), graph::page,
+                (caller, pages) -> graph.analysed(caller, pages));
     }
 
     /** Über die sichtbaren analysierten Seiten, die {@code analysed} je Aufrufer liefert (in Tests erfunden). */
     public VerbQueries(java.util.function.Function<AccessContext,
             ? extends java.util.Collection<KnowledgeGraph.AnalysedPage>> analysed) {
         this(analysed, (caller, key) -> analysed.apply(caller).stream()
-                .filter(one -> one.page().document().equals(com.aresstack.spaceharvester.application.assets.DocumentKey.page(key))).findFirst().map(one -> (KnowledgeGraph.AnalysedPage) one));
+                .filter(one -> one.page().document().equals(com.aresstack.spaceharvester.application.assets.DocumentKey.page(key))).findFirst().map(one -> (KnowledgeGraph.AnalysedPage) one),
+                (caller, pages) -> analysed.apply(caller).stream()
+                        .filter(one -> pages.contains(one.page().key())).toList());
     }
 
     private VerbQueries(java.util.function.Function<AccessContext,
             ? extends java.util.Collection<KnowledgeGraph.AnalysedPage>> analysed,
                         java.util.function.BiFunction<AccessContext, PageKey,
-                                java.util.Optional<KnowledgeGraph.AnalysedPage>> page) {
+                                java.util.Optional<KnowledgeGraph.AnalysedPage>> page,
+                        java.util.function.BiFunction<AccessContext, PageSet,
+                                ? extends java.util.Collection<KnowledgeGraph.AnalysedPage>> some) {
         this.analysed = Objects.requireNonNull(analysed, "analysed");
         this.page = Objects.requireNonNull(page, "page");
+        this.some = Objects.requireNonNull(some, "some");
     }
 
     /**
@@ -215,7 +224,7 @@ public final class VerbQueries {
         int max = Math.max(1, Math.min(limit, MAX_LIMIT));
         String wanted = lemma.strip().toLowerCase(Locale.ROOT);
         List<Occurrence> found = new ArrayList<>();
-        for (KnowledgeGraph.AnalysedPage analysed : analysed.apply(caller)) {
+        for (KnowledgeGraph.AnalysedPage analysed : holders(caller, within, new Key(wanted, fromText))) {
             if (within != null && !within.contains(analysed.page().key())
                     || analysed.page().state() != PageStatements.State.CURRENT) {
                 continue;
@@ -232,6 +241,25 @@ public final class VerbQueries {
             }
         }
         return found;
+    }
+
+    /**
+     * Die Analysen, in denen das Verb stehen kann: mit gemerkten Einträgen nur die Seiten, die es wirklich tragen,
+     * statt aller Analysen samt ihren Seiten; sonst alle.
+     */
+    private java.util.Collection<? extends KnowledgeGraph.AnalysedPage> holders(AccessContext caller, PageSet within,
+                                                                                Key verb) {
+        if (!remembering) {
+            return analysed.apply(caller);
+        }
+        List<PageKey> holding = new ArrayList<>();
+        for (PageDigest page : digest(caller)) {
+            if (page.current() && page.statements().containsKey(verb)
+                    && (within == null || within.contains(page.key()))) {
+                holding.add(page.key());
+            }
+        }
+        return holding.isEmpty() ? List.of() : some.apply(caller, PageSet.ofKeys(holding));
     }
 
     /**
