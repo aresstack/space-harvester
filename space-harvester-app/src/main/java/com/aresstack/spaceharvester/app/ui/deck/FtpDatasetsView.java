@@ -454,13 +454,13 @@ final class FtpDatasetsView extends JPanel {
                 }));
     }
 
-    private void back() {
+    void back() {
         if (!history.isEmpty()) {
             navigate(history.pop(), Move.BACK);
         }
     }
 
-    private void forward() {
+    void forward() {
         if (!future.isEmpty()) {
             navigate(future.pop(), Move.FORWARD);
         }

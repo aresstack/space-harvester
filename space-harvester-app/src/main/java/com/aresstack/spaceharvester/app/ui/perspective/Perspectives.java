@@ -77,6 +77,7 @@ public final class Perspectives {
                 .headline("PROVING GROUND")
                 .caption("In Vorbereitung · Webtests aufzeichnen, bearbeiten, ausführen und auswerten")
                 .cockpit(true);
+        quietMouseNavigation(stars);
         return Perspective.of(PROVING_GROUND, "Proving Ground",
                 "Webtests aufzeichnen, bearbeiten, ausführen und auswerten", false, null, stars, null);
     }
@@ -90,7 +91,16 @@ public final class Perspectives {
                 .headline("MISSION CONTROL")
                 .caption("In Vorbereitung · Workflows definieren, ausführen und überwachen")
                 .cockpit(true);
+        quietMouseNavigation(stars);
         return Perspective.of(MISSION_CONTROL, "Mission Control",
                 "Workflows definieren, ausführen und überwachen", false, null, stars, null);
+    }
+
+    /**
+     * Eine Perspektive ohne Verlauf nimmt die Maustasten Zurück/Vor trotzdem für sich, damit die verdeckte Leseansicht
+     * des Space Harvesters nicht unsichtbar blättert.
+     */
+    private static void quietMouseNavigation(javax.swing.JComponent workspace) {
+        com.aresstack.spaceharvester.app.ui.controls.MouseNavigation.install(workspace, () -> { }, () -> { });
     }
 }
