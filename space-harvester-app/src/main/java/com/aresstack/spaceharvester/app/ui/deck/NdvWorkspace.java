@@ -134,13 +134,18 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         newPill = new ComposerToggleButton(ComposerIcons.plus(12), "Neue Verbindung", "Neue NDV-Verbindung öffnen");
         newPill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         newPill.addActionListener(e -> newConnection());
+        DeckCredentials.menu(newPill, this::editCredentials);
         pillGroup.add(newPill);
         pills.add(newPill);
         tools.setOpaque(false);
         JPanel noTools = new JPanel();
         noTools.setOpaque(false);
         tools.add(noTools, NEW);
-        JPanel head = DeckBars.head(pills, tools);
+        JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
+        east.setOpaque(false);
+        east.add(tools);
+        east.add(DeckCredentials.button(this::editCredentials));
+        JPanel head = DeckBars.head(pills, east);
 
         JPanel formStage = new JPanel(new GridBagLayout());
         formStage.setBackground(Comic.SURFACE);
@@ -196,6 +201,7 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(dot(session.state()), session.label(), session.state().label(),
                 "Trennen und schließen (auch Mittelklick auf den Reiter)", () -> closeSession(session));
         pill.addActionListener(e -> select(session));
+        DeckCredentials.menu(pill, this::editCredentials);
         pillGroup.add(pill);
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
@@ -279,6 +285,16 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         }
         discard(session);
         select(pillOf.isEmpty() ? null : pillOf.keySet().iterator().next());
+    }
+
+    /**
+     * „Zugangsdaten ändern“ ({@link DeckCredentials}): das Formular ohne automatische Anmeldung, die Einträge neu aus
+     * KeePass, eine Sperre nach einem Fehlschlag als Grund.
+     */
+    void editCredentials() {
+        form.load();
+        select(null);
+        DeckCredentials.showLock(NdvConnectForm.rememberedEntry(), form::problem);
     }
 
     /**

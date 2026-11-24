@@ -157,6 +157,11 @@ final class NdvConnectForm extends JPanel {
         serverChanged();
     }
 
+    /** Der KeePass-Eintrag, mit dem „Neue Verbindung“ von selbst anmelden würde (für den Sperrschutz). */
+    static String rememberedEntry() {
+        return working().map(Working::account).orElseGet(NdvConnectForm::remembered);
+    }
+
     private static String remembered() {
         String own = AppState.shared().get(ENTRY_KEY);
         return own == null || own.isBlank() ? AppState.shared().get(ConnectForm.ENTRY_KEY) : own;
