@@ -101,7 +101,7 @@ public final class BackButton extends JButton {
         setFocusPainted(false);
         setOpaque(false);
         setRolloverEnabled(true);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         hold.setRepeats(false);
         addActionListener(e -> {
             if (navigator != null && !navigator.history().back().isEmpty()) {
