@@ -226,15 +226,89 @@ final class BetaViewHtml {
         if (json == null) {
             return "";
         }
-        Object text = jsonObject(json).get("text");
+        // Der echte Server packt die Zeilen in {"messages":[],"payload":{"docId":…,"text":[…]}}; MainframeMate sucht
+        // das erste "text"-Feld, egal wie tief (BetaViewDocumentTab.parsePageText). Rohes JSON zeigen wir nie.
+        Object text = textField(jsonObject(json));
+        if (text instanceof String plain) {
+            return plain.replace("\r", "");
+        }
         if (!(text instanceof List<?> lines)) {
-            return json;
+            return mainframeMatePageText(json);
         }
         StringBuilder out = new StringBuilder();
         for (Object line : lines) {
             out.append(line == null ? "" : String.valueOf(line).replace("\r", "")).append('\n');
         }
         return out.toString();
+    }
+
+    /**
+     * 1:1 aus MainframeMate ({@code BetaViewDocumentTab.parsePageText}): das erste {@code "text"} im Rohtext, dann das
+     * Feld bis {@code ]}, Zeilen an Kommas außerhalb von Anführungszeichen. Greift, wenn die Antwort kein sauberes JSON
+     * ist; ohne {@code "text"} bleibt die Antwort wie bei MainframeMate.
+     */
+    static String mainframeMatePageText(String json) {
+        StringBuilder sb = new StringBuilder();
+        int textIdx = json.indexOf("\"text\"");
+        if (textIdx < 0) {
+            return json;
+        }
+        int arrStart = json.indexOf('[', textIdx);
+        if (arrStart < 0) {
+            return json;
+        }
+        int arrEnd = json.indexOf(']', arrStart);
+        if (arrEnd < 0) {
+            return json;
+        }
+        String arr = json.substring(arrStart + 1, arrEnd);
+        boolean inStr = false;
+        boolean esc = false;
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < arr.length(); i++) {
+            char c = arr.charAt(i);
+            if (esc) {
+                switch (c) {
+                    case '/' -> line.append('/');
+                    case 'n' -> line.append('\n');
+                    case 't' -> line.append('\t');
+                    case '"' -> line.append('"');
+                    case '\\' -> line.append('\\');
+                    default -> line.append(c);
+                }
+                esc = false;
+            } else if (c == '\\') {
+                esc = true;
+            } else if (c == '"') {
+                inStr = !inStr;
+            } else if (c == ',' && !inStr) {
+                sb.append(line).append('\n');
+                line.setLength(0);
+            } else {
+                line.append(c);
+            }
+        }
+        if (line.length() > 0) {
+            sb.append(line).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** Das erste Feld {@code text} (Liste oder Text), auch in {@code payload} oder tiefer verschachtelt. */
+    private static Object textField(Object node) {
+        if (node instanceof Map<?, ?> map) {
+            Object direct = map.get("text");
+            if (direct instanceof List<?> || direct instanceof String) {
+                return direct;
+            }
+            for (Object value : map.values()) {
+                Object found = textField(value);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 
     /** Die gespeicherten Suchen ({@code .el_wall_btn} mit Formular an {@code executeSavedSelection}). */
