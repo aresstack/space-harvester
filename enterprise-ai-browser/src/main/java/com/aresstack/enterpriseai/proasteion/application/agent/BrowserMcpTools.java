@@ -549,6 +549,12 @@ public final class BrowserMcpTools {
         }
         // By locator the action is judged by the listed control it names; an unknown one counts as unknown.
         BrowserControl known = control != null ? run.control(control) : run.controlByLocator(locator);
+        if (control != null && known == null) {
+            // An id that was not in the last control list cannot run anyway (the runtime rejects it): say so at once
+            // instead of asking the user to approve an action that would only fail afterwards.
+            return McpToolResult.error("Unbekannte Id " + control + "; Ids gelten nur für die zuletzt mit " + CONTROLS
+                    + " gelieferte Liste dieses Tabs. Zuerst " + CONTROLS + " aufrufen.");
+        }
         String label = control != null ? run.controlLabel(control) : known == null ? locator : known.label();
         String description = describe(action, label == null ? control : label, value);
         if (approvals != null) {
