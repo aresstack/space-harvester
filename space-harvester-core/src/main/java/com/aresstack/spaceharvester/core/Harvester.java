@@ -986,6 +986,8 @@ public final class Harvester implements AutoCloseable {
             SemanticPreparation preparation = embedding == null || prefetch == null ? null
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT, jobs);
+            // Angelo 24.11.2026: Aufträge „Suchtreffer vorbereiten“ entstehen nicht mehr; unterbrochene alte entfallen.
+            SemanticPreparation.forgetInterrupted(jobs);
             // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
             EnrichmentSettings searchEnrichment = builder.enrichment;
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,

@@ -3,10 +3,6 @@ package com.aresstack.spaceharvester.application.ranking;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
-import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
-import com.aresstack.spaceharvester.application.jobs.JobContext;
-import com.aresstack.spaceharvester.application.jobs.JobTask;
-import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
@@ -32,12 +28,11 @@ import java.util.function.Function;
  * Vorbereitung der semantischen Suche (ADR 0013, Punkt 3): Dieselbe Schlagwortsuche wie ohne Haken findet die Seiten
  * und lädt sie mit den Rechten des Aufrufers in den Cache ({@link KeywordSearch}). Für ihre Treffer, also nur Seiten,
  * die der Aufrufer lesen darf, berechnet die Vorbereitung fehlende oder veraltete Embeddings im Aufruf, begrenzt
- * parallel und höchstens {@link #DEFAULT_WAIT} lang. Was nach der Frist noch nicht angefangen hat, rechnet mit
- * {@link Jobs} ein gewöhnlicher Auftrag {@link JobType#ENRICHMENT} „Suchtreffer vorbereiten“ des Aufrufers weiter
- * (Fundstelle 11, Abnahme #1078): Die Suche ist ein Klick ({@link Jobs#submitInteractive}), wie bisher bis zu vier
- * parallel, sichtbar, abbrechbar und nur, was dann noch nicht aktuell ist. Nur die höchstens vier schon laufenden
- * Berechnungen enden im Aufruf. Seiten aus Quellen ohne Freigabe für externe Verarbeitung lässt der
- * Embedding-Prozessor selbst aus.
+ * parallel und höchstens {@link #DEFAULT_WAIT} lang. Was nach der Frist noch nicht angefangen hat, geht an die
+ * Warteschlange der KI-Anreicherung ({@link Enrichments#recomputeInBackground}), statt wie früher (Fundstelle 11,
+ * Abnahme #1078) je Suche einen eigenen Auftrag „Suchtreffer vorbereiten“ anzulegen, der einen Platz belegte und
+ * andere Aufträge warten ließ (Angelo 24.11.2026). Nur die höchstens vier schon laufenden Berechnungen enden im
+ * Aufruf. Seiten aus Quellen ohne Freigabe für externe Verarbeitung lässt der Embedding-Prozessor selbst aus.
  */
 public final class SemanticPreparation implements RelevanceSearch.Preparation {
 
@@ -58,14 +53,16 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
     private final Enrichments enrichments;
     private final String processorId;
     private final Duration wait;
-    /** Für den Rest nach der Frist; ohne sie rechnet er wie früher im Aufruf weiter. */
+    /**
+     * Ob der Rest nach der Frist an die KI-Anreicherung geht (mit {@link Jobs}); ohne sie rechnet er wie früher im
+     * Aufruf weiter.
+     */
     private final Jobs jobs;
 
-    /** Angabe am Auftrag ({@code task}): der Rest der Vorbereitung nach der Frist. */
+    /** Angabe an Aufträgen „Suchtreffer vorbereiten“ früherer Fassungen ({@code task}); neue entstehen nicht mehr. */
     public static final String TASK = "prepare-search-hits";
-    /** Phase des Auftrags für die Auftragsliste. */
+    /** Phase dieser früheren Aufträge in der Auftragsliste. */
     public static final String PHASE = "Suchtreffer vorbereiten";
-    private static final String COMPONENT = "semantic-preparation";
 
     /**
      * @param snapshots   die abgelegte Seite im Cache
@@ -136,7 +133,7 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
             return pending;
         }
         Semaphore slots = new Semaphore(PARALLEL);
-        // Wer eine Seite rechnet: eine Berechnung des Aufrufs oder, nach der Frist, der Auftrag.
+        // Wer eine Seite rechnet: eine Berechnung des Aufrufs oder, nach der Frist, die KI-Anreicherung.
         Set<PageKey> claimed = java.util.concurrent.ConcurrentHashMap.newKeySet();
         List<Future<Enrichments.Run>> runs = new ArrayList<>(unique.size());
         ExecutorService runner = Executors.newVirtualThreadPerTaskExecutor();
@@ -148,7 +145,7 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
                     slots.acquireUninterruptibly();
                     try {
                         // Nach der Frist wartet niemand mehr (Fundstelle 11): Was noch nicht angefangen hat, rechnet
-                        // der sichtbare Auftrag statt eines Threads ohne Auftrag.
+                        // die KI-Anreicherung statt eines Threads ohne Auftrag.
                         if (jobs != null && System.nanoTime() >= deadline || !claimed.add(key)) {
                             return HANDED_OVER;
                         }
@@ -192,7 +189,7 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
                 }
             });
             if (!left.isEmpty()) {
-                handOver(caller, left);
+                handOver(left);
             }
         }
         flush();
@@ -207,68 +204,56 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
         }
     }
 
-    /** Gibt den Rest nach der Frist an einen Auftrag des Aufrufers; nimmt {@link Jobs} ihn nicht an, die nächste Suche. */
-    private void handOver(AccessContext caller, java.util.Map<PageKey, PageSnapshot> left) {
-        Set<String> sources = new java.util.HashSet<>();
-        left.keySet().forEach(key -> sources.add(key.sourceId()));
-        String sourceId = sources.size() == 1 ? sources.iterator().next() : Jobs.ALL_SOURCES;
-        try {
-            jobs.submitInteractive(JobType.ENRICHMENT, sourceId, null, null, caller.jobOwner(),
-                    java.util.Map.of(EnrichmentsAfterSync.TASK_PARAMETER, TASK),
-                    JobTask.blocking(context -> prepareLeft(left, context)));
-        } catch (RuntimeException e) {
-            LOG.log(System.Logger.Level.INFO, "{0} Suchtreffer nicht als Auftrag vorbereitet ({1}); die nächste Suche "
-                    + "versucht es wieder", left.size(), e.getClass().getName());
+    /**
+     * Gibt den Rest nach der Frist an die Warteschlange der KI-Anreicherung (Angelo 24.11.2026: „scheiß Aufträge
+     * Suchtreffer vorbereiten … die blockieren alles“): kein eigener Auftrag je Suche und Suchvariante mehr, der einen
+     * Platz belegt, sondern je Quelle der eine Teil „KI-Anreicherung“ im Hintergrund. Er nimmt jede Seite höchstens
+     * einmal, rechnet nach {@code ai.parallel}, lässt der offenen Ansicht den Vortritt, wartet ohne Netz und wiederholt
+     * eine gescheiterte Berechnung mit Grund in der Diagnose. Ein gescheitertes oder veraltetes Embedding wird neu
+     * gerechnet, darum erzwungen.
+     */
+    private void handOver(java.util.Map<PageKey, PageSnapshot> left) {
+        int handed = 0;
+        for (PageSnapshot snapshot : left.values()) {
+            try {
+                handed += enrichments.recomputeInBackground(snapshot, List.of(processorId)) > 0 ? 1 : 0;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Suchtreffer nicht an die KI-Anreicherung übergeben ({0}); die "
+                        + "nächste Suche versucht es wieder", e.getClass().getName());
+            }
         }
+        LOG.log(System.Logger.Level.DEBUG, "{0} von {1} Suchtreffern an die KI-Anreicherung übergeben", handed,
+                left.size());
     }
 
-    /** Der Auftrag: bis zu {@value #PARALLEL} parallel, nur was noch nicht aktuell ist; Abbrechen startet keine mehr. */
-    private void prepareLeft(java.util.Map<PageKey, PageSnapshot> left, JobContext context) {
-        context.phase(COMPONENT, PHASE);
-        context.discovered(left.size());
-        Semaphore slots = new Semaphore(PARALLEL);
-        // close() wartet auf die laufenden Berechnungen, ohne sie zu unterbrechen (Lucene-Index).
-        // Quellen, deren Daten beim Start gelöscht wurden, lässt der Auftrag aus (Abnahme #1090).
-        Set<String> withheld = Jobs.withheldSources();
-        try (ExecutorService runner = Executors.newVirtualThreadPerTaskExecutor()) {
-            for (java.util.Map.Entry<PageKey, PageSnapshot> entry : left.entrySet()) {
-                PageSnapshot snapshot = entry.getValue();
-                String sourceId = entry.getKey().sourceId();
-                if (withheld.contains(sourceId)) {
-                    context.processed(1);
-                    continue;
-                }
-                context.checkpoint();
-                slots.acquireUninterruptibly();
-                try {
-                    context.checkpoint();
-                } catch (RuntimeException e) {
-                    slots.release();
-                    throw e;
-                }
-                runner.execute(() -> {
-                    try {
-                        if (withoutCurrentEmbedding(snapshot)) {
-                            Enrichments.Run run = enrichments.recompute(snapshot, processorId);
-                            if (run.failed() > 0) {
-                                context.failed(1);
-                            } else if (run.computed() > 0) {
-                                context.written(1);
-                            }
-                        }
-                    } catch (RuntimeException e) {
-                        LOG.log(System.Logger.Level.INFO, "Embedding eines Suchtreffers in {0} gescheitert ({1})",
-                                sourceId, e.getClass().getName());
-                        context.failed(1);
-                    } finally {
-                        context.processed(1);
-                        slots.release();
-                    }
-                });
+    /**
+     * Räumt Aufträge „Suchtreffer vorbereiten“ früherer Fassungen weg, die das Beenden des Dienstes unterbrach
+     * (Angelo 24.11.2026): Ihre Arbeit lag nur im Speicher, sie ließen sich nie fortsetzen und stünden sonst rot in
+     * der Liste. Fehlende Embeddings holt die nächste Suche über die KI-Anreicherung nach.
+     *
+     * @return wie viele entfernt wurden
+     */
+    public static int forgetInterrupted(Jobs jobs) {
+        int forgotten = 0;
+        for (com.aresstack.spaceharvester.application.jobs.JobStatus status
+                : jobs.listAll(com.aresstack.spaceharvester.application.jobs.JobType.ENRICHMENT)) {
+            if (!TASK.equals(status.parameter("task")) || status.state()
+                    != com.aresstack.spaceharvester.application.jobs.JobState.FAILED || status.error() == null
+                    || !com.aresstack.spaceharvester.application.jobs.JobLifecycleState.INTERRUPTED.equals(status.error().code())) {
+                continue;
             }
-        } finally {
-            flush();
+            try {
+                jobs.delete(status.id(), status.owner());
+                forgotten++;
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Unterbrochener Auftrag „{0}“ nicht entfernt ({1})", PHASE,
+                        e.getClass().getName());
+            }
         }
+        return forgotten;
     }
 
     /** Wartet bis zur Frist, bis die Funde der Suche geladen sind; {@code true}, wenn etwas zu laden war. */
