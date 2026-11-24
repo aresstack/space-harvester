@@ -313,9 +313,10 @@ class AppSettingsLoaderTest {
     }
 
     @Test
-    void theBackgroundFillIsOnByDefaultAndEachSourceCanSwitchItOffForItself() throws Exception {
+    void theBackgroundFillIsOffByDefaultAndEachSourceCanSwitchItForItself() throws Exception {
+        // Angelo 24.11.2026: synchronisiert wird nur per Klick.
         AppSettings defaults = load("space-harvester:\n  sources: []\n", Map.of());
-        assertThat(defaults.sync().backgroundFill()).isTrue();
+        assertThat(defaults.sync().backgroundFill()).isFalse();
         assertThat(defaults.sync().backgroundParallelism())
                 .isEqualTo(com.aresstack.spaceharvester.application.configuration.SyncSettings
                         .DEFAULT_BACKGROUND_PARALLELISM);
@@ -323,6 +324,7 @@ class AppSettingsLoaderTest {
         AppSettings settings = load("""
                 space-harvester:
                   sync:
+                    background-fill: true
                     background-parallelism: 4
                     sources:
                       wiki:

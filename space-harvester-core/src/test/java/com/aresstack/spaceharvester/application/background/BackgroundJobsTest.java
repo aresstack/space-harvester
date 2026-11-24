@@ -244,6 +244,30 @@ class BackgroundJobsTest {
     }
 
     @Test
+    void withoutResumingAtStartNothingRunsAfterTheRestartUntilSomeoneResumesAPart() {
+        // Angelo 24.11.2026: „frisch gestartet, nichts angeklickt“ liefen schon 12 Aufträge.
+        Jobs first = new Jobs(store, new Steps(), new JobLimits(2, 10, Duration.ofHours(1)), clock);
+        BackgroundGroup group = background(first, new AtomicBoolean(true)).start("demo", "Demo", twoSpaces());
+        first.close();
+
+        Jobs restarted = jobs(executor);
+        BackgroundJobs after = background(restarted, new AtomicBoolean(true));
+        AtomicBoolean handedOver = new AtomicBoolean();
+        after.afterResume(() -> handedOver.set(true));
+
+        assertThat(after.keepInterrupted()).isEqualTo(2);
+        executor.runAll();
+        assertThat(seen).isEmpty();
+        assertThat(handedOver).as("nichts Neues beim Start").isFalse();
+        assertThat(group.jobIds()).allSatisfy(id -> assertThat(BackgroundJobs.interrupted(restarted.status(id)))
+                .isTrue());
+
+        after.resumeWithoutCaller(group.parts().get(0).id());
+        executor.runAll();
+        assertThat(restarted.status(group.parts().get(0).id()).state()).isEqualTo(JobState.COMPLETED);
+    }
+
+    @Test
     void afterARestartAKindThatSaysNoStaysInterrupted() {
         Jobs first = jobs(new Steps());
         BackgroundGroup group = background(first, new AtomicBoolean(true)).start("demo", "Demo", twoSpaces());
