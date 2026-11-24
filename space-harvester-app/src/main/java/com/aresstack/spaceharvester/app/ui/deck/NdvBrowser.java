@@ -112,6 +112,11 @@ final class NdvBrowser extends JPanel {
     static final String SIDE_CALLS = "Callees/Caller";
     static final String SIDE_RELATIONS = "Aufrufe/Daten";
     static final String SIDE_OUTLINE = "Gliederung";
+    /** Nur in der Diagramm-Ansicht („Visuell“): deren Werkzeuge; danach zurück zum vorigen Reiter. */
+    static final String SIDE_DIAGRAM = "Diagramm";
+    private final JPanel diagramHolder = new JPanel(new BorderLayout());
+    private final Map<DocumentEditor, JComponent> diagramSideOf = new java.util.WeakHashMap<>();
+    private String beforeDiagram = SIDE_LIBRARIES;
     private final CardLayout sideCards = new CardLayout();
     private final JPanel sideStage = new JPanel(sideCards);
     private final CardLayout sideSearchCards = new CardLayout();
@@ -897,7 +902,8 @@ final class NdvBrowser extends JPanel {
             }
             sideSearch.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead(name, field), name);
         });
-        for (JPanel holder : List.of(resourcesHolder, callsHolder, outlineHolder)) {
+        sideSearch.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead(SIDE_DIAGRAM, null), SIDE_DIAGRAM);
+        for (JPanel holder : List.of(resourcesHolder, callsHolder, outlineHolder, diagramHolder)) {
             holder.setOpaque(false);
         }
         sideStage.setOpaque(false);
@@ -906,6 +912,7 @@ final class NdvBrowser extends JPanel {
         sideStage.add(callsHolder, SIDE_CALLS);
         sideStage.add(relationsPanel, SIDE_RELATIONS);
         sideStage.add(outlineHolder, SIDE_OUTLINE);
+        sideStage.add(diagramHolder, SIDE_DIAGRAM);
         sideTabs.put(SIDE_LIBRARIES, new IconButton(FilesIcons.folder(), "Bibliotheken"));
         sideTabs.put(SIDE_RESOURCES, new IconButton(Glyph.TABLE, "Ressourcen: Daten, Data Areas, Datasets des "
                 + "geöffneten Quelltexts"));
@@ -915,6 +922,9 @@ final class NdvBrowser extends JPanel {
                 + "Bibliothek (Tiefe bis " + NdvAnalysis.HIERARCHY_DEPTH + ")"));
         sideTabs.put(SIDE_OUTLINE, new IconButton(com.aresstack.spaceharvester.app.ui.deck.editor.EditorIcons
                 .outline(), "Gliederung des geöffneten Quelltexts"));
+        sideTabs.put(SIDE_DIAGRAM, new IconButton(com.aresstack.spaceharvester.app.ui.deck.visual.VisualIcons.eye(),
+                "Diagramm: Bearbeiten, Übersicht, Diagrammart, Mindmap-Tiefe, gewähltes Element"));
+        sideTabs.get(SIDE_DIAGRAM).setVisible(false);
         sideTabs.forEach((name, tab) -> {
             tab.getAccessibleContext().setAccessibleName(name);
             tab.addActionListener(e -> selectSide(name));
@@ -931,7 +941,7 @@ final class NdvBrowser extends JPanel {
         left.add(footer, BorderLayout.SOUTH);
         left.setMinimumSize(new Dimension(150, 0));
         String remembered = state.sideTab();
-        selectSide(sideTabs.containsKey(remembered) ? remembered : SIDE_LIBRARIES);
+        selectSide(sideTabs.containsKey(remembered) && !SIDE_DIAGRAM.equals(remembered) ? remembered : SIDE_LIBRARIES);
         return left;
     }
 
@@ -941,7 +951,9 @@ final class NdvBrowser extends JPanel {
             return;
         }
         sideTab = name;
-        state.sideTab(name);
+        if (!SIDE_DIAGRAM.equals(name)) {
+            state.sideTab(name);
+        }
         sideCards.show(sideStage, name);
         sideSearchCards.show(sideSearch, name);
         sideTabs.forEach((tab, button) -> button.marked(tab.equals(name)));
@@ -989,6 +1001,40 @@ final class NdvBrowser extends JPanel {
         applySideFilter(SIDE_RESOURCES);
         applySideFilter(SIDE_CALLS);
         applySideFilter(SIDE_OUTLINE);
+        showDiagramSide(diagramSideOf.get(editor), false);
+    }
+
+    /** Die Diagramm-Ansicht eines Editors geht auf oder zu: ihre Werkzeuge als Reiter der Seitenleiste. */
+    private void diagramSide(DocumentEditor editor, JComponent side) {
+        if (side == null) {
+            diagramSideOf.remove(editor);
+        } else {
+            diagramSideOf.put(editor, side);
+        }
+        if (document != null && editorOf.get(document) == editor) {
+            showDiagramSide(side, true);
+        }
+    }
+
+    private void showDiagramSide(JComponent side, boolean select) {
+        IconButton tab = sideTabs.get(SIDE_DIAGRAM);
+        if (side == null) {
+            diagramHolder.removeAll();
+            tab.setVisible(false);
+            if (SIDE_DIAGRAM.equals(sideTab)) {
+                selectSide(beforeDiagram);
+            }
+        } else {
+            place(diagramHolder, side);
+            tab.setVisible(true);
+            if (select && !SIDE_DIAGRAM.equals(sideTab)) {
+                beforeDiagram = sideTab;
+                selectSide(SIDE_DIAGRAM);
+            }
+        }
+        tab.getParent().revalidate();
+        revalidate();
+        repaint();
     }
 
     private static void place(JPanel holder, JComponent panel) {
@@ -1017,6 +1063,8 @@ final class NdvBrowser extends JPanel {
             }
             editor = new DocumentEditor(opened);
             editor.detachSidePanels();
+            DocumentEditor created = editor;
+            editor.onCenterSide(side -> diagramSide(created, side));
             editorOf.put(opened, editor);
             sourceStage.add(editor, opened.location());
             opened.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
