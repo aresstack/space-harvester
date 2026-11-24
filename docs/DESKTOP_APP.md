@@ -438,7 +438,8 @@ Core selbst.
   weiter (`ReadAloudStart`). Der gerade gelesene Satz bzw. Abschnitt (ein Aufzählungspunkt als Ganzes) ist gelb
   unterstrichen: der Vorlese-Ablauf meldet je Stück seine ungefähre Stelle und Dauer (`ReadAloud.Listener.playing`),
   die Sätze darin schalten anteilig zur Länge weiter; ungefähr, nie Wort für Wort. Ein anderer Chat, ein anderer
-  Bereich oder die zugeklappte Leiste beenden das Vorlesen.
+  Bereich oder die zugeklappte Leiste beenden das Vorlesen. Ohne Sprachausgabe (kein KI-Dienst, Ollama) steht der Knopf
+  gesperrt da und nennt im Tooltip den Grund, wie im EAC (Angelo 24.11.2026).
 - **Export** (Angelo, 13.11.2026, `ExportPanel`) hängt nicht an der gezeigten Seite, sondern an der Auswahl links im
   Explorer: Quelle, Space oder Seite samt Unterseiten („Links gewählt bestimmt rechts“). Für einen Space oder eine
   Seite die Karte **Stand** (jüngster fertiger Download genau dieser Auswahl: Stand vom, Seiten, Bilder, Medien,

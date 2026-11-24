@@ -35,11 +35,6 @@ import java.util.function.Supplier;
  */
 public final class RemotePodcastSpeech implements PodcastSpeech {
 
-    /** Versuche je Stück im Vorlese-Ablauf (wie dessen Regler: 1 bis 5). */
-    static final int ATTEMPTS = 3;
-    /** Parallele Synthesen je Beitrag. */
-    static final int WORKERS = 2;
-
     private final Supplier<AiServiceSettings> settings;
     private final Function<AiServiceSettings, RemoteAi> remote;
     private final TextAnalysisService analysis;
@@ -72,6 +67,12 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
     }
 
     @Override
+    public AiServiceSettings.Speech choice() {
+        AiServiceSettings current = settings.get();
+        return current == null ? AiServiceSettings.Speech.AUTOMATIC : current.speech();
+    }
+
+    @Override
     public List<String> models() {
         AiServiceSettings current = settings.get();
         if (!available()) {
@@ -84,7 +85,7 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
 
     @Override
     public int workers() {
-        return WORKERS;
+        return choice().podcastSynthesisWorkers();
     }
 
     @Override
@@ -95,7 +96,10 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
         } catch (RuntimeException e) {
             throw new IOException("Sprachausgabe nicht eingerichtet (" + e.getClass().getSimpleName() + ")");
         }
-        return speak(port, analysis, model, voice, text, sentences);
+        // Versuche und Synthesen je Beitrag aus der Einstellung „Podcast – Sprache“ (Angelo 24.11.2026).
+        AiServiceSettings.Speech chosen = choice();
+        return speak(port, analysis, model, voice, text, sentences, chosen.podcastSynthesisWorkers(),
+                chosen.podcastSynthesisAttempts());
     }
 
     /**
@@ -327,11 +331,11 @@ public final class RemotePodcastSpeech implements PodcastSpeech {
 
     /** Ein Beitrag durch den Vorlese-Ablauf, mit gesammelten statt gespielten Stücken. */
     static List<byte[]> speak(SpeechSynthesisPort port, TextAnalysisService analysis, String model, String voice,
-                              String text, boolean sentences) throws IOException {
+                              String text, boolean sentences, int workers, int attempts) throws IOException {
         Collector collector = new Collector();
         AtomicReference<String> problem = new AtomicReference<>();
         ReadAloudService service = new ReadAloudService(port, model, voice, collector,
-                sentences ? SpeechChunking.SENTENCES : SpeechChunking.PARAGRAPHS, WORKERS, ATTEMPTS, analysis, null,
+                sentences ? SpeechChunking.SENTENCES : SpeechChunking.PARAGRAPHS, workers, attempts, analysis, null,
                 true);
         service.speak(text, new ReadAloudService.Listener() {
             @Override

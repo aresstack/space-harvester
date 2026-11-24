@@ -214,14 +214,24 @@ final class PodcastProduction {
         String key = origin.key();
         guard(key);
         context.phase("Podcast", "Sprachmodell");
-        List<String> models = voices.ranked(speech.models());
-        if (models.isEmpty()) {
-            throw new JobFailedException("NO_SPEECH_MODEL", "Der KI-Dienst bietet kein Sprachmodell (TTS) an");
+        // Eigene Einstellung „Podcast – Sprache“ (Angelo 24.11.2026); leer: das bevorzugte TTS-Modell des Dienstes.
+        com.aresstack.spaceharvester.ai.AiServiceSettings.Speech chosen = speech.choice();
+        String speechModel = chosen.podcastModel();
+        if (speechModel == null) {
+            List<String> models = voices.ranked(speech.models());
+            if (models.isEmpty()) {
+                throw new JobFailedException("NO_SPEECH_MODEL", "Der KI-Dienst bietet kein Sprachmodell (TTS) an");
+            }
+            speechModel = models.get(0);
         }
-        // Ein Modell und zwei feste Stimmen für den ganzen Podcast, auch über Neustarts hinweg (Angelo 22.11.2026).
-        String speechModel = models.get(0);
-        PodcastVoices.Pair pair = store.meta(key).filter(meta -> speechModel.equals(meta.model()))
-                .map(meta -> new PodcastVoices.Pair(meta.host(), meta.cohost())).orElse(voices.pair(speechModel));
+        // Ein Modell und zwei feste Stimmen für den ganzen Podcast, auch über Neustarts hinweg (Angelo 22.11.2026);
+        // eingestellte Stimmen gelten immer, sonst die gemerkten, sonst die Standardstimmen der Familie.
+        String ttsModel = speechModel;
+        PodcastVoices.Pair automatic = store.meta(key).filter(meta -> ttsModel.equals(meta.model()))
+                .map(meta -> new PodcastVoices.Pair(meta.host(), meta.cohost())).orElse(voices.pair(ttsModel));
+        PodcastVoices.Pair pair = new PodcastVoices.Pair(
+                chosen.podcastHost() != null ? chosen.podcastHost() : automatic.host(),
+                chosen.podcastCohost() != null ? chosen.podcastCohost() : automatic.cohost());
         PodcastSpeaker speaker = new PodcastSpeaker(speech, speechModel, pair);
         store.saveMeta(origin.voiced(speaker.model(), pair.host(), pair.cohost()));
         notify(key);

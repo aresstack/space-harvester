@@ -46,7 +46,8 @@ import java.util.regex.Pattern;
  *   <li>Ein anderer Chat, ein anderer Bereich oder eine zugeklappte Seitenleiste beenden das Vorlesen.</li>
  * </ul>
  *
- * Ohne Sprachausgabe bleibt der Knopf unsichtbar. Alles auf dem EDT.
+ * Ohne Sprachausgabe bleibt der Knopf sichtbar, aber gesperrt, und sein Tooltip nennt den Grund (wie im EAC; Angelo
+ * 24.11.2026 fand ihn sonst nicht). Alles auf dem EDT.
  */
 final class ChatReadAloud {
 
@@ -56,6 +57,9 @@ final class ChatReadAloud {
     static final String RESUME_TIP = "Vorlesen fortsetzen";
     static final String ACTIVE_TIP = "Vorlesen beenden · neue Antworten werden sonst vorgelesen";
     static final String NO_TEXT_TIP = "Noch keine Antwort zum Vorlesen";
+    static final String NO_SPEECH_TIP = "Vorlesen nicht möglich: kein KI-Dienst mit Sprachausgabe eingerichtet "
+            + "(Einstellungen › KI-Dienst; Ollama hat keine Sprachausgabe)";
+    static final String NO_RUNTIME_TIP = "Vorlesen nicht möglich: der Space Harvester läuft noch nicht";
 
     /** Satzgrenzen im gesprochenen Text: hinter Satzzeichen mit Leerraum und an jedem Zeilenwechsel. */
     private static final Pattern BOUNDARY = Pattern.compile("(?<=[.!?…:;])[ \\t]+|\\n+");
@@ -76,6 +80,8 @@ final class ChatReadAloud {
     private final List<AssistantMarkdownBubble> answers = new ArrayList<>();
     private final AWTEventListener doubleClicks = this::mouseEvent;
     private ReadAloudBinding binding;
+    /** Warum ohne Sprachausgabe nicht vorgelesen wird (Tooltip des gesperrten Knopfs). */
+    private String unavailable = NO_SPEECH_TIP;
     /** Play gedrückt und nicht beendet: neue Antworten werden vorgelesen (wie im EAC). */
     private boolean active;
     /** Ob gerade vorgelesen wird (auch angehalten). */
@@ -137,11 +143,19 @@ final class ChatReadAloud {
 
     /** Schließt die Sprachausgabe an; {@code null} = keine, dann ist der Knopf weg. */
     void bind(ReadAloudBinding binding) {
+        bind(binding, NO_SPEECH_TIP);
+    }
+
+    /** Wie {@link #bind(ReadAloudBinding)}; ohne Sprachausgabe nennt der gesperrte Knopf {@code reason}. */
+    void bind(ReadAloudBinding binding, String reason) {
         if (this.binding != null && this.binding != binding) {
             stop();
+            active = false;
+            deferred = null;
         }
         this.binding = binding;
-        orb.setVisible(binding != null);
+        unavailable = reason == null || reason.isBlank() ? NO_SPEECH_TIP : reason;
+        orb.setVisible(true);
         style();
     }
 
@@ -532,6 +546,12 @@ final class ChatReadAloud {
     }
 
     private void style() {
+        if (binding == null) {
+            orb.setState(PodcastOrb.State.PLAY);
+            orb.setEnabled(false);
+            orb.setToolTipText(unavailable);
+            return;
+        }
         boolean hasText = latest() != null;
         boolean playing = speaking && !paused;
         boolean on = playing || (!speaking && active);

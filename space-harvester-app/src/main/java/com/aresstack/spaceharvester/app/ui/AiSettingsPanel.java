@@ -221,6 +221,37 @@ final class AiSettingsPanel {
             AiServiceSettings.DEFAULT_DEADLINE_MAX_TOKENS);
     final ThinkingBox deadlineThinking = new ThinkingBox();
     final ComposerButton pickDeadline = Comic.button("▾", "Modell für die Fristen aus der Liste des Dienstes wählen");
+    /**
+     * Sprachausgabe (Angelo 24.11.2026: „für jeden eine eigene Einstellung“): Podcast und Vorlesen (Chat, Leseansicht)
+     * mit je eigenem TTS-Modell und eigenen Stimmen; leer heißt automatisch.
+     */
+    final JTextField podcastSpeechModel = Comic.field(24);
+    final ComposerButton pickPodcastSpeech = Comic.button("▾", "Sprachmodell (TTS) des Podcasts aus der Liste des "
+            + "Dienstes wählen");
+    final JComboBox<String> podcastHost = voiceBox();
+    final JComboBox<String> podcastCohost = voiceBox();
+    final JTextField readAloudModel = Comic.field(24);
+    final ComposerButton pickReadAloud = Comic.button("▾", "Sprachmodell (TTS) des Vorlesens aus der Liste des "
+            + "Dienstes wählen");
+    final JComboBox<String> readAloudVoice = voiceBox();
+    /**
+     * Sprechwerte des Podcasts unter „Erweitert“ (Angelo 24.11.2026: keine fest eingebauten Werte): Pause zwischen
+     * zwei Beiträgen, Versuche je Stück und gleichzeitige Synthesen je Beitrag; nur für den Podcast, nicht fürs Vorlesen.
+     */
+    final JSpinner podcastPause = countSpinner(0, AiServiceSettings.Speech.MAX_PODCAST_PAUSE_MILLIS, 50,
+            AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS);
+    final JSpinner podcastAttempts = countSpinner(1, AiServiceSettings.Speech.MAX_PODCAST_ATTEMPTS, 1,
+            AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS);
+    final JSpinner podcastWorkers = countSpinner(1, AiServiceSettings.Speech.MAX_PODCAST_WORKERS, 1,
+            AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS);
+    static final String PODCAST_PAUSE_LABEL = "Podcast – Pause";
+    static final String PODCAST_PAUSE_UNIT = "ms zwischen Beiträgen";
+    static final String PODCAST_ATTEMPTS_LABEL = "Podcast – Versuche";
+    static final String PODCAST_ATTEMPTS_UNIT = "je Stück";
+    static final String PODCAST_WORKERS_LABEL = "Podcast – Synthesen";
+    static final String PODCAST_WORKERS_UNIT = "zugleich je Beitrag";
+    private static final com.aresstack.spaceharvester.application.podcast.PodcastVoices VOICES =
+            com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled();
     final JTextField chunkOverlap = Comic.field(6);
     final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     private final SettingDialogs.Rows modelRows;
@@ -545,6 +576,12 @@ final class AiSettingsPanel {
                 summaryThinking, SUMMARY_LABEL, SUMMARY_HELP), null);
         modelRows.add(PODCAST_LABEL, modelRow(Comic.fieldWithButton(podcastModel, pickPodcast), podcastMaxTokens,
                 podcastThinking, PODCAST_LABEL, PODCAST_HELP), null);
+        modelRows.add(PODCAST_SPEECH_LABEL, speechRow(Comic.fieldWithButton(podcastSpeechModel, pickPodcastSpeech),
+                PODCAST_SPEECH_LABEL, PODCAST_SPEECH_HELP, "Gastgeber", podcastHost, "Co-Host", podcastCohost), null);
+        modelRows.add(READ_ALOUD_LABEL, speechRow(Comic.fieldWithButton(readAloudModel, pickReadAloud),
+                READ_ALOUD_LABEL, READ_ALOUD_HELP, "Stimme", readAloudVoice), null);
+        followVoices(podcastSpeechModel, podcastHost, podcastCohost);
+        followVoices(readAloudModel, readAloudVoice);
         automaticImages.setToolTipText("Bilder freigegebener Seiten nach jedem Abgleich und nach neuer KI-Freigabe "
                 + "beschreiben; ohne Häkchen nur auf Klick");
         imagesPerRun.setToolTipText("Höchstens so viele Bilder gehen je Lauf und Quelle an das Vision-Modell; "
@@ -620,6 +657,18 @@ final class AiSettingsPanel {
             modelRows.add(CHECK_PARALLEL_LABEL, Comic.row(checkParallel, Comic.text(CHECK_PARALLEL_UNIT)),
                     "„" + CHECK_JOB + "“: so viele Sätze einer Seite sind höchstens gleichzeitig beim Modell; "
                             + "Vorgabe " + CheckSettings.DEFAULT_PARALLEL);
+            modelRows.add(PODCAST_PAUSE_LABEL, Comic.row(podcastPause, Comic.text(PODCAST_PAUSE_UNIT)),
+                    "Stille zwischen zwei Wortbeiträgen im Podcast; Vorgabe "
+                            + AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS + " ms. Schlüssel: "
+                            + "space-harvester.ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS);
+            modelRows.add(PODCAST_ATTEMPTS_LABEL, Comic.row(podcastAttempts, Comic.text(PODCAST_ATTEMPTS_UNIT)),
+                    "So oft versucht die Sprachausgabe ein Stück des Podcasts, bevor sie Satz für Satz spricht; "
+                            + "Vorgabe " + AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS + ". Schlüssel: "
+                            + "space-harvester.ai." + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS);
+            modelRows.add(PODCAST_WORKERS_LABEL, Comic.row(podcastWorkers, Comic.text(PODCAST_WORKERS_UNIT)),
+                    "So viele Stücke eines Beitrags vertont der Dienst gleichzeitig; zusammen nie mehr als "
+                            + "„" + PARALLEL_LABEL + "“. Vorgabe " + AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS
+                            + ". Schlüssel: space-harvester.ai." + AiServiceSettings.PODCAST_SPEECH_WORKERS);
             advanced.addActionListener(e -> advanced(!advancedOpen()));
             advanced(false);
         }
@@ -635,6 +684,8 @@ final class AiSettingsPanel {
         pickPodcast.setEnabled(false);
         pickImagePlan.setEnabled(false);
         pickDeadline.setEnabled(false);
+        pickPodcastSpeech.setEnabled(false);
+        pickReadAloud.setEnabled(false);
         loadModels.addActionListener(e -> loadModels());
         pickSimplify.addActionListener(e -> pick(pickSimplify, simplifyModel, AiModel.CHAT));
         pickCheck.addActionListener(e -> pick(pickCheck, checkModel, AiModel.CHAT));
@@ -649,6 +700,8 @@ final class AiSettingsPanel {
         pickPodcast.addActionListener(e -> pick(pickPodcast, podcastModel, AiModel.CHAT));
         pickImagePlan.addActionListener(e -> pick(pickImagePlan, imagePlanModel, AiModel.CHAT));
         pickDeadline.addActionListener(e -> pick(pickDeadline, deadlineModel, AiModel.CHAT));
+        pickPodcastSpeech.addActionListener(e -> pick(pickPodcastSpeech, podcastSpeechModel, AiModel.TTS));
+        pickReadAloud.addActionListener(e -> pick(pickReadAloud, readAloudModel, AiModel.TTS));
         released.setOpaque(false);
         released.setLayout(new javax.swing.BoxLayout(released, javax.swing.BoxLayout.Y_AXIS));
         rows.add("An den Dienst senden", released, "Nur freigegebene Quellen bekommen Embeddings und Reranking");
@@ -708,6 +761,14 @@ final class AiSettingsPanel {
         showUse(current.podcast(), podcastModel, podcastMaxTokens, podcastThinking);
         showUse(current.imagePlan(), imagePlanModel, imagePlanMaxTokens, imagePlanThinking);
         showUse(current.deadline(), deadlineModel, deadlineMaxTokens, deadlineThinking);
+        podcastSpeechModel.setText(text(current.speech().podcastModel()));
+        podcastHost.setSelectedItem(text(current.speech().podcastHost()));
+        podcastCohost.setSelectedItem(text(current.speech().podcastCohost()));
+        readAloudModel.setText(text(current.speech().readAloudModel()));
+        readAloudVoice.setSelectedItem(text(current.speech().readAloudVoice()));
+        podcastPause.setValue(current.speech().podcastPause());
+        podcastAttempts.setValue(current.speech().podcastSynthesisAttempts());
+        podcastWorkers.setValue(current.speech().podcastSynthesisWorkers());
         loadPollInterval.setText(current.loadPollInterval() == null ? "" : current.loadPollInterval());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
@@ -748,7 +809,9 @@ final class AiSettingsPanel {
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null
                 || savedSimplification(settings).parallel() != SimplificationSettings.DEFAULT_PARALLEL
-                || savedCheck(settings).parallel() != CheckSettings.DEFAULT_PARALLEL);
+                || savedCheck(settings).parallel() != CheckSettings.DEFAULT_PARALLEL
+                || current.speech().podcastPauseMillis() != null || current.speech().podcastAttempts() != null
+                || current.speech().podcastWorkers() != null);
         timeout = current.timeout();
         releasedIds = current.externalProcessingSources();
         renderReleased(settings, releasedIds);
@@ -1022,7 +1085,94 @@ final class AiSettingsPanel {
                 new AiDraft.Use(summaryPlanModel.getText(), summaryPlanMaxTokens.text(), summaryPlanThinking.level()),
                 new AiDraft.Use(podcastModel.getText(), podcastMaxTokens.text(), podcastThinking.level()),
                 new AiDraft.Use(imagePlanModel.getText(), imagePlanMaxTokens.text(), imagePlanThinking.level()),
-                new AiDraft.Use(deadlineModel.getText(), deadlineMaxTokens.text(), deadlineThinking.level()));
+                new AiDraft.Use(deadlineModel.getText(), deadlineMaxTokens.text(), deadlineThinking.level()),
+                new AiServiceSettings.Speech(podcastSpeechModel.getText(), voice(podcastHost), voice(podcastCohost),
+                        readAloudModel.getText(), voice(readAloudVoice)).withPodcastTiming(
+                        own(podcastPause, AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS),
+                        own(podcastAttempts, AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS),
+                        own(podcastWorkers, AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS)));
+    }
+
+    /** Der Wert eines Zählers; die Vorgabe heißt nichts eingestellt ({@code null}), dann gilt die des Core. */
+    private static Integer own(JSpinner spinner, int fallback) {
+        int value = ((Number) spinner.getValue()).intValue();
+        return value == fallback ? null : value;
+    }
+
+    private static String text(String value) {
+        return value == null ? "" : value;
+    }
+
+    /** Die eingetippte oder gewählte Stimme; leer heißt automatisch. */
+    private static String voice(JComboBox<String> box) {
+        Object typed = box.isEditable() ? box.getEditor().getItem() : box.getSelectedItem();
+        Object value = typed != null ? typed : box.getSelectedItem();
+        return value == null ? "" : value.toString();
+    }
+
+    /** Eine Stimmenauswahl: Stimmen aus {@code tts-voices.properties}, frei eintippbar, leer = automatisch. */
+    private static JComboBox<String> voiceBox() {
+        JComboBox<String> box = Comic.combo();
+        box.setEditable(true);
+        box.setPrototypeDisplayValue("Uncle_Fu  ");
+        box.setToolTipText("Stimme wählen oder eintippen; leer: Standardstimme des Modells");
+        fillVoices(box, "");
+        return box;
+    }
+
+    /** Füllt die Stimmen passend zum Modell; eine eingetragene Stimme bleibt stehen. */
+    static void fillVoices(JComboBox<String> box, String model) {
+        String current = voice(box);
+        box.removeAllItems();
+        box.addItem("");
+        VOICES.voices(model).forEach(box::addItem);
+        box.setSelectedItem(current);
+    }
+
+    /** Die Stimmenauswahl folgt dem eingetragenen Sprachmodell. */
+    private static void followVoices(JTextField model, JComboBox<?>... boxes) {
+        model.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                changed();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                changed();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                changed();
+            }
+
+            @SuppressWarnings("unchecked")
+            private void changed() {
+                for (JComboBox<?> box : boxes) {
+                    fillVoices((JComboBox<String>) box, model.getText().strip());
+                }
+            }
+        });
+    }
+
+    /** Eine Zeile „links Sprachmodell, rechts Stimmen“ mit dem ?-Knopf am Ende. */
+    private static JComponent speechRow(JComponent model, String heading, String help, Object... labelsAndBoxes) {
+        JPanel row = new JPanel(new java.awt.GridBagLayout());
+        row.setOpaque(false);
+        java.awt.GridBagConstraints c = new java.awt.GridBagConstraints();
+        c.gridy = 0;
+        c.fill = java.awt.GridBagConstraints.HORIZONTAL;
+        c.weightx = 1;
+        row.add(model, c);
+        c.weightx = 0;
+        c.insets = new java.awt.Insets(0, 6, 0, 0);
+        for (int i = 0; i + 1 < labelsAndBoxes.length; i += 2) {
+            row.add(Comic.text((String) labelsAndBoxes[i]), c);
+            row.add((JComponent) labelsAndBoxes[i + 1], c);
+        }
+        row.add(new HelpButton(Dialogs.CLOSE_SIZE, heading, help), c);
+        return row;
     }
 
     /** Zeigt eine eigene Modellzeile aus der Datei. */
@@ -1579,6 +1729,13 @@ final class AiSettingsPanel {
     }
 
     /** Ein Zahlenfeld von {@code minimum} bis {@code maximum} im Stil der Dauer-Felder dieser App. */
+    /** Wie {@link #countSpinner(int, int, int)}, mit einem anderen Anfangswert als dem kleinsten. */
+    private static JSpinner countSpinner(int minimum, int maximum, int step, int initial) {
+        JSpinner spinner = countSpinner(minimum, maximum, step);
+        spinner.setValue(initial);
+        return spinner;
+    }
+
     private static JSpinner countSpinner(int minimum, int maximum, int step) {
         JSpinner spinner = new JSpinner(new SpinnerNumberModel(minimum, minimum, maximum, step));
         spinner.setFont(Comic.regular(13f));
@@ -1706,6 +1863,17 @@ final class AiSettingsPanel {
             + " Tokens, denkt nicht. Schlüssel in der Konfigurationsdatei: space-harvester.ai.summary-model, "
             + ".summary-max-tokens und .summary-thinking.";
     static final String PODCAST_LABEL = "Podcast";
+    static final String PODCAST_SPEECH_LABEL = "Podcast – Sprache";
+    static final String PODCAST_SPEECH_HELP = "Sprachmodell (TTS) und die beiden Stimmen des Podcasts, unabhängig vom "
+            + "Vorlesen. Die Auswahl zeigt die Stimmen der Modellfamilie; jede andere Stimme lässt sich eintippen.\n\n"
+            + "Leer: das bevorzugte Sprachmodell des Dienstes, Gastgeber die Standardstimme seiner Familie, Co-Host die "
+            + "erste Stimme der anderen Stimmlage. Schlüssel in der Konfigurationsdatei: "
+            + "space-harvester.ai.podcast-speech-model, .podcast-voice-host und .podcast-voice-cohost.";
+    static final String READ_ALOUD_LABEL = "Vorlesen";
+    static final String READ_ALOUD_HELP = "Sprachmodell (TTS) und Stimme für das Vorlesen im Chat und in der "
+            + "Leseansicht, unabhängig vom Podcast. Lange Texte werden absatzweise gesprochen, Doppelklick liest ab "
+            + "der Stelle.\n\nLeer: das bevorzugte Sprachmodell des Dienstes mit der Standardstimme seiner Familie. "
+            + "Schlüssel in der Konfigurationsdatei: space-harvester.ai.read-aloud-model und .read-aloud-voice.";
     static final String PODCAST_HELP = "Dieses Modell plant den Podcast und schreibt die Sprechertexte. Stimmen und "
             + "Bilder haben eigene Einstellungen. Leer: das Text-Modell.\n\n" + TOKENS_HELP_TAIL + "\n\nStandard "
             + AiServiceSettings.DEFAULT_PODCAST_MAX_TOKENS + " Tokens, denkt nicht. Schlüssel in der "
@@ -1924,6 +2092,8 @@ final class AiSettingsPanel {
         pickPodcast.setEnabled(false);
         pickImagePlan.setEnabled(false);
         pickDeadline.setEnabled(false);
+        pickPodcastSpeech.setEnabled(false);
+        pickReadAloud.setEnabled(false);
     }
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
@@ -2007,6 +2177,9 @@ final class AiSettingsPanel {
         modelRows.visible(chunkOverlap, open);
         modelRows.visible(simplifyParallel, open);
         modelRows.visible(checkParallel, open);
+        modelRows.visible(podcastPause, open);
+        modelRows.visible(podcastAttempts, open);
+        modelRows.visible(podcastWorkers, open);
         Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();
@@ -2048,6 +2221,8 @@ final class AiSettingsPanel {
         pickPodcast.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickImagePlan.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickDeadline.setEnabled(!choices(AiModel.CHAT).isEmpty());
+        pickPodcastSpeech.setEnabled(!choices(AiModel.TTS).isEmpty());
+        pickReadAloud.setEnabled(!choices(AiModel.TTS).isEmpty());
         long embeddings = this.loaded.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
         if (this.loaded.isEmpty()) {
             modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");

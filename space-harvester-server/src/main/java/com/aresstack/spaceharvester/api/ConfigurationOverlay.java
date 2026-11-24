@@ -53,7 +53,11 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.SUMMARY_PLAN_THINKING, "ai." + AiServiceSettings.IMAGE_PLAN_MODEL,
             "ai." + AiServiceSettings.IMAGE_PLAN_MAX_TOKENS, "ai." + AiServiceSettings.IMAGE_PLAN_THINKING,
             "ai." + AiServiceSettings.DEADLINE_MODEL, "ai." + AiServiceSettings.DEADLINE_MAX_TOKENS,
-            "ai." + AiServiceSettings.DEADLINE_THINKING,
+            "ai." + AiServiceSettings.DEADLINE_THINKING, "ai." + AiServiceSettings.PODCAST_SPEECH_MODEL,
+            "ai." + AiServiceSettings.PODCAST_VOICE_HOST, "ai." + AiServiceSettings.PODCAST_VOICE_COHOST,
+            "ai." + AiServiceSettings.READ_ALOUD_MODEL, "ai." + AiServiceSettings.READ_ALOUD_VOICE,
+            "ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS, "ai." + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS,
+            "ai." + AiServiceSettings.PODCAST_SPEECH_WORKERS,
             SearchSettings.SEMANTIC, SearchSettings.RERANK, SearchSettings.PREFETCH_HITS,
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
@@ -143,6 +147,14 @@ public final class ConfigurationOverlay {
         put(properties, "ai." + AiServiceSettings.DEADLINE_MODEL, ai.deadlineUse().model());
         put(properties, "ai." + AiServiceSettings.DEADLINE_MAX_TOKENS, ai.deadlineUse().maxTokens());
         put(properties, "ai." + AiServiceSettings.DEADLINE_THINKING, ai.deadlineUse().thinking());
+        put(properties, "ai." + AiServiceSettings.PODCAST_SPEECH_MODEL, ai.speech().podcastModel());
+        put(properties, "ai." + AiServiceSettings.PODCAST_VOICE_HOST, ai.speech().podcastHost());
+        put(properties, "ai." + AiServiceSettings.PODCAST_VOICE_COHOST, ai.speech().podcastCohost());
+        put(properties, "ai." + AiServiceSettings.READ_ALOUD_MODEL, ai.speech().readAloudModel());
+        put(properties, "ai." + AiServiceSettings.READ_ALOUD_VOICE, ai.speech().readAloudVoice());
+        put(properties, "ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS, ai.speech().podcastPauseMillis());
+        put(properties, "ai." + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS, ai.speech().podcastAttempts());
+        put(properties, "ai." + AiServiceSettings.PODCAST_SPEECH_WORKERS, ai.speech().podcastWorkers());
         SearchSettings search = configuration.search();
         put(properties, SearchSettings.SEMANTIC, search.semantic());
         put(properties, SearchSettings.RERANK, search.rerank());

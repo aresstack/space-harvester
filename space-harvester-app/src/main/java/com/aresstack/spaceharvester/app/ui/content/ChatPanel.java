@@ -2766,16 +2766,14 @@ public final class ChatPanel extends JPanel {
         bindReadAloud();
     }
 
-    /** Knopf an oder aus, je nachdem, ob gerade eine Sprachausgabe eingerichtet ist. */
+    /**
+     * Knopf bereit, sobald die Laufzeit steht: vorgelesen wird über denselben Weg wie der Podcast
+     * ({@code pagePodcasts().readAloud}); fehlt die Sprachausgabe, nennt die Statuszeile beim Klick den Grund. Nicht
+     * vorab gesperrt: die Prüfung beim Start kam zu früh (Angelo 24.11.2026: „der Podcast funktioniert, der Chat nicht“).
+     */
     private void bindReadAloud() {
         AppRuntime runtime = context.runtime();
-        boolean available;
-        try {
-            available = runtime != null && runtime.workspace().pageReadAloudAvailable();
-        } catch (RuntimeException e) {
-            available = false;
-        }
-        readAloud.bind(available ? readAloudBindings.get() : null);
+        readAloud.bind(runtime != null ? readAloudBindings.get() : null, ChatReadAloud.NO_RUNTIME_TIP);
         if (transcriptLayers != null) {
             transcriptLayers.revalidate();
             transcriptLayers.repaint();

@@ -30,9 +30,6 @@ import java.util.Objects;
  */
 public final class PodcastSpeaker {
 
-    /** Pause zwischen zwei Beiträgen. */
-    static final int PAUSE_MILLIS = 350;
-
     private final PodcastSpeech speech;
     private final String model;
     private final PodcastVoices.Pair pair;
@@ -83,6 +80,8 @@ public final class PodcastSpeaker {
         List<AudioInputStream> parts = new ArrayList<>();
         List<Integer> firstPart = new ArrayList<>();
         AudioFormat format = null;
+        // Pause zwischen zwei Beiträgen aus der Einstellung „Podcast – Sprache“ (Angelo 24.11.2026).
+        int pauseMillis = speech.choice().podcastPause();
         for (Turn turn : turns) {
             if (turn.text().isBlank()) {
                 firstPart.add(-1);
@@ -98,7 +97,7 @@ public final class PodcastSpeaker {
                 }
                 parts.add(stream);
             }
-            parts.add(silence(format));
+            parts.add(silence(format, pauseMillis));
         }
         if (parts.isEmpty() || format == null) {
             throw new IOException("Abschnitt ohne sprechbaren Text");
@@ -150,8 +149,8 @@ public final class PodcastSpeaker {
         }
     }
 
-    private static AudioInputStream silence(AudioFormat format) {
-        int frames = Math.round(format.getFrameRate() * PAUSE_MILLIS / 1000f);
+    private static AudioInputStream silence(AudioFormat format, int pauseMillis) {
+        int frames = Math.round(format.getFrameRate() * pauseMillis / 1000f);
         byte[] zeros = new byte[Math.max(0, frames * format.getFrameSize())];
         return new AudioInputStream(new ByteArrayInputStream(zeros), format, frames);
     }

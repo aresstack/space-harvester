@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.source.ai;
 import com.aresstack.enterpriseai.speech.api.SpeechSynthesisException;
 import com.aresstack.enterpriseai.speech.api.SpeechSynthesisPort;
 import com.aresstack.enterpriseai.speech.api.SynthesizedSpeech;
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -23,7 +24,7 @@ class RemotePodcastSpeechTest {
         String text = sentence.repeat(20).trim();
 
         List<byte[]> wavs = RemotePodcastSpeech.speak(port(pieces, false), null, "orpheus-3b-german", "Jana", text,
-                false);
+                false, AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS, AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS);
 
         // Stimmstabilitäts-Fix des Enterprise AI Client: kein Stück erreicht die rund 1000 Zeichen, ab denen Orpheus
         // die Stimme wechselt
@@ -36,7 +37,8 @@ class RemotePodcastSpeechTest {
     @Test
     void reportsAFailureWithoutTheText() {
         assertThatThrownBy(() -> RemotePodcastSpeech.speak(port(new ArrayList<>(), true), null, "orpheus-3b-german",
-                "Jana", "Das Projekt Nordlicht hat eine neue Startseite.", true))
+                "Jana", "Das Projekt Nordlicht hat eine neue Startseite.", true,
+                AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS, AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS))
                 .isInstanceOf(IOException.class)
                 .message().doesNotContain("Nordlicht");
     }
