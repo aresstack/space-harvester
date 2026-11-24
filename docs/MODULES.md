@@ -196,8 +196,8 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      Bereichszusammenfassung (ADR 0034 §7, Paket 4b; Angelo 24.11.2026, Umschalter „Änderungen | Bereich“):
      `areaSummary`/`summarizeArea` fassen den Bestand einer `holdings.Selection` (Quelle, Space, später Ordner)
      didaktisch für Neue zusammen (`AreaSummarizer`, dieselbe Engine `ThematicSummarizer`): je gespeicherter Seite
-     Titel, Pfad, Space und Auszug, höchstens `space-harvester.cache.change-log.area-pages` Seiten (Standard 300, die
-     oberen zuerst), Seiten ohne KI-Freigabe nur als Zahl. Abgelegt je Aufrufer unter `SummaryScope.selection`,
+     Titel, Pfad, Space und Auszug, alle geladenen Seiten ohne Seitenbudget (Angelo 24.11.2026), in Teilen bis
+     `ai.parallel` zugleich und stufenweise zusammengeführt, Seiten ohne KI-Freigabe nur als Zahl. Abgelegt je Aufrufer unter `SummaryScope.selection`,
      `stale` über `Holdings.fingerprint`; kein Lauf von selbst bei Änderungen. Podcast dazu im Format `AREA`.
      Update-Text (ADR 0031, Abschnitt 2): `updateText` liefert je Ebene (Quelle oder ein Space) die feste Textform
      `update-text/v1` seitenweise (Kopf mit Zeitraum und Zählern, je Seite Pfad, Arten, Versionen, Zeitpunkt, geänderte

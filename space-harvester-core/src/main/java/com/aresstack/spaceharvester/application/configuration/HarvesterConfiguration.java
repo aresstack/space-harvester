@@ -470,12 +470,6 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         } catch (IllegalArgumentException e) {
             problems.add(new ConfigurationProblem(ChangeLogSettings.SHOW_AFTER_UPDATE, e.getMessage()));
         }
-        try {
-            changeLog = changeLog.withAreaPages(read.integer(ChangeLogSettings.AREA_PAGES,
-                    ChangeLogSettings.DEFAULT_AREA_PAGES));
-        } catch (IllegalArgumentException e) {
-            problems.add(new ConfigurationProblem(ChangeLogSettings.AREA_PAGES, e.getMessage()));
-        }
         SimplificationSettings simplification = SimplificationSettings.DEFAULT;
         try {
             simplification = new SimplificationSettings(SimplificationSettings.Mode.parse(

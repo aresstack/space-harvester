@@ -73,8 +73,8 @@ final class AreaSummaryView extends JPanel {
     static final String HELP = "„Bereich“ fasst den ganzen gewählten Bereich zusammen, nicht nur die Änderungen: "
             + "worum es geht, wie er aufgebaut ist und wo man anfängt, zum Einstieg für Neue. Fehlt der Überblick, "
             + "erstellt das eingestellte Chat-Modell ihn beim Öffnen von selbst; „Zusammenfassen“ erstellt ihn neu. "
-            + "Es liest nur geladene Seiten mit KI-Freigabe, die oberen zuerst, höchstens so viele, wie unter "
-            + "Einstellungen › Cache bei „Bereichszusammenfassung – Seiten“ steht.\n\n"
+            + "Es liest alle geladenen Seiten mit KI-Freigabe, in Teilen nebeneinander, und führt die Teile danach "
+            + "zusammen.\n\n"
             + "In der Podcast-Ansicht erklärt ein Podcast denselben Überblick; der Text darunter zeigt je Thema die "
             + "ausführliche Erklärung, gelb, was gerade erzählt wird.";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
