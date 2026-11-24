@@ -138,8 +138,8 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.folderSubfolders().isSelected())).isFalse();
         // Eine Änderung am Ordner gilt sofort (ADR 0034 §3).
-        favorites.toggle(com.aresstack.spaceharvester.app.ui.Favorites.Favorite.space("handbuch", "erfunden",
-                "Erfunden", "handbuch"), below);
+        favorites.toggle(com.aresstack.spaceharvester.app.ui.Favorites.Favorite.space("handbuch", space("handbuch"),
+                "Handbuch", "handbuch"), below);
         await(() -> detail.export().selection().roots(null).size() == 2);
 
         // Eine Quelle ist kein Ordner: die Leiste ohne Checkbox.
