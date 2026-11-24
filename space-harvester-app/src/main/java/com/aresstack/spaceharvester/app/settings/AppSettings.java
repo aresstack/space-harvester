@@ -689,6 +689,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param podcast       Zeile „Podcast“ ({@code podcast-*}); {@code null}: Standards des Core
      * @param imagePlan     Zeile „Bildgenerierung – Plan“ ({@code image-plan-*}); {@code null}: Standards des Core
      * @param deadline      Zeile „Fristen“ ({@code deadline-*}, ADR 0035); {@code null}: Standards des Core
+     * @param speech        Sprachausgabe für Podcast und Vorlesen ({@code podcast-speech-model},
+     *                      {@code podcast-voice-*}, {@code read-aloud-*}); {@code null}: automatisch
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
@@ -699,7 +701,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                              Integer imageMaxTokens, String visionThinking, String imageThinking,
                              AiServiceSettings.ModelUse summary, AiServiceSettings.ModelUse summaryPlan,
                              AiServiceSettings.ModelUse podcast, AiServiceSettings.ModelUse imagePlan,
-                             AiServiceSettings.ModelUse deadline) {
+                             AiServiceSettings.ModelUse deadline, AiServiceSettings.Speech speech) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -711,6 +713,24 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             podcast = podcast == null ? AiServiceSettings.ModelUse.DEFAULT : podcast;
             imagePlan = imagePlan == null ? AiServiceSettings.ModelUse.DEFAULT : imagePlan;
             deadline = deadline == null ? AiServiceSettings.ModelUse.DEFAULT : deadline;
+            speech = speech == null ? AiServiceSettings.Speech.AUTOMATIC : speech;
+        }
+
+        /** Ohne eigene Sprachausgabe. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                          Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                          Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
+                          String visionThinking, String imageThinking, AiServiceSettings.ModelUse summary,
+                          AiServiceSettings.ModelUse summaryPlan, AiServiceSettings.ModelUse podcast,
+                          AiServiceSettings.ModelUse imagePlan, AiServiceSettings.ModelUse deadline) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens,
+                    imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan, podcast,
+                    imagePlan, deadline, null);
         }
 
         /** Ohne eigene Zeile der Fristenextraktion. */

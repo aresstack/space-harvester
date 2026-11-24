@@ -395,7 +395,9 @@ public final class AppRuntime implements AutoCloseable {
                 .withThinking(ai.visionThinking(), ai.imageThinking())
                 // Eigene Zeilen für Zusammenfassung, ihren Plan und den Podcast (Angelo 22.11.2026).
                 .withUses(ai.summary(), ai.podcast()).withSummaryPlan(ai.summaryPlan())
-                .withImagePlan(ai.imagePlan()).withDeadline(ai.deadline());
+                .withImagePlan(ai.imagePlan()).withDeadline(ai.deadline())
+                // Eigene Sprachausgabe für Podcast und Vorlesen (Angelo 24.11.2026); leer: automatisch.
+                .withSpeech(ai.speech());
         if (ai.visionModel() != null) {
             // Bildbeschreibungen nur auf Abruf im Reiter „Bilder“ (ADR 0021); ohne Modell nennt er den Grund.
             service = service.withVisionModel(ai.visionModel());

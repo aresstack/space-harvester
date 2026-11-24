@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.application.podcast;
 
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
+
 import java.io.IOException;
 import java.util.List;
 
@@ -47,6 +49,14 @@ public interface PodcastSpeech {
      */
     default ReadAloud readAloud(String model, String voice, ReadAloud.Playback playback) {
         throw new IllegalStateException("Keine Sprachausgabe eingerichtet");
+    }
+
+    /**
+     * Was in den Einstellungen für die Sprachausgabe steht (Modell und Stimmen, getrennt für Podcast und Vorlesen);
+     * leer heißt automatisch. Folgt der wirksamen Konfiguration bei jedem Aufruf.
+     */
+    default AiServiceSettings.Speech choice() {
+        return AiServiceSettings.Speech.AUTOMATIC;
     }
 
     /** Keine Sprachausgabe. */

@@ -49,6 +49,11 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param deadlineModel       Modell der Fristenextraktion (ADR 0035); leer: das Chat-Modell
  * @param deadlineMaxTokens   Tokenlänge der Fristenextraktion; leer: 8192
  * @param deadlineThinking    Nachdenken der Fristenextraktion; leer: none
+ * @param podcastSpeechModel  TTS-Modell des Podcasts; leer: das bevorzugte des Dienstes
+ * @param podcastVoiceHost    Stimme des Gastgebers; leer: Standardstimme der Modellfamilie
+ * @param podcastVoiceCohost  Stimme des Co-Hosts; leer: erste Stimme der anderen Stimmlage
+ * @param readAloudModel      TTS-Modell des Vorlesens (Chat, Leseansicht); leer: das bevorzugte des Dienstes
+ * @param readAloudVoice      Stimme des Vorlesens; leer: Standardstimme der Modellfamilie
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -66,7 +71,9 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            Integer podcastMaxTokens, String podcastThinking, String summaryPlanModel,
                            Integer summaryPlanMaxTokens, String summaryPlanThinking, String imagePlanModel,
                            Integer imagePlanMaxTokens, String imagePlanThinking, String deadlineModel,
-                           Integer deadlineMaxTokens, String deadlineThinking) {
+                           Integer deadlineMaxTokens, String deadlineThinking, String podcastSpeechModel,
+                           String podcastVoiceHost, String podcastVoiceCohost, String readAloudModel,
+                           String readAloudVoice) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
@@ -77,7 +84,9 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                 summaryThinking), new AiServiceSettings.ModelUse(podcastModel, podcastMaxTokens, podcastThinking),
                 new AiServiceSettings.ModelUse(summaryPlanModel, summaryPlanMaxTokens, summaryPlanThinking),
                 new AiServiceSettings.ModelUse(imagePlanModel, imagePlanMaxTokens, imagePlanThinking),
-                new AiServiceSettings.ModelUse(deadlineModel, deadlineMaxTokens, deadlineThinking));
+                new AiServiceSettings.ModelUse(deadlineModel, deadlineMaxTokens, deadlineThinking),
+                new AiServiceSettings.Speech(podcastSpeechModel, podcastVoiceHost, podcastVoiceCohost,
+                        readAloudModel, readAloudVoice));
     }
 
     /** Ohne API-Key. */
