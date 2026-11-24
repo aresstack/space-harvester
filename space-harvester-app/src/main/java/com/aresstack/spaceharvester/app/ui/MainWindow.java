@@ -383,10 +383,10 @@ public final class MainWindow implements AppContext.Navigator {
             public void windowClosing(WindowEvent event) {
                 if (confirmUnsaved(frame) && confirmClose(frame)) {
                     WindowPlacement.remember(frame);
-                    commandDeck.shutdown();
                     frame.dispose();
-                    context.shutdown();
-                    System.exit(0);
+                    // Aufräumen nicht auf dem Swing-Faden und mit Frist; danach enden Kindprozesse und die JVM sicher.
+                    com.aresstack.spaceharvester.app.AppExit.exit(0,
+                            java.util.List.of(commandDeck::shutdown, context::shutdown));
                 }
             }
         });
@@ -1570,7 +1570,8 @@ public final class MainWindow implements AppContext.Navigator {
         }
         return running == 0 || Dialogs.confirm(frame, "Space Harvester beenden?", "Space Harvester wirklich beenden? "
                 + Texts.count(running, "Auftrag läuft", "Aufträge laufen")
-                + " noch. Beim Beenden werden sie abgebrochen; ihr Ergebnis bleibt unbestätigt.");
+                + " noch. Beim Beenden werden sie unterbrochen: Hintergrundaufträge setzen beim nächsten Start "
+                + "fort, die übrigen werden abgebrochen und ihr Ergebnis bleibt unbestätigt.");
     }
 
     /**
