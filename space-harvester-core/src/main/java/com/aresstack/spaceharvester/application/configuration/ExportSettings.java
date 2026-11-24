@@ -32,6 +32,7 @@ public record ExportSettings(boolean attachments, List<String> mediaTypes, long 
     public static final List<String> DEFAULT_MEDIA_TYPES = List.of(
             "application/pdf",
             "application/msword",
+            "application/onenote",
             "application/vnd.ms-excel",
             "application/vnd.ms-powerpoint",
             "application/vnd.openxmlformats-officedocument.*",

@@ -110,7 +110,7 @@ public final class LocalFilesTextProjector implements PageTextProjector {
     /** Dokumentformate, aus denen die Extraktion Text liest; Bilder, Audio, Video und Unbekanntes nicht. */
     private static boolean document(String mediaType) {
         String type = base(mediaType);
-        return type.equals("application/pdf") || type.equals("application/rtf") || type.equals("application/msword")
+        return type.equals("application/onenote") || type.equals("application/pdf") || type.equals("application/rtf") || type.equals("application/msword")
                 || type.startsWith("application/vnd.openxmlformats-officedocument.")
                 || type.startsWith("application/vnd.ms-") || type.startsWith("application/vnd.oasis.opendocument.")
                 || type.equals("message/rfc822");

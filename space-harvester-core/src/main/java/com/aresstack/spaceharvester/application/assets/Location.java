@@ -11,16 +11,22 @@ import java.util.Optional;
  * @param slide PowerPoint-Folie ab 1
  * @param sheet Name des Excel-Blatts
  */
-public record Location(Optional<Integer> page, Optional<Integer> slide, Optional<String> sheet) {
+public record Location(Optional<Integer> page, Optional<Integer> slide, Optional<String> sheet,
+                       Optional<NotePageLocation> notePage) {
+
+    public Location(Optional<Integer> page, Optional<Integer> slide, Optional<String> sheet) {
+        this(page, slide, sheet, Optional.empty());
+    }
 
     public Location {
         page = page == null ? Optional.empty() : page;
         slide = slide == null ? Optional.empty() : slide;
         sheet = sheet == null ? Optional.empty() : sheet.filter(name -> !name.isBlank());
+        notePage = notePage == null ? Optional.empty() : notePage;
         if (page.filter(value -> value < 1).isPresent() || slide.filter(value -> value < 1).isPresent()) {
             throw new IllegalArgumentException("Seite und Folie zählen ab 1");
         }
-        if (page.isEmpty() && slide.isEmpty() && sheet.isEmpty()) {
+        if (page.isEmpty() && slide.isEmpty() && sheet.isEmpty() && notePage.isEmpty()) {
             throw new IllegalArgumentException("Fundstelle ohne Angabe; dann keine Fundstelle setzen");
         }
     }
@@ -31,6 +37,12 @@ public record Location(Optional<Integer> page, Optional<Integer> slide, Optional
 
     public static Location slide(int slide) {
         return new Location(Optional.empty(), Optional.of(slide), Optional.empty());
+    }
+
+    /** Locate a parser-confirmed OneNote page by its order within this extraction. */
+    public static Location notePage(int index) {
+        return new Location(Optional.empty(), Optional.empty(), Optional.empty(),
+                Optional.of(new NotePageLocation(index)));
     }
 
     public static Location sheet(String sheet) {

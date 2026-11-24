@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.assets.EmbeddedEntry;
 import com.aresstack.spaceharvester.application.assets.ExtractionStatus;
 import com.aresstack.spaceharvester.application.assets.Link;
 import com.aresstack.spaceharvester.application.assets.Location;
+import com.aresstack.spaceharvester.application.assets.NotePageLocation;
 import com.aresstack.spaceharvester.application.assets.Outcome;
 import com.aresstack.spaceharvester.application.assets.PartId;
 import com.aresstack.spaceharvester.application.assets.ReadExtent;
@@ -79,6 +80,7 @@ final class ExtractionJson {
             location.page().ifPresent(page -> l.put("page", page));
             location.slide().ifPresent(slide -> l.put("slide", slide));
             location.sheet().ifPresent(sheet -> l.put("sheet", sheet));
+            location.notePage().ifPresent(note -> l.putObject("notePage").put("index", note.index()));
         });
         if (!block.links().isEmpty()) {
             ArrayNode links = node.putArray("links");
@@ -97,7 +99,9 @@ final class ExtractionJson {
         if (node.has("location")) {
             JsonNode l = node.get("location");
             location = Optional.of(new Location(optionalInt(l, "page"), optionalInt(l, "slide"),
-                    optionalText(l, "sheet")));
+                    optionalText(l, "sheet"), l.has("notePage")
+                            ? Optional.of(new NotePageLocation(l.path("notePage").path("index").asInt()))
+                            : Optional.empty()));
         }
         List<Link> links = new ArrayList<>();
         for (JsonNode l : node.path("links")) {
