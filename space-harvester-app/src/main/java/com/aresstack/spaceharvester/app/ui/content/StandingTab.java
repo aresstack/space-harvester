@@ -259,8 +259,9 @@ final class StandingTab extends JPanel {
 
                 @Override
                 public int deleteAnalyses(ExportPanel.Selection selection) {
-                    return runtime.workspace().deleteStatementAnalyses(selection.toCore(runtime), false,
-                            !(selection instanceof ExportPanel.Selection.Collection));
+                    // Ohne veraltete Favoriten, sonst bräche die strenge Auflösung den ganzen Ordner (ADR 0034 §4).
+                    return runtime.workspace().deleteStatementAnalyses(SelectionHoldings.core(runtime, selection),
+                            false, !(selection instanceof ExportPanel.Selection.Collection));
                 }
 
                 @Override
@@ -270,8 +271,9 @@ final class StandingTab extends JPanel {
 
                 @Override
                 public int deleteEverything(ExportPanel.Selection selection) {
-                    return runtime.workspace().deleteStatementAnalyses(selection.toCore(runtime), true,
-                            !(selection instanceof ExportPanel.Selection.Collection));
+                    // Ohne veraltete Favoriten, sonst bräche die strenge Auflösung den ganzen Ordner (ADR 0034 §4).
+                    return runtime.workspace().deleteStatementAnalyses(SelectionHoldings.core(runtime, selection),
+                            true, !(selection instanceof ExportPanel.Selection.Collection));
                 }
 
                 @Override
