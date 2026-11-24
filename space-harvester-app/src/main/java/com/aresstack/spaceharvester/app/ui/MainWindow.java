@@ -393,8 +393,8 @@ public final class MainWindow implements AppContext.Navigator {
         frame.setVisible(true);
         WindowPlacement.maximizeIfRemembered(frame);
         WindowPlacement.track(frame);
-        // Die App startet in der Leseansicht; zur Suche geht es erst mit einer Eingabe oben (Angelo, 21.11.2026).
-        show(AppContext.Section.CONTENT);
+        // Die App startet auf dem Suchreiter, ohne Auswahl, mit dem Chat als Suchagent (Angelo, 24.11.2026).
+        openSearchTab();
         return frame;
     }
 
@@ -715,8 +715,28 @@ public final class MainWindow implements AppContext.Navigator {
                 section.title() + " (Strg+" + number + ")");
         button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         button.getAccessibleContext().setAccessibleName(section.title());
-        button.addActionListener(e -> show(section));
+        button.addActionListener(e -> showByHand(section));
         return button;
+    }
+
+    /** Ein Bereich, den der Benutzer selbst wählt (Knopf oder Strg+Zahl): der Suchreiter hebt die Auswahl auf. */
+    private void showByHand(AppContext.Section section) {
+        if (section == AppContext.Section.SEARCH) {
+            openSearchTab();
+        } else {
+            show(section);
+        }
+    }
+
+    /**
+     * Der Suchreiter von Hand (Angelo, 24.11.2026): Die Auswahl der Wissensquellen verschwindet ganz, auch die globale;
+     * gesucht wird überall, und der Chat arbeitet ohne Bereich nur mit den zugeschalteten Suchen, ohne die langsame
+     * Suche im Bereich. Die Suche in der Titelleiste lässt die Auswahl dagegen stehen.
+     */
+    void openSearchTab() {
+        show(AppContext.Section.SEARCH);
+        explorer.clearSelection();
+        searchView.scope(explorer.scopes());
     }
 
     private void installShortcuts(JComponent surface) {
@@ -731,7 +751,7 @@ public final class MainWindow implements AppContext.Navigator {
             surface.getActionMap().put(key, new javax.swing.AbstractAction() {
                 @Override
                 public void actionPerformed(java.awt.event.ActionEvent e) {
-                    show(section);
+                    showByHand(section);
                 }
             });
         }
@@ -1066,16 +1086,20 @@ public final class MainWindow implements AppContext.Navigator {
         if (changed && current != AppContext.Section.SETTINGS && settingsOver == null) {
             beforeSettings = current;
         }
+        boolean leftSearch = changed && current == AppContext.Section.SEARCH;
         current = section;
+        if (leftSearch && explorer.scopes().isEmpty() && !explorer.allSelected()) {
+            // Raus aus der Suche ohne Auswahl: „Wissensquellen“ wird gewählt und gelb markiert, als hätte man es
+            // angeklickt (Angelo, 24.11.2026).
+            explorer.selectAll();
+        }
         // Zurück und Vor unten blättern in der Suche zwischen ihren Suchen und Filtern, sonst in den Seiten.
         if (jobStatus != null) {
             jobStatus.navigation(section == AppContext.Section.SEARCH ? searchView.navigation() : content.navigation());
         }
         placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
-            // Die Lupe hebt die Auswahl der Wissensquellen ganz auf, auch die globale (Angelo 24.11.2026): gesucht wird
-            // überall, der Chat arbeitet ohne Bereich nur mit den zugeschalteten Suchen und spart die Suche im Bereich.
-            explorer.clearSelection();
+            // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
             searchView.scope(explorer.scopes());
         }
         // Keine zweite Leiste: Die Quellenkarten bzw. die Bereiche der Einstellungen ersetzen im Drawer den Explorer,
