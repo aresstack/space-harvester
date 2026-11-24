@@ -124,7 +124,7 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.folderSubfolders().isEnabled())).isTrue();
         assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.folderFoot());
         assertThat(onEdt(() -> detail.export().selection().roots(null)))
-                .containsExactly(handbook.root(), notes.root());
+                .containsExactly(notes.root(), handbook.root()); // Baumreihenfolge: Unterordner zuerst angelegt
 
         onEdt(() -> {
             detail.folderSubfolders().doClick();
