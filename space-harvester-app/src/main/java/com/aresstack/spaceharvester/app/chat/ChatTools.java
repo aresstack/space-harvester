@@ -875,9 +875,32 @@ final class ChatTools {
 
     /** Die progressive Suche nur in den Seiten des Bereichs, wie die Suche mit Auswahl links. */
     List<KeywordSearch.Hit> hits(String query) {
-        KeywordSearch.Query search = new KeywordSearch.Query(query, null, Set.of(), Set.of()).within(scope.pages())
-                .withGlossarySynonyms(glossarySynonyms);
-        return ranked(search, neighbors, false);
+        return ranked(areaQuery(query, scope).withGlossarySynonyms(glossarySynonyms), neighbors, false);
+    }
+
+    /**
+     * Die Anfrage für einen Bereich im selben Umfang wie die Suchleiste mit derselben Auswahl: Quelle(n) und Spaces des
+     * Bereichs, dazu seine Seiten. Ohne die Spaces fragte eine Quelle mit eigener Suche (Confluence) das ganze Wiki,
+     * lieferte nur ihre ersten Treffer, und alle außerhalb des Bereichs fielen danach weg; eine Seite im Bereich, die
+     * die Suchleiste im Space als Erstes findet, kam so nie an (Angelo 24.11.2026, „Team 10“). Kennt die Auswahl den
+     * Space einer ihrer Quellen nicht, bleibt es ohne Space-Filter, damit keine Seite verloren geht.
+     */
+    static KeywordSearch.Query areaQuery(String text, PageSelection scope) {
+        Set<String> sources = scope.pages().sourceIds();
+        Set<String> spaces = new java.util.TreeSet<>();
+        Set<String> withSpace = new java.util.HashSet<>();
+        for (com.aresstack.spaceharvester.application.holdings.SpaceSummary space : scope.spaces()) {
+            if (sources.contains(space.sourceId())) {
+                spaces.add(space.spaceKey());
+                withSpace.add(space.sourceId());
+            }
+        }
+        if (!withSpace.containsAll(sources)) {
+            spaces.clear();
+        }
+        String single = sources.size() == 1 ? sources.iterator().next() : null;
+        return new KeywordSearch.Query(text, single, single == null ? sources : Set.of(), spaces)
+                .within(scope.pages());
     }
 
     // ------------------------------------------------------------------ Interne Suche
