@@ -21,10 +21,11 @@ import tools.jackson.databind.node.ObjectNode;
  * etwa einer Quelle, eines Space oder eines Favoriten-Ordners, statt der Änderungen eines Updates. Angelo 24.11.2026
  * (Umschalter „Änderungen | Bereich“): wer neu ist und die Seiten noch nie besucht hat, soll erst einmal didaktisch
  * aufbereitet verstehen, worum es in dem Bereich geht. Das Modell bekommt je Seite Titel, Pfad, Space und einen Auszug
- * des Lesetexts. Höchstens {@code budget} Seiten gehen ein, die oberen zuerst (sie tragen meist den Überblick), weitere
- * und Seiten ohne KI-Freigabe (ADR 0028) nur als Zahl. Teilen, Plan, Zusammenführen und Prüfung der Antworten macht
- * {@link ThematicSummarizer}; die Ausgabeform ist dieselbe wie bei Updates, damit Lese- und Podcast-Ansicht sie gleich
- * zeigen.
+ * des Lesetexts. Alle geladenen Seiten mit KI-Freigabe (ADR 0028) gehen ein, ohne Seitenbudget (Angelo 24.11.2026:
+ * „nicht pauschal 300 Seiten und dann ist Schluss“); nur Seiten ohne Freigabe zählen als Zahl. Wie groß der Bereich
+ * auch ist: {@link ThematicSummarizer} teilt die Seiten in Teile, die bis {@code ai.parallel} zugleich laufen, und führt
+ * die Teilantworten stufenweise zusammen (mit Plan vorab, solange der Plan in eine Anfrage passt, sonst nach Space und
+ * Pfad). Die Ausgabeform ist dieselbe wie bei Updates, damit Lese- und Podcast-Ansicht sie gleich zeigen.
  */
 final class AreaSummarizer {
 
@@ -39,7 +40,7 @@ final class AreaSummarizer {
             welche Themen er behandelt, wie er aufgebaut ist und wo man anfängt, ohne die Seiten zu öffnen.
             Die Eingabe ist ein JSON-Objekt mit Zählern und einer Liste von Seiten mit id, titel, pfad (übergeordnete
             Seiten von oben), space (Name des Space) und einem Auszug des Inhalts ("inhalt"). Seiten, die du nicht lesen
-            darfst oder die nicht mehr ins Budget passten, stehen nur als Zahl "nichtLesbar" darin.
+            darfst, stehen nur als Zahl "nichtLesbar" darin.
             Erkläre didaktisch: erst das Große und Ganze, dann die Teile; Fachbegriffe kurz erklären, wenn das Material
             sie erklärt; mit Beispielen aus dem Material statt Aufzählungen.
             Bündle nach Thema, nicht Seite für Seite: Seiten unter derselben Elternseite oder zum selben Gegenstand bilden
@@ -133,15 +134,11 @@ final class AreaSummarizer {
      * @param pages      die lokal gespeicherten Seiten des Bereichs, die der Auftraggeber sehen darf
      * @param text       Lesetext der gespeicherten Fassung, nur wo der Auftraggeber den Inhalt lesen darf
      * @param spaceNames Anzeigenamen der Spaces, soweit bekannt
-     * @param budget     höchstens so viele Seiten gehen mit Auszug ein, mindestens 1
      * @param skipped    Seiten des Bereichs, die gar nicht erst als Seite vorliegen (etwa nur aus der Quelle bekannt);
      *                   zählen als nicht lesbar
      */
     ThematicSummarizer.Result summarize(List<Page> pages, Function<Page, Optional<String>> text,
-                                        Map<String, String> spaceNames, int budget, int skipped, JobContext context) {
-        if (budget < 1) {
-            throw new IllegalArgumentException("budget < 1");
-        }
+                                        Map<String, String> spaceNames, int skipped, JobContext context) {
         List<Page> readable = new ArrayList<>();
         Map<String, int[]> spaces = new TreeMap<>();
         int withheld = Math.max(0, skipped);
@@ -155,20 +152,7 @@ final class AreaSummarizer {
                 withheld++;
             }
         }
-        // Die oberen Seiten zuerst: Sie tragen meist den Überblick; das Budget schneidet die tiefsten ab.
-        readable.sort(Comparator.comparingInt((Page page) -> page.path().size())
-                .thenComparing(Page::spaceKey)
-                .thenComparing(page -> String.join("\u001f", page.path()), String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(page -> String.valueOf(page.title()), String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(page -> page.page().pageId()));
-        if (readable.size() > budget) {
-            for (Page dropped : readable.subList(budget, readable.size())) {
-                spaces.get(dropped.spaceKey())[1]++;
-            }
-            withheld += readable.size() - budget;
-            readable = new ArrayList<>(readable.subList(0, budget));
-        }
-        // Für die Teile wieder nach Space und Pfad: Seiten unter derselben Elternseite landen im selben Teil.
+        // Für die Teile nach Space und Pfad: Seiten unter derselben Elternseite landen im selben Teil.
         readable.sort(Comparator.comparing(Page::spaceKey)
                 .thenComparing(page -> String.join("\u001f", page.path()), String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(page -> String.valueOf(page.title()), String.CASE_INSENSITIVE_ORDER)
