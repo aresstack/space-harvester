@@ -241,10 +241,11 @@ public final class Workspace {
 
     /**
      * Die verwalteten Gesamtzahlen der Begriffe einer Quelle samt ihren Spaces von Hand neu aufbauen, {@code null}
-     * für alle Quellen; die nächste Abfrage liest sie neu. Für den Fehlerfall.
+     * für alle Quellen, und die gemerkten Verben verwerfen; die nächste Abfrage liest neu. Für den Fehlerfall.
      */
     public void rebuildTermTotals(String sourceId) {
         harvester.terms().rebuildTotals(sourceId);
+        harvester.verbQueries().invalidate();
     }
 
     /**

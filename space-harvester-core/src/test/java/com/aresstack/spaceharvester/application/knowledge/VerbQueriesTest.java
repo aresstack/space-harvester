@@ -141,4 +141,25 @@ class VerbQueriesTest {
         assertThat(corrected.onPage(null, new PageKey("wiki", "5")).verbs()).singleElement()
                 .satisfies(verb -> assertThat(verb.occurrences()).hasSize(1));
     }
+
+    @Test
+    void rememberedPagesAnswerEverySelectionWithoutReadingAgainUntilAChangeIsReported() {
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        VerbQueries remembering = new VerbQueries(caller -> {
+            reads.incrementAndGet();
+            return pages;
+        }).remembering();
+
+        VerbQueries.VerbList all = remembering.verbs(null, null, null, 50, null);
+        VerbQueries.VerbList some = remembering.verbs(null, within("1", "2", "3", "4"), null, 50, null);
+        remembering.verbs(null, within("9"), "prüf", 1, null);
+
+        assertThat(reads).as("Zahl, Liste und jede andere Auswahl aus denselben gemerkten Einträgen").hasValue(1);
+        assertThat(all).isEqualTo(queries.verbs(null, null, null, 50, null));
+        assertThat(some).isEqualTo(queries.verbs(null, within("1", "2", "3", "4"), null, 50, null));
+
+        remembering.invalidate();
+        assertThat(remembering.verbs(null, null, null, 50, null)).isEqualTo(all);
+        assertThat(reads).hasValue(2);
+    }
 }
