@@ -49,7 +49,7 @@ public final class FakeEakteServer implements AutoCloseable {
     /** Erfundene Outlook-Nachricht (264 KiB, OLE-Kopf und danach deterministische Bytes), wie die echte .msg. */
     public static final String MESSAGE_PATH = "/Arbeitsvorrat/Vorgang 4711/Anfrage Frachtraum #7 (Kopie).msg";
     public static final String MESSAGE_TYPE = "application/vnd.ms-outlook";
-    public static final String MESSAGE_ADDRESS = "COO.7169.100.8.4711";
+    public static final String MESSAGE_ADDRESS = "COO.1.2.3.4711";
     public static final byte[] MESSAGE = message();
     /** Mappe ohne Berechtigung (PROPFIND → 403). */
     public static final String FORBIDDEN_FOLDER = "/Gesperrt/";
@@ -104,6 +104,7 @@ public final class FakeEakteServer implements AutoCloseable {
     private final List<String> requests = new CopyOnWriteArrayList<>();
     private volatile boolean separateWebDavSession;
     private volatile boolean nameCallbacks;
+    private volatile boolean foreignFormAction;
 
     public FakeEakteServer() throws IOException {
         InetAddress loopback = InetAddress.getLoopbackAddress();
@@ -125,6 +126,12 @@ public final class FakeEakteServer implements AutoCloseable {
     }
 
     /** OpenAM fragt direkt nach Benutzer und Kennwort (NameCallback/PasswordCallback) statt umzuleiten. */
+    /** Das Anmeldeformular des Identitätsdienstes zielt auf einen anderen Server (OpenAM) als die Formularseite. */
+    public FakeEakteServer foreignFormAction(boolean on) {
+        this.foreignFormAction = on;
+        return this;
+    }
+
     public FakeEakteServer nameCallbacks(boolean direct) {
         this.nameCallbacks = direct;
         return this;
@@ -138,17 +145,12 @@ public final class FakeEakteServer implements AutoCloseable {
         return URI.create(base(eakte) + START + "?bx=COO.1.2.3&venv_view=COO.4.5.6");
     }
 
-    /** Die Anmeldedienste als Host:Port. */
-    public Set<String> loginHosts() {
-        return Set.of(authority(idp), authority(provider));
-    }
-
-    /** Wie oft ein Kennwort ans Anmeldeformular ging. */
     /** Der {@code Referer} jedes Kennwort-POST am Formular des Identitätsdienstes ({@code "null"} ohne). */
     public List<String> loginReferers() {
         return List.copyOf(loginReferers);
     }
 
+    /** Wie oft ein Kennwort ans Anmeldeformular ging. */
     public int passwordPosts() {
         return passwordPosts.get();
     }
@@ -478,7 +480,8 @@ public final class FakeEakteServer implements AutoCloseable {
                 }
             }
             send(exchange, 200, "text/html", "<html><head><title>Anmelden</title><script></script></head><body>"
-                    + "<form id=\"loginForm\" method=\"post\" action=\"/eai/mapz/login\">"
+                    + "<form id=\"loginForm\" method=\"post\" action=\"" + (foreignFormAction ? base(idp) : "")
+                    + "/eai/mapz/login\">"
                     + "<input id=\"username\" name=\"uid\" type=\"text\"/>"
                     + "<input id=\"pw\" name=\"password\" type=\"password\"/>"
                     + "<input type=\"checkbox\" name=\"merken\"/>"

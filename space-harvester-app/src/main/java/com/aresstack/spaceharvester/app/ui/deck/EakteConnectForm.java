@@ -15,7 +15,6 @@ import java.awt.GridBagLayout;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import javax.swing.BorderFactory;
@@ -41,12 +40,12 @@ final class EakteConnectForm extends JPanel {
 
     final JComboBox<String> entry = Comic.combo();
     /**
-     * Die eine E-Akte-Adresse, die man sonst im Browser öffnet: Einstieg der Anmeldung. WebDAV-Wurzel und erlaubte
-     * Anmeldedienste legt der Adapter fest ({@link EakteProfile#fromAddress}); sie sind nicht einstellbar.
+     * Die eine E-Akte-Adresse, die man sonst im Browser öffnet: Einstieg der Anmeldung. Leer gilt das URL-Feld des
+     * KeePass-Eintrags. Die WebDAV-Wurzel legt
+     * der Adapter fest ({@link EakteProfile#fromAddress}); Anmeldedienste ergeben sich aus den Weiterleitungen.
      */
     final PlaceholderField start = new PlaceholderField(30, "Adresse, die du sonst im Browser öffnest");
-    /** Nur für den Nachbau in Tests: andere Anmeldedienste als die festen. */
-    Set<String> loginHostsForTests;
+
     final JCheckBox useProxy = Comic.checkBox("Proxy der App verwenden");
     private final JLabel keePassHint = Comic.muted(" ");
     private final JLabel problem = new JLabel(" ");
@@ -58,6 +57,8 @@ final class EakteConnectForm extends JPanel {
     private boolean entriesLoaded;
     private Consumer<String> direct;
     private String attemptEntry = "";
+    /** URL-Feld je KeePass-Eintrag (wie Terminal/FTP/NDV); zeigt sich als Vorschlag im Feld „E-Akte-Adresse“. */
+    private final Map<String, String> locations = new java.util.HashMap<>();
 
     /** @param connect meldet mit Profil und Kennwort an (auf dem EDT); das Kennwort gehört danach dem Empfänger */
     EakteConnectForm(ServerAccounts accounts, BiConsumer<EakteProfile, char[]> connect) {
@@ -88,6 +89,7 @@ final class EakteConnectForm extends JPanel {
         submit.addActionListener(e -> submit());
         entry.getEditor().addActionListener(e -> submit());
         start.addActionListener(e -> submit());
+        entry.addActionListener(e -> entryChanged());
 
         JPanel body = new JPanel();
         body.setOpaque(false);
@@ -110,8 +112,7 @@ final class EakteConnectForm extends JPanel {
 
     /** Ob ohne Formular verbunden werden darf: Es gibt einen eigenen gemerkten KeePass-Eintrag der E-Akte. */
     static boolean isConfigured() {
-        String start = AppState.shared().get(START_KEY);
-        return !savedEntry().isEmpty() && start != null && !start.isBlank();
+        return !savedEntry().isEmpty();
     }
 
     /** Der eigene KeePass-Eintrag der E-Akte; nie der von Terminal, FTP oder NDV. */
@@ -129,6 +130,8 @@ final class EakteConnectForm extends JPanel {
         String keep = entryTitle();
         keePassHint.setText("Lese KeePass …");
         Background.run(accounts::accounts, found -> {
+            locations.clear();
+            found.forEach(account -> locations.put(account.entry(), account.location()));
             List<String> titles = found.stream().map(ServerAccount::entry).toList();
             entry.removeAllItems();
             titles.forEach(entry::addItem);
@@ -153,12 +156,14 @@ final class EakteConnectForm extends JPanel {
             failed("KeePass-Eintrag fehlt");
             return;
         }
-        EakteProfile draft;
-        try {
-            draft = profile("pruefung");
-        } catch (IllegalArgumentException e) {
-            failed(e.getMessage());
-            return;
+        String typed = start.getText().strip();
+        if (!typed.isEmpty()) {
+            try {
+                EakteProfile.fromAddress(typed, "pruefung");
+            } catch (IllegalArgumentException e) {
+                failed(e.getMessage());
+                return;
+            }
         }
         submit.setEnabled(false);
         keePassHint.setText("Lese den Eintrag aus KeePass …");
@@ -167,9 +172,14 @@ final class EakteConnectForm extends JPanel {
             keePassHint.setText(" ");
             char[] secret = read.copyPassword();
             try (read) {
-                EakteProfile profile = new EakteProfile(draft.webdav(), draft.start(), read.user(),
-                        draft.loginHosts());
-                remember(title);
+                // Wie die anderen Bereiche: die Adresse aus dem URL-Feld des KeePass-Eintrags, das Feld nur ohne sie.
+                String address = typed.isEmpty() ? read.account().location() : typed;
+                if (address.isBlank()) {
+                    throw new IllegalArgumentException("keine E-Akte-Adresse (URL) im Eintrag; bitte im Formular "
+                            + "eintragen");
+                }
+                EakteProfile profile = EakteProfile.fromAddress(address, read.user());
+                remember(title, typed);
                 direct = null;
                 attemptEntry = title;
                 connect.accept(profile, secret);
@@ -217,17 +227,19 @@ final class EakteConnectForm extends JPanel {
         return taken;
     }
 
+    /** Wie {@code ConnectForm.serverChanged}: die Adresse des Eintrags als Vorschlag, eingetippt gilt sie nur dann. */
+    private void entryChanged() {
+        String location = locations.getOrDefault(entryTitle(), "");
+        start.setPlaceholder(location.isBlank() ? "Adresse, die du sonst im Browser öffnest" : location);
+    }
+
     void focusFirst() {
         entry.requestFocusInWindow();
     }
 
-    private EakteProfile profile(String user) {
-        return loginHostsForTests == null ? EakteProfile.fromAddress(start.getText(), user)
-                : EakteProfile.fromAddress(start.getText(), user, loginHostsForTests);
-    }
-
-    private void remember(String title) {
-        AppState.shared().putAll(Map.of(ENTRY_KEY, title, START_KEY, start.getText().strip()));
+    /** Die eingetippte Adresse wird nur gemerkt, wenn eine eingetippt war; sonst gilt weiter die aus KeePass. */
+    private void remember(String title, String typed) {
+        AppState.shared().putAll(Map.of(ENTRY_KEY, title, START_KEY, typed));
         AppState.shared().put(USE_PROXY_KEY, useProxy.isSelected());
     }
 

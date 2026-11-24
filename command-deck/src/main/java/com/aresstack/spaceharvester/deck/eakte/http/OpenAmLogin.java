@@ -24,8 +24,8 @@ import org.jsoup.nodes.Document;
  *       {@code tokenId}, das als Sitzungscookie {@value #SESSION_COOKIE} hinterlegt wird.</li>
  * </ol>
  * Fragt OpenAM stattdessen direkt nach Benutzer und Kennwort ({@code NameCallback}/{@code PasswordCallback}), werden
- * diese beantwortet, ebenfalls höchstens einmal. Zugangsdaten gehen nur an Hosts aus
- * {@link com.aresstack.spaceharvester.deck.eakte.EakteProfile#loginHosts()}.
+ * diese beantwortet, ebenfalls höchstens einmal. Zugangsdaten gehen nur an Server, zu denen
+ * die Weiterleitungen ab der E-Akte geführt haben.
  *
  * <p>Nach dem Identitätsdienst geht es wie in v2.0 weiter: {@code /openam/?code…} liefert die feste Startseite
  * „Please Wait While Redirecting to Login page“, deren Skript {@code UI/Login} mit derselben Abfrage lädt
@@ -120,7 +120,7 @@ final class OpenAmLogin {
             if (credentialsSent) {
                 throw new LoginRefusedException("OpenAM fragt erneut nach Benutzer und Kennwort: Anmeldung abgelehnt");
             }
-            if (!http.profile().mayReceiveCredentials(api)) {
+            if (!http.mayReceiveCredentials(api)) {
                 throw new IOException("Zugangsdaten nicht gesendet: " + SsoHttp.host(api)
                         + " ist kein zugelassener Anmeldedienst");
             }
@@ -149,6 +149,7 @@ final class OpenAmLogin {
             throw new IOException("OpenAM: Weiterleitung zum Identitätsdienst ohne Ziel oder nicht per GET");
         }
         URI current = api.resolve(target);
+        http.trust(api, current);
         http.trace("OpenAM leitet zum Identitätsdienst: " + SsoHttp.safe(current));
         SsoHttp.Response response = http.get(current);
         for (int step2 = 1; step2 <= MAX_STEPS; step2++) {
@@ -188,7 +189,8 @@ final class OpenAmLogin {
             var saml = SsoPages.samlResponse(page);
             if (saml.isPresent() && samlForms++ < 3) {
                 URI acs = saml.get().action();
-                if (!http.profile().allows(acs)) {
+                http.trust(response.uri(), acs);
+                if (!http.allows(acs)) {
                     throw new IOException("SAML-Formular verweist auf einen fremden Server: " + SsoHttp.host(acs));
                 }
                 http.trace("Übermittle vom Server geliefertes SAML-Formular");
@@ -212,7 +214,9 @@ final class OpenAmLogin {
                         + "erneut (Benutzer oder Kennwort falsch, abgelaufen oder gesperrt)");
             }
             URI action = form.get().action();
-            if (!"POST".equals(form.get().method()) || !http.profile().mayReceiveCredentials(action)) {
+            // Wie v2.0: Zugangsdaten nur an das Formularziel auf demselben Server wie die Formularseite.
+            if (!"POST".equals(form.get().method()) || !origin(action).equalsIgnoreCase(origin(response.uri()))
+                    || !http.mayReceiveCredentials(action)) {
                 throw new IOException("Zugangsdaten nicht gesendet: Das Anmeldeformular zielt auf "
                         + SsoHttp.host(action) + " oder nicht per POST");
             }

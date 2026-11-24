@@ -9,7 +9,7 @@ import java.io.IOException;
 public interface EakteServer {
 
     /**
-     * Meldet an. Das Kennwort geht höchstens einmal an einen Anmeldedienst aus {@link EakteProfile#loginHosts()}.
+     * Meldet an. Das Kennwort geht höchstens einmal an einen Anmeldedienst, zu dem die Weiterleitungen ab der E-Akte geführt haben.
      * Blockiert, also nie auf dem EDT.
      *
      * @param profile  Adressen und Benutzer

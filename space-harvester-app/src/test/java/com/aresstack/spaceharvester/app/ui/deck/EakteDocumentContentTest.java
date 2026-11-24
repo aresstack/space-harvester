@@ -71,8 +71,8 @@ class EakteDocumentContentTest {
 
     private EakteSession connect() throws Exception {
         fake = new FakeEakteServer();
-        EakteSession session = sessions.open(new EakteProfile(fake.webdav(), fake.start(), FakeEakteServer.USER,
-                fake.loginHosts()), FakeEakteServer.PASSWORD.toCharArray());
+        EakteSession session = sessions.open(new EakteProfile(fake.webdav(), fake.start(), FakeEakteServer.USER),
+                FakeEakteServer.PASSWORD.toCharArray());
         long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
         while (session.state() != EakteState.CONNECTED && System.nanoTime() < until) {
             if (session.state() == EakteState.FAILED) {

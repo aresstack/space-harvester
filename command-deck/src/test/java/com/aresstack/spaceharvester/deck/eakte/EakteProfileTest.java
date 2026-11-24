@@ -15,7 +15,6 @@ class EakteProfileTest {
         assertThat(profile.start().toString())
                 .isEqualTo("https://akte.flotte.example/fsc/fscasp/content/bin/fscvext.dll?bx=COO.1.2.3");
         assertThat(profile.webdav().toString()).isEqualTo("https://akte.flotte.example/fsc/webdav");
-        assertThat(profile.loginHosts()).containsExactlyInAnyOrderElementsOf(EakteProfile.DEFAULT_LOGIN_HOSTS);
     }
 
     @Test

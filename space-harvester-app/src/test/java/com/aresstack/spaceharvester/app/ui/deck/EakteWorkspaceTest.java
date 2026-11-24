@@ -64,8 +64,10 @@ class EakteWorkspaceTest {
         background.shutdownNow();
     }
 
-    private static ServerAccounts accounts(String password) {
-        ServerAccount account = new ServerAccount(ENTRY, "", FakeEakteServer.USER);
+    private String keePassUrl = "";
+
+    private ServerAccounts accounts(String password) {
+        ServerAccount account = new ServerAccount(ENTRY, keePassUrl, FakeEakteServer.USER);
         return new ServerAccounts() {
             @Override
             public List<ServerAccount> accounts() {
@@ -92,7 +94,6 @@ class EakteWorkspaceTest {
             form.entries(List.of(ENTRY));
             form.entry.setSelectedItem(ENTRY);
             form.start.setText(fake.start().toString());
-            form.loginHostsForTests = fake.loginHosts();
         });
     }
 
@@ -210,12 +211,33 @@ class EakteWorkspaceTest {
             form.entries(List.of(ENTRY));
             form.entry.setSelectedItem(ENTRY);
             form.start.setText(fake.start().toString());
-            form.loginHostsForTests = fake.loginHosts();
             form.submit();
         });
         await(() -> onEdt(() -> workspace.selected() != null
                 && workspace.selected().state() == EakteState.CONNECTED), "angemeldet nur mit Start-URL");
         assertThat(fake.passwordPosts()).isEqualTo(1);
+    }
+
+    /** Angelo: die E-Akte-Adresse kommt aus dem URL-Feld des KeePass-Eintrags, wenn sie dort steht. */
+    @Test
+    void takesTheAddressFromTheKeePassEntry() throws Exception {
+        fake = new FakeEakteServer();
+        keePassUrl = fake.start().toString();
+        EakteSessions sessions = new EakteSessions(
+                new HttpEakteServer(HttpClientFactory.direct(), Duration.ofSeconds(10), null), background);
+        SwingUtilities.invokeAndWait(() -> {
+            workspace = new EakteWorkspace(sessions, accounts(FakeEakteServer.PASSWORD));
+            EakteConnectForm form = workspace.form();
+            form.entries(List.of(ENTRY));
+            form.entry.setSelectedItem(ENTRY);
+            assertThat(form.start.getText()).isEmpty();
+            form.submit();
+        });
+        await(() -> onEdt(() -> workspace.selected() != null
+                && workspace.selected().state() == EakteState.CONNECTED), "angemeldet mit der URL aus KeePass");
+        assertThat(fake.passwordPosts()).isEqualTo(1);
+        String remembered = AppState.shared().get(EakteConnectForm.START_KEY);
+        assertThat(remembered == null || remembered.isEmpty()).as("nichts Eingetipptes gemerkt").isTrue();
     }
 
     @Test

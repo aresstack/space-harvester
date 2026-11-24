@@ -12,7 +12,6 @@ import com.aresstack.spaceharvester.deck.http.HttpClientFactory;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,8 +36,7 @@ class HttpEakteServerTest {
     }
 
     private EakteProfile profile(boolean withStart) {
-        return new EakteProfile(fake.webdav(), withStart ? fake.start() : null, FakeEakteServer.USER,
-                fake.loginHosts());
+        return new EakteProfile(fake.webdav(), withStart ? fake.start() : null, FakeEakteServer.USER);
     }
 
     @Test
@@ -133,14 +131,22 @@ class HttpEakteServerTest {
         assertThat(fake.restPasswordAnswers()).isEqualTo(1);
     }
 
+    /** Wie v2.0: Zugangsdaten nur an ein Formularziel auf demselben Server wie die Formularseite. */
     @Test
-    void neverSendsCredentialsToAHostThatIsNoLoginService() {
-        EakteProfile untrusted = new EakteProfile(fake.webdav(), fake.start(), FakeEakteServer.USER,
-                Set.of("anmeldung.example.org"));
-        assertThatThrownBy(() -> server.connect(untrusted, FakeEakteServer.PASSWORD.toCharArray()))
-                .hasMessageContaining("fremden Server");
+    void neverSendsCredentialsToAFormTargetOnAnotherServer() {
+        fake.foreignFormAction(true);
+        assertThatThrownBy(() -> server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray()))
+                .hasMessageContaining("Zugangsdaten nicht gesendet");
         assertThat(fake.passwordPosts()).isZero();
-        assertThat(fake.requests()).noneMatch(line -> line.startsWith("openam") || line.startsWith("provider"));
+    }
+
+    /** Anmeldedienste stehen nirgends fest: erlaubt wird nur, wohin die Weiterleitungen ab der E-Akte führten. */
+    @Test
+    void learnsTheLoginServicesFromTheRedirects() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            assertThat(connection.list(connection.rootHref())).isNotEmpty();
+        }
+        assertThat(trace).anyMatch(line -> line.startsWith("Weiterleitung zu ") && line.contains("(von "));
     }
 
     @Test

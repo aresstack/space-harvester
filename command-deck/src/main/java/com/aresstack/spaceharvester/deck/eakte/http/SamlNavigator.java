@@ -96,6 +96,10 @@ final class SamlNavigator {
                 }
                 if (transition.get().secondVisit() != null) {
                     continuation = transition.get().secondVisit();
+                    http.trust(current.uri(), continuation);
+                }
+                if (transition.get().login() != null) {
+                    http.trust(current.uri(), transition.get().login());
                 }
                 if (!hasSession(current.uri()) || triedSession) {
                     // Ohne Sitzungscookie, oder OpenAM kennt es nicht mehr (Zwischenseite trotz Cookie).
