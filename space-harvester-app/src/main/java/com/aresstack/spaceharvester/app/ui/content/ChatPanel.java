@@ -1870,6 +1870,9 @@ public final class ChatPanel extends JPanel {
         bubbleRow.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
         transcript.add(bubbleRow);
+        if (listening != null) {
+            listening.linksBelow();
+        }
         transcript.revalidate();
         transcript.repaint();
         scrollDown();
@@ -2271,6 +2274,8 @@ public final class ChatPanel extends JPanel {
         /** Die Zeile der Antwortblase; wartet unsichtbar hinter den Wolken, bis Text kommt (EAC). */
         private final JComponent row;
         private boolean waiting;
+        /** Die gelbe Blase platzt gerade; die Antwort erscheint erst danach an ihrer Stelle. */
+        private boolean bursting;
         /** Die laufenden Wolken der Werkzeugaufrufe; alle Wolken verschwinden mit dem Ende der Antwort (EAC). */
         private final java.util.Map<String, com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel> clouds =
                 new java.util.HashMap<>();
@@ -2356,9 +2361,47 @@ public final class ChatPanel extends JPanel {
             links.setVisible(false);
         }
 
+        /**
+         * Die blauen Quellen stehen während der Recherche unter der gelben Blase (Angelo 24.11.2026), also hinter jeder
+         * neuen Blase am Ende des Verlaufs.
+         */
+        void linksBelow() {
+            if (detached || !waiting || links.getParent() != transcript) {
+                return;
+            }
+            transcript.remove(links);
+            transcript.add(links);
+        }
+
+        /**
+         * Wie im EAC ({@code ChatTranscriptPanel.applyActivity}/{@code settleActivity}): Die gelbe Blase platzt, und
+         * erst danach verschwindet ihre Zeile und die Antwort erscheint bündig an ihrer Stelle, die blauen Quellen
+         * darunter. Während des Platzens sind die Quellen kurz weg (Angelo 24.11.2026), sonst entstünde eine Lücke.
+         */
+        private void burst(boolean cancelled) {
+            if (card == null || card.finished()) {
+                return;
+            }
+            if (detached) {
+                return;
+            }
+            var thought = card.bubble();
+            bursting = true;
+            links.setVisible(false);
+            card.finish(cancelled, () -> {
+                bursting = false;
+                if (thought != null && thought.getParent() != null && thought.getParent().getParent() == transcript) {
+                    transcript.remove(thought.getParent());
+                }
+                reveal();
+                transcript.revalidate();
+                transcript.repaint();
+            });
+        }
+
         /** Der erste Text (oder das Ende): die Antwort erscheint hinter den Wolken. */
         private void reveal() {
-            if (!waiting || detached) {
+            if (!waiting || detached || bursting) {
                 return;
             }
             waiting = false;
@@ -2473,8 +2516,12 @@ public final class ChatPanel extends JPanel {
         @Override
         public void context(ChatKnowledge.Context context) {
             sources = context.accepted().stream().map(ChatRecord.Source::of).toList();
-            // Die Quellen stehen schon während der Antwort unter der Blase und wachsen mit jeder neuen.
+            // Die Quellen stehen schon während der Recherche unter der Blase und wachsen mit jeder neuen; während die
+            // gelbe Blase platzt, bleiben sie weg und kommen mit der Antwort wieder.
             links.show(sources);
+            if (bursting) {
+                links.setVisible(false);
+            }
             if (!detached && card != null) {
                 card.sources(sources.stream().map(ChatRecord.Source::title).toList());
             }
@@ -2489,10 +2536,8 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void delta(String delta) {
-            // Die Antwort schreibt: Die Gedankenblase platzt mit ihrer Bilanz (wie im EAC).
-            if (card != null && !detached) {
-                card.finish(false);
-            }
+            // Die Antwort schreibt: Die Gedankenblase platzt mit ihrer Bilanz, danach erscheint die Antwort (wie im EAC).
+            burst(false);
             reveal();
             MarkdownMessageView view = bubble.view();
             if (text.isEmpty()) {
@@ -2550,9 +2595,7 @@ public final class ChatPanel extends JPanel {
             if (webCard != null) {
                 webCard.finish(null, cancelled);
             }
-            if (card != null && !detached) {
-                card.finish(cancelled);
-            }
+            burst(cancelled);
         }
 
         private void finish(ChatRecord.Message answer, String note) {
@@ -3234,6 +3277,17 @@ public final class ChatPanel extends JPanel {
 
     JComponent editor() {
         return editor;
+    }
+
+    /** Die sichtbaren Zeilen des Verlaufs in ihrer Reihenfolge (für Tests). */
+    List<Component> transcriptRows() {
+        List<Component> rows = new ArrayList<>();
+        for (Component row : transcript.getComponents()) {
+            if (row.isVisible()) {
+                rows.add(row);
+            }
+        }
+        return rows;
     }
 
     /** Das Vorlesen des Chats (für Tests). */
