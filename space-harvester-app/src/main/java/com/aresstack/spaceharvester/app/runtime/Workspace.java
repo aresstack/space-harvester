@@ -3537,6 +3537,35 @@ public final class Workspace {
     }
 
     /**
+     * Die Bereichszusammenfassung einer Quelle ({@code spaceKey == null}) oder eines Space (Angelo 24.11.2026: Umschalter
+     * „Änderungen | Bereich“, ADR 0034 §7): der ganze Bestand statt der Änderungen. Nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> areaSummary(
+            String sourceId, String spaceKey) {
+        return harvester.changeLog().areaSummary(caller, area(sourceId, spaceKey));
+    }
+
+    /** Ob Bereichszusammenfassungen gehen (Chat-Modell eingestellt). */
+    public boolean areaSummariesAvailable() {
+        return harvester.changeLog().areasAvailable();
+    }
+
+    /**
+     * Startet „Zusammenfassen“ für den Bestand einer Quelle oder eines Space.
+     *
+     * @param interactive ein Klick auf „Zusammenfassen“; {@code false} für den Lauf beim Öffnen
+     */
+    public JobStatus summarizeArea(String sourceId, String spaceKey, boolean interactive) {
+        return harvester.changeLog().summarizeArea(caller, area(sourceId, spaceKey), interactive);
+    }
+
+    private static com.aresstack.spaceharvester.application.holdings.Selection area(String sourceId, String spaceKey) {
+        return com.aresstack.spaceharvester.application.holdings.Selection.of(spaceKey == null
+                ? com.aresstack.spaceharvester.application.holdings.Selection.Root.source(sourceId)
+                : com.aresstack.spaceharvester.application.holdings.Selection.Root.space(sourceId, spaceKey));
+    }
+
+    /**
      * Startet „Zusammenfassen“ für ein Update als Auftrag (ADR 0030); nur auf Wunsch. Fertig meldet sich das Ergebnis
      * über {@link #subscribeChangeLog(String, com.aresstack.spaceharvester.application.changelog.ChangeLogListener)}.
      */

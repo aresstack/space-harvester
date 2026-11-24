@@ -31,8 +31,14 @@ public record PodcastArea(String key, String sourceId, String updateId, String s
                 updateId, spaceKey);
     }
 
-    /** Die Ebene einer Update-Zusammenfassung. */
+    /**
+     * Der Bereich einer Zusammenfassung: die Ebene eines Updates oder, bei einer Bereichszusammenfassung, ihr Platz
+     * ({@link UpdateSummary#area()}) ohne Update.
+     */
     public static PodcastArea of(UpdateSummary summary) {
+        if (summary.isArea()) {
+            return new PodcastArea(summary.area(), summary.sourceId(), null, summary.spaceKey());
+        }
         return update(summary.sourceId(), summary.updateId(), summary.spaceKey());
     }
 }

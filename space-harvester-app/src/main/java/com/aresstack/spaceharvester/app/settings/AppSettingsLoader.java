@@ -889,8 +889,15 @@ public final class AppSettingsLoader {
             problems.add("space-harvester." + ChangeLogSettings.RETENTION + ": " + e.getMessage());
             settings = ChangeLogSettings.DEFAULT;
         }
-        return settings.withShowAfterUpdate(flag(get(changeLog, "show-after-update"), false,
+        settings = settings.withShowAfterUpdate(flag(get(changeLog, "show-after-update"), false,
                 "space-harvester." + ChangeLogSettings.SHOW_AFTER_UPDATE, problems));
+        int areaPages = integer(get(changeLog, "area-pages"), ChangeLogSettings.DEFAULT_AREA_PAGES,
+                "space-harvester." + ChangeLogSettings.AREA_PAGES, problems);
+        if (areaPages < 1) {
+            problems.add("space-harvester." + ChangeLogSettings.AREA_PAGES + " muss mindestens 1 sein");
+            areaPages = ChangeLogSettings.DEFAULT_AREA_PAGES;
+        }
+        return settings.withAreaPages(areaPages);
     }
 
     /**
