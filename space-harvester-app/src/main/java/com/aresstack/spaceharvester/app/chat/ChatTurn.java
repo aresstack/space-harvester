@@ -135,6 +135,13 @@ public final class ChatTurn {
         /** Die Liste freigegebener Seiten ließ sich nicht schreiben. */
         default void releaseFailed(RuntimeException error) {
         }
+
+        /**
+         * Fortschritt der Arbeit vor der Antwort, für den Balken der Gedankenblase: {@code done} von {@code total}
+         * Schritten (mit Werkzeugen die Runden, sonst Suchen und Antworten).
+         */
+        default void progress(int done, int total) {
+        }
     }
 
     /**
@@ -473,6 +480,7 @@ public final class ChatTurn {
             context = ChatKnowledge.assemble(changes.excerpts());
             asked = whatsNewQuestion(question, changes.total(), context.accepted().size(), changes.since());
         } else {
+            onUi(() -> listener.progress(0, 2));
             try {
                 context = gather();
             } catch (RuntimeException e) {
@@ -489,6 +497,7 @@ public final class ChatTurn {
         context = releaseDelivered(context);
         ChatKnowledge.Context chosen = context;
         onUi(() -> listener.context(chosen));
+        onUi(() -> listener.progress(1, 2));
         // Ohne Bereich gibt es kein Wissen aus dem Bestand: dann aus eigenem Wissen (Angelo 24.11.2026).
         String system = scope == null && kind == Kind.QUESTION ? ChatKnowledge.OWN_KNOWLEDGE_PROMPT
                 : ChatKnowledge.systemMessage(area, context);
@@ -660,6 +669,8 @@ public final class ChatTurn {
             return;
         }
         List<AiChat.Tool> offered = round < maxToolRounds() ? toolset.definitions() : List.of();
+        int rounds = maxToolRounds();
+        onUi(() -> listener.progress(round, rounds));
         int roundStart;
         synchronized (received) {
             roundStart = received.length();
@@ -1283,12 +1294,13 @@ public final class ChatTurn {
     static final int SUB_AGENT_CHARS = ChatKnowledge.MAX_PAGE_CHARS;
 
     /**
-     * Die Werkzeuge {@code base} samt {@value ChatTools#EVALUATE}, wenn der Turn ein Suchagent mit Wissen ist (Bereich
-     * oder interne Suche): mehrere Treffer gehen gleichzeitig an Unteragenten, jeder liest seine Seite im Volltext und
+     * Die Werkzeuge {@code base} samt {@value ChatTools#EVALUATE}, wenn der Turn Wissen hat (Bereich oder interne
+     * Suche, auch außerhalb des Suchreiters): mehrere Treffer gehen gleichzeitig an Unteragenten, jeder liest seine Seite im Volltext und
      * liefert nur, was sie zur Frage beiträgt.
      */
     private ChatToolset withSubAgents(ChatToolset base) {
-        if (agentRounds <= 0 || (scope == null && appSources == null)) {
+        // Bereichssuche und interne Suche gleich (Angelo 24.11.2026): beide mit Unteragenten, nicht nur der Suchagent.
+        if (scope == null && appSources == null) {
             return base;
         }
         return new ChatToolset() {

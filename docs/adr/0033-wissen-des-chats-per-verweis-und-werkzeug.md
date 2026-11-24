@@ -108,6 +108,13 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     Grenze der Tabs gilt ohne die frühere feste 8 des EAC-Browserwerkzeugs. Webtreffer: `browser_open_many` mit
     `question` lässt je geladener Seite einen Unteragenten (dieselbe Rolle wie intern) den Volltext auswerten,
     höchstens „Parallele Tabs“ gleichzeitig; zurück kommt nur der Beitrag jeder Seite (EAC #236).
+14. **Gedankenblase statt Statuszeilen** (Nachtrag, Angelo 24.11.2026): Mit dem Senden erscheint eine gelbe Blase
+    (`KnowledgeCard`, wie `ChatResearchCard` im EAC): „Internes Wissen durchsuchen“ bei Bereichssuche und interner
+    Suche gleich, sonst „Antwort wird vorbereitet“. Sie zeigt die Wissenszeile samt „Laden“, die Schritte der
+    Werkzeuge (keine eigenen Wolken mehr außer dem Browser), die Quellen, freigegebene Seiten und einen Balken über
+    die Werkzeugrunden; sie platzt mit dem ersten Antworttext. Die Antwortblase wartet bis dahin unsichtbar (kein „…“).
+    Über dem Eingabefeld stehen nur noch Aktionsknöpfe, Text und Anhänge. `treffer_auswerten` gibt es bei jeder
+    Frage mit Bereich oder interner Suche, nicht nur auf dem Suchreiter.
 
 ## Folgen
 
