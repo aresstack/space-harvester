@@ -1034,13 +1034,14 @@ public final class ActivitiesView implements View {
             return;
         }
         JobStatus status = current.get();
-        title.setText(Texts.type(status) + " " + where(status));
+        // Die Klammer heißt, was sie tut; ihre Quellen stehen darunter unter „Quellen“.
+        title.setText(backgroundGroup(status) ? Texts.type(status) : Texts.type(status) + " " + where(status));
         JobProgress p = status.progress();
         Counters counters = Counters.of(Texts.kind(status));
         boolean waiting = waitingForSignIn(status.id());
         facts.add("Zustand", waiting ? SIGN_IN : Texts.state(status),
                         waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status)))
-                .add("Quelle", status.sourceId())
+                .add(backgroundGroup(status) ? "Quellen" : "Quelle", status.sourceId())
                 .add("Space", status.partitionKey())
                 .add("Startseite", startPage(status))
                 .add("Angelegt", Texts.time(status.createdAt()))
@@ -1227,6 +1228,11 @@ public final class ActivitiesView implements View {
         }
     }
 
+    /** Ob die Zeile die Klammer über Hintergrundteilen ist ({@value #GROUP_PREFIX}…). */
+    static boolean backgroundGroup(JobStatus status) {
+        return status.id() != null && status.id().startsWith(GROUP_PREFIX);
+    }
+
     /** Quelle / Space eines Auftrags, bei einem Seiten-Download dazu „ab“ seiner Startseite. */
     static String where(JobStatus status) {
         if (status.type() == JobType.SEARCH_QUALITY) {
@@ -1244,10 +1250,17 @@ public final class ActivitiesView implements View {
                 : where + " ab „" + startPage(status) + "“";
     }
 
-    /** Spalte „Quelle“: die Wissensquelle des Auftrags, bei der Suchqualität der Testbestand. */
+    /**
+     * Spalte „Quelle“: die Wissensquelle des Auftrags, bei der Suchqualität der Testbestand. Die Klammer über
+     * Hintergrundteilen sagt, was sie tut (Angelo 24.11.2026: „in der Klammer muss stehen, was es ist“); ihre Quellen
+     * stehen in den Details.
+     */
     static String source(JobStatus status) {
         if (status.type() == JobType.SEARCH_QUALITY) {
             return where(status);
+        }
+        if (backgroundGroup(status)) {
+            return Texts.type(status);
         }
         return status.sourceId() == null ? "" : status.sourceId();
     }

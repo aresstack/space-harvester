@@ -361,6 +361,12 @@ public final class SourcesView implements View {
         cards.values().forEach(SourceCard::update);
         cards.get(sourceId).scrollRectToVisible(new Rectangle(cards.get(sourceId).getSize()));
         showSelected();
+        // Die App prüft beim Start keine Verbindung mehr (Angelo 24.11.2026: nichts ohne Klick); die gewählte Quelle
+        // ist der Anlass, ihre Spaces live zu laden.
+        if (context.runtime() != null
+                && context.connection(sourceId).state() == AppContext.Connection.State.NOT_CHECKED) {
+            context.checkConnection(sourceId, () -> { });
+        }
     }
 
     /** Quellentypen, deren Gruppe zugeklappt ist; gilt für die Sitzung. */
@@ -891,7 +897,7 @@ public final class SourcesView implements View {
                         + "dieser Rechner vertraut; Einzelheiten zeigt das Archiv unter „Zertifikate exportieren …“.");
                 return;
             }
-            CertificateCodesView.open(root, name, found.get());
+            QrCodesView.open(root, name, found.get());
         }, error -> {
             card.busy(null, null);
             if (!(error instanceof java.util.concurrent.CancellationException) && !cancelled.get()) {

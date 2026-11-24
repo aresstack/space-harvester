@@ -338,6 +338,11 @@ public final class FindBar extends JPanel {
         return own != null ? 1 : find == null ? 0 : find.hitCount();
     }
 
+    /** Der Suchtext im Feld. */
+    public String query() {
+        return field.getText();
+    }
+
     public String counterText() {
         return counter.getText();
     }

@@ -68,9 +68,6 @@ public final class ChangeLog implements AutoCloseable {
     private final Object summarizing = new Object();
     /** Bestand für Bereichszusammenfassungen ({@link #areas}); {@code null} ohne. */
     private volatile com.aresstack.spaceharvester.application.holdings.Holdings holdings;
-    /** Seitenbudget der Bereichszusammenfassung, gelesen beim Start jedes Laufs. */
-    private volatile java.util.function.IntSupplier areaPages =
-            () -> com.aresstack.spaceharvester.application.configuration.ChangeLogSettings.DEFAULT_AREA_PAGES;
     /** Entscheidungen „Erstbefüllung“ je Quelle, Marke und Seitenzahl; ändern sich erst mit neuen Seiten. */
     private final Map<String, Boolean> inventories = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -115,7 +112,7 @@ public final class ChangeLog implements AutoCloseable {
      */
     public static final String AREA_PARAMETER = "summary.area";
     /** Fassung des Stands einer Bereichszusammenfassung; eine neue Fassung macht alle abgelegten veraltet. */
-    static final String AREA_STATE_VERSION = "area-summary-v1";
+    static final String AREA_STATE_VERSION = "area-summary-v2";
     /** Parameter eines Unterauftrags von „Zusammenfassen“: die ID des Oberauftrags (Angelo 22.11.2026). */
     public static final String PARENT_PARAMETER = "summary.parent";
     /** Parameter eines Unterauftrags von „Zusammenfassen“: sein Schritt, etwa „Teil 2 von 5“. */
@@ -690,14 +687,13 @@ public final class ChangeLog implements AutoCloseable {
     /**
      * Schaltet Bereichszusammenfassungen ein: Bestand einer Auswahl statt Änderungen eines Updates.
      *
-     * @param holdings  löst die Auswahl nachsichtig zu Seiten auf und liefert den Fingerabdruck für „veraltet“
-     * @param areaPages Seitenbudget ({@code space-harvester.cache.change-log.area-pages}), je Lauf gelesen
+     * Ohne Seitenbudget (Angelo 24.11.2026): alle geladenen Seiten mit KI-Freigabe gehen ein.
+     *
+     * @param holdings löst die Auswahl nachsichtig zu Seiten auf und liefert den Fingerabdruck für „veraltet“
      * @return dieses Protokoll
      */
-    public ChangeLog areas(com.aresstack.spaceharvester.application.holdings.Holdings holdings,
-                           java.util.function.IntSupplier areaPages) {
+    public ChangeLog areas(com.aresstack.spaceharvester.application.holdings.Holdings holdings) {
         this.holdings = Objects.requireNonNull(holdings, "holdings");
-        this.areaPages = Objects.requireNonNull(areaPages, "areaPages");
         return this;
     }
 
@@ -843,7 +839,7 @@ public final class ChangeLog implements AutoCloseable {
                             new SummaryChildJobs(runtime.jobs(), runtime.model(), runtime.clock(),
                                     JobType.UPDATE_SUMMARY, context.jobId(), sourceId, spaceKey, caller.jobOwner()),
                             runtime.planner())
-                            .summarize(pages, text, names, Math.max(1, areaPages.getAsInt()), unstored, context);
+                            .summarize(pages, text, names, unstored, context);
                 } catch (com.aresstack.spaceharvester.ai.AiServiceException e) {
                     // Sonst meldet der Auftrag nur „Unerwarteter Fehler (AiServiceException)“; der Grund gehört dazu.
                     throw ThematicSummarizer.jobFailure(e);
@@ -894,11 +890,10 @@ public final class ChangeLog implements AutoCloseable {
         return selection.roots().size() == 1 ? selection.roots().getFirst().spaceKey() : null;
     }
 
-    /** Stand des Bestands einer Auswahl für „veraltet“: Fassung, Budget und Fingerabdruck des Katalogs. */
+    /** Stand des Bestands einer Auswahl für „veraltet“: Fassung und Fingerabdruck des Katalogs. */
     private String areaState(AccessContext caller, com.aresstack.spaceharvester.application.holdings.Holdings stock,
                              com.aresstack.spaceharvester.application.holdings.Selection selection) {
-        return AREA_STATE_VERSION + '|' + Math.max(1, areaPages.getAsInt()) + '|'
-                + stock.fingerprint(caller, stock.resolveLenient(caller, selection).selection());
+        return AREA_STATE_VERSION + '|' + stock.fingerprint(caller, stock.resolveLenient(caller, selection).selection());
     }
 
     private com.aresstack.spaceharvester.application.holdings.Holdings requireAreas() {

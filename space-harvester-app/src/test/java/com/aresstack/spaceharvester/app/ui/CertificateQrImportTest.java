@@ -98,7 +98,7 @@ class CertificateQrImportTest {
                         CertificateQrCodes.image(ca, 1).orElseThrow()),
                 new CertificateCode("Zweite Wurzel", "Stammzertifizierungsstelle", "CC:DD",
                         CertificateQrCodes.image(other, 1).orElseThrow()));
-        CertificateCodesView view = new CertificateCodesView(codes);
+        QrCodesView view = new QrCodesView(codes);
 
         assertThat(view.positionText()).isEqualTo("1 von 2");
         view.step(1);
@@ -112,11 +112,11 @@ class CertificateQrImportTest {
     @Test
     void theCodeIsDrawnWithWholePixelsPerModuleAndWithoutSmoothing() {
         java.awt.image.BufferedImage code = CertificateQrCodes.image(ca, 1).orElseThrow();
-        assertThat(CertificateCodesView.scale(420, 420, code.getWidth(), code.getHeight()))
+        assertThat(QrCodesView.scale(420, 420, code.getWidth(), code.getHeight()))
                 .isEqualTo(420 / code.getWidth());
-        assertThat(CertificateCodesView.scale(10, 10, code.getWidth(), code.getHeight())).isEqualTo(1);
+        assertThat(QrCodesView.scale(10, 10, code.getWidth(), code.getHeight())).isEqualTo(1);
 
-        java.awt.image.BufferedImage drawn = CertificateCodesView.paint(code, 420);
+        java.awt.image.BufferedImage drawn = QrCodesView.paint(code, 420);
         // Nur reines Schwarz und Weiß: keine Zwischentöne einer geglätteten Skalierung.
         for (int y = 0; y < drawn.getHeight(); y++) {
             for (int x = 0; x < drawn.getWidth(); x++) {
@@ -129,10 +129,24 @@ class CertificateQrImportTest {
 
     @Test
     void aCertificateWithoutCodeIsNamedInTheView() {
-        CertificateCodesView view = new CertificateCodesView(List.of(
+        QrCodesView view = new QrCodesView(List.of(
                 new CertificateCode("Riesige Wurzel", "Stammzertifizierungsstelle", "EE:FF", null)));
 
         assertThat(view.tooLargeShown()).isTrue();
+    }
+
+    @Test
+    void aLongChatMessageIsShownInSeveralCodesToPageThrough() {
+        String text = "Die Giraffe frisst Akazienblätter und trinkt selten. ".repeat(60);
+        QrCodesView view = QrCodesView.forText("Assistent", text);
+
+        assertThat(view.size()).isGreaterThan(1);
+        assertThat(view.positionText()).isEqualTo("1 von " + view.size());
+        for (int i = 0; i < view.size(); i++) {
+            assertThat(view.image()).as("jeder Teil hat einen Code").isNotNull();
+            view.step(1);
+        }
+        assertThat(view.tooLargeShown()).isFalse();
     }
 
     private static List<X509Certificate> read(Path file) throws Exception {

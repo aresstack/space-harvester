@@ -43,7 +43,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Bereichszusammenfassung (ADR 0034 §7, Paket 4b; Angelo 24.11.2026: Umschalter „Änderungen | Bereich“): Bestand einer
- * Auswahl statt Änderungen, Seitenbudget mit den oberen Seiten zuerst, KI-Freigabe je Seite, Ablage je Aufrufer,
+ * Auswahl statt Änderungen, alle Seiten ohne Seitenbudget, KI-Freigabe je Seite, Ablage je Aufrufer,
  * „veraltet“ über den Fingerabdruck und kein Modellaufruf für einen leeren Bereich.
  */
 class AreaSummaryTest {
@@ -92,7 +92,6 @@ class AreaSummaryTest {
     private final List<String> marked = new CopyOnWriteArrayList<>();
     private Consumer<String> recorded = ignored -> {
     };
-    private int budget = 10;
     private RuntimeException failure;
     private String answer = """
             {"zusammenfassung": "Der Bereich DEV beschreibt die Entwicklung.",
@@ -178,7 +177,7 @@ class AreaSummaryTest {
                 public Optional<String> spaceName(PageKey page, String spaceKey) {
                     return Optional.of("Entwicklung");
                 }
-            })).areas(holdings, () -> budget);
+            })).areas(holdings);
 
     @AfterEach
     void close() {
@@ -254,15 +253,40 @@ class AreaSummaryTest {
         assertThat(marked).contains("wiki");
     }
 
+    /**
+     * Angelo 24.11.2026: „nicht pauschal 300 Seiten und dann ist Schluss“. Ein großer Bereich geht vollständig ein, in
+     * mehreren Teilen, die danach zusammengeführt werden; keine Seite fällt einem Budget zum Opfer.
+     */
     @Test
-    void theBudgetKeepsTheTopPagesAndCountsTheRest() {
-        devSpace();
-        budget = 2;
+    void everyPageOfALargeAreaReachesTheModelInPartsWithoutAPageBudget() {
+        int count = 400;
+        List<CatalogPage> pages = new ArrayList<>();
+        pages.add(new CatalogPage("1", null, true, "1", "1"));
+        page("1", null, "Startseite");
+        texts.put("1", "Inhalt von Seite 1");
+        released.add("1");
+        for (int i = 2; i <= count; i++) {
+            String id = String.valueOf(i);
+            pages.add(new CatalogPage(id, "1", true, "1", "1"));
+            page(id, "1", "Thema " + id);
+            texts.put(id, "Inhalt von Seite " + id + ". " + "Erklärung ".repeat(20));
+            released.add(id);
+        }
+        stocks.put("wiki/DEV", new Stock(CONFIRMED, pages, Set.of(), List.of()));
+
         log.summarizeArea(CALLER, SPACE, false);
         runHeld();
-        assertThat(inputs.getFirst()).contains("Startseite", "Inhalt von Seite 1").doesNotContain("Freigabe")
-                // 4 abgeschnitten, eine der beiden Seiten unter 1 auch, dazu die nicht gespeicherte 5.
-                .contains("\"nichtLesbar\":3");
+
+        List<String> parts = instructions.stream().filter(AreaSummarizer.INSTRUCTIONS::equals).toList();
+        assertThat(parts).hasSizeGreaterThan(1);
+        assertThat(instructions).anyMatch(given -> given.startsWith(AreaSummarizer.COMBINE));
+        String all = String.join("\n", inputs);
+        for (int i = 2; i <= count; i++) {
+            assertThat(all).contains("\"titel\":\"Thema " + i + "\"");
+        }
+        assertThat(inputs).noneMatch(input -> input.contains("\"nichtLesbar\":") && !input.contains(
+                "\"nichtLesbar\":0"));
+        assertThat(log.areaSummary(CALLER, SPACE)).isPresent();
     }
 
     @Test

@@ -85,6 +85,18 @@ class ActivitiesBackgroundTabTest {
     }
 
     /**
+     * Angelo 24.11.2026: „Da stehen nur die Quellen, anstatt dass da in der Klammer steht, was es ist.“ Die Klammer
+     * nennt in der Spalte „Quelle“ ihre Art; die Teile darunter nennen ihre Quelle.
+     */
+    @Test
+    void theBracketSaysWhatItIsAndItsPartsNameTheirSource() {
+        List<JobStatus> rows = ActivitiesView.groupRows(ActivitiesView.tabJobs(sample(), true));
+
+        assertThat(ActivitiesView.source(rows.get(0))).isEqualTo("Nachbarseiten laden");
+        assertThat(ActivitiesView.source(sample().get(2))).isEqualTo("wiki");
+    }
+
+    /**
      * Angelo 22.11.2026: „Hintergrundfüllung“ sagte nicht, was passiert, und aufgeklappt stand darunter wieder nur
      * „Hintergrundfüllung“. Ein einzelner Teil steht ohne Klammer und heißt nach dem, was er tut; neueste zuerst.
      */

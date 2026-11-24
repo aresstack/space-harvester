@@ -1098,6 +1098,25 @@ public final class BackgroundJobs {
     }
 
     /**
+     * Statt {@link #resumeInterrupted()} beim Start: setzt nichts fort und startet nichts (Angelo 24.11.2026: „frisch
+     * gestartet, nichts angeklickt“ liefen schon 12 Aufträge). Die unterbrochenen Teile bleiben sichtbar stehen und
+     * laufen erst weiter, wenn jemand sie fortsetzt; Arbeit, die nach dem Fortsetzen neuen Teilen übergeben würde
+     * ({@link #afterResume}), bleibt liegen, bis ein Start fortsetzt.
+     *
+     * @return wie viele unterbrochene Teile stehen bleiben
+     */
+    public int keepInterrupted() {
+        int kept = (int) all().stream().filter(BackgroundJobs::interrupted).count();
+        afterResume.clear();
+        resumedOnce = true;
+        if (kept > 0) {
+            LOG.log(System.Logger.Level.INFO, "Hintergrund nach dem Neustart nicht fortgesetzt: {0} Aufträge warten "
+                    + "auf „Fortsetzen“", kept);
+        }
+        return kept;
+    }
+
+    /**
      * Lässt {@code action} einmal nach dem nächsten {@link #resumeInterrupted()} laufen, wenn beim Start alles
      * angemeldet ist, auch das offene Löschen von Quellen ({@link Jobs#sourceHold}): etwa für Arbeit, die eine Art nach
      * dem Neustart neuen Teilen übergibt (Abnahme #1112).

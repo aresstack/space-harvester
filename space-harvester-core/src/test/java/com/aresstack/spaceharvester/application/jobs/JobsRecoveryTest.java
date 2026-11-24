@@ -148,6 +148,22 @@ class JobsRecoveryTest {
     }
 
     @Test
+    void withoutResumingAtStartJobsPausedBeforeTheRestartStayPausedUntilSomeoneResumesThem() {
+        // Angelo 24.11.2026: „frisch gestartet, nichts angeklickt“ liefen schon Aufträge.
+        JobStatus job = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a", offline());
+        executor.runNext();
+        Jobs restarted = new Jobs(store, new InMemoryJobEventStore(), sourceId -> Optional.empty(), executor,
+                new JobLimits(2, 5, Duration.ofHours(1), Duration.ofDays(30)), clock);
+        List<String> resumed = new ArrayList<>();
+        restarted.recovery((status, action) -> resumed.add(status.id() + ":" + action), timer, false);
+
+        assertThat(delays).isEmpty();
+        assertThat(resumed).isEmpty();
+        assertThat(restarted.status(job.id()).lifecycle().key()).isEqualTo("PAUSED_CONNECTION_LOST");
+        assertThat(restarted.reconnectAt(job.id())).isEmpty();
+    }
+
+    @Test
     void retryingFailuresWhileRunningFollowsRightAfterThePassInTheSameEntry() {
         connect(JobTask.blocking(context -> context.processed(1)));
         CompletableFuture<Void> pass = new CompletableFuture<>();
