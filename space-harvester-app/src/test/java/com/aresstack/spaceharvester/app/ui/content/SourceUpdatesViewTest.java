@@ -709,7 +709,7 @@ class SourceUpdatesViewTest {
                 "Neu ist ein Konzept zum Beispielarchiv.", "Bauwesen Beispiel", "1 neu", "Archivumstellung",
                 "Das Archiv wird auf ein neues Format umgestellt.", "→ Neue Seite");
         assertThat(summary.reportTexts()).noneMatch(text -> text != null && text.contains("gpt-test"));
-        assertThat(SourceUpdatesView.summaryModelTip(actions.stored)).isEqualTo("Erstellt mit update-summary-v2:gpt-test");
+        assertThat(SummaryReport.modelTip(actions.stored)).isEqualTo("Erstellt mit update-summary-v2:gpt-test");
         assertThat(summary.clickSummaryText("Bauwesen Beispiel")).isTrue();
         assertThat(spaces).singleElement().satisfies(opened -> assertThat(opened).containsExactly("wiki", "BAU"));
     }
@@ -794,7 +794,7 @@ class SourceUpdatesViewTest {
                 new SummaryStatement("Text B.", List.of(new SummaryPage("2", "B", "BAU")), "Suche", null),
                 new SummaryStatement("Text C.", List.of(new SummaryPage("1", "A", "BAU")), "Archiv nochmal", null),
                 new SummaryStatement("Text D.", List.of(), "Neue Vorlage", null));
-        Map<Integer, Integer> at = SourceUpdatesView.placements(List.of(1, 2, 0, 3), statements, List.of(
+        Map<Integer, Integer> at = SummaryReport.placements(List.of(1, 2, 0, 3), statements, List.of(
                 topicPicture(0, List.of("1"), List.of("Archiv"), "Bild Archiv"),
                 topicPicture(1, List.of("1"), List.of("Archiv nochmal"), "Zweites Bild derselben Seite"),
                 topicPicture(2, List.of("99"), List.of("neue  vorlage"), "Bild über den Titel"),
@@ -962,8 +962,8 @@ class SourceUpdatesViewTest {
         SummaryStatement one = new SummaryStatement("A", List.of(new SummaryPage("1", "Eins", "BAU")), "A", null);
         SummaryStatement both = new SummaryStatement("B", List.of(new SummaryPage("2", "Zwei", "BAU"),
                 new SummaryPage("3", "Drei", "DEV")), "B", null);
-        assertThat(SourceUpdatesView.topicsBySpace(List.of(one, both)))
-                .containsEntry("BAU", List.of(one)).containsEntry(SourceUpdatesView.ACROSS_SPACES, List.of(both));
+        assertThat(SummaryReport.topicsBySpace(List.of(one, both)))
+                .containsEntry("BAU", List.of(one)).containsEntry(SummaryReport.ACROSS_SPACES, List.of(both));
     }
 
     @Test
