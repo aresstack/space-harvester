@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
-import com.aresstack.spaceharvester.app.ui.controls.Cursors;
+import static com.aresstack.spaceharvester.app.ui.content.SummaryReport.clickable;
+import static com.aresstack.spaceharvester.app.ui.content.SummaryReport.pages;
+
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -138,8 +140,10 @@ final class SourceUpdatesView extends JPanel {
     private ChangeReport shown;
     /** Die Zusammenfassung des gezeigten Updates, {@code null} ohne. */
     private UpdateSummary summary;
-    /** Die gerade gezeigte Zusammenfassung (auch die still mitgenommene), für Space-Namen der Themen. */
-    private UpdateSummary rendered;
+    /** Leseansicht: Überblick, Themen, Podcast-Markierung und Bilder der Zusammenfassung. */
+    private final SummaryReport summaryReport;
+    /** Der Bericht, zu dem die gezeigte Zusammenfassung gehört (Zahlen je Space, Seiten zum Öffnen). */
+    private ChangeReport reported;
     /** Laufender Auftrag „Zusammenfassen“; bleibt nach „Abbrechen“ gesetzt, bis er wirklich endet. */
     private Run running;
     /** Der zuletzt gesehene Zustand des laufenden Auftrags. */
@@ -212,18 +216,10 @@ final class SourceUpdatesView extends JPanel {
     private JComponent reportTitle;
     /** Podcast-Ansicht: die Bilder neben den Seitenzeilen, um sie beim Neuzeichnen wieder abzunehmen. */
     private final List<Runnable> unpicture = new ArrayList<>();
-    /** Die Teile jedes gezeigten Themas der Zusammenfassung (Nummer in {@link UpdateSummary#statements()}). */
-    private final Map<Integer, List<JComponent>> topicParts = new java.util.HashMap<>();
-    /** Nimmt die gelbe Markierung des Themas zurück, dem der Podcast gerade folgt. */
-    private final List<Runnable> unmark = new ArrayList<>();
-    /** Die Themen, von denen der Podcast gerade erzählt; bleiben markiert, auch wenn der Bericht neu gezeichnet wird. */
-    private List<Integer> followed = List.of();
-    /** Der Text jedes gezeigten Themas (Nummer in {@link UpdateSummary#statements()}), in der Reihenfolge des Berichts. */
-    private final Map<Integer, TextWithPicture> bodies = new java.util.LinkedHashMap<>();
     /** Die Bilder des Podcasts, wie sie im Bericht stehen, in seiner Reihenfolge. */
-    private List<PlacedPicture> placed = List.of();
+    private List<SummaryReport.PlacedPicture> placed = List.of();
     /** Die zuletzt gelesenen Bilder des Podcasts von {@link #picturesOf}. */
-    private List<LoadedPicture> loadedPictures = List.of();
+    private List<SummaryReport.LoadedPicture> loadedPictures = List.of();
     private UpdateSummary picturesOf;
     private int pictureLoads;
     /** Gelesene Bilder je Datei und Stand: ein neu gezeichneter Bericht liest nichts erneut. */
@@ -309,6 +305,7 @@ final class SourceUpdatesView extends JPanel {
         });
 
         reportBody.setLayout(new BoxLayout(reportBody, BoxLayout.Y_AXIS));
+        summaryReport = new SummaryReport(reportBody, summaryHost());
         reportBody.setOpaque(false);
         report.setOpaque(false);
         report.add(reportBody, BorderLayout.NORTH);
@@ -317,9 +314,10 @@ final class SourceUpdatesView extends JPanel {
         busy = new BusyOverlay(reportScroll);
         busy.onCancel(this::cancelSummary);
         if (mode == Mode.CHANGES) {
-            sky.setTrailingInset(PodcastOrb.SIZE + 2 * SkyLayer.ORB_INSET);
+            sky.setTrailingInset(PodcastOrb.SIZE + 2 * ReportLayer.ORB_INSET);
         }
-        add(new SkyLayer(busy, sky, report, mode == Mode.CHANGES ? podcast.orb() : null, reportScroll),
+        add(new ReportLayer(busy, mode == Mode.CHANGES ? podcast.orb() : null, (javax.swing.JScrollPane) reportScroll)
+                .sky(sky, report),
                 BorderLayout.CENTER);
         // Beim Sichtbarwerden einmal nachholen, was verdeckt gemeldet wurde.
         addHierarchyListener(event -> {
@@ -385,7 +383,7 @@ final class SourceUpdatesView extends JPanel {
         spoken = told;
         podcast.summary(told);
         indexTopics();
-        markFollowed();
+        summaryReport.markFollowed();
         showPictures();
         loadPictures();
     }
@@ -1013,75 +1011,12 @@ final class SourceUpdatesView extends JPanel {
         }
     }
 
-    /**
-     * Bericht unten, die Wolkenreihe als durchsichtige Ebene darüber wie über dem Lesetext der Seiten
-     * ({@link NavigableDocumentPage}); oben bekommt der Bericht so viel Platz, wie die Reihe meldet.
-     */
-    private static final class SkyLayer extends javax.swing.JLayeredPane {
-
-        /** Abstand des Podcast-Knopfs zum Rand, wie der Vorlese-Orb im Enterprise AI Client. */
-        static final int ORB_INSET = 10;
-
-        private final JComponent content;
-        private final DocumentNavigationSky sky;
-        private final JComponent orb;
-        private final JComponent scroll;
-
-        SkyLayer(JComponent content, DocumentNavigationSky sky, JComponent padded, JComponent orb,
-                 JComponent scroll) {
-            this.content = content;
-            this.sky = sky;
-            this.orb = orb;
-            this.scroll = scroll;
-            setLayout(null);
-            add(content, javax.swing.JLayeredPane.DEFAULT_LAYER);
-            add(sky, javax.swing.JLayeredPane.PALETTE_LAYER);
-            if (orb != null && scroll instanceof javax.swing.JScrollPane pane) {
-                add(orb, javax.swing.JLayeredPane.MODAL_LAYER);
-                // Bildlaufleiste erscheint oder verschwindet: der Knopf bleibt links daneben.
-                pane.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
-                    @Override
-                    public void componentResized(java.awt.event.ComponentEvent event) {
-                        doLayout();
-                    }
-                });
-            }
-            sky.addPropertyChangeListener(DocumentNavigationSky.TOP_INSET_PROPERTY, event -> {
-                Object value = sky.getClientProperty(DocumentNavigationSky.TOP_INSET_PROPERTY);
-                int inset = value instanceof Integer pixels ? Math.max(0, pixels) : 0;
-                padded.setBorder(BorderFactory.createEmptyBorder(inset, 0, 0, 0));
-                padded.revalidate();
-            });
-        }
-
-        @Override
-        public void doLayout() {
-            content.setBounds(0, 0, getWidth(), getHeight());
-            sky.setBounds(0, 0, getWidth(), getHeight());
-            if (orb != null && scroll instanceof javax.swing.JScrollPane pane) {
-                int bar = pane.getVerticalScrollBar().isVisible() ? pane.getVerticalScrollBar().getWidth() : 0;
-                int top = com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics.SKY_PADDING_TOP
-                        + (com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics.CLOUD_CHIP_HEIGHT
-                        - PodcastOrb.SIZE) / 2;
-                orb.setBounds(getWidth() - bar - ORB_INSET - PodcastOrb.SIZE, Math.max(2, top), PodcastOrb.SIZE,
-                        PodcastOrb.SIZE);
-            }
-        }
-
-        @Override
-        public Dimension getPreferredSize() {
-            return content.getPreferredSize();
-        }
-    }
-
     private int reportRenders;
 
     private void renderReport(ChangeReport found) {
         reportRenders++;
         reportBody.removeAll();
-        topicParts.clear();
-        unmark.clear();
-        bodies.clear();
+        summaryReport.clear();
         placed = List.of();
         pageParts.clear();
         unpicture.clear();
@@ -1092,15 +1027,15 @@ final class SourceUpdatesView extends JPanel {
         JLabel title = new JLabel(span ? when(update.from()) + " bis " + heading(update) : heading(update));
         title.setFont(Comic.semiBold(15f));
         title.setForeground(Comic.INK);
-        add(reportBody, title);
+        SummaryReport.add(reportBody, title);
         reportTitle = title;
         if (!span) {
-            add(reportBody, Comic.wrapped(period(update), Comic.MUTED, 12.5f));
+            SummaryReport.add(reportBody, Comic.wrapped(period(update), Comic.MUTED, 12.5f));
         }
         // Was früher in der Liste unter dem Datum stand; die Wolke oben trägt nur Datum und Benutzer.
-        add(reportBody, Comic.wrapped(counts(update), Comic.MUTED, 12.5f));
+        SummaryReport.add(reportBody, Comic.wrapped(counts(update), Comic.MUTED, 12.5f));
         if (update.mark() != null && update.mark().failedSyncs() > 0) {
-            add(reportBody, failedRow(update));
+            SummaryReport.add(reportBody, failedRow(update));
         }
         reportBody.add(Box.createVerticalStrut(10));
         if (mode == Mode.SUMMARY) {
@@ -1108,29 +1043,29 @@ final class SourceUpdatesView extends JPanel {
             return;
         }
         if (update.initial()) {
-            add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
+            SummaryReport.add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
                     + "Seitenliste gibt es dafür nicht.", Comic.TEXT, 13.5f));
             for (Map.Entry<String, Integer> space : sortedSpaces(update)) {
-                add(reportBody, Comic.wrapped("Space " + space.getKey() + ": " + pages(space.getValue()),
+                SummaryReport.add(reportBody, Comic.wrapped("Space " + space.getKey() + ": " + pages(space.getValue()),
                         Comic.MUTED, 12.5f));
             }
         } else if (found.pages().isEmpty()) {
-            add(reportBody, Comic.wrapped(NO_PAGES, Comic.MUTED, 13.5f));
+            SummaryReport.add(reportBody, Comic.wrapped(NO_PAGES, Comic.MUTED, 13.5f));
         } else {
             for (Map.Entry<ChangeKind, List<ReportedPage>> group : found.byKind().entrySet()) {
                 JLabel kind = new JLabel(kindLabel(group.getKey()) + " (" + kindCount(update, group) + ")");
                 kind.setFont(Comic.semiBold(14f));
                 kind.setForeground(Comic.INK);
                 kind.setBorder(BorderFactory.createEmptyBorder(8, 0, 4, 0));
-                add(reportBody, kind);
+                SummaryReport.add(reportBody, kind);
                 for (ReportedPage page : group.getValue()) {
                     JPanel row = pageRow(page);
-                    add(reportBody, row);
+                    SummaryReport.add(reportBody, row);
                     List<JComponent> parts = pageParts.computeIfAbsent(page.pageId(), ignored -> new ArrayList<>());
                     parts.add(row);
                     JComponent diff = diffBlock(page);
                     if (diff != null) {
-                        add(reportBody, diff);
+                        SummaryReport.add(reportBody, diff);
                         parts.add(diff);
                     }
                     reportBody.add(Box.createVerticalStrut(4));
@@ -1145,16 +1080,16 @@ final class SourceUpdatesView extends JPanel {
             more.setForeground(Comic.BLUE);
             more.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
             clickable(this::loadMore, "Die nächsten " + Math.min(rest, TEXT_PAGES) + " Seiten des Updates laden", more);
-            add(reportBody, more);
+            SummaryReport.add(reportBody, more);
         }
         String local = localCounts(update);
         if (!local.isEmpty()) {
             reportBody.add(Box.createVerticalStrut(8));
-            add(reportBody, Comic.wrapped(local, Comic.MUTED, 12.5f));
+            SummaryReport.add(reportBody, Comic.wrapped(local, Comic.MUTED, 12.5f));
         }
         // Neu gezeichnet, während der Podcast läuft (etwa nach „Weitere Seiten laden“): Markierung und Bilder bleiben.
         indexTopics();
-        markFollowed();
+        summaryReport.markFollowed();
         showPictures();
         reportBody.revalidate();
         reportBody.repaint();
@@ -1168,16 +1103,14 @@ final class SourceUpdatesView extends JPanel {
         if (mode != Mode.CHANGES) {
             return;
         }
-        unmark.forEach(Runnable::run);
-        unmark.clear();
-        topicParts.clear();
+        summaryReport.unmarkAll();
         UpdateSummary told = spoken;
         if (told == null) {
             return;
         }
         if (reportTitle != null) {
-            topicParts.put(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW,
-                    new ArrayList<>(List.of(reportTitle)));
+            summaryReport.parts(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW,
+                    List.of(reportTitle));
         }
         for (int i = 0; i < told.statements().size(); i++) {
             List<JComponent> parts = new ArrayList<>();
@@ -1185,7 +1118,7 @@ final class SourceUpdatesView extends JPanel {
                 parts.addAll(pageParts.getOrDefault(page.pageId(), List.of()));
             }
             if (!parts.isEmpty()) {
-                topicParts.put(i, parts);
+                summaryReport.parts(i, parts);
             }
         }
     }
@@ -1435,186 +1368,93 @@ final class SourceUpdatesView extends JPanel {
             // Still neu zusammenfassen: bis die neue da ist, bleibt die bisherige stehen.
             renderSummary(found, carried);
         } else if (update.initial()) {
-            add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
+            SummaryReport.add(reportBody, Comic.wrapped("Erstbefüllung: " + pages(update.pages()) + " kamen in den Bestand. Eine "
                     + "Zusammenfassung gibt es ab dem ersten Update mit Änderungen.", Comic.TEXT, 13.5f));
         } else if (found.pages().isEmpty()) {
-            add(reportBody, Comic.wrapped(NO_PAGES, Comic.MUTED, 13.5f));
+            SummaryReport.add(reportBody, Comic.wrapped(NO_PAGES, Comic.MUTED, 13.5f));
         } else if (!available) {
-            add(reportBody, Comic.wrapped(NO_MODEL_PAGE, Comic.MUTED, 13.5f));
+            SummaryReport.add(reportBody, Comic.wrapped(NO_MODEL_PAGE, Comic.MUTED, 13.5f));
         } else if (runningHere()) {
-            add(reportBody, Comic.wrapped(SUMMARIZING, Comic.MUTED, 13.5f));
+            SummaryReport.add(reportBody, Comic.wrapped(SUMMARIZING, Comic.MUTED, 13.5f));
         } else {
-            add(reportBody, Comic.wrapped(NO_SUMMARY, Comic.MUTED, 13.5f));
+            SummaryReport.add(reportBody, Comic.wrapped(NO_SUMMARY, Comic.MUTED, 13.5f));
             reportBody.add(Box.createVerticalStrut(8));
-            add(reportBody, summarizeEntry);
+            SummaryReport.add(reportBody, summarizeEntry);
         }
         reportBody.revalidate();
         reportBody.repaint();
     }
 
-    /**
-     * Die Zusammenfassung (Angelo, 21.11.2026): oben der Überblick, darunter die Themen je Space, Space mit Namen und
-     * anklickbar, darunter klein die Zahlen. Themen über mehrere Spaces stehen für sich. Je Thema Titel, kurzer Text,
-     * ein Knopf für die ausführliche KI-Zusammenfassung und die Seiten, ab {@link #OPEN_LINKS} zugeklappt. Spaces ohne
-     * Thema (etwa ohne KI-Freigabe) stehen aufklappbar am Ende. Die Modellkennung steht nur im Tooltip.
-     */
+    /** Die Zusammenfassung über den gemeinsamen Baustein ({@link SummaryReport}). */
     private void renderSummary(ChangeReport found, UpdateSummary summary) {
-        int before = reportBody.getComponentCount();
-        try {
-            renderTopics(found, summary);
+        reported = found;
+        summaryReport.render(summary, () -> {
             // Neu gezeichnet, während der Podcast läuft (etwa nach einem Abgleich): die Markierung bleibt.
-            markFollowed();
+            summaryReport.markFollowed();
             // Die Bilder stehen sofort wieder da; ob inzwischen weitere fertig sind, fragt der Hintergrund.
             showPictures();
             loadPictures();
-        } catch (RuntimeException e) {
-            // Nie eine leere Seite: was an der Darstellung scheitert, fällt auf den reinen Text zurück.
-            topicParts.clear();
-            unmark.clear();
-            bodies.clear();
-            placed = List.of();
-            while (reportBody.getComponentCount() > before) {
-                reportBody.remove(reportBody.getComponentCount() - 1);
-            }
-            add(reportBody, Comic.wrapped("Zusammenfassung", Comic.INK, 14f));
-            add(reportBody, Comic.wrapped(summary.text(), Comic.TEXT, 13.5f));
-            for (SummaryStatement statement : summary.statements()) {
-                add(reportBody, Comic.wrapped((statement.title() == null ? "" : statement.title() + ": ")
-                        + statement.text(), Comic.TEXT, 13.5f));
-            }
-        }
+        });
     }
 
-    private void renderTopics(ChangeReport found, UpdateSummary summary) {
-        rendered = summary;
-        JLabel title = new JLabel("Zusammenfassung");
-        title.setFont(Comic.semiBold(14f));
-        title.setForeground(Comic.INK);
-        add(reportBody, title);
-        WrappedText meta = Comic.wrapped(summaryMeta(summary), Comic.MUTED, 12f);
-        meta.setName("summary-meta");
-        meta.setToolTipText(summaryModelTip(summary));
-        add(reportBody, meta);
-        // Während des stillen Neu-Zusammenfassens kein Hinweis „veraltet“: die neue kommt gleich.
-        if (summary.stale() && !quietPhase()) {
-            add(reportBody, Comic.wrapped("Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht "
-                    + "alles.", Comic.ORANGE, 12.5f));
-        }
-        // Ältere Zusammenfassungen (ohne Themen) haben als Text nur ihre Aussagen aneinandergereiht: dann nur diese.
-        boolean topical = summary.statements().stream().anyMatch(statement -> statement.title() != null);
-        if (summary.text() != null && !summary.text().isBlank() && (topical || summary.statements().isEmpty())) {
-            reportBody.add(Box.createVerticalStrut(6));
-            WrappedText overview = Comic.wrapped(summary.text(), Comic.TEXT, 13.5f);
-            overview.setName("summary-overview");
-            add(reportBody, overview);
-            // Einstieg und Abschluss des Podcasts erzählen diesen Überblick: dann ist er gelb (Angelo 23.11.2026).
-            topicParts.put(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW,
-                    new ArrayList<>(List.of(overview)));
-        }
-        Map<String, List<ReportedPage>> bySpace = new java.util.LinkedHashMap<>();
-        found.pages().forEach(page -> bySpace.computeIfAbsent(page.spaceKey(), ignored -> new ArrayList<>())
-                .add(page));
-        Map<String, List<SummaryStatement>> topics = topicsBySpace(summary.statements());
-        Map<SummaryStatement, Integer> numbering = new java.util.IdentityHashMap<>();
-        for (int i = 0; i < summary.statements().size(); i++) {
-            numbering.put(summary.statements().get(i), i);
-        }
-        // Spaces mit Themen, die mit den meisten Seiten zuerst; danach was mehrere Spaces betrifft.
-        List<String> spaces = new ArrayList<>(topics.keySet());
-        spaces.remove(ACROSS_SPACES);
-        spaces.sort(java.util.Comparator.comparingInt((String key) -> -bySpace.getOrDefault(key, List.of()).size())
-                .thenComparing(key -> summary.spaceName(key), String.CASE_INSENSITIVE_ORDER));
-        if (topics.containsKey(ACROSS_SPACES)) {
-            spaces.add(0, ACROSS_SPACES);
-        }
-        boolean flat = summary.statements().stream().flatMap(statement -> statement.pages().stream())
-                .allMatch(page -> page.spaceKey() == null);
-        for (String space : spaces) {
-            reportBody.add(Box.createVerticalStrut(flat ? 0 : 12));
-            if (!flat) {
-                add(reportBody, spaceHeading(space));
+    /** Was der Bericht der Zusammenfassung von diesem Update wissen muss. */
+    private SummaryReport.Host summaryHost() {
+        return new SummaryReport.Host() {
+            @Override
+            public int pages(String spaceKey) {
+                return reportedPages(spaceKey).size();
             }
-            if (!ACROSS_SPACES.equals(space)) {
-                String numbers = spaceCounts(bySpace.getOrDefault(space, List.of()));
-                if (!numbers.isEmpty()) {
-                    add(reportBody, Comic.wrapped(numbers, Comic.MUTED, 12f));
-                }
+
+            @Override
+            public String counts(String spaceKey) {
+                return spaceCounts(reportedPages(spaceKey));
             }
-            for (SummaryStatement statement : topics.get(space)) {
-                renderTopic(statement, found, ACROSS_SPACES.equals(space), numbering.get(statement));
+
+            @Override
+            public java.util.Collection<String> spaces() {
+                return reported == null ? List.of() : reported.pages().stream().map(ReportedPage::spaceKey)
+                        .distinct().toList();
             }
-        }
-        List<String> rest = bySpace.keySet().stream().filter(key -> key != null && !topics.containsKey(key))
-                .sorted(java.util.Comparator.comparing(key -> summary.spaceName(key), String.CASE_INSENSITIVE_ORDER))
-                .toList();
-        if (!rest.isEmpty() && !flat) {
-            reportBody.add(Box.createVerticalStrut(12));
-            JPanel list = new JPanel();
-            list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
-            list.setOpaque(false);
-            for (String key : rest) {
-                JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
-                row.setOpaque(false);
-                row.add(spaceLink(key, 12.5f));
-                JLabel numbers = new JLabel("  " + spaceCounts(bySpace.get(key)));
-                numbers.setFont(Comic.regular(12f));
-                numbers.setForeground(Comic.MUTED);
-                row.add(numbers);
-                add(list, row);
+
+            @Override
+            public String title(SummaryPage page) {
+                ReportedPage found = reportedPage(page);
+                return found == null ? null : found.title();
             }
-            add(reportBody, toggle((rest.size() == 1 ? "Ein weiterer Space" : rest.size() + " weitere Spaces")
-                    + " ohne Thema in der Zusammenfassung", list, false));
-        }
-        if (summary.unreadableChanges() > 0) {
-            reportBody.add(Box.createVerticalStrut(8));
-            add(reportBody, Comic.wrapped(summary.unreadableChanges() == 1
-                    ? "Eine Änderung durfte die KI nicht lesen; sie fehlt in der Zusammenfassung."
-                    : summary.unreadableChanges() + " Änderungen durfte die KI nicht lesen; sie fehlen in der "
-                    + "Zusammenfassung.", Comic.MUTED, 12.5f));
-        }
-        reportBody.add(Box.createVerticalStrut(12));
+
+            @Override
+            public Runnable opener(SummaryPage page) {
+                ReportedPage found = reportedPage(page);
+                return found != null && openable(found) ? () -> onOpen.accept(found) : null;
+            }
+
+            @Override
+            public void openSpace(String spaceKey) {
+                onOpenSpace.accept(sourceId, spaceKey);
+            }
+
+            @Override
+            public String staleNote(UpdateSummary shownSummary) {
+                // Während des stillen Neu-Zusammenfassens kein Hinweis „veraltet“: die neue kommt gleich.
+                return shownSummary.stale() && !quietPhase()
+                        ? "Das Update hat sich danach geändert; diese Zusammenfassung kennt nicht alles." : null;
+            }
+
+            @Override
+            public String when(Instant at) {
+                return SourceUpdatesView.this.when(at);
+            }
+        };
     }
 
-    /** Schlüssel der Gruppe „Über mehrere Spaces“; kein Space-Schlüssel kann so heißen. */
-    static final String ACROSS_SPACES = "\u0000mehrere";
-    /** Bis zu so vielen Seiten stehen die Verweise eines Themas offen da, darüber zugeklappt. */
-    static final int OPEN_LINKS = 3;
-
-    /**
-     * Die Themen je Space: ein Thema mit Seiten aus genau einem Space gehört zu ihm, eines aus mehreren Spaces zu
-     * {@link #ACROSS_SPACES}, eines ohne bekannten Space (ältere Zusammenfassungen) ebenfalls dorthin, ohne Überschrift.
-     */
-    static Map<String, List<SummaryStatement>> topicsBySpace(List<SummaryStatement> statements) {
-        Map<String, List<SummaryStatement>> grouped = new java.util.LinkedHashMap<>();
-        for (SummaryStatement statement : statements) {
-            java.util.Set<String> spaces = new java.util.TreeSet<>();
-            statement.pages().stream().map(SummaryPage::spaceKey).filter(Objects::nonNull).forEach(spaces::add);
-            String key = spaces.size() == 1 ? spaces.iterator().next() : ACROSS_SPACES;
-            grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(statement);
-        }
-        return grouped;
+    private List<ReportedPage> reportedPages(String spaceKey) {
+        return reported == null ? List.of() : reported.pages().stream()
+                .filter(page -> Objects.equals(page.spaceKey(), spaceKey)).toList();
     }
 
-    private JComponent spaceHeading(String space) {
-        if (ACROSS_SPACES.equals(space)) {
-            JLabel label = new JLabel("Über mehrere Spaces");
-            label.setFont(Comic.semiBold(14f));
-            label.setForeground(Comic.INK);
-            return label;
-        }
-        return spaceLink(space, 14f);
-    }
-
-    /** Der Space mit Namen; ein Klick wählt ihn links im Baum. */
-    private JLabel spaceLink(String space, float size) {
-        JLabel link = new JLabel(rendered.spaceName(space));
-        link.setName("summary-space");
-        link.setFont(Comic.semiBold(size));
-        link.setForeground(Comic.BLUE);
-        String name = rendered.spaceName(space);
-        clickable(() -> onOpenSpace.accept(sourceId, space),
-                name.equals(space) ? "Space öffnen" : "Space " + space + " öffnen", link);
-        return link;
+    private ReportedPage reportedPage(SummaryPage page) {
+        return reported == null ? null : reported.pages().stream().filter(p -> p.pageId().equals(page.pageId()))
+                .findFirst().orElse(null);
     }
 
     /** Die Zahlen eines Space klein: „3 neu · 1 geändert“. */
@@ -1626,16 +1466,12 @@ final class SourceUpdatesView extends JPanel {
         return String.join(" · ", parts);
     }
 
-    /** Gelb wie die Treffer der Suche (ReaderFind). */
-    static final java.awt.Color PODCAST_MARK = new java.awt.Color(0xFFF59D);
-
     /**
      * Folgt dem Podcast (Angelo 22.11.2026): rollt zum ersten Thema, von dem er gerade erzählt, und hinterlegt alle
      * diese Themen gelb wie die Suche; die vorige Markierung verschwindet. Leer = nur die Markierung weg.
      */
     void followPodcast(List<Integer> statements) {
-        followed = List.copyOf(statements);
-        JComponent first = markFollowed();
+        JComponent first = summaryReport.follow(statements);
         if (first != null && reportScroll instanceof javax.swing.JScrollPane pane) {
             report.validate();
             javax.swing.JViewport port = pane.getViewport();
@@ -1648,64 +1484,14 @@ final class SourceUpdatesView extends JPanel {
         }
     }
 
-    /** Markiert die Themen, denen der Podcast gerade folgt, und nur diese; das erste markierte Teil oder null. */
-    private JComponent markFollowed() {
-        unmark.forEach(Runnable::run);
-        unmark.clear();
-        JComponent first = null;
-        // Mehrere Themen können dieselbe Seite nennen: jedes Teil nur einmal markieren, sonst hielte die zweite
-        // Markierung Gelb für den Ausgangszustand und es bliebe nach dem Zurücknehmen stehen.
-        java.util.Set<JComponent> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-        for (Integer number : followed) {
-            for (JComponent part : topicParts.getOrDefault(number, List.of())) {
-                if (!seen.add(part)) {
-                    continue;
-                }
-                first = first == null ? part : first;
-                mark(part);
-            }
-        }
-        return first;
-    }
-
-    private void mark(JComponent part) {
-        if (part instanceof TextWithPicture body) {
-            body.highlight(PODCAST_MARK);
-            unmark.add(() -> body.highlight(null));
-            return;
-        }
-        if (part instanceof javax.swing.text.JTextComponent text) {
-            try {
-                Object tag = text.getHighlighter().addHighlight(0, text.getDocument().getLength(),
-                        new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(PODCAST_MARK));
-                unmark.add(() -> text.getHighlighter().removeHighlight(tag));
-            } catch (javax.swing.text.BadLocationException e) {
-                // ein leerer Text braucht keine Markierung
-            }
-            return;
-        }
-        boolean opaque = part.isOpaque();
-        java.awt.Color background = part.getBackground();
-        part.setOpaque(true);
-        part.setBackground(PODCAST_MARK);
-        part.repaint();
-        unmark.add(() -> {
-            part.setOpaque(opaque);
-            part.setBackground(background);
-            part.repaint();
-        });
-    }
-
     /** Für Tests: wo die gelb markierten Teile im sichtbaren Ausschnitt stehen (y relativ zum Ausschnitt). */
     List<java.awt.Rectangle> markedInView() {
         List<java.awt.Rectangle> found = new ArrayList<>();
         javax.swing.JViewport port = reportScroll instanceof javax.swing.JScrollPane pane ? pane.getViewport() : null;
-        for (Integer number : followed) {
-            for (JComponent part : topicParts.getOrDefault(number, List.of())) {
-                java.awt.Rectangle at = SwingUtilities.convertRectangle(part.getParent(), part.getBounds(), report);
-                at.translate(0, port == null ? 0 : -port.getViewPosition().y);
-                found.add(at);
-            }
+        for (JComponent part : summaryReport.followedParts()) {
+            java.awt.Rectangle at = SwingUtilities.convertRectangle(part.getParent(), part.getBounds(), report);
+            at.translate(0, port == null ? 0 : -port.getViewPosition().y);
+            found.add(at);
         }
         return found;
     }
@@ -1717,101 +1503,7 @@ final class SourceUpdatesView extends JPanel {
 
     /** Gelb markierte Teile (für Tests). */
     List<String> podcastMarked() {
-        List<String> marked = new ArrayList<>();
-        for (List<JComponent> parts : topicParts.values()) {
-            for (JComponent part : parts) {
-                if (part instanceof TextWithPicture body) {
-                    if (body.highlighted()) {
-                        marked.add(body.text());
-                    }
-                } else if (part instanceof javax.swing.text.JTextComponent text
-                        && text.getHighlighter().getHighlights().length > 0) {
-                    marked.add(text.getText());
-                } else if (part.isOpaque() && PODCAST_MARK.equals(part.getBackground())) {
-                    // Leseansicht: Zeile mit Beschriftung vorn; Podcast-Ansicht: Überschrift oder Seitenzeile
-                    marked.add(part instanceof JLabel label ? label.getText()
-                            : part.getComponent(0) instanceof JLabel label ? label.getText()
-                            : ((javax.swing.text.JTextComponent) part.getComponent(0)).getText());
-                }
-            }
-        }
-        return marked;
-    }
-
-    /** Ein Thema: Titel mit Details-Knopf, kurzer Text, Seiten. */
-    private void renderTopic(SummaryStatement statement, ChangeReport found, boolean across, Integer number) {
-        reportBody.add(Box.createVerticalStrut(6));
-        List<JComponent> parts = new ArrayList<>();
-        if (number != null) {
-            topicParts.put(number, parts);
-        }
-        if (statement.title() != null && !statement.title().isBlank()) {
-            JPanel head = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
-            head.setOpaque(false);
-            JLabel topic = new JLabel(statement.title());
-            topic.setName("summary-topic");
-            topic.setFont(Comic.semiBold(13.5f));
-            topic.setForeground(Comic.INK);
-            head.add(topic);
-            if (statement.details() != null && !statement.details().isBlank()) {
-                com.aresstack.spaceharvester.app.ui.IconButton details =
-                        new com.aresstack.spaceharvester.app.ui.IconButton(
-                                com.aresstack.spaceharvester.app.ui.Glyph.SUMMARIZE, DETAILS_TIP).compact();
-                details.setName("summary-details");
-                details.setForeground(Comic.BLUE);
-                details.addActionListener(e -> showDetails(statement, found, details));
-                head.add(Box.createHorizontalStrut(4));
-                head.add(details);
-            }
-            head.setMaximumSize(new Dimension(Integer.MAX_VALUE, head.getPreferredSize().height));
-            add(reportBody, head);
-            parts.add(head);
-        }
-        String text = statement.text();
-        if (across) {
-            java.util.Set<String> names = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-            statement.pages().stream().map(SummaryPage::spaceKey).filter(Objects::nonNull)
-                    .forEach(key -> names.add(rendered.spaceName(key)));
-            if (!names.isEmpty()) {
-                text += " (" + String.join(", ", names) + ")";
-            }
-        }
-        TextWithPicture body = new TextWithPicture(text, Comic.TEXT, 13.5f);
-        body.setName("summary-text");
-        add(reportBody, body);
-        parts.add(body);
-        if (number != null) {
-            bodies.put(number, body);
-        }
-        if (statement.pages().isEmpty()) {
-            return;
-        }
-        JPanel links = new JPanel(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(
-                java.awt.FlowLayout.LEFT, 10, 0));
-        links.setOpaque(false);
-        for (SummaryPage page : statement.pages()) {
-            links.add(pageLink(page, found));
-        }
-        // Die Verweise stehen direkt unter dem Text der Meldung, auch neben ihrem Bild (UX-Manager 22.11.2026).
-        body.footer(statement.pages().size() <= OPEN_LINKS ? links
-                : toggle(pages(statement.pages().size()), links, false));
-    }
-
-    static final String DETAILS_TIP = "Ausführliche KI-Zusammenfassung dieses Themas";
-
-    /** Ein gelesenes Bild eines Themas des Podcasts. */
-    private record LoadedPicture(TopicPicture topic, PictureStage.Picture read) {
-    }
-
-    /**
-     * Ein Bild an seiner Stelle im Bericht: in der Leseansicht in der Meldung ({@link TextWithPicture}), in der
-     * Podcast-Ansicht rechts in der Zeile der ersten Seite des Themas.
-     *
-     * @param anchor wo das Bild steht
-     * @param bounds wo genau, in Koordinaten von {@code anchor}
-     */
-    private record PlacedPicture(int topic, JComponent anchor, Supplier<java.awt.Rectangle> bounds, String caption,
-                                 ImageViewer.Picture viewer) {
+        return summaryReport.marked();
     }
 
     /** So breit steht ein Bild in der Podcast-Ansicht rechts neben der Seitenzeile. */
@@ -1819,72 +1511,22 @@ final class SourceUpdatesView extends JPanel {
 
     /** Die Zusammenfassung, zu der die Bilder gehören: die gezeigte (Leseansicht) bzw. die erzählte. */
     private UpdateSummary pictured() {
-        return mode == Mode.SUMMARY ? rendered : spoken;
-    }
-
-    /** So breit wird ein Schaubild (SVG) für den Bericht gerastert: scharf auch auf Bildschirmen mit Skalierung. */
-    static final int VECTOR_RASTER_WIDTH = 2 * TextWithPicture.MAX_PICTURE_WIDTH;
-
-    /**
-     * Wo die Bilder des Podcasts im Bericht stehen (UX-Manager, 22.11.2026): jedes genau einmal, neben der ersten
-     * Meldung in der Reihenfolge des Berichts, deren Seiten sich mit denen des Themas überschneiden; sonst neben der
-     * ersten, deren Titel einem Meldungstitel des Themas gleicht; sonst nirgends, nie gesammelt am Ende. Eine Meldung
-     * trägt höchstens ein Bild.
-     *
-     * @param order      die Nummern der gezeigten Meldungen in der Reihenfolge des Berichts
-     * @param statements alle Meldungen der Zusammenfassung
-     * @return Nummer der Meldung → Stelle des Bildes in {@code pictures}
-     */
-    static Map<Integer, Integer> placements(List<Integer> order, List<SummaryStatement> statements,
-                                            List<TopicPicture> pictures) {
-        Map<Integer, Integer> at = new java.util.HashMap<>();
-        for (int p = 0; p < pictures.size(); p++) {
-            TopicPicture picture = pictures.get(p);
-            java.util.Set<String> ids = new java.util.HashSet<>(picture.pageIds());
-            java.util.Set<String> titles = new java.util.HashSet<>();
-            picture.storyTitles().stream().filter(Objects::nonNull).map(SourceUpdatesView::comparable)
-                    .forEach(titles::add);
-            Integer found = null;
-            for (Integer number : order) {
-                if (!at.containsKey(number) && number >= 0 && number < statements.size() && statements.get(number)
-                        .pages().stream().anyMatch(page -> ids.contains(page.pageId()))) {
-                    found = number;
-                    break;
-                }
-            }
-            if (found == null) {
-                for (Integer number : order) {
-                    String title = number >= 0 && number < statements.size() ? statements.get(number).title() : null;
-                    if (!at.containsKey(number) && title != null && titles.contains(comparable(title))) {
-                        found = number;
-                        break;
-                    }
-                }
-            }
-            if (found != null) {
-                at.put(found, p);
-            }
-        }
-        return at;
-    }
-
-    private static String comparable(String title) {
-        return title.strip().replaceAll("\\s+", " ").toLowerCase(Locale.GERMAN);
+        return mode == Mode.SUMMARY ? summaryReport.rendered() : spoken;
     }
 
     /** Fragt im Hintergrund, welche Bilder der Podcast zur gezeigten Zusammenfassung schon fertig hat. */
     private void loadPictures() {
         Actions current = actions.get();
         UpdateSummary of = pictured();
-        if (current == null || of == null || (mode == Mode.SUMMARY ? bodies.isEmpty() : pageParts.isEmpty())) {
+        if (current == null || of == null || (mode == Mode.SUMMARY ? !summaryReport.hasBodies() : pageParts.isEmpty())) {
             return;
         }
-        if (picturesOf != null && !samePodcast(picturesOf, of)) {
+        if (picturesOf != null && !SummaryReport.samePodcast(picturesOf, of)) {
             pictureCache.clear();
         }
         int mine = ++pictureLoads;
         runner.run(() -> readPictures(current, of), loaded -> {
-            if (mine == pictureLoads && samePodcast(pictured(), of)) {
+            if (mine == pictureLoads && SummaryReport.samePodcast(pictured(), of)) {
                 picturesOf = of;
                 loadedPictures = loaded;
                 showPictures();
@@ -1897,8 +1539,8 @@ final class SourceUpdatesView extends JPanel {
         });
     }
 
-    private List<LoadedPicture> readPictures(Actions current, UpdateSummary of) {
-        List<LoadedPicture> loaded = new ArrayList<>();
+    private List<SummaryReport.LoadedPicture> readPictures(Actions current, UpdateSummary of) {
+        List<SummaryReport.LoadedPicture> loaded = new ArrayList<>();
         for (TopicPicture topic : current.podcastPictures(of)) {
             java.nio.file.Path file = topic.picture().file();
             String key;
@@ -1917,7 +1559,7 @@ final class SourceUpdatesView extends JPanel {
                 }
                 pictureCache.put(key, read);
             }
-            loaded.add(new LoadedPicture(topic, read));
+            loaded.add(new SummaryReport.LoadedPicture(topic, read));
         }
         return loaded;
     }
@@ -1928,28 +1570,9 @@ final class SourceUpdatesView extends JPanel {
             showRowPictures();
             return;
         }
-        List<LoadedPicture> loaded = samePodcast(rendered, picturesOf) ? loadedPictures : List.of();
-        Map<Integer, Integer> at = rendered == null ? Map.of() : placements(new ArrayList<>(bodies.keySet()),
-                rendered.statements(), loaded.stream().map(LoadedPicture::topic).toList());
-        List<PlacedPicture> now = new ArrayList<>();
-        for (Map.Entry<Integer, TextWithPicture> entry : bodies.entrySet()) {
-            TextWithPicture body = entry.getValue();
-            Integer index = at.get(entry.getKey());
-            java.awt.image.BufferedImage image = index == null ? null : inline(loaded.get(index).read());
-            if (image == null) {
-                body.picture(null, null);
-                continue;
-            }
-            PictureStage.Picture read = loaded.get(index).read();
-            int position = now.size();
-            body.picture(image, read.caption());
-            body.onOpen(() -> openPicture(position, false));
-            now.add(new PlacedPicture(loaded.get(index).topic().topic(), body, body::pictureBounds, body.caption(),
-                    new ImageViewer.Picture(image, read.caption(), read.vector())));
-        }
-        placed = List.copyOf(now);
-        reportBody.revalidate();
-        reportBody.repaint();
+        List<SummaryReport.LoadedPicture> loaded = SummaryReport.samePodcast(summaryReport.rendered(), picturesOf)
+                ? loadedPictures : List.of();
+        placed = summaryReport.showPictures(loaded, position -> openPicture(position, false));
     }
 
     /**
@@ -1960,7 +1583,7 @@ final class SourceUpdatesView extends JPanel {
         unpicture.forEach(Runnable::run);
         unpicture.clear();
         UpdateSummary told = spoken;
-        List<LoadedPicture> loaded = samePodcast(told, picturesOf) ? loadedPictures : List.of();
+        List<SummaryReport.LoadedPicture> loaded = SummaryReport.samePodcast(told, picturesOf) ? loadedPictures : List.of();
         if (told == null || loaded.isEmpty()) {
             placed = List.of();
             return;
@@ -1978,14 +1601,14 @@ final class SourceUpdatesView extends JPanel {
                 }
             }
         }
-        Map<Integer, Integer> at = placements(order, told.statements(),
-                loaded.stream().map(LoadedPicture::topic).toList());
-        List<PlacedPicture> now = new ArrayList<>();
+        Map<Integer, Integer> at = SummaryReport.placements(order, told.statements(),
+                loaded.stream().map(SummaryReport.LoadedPicture::topic).toList());
+        List<SummaryReport.PlacedPicture> now = new ArrayList<>();
         java.util.Set<JPanel> used = new java.util.HashSet<>();
         for (Integer number : order) {
             Integer index = at.get(number);
             JPanel row = firstRow.get(number);
-            java.awt.image.BufferedImage image = index == null ? null : inline(loaded.get(index).read());
+            java.awt.image.BufferedImage image = index == null ? null : SummaryReport.inline(loaded.get(index).read());
             if (image == null || !used.add(row)) {
                 continue;
             }
@@ -2002,26 +1625,13 @@ final class SourceUpdatesView extends JPanel {
                     picture);
             row.add(picture, BorderLayout.EAST);
             unpicture.add(() -> row.remove(picture));
-            now.add(new PlacedPicture(loaded.get(index).topic().topic(), picture,
+            now.add(new SummaryReport.PlacedPicture(loaded.get(index).topic().topic(), picture,
                     () -> new java.awt.Rectangle(0, 0, picture.getWidth(), picture.getHeight()), read.caption(),
                     new ImageViewer.Picture(image, read.caption(), read.vector())));
         }
         placed = List.copyOf(now);
         reportBody.revalidate();
         reportBody.repaint();
-    }
-
-    /** Ob beide Zusammenfassungen denselben Podcast haben (auch neu gelesen, also nicht dasselbe Objekt). */
-    private static boolean samePodcast(UpdateSummary a, UpdateSummary b) {
-        return a != null && b != null && (a == b || com.aresstack.spaceharvester.application.podcast.UpdatePodcasts
-                .key(a).equals(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.key(b)));
-    }
-
-    private static java.awt.image.BufferedImage inline(PictureStage.Picture read) {
-        if (read.image() != null) {
-            return read.image();
-        }
-        return read.vector() == null ? null : read.vector().raster(VECTOR_RASTER_WIDTH);
     }
 
     /** Öffnet das Bild von Kapitel {@code topic} des Podcasts, wenn es im Bericht steht. */
@@ -2045,9 +1655,9 @@ final class SourceUpdatesView extends JPanel {
         if (position < 0 || position >= placed.size() || SwingUtilities.getRootPane(this) == null) {
             return false;
         }
-        PlacedPicture at = placed.get(position);
+        SummaryReport.PlacedPicture at = placed.get(position);
         JComponent anchor = at.anchor();
-        ViewerPopup popup = ViewerPopup.open(this, new ImageViewer(placed.stream().map(PlacedPicture::viewer)
+        ViewerPopup popup = ViewerPopup.open(this, new ImageViewer(placed.stream().map(SummaryReport.PlacedPicture::viewer)
                         .toList(), position, Comic.viewerLook(
                         com.aresstack.spaceharvester.app.settings.ViewerBackground.DEFAULT)),
                 () -> SwingUtilities.isDescendingFrom(anchor, this)
@@ -2066,7 +1676,7 @@ final class SourceUpdatesView extends JPanel {
 
     /** Die Bilder im Bericht, als Bildunterschriften in seiner Reihenfolge (für Tests). */
     List<String> reportPictures() {
-        return placed.stream().map(PlacedPicture::caption).toList();
+        return placed.stream().map(SummaryReport.PlacedPicture::caption).toList();
     }
 
     /** Klickt das Bild an Stelle {@code position} im Bericht an (für Tests). */
@@ -2077,74 +1687,6 @@ final class SourceUpdatesView extends JPanel {
     /** Öffnet das Bild eines Kapitels, wie es der Podcast tut (für Tests). */
     boolean cuePicture(int topic) {
         return openTopicPicture(topic);
-    }
-
-    /** Das Fenster mit der ausführlichen Zusammenfassung eines Themas; darunter die Seiten zum Öffnen. */
-    private void showDetails(SummaryStatement statement, ChangeReport found, Component owner) {
-        com.aresstack.spaceharvester.app.ui.controls.InfoPopup popup =
-                new com.aresstack.spaceharvester.app.ui.controls.InfoPopup()
-                        .text(statement.title() == null ? "Details" : statement.title(), statement.details());
-        for (SummaryPage page : statement.pages()) {
-            ReportedPage reported = found.pages().stream().filter(p -> p.pageId().equals(page.pageId())).findFirst()
-                    .orElse(null);
-            if (reported != null && openable(reported)) {
-                String title = page.title() != null && !page.title().isBlank() ? page.title() : page.pageId();
-                popup.link("→ " + title, () -> onOpen.accept(reported));
-            }
-        }
-        popup.showAt(owner, 0, owner.getHeight());
-    }
-
-    /** Ein aufklappbarer Abschnitt: Pfeil und Beschriftung, darunter der Inhalt. */
-    private static JComponent toggle(String label, JComponent content, boolean open) {
-        JPanel box = new JPanel();
-        box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
-        box.setOpaque(false);
-        // Pfeil gezeichnet wie bei „Erweitert“ (Comic.disclosure): die Schrift hat ▸/▾ nicht und zeigte ein Kästchen.
-        javax.swing.JButton head = Comic.disclosure(label, "Auf- oder zuklappen");
-        head.setName("summary-toggle");
-        head.setForeground(Comic.BLUE);
-        head.setAlignmentX(LEFT_ALIGNMENT);
-        Comic.disclose(head, open);
-        content.setVisible(open);
-        content.setAlignmentX(LEFT_ALIGNMENT);
-        head.addActionListener(e -> {
-            content.setVisible(!content.isVisible());
-            Comic.disclose(head, content.isVisible());
-            box.revalidate();
-            box.repaint();
-        });
-        add(box, head);
-        add(box, content);
-        return box;
-    }
-
-    /** „Erstellt am …“ ohne Technik; das Modell steht im Tooltip ({@link #summaryModelTip}). */
-    String summaryMeta(UpdateSummary shownSummary) {
-        return "Erstellt am " + when(shownSummary.createdAt());
-    }
-
-    static String summaryModelTip(UpdateSummary shownSummary) {
-        return shownSummary.model() == null || shownSummary.model().isBlank() ? null
-                : "Erstellt mit " + shownSummary.model();
-    }
-
-    /** Verweis einer Aussage auf eine Seite; anklickbar, wenn die Seite im Bericht steht und sich öffnen lässt. */
-    private JLabel pageLink(SummaryPage page, ChangeReport found) {
-        ReportedPage reported = found.pages().stream().filter(p -> p.pageId().equals(page.pageId())).findFirst()
-                .orElse(null);
-        String title = page.title() != null && !page.title().isBlank() ? page.title()
-                : reported != null && reported.title() != null ? reported.title() : page.pageId();
-        JLabel link = new JLabel("→ " + title);
-        link.setFont(Comic.semiBold(12.5f));
-        link.setForeground(Comic.BLUE);
-        link.setName("summary-link");
-        if (reported != null && openable(reported)) {
-            clickable(() -> onOpen.accept(reported), "Seite öffnen", link);
-        } else {
-            link.setForeground(Comic.MUTED);
-        }
-        return link;
     }
 
     private JPanel pageRow(ReportedPage page) {
@@ -2185,8 +1727,8 @@ final class SourceUpdatesView extends JPanel {
         block.setOpaque(false);
         block.setBorder(BorderFactory.createEmptyBorder(0, 20, 4, 8));
         switch (diff.status()) {
-            case NOT_PERMITTED -> add(block, Comic.wrapped("Den Inhalt darfst du nicht lesen.", Comic.MUTED, 12.5f));
-            case PREVIOUS_MISSING -> add(block, Comic.wrapped("Kein Vergleich möglich: Der bisherige Inhalt war nicht "
+            case NOT_PERMITTED -> SummaryReport.add(block, Comic.wrapped("Den Inhalt darfst du nicht lesen.", Comic.MUTED, 12.5f));
+            case PREVIOUS_MISSING -> SummaryReport.add(block, Comic.wrapped("Kein Vergleich möglich: Der bisherige Inhalt war nicht "
                     + "lokal, als der neue kam.", Comic.MUTED, 12.5f));
             default -> {
             }
@@ -2201,10 +1743,10 @@ final class SourceUpdatesView extends JPanel {
                         path.setFont(Comic.semiBold(12f));
                         path.setForeground(Comic.MUTED);
                         path.setBorder(BorderFactory.createEmptyBorder(4, 0, 1, 0));
-                        add(block, path);
+                        SummaryReport.add(block, path);
                     }
                 }
-                add(block, switch (paragraph.kind()) {
+                SummaryReport.add(block, switch (paragraph.kind()) {
                     case ADDED -> Comic.wrapped("+ " + paragraph.after(), Comic.GREEN, 12.5f);
                     case REMOVED -> Comic.wrapped("− " + paragraph.before(), Comic.RED, 12.5f);
                     case CHANGED -> Comic.wrapped("~ " + paragraph.before() + " → " + paragraph.after(), Comic.TEXT,
@@ -2212,7 +1754,7 @@ final class SourceUpdatesView extends JPanel {
                 });
             }
             if (step.truncated()) {
-                add(block, Comic.wrapped("… gekürzt", Comic.MUTED, 12f));
+                SummaryReport.add(block, Comic.wrapped("… gekürzt", Comic.MUTED, 12f));
             }
         }
         return block.getComponentCount() == 0 ? null : block;
@@ -2317,10 +1859,6 @@ final class SourceUpdatesView extends JPanel {
         return Math.max(loaded, update.kinds().getOrDefault(group.getKey(), 0));
     }
 
-    private static String pages(int count) {
-        return count == 1 ? "1 Seite" : count + " Seiten";
-    }
-
     static String kindLabel(ChangeKind kind) {
         return switch (kind) {
             case NEW -> "Neu";
@@ -2338,35 +1876,11 @@ final class SourceUpdatesView extends JPanel {
 
     private void message(String text) {
         reportBody.removeAll();
-        topicParts.clear();
-        unmark.clear();
-        bodies.clear();
+        summaryReport.clear();
         placed = List.of();
-        add(reportBody, Comic.wrapped(text, Comic.MUTED, 13.5f));
+        SummaryReport.add(reportBody, Comic.wrapped(text, Comic.MUTED, 13.5f));
         reportBody.revalidate();
         reportBody.repaint();
-    }
-
-    private static void add(JPanel column, JComponent part) {
-        part.setAlignmentX(LEFT_ALIGNMENT);
-        column.add(part);
-    }
-
-    private static void clickable(Runnable action, String tip, Component... parts) {
-        MouseAdapter click = new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                action.run();
-            }
-        };
-        // Die Textfelder fangen Mausklicks selbst ab; der Klick gilt auf Zeile und Texten gleich.
-        for (Component part : parts) {
-            Cursors.set(part, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            part.addMouseListener(click);
-            if (part instanceof JComponent component) {
-                component.setToolTipText(tip);
-            }
-        }
     }
 
     /** Ob eine Zusammenfassung gezeigt wird, die man speichern kann. */
@@ -2382,7 +1896,7 @@ final class SourceUpdatesView extends JPanel {
         StringBuilder text = new StringBuilder(heading(shown.update())).append('\n').append(period(shown.update()));
         if (mode == Mode.SUMMARY) {
             if (summary != null) {
-                text.append("\n\nZusammenfassung (").append(summaryMeta(summary)).append(')');
+                text.append("\n\nZusammenfassung (").append(summaryReport.meta(summary)).append(')');
                 text.append("\n").append(summary.text());
                 for (SummaryStatement statement : summary.statements()) {
                     text.append("\n\n");

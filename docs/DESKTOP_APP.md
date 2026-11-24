@@ -406,7 +406,13 @@ Core selbst.
   das Modell selbst über die Werkzeuge `im_bereich_suchen`, `seiten_auflisten` (je Knoten, blätternd),
   `seite_lesen` und `begriff_nachschlagen` (Begriffswissen des Wissensgraphen zu einem bestätigten Fachbegriff,
   `TermKnowledge`, Paket W7) (`ChatTools`); jeder Aufruf wird gegen den Bereich beim Senden geprüft, gelesene Seiten werden
-  fortlaufend nummeriert, die Statuszeile nennt, was das Modell gerade holt. Lehnt der Dienst Werkzeuge ab, gilt für
+  fortlaufend nummeriert, die Statuszeile nennt, was das Modell gerade holt. Ist ein Favoriten-Ordner gewählt
+  ([ADR 0034](adr/0034-favoriten-ordner-als-sammlungen.md) §5), ist er der Bereich wie ein Space: kein Seitentext
+  automatisch, die Zeile „Wissen: Ordner ‹Name› [samt Unterordnern] · n Seiten“ nennt veraltete oder nicht sichtbare
+  Favoriten als „n Favoriten nicht verfügbar“ (nachsichtige Auflösung über `SelectionHoldings`), `seiten_auflisten`
+  zeigt ohne Knoten die Unterordner als `ordner/<id>` (nur mit „mit Unterseiten“) und die direkten Favoriten (Seite
+  samt Unterseiten, Startseiten von Space oder Quelle); die Chats eines Ordners liegen unter `chats/_sammlung/<Ordner-ID>`.
+  Eine Änderung am Ordner gilt ab der nächsten Frage. Lehnt der Dienst Werkzeuge ab, gilt für
   dieses Modell bis zum Neustart der frühere Weg (ADR 0029: bis drei gewählte Seiten gehen ganz mit, sonst sucht die progressive Suche des Core, ADR 0017, nur in den gewählten Seiten
   und die besten acht Treffer kommen als Absatz samt Nachbarn oder Lesetext-Auszug mit; Kontextblock wie
   `PromptContextAssembler` des EAC mit nummerierten Auszügen, Quelle, Ort und dem Hinweis, dass Auszüge Daten sind;

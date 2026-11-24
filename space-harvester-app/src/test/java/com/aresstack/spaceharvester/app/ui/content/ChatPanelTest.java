@@ -447,30 +447,114 @@ class ChatPanelTest {
     }
 
     @Test
+    void aFolderIsTheAreaAndAChangedFolderCountsFromTheNextQuestion() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("datenhaus.md"), "# Datenhaus\n\nText.\n");
+        Files.writeString(files.resolve("nachtlauf.md"), "# Nachtlauf\n\nText.\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        var workspace = context.runtime().workspace();
+        String space = workspace.spaces("handbuch").get(0).key();
+        workspace.startSync("handbuch", space,
+                com.aresstack.spaceharvester.application.sync.SyncMode.FULL);
+        var whole = com.aresstack.spaceharvester.application.holdings.Selection.of(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.space("handbuch", space));
+        java.util.List<String> pageIds = new java.util.ArrayList<>();
+        for (int i = 0; i < 300 && pageIds.size() < 2; i++) {
+            pageIds.clear();
+            workspace.resolveSelection(whole).pages().asMap().getOrDefault("handbuch", java.util.Set.of())
+                    .forEach(pageIds::add);
+            Thread.sleep(100);
+        }
+        assertThat(pageIds).hasSize(2);
+        java.util.Collections.sort(pageIds);
+        var first = com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree("handbuch", space,
+                pageIds.get(0));
+        var second = com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree("handbuch", space,
+                pageIds.get(1));
+        var gone = com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree("handbuch", space,
+                "gibt-es-nicht.md");
+        ChatPanel[] panel = new ChatPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new ChatPanel(context);
+            panel[0].selection(new Selection.Collection("f-1", "Betrieb", java.util.List.of(first, second, gone),
+                    true));
+        });
+        awaitResolved(panel[0], 2);
+        String[] line = new String[1];
+        SwingUtilities.invokeAndWait(() -> line[0] = panel[0].knowledge());
+        assertThat(line[0]).startsWith("Wissen: Ordner Betrieb samt Unterordnern · 2 Seiten")
+                .contains("1 Favorit nicht verfügbar");
+
+        // Ein Favorit wird entfernt: Die neue Sammlung ist eine andere Auswahl, die nächste Frage kennt die Seite nicht.
+        SwingUtilities.invokeAndWait(() -> panel[0].selection(new Selection.Collection("f-1", "Betrieb",
+                java.util.List.of(first), true)));
+        awaitResolved(panel[0], 1);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].resolved().contains("handbuch", pageIds.get(1))).isFalse();
+            assertThat(panel[0].resolved().contains("handbuch", pageIds.get(0))).isTrue();
+        });
+    }
+
+    /** Wartet, bis der Chat die Auswahl mit {@code pages} Seiten aufgelöst hat. */
+    private static void awaitResolved(ChatPanel panel, int pages) throws Exception {
+        int[] seen = {-1};
+        for (int i = 0; i < 300 && seen[0] != pages; i++) {
+            SwingUtilities.invokeAndWait(() -> seen[0] = panel.resolved() == null ? -1
+                    : panel.resolved().counts().pages());
+            Thread.sleep(50);
+        }
+        assertThat(seen[0]).isEqualTo(pages);
+    }
+
+    @Test
     void theKnowledgeLineNamesTheSelectionItsPagesAndWhatIsMissing() {
-        assertThat(ChatPanel.knowledgeText(null, null, true, true)).isEqualTo(ChatPanel.NO_SELECTION);
+        assertThat(ChatPanel.knowledgeText(null, null, true, true, 0)).isEqualTo(ChatPanel.NO_SELECTION);
         Selection page = new Selection.Node("wiki", "DEV", "42", "Handbuch");
-        assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(120, 120, 0, 0), true, true))
+        assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(120, 120, 0, 0), true, true, 0))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 120 Seiten");
-        assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(120, 80, 0, 0), true, true))
+        assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(120, 80, 0, 0), true, true, 0))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 120 Seiten · 40 davon nicht geladen");
-        assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(1, 1, 0, 0), true, true))
+        assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(1, 1, 0, 0), true, true, 0))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 1 Seite");
         Selection space = new Selection.Node("wiki", "DEV", null, "Entwicklung");
-        assertThat(ChatPanel.knowledgeText(space, HoldingCounts.ZERO, true, true))
+        assertThat(ChatPanel.knowledgeText(space, HoldingCounts.ZERO, true, true, 0))
                 .isEqualTo("Wissen: Space Entwicklung · " + ChatPanel.NOT_LOADED);
-        assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(3, 3, 0, 0), false, true))
+        assertThat(ChatPanel.knowledgeText(page, new HoldingCounts(3, 3, 0, 0), false, true, 0))
                 .isEqualTo("Wissen: Handbuch samt Unterseiten · 3 Seiten · " + ExportPanel.INCOMPLETE);
-        assertThat(ChatPanel.knowledgeText(space, null, true, true))
+        assertThat(ChatPanel.knowledgeText(space, null, true, true, 0))
                 .isEqualTo("Wissen: Space Entwicklung · " + ChatPanel.NOT_LOADED);
         Selection source = new Selection.Node("wiki", null, null, "Beta");
         // Der Chat ist die Ausnahme der KI-Freigabe (Angelo, 13.11.2026): genannt, nicht gesperrt.
-        assertThat(ChatPanel.knowledgeText(source, new HoldingCounts(2010, 176, 8, 0), true, false))
+        assertThat(ChatPanel.knowledgeText(source, new HoldingCounts(2010, 176, 8, 0), true, false, 0))
                 .isEqualTo("Wissen: Beta · alle Spaces · 2010 Seiten · 1826 davon nicht geladen · "
                         + ChatPanel.NOT_ALLOWED);
         // Die globale Auswahl (Überschrift „Wissensquellen“, Angelo 16.11.2026).
         assertThat(Selection.ALL.global()).isTrue();
-        assertThat(ChatPanel.knowledgeText(Selection.ALL, new HoldingCounts(10, 10, 0, 0), true, true))
+        assertThat(ChatPanel.knowledgeText(Selection.ALL, new HoldingCounts(10, 10, 0, 0), true, true, 0))
                 .isEqualTo("Wissen: alle Wissensquellen · 10 Seiten");
+        // Ein Favoriten-Ordner (ADR 0034 §5): Ordnername und Seitenzahl, veraltete Favoriten nur gezählt.
+        Selection folder = new Selection.Collection("f-1", "Betrieb", java.util.List.of(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree("wiki", "DEV", "42")), true);
+        assertThat(ChatPanel.knowledgeText(folder, new HoldingCounts(4, 4, 0, 0), true, true, 2))
+                .isEqualTo("Wissen: Ordner Betrieb samt Unterordnern · 4 Seiten · 2 Favoriten nicht verfügbar");
+        assertThat(ChatPanel.knowledgeText(new Selection.Collection("f-1", "Betrieb", java.util.List.of(), false),
+                HoldingCounts.ZERO, true, true, 1))
+                .isEqualTo("Wissen: Ordner Betrieb · " + ChatPanel.NOT_LOADED + " · 1 Favorit nicht verfügbar");
+        assertThat(ChatPanel.allowed(null, null, folder)).as("Quelle des Favoriten nicht freigegeben").isFalse();
     }
 }
