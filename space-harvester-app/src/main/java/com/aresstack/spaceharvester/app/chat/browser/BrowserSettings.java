@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.chat.browser;
 
+import com.aresstack.enterpriseai.browser.api.BrowserAccessPolicy;
 import com.aresstack.enterpriseai.proasteion.application.browser.BrowserPolicyStore;
 import com.aresstack.enterpriseai.proasteion.application.config.BrowserAccessConfig;
 import com.aresstack.enterpriseai.proasteion.application.config.BrowserProfile;
@@ -15,9 +16,9 @@ import java.util.Map;
  * Such-URLs. Gespeichert im App-Zustand unter denselben Schlüsseln wie im Enterprise AI Client
  * ({@code browser.access.*}, {@code browser.search.urls}, {@code browser.access.internal.*},
  * {@code browser.search.internal.urls}). „Immer erlauben“ und „Immer verbieten“ der Rückfrage tragen den Host hier
- * ins aktive Profil ein.
+ * ins aktive Profil ein; für ändernde Aktionen ({@code browser_act}) merken sie den Host in eigenen Listen.
  */
-public final class BrowserSettings implements BrowserPolicyStore {
+public final class BrowserSettings implements BrowserPolicyStore, ChangeApprovals.Memory {
 
     /** Such-URL des Profils Extern ohne Angabe, wie {@code browser-search-defaults.properties} im EAC. */
     public static final String DEFAULT_EXTERNAL_SEARCH = "https://html.duckduckgo.com/html/?q={query}";
@@ -78,6 +79,42 @@ public final class BrowserSettings implements BrowserPolicyStore {
         values.put(profile.allowKey(), BrowserAccessConfig.join(config.allow()));
         values.put(profile.blockKey(), BrowserAccessConfig.join(config.block()));
         values.put(profile.searchKey(), BrowserAccessConfig.joinUrls(config.searchUrls()));
+        store.putAll(values);
+    }
+
+    /** Hosts, auf denen der Chat ändernde Browser-Aktionen ohne Rückfrage ausführt („Immer erlauben“). */
+    static final String CHANGE_ALLOW_KEY = "browser.act.change.allow";
+    /** Hosts, auf denen der Chat ändernde Browser-Aktionen nie ausführt („Immer verbieten“). */
+    static final String CHANGE_BLOCK_KEY = "browser.act.change.block";
+
+    /**
+     * Die gemerkten Antworten auf die Rückfrage vor ändernden Aktionen ({@code browser_act}, Aktion {@code change}),
+     * je Website (Angelo 24.11.2026): Regeln wie Whitelist und Blacklist, Verbieten gewinnt, sonst wird gefragt.
+     */
+    @Override
+    public synchronized BrowserAccessPolicy changes() {
+        return new BrowserAccessPolicy(BrowserAccessPolicy.Mode.BLOCK_BY_DEFAULT,
+                BrowserAccessConfig.split(store.get(CHANGE_ALLOW_KEY)),
+                BrowserAccessConfig.split(store.get(CHANGE_BLOCK_KEY)));
+    }
+
+    /** „Immer erlauben“: ändernde Aktionen auf diesem Host ohne Rückfrage. */
+    @Override
+    public void allowChanges(String host) {
+        add(CHANGE_ALLOW_KEY, host);
+    }
+
+    /** „Immer verbieten“: ändernde Aktionen auf diesem Host nie. */
+    @Override
+    public void blockChanges(String host) {
+        add(CHANGE_BLOCK_KEY, host);
+    }
+
+    /** Speichert beide Listen der ändernden Aktionen (Einstellungen › Browser). */
+    public synchronized void saveChanges(List<String> allow, List<String> block) {
+        Map<String, String> values = new HashMap<>();
+        values.put(CHANGE_ALLOW_KEY, BrowserAccessConfig.join(allow));
+        values.put(CHANGE_BLOCK_KEY, BrowserAccessConfig.join(block));
         store.putAll(values);
     }
 

@@ -1741,6 +1741,9 @@ public final class ChatPanel extends JPanel {
     com.aresstack.spaceharvester.app.chat.browser.ChatApprovalPrompt.Handle showApproval(String title,
             String description, boolean offersAlways,
             java.util.function.Consumer<com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome> answer) {
+        if (listening != null) {
+            listening.behindActivity();
+        }
         com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel thought =
                 new com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel(BubbleSide.LEFT, bubbles,
                         title, description);
@@ -1812,9 +1815,12 @@ public final class ChatPanel extends JPanel {
         };
     }
 
-    /** Die Karte „Browserrecherche“ als Aktivitätsblase im Verlauf. */
+    /** Eine Aktivitätsblase im Verlauf: die Karte „Browserrecherche“ oder die Wolke eines Werkzeugaufrufs. */
     private com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel addActivity(String title,
                                                                                          String body) {
+        if (listening != null) {
+            listening.behindActivity();
+        }
         com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel bubble =
                 new com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel(BubbleSide.LEFT, bubbles,
                         title, body);
@@ -2020,6 +2026,7 @@ public final class ChatPanel extends JPanel {
             // Angelo 24.11.2026: Webtreffer wertet je Seite ein eigener Agent aus, so viele gleichzeitig wie Tabs.
             context.webBrowser().pageEvaluator(chat.id(), turn::evaluatePage, parallel("tabs", WEB_TABS_DEFAULT));
             listener.webCard = card;
+            listener.browserTools = web.tools();
         }
         listener.turn = turn;
         send.setText(STOP);
@@ -2121,6 +2128,19 @@ public final class ChatPanel extends JPanel {
         volatile boolean discarded;
         /** Die Karte „Browserrecherche“ dieser Antwort, {@code null} ohne Websuche. */
         WebSearchCard webCard;
+        /** Die Browser-Werkzeuge dieser Antwort, {@code null} ohne Websuche. */
+        com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools browserTools;
+        /** Die Zeile der Antwortblase; wartet unsichtbar hinter den Wolken, bis Text kommt (EAC). */
+        private final JComponent row;
+        private boolean waiting;
+        /** Die laufenden Wolken der Werkzeugaufrufe; alle Wolken verschwinden mit dem Ende der Antwort (EAC). */
+        private final java.util.Map<String, com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel> clouds =
+                new java.util.HashMap<>();
+        private final List<com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel> shownClouds =
+                new ArrayList<>();
+        /** Die Wolke „Browser wird gestartet“, bis das erste Browser-Werkzeug fertig ist. */
+        private String browserStart;
+        private boolean browserSeen;
         /** Offene Rückfragen der Websuche dieser Antwort (nur EDT). */
         private final List<java.util.function.Consumer<
                 com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome>> approvals = new ArrayList<>();
@@ -2156,6 +2176,7 @@ public final class ChatPanel extends JPanel {
             this.startedNode = startedNode;
             this.bubble = bubble;
             this.links = links;
+            this.row = answeringRow;
             // Die Markdown-Ansicht rendert gedrosselt: erst wenn die Blase dadurch wächst, nach unten rollen (Codex-
             // Befund zu #966), auch nach dem letzten Delta und beim Abschluss.
             follow = new java.awt.event.ComponentAdapter() {
@@ -2171,6 +2192,10 @@ public final class ChatPanel extends JPanel {
 
         /** Ersetzt den ganzen Text der Antwortblase (Platzhalter, Fehler, Abschluss) und beendet das Streaming. */
         private void show(String markdown) {
+            if (!detached) {
+                clearClouds();
+            }
+            reveal();
             MarkdownMessageView view = bubble.view();
             if (view.isStreaming()) {
                 view.finishStreaming();
@@ -2178,6 +2203,93 @@ public final class ChatPanel extends JPanel {
             view.setMarkdown(markdown);
             bubble.revalidate();
             bubble.repaint();
+        }
+
+        /**
+         * Wie {@code ChatShellModel.startActivity} im EAC: Eine noch leere Antwort rückt hinter die neue Wolke und
+         * bleibt unsichtbar, bis ihr erster Text kommt; der „…“-Platzhalter steht so nie über der Recherche.
+         */
+        void behindActivity() {
+            if (detached || !text.isEmpty() || row == null) {
+                return;
+            }
+            waiting = true;
+            row.setVisible(false);
+            links.setVisible(false);
+        }
+
+        /** Der erste Text (oder das Ende): die Antwort erscheint hinter den Wolken. */
+        private void reveal() {
+            if (!waiting || detached) {
+                return;
+            }
+            waiting = false;
+            transcript.remove(row);
+            transcript.remove(links);
+            transcript.add(row);
+            transcript.add(links);
+            row.setVisible(true);
+            links.setVisible(links.getComponentCount() > 0);
+            transcript.revalidate();
+            transcript.repaint();
+            scrollDown();
+        }
+
+        /**
+         * Eine Wolke je Werkzeugaufruf wie im EAC. Der erste Browser-Aufruf startet Firefox: seine Wolke heißt
+         * „Browser wird gestartet“ und verschwindet, sobald er fertig ist; alle weiteren Browser-Schritte zeigt die
+         * Karte „Browserrecherche“.
+         */
+        @Override
+        public void toolStarted(String key, String name, String what) {
+            if (detached) {
+                return;
+            }
+            String title = what;
+            if (browserTools != null && browserTools.handles(name)) {
+                if (browserSeen) {
+                    return;
+                }
+                browserSeen = true;
+                browserStart = key;
+                title = WebSearchCard.STARTING;
+            }
+            var cloud = addActivity(title, "");
+            clouds.put(key, cloud);
+            shownClouds.add(cloud);
+        }
+
+        @Override
+        public void toolFinished(String key) {
+            var cloud = clouds.remove(key);
+            if (cloud == null || detached) {
+                return;
+            }
+            if (key.equals(browserStart)) {
+                removeCloud(cloud);
+                return;
+            }
+            if (cloud.getVisualState()
+                    == com.aresstack.enterpriseai.ui.comic.bubble.AnimatedThoughtBubblePanel.VisualState.RUNNING) {
+                cloud.completeSuccessfully("", null);
+            }
+        }
+
+        private void removeCloud(com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel cloud) {
+            shownClouds.remove(cloud);
+            if (cloud.getParent() != null) {
+                transcript.remove(cloud.getParent());
+                transcript.revalidate();
+                transcript.repaint();
+            }
+        }
+
+        /** Mit dem Ende der Antwort verschwinden die Wolken der Werkzeugaufrufe (EAC: transiente Wolken). */
+        private void clearClouds() {
+            clouds.clear();
+            for (var cloud : List.copyOf(shownClouds)) {
+                removeCloud(cloud);
+            }
         }
 
         @Override
@@ -2226,6 +2338,7 @@ public final class ChatPanel extends JPanel {
 
         @Override
         public void delta(String delta) {
+            reveal();
             MarkdownMessageView view = bubble.view();
             if (text.isEmpty()) {
                 // Der Platzhalter „…“ weicht dem ersten Delta; danach wird nur angehängt (gedrosselt gerendert).
@@ -2403,6 +2516,9 @@ public final class ChatPanel extends JPanel {
         return bubble;
     }
 
+    /** Die Zeile der Antwortblase, die gerade geschrieben wird (für das Warten hinter den Wolken). */
+    private JComponent answeringRow;
+
     /** Eine Antwortblase mit Markdown-Körper wie im EAC ({@code ChatTranscriptPanel.createMarkdownBubble}). */
     private AssistantMarkdownBubble addAnswer(String markdown) {
         if (mermaid == null) {
@@ -2417,6 +2533,7 @@ public final class ChatPanel extends JPanel {
         clearance.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
         transcript.add(clearance);
+        answeringRow = clearance;
         answeringSources = new SourceLinks(this::openSource);
         answeringSources.setAlignmentX(LEFT_ALIGNMENT);
         transcript.add(answeringSources);

@@ -64,8 +64,11 @@ public final class ChatWebBrowser {
         guard.delegateTo(new BrowserAccessService(this::profile,
                 profile -> BrowserAccessService.policyOf(settings.load().profile(profile)), () -> current, settings,
                 ToolApprovalGate.DEFAULT_TIMEOUT_MILLIS));
+        // Ändernde Aktionen fragen mit „Immer erlauben/verbieten“ je Website und merken die Antwort (Angelo 24.11.2026);
+        // vorher fragte jede Aktion jedes Mal, weil es keine gemerkten Regeln gab.
+        ChangeApprovals changes = new ChangeApprovals(settings, () -> current);
         this.tools = new BrowserMcpTools(browsers, documents(),
-                new ToolApprovalGate(ApprovalRules::none, current, ToolApprovalGate.DEFAULT_TIMEOUT_MILLIS));
+                new ToolApprovalGate(ApprovalRules::none, changes, ToolApprovalGate.DEFAULT_TIMEOUT_MILLIS));
     }
 
     /**
