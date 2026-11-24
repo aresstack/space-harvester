@@ -807,6 +807,71 @@ class ContentViewTest {
     }
 
     @Test
+    void theScopeToggleSwitchesBothViewsToTheAreaOverviewAndIsRememberedForEveryPage() throws Exception {
+        String before = onEdt(() -> com.aresstack.spaceharvester.app.ui.AppState.shared()
+                .get(AreaSummaryView.SCOPE_KEY));
+        try {
+            onEdt(() -> {
+                AreaSummaryView.choose(false);
+                view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
+                return null;
+            });
+            assertThat(onEdt(() -> view.detail().showsSource())).isTrue();
+            // Vorgabe „Änderungen“: die Leseansicht zeigt die Updates, unten mittig der Umschalter.
+            assertThat(onEdt(() -> view.detail().sourceView().isVisible())).isTrue();
+            assertThat(onEdt(() -> view.detail().scopeToggles())).hasSize(3)
+                    .allSatisfy(toggle -> assertThat(toggle.selected()).isEqualTo(AreaSummaryView.CHANGES));
+            assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(view.detail().scopeToggles().get(1),
+                    view.tools()))).as("Leseansicht: Umschalter in der Leiste unten").isTrue();
+
+            onEdt(() -> {
+                view.detail().scopeToggles().get(1).button(AreaSummaryView.AREA).doClick();
+                return null;
+            });
+            assertThat(onEdt(AreaSummaryView::areaChosen)).isTrue();
+            assertThat(onEdt(() -> view.detail().scopeToggles()))
+                    .allSatisfy(toggle -> assertThat(toggle.selected()).isEqualTo(AreaSummaryView.AREA));
+            assertThat(onEdt(() -> view.detail().areaView().isVisible())).as("Leseansicht: der Überblick").isTrue();
+            assertThat(onEdt(() -> view.detail().sourceView().isVisible())).isFalse();
+            assertThat(onEdt(() -> view.detail().areaView().sourceId())).isEqualTo("handbuch");
+            assertThat(onEdt(() -> view.detail().areaView().tools().isVisible())).isTrue();
+            assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
+
+            onEdt(() -> {
+                view.detail().tabs().select("Podcast-Ansicht");
+                return null;
+            });
+            assertThat(onEdt(() -> view.detail().areaPodcast().isVisible())).as("Podcast zum Überblick").isTrue();
+            assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).isFalse();
+            assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(view.detail().scopeToggles().get(2),
+                    view.tools()))).isTrue();
+            assertThat(onEdt(() -> menuEntries(view.detail())))
+                    .containsExactly(PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)");
+
+            // Eine andere Wurzel behält die Wahl (global, nicht je Seite).
+            String space = space("handbuch");
+            onEdt(() -> {
+                view.selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
+                return null;
+            });
+            assertThat(onEdt(() -> view.detail().areaPodcast().spaceKey())).isEqualTo(space);
+            assertThat(onEdt(() -> view.detail().areaPodcast().isVisible())).isTrue();
+
+            onEdt(() -> {
+                view.detail().scopeToggles().get(2).button(AreaSummaryView.CHANGES).doClick();
+                return null;
+            });
+            assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).isTrue();
+            assertThat(onEdt(AreaSummaryView::areaChosen)).isFalse();
+        } finally {
+            onEdt(() -> {
+                com.aresstack.spaceharvester.app.ui.AppState.shared().put(AreaSummaryView.SCOPE_KEY, before);
+                return null;
+            });
+        }
+    }
+
+    @Test
     void backAndForwardAlsoReturnToSourcesAndSpacesChosenInTheTree() throws Exception {
         // Angelo, 17.11.2026: Bereich um Bereich im Baum gewählt, dann Zurück – nichts passierte, weil nur Seiten im
         // Verlauf standen. Jetzt stehen Quelle und Space darin, und Bereichsanzeige und Baum folgen jedem Schritt.
