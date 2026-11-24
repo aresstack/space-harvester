@@ -152,12 +152,14 @@ class MainWindowPerspectiveTest {
             window.settings().back.doClick();
             assertThat(perspectives.isCurrent(Perspectives.COMMAND_DECK)).isTrue();
             assertThat(window.settingsOverPerspective()).isFalse();
+            assertThat(window.navSelected(AppContext.Section.SETTINGS)).as("Zahnrad nicht mehr gedrückt").isFalse();
             assertThat(visible(window.stage())).isSameAs(window.commandDeck().perspective().workspace());
             assertThat(window.split().isLeftCollapsed()).as("das Deck hat keine linke Leiste").isTrue();
             // Ein Knopf der Deck-Navigation schließt die Einstellungen ebenso.
             window.show(AppContext.Section.SETTINGS);
             ((javax.swing.AbstractButton) window.commandDeck().perspective().navigation().getComponent(1)).doClick();
             assertThat(window.settingsOverPerspective()).isFalse();
+            assertThat(window.navSelected(AppContext.Section.SETTINGS)).as("Zahnrad nicht mehr gedrückt").isFalse();
             assertThat(visible(window.stage())).isSameAs(window.commandDeck().perspective().workspace());
             // Direkt in eine andere Perspektive gewechselt: Ein zugeklappter Explorer bleibt zu.
             perspectives.select(Perspectives.HARVESTER);
@@ -167,6 +169,7 @@ class MainWindowPerspectiveTest {
             window.show(AppContext.Section.SETTINGS);
             perspectives.select(Perspectives.MISSION_CONTROL);
             assertThat(window.settingsOverPerspective()).isFalse();
+            assertThat(window.navSelected(AppContext.Section.SETTINGS)).as("Zahnrad nicht mehr gedrückt").isFalse();
             // Zurück im Space Harvester steht der Bereich von vorher, nicht die Einstellungen.
             perspectives.select(Perspectives.HARVESTER);
             assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
