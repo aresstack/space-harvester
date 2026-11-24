@@ -63,7 +63,7 @@ class SourcesViewTest {
 
         List<StatusMark> marks = find(root, StatusMark.class);
         assertThat(marks).hasSize(2);
-        // Die App prüft beim Start selbst; danach steht der Haken an der Karte.
+        // Nach der Prüfung steht der Haken an der Karte.
         await(() -> marks.get(1).state() == StatusMark.State.CONNECTED);
         assertThat(marks.get(1).getToolTipText()).isEqualTo("Verbunden · 1 Space");
 
@@ -390,6 +390,10 @@ class SourcesViewTest {
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        // Die App prüft beim Start keine Verbindung mehr (Angelo 24.11.2026: nichts ohne Klick); hier wie ein Klick auf
+        // „Verbindung prüfen …“ an jeder Karte.
+        SwingUtilities.invokeAndWait(() -> context.runtime().workspace().sources()
+                .forEach(source -> context.checkConnection(source.id(), () -> { })));
     }
 
     private static void await(BooleanSupplier condition) throws Exception {

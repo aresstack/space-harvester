@@ -56,6 +56,10 @@ class StatusViewTest {
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        // Die App prüft beim Start keine Verbindung mehr (Angelo 24.11.2026: nichts ohne Klick); hier wie ein Klick auf
+        // „Verbindung prüfen …“ an jeder Karte.
+        SwingUtilities.invokeAndWait(() -> context.runtime().workspace().sources()
+                .forEach(source -> context.checkConnection(source.id(), () -> { })));
         Workspace workspace = context.runtime().workspace();
         await(() -> context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED);
         String job = workspace.startSync("handbuch", workspace.spaces("handbuch").get(0).key()).id();
