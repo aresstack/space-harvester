@@ -256,6 +256,32 @@ public final class SourceRelations {
 
     // ---- COBOL (showExternalCallsInLeftDrawer) ---------------------------------------------------------------------
 
+    /** Project the same semantic result used by the COBOL outline, without parsing the document again. */
+    public Analysis analyzeCobol(com.aresstack.spaceharvester.mainframe.cobol.CobolSource source,
+            com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis analysis) {
+        List<Relation> copies = new ArrayList<>();
+        for (var element : analysis.elements()) {
+            if (element.kind() == com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis.Kind.COPY_STMT) {
+                int line = source.name().equals(element.span().start().source()) ? element.span().start().line() : 0;
+                copies.add(new Relation(element.name(), null, "COPY", line));
+            }
+        }
+        String diagnostic = analysis.diagnostics().isEmpty() ? null : analysis.diagnostics().getFirst().message();
+        String partial = analysis.isPartial() ? " (Teilergebnis)" : "";
+        Resources resources = copies.isEmpty()
+                ? Resources.empty(diagnostic == null ? "Keine Copybooks." : "Analyse unvollständig: " + diagnostic)
+                : new Resources("Copybooks" + partial, Map.of("COPY", copies), copies.size(), diagnostic);
+        List<CallNode> children = new ArrayList<>();
+        for (var call : analysis.knownLiteralCalls()) {
+            int line = source.name().equals(call.span().start().source()) ? call.span().start().line() : 0;
+            children.add(new CallNode("CALL " + call.target(), null, false, line, null, "CALL", List.of()));
+        }
+        Hierarchy callees = children.isEmpty()
+                ? Hierarchy.empty(analysis.isPartial() ? "Analyse unvollständig." : "Keine externen Aufrufe.")
+                : Hierarchy.of(CallNode.root("Externe Aufrufe" + partial, children), fileName(source.name()));
+        return new Analysis(resources, callees, Hierarchy.empty("(keine eingehenden Aufrufe)"));
+    }
+
     private Analysis cobol(String content, String name) {
         List<CobolCalls.Call> calls = cobolCalls.extract(content, name);
         if (calls.isEmpty()) {

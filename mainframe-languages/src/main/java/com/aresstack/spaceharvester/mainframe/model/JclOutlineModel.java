@@ -11,7 +11,16 @@ public class JclOutlineModel {
     public enum Language { JCL, COBOL, NATURAL, DDM, UNKNOWN }
 
     private final List<JclElement> elements = new ArrayList<>();
+    private List<String> analysisDiagnostics = List.of();
     private String sourceName;
+
+    public List<String> getAnalysisDiagnostics() {
+        return analysisDiagnostics;
+    }
+
+    public void setAnalysisDiagnostics(List<String> diagnostics) {
+        analysisDiagnostics = List.copyOf(diagnostics);
+    }
     private int totalLines;
     private Language language = Language.UNKNOWN;
 

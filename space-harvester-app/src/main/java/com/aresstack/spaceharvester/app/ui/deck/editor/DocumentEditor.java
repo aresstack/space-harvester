@@ -153,6 +153,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
     private EditorLanguage effective = EditorLanguage.AUTO;
     private Outline outline;
     private long parseTicket;
+    private CobolEditorAnalysis cobolEditorAnalysis;
     /** Fasst schnelles Tippen zusammen, bevor die Natural-Blöcke neu gefärbt werden. */
     private final javax.swing.Timer blocks;
     private final Runnable recolor = () -> SwingUtilities.invokeLater(this::recolorBlocks);
@@ -802,6 +803,10 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
             return;
         }
         showRelations(relationsToggle.marked());
+        if (parser.get() == SourceLanguage.COBOL) {
+            reparseCobol(ticket);
+            return;
+        }
         analyzeRelations(parser);
         String text = area.getText();
         String name = session.name();
@@ -818,6 +823,33 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
                     outline = result;
                     outlinePanel.show(Optional.ofNullable(result));
                     extraOutlines.forEach(panel -> panel.show(Optional.ofNullable(result)));
+                }
+            });
+        });
+    }
+
+    private void reparseCobol(long outlineTicket) {
+        long relationTicket = ++relationsTicket;
+        String location = session.location().isBlank() ? session.name() : session.location();
+        long revision = session.revision();
+        if (cobolEditorAnalysis == null || !cobolEditorAnalysis.matches(location, revision)) {
+            cobolEditorAnalysis = new CobolEditorAnalysis(session.store(), location, revision);
+        }
+        CobolEditorAnalysis worker = cobolEditorAnalysis;
+        String text = area.getText();
+        if (!relationsPanel.hasData()) {
+            relationsPanel.loading();
+        }
+        Thread.ofVirtual().name("deck-cobol-analysis").start(() -> {
+            CobolEditorAnalysis.Result result = worker.analyze(text, DocumentEditors.relations());
+            SwingUtilities.invokeLater(() -> {
+                if (outlineTicket == parseTicket) {
+                    outline = result.outline();
+                    outlinePanel.show(Optional.of(outline));
+                    extraOutlines.forEach(panel -> panel.show(Optional.of(outline)));
+                }
+                if (relationTicket == relationsTicket) {
+                    relationsPanel.show(result.relations());
                 }
             });
         });

@@ -15,9 +15,16 @@ class LanguagesLayeringTest {
             .importPackages("com.aresstack.spaceharvester.mainframe");
 
     @Test
+    void proLeapDoesNotLeakFromItsAdapter() {
+        noClasses().that().resideOutsideOfPackage("..mainframe.cobol.internal..")
+                .should().dependOnClassesThat().resideInAPackage("io.proleap..")
+                .check(classes);
+    }
+
+    @Test
     void parsersHaveNoUi() {
         noClasses().that().resideInAnyPackage("..mainframe.parser..", "..mainframe.model..", "..mainframe.outline..",
-                        "..mainframe.calltree..", "..mainframe.diagram..", "..mainframe.dependency..")
+                        "..mainframe.calltree..", "..mainframe.diagram..", "..mainframe.dependency..", "..mainframe.cobol..")
                 .should().dependOnClassesThat().resideInAnyPackage("javax.swing..", "java.awt..", "org.fife..",
                         "..mainframe.syntax..")
                 .check(classes);
