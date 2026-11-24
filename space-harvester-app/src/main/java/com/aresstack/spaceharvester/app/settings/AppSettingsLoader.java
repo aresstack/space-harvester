@@ -731,7 +731,9 @@ public final class AppSettingsLoader {
                     + SyncSettings.MAX_BACKGROUND_PARALLELISM);
             parallelism = SyncSettings.DEFAULT_BACKGROUND_PARALLELISM;
         }
-        boolean background = flag(get(sync, "background-fill"), true, "space-harvester." + SyncSettings.BACKGROUND_FILL,
+        // In der App aus, solange niemand sie einschaltet (Angelo 24.11.2026: synchronisiert wird nur per Klick, je
+        // Quelle; der Unterschiedsbericht soll genau das zeigen). Im Dienst bleibt sie an (ADR 0016).
+        boolean background = flag(get(sync, "background-fill"), false, "space-harvester." + SyncSettings.BACKGROUND_FILL,
                 problems);
         return new SyncSettings(
                 flag(get(sync, "events"), false, prefix + SyncSettings.EVENTS, problems),
