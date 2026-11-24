@@ -53,6 +53,8 @@ public final class FakeMvsFtpHost implements AutoCloseable {
     private final AtomicInteger logins = new AtomicInteger();
     private final AtomicInteger nextJob = new AtomicInteger(4711);
     private volatile boolean jesInterfaceLevel2 = true;
+    /** Wie der echte Host aus #1317: NLST 'PDS' ohne (*) liefert nur das Dataset selbst. */
+    private volatile boolean membersWithoutWildcard = false;
     private volatile java.util.concurrent.CountDownLatch jesRetrieveGate;
     private final java.util.concurrent.CountDownLatch jesRetrieveStalled = new java.util.concurrent.CountDownLatch(1);
 
@@ -101,6 +103,11 @@ public final class FakeMvsFtpHost implements AutoCloseable {
 
     public boolean awaitStalledRetrieve(long seconds) throws InterruptedException {
         return jesRetrieveStalled.await(seconds, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    /** NLST 'PDS' liefert auch ohne (*) die Members (älteres Verhalten des Scheinhosts). */
+    public void membersWithoutWildcard() {
+        membersWithoutWildcard = true;
     }
 
     public void jesInterfaceLevel1() {
@@ -311,6 +318,23 @@ public final class FakeMvsFtpHost implements AutoCloseable {
             TreeSet<String> all = new TreeSet<>(partitioned.keySet());
             all.addAll(sequential.keySet());
             all.stream().filter(candidate -> candidate.startsWith(prefix)).forEach(names::add);
+        } else if (name.endsWith("(*)")) {
+            // Wie z/OS: Members nur mit (*); ein sequenzielles Dataset ist dann „not a partitioned data set“.
+            String dataset = name.substring(0, name.length() - 3);
+            if (sequential.containsKey(dataset)) {
+                reply(out, "550 Data set " + dataset + " is not a partitioned data set.");
+                return;
+            }
+            if (partitioned.containsKey(dataset)) {
+                if (partitioned.get(dataset).isEmpty()) {
+                    reply(out, "550 No members found.");
+                    return;
+                }
+                names.addAll(new TreeMap<>(partitioned.get(dataset)).keySet());
+            }
+        } else if (partitioned.containsKey(name) && !membersWithoutWildcard) {
+            // Manche Hosts listen bei NLST 'PDS' (ohne (*)) nur das Dataset selbst, nicht seine Members.
+            names.add(name);
         } else if (partitioned.containsKey(name)) {
             names.addAll(new TreeMap<>(partitioned.get(name)).keySet());
         } else if (sequential.containsKey(name)) {

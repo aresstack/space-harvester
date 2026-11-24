@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.deck.ftp.commonsnet;
 
 import com.aresstack.spaceharvester.deck.ftp.TextEncodingException;
+import com.aresstack.spaceharvester.deck.ftp.TextTransform;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
@@ -11,8 +12,9 @@ import java.nio.charset.CodingErrorAction;
 import java.util.Arrays;
 
 /**
- * Satzstruktur von MVS-Textdateien bei {@code STRU R}: jeder Satz endet mit {@code FF01}, die Datei mit {@code FF02}.
- * Übernommen aus MainframeMate ({@code RecordStructureCodec} mit den dortigen Vorgaben), dort im Einsatz erprobt.
+ * Satzstruktur von MVS-Textdateien bei {@code STRU R}: Satzende, Dateiende und Füllbyte aus den Einstellungen
+ * ({@link TextTransform}, Standard {@code FF01}/{@code FF02}/{@code 00}). Übernommen aus MainframeMate
+ * ({@code RecordStructureCodec}), dort im Einsatz erprobt.
  *
  * <p>Host → Editor: Füllbytes {@code 00} sind beim Lesen schon entfernt; Satzenden werden Zeilenumbrüche, das
  * Dateiende fällt weg, ebenso der letzte Umbruch, und jede Zeile verliert nachlaufende Leer- und Steuerzeichen (FB-Sätze
@@ -20,35 +22,55 @@ import java.util.Arrays;
  */
 final class RecordStructure {
 
-    static final byte[] RECORD_END = {(byte) 0xFF, 0x01};
-    static final byte[] FILE_END = {(byte) 0xFF, 0x02};
-    static final byte PADDING = 0x00;
+    /** Satz- und Dateiende der Standard-Einstellungen ({@link TextTransform#DEFAULT}). */
+    static final byte[] RECORD_END = TextTransform.DEFAULT.recordMarkerBytes();
+    static final byte[] FILE_END = TextTransform.DEFAULT.fileEndMarkerBytes();
 
     private RecordStructure() {
     }
 
     static String decode(byte[] remote, Charset charset) {
+        return decode(remote, charset, TextTransform.DEFAULT);
+    }
+
+    /** Wie {@code RecordStructureCodec.decodeForEditor} in MainframeMate, mit den Werten aus den Einstellungen. */
+    static String decode(byte[] remote, Charset charset, TextTransform transform) {
         if (remote == null || remote.length == 0) {
             return "";
         }
-        byte[] transformed = replace(remote, RECORD_END, "\n".getBytes(charset));
-        if (endsWith(transformed, FILE_END)) {
-            transformed = Arrays.copyOf(transformed, transformed.length - FILE_END.length);
+        byte[] recordMarker = transform.recordMarkerBytes();
+        byte[] endMarker = transform.fileEndMarkerBytes();
+        byte[] transformed = recordMarker == null || recordMarker.length == 0 ? remote
+                : replace(remote, recordMarker, "\n".getBytes(charset));
+        if (endMarker != null && endMarker.length > 0 && endsWith(transformed, endMarker)) {
+            transformed = Arrays.copyOf(transformed, transformed.length - endMarker.length);
         }
-        if (transformed.length > 0 && transformed[transformed.length - 1] == (byte) 0x0A) {
+        if (transform.removeFinalNewline() && transformed.length > 0
+                && transformed[transformed.length - 1] == (byte) 0x0A) {
             transformed = Arrays.copyOf(transformed, transformed.length - 1);
         }
         return stripLines(new String(transformed, charset));
     }
 
     static byte[] encode(String text, Charset charset) throws TextEncodingException {
+        return encode(text, charset, TextTransform.DEFAULT);
+    }
+
+    /** Wie {@code RecordStructureCodec.encodeForRemote} in MainframeMate, mit den Werten aus den Einstellungen. */
+    static byte[] encode(String text, Charset charset, TextTransform transform) throws TextEncodingException {
+        byte[] recordMarker = transform.recordMarkerBytes();
+        byte[] endMarker = transform.fileEndMarkerBytes();
         String[] lines = (text == null ? "" : text).split("\n", -1);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         for (int i = 0; i < lines.length; i++) {
             out.writeBytes(bytes(rtrim(lines[i]), charset, i + 1));
-            out.writeBytes(RECORD_END);
+            if (recordMarker != null && recordMarker.length > 0) {
+                out.writeBytes(recordMarker);
+            }
         }
-        out.writeBytes(FILE_END);
+        if (endMarker != null && endMarker.length > 0) {
+            out.writeBytes(endMarker);
+        }
         return out.toByteArray();
     }
 
@@ -88,11 +110,19 @@ final class RecordStructure {
         }
     }
 
-    /** Entfernt alle Füllbytes (wie MainframeMate beim Lesen im Textmodus). */
     static byte[] withoutPadding(byte[] bytes) {
+        return withoutPadding(bytes, TextTransform.DEFAULT);
+    }
+
+    /** Entfernt alle Füllbytes wie {@code readAllBytes} in MainframeMate; ohne Füllbyte bleibt alles. */
+    static byte[] withoutPadding(byte[] bytes, TextTransform transform) {
+        Byte padding = transform.paddingByte();
+        if (padding == null) {
+            return bytes;
+        }
         ByteArrayOutputStream out = new ByteArrayOutputStream(bytes.length);
         for (byte b : bytes) {
-            if (b != PADDING) {
+            if (b != padding) {
                 out.write(b);
             }
         }
