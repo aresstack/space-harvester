@@ -107,6 +107,10 @@ final class EakteBrowser extends JPanel {
     private final SegmentedToggle viewToggle = new SegmentedToggle();
     private final ExtractionView extraction = new ExtractionView(DocumentAnalysisProvider.NONE);
     private Path temp;
+    /** Zurück/Vor über die gewählten Mappen und Dokumente (Maustasten 4/5), wie in den anderen Deck-Bereichen. */
+    private final com.aresstack.spaceharvester.deck.NavigationHistory<TreePath> visits =
+            new com.aresstack.spaceharvester.deck.NavigationHistory<>();
+    private boolean revisiting;
     /** „Speichern unter“: Ziel wählen (Dialog im Ausgabeordner der App); Tests setzen ein festes Ziel. */
     Function<String, Optional<Path>> saveTarget = this::chooseTarget;
 
@@ -273,6 +277,31 @@ final class EakteBrowser extends JPanel {
         }
     }
 
+    /** Maustaste Zurück: die vorher gewählte Mappe oder das vorher gewählte Dokument. */
+    void navigateBack() {
+        revisit(visits.back());
+    }
+
+    /** Maustaste Vor. */
+    void navigateForward() {
+        revisit(visits.forward());
+    }
+
+    private void revisit(java.util.Optional<TreePath> target) {
+        // Ein Eintrag, den „Aktualisieren“ inzwischen ersetzt hat, steht nicht mehr im Baum und wird übergangen.
+        target.filter(path -> ((DefaultMutableTreeNode) path.getLastPathComponent()).getRoot() == root)
+                .ifPresent(path -> {
+                    revisiting = true;
+                    try {
+                        tree.expandPath(path.getParentPath());
+                        tree.setSelectionPath(path);
+                        tree.scrollPathToVisible(path);
+                    } finally {
+                        revisiting = false;
+                    }
+                });
+    }
+
     /** Zur übergeordneten Mappe. */
     void up() {
         Folder chosen = chosenFolder();
@@ -309,6 +338,10 @@ final class EakteBrowser extends JPanel {
 
     /** Ein Dokument im Baum gewählt: rechts zeigen; eine Mappe: lesen. */
     private void selectionChanged() {
+        TreePath path = tree.getSelectionPath();
+        if (path != null && !revisiting) {
+            visits.add(path);
+        }
         if (selected() != null) {
             previewDelay.restart();
         } else {

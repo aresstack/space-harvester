@@ -124,6 +124,10 @@ final class DocumentPane extends JPanel {
     private final JPanel drawer = new JPanel(drawerCards);
     private String activeDrawer = DRAWER_NONE;
     private Doc current;
+    /** Zurück/Vor über die gezeigten Dokumente (Maustasten 4/5), wie in den anderen Deck-Bereichen. */
+    private final com.aresstack.spaceharvester.deck.NavigationHistory<Doc> visits =
+            new com.aresstack.spaceharvester.deck.NavigationHistory<>();
+    private boolean revisiting;
 
     DocumentPane(Actions actions) {
         super(new BorderLayout());
@@ -541,6 +545,9 @@ final class DocumentPane extends JPanel {
     private void select(Doc doc, boolean load) {
         boolean switched = current != doc;
         current = doc;
+        if (!revisiting) {
+            visits.add(doc);
+        }
         if (switched) {
             clearDrawer();
         }
@@ -551,6 +558,25 @@ final class DocumentPane extends JPanel {
         showCurrent();
         if (load && doc.opened == null) {
             actions.open(doc.tab);
+        }
+    }
+
+    /** Maustaste Zurück: das vorher gezeigte Dokument, sofern es noch offen ist. */
+    void navigateBack() {
+        visits.back().filter(docs::containsValue).ifPresent(this::revisit);
+    }
+
+    /** Maustaste Vor. */
+    void navigateForward() {
+        visits.forward().filter(docs::containsValue).ifPresent(this::revisit);
+    }
+
+    private void revisit(Doc doc) {
+        revisiting = true;
+        try {
+            select(doc, true);
+        } finally {
+            revisiting = false;
         }
     }
 

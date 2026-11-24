@@ -481,9 +481,23 @@ public final class CommandDeck {
                     ndv.navigateForward();
                 }
             }
+            case BETAVIEW -> {
+                if (back) {
+                    betaView.navigateBack();
+                } else {
+                    betaView.navigateForward();
+                }
+            }
+            case EAKTE -> {
+                if (back) {
+                    eakte.navigateBack();
+                } else {
+                    eakte.navigateForward();
+                }
+            }
             default -> {
-                // Terminal belegt die Seitentasten selbst mit F-Tasten (Einstellungen › Maus); die übrigen haben
-                // keinen Verlauf.
+                // Home hat keinen Verlauf; das Terminal belegt die Seitentasten selbst mit F-Tasten (Einstellungen ›
+                // Maus).
             }
         }
     }
