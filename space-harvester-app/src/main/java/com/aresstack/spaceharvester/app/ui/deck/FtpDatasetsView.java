@@ -153,8 +153,6 @@ final class FtpDatasetsView extends JPanel {
         pathFrame.addButton(reload);
         path.addActionListener(e -> navigate(path.getText(), true));
         path.setToolTipText("HLQ, Dataset oder Pfad; Pfeil runter springt in die Liste");
-        InputFrame filterFrame = InputFrame.search(filter);
-        filterFrame.addClearButton();
         filter.setToolTipText("<html>Filter auf den Namen, Groß-/Kleinschreibung egal.<br>"
                 + "Auf MVS: enthält; mit / am Anfang ein Regex (etwa <b>/^J.*L$</b>).<br>"
                 + "Sonst ein Regex. Rot: ungültig oder nichts gefunden.</html>");
@@ -195,20 +193,12 @@ final class FtpDatasetsView extends JPanel {
         });
         expandAll.addActionListener(e -> expandTree(true));
         collapseAll.addActionListener(e -> expandTree(false));
-        JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
-        tools.setOpaque(false);
-        for (IconButton tool : new IconButton[] {sortButton, detailsButton, groupButton, expandAll, collapseAll}) {
-            tools.add(tool);
-        }
-        JPanel east = new JPanel(new BorderLayout(6, 0));
-        east.setOpaque(false);
-        east.add(tools, BorderLayout.WEST);
-        east.add(filterFrame, BorderLayout.CENTER);
+        // Oben nur der Pfad; Filter und Knöpfe der Liste stehen im Kopf der Seitenleiste wie im Space Harvester,
+        // Zuklappen/Aufklappen in ihrer Fußleiste (Angelo 24.11.2026).
         JPanel head = new JPanel(new BorderLayout(10, 0));
         head.setOpaque(false);
         head.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
         head.add(pathFrame, BorderLayout.CENTER);
-        head.add(east, BorderLayout.EAST);
 
         // „Neu …“ als Zeile über der Liste, mit ✕ (Meldungskästen oben mit ✕).
         newBar.setOpaque(false);
@@ -326,10 +316,20 @@ final class FtpDatasetsView extends JPanel {
         messagePanel.add(listMessage, BorderLayout.CENTER);
         listArea.add(messagePanel, MESSAGE);
         message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listArea, documentPanel);
+        // Seitenleiste wie der Explorer im Space Harvester: Kopf mit Überschrift und Filter, unten die gemeinsame
+        // Fußleiste; unter der Arbeitsfläche rechts die Leiste mit der Lupe (DeckBars.withFind).
+        JPanel side = new JPanel(new BorderLayout(0, 6));
+        side.setOpaque(false);
+        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead("Datasets", filter)
+                .actions(sortButton, detailsButton, groupButton), BorderLayout.NORTH);
+        side.add(listArea, BorderLayout.CENTER);
+        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
+                com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll), null, null),
+                BorderLayout.SOUTH);
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, side, DeckBars.withFind(documentPanel));
         ComicDivider.install(split, Comic.PALETTE);
         split.setResizeWeight(0.42);
-        split.setBorder(BorderFactory.createEmptyBorder(0, 12, 8, 12));
+        split.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 0));
         split.setOpaque(false);
 
         add(north, BorderLayout.NORTH);

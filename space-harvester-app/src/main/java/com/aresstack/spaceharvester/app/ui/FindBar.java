@@ -408,9 +408,9 @@ public final class FindBar extends JPanel {
             Dimension button = findButton.getPreferredSize();
             Dimension middle = tools.getPreferredSize();
             Dimension field = search.getPreferredSize();
-            int height = Math.max(button.height, Math.max(middle.height, field.height));
             int width = button.width + GAP + Math.max(middle.width, field.width);
-            return new Dimension(width + insets.left + insets.right, height + insets.top + insets.bottom);
+            // Überall dieselbe Höhe wie die Fußleisten der Seitenleisten (Angelo 24.11.2026).
+            return new Dimension(width + insets.left + insets.right, Comic.FOOT_HEIGHT);
         }
 
         @Override

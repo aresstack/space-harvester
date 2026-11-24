@@ -257,8 +257,9 @@ public final class Explorer {
     private final PlaceholderField filter = new PlaceholderField(14, "Titel filtern …");
     private final Node top = new Node(new Note("Wissensquellen"));
     /** Kopf: Überschrift und Filterfeld; als globale Auswahl gelb hinterlegt wie ein gewählter Knoten im Baum. */
-    private final JPanel head = new JPanel(new BorderLayout(0, 6));
-    private final JLabel heading = Comic.caption("Wissensquellen");
+    private final com.aresstack.spaceharvester.app.ui.controls.SideHead head =
+            new com.aresstack.spaceharvester.app.ui.controls.SideHead("Wissensquellen", filter);
+    private final JLabel heading = head.heading();
     /** Rechts neben der Überschrift, tut dasselbe wie der Klick auf sie: zeigt, dass man hier wählen kann. */
     private final IconButton selectAll = new IconButton(Glyph.SELECT_ALL, ALL_TIP);
     /** Rechts von „Alles auswählen“: das Bestandszeichen über alle Quellen, in der Spalte der Zeilen. */
@@ -652,16 +653,9 @@ public final class Explorer {
         // Kopf wie in der Quellenverwaltung: Comic-Überschrift, darunter das Filterfeld.
         // Die Überschrift ist anklickbar: sie wählt alle Wissensquellen; dann ist der ganze Kopf samt Filterfeld
         // gelb hinterlegt, als ein Feld (Angelo, 16.11.2026).
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 2));
-        JPanel title = new JPanel(new BorderLayout(4, 0));
-        title.setOpaque(false);
-        title.add(heading, BorderLayout.CENTER);
+        JPanel title = head.title();
         // Rechtsbündig wie die Symbole der Zeilen (Angelo, 16.11.2026): „Alles auswählen“, dann das Bestandszeichen
         // über der Spalte der Bestandszeichen; rechts davon bleibt die Spalte der Sterne frei.
-        JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
-        actions.setOpaque(false);
-        actions.add(selectAll);
         allBadge.setHorizontalAlignment(JLabel.CENTER);
         allBadge.setPreferredSize(new java.awt.Dimension(BADGE_WIDTH, RoundHover.SIZE));
         // Beim Darüberfahren Kreispfeile; der Klick aktualisiert nach Rückfrage alle Quellen (Angelo, 16.11.2026).
@@ -686,12 +680,9 @@ public final class Explorer {
                 }
             }
         });
-        actions.add(allBadge);
-        actions.add(javax.swing.Box.createRigidArea(new java.awt.Dimension(ACTION_WIDTH, RoundHover.SIZE)));
-        title.add(actions, BorderLayout.EAST);
+        head.actions(selectAll, allBadge,
+                javax.swing.Box.createRigidArea(new java.awt.Dimension(ACTION_WIDTH, RoundHover.SIZE)));
         selectAll.addActionListener(e -> selectAll());
-        head.add(title, BorderLayout.NORTH);
-        head.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter), BorderLayout.CENTER);
         heading.setToolTipText(ALL_TIP);
         Cursors.set(heading, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         MouseAdapter chooseAll = new MouseAdapter() {
@@ -720,19 +711,13 @@ public final class Explorer {
         collapseAll.addActionListener(e -> collapseAll());
         showCurrent.setEnabled(false);
         showCurrent.addActionListener(e -> showCurrent());
-        JPanel foot = new JPanel(new BorderLayout());
-        foot.setOpaque(false);
-        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
-        buttons.setOpaque(false);
-        buttons.add(collapseAll);
-        buttons.add(showCurrent);
-        foot.add(buttons, BorderLayout.WEST);
         // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
         note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
-        foot.add(note, BorderLayout.CENTER);
         favoritesOnly.addActionListener(e -> showOnlyFavorites(!onlyFavorites));
-        foot.add(favoritesOnly, BorderLayout.EAST);
-        root.add(foot, BorderLayout.SOUTH);
+        // Die gemeinsame Fußleiste aller Seitenleisten, so hoch wie die Leiste mit der Lupe daneben.
+        root.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
+                com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, showCurrent), note,
+                favoritesOnly), BorderLayout.SOUTH);
         context.onChange(ignored -> refreshSources());
         refreshSources();
     }
