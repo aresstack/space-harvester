@@ -110,8 +110,6 @@ final class DocumentPane extends JPanel {
     final IconButton notesToggle = tool(ComposerIcons.pencil(), "Notizen ein-/ausblenden");
     final IconButton marksToggle = tool(BetaViewIcons.flag(), "Markierte Bereiche ein-/ausblenden");
     final IconButton searchToggle = tool(ComposerIcons.magnifier(), "Volltextsuche im Dokument ein-/ausblenden");
-    final IconButton close = tool(ComposerIcons.close(), "Dokument schließen (auch auf dem Server)");
-    final IconButton closeAll = tool(BetaViewIcons.closeAll(), "Alle Dokumente schließen (auch auf dem Server)");
     static final String DRAWER_NONE = "none";
     static final String DRAWER_NOTES = "notes";
     static final String DRAWER_MARKS = "marks";
@@ -161,30 +159,21 @@ final class DocumentPane extends JPanel {
         notesToggle.addActionListener(e -> toggleDrawer(DRAWER_NOTES));
         marksToggle.addActionListener(e -> toggleDrawer(DRAWER_MARKS));
         searchToggle.addActionListener(e -> toggleDrawer(DRAWER_SEARCH));
-        close.addActionListener(e -> withCurrent(doc -> actions.close(doc.tab)));
-        closeAll.addActionListener(e -> {
-            if (!docs.isEmpty()) {
-                actions.closeAll();
-            }
-        });
         searchField.addActionListener(e -> fireSearch());
 
-        // Reihenfolge wie die Werkzeugleiste in MainframeMate (DocumentPreviewPanel); bricht bei schmaler Breite um.
-        JPanel tools = new JPanel(new WrapLayout(FlowLayout.RIGHT, 2, 2));
-        tools.setOpaque(false);
-        for (JComponent part : new JComponent[] {refresh, first, previous, pageField, pageCount, next, last,
-                download, downloadOptions, bookmark, print, info, quickInfo, notesToggle, marksToggle, searchToggle,
-                close, closeAll}) {
-            tools.add(part);
-        }
-        // Zwei Zeilen: oben die Dokumente (brechen bei schmaler Breite um), darunter die Werkzeuge zum gewählten.
-        // In einer gemeinsamen Zeile schnitten die Werkzeuge bei 960 px den Titel ab.
+        // Reihenfolge wie die Werkzeugleiste in MainframeMate (DocumentPreviewPanel). Die Werkzeuge stehen mittig in
+        // der Fußleiste unter dem Dokumentbereich neben der Lupe, nicht mehr oben (Angelo, 24.11.2026); Schließen
+        // macht das Kreuz im Reiter des Dokuments, „Alle schließen“ steht in dessen Kontextmenü. Reicht die Breite
+        // nicht (960 px), stehen die hinteren Werkzeuge im Menü am Ende, die Leiste bleibt einzeilig.
+        footTools = new com.aresstack.spaceharvester.app.ui.controls.OverflowRow(refresh, first, previous, pageField,
+                pageCount, next, last, download, downloadOptions, bookmark, print, info, quickInfo, notesToggle,
+                marksToggle, searchToggle);
+        // Oben nur noch die offenen Dokumente als Reiter mit Kreuz (brechen bei schmaler Breite um).
         JPanel head = new JPanel(new BorderLayout(0, 4));
         head.setOpaque(false);
         head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(6, 10, 6, 10)));
         head.add(pillRow, BorderLayout.CENTER);
-        head.add(tools, BorderLayout.SOUTH);
         JPanel top = new JPanel(new BorderLayout());
         top.setOpaque(false);
         top.add(head, BorderLayout.NORTH);
@@ -203,6 +192,13 @@ final class DocumentPane extends JPanel {
         add(center, BorderLayout.CENTER);
         showCurrent();
     }
+
+    /** Die Werkzeuge zum gewählten Dokument für die Fußleiste des Command Deck neben der Lupe. */
+    JComponent footTools() {
+        return footTools;
+    }
+
+    private final JComponent footTools;
 
     /** Die Schublade unter den Werkzeugen: Notizen, markierte Bereiche oder Volltextsuche (wie MainframeMate). */
     private JComponent buildDrawer() {
@@ -499,10 +495,12 @@ final class DocumentPane extends JPanel {
         if (doc == null) {
             doc = new Doc(tab);
             docs.put(tab.key(), doc);
-            ComposerToggleButton pill = new ComposerToggleButton(null, shortLabel(tab), tooltip(tab));
-            pill.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-            pill.getAccessibleContext().setAccessibleName(tab.label());
             Doc target = doc;
+            // Kreuz im Reiter wie bei der Verbindung (Angelo, 24.11.2026); schließt auch auf dem Server.
+            ComposerToggleButton pill = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(null,
+                    shortLabel(tab), tooltip(tab), "Dokument schließen (auch auf dem Server; auch Mittelklick)",
+                    () -> actions.close(target.tab));
+            pill.getAccessibleContext().setAccessibleName(tab.label());
             pill.addActionListener(e -> select(target, true));
             pill.setComponentPopupMenu(menu(target));
             group.add(pill);
@@ -617,8 +615,6 @@ final class DocumentPane extends JPanel {
         notesToggle.setEnabled(loaded);
         marksToggle.setEnabled(loaded);
         searchToggle.setEnabled(loaded);
-        close.setEnabled(has);
-        closeAll.setEnabled(!docs.isEmpty());
     }
 
     /** Höchstlänge des Titels in der Pille; der volle Titel steht im Tooltip. */
