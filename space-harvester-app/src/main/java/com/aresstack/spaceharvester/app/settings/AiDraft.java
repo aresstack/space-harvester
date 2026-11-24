@@ -757,6 +757,9 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         append(yaml, inner, AiServiceSettings.PODCAST_VOICE_COHOST, speech.podcastCohost());
         append(yaml, inner, AiServiceSettings.READ_ALOUD_MODEL, speech.readAloudModel());
         append(yaml, inner, AiServiceSettings.READ_ALOUD_VOICE, speech.readAloudVoice());
+        append(yaml, inner, AiServiceSettings.PODCAST_PAUSE_MILLIS, digits(speech.podcastPauseMillis()));
+        append(yaml, inner, AiServiceSettings.PODCAST_SPEECH_ATTEMPTS, digits(speech.podcastAttempts()));
+        append(yaml, inner, AiServiceSettings.PODCAST_SPEECH_WORKERS, digits(speech.podcastWorkers()));
         if (retryCount() != null) {
             yaml.append(inner).append("retries: ").append(retryCount()).append('\n');
         }
@@ -783,6 +786,10 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         if (value != null) {
             yaml.append(indent).append(key).append(": ").append(quote(value)).append('\n');
         }
+    }
+
+    private static String digits(Integer value) {
+        return value == null ? null : value.toString();
     }
 
     private static String quote(String value) {

@@ -92,6 +92,9 @@ class ConfigurationParityTest {
                 podcast-voice-cohost: Thomas
                 read-aloud-model: tts-vorlesen
                 read-aloud-voice: Max
+                podcast-pause-millis: 500
+                podcast-speech-attempts: 4
+                podcast-speech-workers: 3
                 external-processing-sources:
                   - confluence
               cache:
@@ -234,7 +237,8 @@ class ConfigurationParityTest {
         assertThat(appAi.deadline()).isEqualTo(ai.deadlineUse())
                 .isEqualTo(new AiServiceSettings.ModelUse("fristen-modell", 4096, "low"));
         assertThat(appAi.speech()).isEqualTo(ai.speech())
-                .isEqualTo(new AiServiceSettings.Speech("tts-podcast", "Jana", "Thomas", "tts-vorlesen", "Max"));
+                .isEqualTo(new AiServiceSettings.Speech("tts-podcast", "Jana", "Thomas", "tts-vorlesen", "Max", 500, 4,
+                        3));
         assertThat(appAi.externalProcessingSources()).containsExactlyInAnyOrderElementsOf(
                 ai.externalProcessingSources());
         assertThat(appAi.externalProcessingSources()).isEqualTo(List.of("confluence"));

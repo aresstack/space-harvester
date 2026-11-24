@@ -1226,7 +1226,13 @@ public final class AppSettingsLoader {
                         text(get(ai, AiServiceSettings.PODCAST_VOICE_HOST), problems),
                         text(get(ai, AiServiceSettings.PODCAST_VOICE_COHOST), problems),
                         text(get(ai, AiServiceSettings.READ_ALOUD_MODEL), problems),
-                        text(get(ai, AiServiceSettings.READ_ALOUD_VOICE), problems)));
+                        text(get(ai, AiServiceSettings.READ_ALOUD_VOICE), problems),
+                        count(ai, AiServiceSettings.PODCAST_PAUSE_MILLIS, 0,
+                                AiServiceSettings.Speech.MAX_PODCAST_PAUSE_MILLIS, problems),
+                        count(ai, AiServiceSettings.PODCAST_SPEECH_ATTEMPTS, 1,
+                                AiServiceSettings.Speech.MAX_PODCAST_ATTEMPTS, problems),
+                        count(ai, AiServiceSettings.PODCAST_SPEECH_WORKERS, 1,
+                                AiServiceSettings.Speech.MAX_PODCAST_WORKERS, problems)));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1240,6 +1246,26 @@ public final class AppSettingsLoader {
                 draft.imageModel(), draft.imageTokens(), draft.visionLevel(), draft.imageLevel(),
                 draft.summary().use(), draft.summaryPlan().use(), draft.podcast().use(), draft.imagePlan().use(),
                 draft.deadline().use(), draft.speech());
+    }
+
+    /**
+     * Eine ganze Zahl der Sprachausgabe ({@code space-harvester.ai.<key>}) von {@code min} bis {@code max} oder
+     * {@code null}, wenn leer; ein unlesbarer Wert ist ein Problem und lässt die Vorgabe des Core gelten.
+     */
+    private Integer count(Map<?, ?> ai, String key, int min, int max, List<String> problems) {
+        String text = text(get(ai, key), problems);
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String stripped = text.strip();
+        if (stripped.matches("\\d{1,7}")) {
+            int value = Integer.parseInt(stripped);
+            if (value >= min && value <= max) {
+                return value;
+            }
+        }
+        problems.add("space-harvester.ai." + key + ": ganze Zahl von " + min + " bis " + max);
+        return null;
     }
 
     /** Eine eigene Modellzeile ({@code <prefix>-model}, {@code -max-tokens}, {@code -thinking}) als Eingaben. */
