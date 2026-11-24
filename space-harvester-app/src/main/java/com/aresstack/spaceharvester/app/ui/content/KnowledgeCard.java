@@ -38,7 +38,7 @@ final class KnowledgeCard {
     private int released;
     private List<String> sources = List.of();
     private int done;
-    private int total = 1;
+    private int total;
     private boolean finished;
 
     /**
@@ -100,9 +100,12 @@ final class KnowledgeCard {
         update();
     }
 
-    /** Fortschritt der Arbeit: {@code done} von {@code total} Schritten; der Balken geht nie zurück. */
+    /**
+     * Fortschritt der Arbeit: {@code done} gelesene von {@code total} gefundenen Seiten (Angelo 24.11.2026: keine feste
+     * Höchstzahl); ohne Treffer kein Balken. Beide Zahlen wachsen nur.
+     */
     void progress(int done, int total) {
-        this.total = Math.max(1, total);
+        this.total = Math.max(this.total, Math.max(0, total));
         this.done = Math.max(this.done, Math.min(done, this.total));
         update();
     }
@@ -167,7 +170,9 @@ final class KnowledgeCard {
             text.append(text.isEmpty() ? "" : "\n").append(Texts.count(released, "Seite", "Seiten"))
                     .append(" für KI freigegeben");
         }
-        text.append(" [[bar:").append(done).append('/').append(total).append("]]");
+        if (total > 0) {
+            text.append(" [[bar:").append(done).append('/').append(total).append("]]");
+        }
         return text.toString();
     }
 

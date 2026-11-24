@@ -58,6 +58,12 @@ final class ComposerButtonStyle {
 
     /** Paint plate/wash and set the foreground the glyph and text will use. */
     static void paintBackground(AbstractButton button, Graphics graphics, Color accent, boolean filled) {
+        paintBackground(button, graphics, accent, filled, null);
+    }
+
+    /** As above; {@code flatTint} (if not null) replaces the standard glyph color of an enabled flat button. */
+    static void paintBackground(AbstractButton button, Graphics graphics, Color accent, boolean filled,
+            Color flatTint) {
         Graphics2D g2 = (Graphics2D) graphics.create();
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -80,9 +86,9 @@ final class ComposerButtonStyle {
             } else if (hovered) {
                 g2.setColor(HOVER_WASH);
                 g2.fillRoundRect(0, 0, button.getWidth(), button.getHeight(), HOVER_ARC, HOVER_ARC);
-                button.setForeground(flatForeground());
+                button.setForeground(flatTint != null ? flatTint : flatForeground());
             } else {
-                button.setForeground(flatForeground());
+                button.setForeground(flatTint != null ? flatTint : flatForeground());
             }
             if (button.isFocusOwner()) {
                 paintFocusRing(g2, button, filled && enabled ? Color.WHITE : active, filled ? FILLED_ARC : HOVER_ARC);

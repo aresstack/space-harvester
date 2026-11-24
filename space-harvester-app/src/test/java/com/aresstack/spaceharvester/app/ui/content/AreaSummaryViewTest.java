@@ -177,6 +177,37 @@ class AreaSummaryViewTest {
         assertThat(view.summarizeOffered()).isFalse();
     }
 
+    /**
+     * Fehler 24.11.2026: Der Lauf endete sofort, die Ansicht stand wieder auf „Noch kein Überblick“. Jetzt steht der
+     * Grund in der Ansicht, ob der Start abgelehnt wird oder der Auftrag scheitert.
+     */
+    @Test
+    void aRefusedStartShowsTheReasonInTheView() {
+        actions.failWith = new SummaryUnavailableException(SummaryUnavailableException.Reason.AREA_NOT_LOADED,
+                "wiki-ungeladen");
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.area("wiki-ungeladen", "BAU");
+        assertThat(view.texts()).contains("Von diesem Bereich ist noch keine Seite geladen; erst laden, dann "
+                + "zusammenfassen.", AreaSummaryView.NO_SUMMARY);
+        assertThat(view.busy()).isFalse();
+    }
+
+    @Test
+    void aFailedRunShowsItsReasonInTheViewUntilTheNextStart() throws Exception {
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.area("wiki-fehler", null);
+        assertThat(view.busy()).isTrue();
+
+        com.aresstack.spaceharvester.application.jobs.JobStatus failed = SourceUpdatesViewTest.FakeActions.job(
+                "job-area-1", JobState.FAILED);
+        shared.jobs.forEach(listener -> listener.changed(failed));
+        SwingUtilities.invokeAndWait(() -> { });
+
+        assertThat(view.busy()).isFalse();
+        assertThat(view.texts()).contains("Überblick fehlgeschlagen: Modell nicht erreichbar. "
+                + AreaSummaryView.FAILURE_HINT, AreaSummaryView.NO_SUMMARY);
+    }
+
     @Test
     void theToggleIsRememberedGloballyAndDefaultsToChanges() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
@@ -200,6 +231,7 @@ class AreaSummaryViewTest {
         UpdateSummary stored;
         boolean available = true;
         boolean failEmpty;
+        RuntimeException failWith;
         final List<String> summarized = new ArrayList<>();
         final List<AreaSummaryView.Target> asked = new ArrayList<>();
 
@@ -216,6 +248,9 @@ class AreaSummaryViewTest {
 
         @Override
         public JobStatus summarize(AreaSummaryView.Target target, boolean interactive) {
+            if (failWith != null) {
+                throw failWith;
+            }
             if (failEmpty) {
                 throw new SummaryUnavailableException(SummaryUnavailableException.Reason.EMPTY_AREA,
                         target.sourceId());

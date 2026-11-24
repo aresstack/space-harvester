@@ -467,6 +467,49 @@ class WorkspaceTest {
         }
     }
 
+    /**
+     * Fehler 24.11.2026: „Zusammenfassen“ unter „Bereich“ endete sofort ohne Überblick. In der echten Laufzeit bekam
+     * das Modell bei einem Space ohne geladene Seite nur {@code "seiten":[]}. Jetzt nennt der Start den Grund und fragt
+     * kein Modell.
+     */
+    @Test
+    void anAreaWithoutLoadedPagesSaysWhyInsteadOfAskingTheModelWithNothing() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger asked = new java.util.concurrent.atomic.AtomicInteger();
+        com.sun.net.httpserver.HttpServer model = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        model.createContext("/", exchange -> {
+            asked.incrementAndGet();
+            byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(500, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        model.start();
+        try {
+            extraConfig = """
+                      ai:
+                        base-url: http://127.0.0.1:%d/v1
+                        chat-model: test-chat
+                        external-processing-sources:
+                          - handbuch
+                    """.formatted(model.getAddress().getPort());
+            Workspace workspace = start().workspace();
+            String space = workspace.spaces("handbuch").get(0).key();
+            assertThat(await(workspace, workspace.startSync("handbuch", space)).state()).isEqualTo(JobState.COMPLETED);
+            assertThat(workspace.areaSummariesAvailable()).isTrue();
+            for (String level : java.util.Arrays.asList(space, null)) {
+                org.assertj.core.api.Assertions.assertThatThrownBy(() -> workspace.summarizeArea("handbuch", level,
+                        true)).isInstanceOfSatisfying(
+                        com.aresstack.spaceharvester.application.changelog.SummaryUnavailableException.class,
+                        e -> assertThat(e.reason()).isEqualTo(com.aresstack.spaceharvester.application.changelog
+                                .SummaryUnavailableException.Reason.AREA_NOT_LOADED));
+            }
+            assertThat(asked).hasValue(0);
+        } finally {
+            model.stop(0);
+        }
+    }
+
     @Test
     void aFormatButtonFirstLoadsWithoutHoldingsAndThenWritesTheFileAsItsOwnJob() throws Exception {
         AppRuntime started = start();

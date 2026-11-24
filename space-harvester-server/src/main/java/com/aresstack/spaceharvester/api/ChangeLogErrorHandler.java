@@ -30,6 +30,7 @@ class ChangeLogErrorHandler {
                     case NO_MODEL -> "Für Zusammenfassungen ist kein Chat-Modell eingestellt.";
                     case INITIAL_LOAD -> "Die Erstbefüllung wird nicht zusammengefasst.";
                     case EMPTY_AREA -> "Der Bereich hat noch keine Seite, die sich zusammenfassen lässt.";
+                    case AREA_NOT_LOADED, AREA_NOT_RELEASED -> e.getMessage() + ".";
                 });
         problem.setType(URI.create(TYPE_BASE + "summary-unavailable"));
         problem.setTitle("Zusammenfassung nicht möglich");
