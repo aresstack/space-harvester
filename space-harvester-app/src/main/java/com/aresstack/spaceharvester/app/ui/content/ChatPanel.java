@@ -343,6 +343,12 @@ public final class ChatPanel extends JPanel {
     private boolean editorFocused;
 
     private Selection selection;
+    /**
+     * Die offene Ansicht des Chats für den Vorrang ({@code Foreground}, Angelo 24.11.2026): je gewählter Seite bzw.
+     * Bereich eine neue Kennung; beim Wechsel wird die alte verlassen, ihre Arbeit verliert den Vorrang.
+     */
+    private String view;
+    private static final java.util.concurrent.atomic.AtomicLong VIEWS = new java.util.concurrent.atomic.AtomicLong();
     /** Die Schnellaktionen für die untere Leiste; sichtbar nur im Reiter Chat. */
     private final JPanel quickActions = new JPanel(
             new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 6, 4));
@@ -1025,6 +1031,20 @@ public final class ChatPanel extends JPanel {
         apply(scope());
     }
 
+    /** Verlässt die bisherige Ansicht und öffnet die neue; ohne Auswahl keine. */
+    private void openView(Selection selection) {
+        com.aresstack.spaceharvester.application.jobs.Foreground.close(view);
+        view = selection == null ? null : "ansicht-" + VIEWS.incrementAndGet();
+        if (view != null) {
+            com.aresstack.spaceharvester.application.jobs.Foreground.open(view);
+        }
+    }
+
+    /** Für Tests: die offene Ansicht. */
+    String view() {
+        return view;
+    }
+
     /** Was der Chat als Bereich nimmt: vorne die Leseansicht mit offener Seite, sonst die Auswahl im Baum. */
     Selection scope() {
         return readingFront && reading != null ? reading : treeSelection;
@@ -1035,6 +1055,7 @@ public final class ChatPanel extends JPanel {
             return;
         }
         this.selection = selection;
+        openView(selection);
         ChatNode next = selection == null ? null
                 : selection.global() ? ChatNode.ALL
                 : selection instanceof Selection.Collection collection ? ChatNode.collection(collection.folderId())
@@ -2031,6 +2052,7 @@ public final class ChatPanel extends JPanel {
         send.setIcon(ComposerIcons.stop());
         updateHeaderActions();
         send.setToolTipText("Antwort abbrechen");
+        turn.inView(view);
         turn.start();
     }
 

@@ -239,6 +239,57 @@ public class Jobs implements AutoCloseable {
         this.parallelDownloads = limits.parallelDownloads();
         markInterrupted();
         purgeExpired();
+        Foreground.onLeave(leaving);
+    }
+
+    /** Die Angaben, dazu {@link #PRIORITY}, wenn der Aufrufer für eine offene Ansicht arbeitet (außer Downloads). */
+    private static Map<String, String> withView(JobType type, Map<String, String> parameters) {
+        String view = Foreground.view();
+        if (view == null || type.download() || parameters.containsKey(PRIORITY)) {
+            return Map.copyOf(parameters);
+        }
+        Map<String, String> marked = new java.util.HashMap<>(parameters);
+        marked.put(PRIORITY, view);
+        return Map.copyOf(marked);
+    }
+
+    /** Ob der Auftrag für eine offene Ansicht arbeitet ({@link #PRIORITY}). */
+    private static boolean prioritized(Job job) {
+        return job.parameters != null && Foreground.isOpen(job.parameters.get(PRIORITY));
+    }
+
+    /**
+     * Die Ansicht ist verlassen: Ihre wartenden Aufträge reihen sich ab jetzt normal ein; ihre laufenden belegen ab
+     * jetzt einen Platz, auch wenn alle belegt sind, und halten so den nächsten Start auf. Abgebrochen wird keiner.
+     */
+    private void demote(String view) {
+        List<Job> demoted = new ArrayList<>();
+        lock.lock();
+        try {
+            for (Job job : open.values()) {
+                if (job.slotless && job.state == JobState.RUNNING && job.parameters != null
+                        && view.equals(job.parameters.get(PRIORITY))) {
+                    job.slotless = false;
+                    if (!ownLane(job)) {
+                        running++;
+                        if (job.type.followUp()) {
+                            runningFollowUps++;
+                        }
+                        if (job.type.background()) {
+                            runningBackground++;
+                        }
+                    }
+                    demoted.add(job);
+                }
+            }
+        } finally {
+            lock.unlock();
+        }
+        for (Job job : demoted) {
+            job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, PRIORITY_ENDED, PRIORITY_ENDED_TEXT,
+                    null, null, null, null);
+        }
+        dispatch();
     }
 
     /**
@@ -283,6 +334,22 @@ public class Jobs implements AutoCloseable {
      * Hintergrund startet er nicht bei nur einem Platz und nicht nach {@link #interruptBackground()}.
      */
     public static final String OWN_LANE = "jobs.ownLane";
+
+    /**
+     * Angabe: die offene Ansicht, für die der Auftrag arbeitet ({@link Foreground}). Gesetzt, wenn er im Kontext einer
+     * offenen Ansicht angenommen wird. Solange sie offen ist, startet er vor allen anderen und ohne freien Platz; wird
+     * sie verlassen, reiht er sich normal ein bzw. belegt ab dann einen Platz (Angelo 24.11.2026).
+     */
+    public static final String PRIORITY = "jobs.priority";
+    /** Code des Hinweises: der Auftrag startet mit Vorrang der offenen Ansicht. */
+    public static final String PRIORITY_STARTED = "PRIORITY_STARTED";
+    static final String PRIORITY_STARTED_TEXT = "Vorrang der offenen Ansicht: startet sofort, ohne auf einen Platz zu "
+            + "warten";
+    /** Code des Hinweises: die Ansicht ist verlassen, der Auftrag verliert den Vorrang. */
+    public static final String PRIORITY_ENDED = "PRIORITY_ENDED";
+    static final String PRIORITY_ENDED_TEXT = "Ansicht verlassen: läuft ohne Vorrang weiter und belegt einen Platz";
+    /** Vom Verlassen einer Ansicht ({@link Foreground#close}); fest gehalten, weil {@link Foreground} schwach hält. */
+    private final java.util.function.Consumer<String> leaving = this::demote;
 
     /**
      * Angabe eines Auftrags, der wie ein Hintergrundauftrag das Ende des Dienstes übersteht: Er gilt danach als
@@ -338,7 +405,7 @@ public class Jobs implements AutoCloseable {
         Objects.requireNonNull(parameters, "parameters");
         purgeExpired();
         Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner,
-                Map.copyOf(parameters), task, clock.instant());
+                withView(type, parameters), task, clock.instant());
         JobStatus status;
         lock.lock();
         try {
@@ -379,7 +446,7 @@ public class Jobs implements AutoCloseable {
         Objects.requireNonNull(parameters, "parameters");
         purgeExpired();
         Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner,
-                Map.copyOf(parameters), task, clock.instant());
+                withView(type, parameters), task, clock.instant());
         job.starting = true;
         JobStatus status;
         lock.lock();
@@ -439,7 +506,7 @@ public class Jobs implements AutoCloseable {
         Map<String, String> withAwaited = new java.util.HashMap<>(parameters);
         withAwaited.put(AWAITS, awaited);
         Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner,
-                Map.copyOf(withAwaited), task, clock.instant());
+                withView(type, withAwaited), task, clock.instant());
         job.awaiting = awaited;
         lock.lock();
         try {
@@ -1845,7 +1912,12 @@ public class Jobs implements AutoCloseable {
         try {
             Job job;
             while ((job = next()) != null) {
-                if (job.type.download()) {
+                job.slotless = !job.type.download() && !ownLane(job) && prioritized(job);
+                if (job.slotless) {
+                    // Vorrang der offenen Ansicht: ohne Platz; belegt erst einen, wenn die Ansicht verlassen wird.
+                    job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, PRIORITY_STARTED,
+                            PRIORITY_STARTED_TEXT, null, null, null, null);
+                } else if (job.type.download()) {
                     preparing++;
                     job.stage = JobStage.PREPARING;
                 } else if (!ownLane(job)) {
@@ -1879,7 +1951,8 @@ public class Jobs implements AutoCloseable {
             job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag gestartet", null, null,
                     null, null);
             try {
-                executor.execute(() -> run(job));
+                String view = job.slotless ? job.parameters.get(PRIORITY) : null;
+                executor.execute(() -> Foreground.inJob(view, () -> run(job)));
             } catch (RejectedExecutionException e) {
                 complete(job, new JobFailedException(SHUTDOWN, "Der Auftrag konnte nicht gestartet werden, "
                         + "weil der Dienst beendet wird"));
@@ -1911,6 +1984,14 @@ public class Jobs implements AutoCloseable {
         Job pick = null;
         Job backgroundPick = null;
         boolean othersWaiting = false;
+        // Vorrang der offenen Ansicht (Angelo 24.11.2026): vor allen anderen und ohne freien Platz.
+        for (Job job : queued) {
+            if (job.awaiting == null && !job.starting && !job.type.download() && !heldBySource(job) && !held(job)
+                    && prioritized(job)) {
+                queued.remove(job);
+                return job;
+            }
+        }
         for (Job job : queued) {
             if (job.awaiting != null || job.starting) {
                 continue;
@@ -2153,6 +2234,10 @@ public class Jobs implements AutoCloseable {
     /** Unter dem Sperrobjekt: gibt den Platz eines beendeten Auftrags frei. */
     private void release(Job job) {
         if (ownLane(job)) {
+            return;
+        }
+        if (job.slotless) {
+            job.slotless = false;
             return;
         }
         if (!job.type.download()) {
@@ -2736,6 +2821,8 @@ public class Jobs implements AutoCloseable {
         volatile boolean shutdownInterrupted;
         /** Ob „wartet, nur ein Platz eingestellt“ schon gemeldet ist. */
         boolean singleSlotNoted;
+        /** Läuft mit Vorrang der offenen Ansicht ohne Platz ({@link #PRIORITY}); unter dem Sperrobjekt. */
+        boolean slotless;
         /** Ob „wartet auf …“ für die laufende Sperre schon gemeldet ist. */
         boolean waitingNoted;
 
