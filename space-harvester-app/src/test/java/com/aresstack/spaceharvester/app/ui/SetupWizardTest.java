@@ -431,7 +431,8 @@ class SetupWizardTest {
         SwingUtilities.invokeAndWait(() -> {
             AiSettingsPanel panel = new AiSettingsPanel(context);
             javax.swing.JComponent models = panel.modelsComponent();
-            // Hoch genug für alle Zeilen: Reicht die Höhe nicht, legt das Raster nach Mindestgrößen aus.
+            // Hoch genug für alle Zeilen, auch wenn neue dazukommen: Reicht die Höhe nicht einmal für die
+            // Mindestgrößen, schrumpft das Raster Zeilen auf null und nichts steht mehr bündig.
             models.setSize(700, 1800);
             layout(models);
             assertThat(panel.dimensions.isVisible()).as("Dimension unter „Erweitert“").isFalse();
@@ -439,6 +440,7 @@ class SetupWizardTest {
             assertThat(panel.checkParallel.getParent().isVisible()).as("Sätze zugleich unter „Erweitert“").isFalse();
             assertThat(panel.chunkTokens.isVisible()).isFalse();
             panel.advanced.doClick();
+            models.setSize(700, Math.max(1800, models.getMinimumSize().height));
             layout(models);
             assertThat(panel.dimensions.isVisible()).isTrue();
             // Modellfelder tragen ▾ im Feld (InputFrame): verglichen wird die äußere Kante des Felds.
