@@ -158,8 +158,18 @@ class VerbQueriesTest {
         assertThat(all).isEqualTo(queries.verbs(null, null, null, 50, null));
         assertThat(some).isEqualTo(queries.verbs(null, within("1", "2", "3", "4"), null, 50, null));
 
+        // Die Fundstellen eines Verbs: dieselben wie ohne Merken, für jedes Verb und jede Auswahl.
+        for (VerbQueries.Verb verb : all.verbs()) {
+            assertThat(remembering.occurrences(null, null, verb.lemma(), verb.fromText(), 50))
+                    .isEqualTo(queries.occurrences(null, null, verb.lemma(), verb.fromText(), 50));
+            assertThat(remembering.occurrences(null, within("1", "9"), verb.lemma(), verb.fromText(), 1))
+                    .isEqualTo(queries.occurrences(null, within("1", "9"), verb.lemma(), verb.fromText(), 1));
+        }
+        assertThat(remembering.occurrences(null, null, "gibtesnicht", false, 50)).isEmpty();
+        int afterOccurrences = reads.get();
+
         remembering.invalidate();
         assertThat(remembering.verbs(null, null, null, 50, null)).isEqualTo(all);
-        assertThat(reads).hasValue(2);
+        assertThat(reads).hasValue(afterOccurrences + 1);
     }
 }
