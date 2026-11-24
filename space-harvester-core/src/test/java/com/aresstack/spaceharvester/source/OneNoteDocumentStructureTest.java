@@ -51,6 +51,18 @@ class OneNoteDocumentStructureTest {
         });
     }
 
+    @Test
+    void previewSeparatesVerifiedPages() throws IOException {
+        var preview = new OneNotePreviewReader(new TikaDocumentStructure(), fixtureLimits())
+                .read("notes.one", fixture());
+        assertThat(preview.hasPageBoundaries()).isTrue();
+        assertThat(preview.sections()).hasSize(2);
+        assertThat(preview.sections().get(0).text()).contains("Section1Page1Content")
+                .doesNotContain("Section1Page2Content");
+        assertThat(preview.sections().get(1).text()).contains("Section1Page2Content")
+                .doesNotContain("Section1Page1Content");
+    }
+
     private static ExtractionLimits fixtureLimits() {
         ExtractionLimits defaults = ExtractionLimits.DEFAULTS;
         return new ExtractionLimits(defaults.maxFileBytes(), defaults.maxChars(), defaults.unpackRatio(),

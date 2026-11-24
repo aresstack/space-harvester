@@ -110,7 +110,7 @@ public final class AttachmentViewerPanel extends JPanel {
     private final JScrollPane documentPane;
     /** Der Klartext der gezeigten Text- oder Dokumentansicht. */
     private String shownText = "";
-    private final JPanel spreadsheetPane = new JPanel(new BorderLayout());
+    private final JPanel structuredPreviewPane = new JPanel(new BorderLayout());
     private final ViewerButton previous;
     private final ViewerButton next;
     private final ViewerButton download;
@@ -220,8 +220,8 @@ public final class AttachmentViewerPanel extends JPanel {
         documentPane = com.aresstack.spaceharvester.app.ui.Comic.scroll(documentArea);
         documentPane.setBorder(BorderFactory.createEmptyBorder());
         documentPane.setVisible(false);
-        spreadsheetPane.setVisible(false);
-        spreadsheetPane.setOpaque(true);
+        structuredPreviewPane.setVisible(false);
+        structuredPreviewPane.setOpaque(true);
 
         previous = new ViewerButton(new ScaledIcon(ComposerIcons.chevronLeft(), 2),
                 "Vorherige Seite (Pfeiltaste links oder Bild auf)");
@@ -249,7 +249,7 @@ public final class AttachmentViewerPanel extends JPanel {
         }
         layers.add(textPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 10));
         layers.add(documentPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 10));
-        layers.add(spreadsheetPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 11));
+        layers.add(structuredPreviewPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 11));
         mailPart.setOpaque(true);
         mailPart.setBackground(ResearchUiPalette.LIGHT_CONTROL_BG);
         mailPart.setVisible(false);
@@ -277,7 +277,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 int inset = 8; // die Textansicht eines Anhangs blättert nicht
                 textPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
                 documentPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
-                spreadsheetPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
+                structuredPreviewPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
                 mailPart.setBounds(0, 0, w, h);
                 previous.setBounds(0, h / 3, ARROW_W, h / 3);
                 next.setBounds(w - ARROW_W, h / 3, ARROW_W, h / 3);
@@ -436,7 +436,7 @@ public final class AttachmentViewerPanel extends JPanel {
     /** Ob der Viewer {@code attachment} selbst zeigt (sonst „keine Vorschau“ bzw. nur über die Vorschau der Quelle). */
     public static boolean showsFormatted(ReaderAttachment attachment) {
         return switch (attachment.kind()) {
-            case PDF, IMAGE, TEXT, PRESENTATION, SPREADSHEET, MAIL -> true;
+            case PDF, IMAGE, TEXT, PRESENTATION, SPREADSHEET, NOTEBOOK, MAIL -> true;
             case OFFICE -> WordDocumentPreview.supports(attachment.fileName(), attachment.mediaType());
             default -> false;
         };
@@ -469,7 +469,8 @@ public final class AttachmentViewerPanel extends JPanel {
 
     /** Whether the locally rendered read-only spreadsheet is visible. */
     public boolean isShowingSpreadsheet() {
-        return spreadsheetPane.isVisible();
+        return structuredPreviewPane.isVisible() && structuredPreviewPane.getComponentCount() == 1
+                && structuredPreviewPane.getComponent(0) instanceof SpreadsheetPreviewPanel;
     }
 
     /** Der Zoom in Prozent (bezogen auf die gezeichnete Seite bzw. das Bild). */
@@ -839,7 +840,7 @@ public final class AttachmentViewerPanel extends JPanel {
             headings(List.of());
         }
         showingText = false;
-        spreadsheetPane.setVisible(false);
+        structuredPreviewPane.setVisible(false);
         closeMailPart();
         mail = null;
         canvas.setStaticImage(null);
@@ -853,6 +854,16 @@ public final class AttachmentViewerPanel extends JPanel {
             case OTHER:
                 showUnavailable(NO_PREVIEW_TEXT);
                 return;
+            case NOTEBOOK:
+                requestOriginal(bytes -> decodeAside(() -> {
+                    try {
+                        return com.aresstack.spaceharvester.source.OneNotePreviewReader.shared()
+                                .read(attachment.fileName(), bytes);
+                    } catch (java.io.IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                }, this::showOneNote), reason -> showUnavailable("OneNote nicht lesbar: " + reasonText(reason)));
+                break;
             case SPREADSHEET:
                 loading("Tabelle wird geladen …");
                 requestOriginal(bytes -> decodeAside(() -> {
@@ -973,21 +984,34 @@ public final class AttachmentViewerPanel extends JPanel {
         updateInfo();
     }
 
+    private void showOneNote(com.aresstack.spaceharvester.application.assets.OneNotePreview data) {
+        if (data.sections().isEmpty()) {
+            showUnavailable("OneNote: kein lesbarer Text (" + data.outcome().status() + ", "
+                    + data.outcome().reason().map(Enum::name).orElse("-") + ")");
+            return;
+        }
+        showStructuredPreview(new OneNotePreviewPanel(data));
+    }
+
     private void showSpreadsheet(SpreadsheetPreviewData data) {
-        spreadsheetPane.removeAll();
-        spreadsheetPane.add(new SpreadsheetPreviewPanel(data), BorderLayout.CENTER);
-        spreadsheetPane.setVisible(true);
+        showStructuredPreview(new SpreadsheetPreviewPanel(data));
+    }
+
+    private void showStructuredPreview(javax.swing.JComponent preview) {
+        structuredPreviewPane.removeAll();
+        structuredPreviewPane.add(preview, BorderLayout.CENTER);
+        structuredPreviewPane.setVisible(true);
         loaded();
         showingText = false;
         textPane.setVisible(false);
         documentPane.setVisible(false);
-        spreadsheetPane.revalidate();
-        spreadsheetPane.repaint();
+        structuredPreviewPane.revalidate();
+        structuredPreviewPane.repaint();
         updateInfo();
     }
 
     private void showText(String text) {
-        spreadsheetPane.setVisible(false);
+        structuredPreviewPane.setVisible(false);
         documentPane.setVisible(false);
         showingText = true;
         loaded();
@@ -1004,7 +1028,7 @@ public final class AttachmentViewerPanel extends JPanel {
      * Speicher, wie in der Leseansicht), nicht nur den Text.
      */
     private void showDocument(WordDocumentPreview.Rendered document) {
-        spreadsheetPane.setVisible(false);
+        structuredPreviewPane.setVisible(false);
         textPane.setVisible(false);
         showingText = true;
         loaded();
@@ -1344,7 +1368,7 @@ public final class AttachmentViewerPanel extends JPanel {
             return;
         }
         showingText = false;
-        spreadsheetPane.setVisible(false);
+        structuredPreviewPane.setVisible(false);
         textPane.setVisible(false);
         documentPane.setVisible(false);
         canvas.setStaticImage(null);
