@@ -40,12 +40,30 @@ final class SamlNavigator {
 
     /** Folgt {@code response}, bis die E-Akte selbst ohne Weiterleitung antwortet, und liefert diese Antwort. */
     SsoHttp.Response settle(SsoHttp.Response response) throws IOException {
+        return settle(response, false);
+    }
+
+    /**
+     * Der eigene SAML-Challenge von WebDAV, wie {@code completeWebDavSamlChallenge} in v2.0: mit der bestehenden
+     * OpenAM-Sitzung abschließen; leitet die E-Akte nach der SAML-Antwort weiter, endet es dort (kein GET auf den
+     * WebDAV-Endpunkt), der Aufrufer wiederholt seine Anfrage.
+     */
+    SsoHttp.Response challenge(SsoHttp.Response response) throws IOException {
+        return settle(response, true);
+    }
+
+    private SsoHttp.Response settle(SsoHttp.Response response, boolean stopAfterSaml) throws IOException {
         SsoHttp.Response current = response;
         URI continuation = null;
         int samlPosts = 0;
         int transitions = 0;
         boolean triedSession = false;
         for (int step = 1; step <= MAX_STEPS; step++) {
+            if (stopAfterSaml && samlPosts > 0 && current.redirect() && http.profile().isEakte(current.next())) {
+                http.trace("SAML-Antwort von der E-Akte verarbeitet; wiederhole die Anfrage statt der Weiterleitung "
+                        + "zu folgen");
+                return current;
+            }
             if (current.redirect()) {
                 current = http.get(current.next());
                 continue;
@@ -78,10 +96,23 @@ final class SamlNavigator {
                 }
                 if (transition.get().secondVisit() != null) {
                     continuation = transition.get().secondVisit();
+                    http.trust(current.uri(), continuation);
+                }
+                if (transition.get().login() != null) {
+                    http.trust(current.uri(), transition.get().login());
                 }
                 if (!hasSession(current.uri()) || triedSession) {
                     // Ohne Sitzungscookie, oder OpenAM kennt es nicht mehr (Zwischenseite trotz Cookie).
-                    authenticate(transition.get().login() != null ? transition.get().login() : current.uri());
+                    URI loginUrl = transition.get().login() != null ? transition.get().login() : current.uri();
+                    if (login != null && !login.done()) {
+                        // v2.0: erst loginUrl aufrufen (→ XUI/), dann über REST anmelden.
+                        visit(loginUrl);
+                    }
+                    authenticate(loginUrl);
+                    SsoHttp.Response reached = login.takeReachedEakte();
+                    if (reached != null) {
+                        return reached;
+                    }
                 }
                 triedSession = true;
                 if (continuation == null) {
@@ -94,6 +125,10 @@ final class SamlNavigator {
             if (!hasSession(current.uri()) && continuation != null) {
                 // JavaScript-Oberfläche von OpenAM (XUI) ohne Formular: über REST anmelden, dann weiter.
                 authenticate(current.uri());
+                SsoHttp.Response reached = login.takeReachedEakte();
+                if (reached != null) {
+                    return reached;
+                }
                 current = http.get(continuation);
                 continue;
             }
@@ -101,6 +136,15 @@ final class SamlNavigator {
                     + SsoHttp.host(current.uri()));
         }
         throw new IOException("Anmeldung: zu viele Weiterleitungen");
+    }
+
+    /** Ruft {@code loginUrl} auf und folgt ihren Weiterleitungen (UI/Login → XUI/), wie v2.0 vor der REST-Anmeldung. */
+    private void visit(URI loginUrl) throws IOException {
+        http.trace("Authentifizierung noch nicht erfolgt; folge loginUrl statt secondVisitUrl: " + SsoHttp.safe(loginUrl));
+        SsoHttp.Response response = http.get(loginUrl);
+        for (int hop = 0; hop < 5 && response.redirect(); hop++) {
+            response = http.get(response.next());
+        }
     }
 
     private boolean hasSession(URI idp) {

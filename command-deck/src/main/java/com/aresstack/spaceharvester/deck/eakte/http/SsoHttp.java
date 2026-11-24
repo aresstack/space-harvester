@@ -62,6 +62,45 @@ final class SsoHttp {
         this.trace = trace;
     }
 
+    /**
+     * Server, die angesprochen werden dürfen ({@code schema://host:port}): anfangs nur die E-Akte; dazu kommt, wohin
+     * ein schon erlaubter Server ausdrücklich weiterleitet (HTTP-Weiterleitung, Fortsetzungsadresse, Formular oder
+     * Weiterleitung von OpenAM). Fest eingetragene Anmeldedienste gibt es nicht.
+     */
+    private final java.util.Set<String> trusted = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Die zuletzt aufgerufene Seite der Anmeldung (für {@code Referer}). */
+    private volatile URI previous;
+
+    /** Ob {@code target} angesprochen werden darf: die E-Akte oder ein Server, zu dem die Kette geführt hat. */
+    boolean allows(URI target) {
+        return target != null && target.getHost() != null
+                && (profile.isEakte(target) || trusted.contains(key(target)));
+    }
+
+    /** Ein erlaubter Server ({@code from}) verweist auf {@code to}: von nun an darf auch {@code to} angesprochen werden. */
+    void trust(URI from, URI to) {
+        if (allows(from) && to != null && to.getHost() != null
+                && ("https".equalsIgnoreCase(to.getScheme()) || "http".equalsIgnoreCase(to.getScheme()))
+                && trusted.add(key(to))) {
+            trace.accept("Weiterleitung zu " + host(to) + " (von " + host(from) + ")");
+        }
+    }
+
+    /**
+     * Ob Zugangsdaten an {@code target} gehen dürfen: ein Server der Kette, nur über HTTPS (lokal im Test auch HTTP),
+     * und nie die E-Akte selbst.
+     */
+    boolean mayReceiveCredentials(URI target) {
+        return allows(target) && !profile.isEakte(target) && EakteProfile.secure(target);
+    }
+
+    private static String key(URI uri) {
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        int port = uri.getPort() > 0 ? uri.getPort() : "http".equals(scheme) ? 80 : 443;
+        return scheme + "://" + uri.getHost().toLowerCase(java.util.Locale.ROOT) + ":" + port;
+    }
+
     EakteProfile profile() {
         return profile;
     }
@@ -75,18 +114,37 @@ final class SsoHttp {
     }
 
     Response get(URI target) throws IOException {
-        return send("GET", target, Map.of(), null);
+        return navigate("GET", target, Map.of(), null);
     }
 
     Response postForm(URI target, String body) throws IOException {
-        return send("POST", target, Map.of("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"),
+        return navigate("POST", target, Map.of("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"),
                 body.getBytes(StandardCharsets.UTF_8));
     }
 
+    /** REST von OpenAM; wie v2.0 ohne Referer, und die nächste Seite danach beginnt ohne. */
     Response postJson(URI target, String json) throws IOException {
+        previous = null;
         return send("POST", target, Map.of("Content-Type", "application/json; charset=UTF-8",
                 "Accept", "application/json", "Accept-API-Version", "resource=2.0, protocol=1.0"),
                 json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Seitenaufrufe der Anmeldung wie in v2.0 ({@code SessionTest.execute}): mit {@code Referer} der vorigen Seite,
+     * wenn sie auf demselben Host lag.
+     */
+    private Response navigate(String method, URI target, Map<String, String> headers, byte[] body)
+            throws IOException {
+        URI from = previous;
+        Map<String, String> all = headers;
+        if (from != null && from.getHost() != null && from.getHost().equalsIgnoreCase(target.getHost())) {
+            all = new java.util.LinkedHashMap<>(headers);
+            all.put("Referer", from.toString());
+        }
+        Response response = send(method, target, all, body);
+        previous = target;
+        return response;
     }
 
     /**
@@ -94,7 +152,7 @@ final class SsoHttp {
      * werden nie angefragt.
      */
     Response send(String method, URI target, Map<String, String> headers, byte[] body) throws IOException {
-        if (!profile.allows(target)) {
+        if (!allows(target)) {
             throw new IOException("Weiterleitung zu einem fremden Server abgelehnt: " + host(target));
         }
         HttpRequest.Builder request = HttpRequest.newBuilder(target).timeout(timeout)
@@ -125,6 +183,9 @@ final class SsoHttp {
                 response.headers().firstValue("Location").orElse(null),
                 response.headers().firstValue("Content-Type").orElse(""),
                 response.body() == null ? new byte[0] : response.body());
+        if (result.redirect()) {
+            trust(target, result.next());
+        }
         trace.accept(method + " " + safe(target) + " → HTTP " + result.status()
                 + (setCookies.isEmpty() ? "" : " | setzt " + cookieNames(setCookies))
                 + (result.redirect() ? " | weiter zu " + safe(result.next()) : ""));
@@ -151,7 +212,7 @@ final class SsoHttp {
 
     /** {@code GET} mit gestreamtem Inhalt; sonst wie {@link #send}. */
     Stream stream(URI target) throws IOException {
-        if (!profile.allows(target)) {
+        if (!allows(target)) {
             throw new IOException("Weiterleitung zu einem fremden Server abgelehnt: " + host(target));
         }
         HttpRequest.Builder request = HttpRequest.newBuilder(target).timeout(timeout)
@@ -175,6 +236,9 @@ final class SsoHttp {
                 response.headers().firstValue("Location").orElse(null),
                 response.headers().firstValue("Content-Type").orElse(""),
                 response.headers().firstValueAsLong("Content-Length").orElse(-1L), response.body());
+        if (result.redirect()) {
+            trust(target, result.next());
+        }
         trace.accept("GET " + safe(target) + " → HTTP " + result.status() + " | " + result.contentType()
                 + (result.length() >= 0 ? " | " + result.length() + " Byte" : "")
                 + (setCookies.isEmpty() ? "" : " | setzt " + cookieNames(setCookies))

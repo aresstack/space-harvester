@@ -34,8 +34,8 @@ import org.junit.jupiter.api.io.TempDir;
 class EakteWorkspaceTest {
 
     private static final String ENTRY = "E-Akte Flotte";
-    private static final List<String> KEYS = List.of(EakteConnectForm.ENTRY_KEY, EakteConnectForm.WEBDAV_KEY,
-            EakteConnectForm.START_KEY, EakteConnectForm.LOGIN_HOSTS_KEY, EakteConnectForm.USE_PROXY_KEY);
+    private static final List<String> KEYS = List.of(EakteConnectForm.ENTRY_KEY,
+            EakteConnectForm.START_KEY, EakteConnectForm.USE_PROXY_KEY, EakteConnectForm.WEBDAV_PATH_KEY);
 
     private final ExecutorService background = Executors.newVirtualThreadPerTaskExecutor();
     private FakeEakteServer fake;
@@ -64,8 +64,10 @@ class EakteWorkspaceTest {
         background.shutdownNow();
     }
 
-    private static ServerAccounts accounts(String password) {
-        ServerAccount account = new ServerAccount(ENTRY, "", FakeEakteServer.USER);
+    private String keePassUrl = "";
+
+    private ServerAccounts accounts(String password) {
+        ServerAccount account = new ServerAccount(ENTRY, keePassUrl, FakeEakteServer.USER);
         return new ServerAccounts() {
             @Override
             public List<ServerAccount> accounts() {
@@ -91,9 +93,7 @@ class EakteWorkspaceTest {
             EakteConnectForm form = workspace.form();
             form.entries(List.of(ENTRY));
             form.entry.setSelectedItem(ENTRY);
-            form.webdav.setText(fake.webdav().toString());
-            form.start.setText(fake.start().toString());
-            form.loginHosts.setText(String.join(", ", fake.loginHosts()));
+            form.start.setText(fake.webdav().resolve("/").toString());
         });
     }
 
@@ -199,6 +199,46 @@ class EakteWorkspaceTest {
         try (var files = Files.list(downloads)) {
             assertThat(files).as("weder Datei noch Teildatei").isEmpty();
         }
+    }
+
+    /** Angelo: genau ein Feld „E-Akte-Adresse“; WebDAV und Anmeldedienste bestimmt der Adapter fest. */
+    @Test
+    void onlyTheStartUrlIsNeededTheRestIsFilledIn() throws Exception {
+        build(FakeEakteServer.PASSWORD);
+        SwingUtilities.invokeAndWait(() -> {
+            EakteConnectForm form = workspace.form();
+            assertThat(form.start.getText()).as("keine vorbelegte Adresse").isEmpty();
+            form.entries(List.of(ENTRY));
+            form.entry.setSelectedItem(ENTRY);
+            form.start.setText(fake.webdav().resolve("/").toString());
+            form.submit();
+        });
+        await(() -> onEdt(() -> workspace.selected() != null
+                && workspace.selected().state() == EakteState.CONNECTED), "angemeldet nur mit Start-URL");
+        assertThat(fake.passwordPosts()).isEqualTo(1);
+    }
+
+    /** Angelo: die E-Akte-Adresse kommt aus dem URL-Feld des KeePass-Eintrags, wenn sie dort steht. */
+    @Test
+    void takesTheAddressFromTheKeePassEntry() throws Exception {
+        fake = new FakeEakteServer();
+        keePassUrl = fake.webdav().resolve("/").toString(); // nur die Basisadresse, wie in KeePass
+        EakteSessions sessions = new EakteSessions(
+                new HttpEakteServer(HttpClientFactory.direct(), Duration.ofSeconds(10), null), background);
+        SwingUtilities.invokeAndWait(() -> {
+            workspace = new EakteWorkspace(sessions, accounts(FakeEakteServer.PASSWORD));
+            EakteConnectForm form = workspace.form();
+            form.entries(List.of(ENTRY));
+            form.entry.setSelectedItem(ENTRY);
+            assertThat(form.start.getText()).isEmpty();
+            assertThat(form.start.getToolTipText()).contains("Domain", "Subdomains", "/fsc/webdav", "optional");
+            form.submit();
+        });
+        await(() -> onEdt(() -> workspace.selected() != null
+                && workspace.selected().state() == EakteState.CONNECTED), "angemeldet mit der URL aus KeePass");
+        assertThat(fake.passwordPosts()).isEqualTo(1);
+        String remembered = AppState.shared().get(EakteConnectForm.START_KEY);
+        assertThat(remembered == null || remembered.isEmpty()).as("nichts Eingetipptes gemerkt").isTrue();
     }
 
     @Test

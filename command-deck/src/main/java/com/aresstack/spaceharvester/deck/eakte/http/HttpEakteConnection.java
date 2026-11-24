@@ -38,9 +38,12 @@ final class HttpEakteConnection implements EakteConnection {
         return path == null || path.isEmpty() ? "/" : path;
     }
 
-    /** Erster PROPFIND auf die Wurzel; die Anmeldung darf dabei noch das Kennwort nutzen. */
-    void check(SamlNavigator withPassword) throws IOException {
-        SsoHttp.Response response = request(withPassword, "PROPFIND", root, "0");
+    /**
+     * Erster {@code PROPFIND Depth: 1} auf die Wurzel wie in v2.0. {@code sso} schließt einen WebDAV-Challenge ab: nach
+     * der Startseite nur mit der bestehenden Sitzung, ohne Startseite darf er noch das Kennwort nutzen.
+     */
+    void check(SamlNavigator sso) throws IOException {
+        SsoHttp.Response response = request(sso, "PROPFIND", root, "1");
         if (response.status() != 207) {
             throw rejected(response, "WebDAV");
         }
@@ -64,7 +67,7 @@ final class HttpEakteConnection implements EakteConnection {
             stream.body().close();
             http.trace("Die E-Akte leitet GET zur Anmeldung um; schließe die SAML-Anforderung mit der bestehenden "
                     + "Sitzung ab und wiederhole");
-            navigator.settle(stream.head());
+            navigator.challenge(stream.head());
             stream = http.stream(uri);
         }
         for (int hop = 0; hop < MAX_LOCAL_REDIRECTS && stream.redirect()
@@ -98,7 +101,7 @@ final class HttpEakteConnection implements EakteConnection {
         for (int round = 0; round < 2 && sso.leadsToLogin(response); round++) {
             http.trace("Die E-Akte leitet " + method + " zur Anmeldung um; schließe die SAML-Anforderung mit der "
                     + "bestehenden Sitzung ab und wiederhole");
-            sso.settle(response);
+            sso.challenge(response);
             response = send(method, target, depth);
         }
         if (sso.leadsToLogin(response)) {
