@@ -16,6 +16,8 @@ import javax.swing.SwingUtilities;
 import java.awt.Component;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -325,6 +327,32 @@ class ChatPanelTest {
             state[3] = panel.quickActionLabels().isEmpty();
         });
         assertThat(state).containsExactly(true, true, true, true);
+    }
+
+    @Test
+    void theMenuAtTheTriangleOffersThreeSeparateParallelLimitsWithTheChoicesOfTheJobs() throws Exception {
+        // Angelo 24.11.2026: nicht in den Einstellungen, sondern im Dreieck-Menü, mit dem Code der Aufträge.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        List<List<String>> menus = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            for (javax.swing.JMenu menu : new ChatPanel(context).parallelMenus()) {
+                List<String> labels = new ArrayList<>(List.of(menu.getText()));
+                for (int i = 0; i < menu.getItemCount(); i++) {
+                    if (menu.getItem(i) != null) {
+                        labels.add(menu.getItem(i).getText());
+                    }
+                }
+                menus.add(labels);
+            }
+        });
+        assertThat(menus).extracting(labels -> labels.get(0).substring(0, labels.get(0).indexOf(':')))
+                .containsExactly(ChatPanel.PARALLEL_TABS, ChatPanel.PARALLEL_AGENTS, ChatPanel.PARALLEL_FILES);
+        assertThat(menus).allSatisfy(labels -> assertThat(labels.subList(1, 8))
+                .containsExactly("1", "2", "4", "8", "16", "32", "64"))
+                .allSatisfy(labels -> assertThat(labels.get(8))
+                        .startsWith(com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM));
     }
 
     @Test
