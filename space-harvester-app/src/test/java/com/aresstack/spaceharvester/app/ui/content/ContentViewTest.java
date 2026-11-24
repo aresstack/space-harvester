@@ -241,7 +241,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export");
+                .containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph", "Beziehungen");
         // „Info“ hat die Eigenschaften als ersten Unterreiter (Angelo, 19.11.2026); „Beziehungen“ steht unter
@@ -262,7 +262,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export");
+        })).containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -438,30 +438,28 @@ class ContentViewTest {
                 .as("Werkzeuge der Updates in der gemeinsamen Kopfzeile").isTrue();
         assertThat(onEdt(() -> barIcons(view.detail()))).as("die Symbole der Reiterleiste bleiben überall gleich")
                 .containsExactly(bar);
-        // Hinter dem Dreieck stehen hier die Speicher-Einträge; ohne Zusammenfassung und Podcast sind sie gesperrt.
+        // Hinter dem Dreieck steht hier „Zusammenfassung speichern“; ohne Zusammenfassung gesperrt. Der Podcast steht
+        // in der Podcast-Ansicht (Angelo 23.11.2026), seine Einträge also dort.
         assertThat(onEdt(() -> view.detail().moreButton().isEnabled())).isTrue();
-        assertThat(onEdt(() -> {
-            List<String> entries = new java.util.ArrayList<>();
-            for (java.awt.Component item : view.detail().moreMenu().getComponents()) {
-                entries.add(((javax.swing.JMenuItem) item).getText() + (item.isEnabled() ? "" : " (gesperrt)"));
-            }
-            return entries;
-        })).containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)",
-                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)");
-        // Neben der Lupe steht der Platz für „Transkript kopieren“; ohne Podcast bleibt der Knopf weg.
-        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
-                view.detail().sourceView().podcast().transcriptCopy(), view.tools()))).isTrue();
-        assertThat(onEdt(() -> view.detail().sourceView().podcast().transcriptCopy().isVisible())).isFalse();
+        assertThat(onEdt(() -> menuEntries(view.detail())))
+                .containsExactly(PageDetailPanel.SAVE_SUMMARY + " (gesperrt)");
         assertThat(onEdt(() -> view.detail().sourceView().isShowing() || view.detail().sourceView().isVisible()))
                 .isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().sourceId())).isEqualTo("handbuch");
         onEdt(() -> {
-            view.detail().tabs().select("Text");
+            view.detail().tabs().select("Podcast-Ansicht");
             return null;
         });
         assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).as("„Text“: die Updates").isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
+        // Podcast-Ansicht: Transkript und „Podcast neu erstellen“ hinter dem Dreieck, ohne Podcast gesperrt; neben der
+        // Lupe der Platz für „Transkript kopieren“, ohne Podcast bleibt der Knopf weg.
+        assertThat(onEdt(() -> menuEntries(view.detail()))).containsExactly(
+                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)");
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
+                view.detail().sourceChanges().podcast().transcriptCopy(), view.tools()))).isTrue();
+        assertThat(onEdt(() -> view.detail().sourceChanges().podcast().transcriptCopy().isVisible())).isFalse();
         onEdt(() -> {
             view.detail().selectTab("Eigenschaften");
             return null;
@@ -520,8 +518,16 @@ class ContentViewTest {
         return !chips.isEmpty() && chips.stream().allMatch(javax.swing.AbstractButton::isEnabled);
     }
 
+    private static List<String> menuEntries(PageDetailPanel detail) {
+        List<String> entries = new java.util.ArrayList<>();
+        for (java.awt.Component item : detail.moreMenu().getComponents()) {
+            entries.add(((javax.swing.JMenuItem) item).getText() + (item.isEnabled() ? "" : " (gesperrt)"));
+        }
+        return entries;
+    }
+
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
-        return java.util.stream.Stream.of("Leseansicht", "Text", "Anhänge", "Analysen", "Info", "Export").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
+        return java.util.stream.Stream.of("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 
     @Test
@@ -597,11 +603,11 @@ class ContentViewTest {
         });
         await(() -> ChatPanel.NO_SELECTION.equals(chat.knowledge()));
         onEdt(() -> {
-            detail.tabs().button("Text").doClick();
+            detail.tabs().button("Podcast-Ansicht").doClick();
             return null;
         });
-        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Text");
-        assertThat(onEdt(() -> detail.tabs().button("Text").isSelected())).isTrue();
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Podcast-Ansicht");
+        assertThat(onEdt(() -> detail.tabs().button("Podcast-Ansicht").isSelected())).isTrue();
         // Ohne Auswahl gibt es keine Chips; die Seitenüberschrift der Ansicht hat mit dem Chat nichts mehr zu tun.
         assertThat(onEdt(() -> detail.titleLabel().isVisible() && !chat.quickActions().isVisible())).isTrue();
         onEdt(() -> {
@@ -671,7 +677,7 @@ class ContentViewTest {
 
         // Ein Unterreiter über seinen Namen wählt auch den Hauptreiter „Analysen“.
         onEdt(() -> {
-            detail.selectTab("Text");
+            detail.selectTab("Podcast-Ansicht");
             detail.selectTab("Absätze");
             return null;
         });

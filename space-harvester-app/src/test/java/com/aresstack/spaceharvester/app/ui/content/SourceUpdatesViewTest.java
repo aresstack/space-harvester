@@ -709,7 +709,7 @@ class SourceUpdatesViewTest {
                 "Neu ist ein Konzept zum Beispielarchiv.", "Bauwesen Beispiel", "1 neu", "Archivumstellung",
                 "Das Archiv wird auf ein neues Format umgestellt.", "→ Neue Seite");
         assertThat(summary.reportTexts()).noneMatch(text -> text != null && text.contains("gpt-test"));
-        assertThat(SourceUpdatesView.summaryModelTip(actions.stored)).isEqualTo("Erstellt mit update-summary-v2:gpt-test");
+        assertThat(SummaryReport.modelTip(actions.stored)).isEqualTo("Erstellt mit update-summary-v2:gpt-test");
         assertThat(summary.clickSummaryText("Bauwesen Beispiel")).isTrue();
         assertThat(spaces).singleElement().satisfies(opened -> assertThat(opened).containsExactly("wiki", "BAU"));
     }
@@ -794,7 +794,7 @@ class SourceUpdatesViewTest {
                 new SummaryStatement("Text B.", List.of(new SummaryPage("2", "B", "BAU")), "Suche", null),
                 new SummaryStatement("Text C.", List.of(new SummaryPage("1", "A", "BAU")), "Archiv nochmal", null),
                 new SummaryStatement("Text D.", List.of(), "Neue Vorlage", null));
-        Map<Integer, Integer> at = SourceUpdatesView.placements(List.of(1, 2, 0, 3), statements, List.of(
+        Map<Integer, Integer> at = SummaryReport.placements(List.of(1, 2, 0, 3), statements, List.of(
                 topicPicture(0, List.of("1"), List.of("Archiv"), "Bild Archiv"),
                 topicPicture(1, List.of("1"), List.of("Archiv nochmal"), "Zweites Bild derselben Seite"),
                 topicPicture(2, List.of("99"), List.of("neue  vorlage"), "Bild über den Titel"),
@@ -852,6 +852,71 @@ class SourceUpdatesViewTest {
         assertThat(summary.reportPictures()).containsExactly("Altes und neues Format", "Suchmaske mit Anhang");
     }
 
+    /**
+     * Angelo 23.11.2026: Der Podcast der Quelle steht in der Podcast-Ansicht (Reiter „Text“), die Zusammenfassung bleibt
+     * in der Leseansicht und ist seine Grundlage. Die Podcast-Ansicht markiert die Seiten des laufenden Themas und
+     * zeigt sein Bild neben der ersten davon.
+     */
+    @Test
+    void thePodcastOfASourceStandsInThePodcastViewAndTellsTheExistingSummary() throws Exception {
+        java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("bilder");
+        actions.openGrows = true;
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, null, "Zwei Neuerungen im Beispielarchiv.",
+                List.of(new SummaryStatement("Das Archiv wird auf ein neues Format umgestellt.",
+                                List.of(new SummaryPage("20", "Neue Seite", "BAU")), "Archivumstellung", null),
+                        new SummaryStatement("Die Suche findet jetzt auch Anhänge.",
+                                List.of(new SummaryPage("21", "Noch eine Seite", "BAU")), "Suche in Anhängen", null)),
+                "update-summary-v2:gpt-test", SECOND, 0, false, Map.of("BAU", "Bauwesen Beispiel"));
+        actions.pictures = List.of(
+                new com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.TopicPicture(1, "Suche",
+                        List.of("21"), List.of("Suche in Anhängen"), png(dir.resolve("1.png"), "Suchmaske mit Anhang")));
+        javax.swing.JRootPane root = new javax.swing.JRootPane();
+        root.getContentPane().setLayout(new java.awt.BorderLayout());
+        root.getContentPane().add(view, java.awt.BorderLayout.CENTER);
+        root.setSize(960, 700);
+        root.getLayeredPane().setSize(960, 700);
+        List<UpdateSummary> forwarded = new ArrayList<>();
+        summary.onSummary(forwarded::add);
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("Seit dem letzten Update");
+        view.source("wiki", "Confluence HaVdB");
+        view.clickUpdate("Seit dem letzten Update");
+        root.validate();
+
+        assertThat(view.spoken()).as("die vorhandene Zusammenfassung, keine neue").isEqualTo(actions.stored);
+        assertThat(actions.summarizeCalls).isZero();
+        assertThat(summary.spoken()).as("die Leseansicht spielt keinen Podcast").isNull();
+        assertThat(forwarded).as("die Leseansicht reicht ihre Zusammenfassung weiter").contains(actions.stored);
+        assertThat(view.podcastRenewable()).isEqualTo(view.podcast().renewable());
+        assertThat(summary.podcastRenewable()).isFalse();
+
+        view.followPodcast(List.of(1));
+        assertThat(view.podcastMarked()).as("die Seite des laufenden Themas").containsExactly("Noch eine Seite");
+        // zwei Themen derselben Seite: nach dem Zurücknehmen ist nichts mehr gelb
+        view.followPodcast(List.of(0, 1, 1));
+        view.followPodcast(List.of());
+        assertThat(view.podcastMarked()).isEmpty();
+        view.followPodcast(List.of(com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW));
+        assertThat(view.podcastMarked()).as("Einstieg: die Überschrift des Updates").hasSize(1);
+        view.followPodcast(List.of());
+        assertThat(view.podcastMarked()).isEmpty();
+
+        assertThat(view.reportPictures()).containsExactly("Suchmaske mit Anhang");
+        assertThat(view.cuePicture(1)).isTrue();
+        assertThat(com.aresstack.spaceharvester.app.ui.controls.ViewerPopup.current(view)).isPresent();
+        com.aresstack.spaceharvester.app.ui.controls.ViewerPopup.current(view).orElseThrow().close();
+        assertThat(view.cuePicture(0)).as("ein Thema ohne Bild bleibt zu").isFalse();
+
+        // eine neue Zusammenfassung der Leseansicht übernimmt die Podcast-Ansicht; eine fremde nicht
+        UpdateSummary newer = new UpdateSummary("wiki", ChangeUpdate.OPEN, null, "Neu zusammengefasst.",
+                actions.stored.statements(), "update-summary-v2:gpt-test", SECOND, 0, false, Map.of());
+        view.adopt(new UpdateSummary("wiki", "anderes-update", null, "Fremd.", List.of(), "m", SECOND, 0, false,
+                Map.of()));
+        assertThat(view.spoken()).isEqualTo(actions.stored);
+        view.adopt(newer);
+        assertThat(view.spoken()).isEqualTo(newer);
+    }
+
     /** Legt ohne Bildschirm aus wie validate() mit Fenster (kopflos hat der Baum keinen Peer). */
     static void layOut(java.awt.Component component) {
         if (component instanceof java.awt.Container container) {
@@ -897,8 +962,8 @@ class SourceUpdatesViewTest {
         SummaryStatement one = new SummaryStatement("A", List.of(new SummaryPage("1", "Eins", "BAU")), "A", null);
         SummaryStatement both = new SummaryStatement("B", List.of(new SummaryPage("2", "Zwei", "BAU"),
                 new SummaryPage("3", "Drei", "DEV")), "B", null);
-        assertThat(SourceUpdatesView.topicsBySpace(List.of(one, both)))
-                .containsEntry("BAU", List.of(one)).containsEntry(SourceUpdatesView.ACROSS_SPACES, List.of(both));
+        assertThat(SummaryReport.topicsBySpace(List.of(one, both)))
+                .containsEntry("BAU", List.of(one)).containsEntry(SummaryReport.ACROSS_SPACES, List.of(both));
     }
 
     @Test

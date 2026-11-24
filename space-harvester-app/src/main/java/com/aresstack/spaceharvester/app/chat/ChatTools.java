@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.holdings.HoldingState;
 import com.aresstack.spaceharvester.application.holdings.PageHolding;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
+import com.aresstack.spaceharvester.application.holdings.Selection;
 import com.aresstack.spaceharvester.application.knowledge.DomainTermGraph;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.knowledge.TermKnowledge;
@@ -63,6 +64,8 @@ final class ChatTools {
     static final String TERM = "begriff_nachschlagen";
     /** Nur mit dem Schalter „Interne Suche“ im Composer: die globale Suche der App über alle Wissensquellen. */
     static final String APP_SEARCH = "wissensquellen_durchsuchen";
+    /** Präfix der virtuellen Ordnerknoten einer Sammlung in {@value #LIST} (ADR 0034 §5). */
+    static final String FOLDER = "ordner/";
 
     /** So viele Einträge je Blatt der Liste. */
     static final int PAGE_SIZE = 100;
@@ -180,12 +183,23 @@ final class ChatTools {
 
     private java.util.function.Supplier<Set<String>> appSources;
 
+    /**
+     * Ist eine Sammlung der Bereich (ADR 0034 §5), liefert {@code nodes} ihre Ordner und Favoriten für {@value #LIST};
+     * {@code null} für jeden anderen Bereich.
+     */
+    ChatTools collection(CollectionNodes nodes) {
+        this.nodes = nodes;
+        return this;
+    }
+
+    private CollectionNodes nodes;
+
     /** Die Werkzeuge dieses Turns: die vier des Bereichs, mit „Interne Suche“ dazu {@value #APP_SEARCH}. */
     List<AiChat.Tool> toolDefinitions() {
         if (appSources == null) {
-            return definitions();
+            return definitions(nodes != null);
         }
-        List<AiChat.Tool> all = new ArrayList<>(definitions());
+        List<AiChat.Tool> all = new ArrayList<>(definitions(nodes != null));
         all.add(appSearchDefinition());
         return List.copyOf(all);
     }
@@ -228,18 +242,24 @@ final class ChatTools {
         return this;
     }
 
-    /** Die Definitionen für die Anfrage. */
-    static List<AiChat.Tool> definitions() {
+    /** Die Definitionen für die Anfrage; mit {@code collection} nennt {@value #LIST} die Ordnerknoten einer Sammlung. */
+    static List<AiChat.Tool> definitions(boolean collection) {
         return List.of(
                 new AiChat.Tool(SEARCH, "Sucht im gewählten Bereich nach Stichworten und liefert die besten Treffer "
                         + "mit Kennung und Titel, ohne Text. Den Text einer Seite danach mit " + READ + " holen.",
                         "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\","
                                 + "\"description\":\"Suchbegriffe\"}},\"required\":[\"text\"]}"),
-                new AiChat.Tool(LIST, "Listet die Seiten des gewählten Bereichs wie einen Baum: ohne knoten die "
+                new AiChat.Tool(LIST, collection
+                        ? "Listet den gewählten Favoriten-Ordner wie einen Baum: ohne knoten seine Unterordner "
+                        + "(Kennung " + FOLDER + "…) und Favoriten, mit knoten den Inhalt eines Unterordners oder "
+                        + "die Unterseiten einer Seite. Je Aufruf höchstens " + PAGE_SIZE + " Einträge; weitere mit "
+                        + "blatt."
+                        : "Listet die Seiten des gewählten Bereichs wie einen Baum: ohne knoten die "
                         + "Startseiten, mit knoten dessen Unterseiten. Je Aufruf höchstens " + PAGE_SIZE
                         + " Einträge; weitere mit blatt.",
                         "{\"type\":\"object\",\"properties\":{\"knoten\":{\"type\":\"string\","
-                                + "\"description\":\"Kennung einer Seite; leer für die Startseiten\"},"
+                                + "\"description\":\"" + (collection ? "Kennung einer Seite oder eines Ordners"
+                                : "Kennung einer Seite") + "; leer für die Startseiten\"},"
                                 + "\"blatt\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Blattnummer, "
                                 + "ab 1\"}}}"),
                 new AiChat.Tool(READ, "Liest den Text einer Seite des gewählten Bereichs, höchstens " + READ_CHARS
@@ -407,8 +427,9 @@ final class ChatTools {
         if (scope == null) {
             return "Es ist kein Bereich gewählt.";
         }
-        List<Entry> entries = new ArrayList<>();
-        boolean unreadable = false;
+        if (nodes != null && (node.isBlank() || node.strip().startsWith(FOLDER))) {
+            return listFolder(node.isBlank() ? null : node.strip().substring(FOLDER.length()), sheet);
+        }
         PageKey parent = null;
         if (!node.isBlank()) {
             parent = parse(node);
@@ -416,8 +437,49 @@ final class ChatTools {
                 return UNAVAILABLE;
             }
         }
+        Listing listing = entries(parent, null);
+        return sheet(listing, parent == null ? "Startseiten des Bereichs" : "Unterseiten",
+                parent == null ? "Der Bereich enthält keine Seiten." : "Diese Seite hat keine Unterseiten.", sheet);
+    }
+
+    /**
+     * Ein Ordner der Sammlung (ADR 0034 §5): seine Unterordner als virtuelle Knoten, danach je direkter Favorit die Seite
+     * samt Unterseiten bzw. die Startseiten seines Space oder seiner Quelle; nur Seiten des Bereichs.
+     */
+    private String listFolder(String folderId, int sheet) {
+        CollectionNodes.Content content = nodes.content(folderId);
+        if (content == null) {
+            return UNAVAILABLE;
+        }
+        List<Entry> entries = new ArrayList<>();
+        for (CollectionNodes.Folder folder : content.folders()) {
+            entries.add(new Entry(FOLDER + folder.id(), folder.name(), 0, true));
+        }
+        boolean unreadable = false;
+        Set<String> seen = new java.util.HashSet<>();
+        for (Selection.Root root : content.roots()) {
+            Listing listing = entries(null, root);
+            unreadable |= listing.unreadable();
+            for (Entry entry : listing.entries()) {
+                if (seen.add(entry.ref())) {
+                    entries.add(entry);
+                }
+            }
+        }
+        return sheet(new Listing(entries, unreadable), folderId == null ? "Favoriten des Bereichs"
+                : "Inhalt des Ordners", "Dieser Ordner enthält keine Favoriten.", sheet);
+    }
+
+    /**
+     * Die Einträge unter {@code parent} bzw. ohne ihn die Startseiten des Bereichs; mit {@code within} nur die eines
+     * Favoriten: eine Seite selbst, sonst die Startseiten seines Space oder seiner Quelle.
+     */
+    private Listing entries(PageKey parent, Selection.Root within) {
+        List<Entry> entries = new ArrayList<>();
+        boolean unreadable = false;
         for (var space : scope.spaces()) {
-            if (parent != null && !space.sourceId().equals(parent.sourceId())) {
+            if (parent != null && !space.sourceId().equals(parent.sourceId())
+                    || within != null && !covers(within, space.sourceId(), space.spaceKey())) {
                 continue;
             }
             Map<String, PageHolding> pages = holdings(space.sourceId(), space.spaceKey());
@@ -432,37 +494,50 @@ final class ChatTools {
                 if (page.state() == HoldingState.REMOVED || !scope.contains(space.sourceId(), page.pageId())) {
                     continue;
                 }
-                boolean match = parent == null
+                boolean match = within != null && within.pageId() != null ? within.pageId().equals(page.pageId())
+                        : parent == null
                         ? page.parentPageId() == null || !scope.contains(space.sourceId(), page.parentPageId())
                         : parent.pageId().equals(page.parentPageId());
                 if (match) {
                     String title = titles(space.sourceId(), space.spaceKey()).get(page.pageId());
-                    entries.add(new Entry(new PageKey(space.sourceId(), page.pageId()), title,
-                            page.subtree().pages()));
+                    entries.add(new Entry(ref(new PageKey(space.sourceId(), page.pageId())), title,
+                            page.subtree().pages(), false));
                 }
             }
             if (parent != null) {
                 break;
             }
         }
-        // Feste Reihenfolge fürs Blättern: nach Titel wie im Baum, dann nach Kennung.
-        entries.sort(Comparator.comparing((Entry entry) -> entry.title() == null ? "\uffff"
-                : entry.title().toLowerCase(java.util.Locale.ROOT)).thenComparing(entry -> ref(entry.key())));
+        return new Listing(entries, unreadable);
+    }
+
+    /** Ob der Space unter der Wurzel liegt: eine Quelle deckt alle ihre Spaces ab. */
+    private static boolean covers(Selection.Root root, String sourceId, String spaceKey) {
+        return root.sourceId().equals(sourceId) && (root.spaceKey() == null || root.spaceKey().equals(spaceKey));
+    }
+
+    /** Ein Blatt der Liste in fester Reihenfolge: Ordner zuerst, dann nach Titel wie im Baum, dann nach Kennung. */
+    private static String sheet(Listing listing, String heading, String empty, int sheet) {
+        List<Entry> entries = new ArrayList<>(listing.entries());
+        entries.sort(Comparator.comparing((Entry entry) -> !entry.folder())
+                .thenComparing(entry -> entry.title() == null ? "\uffff"
+                        : entry.title().toLowerCase(java.util.Locale.ROOT)).thenComparing(Entry::ref));
         int sheets = Math.max(1, (entries.size() + PAGE_SIZE - 1) / PAGE_SIZE);
         if (entries.isEmpty()) {
-            return unreadable ? TOO_LARGE
-                    : parent == null ? "Der Bereich enthält keine Seiten." : "Diese Seite hat keine Unterseiten.";
+            return listing.unreadable() ? TOO_LARGE : empty;
         }
         if (sheet > sheets) {
             return "Blatt " + sheet + " gibt es nicht; es gibt " + sheets + ".";
         }
         StringBuilder b = new StringBuilder();
-        b.append(parent == null ? "Startseiten des Bereichs" : "Unterseiten").append(", Blatt ").append(sheet)
-                .append(" von ").append(sheets).append(" (").append(entries.size()).append(" Einträge)\n");
+        b.append(heading).append(", Blatt ").append(sheet).append(" von ").append(sheets).append(" (")
+                .append(entries.size()).append(" Einträge)\n");
         for (Entry entry : entries.subList((sheet - 1) * PAGE_SIZE, Math.min(entries.size(), sheet * PAGE_SIZE))) {
-            b.append("- ").append(ref(entry.key())).append(" | ")
+            b.append("- ").append(entry.ref()).append(" | ")
                     .append(entry.title() == null ? "(nicht lokal gespeichert)" : oneLine(entry.title()));
-            if (entry.size() > 1) {
+            if (entry.folder()) {
+                b.append(" | Ordner");
+            } else if (entry.size() > 1) {
                 b.append(" | hat Unterseiten (").append(entry.size() - 1).append(')');
             }
             b.append('\n');
@@ -470,10 +545,13 @@ final class ChatTools {
         if (sheet < sheets) {
             b.append("(weiter mit blatt ").append(sheet + 1).append(")\n");
         }
-        if (unreadable) {
+        if (listing.unreadable()) {
             b.append("Hinweis: Nicht alle Spaces ließen sich auflisten (zu groß); nutze ").append(SEARCH).append('.');
         }
         return b.toString().stripTrailing();
+    }
+
+    private record Listing(List<Entry> entries, boolean unreadable) {
     }
 
     /** Der Space einer Seite des Bereichs aus dem Bestand; {@code null}, wenn kein Space der Auswahl sie kennt. */
@@ -533,7 +611,8 @@ final class ChatTools {
         });
     }
 
-    private record Entry(PageKey key, String title, int size) {
+    /** Ein Eintrag der Liste: eine Seite ({@code ref} wie {@link #ref}) oder ein Ordner ({@code ordner/<id>}). */
+    private record Entry(String ref, String title, int size, boolean folder) {
     }
 
     // ------------------------------------------------------------------ Fachbegriff (W7)

@@ -60,6 +60,31 @@ public final class Favorites {
                     List.of());
         }
 
+        /**
+         * Ein Seiten-Favorit aus dem Pfad der Seite (Quelle › Space › Vorfahren, dazu die IDs der Vorfahren); ohne
+         * bekannte Position nur Quelle › Space. Der eine Weg für Stern im Baum und Stern an der Seite.
+         */
+        public static Favorite page(String sourceId, String spaceKey, String pageId, String title,
+                                    com.aresstack.spaceharvester.application.navigation.PageNavigation.Position position,
+                                    String sourceTitle) {
+            List<String> path = new ArrayList<>();
+            List<String> ancestors = new ArrayList<>();
+            path.add(sourceTitle == null ? sourceId : sourceTitle);
+            if (position == null || position.page() == null) {
+                path.add(spaceKey);
+                return new Favorite(sourceId, spaceKey, pageId, title, path, ancestors);
+            }
+            path.add(position.spaceName() == null || position.spaceName().isBlank() ? position.spaceKey()
+                    : position.spaceName());
+            for (com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode ancestor
+                    : position.ancestors()) {
+                path.add(ancestor.title());
+                ancestors.add(ancestor.pageId());
+            }
+            return new Favorite(sourceId, position.spaceKey() == null ? spaceKey : position.spaceKey(), pageId,
+                    position.page().title() == null ? title : position.page().title(), path, ancestors);
+        }
+
         /** Eine ganze Wissensquelle. */
         public static Favorite source(String sourceId, String title) {
             return new Favorite(sourceId, null, null, title, List.of(), List.of());
@@ -112,6 +137,22 @@ public final class Favorites {
             collect(children, recursive, out);
             return List.copyOf(out);
         }
+
+        /** Der Unterordner {@code id} auf irgendeiner Ebene unter diesem Ordner (nie er selbst), falls vorhanden. */
+        public java.util.Optional<Folder> subfolder(String id) {
+            for (Entry entry : children) {
+                if (entry instanceof Folder folder) {
+                    if (folder.id().equals(id)) {
+                        return java.util.Optional.of(folder);
+                    }
+                    java.util.Optional<Folder> below = folder.subfolder(id);
+                    if (below.isPresent()) {
+                        return below;
+                    }
+                }
+            }
+            return java.util.Optional.empty();
+        }
     }
 
     /** Ein Favorit an seiner Stelle im Baum. */
@@ -132,6 +173,8 @@ public final class Favorites {
     private List<Node> root;
     private Path loadedFrom;
     private final List<Runnable> listeners = new ArrayList<>();
+    /** Wohin ein neuer Stern kommt: der in der Favoritenansicht gewählte Ordner ({@code null} = oberste Ebene). */
+    private volatile Supplier<String> target = () -> null;
 
     /** @param file die Datei; {@code null}, solange kein Datenordner bekannt ist (dann nur im Speicher) */
     public Favorites(Supplier<Path> file) {
@@ -184,9 +227,17 @@ public final class Favorites {
 
     // ------------------------------------------------------------------ Ändern
 
-    /** Setzt den Favoriten in der obersten Ebene oder nimmt ihn zurück; liefert, ob er danach gesetzt ist. */
+    /**
+     * Der Stern (ADR 0034): setzt den Favoriten in den Zielordner ({@link #target}) oder nimmt ihn zurück, egal in
+     * welchem Ordner er liegt; liefert, ob er danach gesetzt ist. Stern im Baum und Stern an der Seite laufen hierüber.
+     */
     public boolean toggle(Favorite favorite) {
-        return toggle(favorite, null);
+        return toggle(favorite, target.get());
+    }
+
+    /** Woher {@link #toggle(Favorite)} den Zielordner nimmt (die Favoritenansicht meldet ihren gewählten Ordner). */
+    public void target(Supplier<String> folder) {
+        this.target = Objects.requireNonNull(folder, "folder");
     }
 
     /**

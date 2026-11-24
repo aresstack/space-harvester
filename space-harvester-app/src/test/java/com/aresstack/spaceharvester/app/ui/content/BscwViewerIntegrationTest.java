@@ -89,7 +89,7 @@ final class BscwViewerIntegrationTest {
 
         long begin = System.nanoTime();
         onEdt(() -> {
-            panel.tabs().select("Text");
+            panel.tabs().select("Podcast-Ansicht");
             panel.tabs().select("Leseansicht");
             panel.load("bscw-test", csvId, false);
             return null;

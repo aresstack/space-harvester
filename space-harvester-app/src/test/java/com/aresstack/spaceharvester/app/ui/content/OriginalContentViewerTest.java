@@ -54,8 +54,8 @@ final class OriginalContentViewerTest {
         AttachmentViewerPanel viewer = onEdt(panel::originalViewer);
         assertThat(onEdt(viewer::textContent)).isEqualTo("Originalinhalt mit Formatierung");
         onEdt(() -> {
-            panel.tabs().select("Text");
-            assertThat(panel.selectedTab()).isEqualTo("Text");
+            panel.tabs().select("Podcast-Ansicht");
+            assertThat(panel.selectedTab()).isEqualTo("Podcast-Ansicht");
             assertThat(panel.footTools().getComponentCount()).isZero();
             panel.tabs().select("Leseansicht");
             assertThat(panel.originalViewer()).isSameAs(viewer);

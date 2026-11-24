@@ -7,7 +7,7 @@ import java.util.regex.Pattern;
 /**
  * Macht den Text eines Beitrags sprechbar, bevor er an die Sprachausgabe geht (Angelo 22.11.2026: „Die Sprachausgabe
  * verhaspelt sich immer bei den Bindestrichen … und gibt dann teilweise ganz auf“). Nur für das Audio: Bericht und
- * Transkript zeigen den Text, wie das Modell ihn schrieb.
+ * Transkript zeigen den Text, wie das Modell ihn schrieb. Auch das Vorlesen im Chat bereinigt so (Angelo 23.11.2026).
  *
  * <p>Die Schritte, in dieser Reihenfolge:
  * <ul>
@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  *   läse, buchstabiert (BSCW).</li>
  * </ul>
  */
-final class SpeakableText {
+public final class SpeakableText {
 
     private static final Pattern SOFT_HYPHEN = Pattern.compile("\\x{00AD}");
     private static final Pattern TYPOGRAPHIC_HYPHEN = Pattern.compile("[\\x{2010}\\x{2011}\\x{FE63}\\x{FF0D}]");
@@ -81,7 +81,7 @@ final class SpeakableText {
     }
 
     /** Der Text, wie ihn die Sprachausgabe bekommt; nie {@code null}. */
-    static String of(String text) {
+    public static String of(String text) {
         if (text == null || text.isBlank()) {
             return "";
         }
