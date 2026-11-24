@@ -193,7 +193,10 @@ final class EakteBrowser extends JPanel {
         extraction.actions().setVisible(false);
     }
 
-    /** Links oben „Ordner | Gliederung“ (Angelo 24.11.): die Gliederung steht an Stelle des Baums, nie neben dem Text. */
+    /**
+     * Links „Ordner | Gliederung“ in der Fußleiste der Seitenleiste (Angelo 24.11.): die Gliederung steht an Stelle
+     * des Baums, nie neben dem Text.
+     */
     private JComponent leftPane() {
         leftToggle.segment(FOLDERS).segment(OUTLINE);
         leftToggle.select(FOLDERS);
@@ -235,13 +238,11 @@ final class EakteBrowser extends JPanel {
         leftStage.setOpaque(false);
         leftStage.add(Comic.scroll(tree), FOLDERS);
         leftStage.add(outline, OUTLINE);
-        JPanel head = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 4));
-        head.setOpaque(false);
-        head.add(leftToggle);
         JPanel left = new JPanel(new BorderLayout());
         left.setOpaque(false);
-        left.add(head, BorderLayout.NORTH);
         left.add(leftStage, BorderLayout.CENTER);
+        // Angelo 24.11.: der Umschalter einer Seitenleiste steht unten in ihrer Fußleiste, überall gleich hoch
+        left.add(DeckBars.foot(leftToggle, null), BorderLayout.SOUTH);
         return left;
     }
 
@@ -255,7 +256,7 @@ final class EakteBrowser extends JPanel {
         outlineEmpty.setVisible(headings.isEmpty());
     }
 
-    /** „Ordner | Gliederung“ links oben. */
+    /** „Ordner | Gliederung“ unten in der Seitenleiste. */
     JComponent leftToggle() {
         return leftToggle;
     }
