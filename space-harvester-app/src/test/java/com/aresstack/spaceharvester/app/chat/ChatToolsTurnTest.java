@@ -277,6 +277,80 @@ class ChatToolsTurnTest {
                 .contains(ChatTools.ref(page("datenhaus"))).contains(ChatTools.ref(page("glossar")));
     }
 
+    // ------------------------------------------------------------------ Sammlung (ADR 0034 §5)
+
+    @Test
+    void aFolderListsItsSubfoldersAsVirtualNodesAndOnlyItsFavoritesPages() {
+        String key = workspace.spaces("handbuch").get(0).key();
+        PageKey datenhaus = page("datenhaus");
+        PageKey nachtlauf = page("nachtlauf");
+        Selection.Root top = Selection.Root.subtree("handbuch", key, datenhaus.pageId());
+        Selection.Root below = Selection.Root.subtree("handbuch", key, nachtlauf.pageId());
+        PageSelection scope = workspace.resolveSelection(new Selection(List.of(top, below)));
+        CollectionNodes nodes = folderId -> folderId == null
+                ? new CollectionNodes.Content(List.of(new CollectionNodes.Folder("f-2", "Betrieb")), List.of(top))
+                : folderId.equals("f-2") ? new CollectionNodes.Content(List.of(), List.of(below)) : null;
+        ChatTools tools = new ChatTools(workspace, scope, java.util.Set.of(), sources(new ArrayList<>()))
+                .collection(nodes);
+
+        String first = tools.list("", 1);
+        String sub = tools.list(ChatTools.FOLDER + "f-2", 1);
+
+        assertThat(first).startsWith("Favoriten des Bereichs, Blatt 1 von 1 (2 Einträge)")
+                .contains("- " + ChatTools.FOLDER + "f-2 | Betrieb | Ordner")
+                .contains("- " + ChatTools.ref(datenhaus) + " | ")
+                .doesNotContain(ChatTools.ref(nachtlauf)).doesNotContain("glossar");
+        assertThat(first.indexOf(ChatTools.FOLDER)).as("Ordner zuerst").isLessThan(first.indexOf(datenhaus.pageId()));
+        assertThat(sub).startsWith("Inhalt des Ordners").contains(ChatTools.ref(nachtlauf))
+                .doesNotContain(ChatTools.ref(datenhaus));
+        assertThat(tools.list(ChatTools.FOLDER + "fremd", 1)).as("geprüft wie allows()")
+                .isEqualTo(ChatTools.UNAVAILABLE);
+        assertThat(tools.toolDefinitions().stream().filter(tool -> tool.name().equals(ChatTools.LIST))
+                .findFirst().orElseThrow().description()).contains(ChatTools.FOLDER);
+    }
+
+    @Test
+    void aRemovedFavoriteIsRejectedOnTheNextQuestion() throws Exception {
+        // ADR 0034 §5: Der Ordner ändert sich während des Chats; ab der nächsten Frage gilt der neue Stand.
+        String key = workspace.spaces("handbuch").get(0).key();
+        PageKey datenhaus = page("datenhaus");
+        PageKey nachtlauf = page("nachtlauf");
+        com.aresstack.spaceharvester.app.ui.Favorites favorites =
+                new com.aresstack.spaceharvester.app.ui.Favorites(() -> home.resolve("favorites.json"));
+        String folder = favorites.createFolder("Betrieb", null);
+        for (PageKey page : List.of(datenhaus, nachtlauf)) {
+            favorites.toggle(new com.aresstack.spaceharvester.app.ui.Favorites.Favorite("handbuch", key,
+                    page.pageId(), page.pageId(), List.of(), List.of()), folder);
+        }
+        String read = "{\"kennung\":\"" + ChatTools.ref(nachtlauf) + "\"}";
+
+        String before = ask(favorites, folder, read);
+        favorites.toggle(new com.aresstack.spaceharvester.app.ui.Favorites.Favorite("handbuch", key,
+                nachtlauf.pageId(), null, List.of(), List.of()), folder);
+        String after = ask(favorites, folder, read);
+
+        assertThat(before).contains("vollem Spool");
+        assertThat(after).isEqualTo(ChatTools.UNAVAILABLE);
+    }
+
+    /** Eine Frage im Ordner: seine Favoriten wie beim Senden aufgelöst, das Modell liest eine Seite. */
+    private String ask(com.aresstack.spaceharvester.app.ui.Favorites favorites, String folder, String read)
+            throws Exception {
+        List<Selection.Root> roots = favorites.favoritesIn(folder, true).stream()
+                .map(com.aresstack.spaceharvester.app.ui.Favorites.Favorite::root).toList();
+        PageSelection scope = workspace.resolveSelection(new Selection(roots));
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.READ, read))),
+                (request, listener) -> listener.completed("Fertig.")));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", scope,
+                "Ordner Betrieb", events, Runnable::run).knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+        List<AiChat.Message> messages = port.requests.get(1).messages();
+        return messages.get(messages.size() - 1).text();
+    }
+
     @Test
     void theLastRoundGoesWithoutToolsSoThatAnAnswerComes() throws Exception {
         List<BiConsumer<AiChat.Request, AiChat.Listener>> script = new ArrayList<>();

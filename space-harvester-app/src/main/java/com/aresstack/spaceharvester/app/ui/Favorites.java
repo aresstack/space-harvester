@@ -137,6 +137,22 @@ public final class Favorites {
             collect(children, recursive, out);
             return List.copyOf(out);
         }
+
+        /** Der Unterordner {@code id} auf irgendeiner Ebene unter diesem Ordner (nie er selbst), falls vorhanden. */
+        public java.util.Optional<Folder> subfolder(String id) {
+            for (Entry entry : children) {
+                if (entry instanceof Folder folder) {
+                    if (folder.id().equals(id)) {
+                        return java.util.Optional.of(folder);
+                    }
+                    java.util.Optional<Folder> below = folder.subfolder(id);
+                    if (below.isPresent()) {
+                        return below;
+                    }
+                }
+            }
+            return java.util.Optional.empty();
+        }
     }
 
     /** Ein Favorit an seiner Stelle im Baum. */
