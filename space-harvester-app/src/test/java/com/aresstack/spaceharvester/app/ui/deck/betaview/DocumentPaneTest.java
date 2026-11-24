@@ -49,6 +49,7 @@ class DocumentPaneTest {
 
         @Override
         public void close(DocumentTab document) {
+            calls.add("close " + document.title());
         }
 
         @Override
@@ -115,8 +116,20 @@ class DocumentPaneTest {
             pane.quickInfo.doClick();
             assertThat(actions.calls).endsWith("print Lauf A", "quickInfo Lauf A vom Montag 1");
 
-            pane.closeAll.doClick();
-            assertThat(actions.calls).endsWith("closeAll");
+            // Schließen macht das Kreuz im Reiter des Dokuments (Angelo, 24.11.2026), kein Knopf in der Leiste.
+            com.aresstack.spaceharvester.app.ui.controls.ClosableTab tab = closableTab(pane);
+            assertThat(tab).as("Reiter mit Kreuz").isNotNull();
+            tab.cross().doClick();
+            assertThat(actions.calls).endsWith("close Lauf A");
+            assertThat(pane.footTools()).as("Werkzeuge für die Fußleiste").isNotNull();
+            assertThat(java.util.Arrays.asList(((java.awt.Container) pane.footTools()).getComponents()))
+                    .contains(pane.download, pane.searchToggle);
+            // Schmal: die hinteren Werkzeuge gehen ins Menü, die Leiste bricht nicht um.
+            var row = (com.aresstack.spaceharvester.app.ui.controls.OverflowRow) pane.footTools();
+            row.setSize(row.getPreferredSize().width, 40);
+            assertThat(row.hiddenParts()).isEmpty();
+            row.setSize(300, 40);
+            assertThat(row.hiddenParts()).contains(pane.searchToggle).doesNotContain(pane.refresh);
             pane.clear();
             assertThat(pane.activeDrawer()).isEqualTo(DocumentPane.DRAWER_NONE);
             assertThat(pane.notesText.getText()).isEmpty();
@@ -168,5 +181,20 @@ class DocumentPaneTest {
         assertThat(chosen.from()).isEqualTo(2);
         assertThat(chosen.to()).isEqualTo(2);
         assertThat(DownloadOptions.quick().withCurrentPage(2)).isEqualTo(DownloadOptions.quick());
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.controls.ClosableTab closableTab(java.awt.Container root) {
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof com.aresstack.spaceharvester.app.ui.controls.ClosableTab tab) {
+                return tab;
+            }
+            if (child instanceof java.awt.Container inner) {
+                var found = closableTab(inner);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 }

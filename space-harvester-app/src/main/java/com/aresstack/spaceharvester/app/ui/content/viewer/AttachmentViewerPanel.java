@@ -152,6 +152,14 @@ public final class AttachmentViewerPanel extends JPanel {
     /** Text statt Bild (Textansicht). */
     private boolean showingText;
     private List<Heading> headings = List.of();
+    /** Die gezeigte E-Mail, sonst {@code null}. */
+    private MailMessage mail;
+    private final List<Runnable> mailObservers = new java.util.ArrayList<>();
+    /** Wer eine Anlage der E-Mail selbst öffnet (etwa der Baum der E-Akte); {@code null}: hier im Viewer. */
+    private Consumer<MailMessage.Attachment> mailAttachmentHandler;
+    /** Eine geöffnete Anlage der E-Mail, über der E-Mail, mit „Zurück zur E-Mail“. */
+    private final JPanel mailPart = new JPanel(new BorderLayout());
+    private AttachmentViewerPanel mailPartViewer;
     private final List<Runnable> headingObservers = new java.util.ArrayList<>();
 
     /**
@@ -238,6 +246,22 @@ public final class AttachmentViewerPanel extends JPanel {
         layers.add(textPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 10));
         layers.add(documentPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 10));
         layers.add(spreadsheetPane, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 11));
+        mailPart.setOpaque(true);
+        mailPart.setBackground(ResearchUiPalette.LIGHT_CONTROL_BG);
+        mailPart.setVisible(false);
+        layers.add(mailPart, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 12));
+        documentArea.addHyperlinkListener(event -> {
+            if (event.getEventType() == javax.swing.event.HyperlinkEvent.EventType.ACTIVATED && mail != null
+                    && event.getDescription() != null
+                    && event.getDescription().startsWith(MailMessage.ATTACHMENT_LINK)) {
+                try {
+                    openMailAttachment(Integer.parseInt(event.getDescription()
+                            .substring(MailMessage.ATTACHMENT_LINK.length())));
+                } catch (NumberFormatException ignored) {
+                    // nur eigene Verweise
+                }
+            }
+        });
         layers.addComponentListener(new ComponentAdapter() {
             @Override
             public void componentResized(ComponentEvent e) {
@@ -250,6 +274,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 textPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
                 documentPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
                 spreadsheetPane.setBounds(inset, 8, Math.max(0, w - 2 * inset), Math.max(0, h - 16));
+                mailPart.setBounds(0, 0, w, h);
                 previous.setBounds(0, h / 3, ARROW_W, h / 3);
                 next.setBounds(w - ARROW_W, h / 3, ARROW_W, h / 3);
                 download.setBounds(w - BUTTON - 8, 8, BUTTON, BUTTON);
@@ -407,7 +432,7 @@ public final class AttachmentViewerPanel extends JPanel {
     /** Ob der Viewer {@code attachment} selbst zeigt (sonst „keine Vorschau“ bzw. nur über die Vorschau der Quelle). */
     public static boolean showsFormatted(ReaderAttachment attachment) {
         return switch (attachment.kind()) {
-            case PDF, IMAGE, TEXT, PRESENTATION, SPREADSHEET -> true;
+            case PDF, IMAGE, TEXT, PRESENTATION, SPREADSHEET, MAIL -> true;
             case OFFICE -> WordDocumentPreview.supports(attachment.fileName(), attachment.mediaType());
             default -> false;
         };
@@ -788,6 +813,7 @@ public final class AttachmentViewerPanel extends JPanel {
     public void close() {
         closed = true;
         sharpen.stop();
+        closeMailPart();
         final RenderedPages open = pages;
         pages = null;
         if (open != null) {
@@ -808,6 +834,8 @@ public final class AttachmentViewerPanel extends JPanel {
         }
         showingText = false;
         spreadsheetPane.setVisible(false);
+        closeMailPart();
+        mail = null;
         canvas.setStaticImage(null);
         loading(LOADING_ATTACHMENT_TEXT);
         updateInfo();
@@ -829,6 +857,16 @@ public final class AttachmentViewerPanel extends JPanel {
                     }
                 }, this::showSpreadsheet), reason -> showUnavailable(
                         "Tabelle nicht lesbar: " + reasonText(reason)));
+                return;
+            case MAIL:
+                loading("E-Mail wird geladen …");
+                requestOriginal(bytes -> decodeAside(() -> {
+                    try {
+                        return MailMessage.read(attachment.fileName(), bytes);
+                    } catch (IOException failure) {
+                        throw new IllegalStateException(failure.getMessage(), failure);
+                    }
+                }, this::showMail), reason -> showUnavailable("E-Mail nicht lesbar: " + reasonText(reason)));
                 return;
             case PRESENTATION:
                 loading("PowerPoint wird geladen …");
@@ -994,6 +1032,84 @@ public final class AttachmentViewerPanel extends JPanel {
         headings(collectHeadings(html));
         hover(pointer);
         updateInfo();
+    }
+
+    /**
+     * Zeigt eine E-Mail formatiert: Kopf (Von, An, Cc, Datum, Betreff), die Anlagen als Verweise (ein Klick öffnet
+     * sie, PDF formatiert, mit Speichern), darunter der Text mit eingebetteten Bildern (Angelo 24.11.2026).
+     */
+    private void showMail(MailMessage message) {
+        mail = message;
+        showDocument(message.render());
+        mailObservers.forEach(Runnable::run);
+    }
+
+    /** Die gezeigte E-Mail (Kopf, Text, Anlagen), sonst leer. */
+    public java.util.Optional<MailMessage> mail() {
+        return java.util.Optional.ofNullable(mail);
+    }
+
+    /** Meldet, wenn eine E-Mail gezeigt wird (auf dem EDT). */
+    public void onMail(Runnable observer) {
+        mailObservers.add(java.util.Objects.requireNonNull(observer, "observer"));
+    }
+
+    /**
+     * Wer eine angeklickte Anlage selbst öffnet, etwa die E-Akte über ihren Baum; ohne öffnet der Viewer sie über der
+     * E-Mail.
+     */
+    public void onMailAttachment(Consumer<MailMessage.Attachment> handler) {
+        mailAttachmentHandler = handler;
+    }
+
+    /** Öffnet die Anlage {@code index} der gezeigten E-Mail (wie ein Klick auf ihren Verweis). */
+    public void openMailAttachment(int index) {
+        if (mail == null) {
+            return;
+        }
+        MailMessage.Attachment chosen = mail.allAttachments().stream().filter(a -> a.index() == index).findFirst()
+                .orElse(null);
+        if (chosen == null) {
+            return;
+        }
+        if (mailAttachmentHandler != null) {
+            mailAttachmentHandler.accept(chosen);
+            return;
+        }
+        closeMailPart();
+        byte[] data = chosen.data();
+        mailPartViewer = new AttachmentViewerPanel(chosen.asReaderAttachment(),
+                (ignored, done, failed) -> done.accept(data), fileOpener, renderer);
+        ViewerButton back = new ViewerButton(ComposerIcons.chevronLeft(), "Zurück zur E-Mail");
+        back.onClick(this::closeMailPart);
+        back.setPreferredSize(new Dimension(BUTTON, BUTTON));
+        JLabel title = new JLabel(chosen.name());
+        title.setFont(ResearchUiTypography.semiBold(12f));
+        JPanel bar = new JPanel(new BorderLayout(6, 0));
+        bar.setOpaque(false);
+        bar.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+        bar.add(back, BorderLayout.WEST);
+        bar.add(title, BorderLayout.CENTER);
+        mailPart.removeAll();
+        mailPart.add(bar, BorderLayout.NORTH);
+        mailPart.add(mailPartViewer, BorderLayout.CENTER);
+        mailPart.setVisible(true);
+        mailPart.revalidate();
+        mailPart.repaint();
+    }
+
+    /** Die über der E-Mail geöffnete Anlage, sonst {@code null}. */
+    public AttachmentViewerPanel mailPartViewer() {
+        return mailPartViewer;
+    }
+
+    private void closeMailPart() {
+        if (mailPartViewer != null) {
+            mailPartViewer.close();
+            mailPartViewer = null;
+        }
+        mailPart.removeAll();
+        mailPart.setVisible(false);
     }
 
     /** Eine Überschrift des gezeigten Word-Dokuments (Formatvorlagen Überschrift 1–3) und ihre Stelle im Text. */

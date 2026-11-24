@@ -39,7 +39,7 @@ class SearchPaneTest {
         }
 
         @Override
-        public void open(ResultTable.Row row) {
+        public void open(ResultTable.Row row, Object origin) {
         }
 
         @Override

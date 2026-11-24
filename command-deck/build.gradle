@@ -31,6 +31,8 @@ dependencies {
     // nur der Adapter deck.ndv.pal spricht damit
     implementation project(':enterprise-ai-sources')
 
+    // Erfundene Outlook-Nachricht der Schein-E-Akte (FakeOutlookMessage): OLE2 über das POIFS von Apache POI
+    testFixturesImplementation "org.apache.poi:poi:${libs.versions.poi.get()}"
     testImplementation platform(libs.junit.bom)
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation platform(libs.spring.boot.dependencies)

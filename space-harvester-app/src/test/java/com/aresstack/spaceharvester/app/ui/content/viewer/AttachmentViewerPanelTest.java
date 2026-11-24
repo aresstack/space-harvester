@@ -344,6 +344,37 @@ class AttachmentViewerPanelTest {
         });
     }
 
+    /**
+     * Angelo 24.11.2026: Der eine Viewer kann E-Mails. Outlook-Nachricht formatiert mit Kopf und Anlagenliste; ein
+     * Klick auf die PDF-Anlage zeigt sie über der E-Mail, „Zurück“ führt wieder zur E-Mail. Erfundene Inhalte.
+     */
+    @Test
+    void outlookMessageShowsHeaderAndOpensItsPdfAttachment() throws Exception {
+        byte[] message = com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.build(0);
+        FakeLoader loader = new FakeLoader().file("msg", message).withoutPreviews();
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("msg", "Erlass.msg", "application/octet-stream", message.length), loader,
+                    null, Runnable::run);
+            assertThat(viewer.mail()).isPresent();
+            assertThat(viewer.isShowingText()).isTrue();
+            assertThat(viewer.textContent()).contains("Von: " + com.aresstack.spaceharvester.deck.eakte.http
+                    .FakeOutlookMessage.FROM).contains(com.aresstack.spaceharvester.deck.eakte.http
+                    .FakeOutlookMessage.ATTACHMENT);
+            java.util.List<MailMessage.Attachment> opened = new java.util.ArrayList<>();
+            viewer.openMailAttachment(0);
+            assertThat(viewer.mailPartViewer()).isNotNull();
+            assertThat(viewer.mailPartViewer().attachment().kind()).isEqualTo(ReaderAttachmentKind.PDF);
+            assertThat(viewer.mailPartViewer().attachment().fileName())
+                    .isEqualTo(com.aresstack.spaceharvester.deck.eakte.http.FakeOutlookMessage.ATTACHMENT);
+            viewer.onMailAttachment(opened::add);
+            viewer.openMailAttachment(0);
+            assertThat(opened).extracting(MailMessage.Attachment::index).containsExactly(0);
+            viewer.close();
+            assertThat(viewer.mailPartViewer()).isNull();
+        });
+    }
+
     private static byte[] wordWithText(String text) throws java.io.IOException {
         try (org.apache.poi.xwpf.usermodel.XWPFDocument word = new org.apache.poi.xwpf.usermodel.XWPFDocument();
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {

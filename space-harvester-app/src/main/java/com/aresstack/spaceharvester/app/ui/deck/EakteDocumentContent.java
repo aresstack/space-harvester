@@ -43,10 +43,13 @@ final class EakteDocumentContent implements DocumentContent {
         if (connected.isEmpty()) {
             throw new IOException("Keine angemeldete Verbindung zur E-Akte");
         }
-        String parent = parent(document.id());
+        // Eine Anlage einer E-Mail (etwa der Erlass als PDF): die E-Mail lesen, daraus die Anlage.
+        int part = document.id().indexOf(EakteBrowser.PART);
+        String href = part < 0 ? document.id() : document.id().substring(0, part);
+        String parent = parent(href);
         for (EakteSession session : connected) {
             Optional<EakteEntry> entry = await(session.list(parent)).stream()
-                    .filter(candidate -> !candidate.folder() && candidate.href().equals(document.id())).findFirst();
+                    .filter(candidate -> !candidate.folder() && candidate.href().equals(href)).findFirst();
             if (entry.isEmpty()) {
                 continue;
             }
@@ -54,9 +57,27 @@ final class EakteDocumentContent implements DocumentContent {
             if (!document.version().isEmpty() && !document.version().equals(found.etag())) {
                 throw new IOException("Das Dokument hat sich seit der Anzeige geändert (anderes ETag)");
             }
-            return new Content(found.name(), found.contentType(), await(session.read(document.id())));
+            byte[] bytes = await(session.read(href));
+            if (part >= 0) {
+                return attachment(found.name(), bytes, document.id().substring(part + EakteBrowser.PART.length()));
+            }
+            return new Content(found.name(), found.contentType(), bytes);
         }
         throw new IOException("Dokument in keiner angemeldeten Verbindung gefunden");
+    }
+
+    /** Die Anlage {@code index} der E-Mail {@code bytes}. */
+    private static Content attachment(String mailName, byte[] bytes, String index) throws IOException {
+        int wanted;
+        try {
+            wanted = Integer.parseInt(index);
+        } catch (NumberFormatException e) {
+            throw new IOException("Keine Anlage „" + index + "“", e);
+        }
+        return com.aresstack.spaceharvester.app.ui.content.viewer.MailMessage.read(mailName, bytes).attachments()
+                .stream().filter(attachment -> attachment.index() == wanted).findFirst()
+                .map(attachment -> new Content(attachment.name(), attachment.mediaType(), attachment.data()))
+                .orElseThrow(() -> new IOException("Die E-Mail hat keine Anlage " + (wanted + 1)));
     }
 
     private List<EakteSession> connected() {

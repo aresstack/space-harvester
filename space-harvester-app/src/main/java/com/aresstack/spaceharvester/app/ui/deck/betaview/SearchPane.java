@@ -7,7 +7,6 @@ import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.PillTabs;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
-import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.deck.betaview.Bookmark;
 import com.aresstack.spaceharvester.deck.betaview.FilterPatterns;
 import com.aresstack.spaceharvester.deck.betaview.ResultTable;
@@ -28,7 +27,6 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
-import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
@@ -64,7 +62,12 @@ final class SearchPane extends JPanel {
 
         void openBookmark(Bookmark bookmark);
 
-        void open(ResultTable.Row row);
+        /**
+         * Öffnet einen Treffer. Treffer gehen beim Server über ihre Nummer in der zuletzt gesuchten Liste; {@code origin}
+         * sagt, aus welcher Suche (Auswahl oder gespeicherte Suche) die Liste stammt, damit die Sitzung eine ältere Liste
+         * vorher neu sucht.
+         */
+        void open(ResultTable.Row row, Object origin);
 
         /** Eine Eingabe passt nicht; der Text sagt, was fehlt. */
         void problem(String message);
@@ -109,6 +112,20 @@ final class SearchPane extends JPanel {
     private final BusyOverlay busy;
     private final TableRowSorter<ResultModel> sorter = new TableRowSorter<>(model);
     private final JPanel periodDetail = new JPanel(new CardLayout());
+    /** Mitte: die Suchmaske oder eine Trefferliste, umgeschaltet in der Fußleiste der Seitenleiste. */
+    static final String MASK = "mask";
+    static final String HITS = "hits";
+    private final CardLayout centerCards = new CardLayout();
+    private final JPanel center = new JPanel(centerCards);
+    /** Fußleiste der Seitenleiste: „Suchmaske“ und je Suche eine schließbare Trefferliste (Angelo, 24.11.2026). */
+    private final JPanel switchRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
+    private final javax.swing.ButtonGroup switchGroup = new javax.swing.ButtonGroup();
+    final com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton maskTab =
+            new com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton(null, "Suchmaske",
+                    "Suchmaske zeigen (Auswahl, gespeicherte Suchen, gemerkte Dokumente)");
+    final List<HitList> hitLists = new java.util.ArrayList<>();
+    private HitList shown;
+    private int searchCount;
     private final Actions actions;
     private boolean savedLoaded;
     private boolean bookmarksLoaded;
@@ -136,6 +153,7 @@ final class SearchPane extends JPanel {
                 .tab(MARKED, listTab(bookmarks, "Gemerkte Dokumente neu laden", actions::loadBookmarks,
                         actions::openBookmark))
                 .actions(saveSearchButton, searchButton);
+
         tabs.onSelect(name -> {
             if (SAVED.equals(name) && !savedLoaded) {
                 savedLoaded = true;
@@ -156,7 +174,7 @@ final class SearchPane extends JPanel {
                 if (view >= 0) {
                     ResultTable.Row row = model.row(table.convertRowIndexToModel(view));
                     if (row.openable()) {
-                        actions.open(row);
+                        actions.open(row, shown == null ? null : shown.origin);
                     }
                 }
             }
@@ -187,14 +205,19 @@ final class SearchPane extends JPanel {
         results.setOpaque(false);
         results.add(resultHead, BorderLayout.NORTH);
         results.add(Comic.scroll(table), BorderLayout.CENTER);
-        busy = new BusyOverlay(results);
-
-        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tabs, busy);
-        ComicDivider.install(split);
-        split.setBorder(null);
-        split.setOpaque(false);
-        split.setResizeWeight(0.0);
-        add(split, BorderLayout.CENTER);
+        // Oben bleiben Reiterzeile und Filter wie gehabt; die Trefferlisten liegen in derselben Fläche und werden in
+        // der Fußleiste umgeschaltet, wie die Seitenleiste von NDV (Angelo, 24.11.2026).
+        center.setOpaque(false);
+        center.add(tabs, MASK);
+        center.add(results, HITS);
+        busy = new BusyOverlay(center);
+        add(busy, BorderLayout.CENTER);
+        switchRow.setOpaque(false);
+        maskTab.setAccent(com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette.SECONDARY_SURFACE);
+        maskTab.addActionListener(e -> showMask());
+        switchGroup.add(maskTab);
+        switchRow.add(maskTab);
+        maskTab.setSelected(true);
         showCount();
         recall();
         for (PlaceholderField field : List.of(favorite, locale, amount, from, to, title, form.custom, extension.bkNumber,
@@ -283,12 +306,12 @@ final class SearchPane extends JPanel {
         return panel;
     }
 
-    /** Hält ein Formular oben, damit es bei hoher Fläche nicht in die Mitte rutscht. */
+    /**
+     * Hält ein Formular oben; reicht der Platz nicht, scrollt es mit der gestylten Leiste der App (Angelo, 24.11.2026:
+     * Dokument und Status haben viele Felder).
+     */
     private static JComponent top(JComponent content) {
-        JPanel holder = new JPanel(new BorderLayout());
-        holder.setOpaque(false);
-        holder.add(content, BorderLayout.NORTH);
-        return holder;
+        return scrolling(content);
     }
 
     private void showPeriodDetail() {
@@ -314,11 +337,80 @@ final class SearchPane extends JPanel {
     }
 
     /**
-     * Die Unterreiter der Suche für die Fußleiste der Seitenleiste (Angelo 24.11.2026: Reiter einer Seitenleiste
-     * stehen unten); die Aktionen bleiben oben.
+     * Der Umschalter für die Fußleiste der Seitenleiste: „Suchmaske“ und die Trefferlisten, jede mit Kreuz (Angelo
+     * 24.11.2026). Reiterzeile, Speichern und „Suchen“ bleiben oben.
      */
     javax.swing.JComponent footTabs() {
-        return tabs.detachBar();
+        return switchRow;
+    }
+
+    /** Eine Trefferliste: woher sie stammt (für das erneute Suchen beim Öffnen) und was sie zeigt. */
+    static final class HitList {
+        final String label;
+        final Object origin;
+        final ResultTable result;
+        com.aresstack.spaceharvester.app.ui.controls.ClosableTab tab;
+
+        HitList(String label, Object origin, ResultTable result) {
+            this.label = label;
+            this.origin = origin;
+            this.result = result;
+        }
+    }
+
+    /** Die gerade gezeigte Trefferliste, sonst {@code null} (Suchmaske). */
+    HitList shownList() {
+        return shown;
+    }
+
+    /** Zeigt die Suchmaske. */
+    void showMask() {
+        shown = null;
+        maskTab.setSelected(true);
+        centerCards.show(center, MASK);
+    }
+
+    /** Zeigt eine Trefferliste in der Tabelle. */
+    void showList(HitList list) {
+        shown = list;
+        list.tab.setSelected(true);
+        filling = true;
+        try {
+            filter.setText("");
+            model.fill(list.result);
+            table.clearSelection();
+        } finally {
+            filling = false;
+        }
+        showCount();
+        centerCards.show(center, HITS);
+    }
+
+    /** Schließt eine Trefferliste; war sie zu sehen, kommt die vorige oder die Suchmaske. */
+    void closeList(HitList list) {
+        int index = hitLists.indexOf(list);
+        if (index < 0) {
+            return;
+        }
+        hitLists.remove(index);
+        switchGroup.remove(list.tab);
+        switchRow.remove(list.tab);
+        switchRow.revalidate();
+        switchRow.repaint();
+        if (shown == list) {
+            if (hitLists.isEmpty()) {
+                showMask();
+            } else {
+                showList(hitLists.get(Math.max(0, index - 1)));
+            }
+        }
+    }
+
+    /** Hält den Inhalt oben und lässt ihn mit der gestylten Leiste der App senkrecht scrollen. */
+    private static JComponent scrolling(JComponent content) {
+        javax.swing.JScrollPane scroll = Comic.column(content);
+        scroll.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        return scroll;
     }
 
     SearchFilter filter() {
@@ -363,14 +455,30 @@ final class SearchPane extends JPanel {
     }
 
     void show(ResultTable result) {
-        filling = true;
-        try {
-            model.fill(result);
-            table.clearSelection();
-        } finally {
-            filling = false;
-        }
-        showCount();
+        show(result, "Treffer", null);
+    }
+
+    /**
+     * Legt für das Ergebnis einer Suche eine eigene Trefferliste an und zeigt sie; ältere Listen bleiben in der
+     * Fußleiste stehen, bis man sie schließt.
+     */
+    HitList show(ResultTable result, String label, Object origin) {
+        searchCount++;
+        String name = label == null || label.isBlank() ? "Treffer " + searchCount : label.strip();
+        HitList list = new HitList(name, origin, result);
+        int rows = result.rows().size();
+        list.tab = new com.aresstack.spaceharvester.app.ui.controls.ClosableTab(null, name.length() > DocumentPane.MAX_PILL
+                ? name.substring(0, DocumentPane.MAX_PILL - 1).strip() + "…" : name,
+                name + " · " + rows + (rows == 1 ? " Treffer" : " Treffer"),
+                "Trefferliste schließen (auch Mittelklick)", () -> closeList(list));
+        list.tab.addActionListener(e -> showList(list));
+        switchGroup.add(list.tab);
+        switchRow.add(list.tab);
+        switchRow.revalidate();
+        switchRow.repaint();
+        hitLists.add(list);
+        showList(list);
+        return list;
     }
 
     void showSaved(List<SavedSearch> items) {

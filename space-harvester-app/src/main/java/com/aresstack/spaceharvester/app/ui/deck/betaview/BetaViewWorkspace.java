@@ -32,7 +32,8 @@ import javax.swing.SwingUtilities;
  * Sitzung (Suche links, Dokumente rechts). Die Sitzungen gehören dem Anwendungsfall {@link BetaViewSessions}; der
  * Wechsel des Bereichs oder der Perspektive meldet nichts ab. Nichts läuft, bevor jemand „Anmelden“ drückt.
  */
-public final class BetaViewWorkspace extends JPanel {
+public final class BetaViewWorkspace extends JPanel
+        implements com.aresstack.spaceharvester.app.ui.deck.DeckBars.FootTools {
 
     /**
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
@@ -66,6 +67,9 @@ public final class BetaViewWorkspace extends JPanel {
     private final Map<BetaViewSession, SessionPanel> panelOf = new LinkedHashMap<>();
     private final ComposerToggleButton newPill;
     private final CardLayout cards = new CardLayout();
+    /** Die Werkzeuge des gezeigten Dokuments je Sitzung, mittig neben der Lupe in der Fußleiste des Command Deck. */
+    private final CardLayout footCards = new CardLayout();
+    private final JPanel footTools = new JPanel(footCards);
     private final JPanel center = new JPanel(cards);
     private final BetaViewConnectForm form;
     private BetaViewSession selected;
@@ -196,6 +200,7 @@ public final class BetaViewWorkspace extends JPanel {
             }
         });
         center.add(panel, session.id());
+        footTools.add(panel.documents.footTools(), session.id());
         session.observe(changed -> SwingUtilities.invokeLater(() -> changed(changed)));
         select(session);
         pills.revalidate();
@@ -256,6 +261,12 @@ public final class BetaViewWorkspace extends JPanel {
         return reason.startsWith("Anmeldung abgelehnt") && !reason.matches("Anmeldung abgelehnt: HTTP (?!40[13]).*");
     }
 
+    /** Die Werkzeuge zum Dokument der gewählten Sitzung; das Formular „Neue Anmeldung“ hat keine. */
+    @Override
+    public javax.swing.JComponent footTools() {
+        return footTools;
+    }
+
     /** Zeigt die Sitzung (oder mit {@code null} das Formular „Neue Anmeldung“). */
     void select(BetaViewSession session) {
         selected = session;
@@ -264,6 +275,7 @@ public final class BetaViewWorkspace extends JPanel {
             pill.setSelected(true);
         }
         cards.show(center, session == null ? FORM : session.id());
+        footCards.show(footTools, session == null || !panelOf.containsKey(session) ? FORM : session.id());
         // Die Statuszeile der App zeigt den Stand der gewählten Sitzung; ohne Sitzung nichts.
         SessionPanel shown = session == null ? null : panelOf.get(session);
         statusInfo.show(shown == null ? com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(" ")
@@ -286,6 +298,7 @@ public final class BetaViewWorkspace extends JPanel {
         SessionPanel panel = panelOf.remove(session);
         if (panel != null) {
             center.remove(panel);
+            footTools.remove(panel.documents.footTools());
         }
         select(pillOf.isEmpty() ? null : pillOf.keySet().iterator().next());
     }

@@ -114,7 +114,8 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
         info("Suche läuft …");
         after(session.search(filter), result -> {
             search.busy(false, null);
-            search.show(result);
+            search.show(result, hitLabel(filter), filter);
+            serverOrigin = filter;
             info(result.rows().size() + " Treffer");
         }, "Suche gescheitert", () -> search.busy(false, null));
     }
@@ -146,7 +147,8 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
         search.busy(true, "Suche „" + saved.name() + "“ läuft …");
         after(session.run(saved), result -> {
             search.busy(false, null);
-            search.show(result);
+            search.show(result, saved.name(), saved);
+            serverOrigin = saved;
             info("Gespeicherte Suche „" + saved.name() + "“: " + result.rows().size() + " Treffer");
             // Wie MainframeMate: die Liste neu lesen, denn jede Ausführung verbraucht ihr Formular-Token.
             loadSaved();
@@ -175,8 +177,33 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
     }
 
     @Override
-    public void open(ResultTable.Row row) {
-        openAction(row.action(), "Dokument");
+    public void open(ResultTable.Row row, Object origin) {
+        if (origin == null || origin == serverOrigin) {
+            openAction(row.action(), "Dokument");
+            return;
+        }
+        // Treffer gehen beim Server über ihre Nummer in der zuletzt gesuchten Liste: eine ältere Liste erst neu suchen.
+        documents.busy(true, "Stelle die Trefferliste wieder her …");
+        java.util.concurrent.CompletableFuture<ResultTable> again = origin instanceof SavedSearch saved
+                ? session.run(saved) : session.search((SearchFilter) origin);
+        after(again, result -> {
+            serverOrigin = origin;
+            documents.busy(false, null);
+            openAction(row.action(), "Dokument");
+            if (origin instanceof SavedSearch) {
+                // Jede Ausführung verbraucht das Formular-Token der gespeicherten Suche: Liste still neu lesen.
+                session.savedSearches().thenAccept(items -> SwingUtilities.invokeLater(() -> search.showSaved(items)));
+            }
+        }, "Trefferliste nicht wiederherstellbar", () -> documents.busy(false, null));
+    }
+
+    /** Aus welcher Suche die Trefferliste des Servers gerade stammt (Auswahl oder gespeicherte Suche). */
+    private Object serverOrigin;
+
+    /** Name der Trefferliste einer Suche: Favorit und Uhrzeit, etwa „A158 · 03:20“. */
+    static String hitLabel(SearchFilter filter) {
+        String time = java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+        return filter.favoriteId().isBlank() ? "Treffer · " + time : filter.favoriteId().strip() + " · " + time;
     }
 
     @Override

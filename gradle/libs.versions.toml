@@ -67,6 +67,8 @@ mermaidJava = "0.2.0-beta.2"
 # Diagramm-Ansicht „Visuell“ im Command Deck (mermaid-renderer, Kopie aus MainframeMate): GraalJS wie drawio-java
 graalJs = "21.3.20.0.3"
 poi = "5.5.1"
+# E-Mails (.eml) im Anhang-Viewer: Apache James Mime4j in derselben Fassung wie in Tika 3.3.2 (tika-parser-mail)
+mime4j = "0.8.14"
 # Desktop-App (#103): YAML-Konfiguration ohne Spring, dieselbe Fassung wie über Spring Boot 4.1
 snakeyaml = "2.4"
 # QR-Codes für den Zertifikatsexport einer Quelle (Strang ZX): nur zxing core (Apache-2.0, reines Java, ohne
@@ -126,6 +128,7 @@ flexmark-ext-tables = { module = "com.vladsch.flexmark:flexmark-ext-tables", ver
 flexmark-ext-autolink = { module = "com.vladsch.flexmark:flexmark-ext-autolink", version.ref = "flexmark" }
 flexmark-ext-gfm-strikethrough = { module = "com.vladsch.flexmark:flexmark-ext-gfm-strikethrough", version.ref = "flexmark" }
 poi-ooxml = { module = "org.apache.poi:poi-ooxml", version.ref = "poi" }
+mime4j-dom = { module = "org.apache.james:apache-mime4j-dom", version.ref = "mime4j" }
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 

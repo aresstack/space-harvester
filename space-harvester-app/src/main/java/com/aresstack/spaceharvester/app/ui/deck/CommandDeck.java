@@ -446,8 +446,6 @@ public final class CommandDeck {
         tools.removeAll();
         if (next == DeckArea.FTP) {
             tools.add(ftp.tools(), BorderLayout.CENTER);
-        } else if (next == DeckArea.EAKTE) {
-            tools.add(eakte.tools(), BorderLayout.CENTER);
         }
         tools.revalidate();
         tools.repaint();
