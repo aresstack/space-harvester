@@ -30,7 +30,9 @@ class AutoLoginTest {
             // Wie ein echter Host: Die Anmeldemaske steht, bevor jemand tippt. OpenTerm gibt die Tastatur schon vor dem
             // ersten Bild frei; ohne diese Bedingung läge es am Zufall der Fadenplanung, ob CLEAR noch vor dem Ende der
             // Telnet-Aushandlung (ohne IAC EOR) hinausgeht und der Host es mit der nächsten Eingabe zu einer verschmilzt.
-            TerminalSessions sessions = new TerminalSessions(untilScreenShows("ANMELDUNG"),
+            // OpenTerm leert sein Bild erst nach dem Senden von CLEAR; der Schein-Host antwortet erst danach.
+            host.holdClearAnswers();
+            TerminalSessions sessions = new TerminalSessions(untilScreenShows("ANMELDUNG", host::clearDone),
                     runnable -> Thread.ofVirtual().start(runnable), new LoginScript(Duration.ofMillis(300)));
             java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
 
@@ -46,6 +48,7 @@ class AutoLoginTest {
             }
 
             assertThat(done.await(30, TimeUnit.SECONDS)).as("Anmeldung abgeschlossen").isTrue();
+            assertThat(session.note()).hasValue("Automatisch angemeldet als TESTUSR");
             // Die letzte Eingabe kann den Host einen Augenblick nach der Meldung erreichen: auf sie warten, nicht schlafen.
             boolean arrived = host.awaitInputs(3, Duration.ofSeconds(10));
             assertThat(arrived).as("Eingaben am Host: " + host.aids()).isTrue();
@@ -84,7 +87,8 @@ class AutoLoginTest {
      * Bildbeobachter der Anzeige, kein Abfragen). Danach beginnt die Anmeldung, wie bei einem Menschen, der die Maske
      * sieht. Am Ablauf der Anmeldung selbst ändert das nichts.
      */
-    private static com.aresstack.spaceharvester.deck.terminal.TerminalConnector untilScreenShows(String text) {
+    private static com.aresstack.spaceharvester.deck.terminal.TerminalConnector untilScreenShows(String text,
+                                                                                            Runnable cleared) {
         OpenTermConnector openTerm = new OpenTermConnector();
         return (profile, listener) -> {
             com.aresstack.spaceharvester.deck.terminal.TerminalConnection connection = openTerm.create(profile, listener);
@@ -121,7 +125,25 @@ class AutoLoginTest {
 
                 @Override
                 public <T> java.util.Optional<T> view(Class<T> type) {
-                    return connection.view(type);
+                    if (type != com.aresstack.spaceharvester.deck.terminal.TerminalKeyboard.class) {
+                        return connection.view(type);
+                    }
+                    // Dieselbe Tastatur; nach CLEAR erfährt der Schein-Host, dass OpenTerm fertig ist.
+                    return connection.view(com.aresstack.spaceharvester.deck.terminal.TerminalKeyboard.class)
+                            .map(keyboard -> type.cast(java.lang.reflect.Proxy.newProxyInstance(
+                                    type.getClassLoader(), new Class<?>[] {type}, (proxy, method, args) -> {
+                                        Object result;
+                                        try {
+                                            result = method.invoke(keyboard, args);
+                                        } catch (java.lang.reflect.InvocationTargetException e) {
+                                            throw e.getCause();
+                                        }
+                                        if (method.getName().equals("clear") || (method.getName().equals("press")
+                                                && args[0] == com.aresstack.spaceharvester.deck.terminal.AidKey.CLEAR)) {
+                                            cleared.run();
+                                        }
+                                        return result;
+                                    })));
                 }
             };
         };

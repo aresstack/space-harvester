@@ -154,6 +154,9 @@ public final class FakeTn3270Host implements AutoCloseable {
                                     inputs.incrementAndGet();
                                     inputs.notifyAll();
                                 }
+                                if (holdClear && !aids.isEmpty() && aids.get(aids.size() - 1) == CLEAR_AID) {
+                                    awaitClearDone();
+                                }
                                 synchronized (out) {
                                     out.write(dataStream());
                                     out.write(new byte[] {(byte) IAC, (byte) EOR});
@@ -208,6 +211,33 @@ public final class FakeTn3270Host implements AutoCloseable {
                 inputs.wait(left);
             }
             return true;
+        }
+    }
+
+    private static final int CLEAR_AID = 0x6D;
+    private volatile boolean holdClear;
+    private final java.util.concurrent.Semaphore clearDone = new java.util.concurrent.Semaphore(0);
+
+    /**
+     * Ab jetzt beantwortet der Host CLEAR erst, wenn der Client {@link #clearDone()} meldet. OpenTerm sendet CLEAR und
+     * leert danach erst sein eigenes Bild (Term3270.Fkey); über die Schleife des Testrechners käme die Antwort sonst
+     * schon in dieses Leeren hinein und würde mitgelöscht. Ein echter Host antwortet nie so schnell.
+     */
+    public void holdClearAnswers() {
+        holdClear = true;
+    }
+
+    /** Der Client hat CLEAR fertig verarbeitet: Die Antwort darf hinaus. */
+    public void clearDone() {
+        clearDone.release();
+    }
+
+    private void awaitClearDone() {
+        try {
+            // Nur eine Obergrenze gegen Hängen, kein Takt: geweckt wird durch clearDone().
+            clearDone.tryAcquire(30, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
