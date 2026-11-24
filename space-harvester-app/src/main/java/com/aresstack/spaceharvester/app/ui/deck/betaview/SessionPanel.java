@@ -53,7 +53,7 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
         javax.swing.JPanel side = new javax.swing.JPanel(new java.awt.BorderLayout());
         side.setOpaque(false);
         side.add(search, java.awt.BorderLayout.CENTER);
-        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(null, null, null),
+        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(null, search.footTabs(), null),
                 java.awt.BorderLayout.SOUTH);
         split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, side,
                 com.aresstack.spaceharvester.app.ui.deck.DeckBars.withFind(documents));

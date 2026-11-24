@@ -8,7 +8,6 @@ import com.aresstack.spaceharvester.app.ui.PillTabs;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
-import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.deck.betaview.Bookmark;
 import com.aresstack.spaceharvester.deck.betaview.FilterPatterns;
 import com.aresstack.spaceharvester.deck.betaview.ResultTable;
@@ -178,11 +177,12 @@ final class SearchPane extends JPanel {
                 applyFilter();
             }
         });
-        JPanel resultHead = new JPanel(new BorderLayout(8, 0));
+        // Kopf wie die Seitenleiste des Space Harvesters: Überschrift, rechts die Anzahl, darunter der Filter.
+        JPanel resultHead = new JPanel(new BorderLayout());
         resultHead.setOpaque(false);
-        resultHead.setBorder(BorderFactory.createEmptyBorder(8, 12, 6, 12));
-        resultHead.add(count, BorderLayout.CENTER);
-        resultHead.add(InputFrame.search(filter), BorderLayout.EAST);
+        resultHead.setBorder(BorderFactory.createEmptyBorder(8, 8, 2, 8));
+        resultHead.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead("Treffer", filter).actions(count),
+                BorderLayout.CENTER);
         JPanel results = new JPanel(new BorderLayout());
         results.setOpaque(false);
         results.add(resultHead, BorderLayout.NORTH);
@@ -311,6 +311,14 @@ final class SearchPane extends JPanel {
         width += saveSearchButton.getPreferredSize().width + searchButton.getPreferredSize().width + 3 * 6;
         java.awt.Insets insets = tabs.getInsets();
         return width + insets.left + insets.right + 8;
+    }
+
+    /**
+     * Die Unterreiter der Suche für die Fußleiste der Seitenleiste (Angelo 24.11.2026: Reiter einer Seitenleiste
+     * stehen unten); die Aktionen bleiben oben.
+     */
+    javax.swing.JComponent footTabs() {
+        return tabs.detachBar();
     }
 
     SearchFilter filter() {
