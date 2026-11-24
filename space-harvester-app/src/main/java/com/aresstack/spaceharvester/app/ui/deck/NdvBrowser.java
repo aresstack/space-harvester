@@ -108,25 +108,14 @@ final class NdvBrowser extends JPanel {
      * Nichts mehr neben dem Quelltext; Ressourcen, Callees/Caller, Aufrufe/Daten und Gliederung stehen hier.
      */
     static final String SIDE_LIBRARIES = "Bibliotheken";
-    static final String SIDE_RESOURCES = "Ressourcen";
-    static final String SIDE_CALLS = "Callees/Caller";
+    static final String SIDE_RESOURCES = EditorSideBar.RESOURCES;
+    static final String SIDE_CALLS = EditorSideBar.CALLS;
     static final String SIDE_RELATIONS = "Aufrufe/Daten";
-    static final String SIDE_OUTLINE = "Gliederung";
+    static final String SIDE_OUTLINE = EditorSideBar.OUTLINE;
     /** Nur in der Diagramm-Ansicht („Visuell“): deren Werkzeuge; danach zurück zum vorigen Reiter. */
-    static final String SIDE_DIAGRAM = "Diagramm";
-    private final JPanel diagramHolder = new JPanel(new BorderLayout());
-    private final Map<DocumentEditor, JComponent> diagramSideOf = new java.util.WeakHashMap<>();
-    private String beforeDiagram = SIDE_LIBRARIES;
-    private final CardLayout sideCards = new CardLayout();
-    private final JPanel sideStage = new JPanel(sideCards);
-    private final CardLayout sideSearchCards = new CardLayout();
-    private final JPanel sideSearch = new JPanel(sideSearchCards);
-    private final Map<String, IconButton> sideTabs = new LinkedHashMap<>();
-    private final Map<String, PlaceholderField> sideFilters = new LinkedHashMap<>();
-    private final JPanel resourcesHolder = new JPanel(new BorderLayout());
-    private final JPanel callsHolder = new JPanel(new BorderLayout());
-    private final JPanel outlineHolder = new JPanel(new BorderLayout());
-    private String sideTab = SIDE_LIBRARIES;
+    static final String SIDE_DIAGRAM = EditorSideBar.DIAGRAM;
+    /** Die Seitenleiste des Code-Viewers (gemeinsam mit FTP); erster Reiter: Bibliotheken. */
+    private EditorSideBar sideBar;
     private final ObjectModel objects = new ObjectModel();
     private final JTable objectTable = Comic.table(new JTable(objects));
     private final TableRowSorter<ObjectModel> sorter = new TableRowSorter<>(objects);
@@ -911,163 +900,29 @@ final class NdvBrowser extends JPanel {
 
     /** Die Seitenleiste: Suche oben (je Reiter ein Feld, sichtbar immer eins), Reiter, Fußleiste mit den Reitern. */
     private JPanel sideBar() {
-        sideFilters.put(SIDE_LIBRARIES, libraryFilter);
-        sideFilters.put(SIDE_RESOURCES, new PlaceholderField(10, "Ressourcen filtern"));
-        sideFilters.put(SIDE_CALLS, new PlaceholderField(10, "Callees/Caller filtern (Ausdruck)"));
-        sideFilters.put(SIDE_RELATIONS, new PlaceholderField(10, "Aufrufe/Daten filtern"));
-        sideFilters.put(SIDE_OUTLINE, new PlaceholderField(10, "Gliederung filtern"));
-        sideSearch.setOpaque(false);
-        sideFilters.forEach((name, field) -> {
-            if (field != libraryFilter) {
-                Comic.style(field);
-                field.getAccessibleContext().setAccessibleName(name + " filtern");
-                field.getDocument().addDocumentListener(changes(() -> applySideFilter(name)));
-            }
-            sideSearch.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead(name, field), name);
-        });
-        sideSearch.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead(SIDE_DIAGRAM, null), SIDE_DIAGRAM);
-        for (JPanel holder : List.of(resourcesHolder, callsHolder, outlineHolder, diagramHolder)) {
-            holder.setOpaque(false);
-        }
-        sideStage.setOpaque(false);
-        sideStage.add(libraryBusy, SIDE_LIBRARIES);
-        sideStage.add(resourcesHolder, SIDE_RESOURCES);
-        sideStage.add(callsHolder, SIDE_CALLS);
-        sideStage.add(relationsPanel, SIDE_RELATIONS);
-        sideStage.add(outlineHolder, SIDE_OUTLINE);
-        sideStage.add(diagramHolder, SIDE_DIAGRAM);
-        sideTabs.put(SIDE_LIBRARIES, new IconButton(FilesIcons.folder(), "Bibliotheken"));
-        sideTabs.put(SIDE_RESOURCES, new IconButton(Glyph.TABLE, "Ressourcen: Daten, Data Areas, Datasets des "
-                + "geöffneten Quelltexts"));
-        sideTabs.put(SIDE_CALLS, new IconButton(com.aresstack.spaceharvester.app.ui.deck.editor.EditorIcons
-                .relations(), "Callees/Caller: was der Quelltext aufruft und wer ihn aufruft"));
-        sideTabs.put(SIDE_RELATIONS, new IconButton(Glyph.GRAPH, "Aufrufe/Aufrufer/Daten aus dem Index der "
-                + "Bibliothek (Tiefe bis " + NdvAnalysis.HIERARCHY_DEPTH + ")"));
-        sideTabs.put(SIDE_OUTLINE, new IconButton(com.aresstack.spaceharvester.app.ui.deck.editor.EditorIcons
-                .outline(), "Gliederung des geöffneten Quelltexts"));
-        sideTabs.put(SIDE_DIAGRAM, new IconButton(com.aresstack.spaceharvester.app.ui.deck.visual.VisualIcons.eye(),
-                "Diagramm: Bearbeiten, Übersicht, Diagrammart, Mindmap-Tiefe, gewähltes Element"));
-        sideTabs.get(SIDE_DIAGRAM).setVisible(false);
-        sideTabs.forEach((name, tab) -> {
-            tab.getAccessibleContext().setAccessibleName(name);
-            tab.addActionListener(e -> selectSide(name));
-        });
-        // Gemeinsame Fußleiste der Seitenleisten (feste Höhe, auf einer Linie mit der Lupenleiste), Reiter mittig.
-        JComponent footer = new com.aresstack.spaceharvester.app.ui.controls.SideFoot(null,
-                com.aresstack.spaceharvester.app.ui.controls.SideFoot.centered(sideTabs.values()
-                        .toArray(java.awt.Component[]::new)), null);
-        JPanel left = new JPanel(new BorderLayout(0, 6));
-        left.setOpaque(false);
-        left.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 6));
-        left.add(sideSearch, BorderLayout.NORTH);
-        left.add(sideStage, BorderLayout.CENTER);
-        left.add(footer, BorderLayout.SOUTH);
-        left.setMinimumSize(new Dimension(150, 0));
-        String remembered = state.sideTab();
-        selectSide(sideTabs.containsKey(remembered) && !SIDE_DIAGRAM.equals(remembered) ? remembered : SIDE_LIBRARIES);
-        return left;
+        sideBar = new EditorSideBar(
+                new EditorSideBar.Home(SIDE_LIBRARIES, FilesIcons.folder(), "Bibliotheken",
+                        new com.aresstack.spaceharvester.app.ui.controls.SideHead(SIDE_LIBRARIES, libraryFilter),
+                        libraryBusy, null),
+                List.of(new EditorSideBar.Extra(SIDE_RELATIONS, Glyph.GRAPH, "Aufrufe/Aufrufer/Daten aus dem Index der "
+                        + "Bibliothek (Tiefe bis " + NdvAnalysis.HIERARCHY_DEPTH + ")", "Aufrufe/Daten filtern",
+                        relationsPanel, relationsPanel::query)),
+                state.sideTab(), state::sideTab);
+        sideBar.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 6));
+        return sideBar;
     }
 
     /** Zeigt einen Reiter der Seitenleiste samt seiner Suche. */
     void selectSide(String name) {
-        if (!sideTabs.containsKey(name)) {
-            return;
-        }
-        sideTab = name;
-        if (!SIDE_DIAGRAM.equals(name)) {
-            state.sideTab(name);
-        }
-        sideCards.show(sideStage, name);
-        sideSearchCards.show(sideSearch, name);
-        sideTabs.forEach((tab, button) -> button.marked(tab.equals(name)));
+        sideBar.select(name);
     }
 
     String sideTab() {
-        return sideTab;
+        return sideBar.tab();
     }
 
     PlaceholderField sideFilter(String name) {
-        return sideFilters.get(name);
-    }
-
-    private void applySideFilter(String name) {
-        String text = sideFilters.get(name).getText();
-        DocumentEditor editor = document == null ? null : editorOf.get(document);
-        switch (name) {
-            case SIDE_RESOURCES -> {
-                if (editor != null) {
-                    editor.filterResources(text);
-                }
-            }
-            case SIDE_CALLS -> {
-                if (editor != null) {
-                    editor.filterCalls(text);
-                }
-            }
-            case SIDE_OUTLINE -> {
-                if (editor != null) {
-                    editor.filterOutline(text);
-                }
-            }
-            case SIDE_RELATIONS -> relationsPanel.query(text);
-            default -> {
-            }
-        }
-    }
-
-    /** Legt Ressourcen, Callees/Caller und Gliederung des gezeigten Editors in die Seitenleiste. */
-    private void sideFor(DocumentEditor editor) {
-        DocumentEditor.SidePanels panels = editor.detachSidePanels();
-        place(resourcesHolder, panels.resources());
-        place(callsHolder, panels.calls());
-        place(outlineHolder, panels.outline());
-        applySideFilter(SIDE_RESOURCES);
-        applySideFilter(SIDE_CALLS);
-        applySideFilter(SIDE_OUTLINE);
-        showDiagramSide(diagramSideOf.get(editor), false);
-    }
-
-    /** Die Diagramm-Ansicht eines Editors geht auf oder zu: ihre Werkzeuge als Reiter der Seitenleiste. */
-    private void diagramSide(DocumentEditor editor, JComponent side) {
-        if (side == null) {
-            diagramSideOf.remove(editor);
-        } else {
-            diagramSideOf.put(editor, side);
-        }
-        if (document != null && editorOf.get(document) == editor) {
-            showDiagramSide(side, true);
-        }
-    }
-
-    private void showDiagramSide(JComponent side, boolean select) {
-        IconButton tab = sideTabs.get(SIDE_DIAGRAM);
-        if (side == null) {
-            diagramHolder.removeAll();
-            tab.setVisible(false);
-            if (SIDE_DIAGRAM.equals(sideTab)) {
-                selectSide(beforeDiagram);
-            }
-        } else {
-            place(diagramHolder, side);
-            tab.setVisible(true);
-            if (select && !SIDE_DIAGRAM.equals(sideTab)) {
-                beforeDiagram = sideTab;
-                selectSide(SIDE_DIAGRAM);
-            }
-        }
-        tab.getParent().revalidate();
-        revalidate();
-        repaint();
-    }
-
-    private static void place(JPanel holder, JComponent panel) {
-        if (holder.getComponentCount() == 1 && holder.getComponent(0) == panel) {
-            return;
-        }
-        holder.removeAll();
-        holder.add(panel, BorderLayout.CENTER);
-        holder.revalidate();
-        holder.repaint();
+        return name.equals(SIDE_LIBRARIES) ? libraryFilter : sideBar.filter(name);
     }
 
     /** Schreibt den Quelltext im Editor auf den Server (Konfliktprüfung macht die Ablage). */
@@ -1085,9 +940,7 @@ final class NdvBrowser extends JPanel {
                 right.setDividerLocation(0.4);
             }
             editor = new DocumentEditor(opened);
-            editor.detachSidePanels();
-            DocumentEditor created = editor;
-            editor.onCenterSide(side -> diagramSide(created, side));
+            sideBar.attach(editor);
             editorOf.put(opened, editor);
             sourceStage.add(editor, opened.location());
             opened.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
@@ -1096,7 +949,7 @@ final class NdvBrowser extends JPanel {
         // Neu gezeigt: der geladene Stand wird gemeldet, auch wenn das Laden schon fertig war.
         announcedRevision = -1;
         sourceCards.show(sourceStage, opened.location());
-        sideFor(editor);
+        sideBar.show(editor);
         if (opened.state() == EditorSession.State.LOADING) {
             note("Lade Quelltext: " + opened.location() + " …", false);
         }

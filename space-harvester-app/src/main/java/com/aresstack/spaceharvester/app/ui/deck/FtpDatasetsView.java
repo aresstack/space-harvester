@@ -63,6 +63,11 @@ final class FtpDatasetsView extends JPanel {
     private final Runnable showJobs;
     private final PlaceholderField path = new PlaceholderField(30, "HLQ oder Dataset, etwa 'HLQ.JCL'");
     private final PlaceholderField filter = new PlaceholderField(12, "Filtern");
+    /** Erster Reiter der Seitenleiste. */
+    static final String SIDE_DATASETS = "Datasets";
+    /** Zuletzt gewählter Reiter der Seitenleiste. */
+    static final String SIDE_TAB_KEY = "deck.ftp.side-tab";
+    private EditorSideBar sideBar;
     private final Entries model = new Entries();
     private final JTable table = Comic.table(new JTable(model));
     private static final String HINT = "hint";
@@ -315,16 +320,17 @@ final class FtpDatasetsView extends JPanel {
         messagePanel.add(listMessage, BorderLayout.CENTER);
         listArea.add(messagePanel, MESSAGE);
         message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
-        // Seitenleiste wie der Explorer im Space Harvester: Kopf mit Überschrift und Filter, unten die gemeinsame
-        // Fußleiste; unter der Arbeitsfläche rechts die Leiste mit der Lupe (DeckBars.withFind).
-        JPanel side = new JPanel(new BorderLayout(0, 6));
-        side.setOpaque(false);
-        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead("Datasets", filter)
-                .actions(sortButton, detailsButton, groupButton), BorderLayout.NORTH);
-        side.add(listArea, BorderLayout.CENTER);
-        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
-                com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll), null, null),
-                BorderLayout.SOUTH);
+        // Seitenleiste wie in NDV (EditorSideBar, Angelo 24.11.2026): erster Reiter die Datasets mit Kopf und Filter,
+        // dann Ressourcen, Callees/Caller, Gliederung des gezeigten Editors und in der Diagramm-Ansicht deren
+        // Werkzeuge; unten die gemeinsame Fußleiste mit den Reitern. Unter der Arbeitsfläche rechts die Leiste mit der
+        // Lupe (DeckBars.withFind); nichts steht rechts neben Quelltext oder Diagramm.
+        sideBar = new EditorSideBar(new EditorSideBar.Home(SIDE_DATASETS, FilesIcons.folder(), "Datasets",
+                new com.aresstack.spaceharvester.app.ui.controls.SideHead(SIDE_DATASETS, filter)
+                        .actions(sortButton, detailsButton, groupButton),
+                listArea, com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll)),
+                List.of(), AppState.shared().get(SIDE_TAB_KEY),
+                name -> AppState.shared().put(SIDE_TAB_KEY, name));
+        javax.swing.JComponent side = sideBar;
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, side, DeckBars.withFind(documentPanel));
         ComicDivider.install(split, Comic.PALETTE);
         split.setResizeWeight(0.42);
@@ -744,6 +750,7 @@ final class FtpDatasetsView extends JPanel {
             return;
         }
         DocumentEditor editor = new DocumentEditor(session);
+        sideBar.attach(editor);
         if (owner.session().mvs()) {
             // Wie MainframeMate (FileTabImpl „▶ Ausführen“, nur FTP + MVS + JCL): den Editor-Inhalt einreichen,
             // auch ungespeichert.
@@ -772,6 +779,7 @@ final class FtpDatasetsView extends JPanel {
         if (session != null) {
             DocumentEditor editor = editorOf.get(session);
             if (editor != null) {
+                sideBar.show(editor);
                 SwingUtilities.invokeLater(editor::focusText);
             }
             documentStatus();
