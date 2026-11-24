@@ -700,7 +700,7 @@ class MainWindowTest {
 
     /**
      * Angelo 24.11.2026: Zurück und Vor kleben direkt links an der Suchleiste (der freie Platz liegt links davor),
-     * sichtbar in der Seitenansicht und in der Suche, ohne das Feld unter seine Mindestbreite zu drücken.
+     * immer sichtbar und nur einmal im Fenster, ohne das Feld unter seine Mindestbreite zu drücken.
      */
     @Test
     void backAndForwardSitDirectlyLeftOfTheSearchBar() throws Exception {
@@ -736,8 +736,10 @@ class MainWindowTest {
                             .isGreaterThanOrEqualTo(west.getX() + west.getWidth());
                 }
             }
+            // Ein Zurück, immer da: auch in den Einstellungen, und nirgends ein zweites (etwa in der Statuszeile).
             window.show(AppContext.Section.SETTINGS);
-            assertThat(nav.isVisible()).as("Einstellungen ohne Zurück/Vor").isFalse();
+            assertThat(nav.isVisible()).as("auch in den Einstellungen").isTrue();
+            assertThat(arrows(surface)).as("genau ein Zurück im Fenster").hasSize(1);
         });
     }
 
@@ -790,6 +792,23 @@ class MainWindowTest {
             window.openFromTree("handbuch", "4711");
             assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
         });
+    }
+
+    /** Alle sichtbaren Zurück/Vor-Knöpfe im Fenster. */
+    private static java.util.List<java.awt.Component> arrows(java.awt.Container container) {
+        java.util.List<java.awt.Component> found = new java.util.ArrayList<>();
+        for (java.awt.Component child : container.getComponents()) {
+            if (!child.isVisible()) {
+                continue;
+            }
+            if (child instanceof com.aresstack.spaceharvester.app.ui.controls.BackButton) {
+                found.add(child);
+            }
+            if (child instanceof java.awt.Container nested) {
+                found.addAll(arrows(nested));
+            }
+        }
+        return found;
     }
 
     private static void layout(java.awt.Container container) {
