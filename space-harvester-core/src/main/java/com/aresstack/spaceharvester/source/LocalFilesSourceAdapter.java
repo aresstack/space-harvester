@@ -68,7 +68,8 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
      */
     public LocalFilesSourceAdapter(Supplier<LocalFileGrants> grants) {
         Objects.requireNonNull(grants, "grants");
-        this.provider = new LocalFilesSourceProvider(new OneNoteContentDetector(DocumentExtraction.detector()), DocumentExtraction.registry(),
+        this.provider = new LocalFilesSourceProvider(new OneNoteContentDetector(DocumentExtraction.detector()),
+                DocumentExtraction.registry(),
                 () -> {
                     LocalFileGrants granted = grants.get();
                     // Nur Verzeichnisse zählen, beim Zugriff statt beim Speichern der Konfiguration: Eine Datei als

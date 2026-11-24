@@ -3,6 +3,8 @@ package com.aresstack.spaceharvester.app.ui.content.viewer;
 import com.aresstack.spaceharvester.application.assets.NotePageLocation;
 import com.aresstack.spaceharvester.application.assets.OneNotePreview;
 import com.aresstack.spaceharvester.application.assets.Outcome;
+import com.aresstack.spaceharvester.application.assets.ExtractionStatus;
+import com.aresstack.spaceharvester.application.assets.StatusReason;
 import java.util.List;
 import java.util.Optional;
 import javax.swing.SwingUtilities;
@@ -16,6 +18,25 @@ class OneNotePreviewPanelTest {
                 .isEqualTo(ReaderAttachmentKind.NOTEBOOK);
         assertThat(ReaderAttachmentKind.of("application/onenote; format=one", "file"))
                 .isEqualTo(ReaderAttachmentKind.NOTEBOOK);
+    }
+
+    @Test
+    void explainInsufficientTemporarySpace() {
+        Outcome outcome = Outcome.of(ExtractionStatus.FAILED, StatusReason.TEMP_SPACE_LOW);
+        assertThat(OneNotePreviewPanel.unavailableMessage(outcome))
+                .contains("Speicherplatz", "temporäre Dateien", "temp-space-low");
+    }
+
+    @Test
+    void showUnassignedTextWithoutInventingPages() throws Exception {
+        OneNotePreview preview = new OneNotePreview(List.of(
+                new OneNotePreview.Section(Optional.empty(), "Legacy content")), Outcome.ok(null));
+        assertThat(preview.hasPageBoundaries()).isFalse();
+        SwingUtilities.invokeAndWait(() -> {
+            OneNotePreviewPanel panel = new OneNotePreviewPanel(preview);
+            assertThat(panel.sectionCount()).isEqualTo(1);
+            assertThat(panel.displayedText()).isEqualTo("Legacy content");
+        });
     }
 
     @Test

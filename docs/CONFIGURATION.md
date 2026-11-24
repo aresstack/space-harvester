@@ -407,7 +407,7 @@ Apache Tika gelesen; das JSON-Paket enthält Original und Text in `attachments.j
 | Schlüssel | Standard | Bedeutung |
 | --- | --- | --- |
 | `export.attachments.enabled` | `true` | `false`: keine Dokument-Anhänge, nur Bilder |
-| `export.attachments.media-types` | PDF, Word/Excel/PowerPoint (alt und OOXML), OpenDocument, RTF, `message/rfc822`, `application/vnd.ms-outlook`, `text/*` | zugelassene Medientypen der Quelle, als YAML-Liste oder Text mit Kommas; `typ/*` und ein Eintrag mit `.*` am Ende passen auf alle Untertypen (etwa `application/vnd.oasis.opendocument.*`) |
+| `export.attachments.media-types` | PDF, Word/Excel/PowerPoint (alt und OOXML), OpenDocument, RTF, OneNote (`application/onenote`), `message/rfc822`, `application/vnd.ms-outlook`, `text/*` | zugelassene Medientypen der Quelle, als YAML-Liste oder Text mit Kommas; `typ/*` und ein Eintrag mit `.*` am Ende passen auf alle Untertypen (etwa `application/vnd.oasis.opendocument.*`) |
 | `export.attachments.max-size` | `0` | `0`: ohne Grenze. Sonst die größte Datei; Bytes oder mit `KB`, `MB`, `GB` (je 1024). Text gibt es unabhängig davon nur bis 20 MiB, die Grenze der Textextraktion |
 
 - Ein Anhang mit anderem Medientyp oder über der Grenze wird nicht geladen; er steht mit Status `EXCLUDED` und Grund

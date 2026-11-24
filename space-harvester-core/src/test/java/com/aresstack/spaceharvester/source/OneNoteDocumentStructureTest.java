@@ -15,7 +15,6 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
-import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -61,6 +60,24 @@ class OneNoteDocumentStructureTest {
                 .doesNotContain("Section1Page2Content");
         assertThat(preview.sections().get(1).text()).contains("Section1Page2Content")
                 .doesNotContain("Section1Page1Content");
+    }
+
+    @Test
+    void olderSectionWithoutPageContainersRetainsTextWithoutInventingPages() throws IOException {
+        Path original = directory.resolve("legacy.one");
+        try (InputStream input = getClass().getResourceAsStream("/onenote/testOneNote1.one")) {
+            if (input == null) {
+                throw new IOException("Legacy OneNote regression fixture not found");
+            }
+            Files.copy(input, original);
+        }
+        var preview = new OneNotePreviewReader(new TikaDocumentStructure(), fixtureLimits())
+                .read("legacy.one", original);
+        assertThat(preview.sections()).isNotEmpty();
+        assertThat(preview.hasPageBoundaries()).isFalse();
+        assertThat(preview.sections()).allSatisfy(section -> assertThat(section.location()).isEmpty());
+        assertThat(preview.sections().stream().map(section -> section.text()).toList())
+                .anySatisfy(text -> assertThat(text).contains("OneNote Basics"));
     }
 
     private static ExtractionLimits fixtureLimits() {

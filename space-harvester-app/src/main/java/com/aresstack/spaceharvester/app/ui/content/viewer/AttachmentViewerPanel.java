@@ -855,6 +855,7 @@ public final class AttachmentViewerPanel extends JPanel {
                 showUnavailable(NO_PREVIEW_TEXT);
                 return;
             case NOTEBOOK:
+                loading("OneNote wird geladen …");
                 requestOriginal(bytes -> decodeAside(() -> {
                     try {
                         return com.aresstack.spaceharvester.source.OneNotePreviewReader.shared()
@@ -863,7 +864,7 @@ public final class AttachmentViewerPanel extends JPanel {
                         throw new java.io.UncheckedIOException(e);
                     }
                 }, this::showOneNote), reason -> showUnavailable("OneNote nicht lesbar: " + reasonText(reason)));
-                break;
+                return;
             case SPREADSHEET:
                 loading("Tabelle wird geladen …");
                 requestOriginal(bytes -> decodeAside(() -> {
@@ -986,8 +987,7 @@ public final class AttachmentViewerPanel extends JPanel {
 
     private void showOneNote(com.aresstack.spaceharvester.application.assets.OneNotePreview data) {
         if (data.sections().isEmpty()) {
-            showUnavailable("OneNote: kein lesbarer Text (" + data.outcome().status() + ", "
-                    + data.outcome().reason().map(Enum::name).orElse("-") + ")");
+            showUnavailable(OneNotePreviewPanel.unavailableMessage(data.outcome()));
             return;
         }
         showStructuredPreview(new OneNotePreviewPanel(data));

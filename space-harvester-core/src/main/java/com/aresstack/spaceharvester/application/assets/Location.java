@@ -3,13 +3,15 @@ package com.aresstack.spaceharvester.application.assets;
 import java.util.Optional;
 
 /**
- * Fundstelle eines Blocks (ADR 0026, Punkt 4). Jedes Feld wird nur gesetzt, wenn der Extraktor den Wert aus der Datei
- * liest; gezählt oder geschätzt wird nie. Eine Word-Seite gibt es nicht, der Abschnitt ergibt sich aus den
+ * Identify only locations supported by the source structure (ADR 0026, point 4).
+ * Count OneNote page containers only when the parser explicitly emits their boundaries; never infer pages from text.
+ * Eine Word-Seite gibt es nicht, der Abschnitt ergibt sich aus den
  * Überschriften davor, Zeichenpositionen gehören zur Ansicht. Die Excel-Zelle steht an der {@link Block.Cell}.
  *
  * @param page  PDF-Seite ab 1
  * @param slide PowerPoint-Folie ab 1
  * @param sheet Name des Excel-Blatts
+ * @param notePage Position eines belegten OneNote-Seitencontainers ab 1 innerhalb der Extraktion, keine Original-ID
  */
 public record Location(Optional<Integer> page, Optional<Integer> slide, Optional<String> sheet,
                        Optional<NotePageLocation> notePage) {

@@ -95,14 +95,7 @@ final class ExtractionJson {
 
     static Block block(JsonNode node) {
         long index = node.path("index").asLong(-1);
-        Optional<Location> location = Optional.empty();
-        if (node.has("location")) {
-            JsonNode l = node.get("location");
-            location = Optional.of(new Location(optionalInt(l, "page"), optionalInt(l, "slide"),
-                    optionalText(l, "sheet"), l.has("notePage")
-                            ? Optional.of(new NotePageLocation(l.path("notePage").path("index").asInt()))
-                            : Optional.empty()));
-        }
+        Optional<Location> location = location(node.path("location"));
         List<Link> links = new ArrayList<>();
         for (JsonNode l : node.path("links")) {
             links.add(new Link(l.path("target").asString(), optionalText(l, "label")));
@@ -210,6 +203,25 @@ final class ExtractionJson {
                 ? Optional.of(new ReadExtent(node.get("bytesRead").asLong(), node.path("charsRead").asLong()))
                 : Optional.empty();
         return new Outcome(status, reason, node.path("truncated").asBoolean(false), extent);
+    }
+
+    private static Optional<Location> location(JsonNode node) {
+        Optional<Integer> page = optionalInt(node, "page");
+        Optional<Integer> slide = optionalInt(node, "slide");
+        Optional<String> sheet = optionalText(node, "sheet").filter(name -> !name.isBlank());
+        Optional<NotePageLocation> note = notePage(node.path("notePage"));
+        if (page.isEmpty() && slide.isEmpty() && sheet.isEmpty() && note.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new Location(page, slide, sheet, note));
+    }
+
+    private static Optional<NotePageLocation> notePage(JsonNode node) {
+        JsonNode index = node.path("index");
+        if (!index.isIntegralNumber() || !index.canConvertToInt()) {
+            return Optional.empty();
+        }
+        return optionalInt(node, "index").filter(value -> value > 0).map(NotePageLocation::new);
     }
 
     private static Optional<Integer> optionalInt(JsonNode node, String field) {

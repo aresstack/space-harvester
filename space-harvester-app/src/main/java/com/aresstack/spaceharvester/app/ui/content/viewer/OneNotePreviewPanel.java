@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
 import com.aresstack.spaceharvester.application.assets.OneNotePreview;
+import com.aresstack.spaceharvester.application.assets.Outcome;
+import com.aresstack.spaceharvester.application.assets.StatusReason;
 import javax.swing.*;
 import java.awt.BorderLayout;
 import java.awt.Component;
@@ -46,6 +48,15 @@ final class OneNotePreviewPanel extends JPanel {
         if (!model.isEmpty()) {
             selectSection(0);
         }
+    }
+
+    static String unavailableMessage(Outcome outcome) {
+        if (outcome.reason().filter(reason -> reason == StatusReason.TEMP_SPACE_LOW).isPresent()) {
+            return "OneNote kann momentan nicht angezeigt werden: Zu wenig freier Speicherplatz "
+                    + "für temporäre Dateien. Gib Speicherplatz frei und öffne die Datei erneut. (temp-space-low)";
+        }
+        return "OneNote: kein lesbarer Text (" + outcome.status() + ", "
+                + outcome.reason().map(StatusReason::code).orElse("-") + ")";
     }
 
     private void displaySelectedSection() {
