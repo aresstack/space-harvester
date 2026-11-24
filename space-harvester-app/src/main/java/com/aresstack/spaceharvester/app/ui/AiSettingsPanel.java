@@ -2235,6 +2235,14 @@ final class AiSettingsPanel {
      * Dienst kennt keine eigene Kategorie dafür) bietet alle an.
      */
     List<AiModel> choices(String category) {
+        return choices(loaded, category);
+    }
+
+    /**
+     * Die Modelle aus {@code loaded}, die zu {@code category} passen, danach die ohne Kategorie; ohne Kategorie alle.
+     * Dieselbe Auswahl in den Einstellungen und in der Modellwahl am Dreieck.
+     */
+    public static List<AiModel> choices(List<AiModel> loaded, String category) {
         if (category == null) {
             return loaded;
         }

@@ -293,6 +293,56 @@ public final class Dialogs {
     }
 
     /**
+     * Fragt einen freien Text ab, etwa ein Modell unter „Benutzerdefiniert …“; „Übernehmen“ geht erst mit Text.
+     *
+     * @return der Text ohne Rand oder {@code null}, wenn abgebrochen wurde
+     */
+    public static String askText(Component parent, String title, String text, String current) {
+        String[] result = {null};
+        JDialog dialog = dialog(parent, title);
+        javax.swing.JTextField field = new javax.swing.JTextField(current == null ? "" : current, 28);
+        Comic.style(field);
+        ComposerButton ok = Comic.primary("Übernehmen", null);
+        ComposerButton cancel = Comic.button("Abbrechen", null);
+        Runnable check = () -> ok.setEnabled(!field.getText().isBlank());
+        field.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent event) {
+                check.run();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent event) {
+                check.run();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent event) {
+                check.run();
+            }
+        });
+        check.run();
+        ok.addActionListener(e -> {
+            if (!field.getText().isBlank()) {
+                result[0] = field.getText().strip();
+                dialog.dispose();
+            }
+        });
+        field.addActionListener(e -> ok.doClick());
+        cancel.addActionListener(e -> dialog.dispose());
+        JPanel body = new JPanel(new BorderLayout(0, 8));
+        body.setOpaque(false);
+        body.add(Comic.note(text), BorderLayout.NORTH);
+        body.add(field, BorderLayout.CENTER);
+        SwingUtilities.invokeLater(() -> {
+            field.requestFocusInWindow();
+            field.selectAll();
+        });
+        show(dialog, title, body, cancel, ok);
+        return result[0];
+    }
+
+    /**
      * Fragt eine ganze Zahl in festen Grenzen ab, etwa die parallelen Downloads („Benutzerdefiniert …“). Nur Ziffern;
      * „Übernehmen“ geht erst mit einer Zahl in den Grenzen.
      *
