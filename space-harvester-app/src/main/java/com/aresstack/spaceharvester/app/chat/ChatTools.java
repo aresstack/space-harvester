@@ -196,12 +196,25 @@ final class ChatTools {
 
     /** Die Werkzeuge dieses Turns: die vier des Bereichs, mit „Interne Suche“ dazu {@value #APP_SEARCH}. */
     List<AiChat.Tool> toolDefinitions() {
+        if (scope == null) {
+            // Ohne Bereich (Angelo 24.11.2026): nur die interne Suche samt Lesen ihrer Treffer, wenn sie an ist.
+            return appSources == null ? List.of() : List.of(readDefinition(), appSearchDefinition());
+        }
         if (appSources == null) {
             return definitions(nodes != null);
         }
         List<AiChat.Tool> all = new ArrayList<>(definitions(nodes != null));
         all.add(appSearchDefinition());
         return List.copyOf(all);
+    }
+
+    /** {@value #READ}: liest eine Seite des Bereichs oder einen Treffer der internen Suche im Volltext. */
+    static AiChat.Tool readDefinition() {
+        return new AiChat.Tool(READ, "Liest den Text einer Seite des gewählten Bereichs oder eines Suchtreffers, "
+                + "höchstens " + READ_CHARS + " Zeichen je Aufruf; lange Seiten mit versatz weiterlesen. Liefert die "
+                + "Quellennummer, mit der du die Seite zitierst.",
+                "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"},"
+                        + "\"versatz\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"kennung\"]}");
     }
 
     static AiChat.Tool appSearchDefinition() {
@@ -262,11 +275,7 @@ final class ChatTools {
                                 : "Kennung einer Seite") + "; leer für die Startseiten\"},"
                                 + "\"blatt\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Blattnummer, "
                                 + "ab 1\"}}}"),
-                new AiChat.Tool(READ, "Liest den Text einer Seite des gewählten Bereichs, höchstens " + READ_CHARS
-                        + " Zeichen je Aufruf; lange Seiten mit versatz weiterlesen. Liefert die Quellennummer, "
-                        + "mit der du die Seite zitierst.",
-                        "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"},"
-                                + "\"versatz\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"kennung\"]}"),
+                readDefinition(),
                 new AiChat.Tool(TERM, "Schlägt einen Fachbegriff im gewählten Bereich nach: was der Wissensgraph "
                         + "dort über ihn weiß, als Aussagen mit Verb, Vertrauensstufe und Belegseiten, dazu seine "
                         + "Synonyme und verwandte Begriffe. Ist das Wort dort kein bestätigter Fachbegriff, nennt es "
