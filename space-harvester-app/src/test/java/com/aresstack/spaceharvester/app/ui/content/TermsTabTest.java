@@ -50,8 +50,9 @@ class TermsTabTest {
     }
 
     /**
-     * Angelo 23.11.2026: Akronyme, Bezeichner, Verben und Beziehungen als Unterreiter für die untere Leiste; die Zähler
-     * oben bleiben, darunter steht nur der gewählte Abschnitt. Ohne Unterreiter (Stand der Auswahl) alles untereinander.
+     * Angelo 24.11.2026: die Kennzahlen Akronyme, Bezeichner, Verben und Beziehungen sind große quadratische
+     * Umschalter; genau einer ist gewählt, darunter steht nur sein Abschnitt. Keine zweite Reiterzeile unten. Ohne
+     * Umschalten (Stand der Auswahl) alles untereinander.
      */
     @Test
     void theKindTabsShowOneSectionAndKeepTheCounters() throws Exception {
@@ -62,19 +63,86 @@ class TermsTabTest {
             assertThat(plain.kind()).isNull();
 
             TermsTab terms = new TermsTab();
-            javax.swing.JComponent bar = terms.kindBar();
-            assertThat(bar.getComponentCount()).isEqualTo(4);
+            terms.selectableKinds();
+            List<com.aresstack.spaceharvester.app.ui.controls.CountTile> tiles = tiles(terms);
+            assertThat(tiles).extracting(com.aresstack.spaceharvester.app.ui.controls.CountTile::caption)
+                    .containsExactly("Akronyme", "Bezeichner", "Verben", "Beziehungen");
+            assertThat(tiles).allSatisfy(tile -> assertThat(tile.getPreferredSize().width)
+                    .isEqualTo(tile.getPreferredSize().height));
             assertThat(terms.kind()).isEqualTo(TermsTab.ACRONYMS);
+            assertThat(tiles.get(0).isSelected()).isTrue();
             terms.show(new PageAcronyms(PageAcronyms.State.CURRENT, RESULT, List.of(rsl), List.of()));
             assertThat(terms.counts().get(0)).isEqualTo("1");
             assertThat(terms.chips().get(0).isShowing() || terms.chips().get(0).getParent().isVisible()).isTrue();
-            ((javax.swing.AbstractButton) bar.getComponent(1)).doClick();
+            tiles.get(1).doClick();
             assertThat(terms.kind()).isEqualTo(TermsTab.IDENTIFIERS);
+            assertThat(tiles).filteredOn(javax.swing.AbstractButton::isSelected).containsExactly(tiles.get(1));
+            tiles.get(1).doClick();
+            assertThat(tiles.get(1).isSelected()).as("bleibt gewählt").isTrue();
             assertThat(terms.chips().get(0).getParent().getParent().isVisible()).as("Akronyme ausgeblendet").isFalse();
             assertThat(terms.counts().get(0)).as("Zähler bleiben").isEqualTo("1");
             terms.kind(TermsTab.ACRONYMS);
             assertThat(terms.chips().get(0).getParent().getParent().isVisible()).isTrue();
+            assertThat(tiles.get(0).isSelected()).isTrue();
         });
+    }
+
+    /**
+     * Angelo 24.11.2026: der Filter oben wirkt immer auf den gewählten Abschnitt, auch auf Beziehungen und Verben der
+     * Seite; der Hinweis „passt nicht“ nennt diesen Abschnitt.
+     */
+    @Test
+    void theFilterAppliesToTheChosenSectionIncludingRelationsAndVerbs() throws Exception {
+        PageAcronyms.Acronym rsl = new PageAcronyms.Acronym("RSL", 1, "Rückmeldeschlüssel", null,
+                List.of(new PageAcronyms.Occurrence(0, 3)));
+        SwingUtilities.invokeAndWait(() -> {
+            TermsTab terms = new TermsTab();
+            terms.selectableKinds();
+            terms.show(new PageAcronyms(PageAcronyms.State.CURRENT, RESULT, List.of(rsl), List.of()));
+            terms.showRelations(List.of(
+                    new com.aresstack.spaceharvester.app.ui.Relation("r1", "RSL", "ABBREVIATION_OF",
+                            "Rückmeldeschlüssel", "PROPOSED", "RULE", 1),
+                    new com.aresstack.spaceharvester.app.ui.Relation("r2", "API", "SYNONYM_OF", "Schnittstelle",
+                            "CONFIRMED", "USER", 1)));
+            terms.showVerbs(List.of(
+                    new TermsTab.PageVerb(new com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb(
+                            "prüfen", 1, 1, false), List.of(new TermsTab.Span(3, 9))),
+                    new TermsTab.PageVerb(new com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb(
+                            "Verschickt", 1, 1, true), List.of(new TermsTab.Span(12, 22)))));
+            assertThat(terms.relationLines()).hasSize(2);
+
+            terms.kind(TermsTab.RELATIONS);
+            terms.filter().setText("schnitt");
+            assertThat(terms.relationLines()).hasSize(1);
+            assertThat(terms.relationLines().get(0)).startsWith("API");
+            assertThat(terms.hint()).isBlank();
+            terms.filter().setText("zzz");
+            assertThat(terms.relationLines()).isEmpty();
+            assertThat(terms.hint()).isEqualTo("Keine Beziehung passt zum Filter.");
+
+            terms.kind(TermsTab.VERBS);
+            assertThat(terms.hint()).isEqualTo("Kein Verb passt zum Filter.");
+            terms.filter().setText("verschick");
+            assertThat(terms.verbChips()).extracting(chip -> chip.getText()).containsExactly("Verschickt");
+            assertThat(terms.hint()).as("Akronyme passen nicht, der Hinweis gilt aber den Verben").isBlank();
+
+            terms.kind(TermsTab.ACRONYMS);
+            assertThat(terms.hint()).isEqualTo("Kein Akronym passt zum Filter.");
+            terms.filter().setText("");
+            assertThat(terms.relationLines()).hasSize(2);
+        });
+    }
+
+    private static List<com.aresstack.spaceharvester.app.ui.controls.CountTile> tiles(java.awt.Container root) {
+        List<com.aresstack.spaceharvester.app.ui.controls.CountTile> found = new ArrayList<>();
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof com.aresstack.spaceharvester.app.ui.controls.CountTile tile) {
+                found.add(tile);
+            } else if (child instanceof java.awt.Container inner) {
+                found.addAll(tiles(inner));
+            }
+        }
+        return found;
     }
 
     @Test
