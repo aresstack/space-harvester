@@ -157,7 +157,7 @@ class MainWindowTest {
         // 13.11.2026); Inhalte hat keinen eigenen Knopf mehr.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
-                .containsSubsequence("Suche", "Leseansicht", "Text", "Anhänge", "Analysen", "Info",
+                .containsSubsequence("Suche", "Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info",
                         "Export", "Chat", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
                 .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
@@ -171,15 +171,15 @@ class MainWindowTest {
         // Ein Reiter in der Leiste schaltet die Mitte auf Inhalte; in anderen Bereichen zeigt keiner der Reiter eine
         // Auswahl, zurück unter Inhalte ist der gewählte Reiter wieder dunkel.
         List<AbstractButton> tabs = find(surface[0], AbstractButton.class).stream()
-                .filter(button -> "Text".equals(button.getAccessibleContext().getAccessibleName())
+                .filter(button -> "Podcast-Ansicht".equals(button.getAccessibleContext().getAccessibleName())
                         || "Leseansicht".equals(button.getAccessibleContext().getAccessibleName())).toList();
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.SEARCH));
         assertThat(tabs).noneMatch(AbstractButton::isSelected);
-        SwingUtilities.invokeAndWait(() -> tabs.stream().filter(b -> "Text".equals(
+        SwingUtilities.invokeAndWait(() -> tabs.stream().filter(b -> "Podcast-Ansicht".equals(
                 b.getAccessibleContext().getAccessibleName())).findFirst().orElseThrow().doClick());
         assertThat(window[0].current()).isEqualTo(AppContext.Section.CONTENT);
         assertThat(tabs).filteredOn(AbstractButton::isSelected)
-                .extracting(b -> b.getAccessibleContext().getAccessibleName()).containsExactly("Text");
+                .extracting(b -> b.getAccessibleContext().getAccessibleName()).containsExactly("Podcast-Ansicht");
         // Die Aufträge sind kein Bereich der Mitte mehr: sie öffnen die Seitenleiste, die Mitte bleibt bei „Text“.
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.ACTIVITIES));
         assertThat(window[0].current()).isEqualTo(AppContext.Section.CONTENT);
@@ -188,7 +188,7 @@ class MainWindowTest {
         assertThat(tabs).noneMatch(AbstractButton::isSelected);
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.CONTENT));
         assertThat(tabs).filteredOn(AbstractButton::isSelected)
-                .extracting(b -> b.getAccessibleContext().getAccessibleName()).containsExactly("Text");
+                .extracting(b -> b.getAccessibleContext().getAccessibleName()).containsExactly("Podcast-Ansicht");
         assertThat(find(surface[0], com.aresstack.enterpriseai.ui.comic.control.ComicSearchBar.class))
                 .as("keine globale Suchleiste mehr; gesucht wird im Bereich Suche").isEmpty();
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));

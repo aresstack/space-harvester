@@ -97,7 +97,7 @@ public final class PageDetailPanel extends JPanel {
 
     private static final System.Logger LOG = System.getLogger(PageDetailPanel.class.getName());
 
-    private static final String READ = "Text";
+    private static final String READ = "Podcast-Ansicht";
     private static final String READING = "Leseansicht";
     private java.util.function.BiConsumer<String, String> pageShown = (source, space) -> { };
     /** Stand des sichtbaren Reiters für die Statuszeile des Hauptfensters ({@link #onStatus}). */
@@ -2732,7 +2732,7 @@ public final class PageDetailPanel extends JPanel {
         long limit = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings.Storage.DEFAULT_MAX_PAGE_BYTES
                 : context.settings().storage().maxPageBytes();
         String reason = "Keine Vorschau: zu groß für den Cache (Grenze " + Texts.bytes(limit) + ")."
-                + (textOnly ? "\nDer Textauszug steht im Reiter „Text“, die Suche findet die Datei darüber."
+                + (textOnly ? "\nDer Textauszug steht im Reiter „Podcast-Ansicht“, die Suche findet die Datei darüber."
                 : "\nAbgelegt sind nur ihre Kopfdaten (kein lesbarer Text oder größer als die Grenze zum Laden).")
                 + "\nGrenzen unter Einstellungen › Daten › „Größte Datei im Cache“.";
         AppRuntime runtime = context.runtime();
