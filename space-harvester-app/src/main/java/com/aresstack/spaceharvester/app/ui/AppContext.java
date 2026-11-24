@@ -1300,9 +1300,14 @@ public final class AppContext {
         if (browser != null) {
             browser.shutdown();
         }
-        if (runtime != null) {
-            runtime.close();
+        // Nur einmal schließen, auch wenn Fenster und Shutdown-Hook zugleich beenden.
+        AppRuntime closing;
+        synchronized (this) {
+            closing = runtime;
             runtime = null;
+        }
+        if (closing != null) {
+            closing.close();
         }
     }
 
