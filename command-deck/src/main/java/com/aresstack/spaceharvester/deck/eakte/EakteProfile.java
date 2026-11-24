@@ -73,35 +73,35 @@ public record EakteProfile(URI webdav, URI start, String user, Set<String> login
     }
 
     /**
-     * Baut aus einer eingetippten oder aus KeePass übernommenen Adresse die WebDAV-Wurzel: ohne Schema gilt https,
-     * ohne Pfad {@code /fsc/webdav}, ein abschließender Schrägstrich entfällt.
+     * Das Profil aus der einen E-Akte-Adresse, die man sonst im Browser öffnet: sie ist der Einstieg der Anmeldung,
+     * die WebDAV-Wurzel ist fest {@code <Schema>://<Server>/fsc/webdav} (Fabasoft, wie im Testprogramm v2.0), und
+     * Zugangsdaten bekommen nur die festen Anmeldedienste {@link #DEFAULT_LOGIN_HOSTS}.
      */
-    public static URI normaliseWebdav(String raw) {
-        String text = raw == null ? "" : raw.trim();
+    public static EakteProfile fromAddress(String address, String user) {
+        return fromAddress(address, user, Set.copyOf(DEFAULT_LOGIN_HOSTS));
+    }
+
+    /** Wie {@link #fromAddress(String, String)} mit anderen Anmeldediensten (nur für den Nachbau in Tests). */
+    public static EakteProfile fromAddress(String address, String user, Set<String> loginHosts) {
+        String text = address == null ? "" : address.strip();
         if (text.isEmpty()) {
-            throw new IllegalArgumentException("Adresse fehlt");
+            throw new IllegalArgumentException("E-Akte-Adresse fehlt");
         }
         if (!text.contains("://")) {
             text = "https://" + text;
         }
-        URI parsed;
+        URI start;
         try {
-            parsed = URI.create(text);
+            start = URI.create(text);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Keine gültige Adresse: " + raw.trim());
+            throw new IllegalArgumentException("E-Akte-Adresse: keine gültige Adresse");
         }
-        if (parsed.getHost() == null) {
-            throw new IllegalArgumentException("Keine gültige Adresse: " + raw.trim());
+        if (start.getScheme() == null || start.getHost() == null) {
+            throw new IllegalArgumentException("E-Akte-Adresse: keine gültige Adresse");
         }
-        String path = parsed.getRawPath() == null ? "" : parsed.getRawPath();
-        if (path.isEmpty() || path.equals("/")) {
-            path = "/fsc/webdav";
-        }
-        while (path.length() > 1 && path.endsWith("/")) {
-            path = path.substring(0, path.length() - 1);
-        }
-        String authority = parsed.getRawAuthority();
-        return URI.create(parsed.getScheme().toLowerCase(Locale.ROOT) + "://" + authority + path);
+        URI webdav = URI.create(start.getScheme().toLowerCase(Locale.ROOT) + "://" + start.getRawAuthority()
+                + "/fsc/webdav");
+        return new EakteProfile(webdav, start, user, loginHosts);
     }
 
     private static URI checked(URI address, String what) {

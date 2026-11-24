@@ -34,8 +34,8 @@ import org.junit.jupiter.api.io.TempDir;
 class EakteWorkspaceTest {
 
     private static final String ENTRY = "E-Akte Flotte";
-    private static final List<String> KEYS = List.of(EakteConnectForm.ENTRY_KEY, EakteConnectForm.WEBDAV_KEY,
-            EakteConnectForm.START_KEY, EakteConnectForm.LOGIN_HOSTS_KEY, EakteConnectForm.USE_PROXY_KEY);
+    private static final List<String> KEYS = List.of(EakteConnectForm.ENTRY_KEY,
+            EakteConnectForm.START_KEY, EakteConnectForm.USE_PROXY_KEY);
 
     private final ExecutorService background = Executors.newVirtualThreadPerTaskExecutor();
     private FakeEakteServer fake;
@@ -91,9 +91,8 @@ class EakteWorkspaceTest {
             EakteConnectForm form = workspace.form();
             form.entries(List.of(ENTRY));
             form.entry.setSelectedItem(ENTRY);
-            form.webdav.setText(fake.webdav().toString());
             form.start.setText(fake.start().toString());
-            form.loginHosts.setText(String.join(", ", fake.loginHosts()));
+            form.loginHostsForTests = fake.loginHosts();
         });
     }
 
@@ -201,7 +200,7 @@ class EakteWorkspaceTest {
         }
     }
 
-    /** Angelo: nur eine Start-URL; WebDAV und Anmeldedienste füllt das Formular selbst (unter „Erweitert“). */
+    /** Angelo: genau ein Feld „E-Akte-Adresse“; WebDAV und Anmeldedienste bestimmt der Adapter fest. */
     @Test
     void onlyTheStartUrlIsNeededTheRestIsFilledIn() throws Exception {
         build(FakeEakteServer.PASSWORD);
@@ -211,9 +210,7 @@ class EakteWorkspaceTest {
             form.entries(List.of(ENTRY));
             form.entry.setSelectedItem(ENTRY);
             form.start.setText(fake.start().toString());
-            assertThat(form.webdav.getText()).isEqualTo(fake.webdav().toString().replaceAll("/$", ""));
-            assertThat(form.loginHosts.getText()).isNotBlank();
-            form.loginHosts.setText(String.join(", ", fake.loginHosts()));
+            form.loginHostsForTests = fake.loginHosts();
             form.submit();
         });
         await(() -> onEdt(() -> workspace.selected() != null
