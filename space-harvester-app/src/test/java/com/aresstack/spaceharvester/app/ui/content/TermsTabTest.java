@@ -726,6 +726,7 @@ class TermsTabTest {
     void selectionCountsUpBreathesAndRemembersTotals() throws Exception {
         List<Runnable> finish = new ArrayList<>();
         List<java.util.function.Consumer<TermsTab.Partial>> progress = new ArrayList<>();
+        List<Integer> rebuilt = new ArrayList<>();
         class Counted implements TermsTab.Selection {
             @Override
             public String title() {
@@ -755,6 +756,11 @@ class TermsTabTest {
             @Override
             public Object key() {
                 return "alle";
+            }
+
+            @Override
+            public void rebuild() {
+                rebuilt.add(progress.size());
             }
 
             @Override
@@ -799,7 +805,19 @@ class TermsTabTest {
             progress.get(1).accept(new TermsTab.Partial(1, 1, null, null));
         });
         flush();
-        SwingUtilities.invokeAndWait(() -> assertThat(tab[0].counts()).as("stilles Nachzählen zählt nicht sichtbar "
-                + "von vorn").containsExactly("112", "789", "353"));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(tab[0].counts()).as("stilles Nachzählen zählt nicht sichtbar von vorn")
+                    .containsExactly("112", "789", "353");
+            finish.remove(0).run();
+            // Von Hand neu aufbauen: Der Core verwirft zuerst, dann wird sichtbar neu gezählt.
+            tab[0].rebuild();
+            assertThat(rebuilt).as("verworfen vor der neuen Zählung").containsExactly(2);
+            assertThat(progress).hasSize(3);
+            assertThat(tab[0].counts()).containsExactly("…", "…", "…");
+            assertThat(tab[0].countTiles()).allMatch(tile -> tile.counting());
+            finish.remove(0).run();
+            assertThat(tab[0].counts()).containsExactly("112", "789", "353");
+            assertThat(tab[0].countTiles()).noneMatch(tile -> tile.counting());
+        });
     }
 }

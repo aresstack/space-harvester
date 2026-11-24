@@ -240,6 +240,14 @@ public final class Workspace {
     }
 
     /**
+     * Die verwalteten Gesamtzahlen der Begriffe einer Quelle samt ihren Spaces von Hand neu aufbauen, {@code null}
+     * für alle Quellen; die nächste Abfrage liest sie neu. Für den Fehlerfall.
+     */
+    public void rebuildTermTotals(String sourceId) {
+        harvester.terms().rebuildTotals(sourceId);
+    }
+
+    /**
      * Zahl der Beziehungen je Art ({@code TermRelations.counts}, BG1b), ohne Status ohne die abgelehnten; mit
      * {@code pages} nur Beziehungen mit einem Begriff auf diesen Seiten, {@code null} ohne Grenze. Nie auf dem EDT.
      */

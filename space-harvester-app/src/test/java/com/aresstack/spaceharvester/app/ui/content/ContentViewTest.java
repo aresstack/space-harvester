@@ -155,6 +155,11 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
         assertThat(onEdt(() -> detail.standingFoot().trailing().isVisible())).isFalse();
+        // Für den Fehlerfall, versteckt hinter dem Dreieck: die Kennzahlen des Knotens neu aufbauen.
+        assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> java.util.Arrays.stream(detail.moreMenu().getComponents())
+                .map(item -> ((javax.swing.JMenuItem) item).getText()).toList()))
+                .containsExactly(PageDetailPanel.REBUILD_COUNTS);
     }
 
     @Test

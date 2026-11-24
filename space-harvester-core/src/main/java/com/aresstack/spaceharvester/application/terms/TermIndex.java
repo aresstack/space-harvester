@@ -38,6 +38,25 @@ public interface TermIndex {
      */
     List<TermPosting> postings(Filter filter, String from, boolean inclusive, int max);
 
+    /**
+     * Meldet, wenn sich die Einträge einer Seite oder Quelle geändert haben können (Observer, kein Polling). Die
+     * Meldung kommt im schreibenden Thread. Ablagen ohne Meldungen liefern {@code null}: Wer mitzählt, darf sich
+     * dann auf nichts Gemerktes verlassen.
+     *
+     * @return Abmelden oder {@code null}, wenn die Ablage nichts meldet
+     */
+    default Runnable subscribe(java.util.function.Consumer<Change> listener) {
+        return null;
+    }
+
+    /**
+     * Was sich geändert haben kann.
+     *
+     * @param pageId die Seite samt ihren Dokumenten oder {@code null} für die ganze Quelle
+     */
+    record Change(String sourceId, String pageId) {
+    }
+
     /** Höchstens so viele Schlüssel je Aufruf von {@link #keys}; sie sind klein, der Stapel darf groß sein. */
     int MAX_KEY_BATCH = 50_000;
 

@@ -109,6 +109,31 @@ class HarvesterTermsTest {
     }
 
     @Test
+    void theManagedTotalsOfEveryNodeFollowALoadedPage() {
+        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).build()) {
+            TermQueries.TermSearch root = new TermQueries.TermSearch(null, null, null, null, false, 50, null);
+            TermQueries.TermSearch source = new TermQueries.TermSearch("wiki", null, null, null, false, 50, null);
+            TermQueries.TermSearch space = new TermQueries.TermSearch("wiki", "DEV", null, null, false, 50, null);
+            // Vor dem Laden gefragt: Die Verwalter stehen leer und müssen die Seite danach von selbst bemerken.
+            assertThat(harvester.terms().totals(harvester.caller(), root).total()).isZero();
+            assertThat(harvester.terms().totals(harvester.caller(), space).total()).isZero();
+
+            harvester.pages().page(harvester.caller(), "wiki", "102", false);
+
+            // Über die Seitenmenge wird über die Einträge gezählt; die Knoten müssen dasselbe liefern.
+            TermQueries.TermTotals counted = harvester.terms().totals(harvester.caller(), root.within(
+                    com.aresstack.spaceharvester.application.snapshot.PageSet.ofKeys(
+                            List.of(new PageKey("wiki", "102")))));
+            assertThat(counted.of(TermKind.ACRONYM)).isEqualTo(1);
+            assertThat(harvester.terms().totals(harvester.caller(), root)).isEqualTo(counted);
+            assertThat(harvester.terms().totals(harvester.caller(), source)).isEqualTo(counted);
+            assertThat(harvester.terms().totals(harvester.caller(), space)).isEqualTo(counted);
+            assertThat(harvester.terms().totals(harvester.caller(), new TermQueries.TermSearch("wiki", "OPS", null,
+                    null, false, 50, null)).total()).isZero();
+        }
+    }
+
+    @Test
     void relationsSurviveACacheRebuild() throws IOException {
         String id;
         try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).build()) {
