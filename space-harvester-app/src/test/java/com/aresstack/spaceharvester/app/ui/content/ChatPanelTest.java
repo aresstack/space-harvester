@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import javax.swing.SwingUtilities;
+import java.awt.Component;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
@@ -344,6 +345,96 @@ class ChatPanelTest {
                 System.setProperty("enterpriseai.firefox", before);
             }
         }
+    }
+
+    @Test
+    void theOpenChatIsDeletedWithoutQuestionStaysStruckThroughUntilRestartAndOpeningRestoresIt() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        ChatStore store = new ChatStore(() -> home.resolve("data").resolve(ChatStore.FOLDER));
+        ChatNode spaceNode = new ChatNode("handbuch", "HB", null);
+        ChatNode sourceNode = new ChatNode("handbuch", null, null);
+        ChatRecord first = ChatRecord.fresh(1_000).plus(ChatRecord.Message.user("Erste Frage", 1_000), 1_000);
+        ChatRecord second = ChatRecord.fresh(2_000).plus(ChatRecord.Message.user("Zweite Frage", 2_000), 2_000);
+        ChatRecord third = ChatRecord.fresh(3_000).plus(ChatRecord.Message.user("Dritte Frage", 3_000), 3_000);
+        store.save(spaceNode, first);
+        store.save(spaceNode, second);
+        store.save(sourceNode, third);
+        java.util.List<String> asked = new java.util.ArrayList<>();
+        boolean[] enabled = new boolean[2];
+        String[] deletedId = new String[1];
+        java.util.List<String> struck = new java.util.ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            panel.confirm = (title, question) -> {
+                asked.add(question);
+                return true;
+            };
+            // Der Chat aus dem Space ist offen, gewählt ist die ganze Quelle: Er steht unter „Übrige Chats“ und bleibt
+            // trotzdem löschbar.
+            panel.selection(new Selection.Node("handbuch", null, null, "Handbuch"));
+            for (Component item : panel.chatMenuItems()) {
+                if (item instanceof javax.swing.JMenuItem menuItem && menuItem.getText().endsWith(second.id())) {
+                    menuItem.doClick();
+                }
+            }
+            deletedId[0] = panel.chat().id();
+            assertThat(deletedId[0]).isEqualTo(second.id());
+            javax.swing.AbstractButton trash = (javax.swing.AbstractButton)
+                    ((java.awt.Container) panel.headerActions()).getComponent(1);
+            enabled[0] = trash.isEnabled();
+            trash.doClick();
+            enabled[1] = trash.isEnabled();
+            assertThat(panel.chat().id()).isNotEqualTo(deletedId[0]);
+            // Bis zum Neustart steht er durchgestrichen unter ▾; ein Klick holt ihn zurück.
+            for (Component item : panel.chatMenuItems()) {
+                if (item instanceof javax.swing.JMenuItem menuItem && menuItem.getText().startsWith("<html><s>")) {
+                    struck.add(menuItem.getText());
+                    menuItem.doClick();
+                }
+            }
+            assertThat(panel.chat().id()).isEqualTo(deletedId[0]);
+            // Alle Chats löschen fragt „wirklich“ und löscht alles endgültig.
+            for (Component item : new ChatSidebar(panel).moreMenu().getComponents()) {
+                if (item instanceof javax.swing.JMenuItem menuItem
+                        && ChatSidebar.DELETE_ALL.equals(menuItem.getText())) {
+                    menuItem.doClick();
+                }
+            }
+            assertThat(panel.chat().isEmpty()).isTrue();
+        });
+        assertThat(enabled).containsExactly(true, true);
+        assertThat(struck).hasSize(1);
+        assertThat(asked).containsExactly(ChatPanel.DELETE_ALL_QUESTION);
+        assertThat(store.all()).isEmpty();
+        assertThat(store.deleted()).isEmpty();
+    }
+
+    @Test
+    void aChatDeletedInAnEarlierRunIsGoneForGoodAfterTheRestart() throws Exception {
+        Path chats = home.resolve("chats");
+        ChatNode node = new ChatNode("handbuch", "HB", null);
+        ChatRecord record = ChatRecord.fresh(1_000).plus(ChatRecord.Message.user("Frage", 1_000), 1_000);
+        // Ein früherer Programmlauf hat den Chat vorläufig gelöscht (Datei mit Endung .deleted).
+        ChatStore before = new ChatStore(() -> chats);
+        before.save(node, record);
+        Path folder = chats.resolve(before.folder(node));
+        Files.move(folder.resolve(record.id() + ".json"), folder.resolve(record.id() + ".json.deleted"));
+        // Dieser Programmlauf sieht den Ordner zum ersten Mal: Was dort gelöscht liegt, geht endgültig.
+        assertThat(new ChatStore(() -> chats).deleted()).isEmpty();
+        assertThat(folder.resolve(record.id() + ".json.deleted")).doesNotExist();
+        // Was in diesem Lauf gelöscht wird, bleibt bis zum nächsten Start wiederherstellbar.
+        ChatStore store = new ChatStore(() -> chats);
+        store.save(node, record);
+        store.trash(store.folder(node), record.id());
+        assertThat(store.list(node)).isEmpty();
+        assertThat(store.deleted()).extracting(entry -> entry.record().id()).containsExactly(record.id());
+        assertThat(store.restore(store.folder(node), record.id())).isNotNull();
+        assertThat(store.list(node)).extracting(ChatRecord::id).containsExactly(record.id());
     }
 
     @Test

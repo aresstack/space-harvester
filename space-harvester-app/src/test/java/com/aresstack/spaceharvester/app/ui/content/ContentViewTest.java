@@ -605,7 +605,8 @@ class ContentViewTest {
         List<String> actions = onEdt(() -> find((java.awt.Container) chat.headerActions(),
                 javax.swing.AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName() + ":" + button.isEnabled()).toList());
-        assertThat(actions).containsExactly(ChatPanel.NEW_CHAT + ":true", ChatPanel.DELETE + ":false");
+        // Die Mülltonne ist immer aktiv, auch beim leeren Chat (Angelo 24.11.2026).
+        assertThat(actions).containsExactly(ChatPanel.NEW_CHAT + ":true", ChatPanel.DELETE + ":true");
         // Den Text zeigt der Chat schon vor dem Auflösen der Auswahl; Senden geht erst danach.
         await(() -> chat.knowledge().startsWith("Wissen: handbuch · alle Spaces") && chat.sendButton().isEnabled());
         // Schnellaktionen über der Eingabe der Leiste, umbrechend; bei einer Quelle „Bereich zusammenfassen“ und
