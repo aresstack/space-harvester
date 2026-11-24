@@ -464,11 +464,11 @@ public final class PageDetailPanel extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.controls.HelpButton readingHelp =
             new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Leseansicht", READING_HELP);
     /** Maustaste Zurück (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_BACK_BUTTON}). */
-    static final int MOUSE_BACK_BUTTON = 4;
+    static final int MOUSE_BACK_BUTTON = com.aresstack.spaceharvester.app.ui.controls.MouseNavigation.BACK_BUTTON;
     /** Client-Eigenschaft einer Ansicht mit eigenem Zurück/Vor (etwa die Suche): dort blättert die Seite nicht. */
-    public static final String OWN_MOUSE_NAVIGATION = "spaceharvester.ownMouseNavigation";
+    public static final String OWN_MOUSE_NAVIGATION = com.aresstack.spaceharvester.app.ui.controls.MouseNavigation.OWN;
     /** Maustaste Vor (Daumentaste) wie im EAC ({@code KnowledgeReaderPanel.MOUSE_FORWARD_BUTTON}). */
-    static final int MOUSE_FORWARD_BUTTON = 5;
+    static final int MOUSE_FORWARD_BUTTON = com.aresstack.spaceharvester.app.ui.controls.MouseNavigation.FORWARD_BUTTON;
     /**
      * Verlauf wie im Lesebereich des EAC, hier über alles, was die Mitte zeigt (Angelo, 17.11.2026): zuvor gezeigte
      * Seiten und Quellenseiten (Quelle oder Space) und die per Zurück verlassenen.
