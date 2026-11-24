@@ -236,7 +236,9 @@ class AreaSummaryTest {
             assertThat(summary.spaceKey()).isEqualTo("DEV");
             assertThat(summary.text()).isEqualTo("Der Bereich DEV beschreibt die Entwicklung.");
             assertThat(summary.statements()).singleElement().satisfies(statement -> assertThat(statement.pages())
-                    .extracting(SummaryPage::title).containsExactly("Startseite", "Abläufe"));
+                    .extracting(SummaryPage::title, SummaryPage::sourceId).containsExactly(
+                            org.assertj.core.groups.Tuple.tuple("Startseite", "wiki"),
+                            org.assertj.core.groups.Tuple.tuple("Abläufe", "wiki")));
             assertThat(summary.stale()).isFalse();
             assertThat(summary.spaceName("DEV")).isEqualTo("Entwicklung");
         });

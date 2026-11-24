@@ -744,7 +744,7 @@ public final class ChangeLog implements AutoCloseable {
                 String spaceKey = input == null ? null : input.spaceKey();
                 String title = headers.apply(new PageKey(pageSource, pageId)).map(found -> found.metadata().title())
                         .orElse(null);
-                pages.add(new SummaryPage(pageId, title, spaceKey));
+                pages.add(new SummaryPage(pageId, title, spaceKey, pageSource));
                 pageSpaces.computeIfAbsent(pageSource, ignored -> new HashMap<>()).put(pageId, spaceKey);
             }
             statements.add(new SummaryStatement(statement.text(), pages, statement.title(), statement.details()));
