@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git 9b66718a4a646c901be219a61825a07191bb06c6
+# upstream https://github.com/aresstack/enterprise-ai-client.git d80b19d7d807148b6a17d99ec96b4ca28029d380
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 55661b9ef0c68a9b68f65199485fe6f1fb639038d6df07a09b2f9c98b5a527e1  src/main/java/com/aresstack/enterpriseai/astu/acropolis/attachment/AttachmentException.java
 5ff7a727bd25add3e4fc0c6abb75a9b2cd531745f2aa0a6800b5505feec6c5d4  src/main/java/com/aresstack/enterpriseai/astu/acropolis/attachment/AttachmentTextExtractor.java
@@ -42,7 +42,7 @@ f3151556408540c4c599509c98afbfb15661cb82fb906bc4e90143513d04fc93  src/main/java/
 c3921e467a01e37c41a0fb8fc18a3273480039a748195f44254c3728a0b76c59  src/main/java/com/aresstack/enterpriseai/browser/api/engine/package-info.java
 46cbbb46e3038a46a99918a9b8506de2293cc73aefed0ec067258f97ff623f47  src/main/java/com/aresstack/enterpriseai/browser/api/package-info.java
 78a158a6425e972f4f3a7065cba065c3b3028a1f75424cb7050ceda286cc77e4  src/main/java/com/aresstack/enterpriseai/browser/firefox/BidiBrowserConnection.java
-f61310145a668215903c30d67e46d5ac6472d0cd0ce21a91b65b761ec07c0543  src/main/java/com/aresstack/enterpriseai/browser/firefox/FirefoxEngine.java
+14a5978ef97234f061e2f8c50641a30ff35f2b421dd2860201af4a7fed0d7c1c  src/main/java/com/aresstack/enterpriseai/browser/firefox/FirefoxEngine.java
 12a7daa5fef30b6075210b5c032c0d9d7507a3ee4ccd2bae1503a147fc352c0a  src/main/java/com/aresstack/enterpriseai/browser/firefox/FirefoxInstance.java
 44067c74d76eafef9fba90acea5519e86b2a44f60a3c42fa8ea3c53390ebc69d  src/main/java/com/aresstack/enterpriseai/browser/firefox/HumanInput.java
 258fe76af76992fd711d017f5e2cfd258be81507a2d063ef6adf46aaf478a996  src/main/java/com/aresstack/enterpriseai/browser/firefox/InputActions.java
@@ -279,7 +279,7 @@ d97c34bf43d3bd6678deb8ae00908140a4e505a5e5655d4b15681e376a8e4343  src/main/java/
 294fd4afeb8e94ff98bcc170788a5f89d9e92f69e9d178da6fc375935f1d70de  src/main/java/de/bund/zrb/websocket/WDEventNames.java
 586017aa3040db329fe868751065212558d081739af7329b9be16d7e4a7d4a98  src/main/java/de/bund/zrb/websocket/readme.md
 8c97c4d518720da2051f44d7208674c234b0d03740fb6717580cee1e44cc67d5  src/test/java/com/aresstack/enterpriseai/browser/api/BrowserAccessPolicyTest.java
-fbf3246ea5ec520b3049c29048204cac8d6d74b7d0233a9fab79e1bef59dd643  src/test/java/com/aresstack/enterpriseai/browser/firefox/FirefoxEngineTest.java
+cbf0e21a8976b59a6e9de42d6f9091d31a3918086da000e0adc854a8809bc1f9  src/test/java/com/aresstack/enterpriseai/browser/firefox/FirefoxEngineTest.java
 7ae65b93699c74dc418e533fab8ea5f1bf6faa8e1b720155357b17c71c13f2f4  src/test/java/com/aresstack/enterpriseai/browser/firefox/HumanInputTest.java
 37a919bedd78f32979ef99f4c23fdb16184b5cb4fe63c16fbfd1c26999711a9f  src/test/java/com/aresstack/enterpriseai/browser/firefox/TwoFirefoxChatsIT.java
 b0a2636a6d3aff61f0e90d9bbbfe3333642c3cec6baa281a0346ee8f5f7b5196  src/test/java/com/aresstack/enterpriseai/browser/runtime/ChatBrowserRuntimeTest.java

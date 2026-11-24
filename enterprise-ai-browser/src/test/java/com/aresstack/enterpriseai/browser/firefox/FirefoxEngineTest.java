@@ -19,6 +19,18 @@ public class FirefoxEngineTest {
     public TemporaryFolder folder = new TemporaryFolder();
 
     @Test
+    public void onWindowsTheLauncherWaitsForTheBrowserElsewhereTheCommandStaysAsItWas() throws Exception {
+        Path executable = folder.newFile("firefox.exe").toPath();
+        Path profile = folder.newFolder("chat-w").toPath();
+        java.util.List<String> windows = FirefoxEngine.command(executable, profile, 4711, "Windows 11");
+        assertEquals(java.util.Arrays.asList(executable.toString(), "-profile", profile.toAbsolutePath().toString(),
+                "-no-remote", "-wait-for-browser", "--remote-debugging-port=4711"), windows);
+        java.util.List<String> linux = FirefoxEngine.command(executable, profile, 4711, "Linux");
+        assertEquals(java.util.Arrays.asList(executable.toString(), "-profile", profile.toAbsolutePath().toString(),
+                "-no-remote", "--remote-debugging-port=4711"), linux);
+    }
+
+    @Test
     public void profileInUseIsRefusedInsteadOfOpenedTwice() throws Exception {
         Path profile = folder.newFolder("chat-a").toPath();
         FirefoxEngine.ProfileLock first = FirefoxEngine.ProfileLock.acquire(profile);
