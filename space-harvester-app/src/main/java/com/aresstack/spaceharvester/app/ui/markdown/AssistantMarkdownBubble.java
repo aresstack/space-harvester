@@ -141,7 +141,7 @@ public final class AssistantMarkdownBubble extends JPanel implements WidthAwareH
     }
 
     /** Ein kleines Bedienelement (Kopierknopf) direkt hinter dem Namen in der Kopfzeile; der Markdown-Körper bleibt unberührt. */
-    void setHeaderAccessory(JComponent accessory) {
+    public void setHeaderAccessory(JComponent accessory) {
         if (!headerShown) {
             return;
         }

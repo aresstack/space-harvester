@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubblePalette;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
+import com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
 import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownBubble;
 import com.aresstack.spaceharvester.app.ui.markdown.CachingMermaidImageRenderer;
@@ -2079,8 +2080,8 @@ public final class ChatPanel extends JPanel {
         // Nur die Seite statt der Auswahl samt Unterseiten ist ein eigener Bereich.
         String scopeKey = custom != null ? custom.scopeKey() : scopeKey(node, scope != resolved);
         addAreaMark(lastQuestion(chat), area, scopeKey);
-        addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question);
         long now = System.currentTimeMillis();
+        addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question, now);
         if (home == null) {
             home = store.folder(stored());
         }
@@ -2095,7 +2096,7 @@ public final class ChatPanel extends JPanel {
         attach.setToolTipText(ATTACH);
         composer.revalidate();
         composer.repaint();
-        answering = addAnswer("…");
+        answering = addAnswer("…", now);
         ChatRecord target = chat;
         Path targetNode = home;
         TurnListener listener = new TurnListener(target, targetNode, answering, answeringSources);
@@ -2659,10 +2660,16 @@ public final class ChatPanel extends JPanel {
         turn = null;
     }
 
+    /**
+     * Eine Sprechblase wie im EAC ({@code ChatTranscriptPanel.createRow}): Datum und Uhrzeit oben rechts, der
+     * Kopierknopf hinter dem Namen.
+     */
     private SpeechBubblePanel addBubble(BubbleSide side, Color background, Color foreground, String header,
-                                        String text) {
+                                        String text, long at) {
         SpeechBubblePanel bubble = new SpeechBubblePanel(side, background, foreground, header, text);
         bubble.setMaximumBubbleWidth(640);
+        bubble.setHeaderTimestamp(at);
+        bubble.setHeaderAccessory(copyButton(foreground, () -> text));
         BubbleMessageRow row = new BubbleMessageRow(bubble, side);
         row.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
@@ -2677,7 +2684,7 @@ public final class ChatPanel extends JPanel {
     private JComponent answeringRow;
 
     /** Eine Antwortblase mit Markdown-Körper wie im EAC ({@code ChatTranscriptPanel.createMarkdownBubble}). */
-    private AssistantMarkdownBubble addAnswer(String markdown) {
+    private AssistantMarkdownBubble addAnswer(String markdown, long at) {
         if (mermaid == null) {
             mermaid = CachingMermaidImageRenderer.forChat();
         }
@@ -2685,6 +2692,9 @@ public final class ChatPanel extends JPanel {
                 bubbles.getAssistantForeground()), linkOpener, mermaid);
         view.setMarkdown(markdown);
         AssistantMarkdownBubble bubble = new AssistantMarkdownBubble(BubbleSide.LEFT, bubbles, ASSISTANT, view);
+        bubble.setHeaderTimestamp(at);
+        // Wie im EAC der Markdown-Quelltext, beim Klick gelesen: auch eine Antwort, die noch geschrieben wird.
+        bubble.setHeaderAccessory(copyButton(bubbles.getAssistantForeground(), view::getMarkdown));
         BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
         OrbClearance clearance = new OrbClearance(row, readAloud.orb());
         clearance.setAlignmentX(LEFT_ALIGNMENT);
@@ -2698,6 +2708,20 @@ public final class ChatPanel extends JPanel {
         transcript.repaint();
         scrollDown();
         return bubble;
+    }
+
+    /** Der Kopierknopf des EAC ({@code ChatTranscriptPanel.copyButton}): Vordergrund mit Alpha 200. */
+    private MessageCopyButton copyButton(Color foreground, java.util.function.Supplier<String> text) {
+        return new MessageCopyButton(new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 200),
+                text, value -> clipboard.accept(value));
+    }
+
+    /** Wohin der Kopierknopf schreibt; für Tests ohne Systemzwischenablage austauschbar. */
+    private java.util.function.Consumer<String> clipboard = value -> java.awt.Toolkit.getDefaultToolkit()
+            .getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(value), null);
+
+    void setClipboard(java.util.function.Consumer<String> clipboard) {
+        this.clipboard = clipboard;
     }
 
     private void scrollDown() {
@@ -2741,10 +2765,10 @@ public final class ChatPanel extends JPanel {
                 addAreaMark(asked, message.area(), message.scope());
                 asked = message.area() == null ? asked : message;
                 addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du",
-                        message.text());
+                        message.text(), message.at());
             } else {
                 AssistantMarkdownBubble answer = addAnswer(message.cancelled()
-                        ? message.text() + "\n\n" + CANCELLED : message.text());
+                        ? message.text() + "\n\n" + CANCELLED : message.text(), message.at());
                 answeringSources.show(message.sources());
                 readAloud.answer(answer);
             }
