@@ -38,6 +38,55 @@ public interface TermIndex {
      */
     List<TermPosting> postings(Filter filter, String from, boolean inclusive, int max);
 
+    /** Höchstens so viele Schlüssel je Aufruf von {@link #keys}; sie sind klein, der Stapel darf groß sein. */
+    int MAX_KEY_BATCH = 50_000;
+
+    /**
+     * Wie {@link #postings}, aber nur das, was Zählen braucht: keine Fundstellen, kein Wortlaut. Eine Ablage mit
+     * eigenem Index liest dafür keine ganzen Einträge.
+     *
+     * @param from nur Schlüssel hinter diesem oder {@code null} für den Anfang
+     * @param max  1 bis {@link #MAX_KEY_BATCH}
+     */
+    default List<TermKey> keys(Filter filter, String from, int max) {
+        if (max < 1 || max > MAX_KEY_BATCH) {
+            throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_KEY_BATCH + " liegen");
+        }
+        List<TermKey> keys = new java.util.ArrayList<>();
+        String after = from;
+        while (keys.size() < max) {
+            int want = Math.min(MAX_BATCH, max - keys.size());
+            List<TermPosting> batch = postings(filter, after, false, want);
+            batch.forEach(posting -> keys.add(TermKey.of(posting)));
+            if (batch.size() < want) {
+                break;
+            }
+            after = batch.get(batch.size() - 1).sortKey();
+        }
+        return keys;
+    }
+
+    /**
+     * Ein Eintrag ohne Inhalt: wozu er gehört und auf welchem Stand er ist.
+     *
+     * @param revision    wie {@link TermPosting#revision()}
+     * @param inputSha256 wie {@link TermPosting#inputSha256()}
+     * @param ofDocument  ob er aus einem Anhang oder einer enthaltenen Datei stammt
+     * @param extraction  wie {@link TermPosting#extraction()}
+     */
+    record TermKey(PageKey page, TermKind kind, String normalized, String revision, String inputSha256,
+                   boolean ofDocument, String extraction, String sortKey) {
+
+        public static TermKey of(TermPosting posting) {
+            return new TermKey(posting.page(), posting.kind(), posting.normalized(), posting.revision(),
+                    posting.inputSha256(), posting.ofDocument(), posting.extraction(), posting.sortKey());
+        }
+
+        public String groupKey() {
+            return TermIndex.groupKey(normalized, kind);
+        }
+    }
+
     /**
      * Auswahl im Index.
      *

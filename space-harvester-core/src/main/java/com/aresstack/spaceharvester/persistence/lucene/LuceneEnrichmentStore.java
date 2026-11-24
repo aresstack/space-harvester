@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -43,12 +44,15 @@ import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.ReaderUtil;
+import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnFloatVectorQuery;
 import org.apache.lucene.search.PrefixQuery;
@@ -177,6 +181,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     /** {@link TermIndex#sortKey}, indexiert für Bereichsabfragen und als DocValues zum Sortieren. */
     private static final String TERM_SORT = "termSort";
     private static final String TERM = "term";
+    /** Stand eines Eintrags ({@link #stamp}) als DocValues, damit Zählen keine gespeicherten Felder liest. */
+    private static final String TERM_STAMP = "termStamp";
     private static final String TERM_COUNT = "termCount";
     private static final String TERM_EXPANSION = "termExpansion";
     private static final String TERM_SECTION = "termSection";
@@ -609,6 +615,99 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()) {
             return List.of();
         }
+        org.apache.lucene.search.Query query = termQuery(filter, from, inclusive);
+        try {
+            IndexSearcher searcher = searchers.acquire();
+            try {
+                TopDocs top = searcher.search(query, max,
+                        new Sort(new SortField(TERM_SORT, SortField.Type.STRING)), false);
+                StoredFields stored = searcher.storedFields();
+                List<TermPosting> postings = new ArrayList<>(top.scoreDocs.length);
+                for (ScoreDoc hit : top.scoreDocs) {
+                    postings.add(posting(stored.document(hit.doc)));
+                }
+                return postings;
+            } finally {
+                searchers.release(searcher);
+            }
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht gelesen werden", e);
+        }
+    }
+
+    /**
+     * Schlüssel ohne gespeicherte Felder: Der Sortierwert kommt aus der Suche, der Stand aus {@link #TERM_STAMP}.
+     * Nur Einträge aus der Zeit vor diesem Feld lesen noch ihr gespeichertes Dokument.
+     */
+    @Override
+    public List<TermKey> keys(Filter filter, String from, int max) {
+        Objects.requireNonNull(filter, "filter");
+        if (max < 1 || max > MAX_KEY_BATCH) {
+            throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_KEY_BATCH + " liegen");
+        }
+        requireOpen();
+        if (filter.sourceIds().isEmpty() || filter.pages() != null && filter.pages().isEmpty()) {
+            return List.of();
+        }
+        org.apache.lucene.search.Query query = termQuery(filter, from, false);
+        try {
+            IndexSearcher searcher = searchers.acquire();
+            try {
+                TopDocs top = searcher.search(query, max,
+                        new Sort(new SortField(TERM_SORT, SortField.Type.STRING)), false);
+                ScoreDoc[] hits = top.scoreDocs;
+                // Doc-Values lassen sich je Segment nur vorwärts lesen: Stände in Dokumentreihenfolge holen.
+                Integer[] byDoc = new Integer[hits.length];
+                for (int i = 0; i < byDoc.length; i++) {
+                    byDoc[i] = i;
+                }
+                Arrays.sort(byDoc, Comparator.comparingInt(i -> hits[i].doc));
+                List<LeafReaderContext> leaves = searcher.getIndexReader().leaves();
+                StoredFields stored = null;
+                TermKey[] keys = new TermKey[hits.length];
+                int leaf = -1;
+                SortedDocValues stamps = null;
+                for (int i : byDoc) {
+                    int doc = hits[i].doc;
+                    int at = ReaderUtil.subIndex(doc, leaves);
+                    if (at != leaf) {
+                        leaf = at;
+                        stamps = leaves.get(at).reader().getSortedDocValues(TERM_STAMP);
+                    }
+                    if (stamps != null && stamps.advanceExact(doc - leaves.get(at).docBase)) {
+                        String sortKey = ((BytesRef) ((FieldDoc) hits[i]).fields[0]).utf8ToString();
+                        keys[i] = key(sortKey, stamps.lookupOrd(stamps.ordValue()).utf8ToString());
+                    } else {
+                        if (stored == null) {
+                            stored = searcher.storedFields();
+                        }
+                        keys[i] = TermKey.of(posting(stored.document(doc)));
+                    }
+                }
+                return Arrays.asList(keys);
+            } finally {
+                searchers.release(searcher);
+            }
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht gelesen werden", e);
+        }
+    }
+
+    /** Revision, Eingabe-Hash und Extraktion eines Eintrags als ein Wert; je Seite gleich, also klein im Index. */
+    private static String stamp(TermPosting posting) {
+        return (posting.revision() == null ? "" : "r" + posting.revision()) + SEPARATOR + posting.inputSha256()
+                + SEPARATOR + (posting.extraction() == null ? "" : "e" + posting.extraction());
+    }
+
+    private static TermKey key(String sortKey, String stamp) {
+        String[] parts = sortKey.split(String.valueOf(SEPARATOR), 5);
+        String[] stand = stamp.split(String.valueOf(SEPARATOR), 3);
+        return new TermKey(new PageKey(parts[2], parts[3]), TermKind.of(parts[1]), parts[0],
+                stand[0].isEmpty() ? null : stand[0].substring(1), stand[1], parts.length > 4,
+                stand[2].isEmpty() ? null : stand[2].substring(1), sortKey);
+    }
+
+    private static org.apache.lucene.search.Query termQuery(Filter filter, String from, boolean inclusive) {
         BooleanQuery.Builder query = new BooleanQuery.Builder()
                 .add(new TermInSetQuery(TERM_SOURCE, filter.sourceIds().stream().map(BytesRef::new).toList()),
                         BooleanClause.Occur.FILTER)
@@ -646,23 +745,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         } else {
             query.add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER);
         }
-        try {
-            IndexSearcher searcher = searchers.acquire();
-            try {
-                TopDocs top = searcher.search(query.build(), max,
-                        new Sort(new SortField(TERM_SORT, SortField.Type.STRING)), false);
-                StoredFields stored = searcher.storedFields();
-                List<TermPosting> postings = new ArrayList<>(top.scoreDocs.length);
-                for (ScoreDoc hit : top.scoreDocs) {
-                    postings.add(posting(stored.document(hit.doc)));
-                }
-                return postings;
-            } finally {
-                searchers.release(searcher);
-            }
-        } catch (IOException e) {
-            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht gelesen werden", e);
-        }
+        return query.build();
     }
 
     @Override
@@ -889,6 +972,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             doc.add(new StringField(TERM_VERSION, posting.processorVersion(), Field.Store.NO));
             doc.add(new StringField(TERM_SORT, posting.sortKey(), Field.Store.NO));
             doc.add(new SortedDocValuesField(TERM_SORT, new BytesRef(posting.sortKey())));
+            doc.add(new SortedDocValuesField(TERM_STAMP, new BytesRef(stamp(posting))));
             doc.add(new StoredField(SOURCE_ID, enrichment.key().sourceId()));
             doc.add(new StoredField(PAGE_ID, enrichment.key().pageId()));
             doc.add(new StoredField(TERM, posting.term()));

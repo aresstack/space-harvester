@@ -398,19 +398,20 @@ public class TermQueries {
         boolean counted = false;
         String from = null;
         while (true) {
-            List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
-            for (TermPosting posting : batch) {
-                if (!posting.groupKey().equals(group)) {
-                    group = posting.groupKey();
+            // Nur Schlüssel: Zählen braucht weder Fundstellen noch Wortlaut (gemessen: der teure Teil des Zählens).
+            List<TermIndex.TermKey> batch = index.keys(filter, from, TermIndex.MAX_KEY_BATCH);
+            for (TermIndex.TermKey key : batch) {
+                if (!key.groupKey().equals(group)) {
+                    group = key.groupKey();
                     counted = false;
                 }
                 // Ein Begriff zählt, sobald er auf einer sichtbaren Seite oder in einem ihrer Dokumente vorkommt.
-                if (!counted && visibility.current(posting).isPresent()) {
+                if (!counted && visibility.current(key).isPresent()) {
                     counted = true;
-                    counts.merge(posting.kind(), 1, Integer::sum);
+                    counts.merge(key.kind(), 1, Integer::sum);
                 }
             }
-            if (batch.size() < TermIndex.MAX_BATCH) {
+            if (batch.size() < TermIndex.MAX_KEY_BATCH) {
                 break;
             }
             if (progress != null) {
@@ -813,6 +814,10 @@ public class TermQueries {
 
         /** Die Kopfdaten, wenn die Seite im Cache liegt, sichtbar ist und der Eintrag zu ihrer Revision passt. */
         Optional<PageHeader> current(TermPosting posting) {
+            return current(TermIndex.TermKey.of(posting));
+        }
+
+        Optional<PageHeader> current(TermIndex.TermKey posting) {
             Optional<PageHeader> header = checked.computeIfAbsent(posting.page(), key -> headers.apply(key)
                     .filter(found -> spaceKey == null || spaceKey.equals(found.metadata().partitionKey()))
                     .filter(found -> access.canRead(caller, key.sourceId(), found.metadata().partitionKey(),
