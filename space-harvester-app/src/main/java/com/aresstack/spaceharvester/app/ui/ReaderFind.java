@@ -163,6 +163,12 @@ final class ReaderFind {
         if (!component.isVisible()) {
             return;
         }
+        if (component instanceof FindBar) {
+            // Die Leiste mit der Lupe steht im Command Deck unter der Arbeitsfläche, also im durchsuchten Bereich: Ihr
+            // eigenes Suchfeld ist kein Inhalt. Sonst fand die Suche den Suchtext im Feld selbst und setzte dort den
+            // Cursor an den Anfang des Treffers, weiteres Tippen landete vorne (Angelo 24.11.2026).
+            return;
+        }
         if (component instanceof JComponent own
                 && own.getClientProperty(FindableSurface.KEY) instanceof FindableSurface surface) {
             // Selbst gezeichnet (Terminalbild): eigener Text, eigene Markierung.
