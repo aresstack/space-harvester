@@ -107,7 +107,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
 
     @Override
     public List<KnowledgeResource> discover(SourceScope scope) throws KnowledgeSourceException {
-        return port.discover(scope).stream().map(this::withParent).toList();
+        return port.discover(scope).stream().map(this::describeFile).toList();
     }
 
     @Override
@@ -117,7 +117,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             return KnowledgeDocument.of(folder(folder), "");
         }
         KnowledgeDocument document = port.load(resourceId);
-        return KnowledgeDocument.of(withParent(document.resource()), document.text(), document.blocks());
+        return KnowledgeDocument.of(describeFile(document.resource()), document.text(), document.blocks());
     }
 
     @Override
@@ -157,7 +157,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
                     resources.add(folder(folder));
                 }
             }
-            resources.add(withParent(file));
+            resources.add(describeFile(file));
             previous = path;
         }
         String next = batch.nextCursor();
@@ -175,7 +175,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
     @Override
     public KnowledgeResource resourceMetadata(String localId) throws KnowledgeSourceException {
         String folder = folderOf(localId);
-        return folder != null ? folder(folder) : withParent(metadata.resourceMetadata(localId));
+        return folder != null ? folder(folder) : describeFile(metadata.resourceMetadata(localId));
     }
 
     @Override
@@ -185,7 +185,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             return new StoredContent(folder(folder), new byte[0], "text/plain", FOLDER_FORMAT, Instant.now());
         }
         StoredContent content = stored.storedContent(localId);
-        return new StoredContent(withParent(content.resource()), content.payload(), content.mediaType(),
+        return new StoredContent(describeFile(content.resource()), content.payload(), content.mediaType(),
                 content.nativeFormat(), content.retrievedAt());
     }
 
@@ -238,7 +238,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
         } else if (Files.isRegularFile(child, LinkOption.NOFOLLOW_LINKS)) {
             try {
                 // Keep document eligibility and access checks in the existing file source.
-                nodes.add(navigationNode(withParent(metadata.resourceMetadata(encode(relative)))));
+                nodes.add(navigationNode(describeFile(metadata.resourceMetadata(encode(relative)))));
             } catch (KnowledgeSourceException ignored) {
                 // Skip files rejected by the source, or files removed during enumeration.
             }
@@ -305,11 +305,16 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
         return "LocalFolderHierarchy{" + port + "}";
     }
 
-    /** Die Datei mit ihrem Ordner als Eltern; an der Wurzel unverändert. */
-    private KnowledgeResource withParent(KnowledgeResource file) {
+    /** Describe a file for the shared original-document reader and preserve its parent. */
+    private KnowledgeResource describeFile(KnowledgeResource file) {
+        KnowledgeResource.Builder builder = file.toBuilder()
+                .metadata(file.metadata().with(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND));
         String path = pathOf(file);
         String parent = path == null ? null : parentOf(path);
-        return parent == null ? file : file.toBuilder().parentId(idOf(parent)).build();
+        if (parent != null) {
+            builder.parentId(idOf(parent));
+        }
+        return builder.build();
     }
 
     /** Der Eintrag eines Ordners (relativer Pfad mit {@code /}). */

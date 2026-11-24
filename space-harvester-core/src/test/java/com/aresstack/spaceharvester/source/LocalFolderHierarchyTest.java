@@ -72,7 +72,13 @@ class LocalFolderHierarchyTest {
 
         PageMetadata file = source.pageMetadata(id("Handbuch/Betrieb/Nachtlauf.md"));
         assertThat(file.parentPageId()).isEqualTo(id("Handbuch/Betrieb"));
-        assertThat(file.attributes()).doesNotContainKey(PageMetadata.RESOURCE_KIND);
+        assertThat(file.attributes()).containsEntry(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND);
+        assertThat(source.storedPage(id("Handbuch/Betrieb/Nachtlauf.md")).metadata().attributes())
+                .containsEntry(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND);
+        assertThat(source.pageMetadata(id("notiz.txt")).attributes())
+                .containsEntry(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND);
+        assertThat(list(source, 500).get(id("notiz.txt")).attributes())
+                .containsEntry(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND);
         assertThat(new String(source.storedPage(id("Handbuch/Betrieb/Nachtlauf.md")).payload(),
                 StandardCharsets.UTF_8)).isEqualTo("Ablauf in der Nacht");
         assertThat(source.pageMetadata(id("notiz.txt")).parentPageId()).isNull();
