@@ -151,6 +151,8 @@ public final class AttachmentViewerPanel extends JPanel {
     private final javax.swing.Timer sharpen = new javax.swing.Timer(250, event -> sharpenPage());
     /** Text statt Bild (Textansicht). */
     private boolean showingText;
+    private List<Heading> headings = List.of();
+    private final List<Runnable> headingObservers = new java.util.ArrayList<>();
 
     /**
      * Der Viewer für {@code attachment}.
@@ -801,6 +803,9 @@ public final class AttachmentViewerPanel extends JPanel {
     /** Lädt und zeigt den Anhang je nach Typ. */
     private void loadAttachment() {
         loadGeneration++;
+        if (!headings.isEmpty()) {
+            headings(List.of());
+        }
         showingText = false;
         spreadsheetPane.setVisible(false);
         canvas.setStaticImage(null);
@@ -986,8 +991,66 @@ public final class AttachmentViewerPanel extends JPanel {
         documentArea.setDocument(html);
         documentArea.setCaretPosition(0);
         documentPane.setVisible(true);
+        headings(collectHeadings(html));
         hover(pointer);
         updateInfo();
+    }
+
+    /** Eine Überschrift des gezeigten Word-Dokuments (Formatvorlagen Überschrift 1–3) und ihre Stelle im Text. */
+    public record Heading(int level, String text, int offset) {
+    }
+
+    /** Die Überschriften des gezeigten Word-Dokuments; leer, solange keins gezeigt wird oder es keine hat. */
+    public List<Heading> headings() {
+        return headings;
+    }
+
+    /** Meldet jede neue Überschriftenliste (auf dem EDT), auch die leere beim Laden. */
+    public void onHeadings(Runnable observer) {
+        headingObservers.add(observer);
+    }
+
+    /** Springt zur Überschrift: sie steht danach oben in der Ansicht. */
+    public void showHeading(Heading heading) {
+        if (!documentPane.isVisible()) {
+            return;
+        }
+        try {
+            java.awt.geom.Rectangle2D at = documentArea.modelToView2D(heading.offset());
+            if (at != null) {
+                java.awt.Rectangle target = at.getBounds();
+                target.height = Math.max(1, documentPane.getViewport().getHeight());
+                documentArea.scrollRectToVisible(target);
+            }
+            documentArea.setCaretPosition(heading.offset());
+        } catch (javax.swing.text.BadLocationException | IllegalArgumentException ignored) {
+            // Stelle außerhalb des Textes: nichts tun.
+        }
+    }
+
+    private void headings(List<Heading> next) {
+        headings = List.copyOf(next);
+        headingObservers.forEach(Runnable::run);
+    }
+
+    private static List<Heading> collectHeadings(javax.swing.text.html.HTMLDocument html) {
+        List<Heading> found = new java.util.ArrayList<>();
+        javax.swing.text.ElementIterator elements = new javax.swing.text.ElementIterator(html);
+        for (javax.swing.text.Element element = elements.first(); element != null; element = elements.next()) {
+            String name = element.getName();
+            if (name != null && name.length() == 2 && name.charAt(0) == 'h' && Character.isDigit(name.charAt(1))) {
+                try {
+                    String text = html.getText(element.getStartOffset(),
+                            element.getEndOffset() - element.getStartOffset()).strip();
+                    if (!text.isEmpty()) {
+                        found.add(new Heading(name.charAt(1) - '0', text, element.getStartOffset()));
+                    }
+                } catch (javax.swing.text.BadLocationException ignored) {
+                    // Element ohne Text.
+                }
+            }
+        }
+        return found;
     }
 
     /** Die gezeigte Text- oder Dokumentansicht als Klartext ({@code ""} außerhalb). */
