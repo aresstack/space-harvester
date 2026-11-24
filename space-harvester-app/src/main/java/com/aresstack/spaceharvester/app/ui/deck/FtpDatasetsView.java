@@ -396,15 +396,6 @@ final class FtpDatasetsView extends JPanel {
     }
 
     private void navigate(String target, Move move) {
-        navigate(target, move, null);
-    }
-
-    /**
-     * Listet einen Pfad. Mit {@code opened} kam der Pfad per Doppelklick/Enter von einem Dataset: Zeigt die Liste dann
-     * nur das Dataset selbst (sequenziell) oder nichts, wird es wie eine Datei im Editor geöffnet statt als leerer
-     * Ordner stehen zu bleiben.
-     */
-    private void navigate(String target, Move move, RemoteEntry opened) {
         FtpSession session = owner.session();
         if (session.mvs() && (target == null || target.isBlank() || MvsPath.ROOT.equals(MvsPath.absolute(target)))) {
             message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
@@ -425,11 +416,6 @@ final class FtpDatasetsView extends JPanel {
                                 && error.getCause() != null ? error.getCause() : error;
                         owner.status("Liste von " + resolved + " nicht geladen – " + FtpWorkspace.describe(cause), true);
                         message("Fehler: " + FtpWorkspace.describe(cause), true);
-                        return;
-                    }
-                    if (opened != null && session.mvs() && readsAsFile(opened, resolved, list)) {
-                        owner.status(current + " · " + opened.name() + " geöffnet", false);
-                        openDocument(opened.path());
                         return;
                     }
                     if (!from.isEmpty() && !from.equals(resolved)) {
@@ -678,33 +664,30 @@ final class FtpDatasetsView extends JPanel {
         if (entry == null) {
             return;
         }
-        if (entry.directory()) {
-            navigate(entry.path(), Move.NEW, entry);
+        if (!owner.session().mvs()) {
+            if (entry.directory()) {
+                navigate(entry.path(), true);
+            } else {
+                openDocument(entry.path());
+            }
             return;
         }
-        openDocument(entry.path());
+        // Wie MainframeMate (MvsConnectionTab.handleDoubleClick → MvsBrowserController.openResource): HLQ/Qualifier
+        // und partitionierte Datasets öffnen als Liste, sequenzielle Datasets und Member im Editor.
+        owner.run(owner.session().files(files -> files.opensAsFolder(entry)), "Öffnen von " + entry.path()
+                + " fehlgeschlagen", folder -> {
+                    if (folder) {
+                        navigate(entry.path(), true);
+                    } else {
+                        openDocument(entry.path());
+                    }
+                });
     }
 
     private void openDocument(String remotePath) {
         EditorSession session = editors.open(store, remotePath, FtpDocumentStore.name(remotePath));
         added(session);
         showDocument(session);
-    }
-
-    /**
-     * Ob ein geöffnetes Dataset eine Datei ist: Die Liste zeigt nur das Dataset selbst als Datei (sequenziell), oder
-     * sie ist leer und das Dataset ist laut Dsorg nicht partitioniert (ein leeres PDS bleibt eine leere Liste).
-     */
-    static boolean readsAsFile(RemoteEntry opened, String resolved, List<RemoteEntry> list) {
-        if (MvsPath.isMember(opened.path())) {
-            return false;
-        }
-        if (list.isEmpty()) {
-            return !partitioned(opened);
-        }
-        String self = MvsPath.unquote(resolved);
-        return list.size() == 1 && !list.get(0).directory()
-                && MvsPath.unquote(list.get(0).path()).equalsIgnoreCase(self);
     }
 
     private static boolean partitioned(RemoteEntry entry) {

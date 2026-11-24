@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.deck.access.ServerAccount;
 import com.aresstack.spaceharvester.deck.access.ServerAccounts;
 import com.aresstack.spaceharvester.deck.ftp.FtpProfile;
 import com.aresstack.spaceharvester.deck.ftp.RetryPolicy;
+import com.aresstack.spaceharvester.deck.ftp.TextTransform;
 import com.aresstack.spaceharvester.deck.ftp.TransferOptions;
 import com.aresstack.spaceharvester.deck.ftp.jes.SpoolNaming;
 import java.awt.BorderLayout;
@@ -75,6 +76,10 @@ final class FtpConnectForm extends JPanel {
     static final String SPOOL_CONNECTIONS_KEY = "deck.ftp.spool.connections";
     static final String SPOOL_PROBE_KEY = "deck.ftp.spool.probe";
     static final String PROXY_KEY = "deck.ftp.proxy";
+    static final String RECORD_MARKER_KEY = "deck.ftp.transform.line-ending";
+    static final String FINAL_NEWLINE_KEY = "deck.ftp.transform.remove-final-newline";
+    static final String FILE_END_KEY = "deck.ftp.transform.file-end-marker";
+    static final String PADDING_KEY = "deck.ftp.transform.padding";
 
     final JComboBox<ServerAccount> server = Comic.combo(ConnectForm::accountText);
     final PlaceholderField host = new PlaceholderField(22, "aus dem KeePass-Eintrag");
@@ -104,6 +109,11 @@ final class FtpConnectForm extends JPanel {
     final JComboBox<SpoolNaming.Mode> spoolMode = combo(SpoolNaming.Mode.values(), SpoolNaming.Mode::label);
     final PlaceholderField spoolConnections = new PlaceholderField(4, "1");
     final JCheckBox spoolProbe = Comic.checkBox("DD-Namen danach einzeln nachladen");
+    // Datenumwandlung wie MainframeMate (Einstellungen → Datenumwandlung), editierbar mit denselben Vorschlägen.
+    final JComboBox<String> recordMarker = hexCombo(TextTransform.RECORD_MARKER_PRESETS);
+    final JCheckBox removeFinalNewline = Comic.checkBox("Letzten Zeilenumbruch ausblenden");
+    final JComboBox<String> fileEndMarker = hexCombo(TextTransform.FILE_END_PRESETS);
+    final JComboBox<String> padding = hexCombo(TextTransform.PADDING_PRESETS);
     private final JLabel problem = new JLabel(" ");
     private final JLabel serverState = Comic.muted(" ");
     private final JPanel advanced = new JPanel(new GridBagLayout());
@@ -162,6 +172,11 @@ final class FtpConnectForm extends JPanel {
         row(right, 9, "DD-Namen", spoolMode);
         row(right, 10, "Verbindungen", spoolConnections);
         row(right, 11, "", spoolProbe);
+        section(right, 12, "Datenumwandlung");
+        row(right, 13, "Zeilenumbruch", recordMarker);
+        row(right, 14, "", removeFinalNewline);
+        row(right, 15, "Datei-Ende", fileEndMarker);
+        row(right, 16, "Padding Byte", padding);
         GridBagConstraints column = new GridBagConstraints();
         column.anchor = GridBagConstraints.NORTHWEST;
         column.fill = GridBagConstraints.HORIZONTAL;
@@ -191,6 +206,14 @@ final class FtpConnectForm extends JPanel {
         onConnection.setOpaque(false);
         exponential.setOpaque(false);
         spoolProbe.setOpaque(false);
+        removeFinalNewline.setOpaque(false);
+        recordMarker.setToolTipText("Zeilenumbruch des Servers (Hex): Satzende bei Satzstruktur, Standard "
+                + TextTransform.DEFAULT_RECORD_MARKER + "; leer = keins");
+        removeFinalNewline.setToolTipText("Den abschließenden Umbruch nach der Umwandlung entfernen (Standard an)");
+        fileEndMarker.setToolTipText("Datei-Ende-Kennung (Hex), beim Lesen entfernt und beim Schreiben angehängt, "
+                + "Standard " + TextTransform.DEFAULT_FILE_END_MARKER + "; leer = keine");
+        padding.setToolTipText("Füllbyte (Hex), das beim Lesen komplett entfernt wird, Standard "
+                + TextTransform.DEFAULT_PADDING + "; leer = keins");
         useProxy.setOpaque(false);
         useProxy.setToolTipText("An (Vorgabe): Proxy-Einstellungen von Java/System wie bisher; aus: immer direkt zum "
                 + "Host, auch an einem SOCKS-Proxy vorbei");
@@ -323,7 +346,7 @@ final class FtpConnectForm extends JPanel {
         TransferOptions transfer = new TransferOptions((TransferOptions.FileType) fileType.getSelectedItem(),
                 (TransferOptions.TextFormat) textFormat.getSelectedItem(),
                 (TransferOptions.Structure) structure.getSelectedItem(),
-                (TransferOptions.TransferMode) transferMode.getSelectedItem());
+                (TransferOptions.TransferMode) transferMode.getSelectedItem(), transform());
         RetryPolicy retry = new RetryPolicy(number(attempts.getText(), RetryPolicy.DEFAULT.maxAttempts(), "Versuche"),
                 number(backoff.getText(), 0, "Wartezeit"), exponential.isSelected(),
                 number(maxBackoff.getText(), 0, "Höchste Wartezeit"), onTimeout.isSelected(),
@@ -334,6 +357,25 @@ final class FtpConnectForm extends JPanel {
                 connectSeconds, number(controlTimeout.getText(), connectSeconds, "Zeitlimit Antworten"),
                 number(dataTimeout.getText(), connectSeconds, "Zeitlimit Daten"), transfer, retry, startHlq.getText(),
                 naming, useProxy.isSelected());
+    }
+
+    /** Die Datenumwandlung aus den Feldern (leer = aus, wie in MainframeMate). */
+    TextTransform transform() {
+        return new TextTransform(text(recordMarker), text(fileEndMarker), text(padding),
+                removeFinalNewline.isSelected());
+    }
+
+    private static String text(JComboBox<String> box) {
+        Object value = box.isEditable() && box.getEditor() != null && box.getEditor().getItem() != null
+                ? box.getEditor().getItem() : box.getSelectedItem();
+        return value == null ? "" : value.toString();
+    }
+
+    private static JComboBox<String> hexCombo(java.util.List<String> presets) {
+        JComboBox<String> box = Comic.combo();
+        presets.forEach(box::addItem);
+        box.setEditable(true);
+        return box;
     }
 
     private static int number(String text, int fallback, String name) {
@@ -444,6 +486,11 @@ final class FtpConnectForm extends JPanel {
         values.put(SPOOL_CONNECTIONS_KEY, spoolConnections.getText().trim());
         values.put(SPOOL_PROBE_KEY, String.valueOf(spoolProbe.isSelected()));
         values.put(PROXY_KEY, String.valueOf(useProxy.isSelected()));
+        TextTransform transform = transform();
+        values.put(RECORD_MARKER_KEY, transform.recordMarker());
+        values.put(FINAL_NEWLINE_KEY, String.valueOf(transform.removeFinalNewline()));
+        values.put(FILE_END_KEY, transform.fileEndMarker());
+        values.put(PADDING_KEY, transform.padding());
         AppState.shared().putAll(values);
     }
 
@@ -474,6 +521,15 @@ final class FtpConnectForm extends JPanel {
         spoolConnections.setText(nonNull(state.get(SPOOL_CONNECTIONS_KEY)));
         spoolProbe.setSelected(flag(state.get(SPOOL_PROBE_KEY), SpoolNaming.DEFAULT.backgroundProbe()));
         useProxy.setSelected(flag(state.get(PROXY_KEY), true));
+        // Nie gespeichert = Standardwerte von MainframeMate; gespeichert leer = bewusst aus.
+        recordMarker.setSelectedItem(orDefault(state.get(RECORD_MARKER_KEY), TextTransform.DEFAULT_RECORD_MARKER));
+        removeFinalNewline.setSelected(flag(state.get(FINAL_NEWLINE_KEY), TextTransform.DEFAULT_REMOVE_FINAL_NEWLINE));
+        fileEndMarker.setSelectedItem(orDefault(state.get(FILE_END_KEY), TextTransform.DEFAULT_FILE_END_MARKER));
+        padding.setSelectedItem(orDefault(state.get(PADDING_KEY), TextTransform.DEFAULT_PADDING));
+    }
+
+    private static String orDefault(String stored, String fallback) {
+        return stored == null ? fallback : stored;
     }
 
     private static <E extends Enum<E>> void select(JComboBox<E> box, Class<E> type, String name, E fallback) {
