@@ -846,7 +846,8 @@ class ContentViewTest {
             assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(view.detail().scopeToggles().get(2),
                     view.tools()))).isTrue();
             assertThat(onEdt(() -> menuEntries(view.detail())))
-                    .containsExactly(PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)");
+                    .containsExactly(PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", "—", PODCAST_TEXTS,
+                            PODCAST_PICTURES);
 
             // Eine andere Wurzel behält die Wahl (global, nicht je Seite).
             String space = space("handbuch");
