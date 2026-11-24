@@ -123,6 +123,12 @@ class JsonPackageConverterTest {
     }
 
     @Test
+    void exportEmbeddedOneNoteWithItsOriginalExtension() {
+        assertThat(JsonPackageConverter.partExtension("application/onenote")).isEqualTo("one");
+        assertThat(JsonPackageConverter.partExtension("application/onenote; format=one")).isEqualTo("one");
+    }
+
+    @Test
     void rawFileNamesStayInsideTheirFolder() {
         assertThat(ExportFileJson.rawFileName("101", "application/json")).isEqualTo("101.json");
         assertThat(ExportFileJson.rawFileName("101", "text/html")).isEqualTo("101.bin");

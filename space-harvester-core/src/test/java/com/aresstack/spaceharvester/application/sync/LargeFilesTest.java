@@ -32,6 +32,18 @@ class LargeFilesTest {
     private static final PageMetadata NOTE = file("note", 1_000);
     private static final PageMetadata PDF = file("pdf", 30_000_000);
 
+    @Test
+    void oneNoteIsRecognizedAboveTheCacheLimit() {
+        PageMetadata metadata = new PageMetadata("notes", "source:notes", "Notes.ONE", "space", null,
+                "1", Instant.now(), null, PageMetadata.sorted(Map.of(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND,
+                LargeFiles.FILE_SIZE, "26214400")));
+        assertThat(LargeFiles.viewableType(metadata)).isEqualTo("application/onenote");
+        assertThat(LargeFiles.tooLarge(metadata, 20L << 20)).isTrue();
+        assertThat(com.aresstack.spaceharvester.source.OneNotePreviewReader.supportsSize(20L << 20)).isTrue();
+        assertThat(com.aresstack.spaceharvester.source.OneNotePreviewReader.supportsSize(LargeFiles.size(metadata)))
+                .isFalse();
+    }
+
     private int downloads;
     private int extracts;
     /** So lange braucht jeder Abruf der Quelle. */

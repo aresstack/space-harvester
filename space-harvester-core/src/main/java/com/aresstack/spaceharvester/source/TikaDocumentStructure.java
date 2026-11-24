@@ -82,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s13";
+    public static final String VERSION = "3.3-s14";
 
     /**
      * Tika-Konfiguration: alle Standard-Parser außer der Texterkennung; HTML liest {@link HtmlStreamParser} als Strom
@@ -393,6 +393,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
             return true;
         }
         type = type.getBaseType();
+        if (OneNoteContentDetector.MIME.equals(type.toString())) {
+            // Tika registers the section parser under the parameterized media type.
+            type = MediaType.parse(OneNoteContentDetector.SECTION_MIME);
+        }
         if (type.equals(MediaType.OCTET_STREAM)) {
             return true;
         }
@@ -1525,6 +1529,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 private boolean sheetTitle;
                 private boolean sheetHeading;
                 private int page;
+                private int notePages;
+                private int notePage;
                 private int slide;
                 /** Folien von Tika in einem .pptx bisher und ihre Nummern ({@link PptxSlideOrder}). */
                 private int slides;
@@ -1665,6 +1671,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
                                 if (cls.equals("embedded") || cls.equals("package-entry")) {
                                     embedded = Math.max(0, embedded - 1);
                                     entryTitle = false;
+                                } else if (embedded == 0 && isNotePage(cls)) {
+                                    notePage = 0;
                                 } else if (embedded == 0 && isSheet(cls)) {
                                     sheet = null;
                                     startSheetRows();
@@ -1774,7 +1782,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     if (embedded > 0) {
                         return;
                     }
-                    if (isSheet(cls)) {
+                    if (isNotePage(cls)) {
+                        notePage = ++notePages;
+                    } else if (isSheet(cls)) {
                         sheetTitle = true;
                         sheet = null;
                         startSheetRows();
@@ -1797,6 +1807,10 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 /** Blätter: in .xlsx div class=sheet, in .xls div class=page; der Name steht im ersten h1. */
                 private boolean isSheet(String cls) {
                     return cls.equals("sheet") || cls.equals("page") && spreadsheet();
+                }
+
+                private boolean isNotePage(String cls) {
+                    return cls.equals("page") && OneNoteContentDetector.MIME.equals(detectedType());
                 }
 
                 private boolean pdf() {
@@ -1976,6 +1990,9 @@ public final class TikaDocumentStructure implements DocumentStructure {
                 private Optional<Location> location() {
                     if (embedded > 0) {
                         return Optional.empty();
+                    }
+                    if (notePage > 0) {
+                        return Optional.of(Location.notePage(notePage));
                     }
                     if (sheet != null) {
                         return Optional.of(new Location(Optional.empty(), Optional.empty(), Optional.of(sheet)));

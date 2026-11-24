@@ -375,6 +375,9 @@ public final class MarkdownView {
     }
 
     private static String describe(Location location) {
+        if (location.notePage().isPresent()) {
+            return "note-page " + location.notePage().orElseThrow().index();
+        }
         if (location.sheet().isPresent()) {
             // Kein "--" und kein ">" im Kommentar, damit der Blattname ihn nicht beendet.
             return "sheet: " + location.sheet().get().replace("--", "- -").replace(">", "&gt;").replaceAll("\\s+", " ");

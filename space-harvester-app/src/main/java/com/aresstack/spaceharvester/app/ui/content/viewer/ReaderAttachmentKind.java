@@ -16,7 +16,7 @@ import java.util.Set;
  * Keep source-based previews for the remaining Office formats.</p>
  */
 public enum ReaderAttachmentKind {
-    IMAGE, PDF, TEXT, PRESENTATION, SPREADSHEET, OFFICE, MAIL, OTHER;
+    IMAGE, PDF, TEXT, PRESENTATION, SPREADSHEET, NOTEBOOK, OFFICE, MAIL, OTHER;
 
     private static final Set<String> IMAGE_EXTENSIONS = set("png", "jpg", "jpeg", "gif", "bmp", "svg", "webp");
     private static final Set<String> TEXT_EXTENSIONS = set("txt", "log", "md", "csv", "tsv", "json", "xml", "yml",
@@ -38,6 +38,9 @@ public enum ReaderAttachmentKind {
         }
         if (MailMessage.supports(fileName, mediaType)) {
             return MAIL; // Outlook (.msg) und .eml: Kopf, Text und Anlagen im Viewer selbst
+        }
+        if ("one".equals(extension) || "application/onenote".equals(type)) {
+            return NOTEBOOK;
         }
         if (SpreadsheetPreviewData.supports(fileName) || "text/csv".equals(type)
                 || "text/tab-separated-values".equals(type)
@@ -74,6 +77,9 @@ public enum ReaderAttachmentKind {
     static String label(String mediaType, String fileName) {
         String type = baseType(mediaType);
         String extension = extension(fileName);
+        if ("one".equals(extension) || "application/onenote".equals(type)) {
+            return "OneNote";
+        }
         if ("csv".equals(extension) || "text/csv".equals(type)) {
             return "CSV";
         }

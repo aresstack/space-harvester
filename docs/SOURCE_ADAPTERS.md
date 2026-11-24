@@ -488,7 +488,7 @@ reagiert nur auf Folienelemente). Bei `.pptx` (AP10) ist `slide` die Position de
 ausgeblendete zählen mit, Notizen tragen die Nummer ihrer Folie. Tika liest eine pptx-Datei auf dem SAX-Weg und gibt die
 Folien in der Reihenfolge ihrer Beziehungskennungen als Text aus (`rId10` vor `rId6`); `PptxSlideOrder` liest nur
 `presentation.xml` und ihre Beziehungen (sicherer XML-Leser ohne DTD, je Teil höchstens 8 MiB, beim Lesen gezählt) und
-ordnet jeder ausgegebenen Folie ihre Nummer zu. Die Zuordnung gilt nur für die geprüften Fassungen (Tika 3.3.2, POI
+ordnet jeder ausgegebenen Folie ihre Nummer zu. Die Zuordnung gilt nur für die geprüften Fassungen (Tika 3.3.3, POI
 5.5.1; `PptxSlideOrderTest` bricht bei einer Anhebung). Keine Nummer, wenn etwas nicht eindeutig ist: andere Fassung,
 Teile fehlen oder sind zu groß, eine Folie fehlt in `p:sldIdLst`, doppelte Kennungen oder Ziele. Gibt Tika am Ende
 mehr oder weniger Folien aus als zugeordnet, sind die schon geschriebenen Nummern nicht belegt: Der Lauf wird verworfen

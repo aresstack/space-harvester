@@ -2891,6 +2891,10 @@ public final class PageDetailPanel extends JPanel {
         if (type == null || runtime == null || limit <= 0 || size > limit) {
             return false;
         }
+        if ("application/onenote".equals(type)
+                && !com.aresstack.spaceharvester.source.OneNotePreviewReader.supportsSize(size)) {
+            return false;
+        }
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(), type, size);
         String source = sourceId;
         ReaderAttachmentLoader loader = new ReaderAttachmentLoader() {

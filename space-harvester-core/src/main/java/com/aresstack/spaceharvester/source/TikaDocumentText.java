@@ -54,7 +54,7 @@ public final class TikaDocumentText implements DocumentText {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieser Klasse; steigt, wenn sich der gelesene Text ändern kann. */
-    public static final String VERSION = "3.3-1";
+    public static final String VERSION = "3.3-2";
 
     /** Größte Datei, die geparst wird: 20 MiB. */
     public static final long DEFAULT_MAX_BYTES = 20L * 1024 * 1024;
@@ -315,7 +315,7 @@ public final class TikaDocumentText implements DocumentText {
     /** Erkennung und Extraktoren wie in der Composition Root des Enterprise AI Client. */
     private static final class Engine {
 
-        final ContentDetector detector = DocumentExtraction.detector();
+        final ContentDetector detector = new OneNoteContentDetector(DocumentExtraction.detector());
         final SourceFileTextExtractor files = new DocumentSourceFileTextExtractor(detector,
                 DocumentExtraction.registry(), null);
     }

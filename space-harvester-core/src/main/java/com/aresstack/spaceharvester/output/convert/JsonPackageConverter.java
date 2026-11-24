@@ -530,6 +530,7 @@ public final class JsonPackageConverter implements ExportConverter {
     private static final Map<String, String> EXTENSIONS = Map.ofEntries(
             Map.entry("application/pdf", "pdf"),
             Map.entry("application/msword", "doc"),
+            Map.entry("application/onenote", "one"),
             Map.entry("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
             Map.entry("application/vnd.ms-excel", "xls"),
             Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"),

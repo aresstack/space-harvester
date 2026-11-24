@@ -34,7 +34,7 @@ import javax.xml.stream.XMLStreamReader;
 final class PptxSlideOrder {
 
     /** Tika-Fassung, an der die Reihenfolge geprüft ist. */
-    static final String TIKA = "Apache Tika 3.3.2";
+    static final String TIKA = "Apache Tika 3.3.3";
     /** POI-Fassung, an der die Reihenfolge geprüft ist. */
     static final String POI = "5.5.1";
 

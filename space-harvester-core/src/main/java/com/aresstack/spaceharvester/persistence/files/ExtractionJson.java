@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.assets.EmbeddedEntry;
 import com.aresstack.spaceharvester.application.assets.ExtractionStatus;
 import com.aresstack.spaceharvester.application.assets.Link;
 import com.aresstack.spaceharvester.application.assets.Location;
+import com.aresstack.spaceharvester.application.assets.NotePageLocation;
 import com.aresstack.spaceharvester.application.assets.Outcome;
 import com.aresstack.spaceharvester.application.assets.PartId;
 import com.aresstack.spaceharvester.application.assets.ReadExtent;
@@ -79,6 +80,7 @@ final class ExtractionJson {
             location.page().ifPresent(page -> l.put("page", page));
             location.slide().ifPresent(slide -> l.put("slide", slide));
             location.sheet().ifPresent(sheet -> l.put("sheet", sheet));
+            location.notePage().ifPresent(note -> l.putObject("notePage").put("index", note.index()));
         });
         if (!block.links().isEmpty()) {
             ArrayNode links = node.putArray("links");
@@ -93,12 +95,7 @@ final class ExtractionJson {
 
     static Block block(JsonNode node) {
         long index = node.path("index").asLong(-1);
-        Optional<Location> location = Optional.empty();
-        if (node.has("location")) {
-            JsonNode l = node.get("location");
-            location = Optional.of(new Location(optionalInt(l, "page"), optionalInt(l, "slide"),
-                    optionalText(l, "sheet")));
-        }
+        Optional<Location> location = location(node.path("location"));
         List<Link> links = new ArrayList<>();
         for (JsonNode l : node.path("links")) {
             links.add(new Link(l.path("target").asString(), optionalText(l, "label")));
@@ -206,6 +203,25 @@ final class ExtractionJson {
                 ? Optional.of(new ReadExtent(node.get("bytesRead").asLong(), node.path("charsRead").asLong()))
                 : Optional.empty();
         return new Outcome(status, reason, node.path("truncated").asBoolean(false), extent);
+    }
+
+    private static Optional<Location> location(JsonNode node) {
+        Optional<Integer> page = optionalInt(node, "page");
+        Optional<Integer> slide = optionalInt(node, "slide");
+        Optional<String> sheet = optionalText(node, "sheet").filter(name -> !name.isBlank());
+        Optional<NotePageLocation> note = notePage(node.path("notePage"));
+        if (page.isEmpty() && slide.isEmpty() && sheet.isEmpty() && note.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new Location(page, slide, sheet, note));
+    }
+
+    private static Optional<NotePageLocation> notePage(JsonNode node) {
+        JsonNode index = node.path("index");
+        if (!index.isIntegralNumber() || !index.canConvertToInt()) {
+            return Optional.empty();
+        }
+        return optionalInt(node, "index").filter(value -> value > 0).map(NotePageLocation::new);
     }
 
     private static Optional<Integer> optionalInt(JsonNode node, String field) {

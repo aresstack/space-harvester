@@ -23,7 +23,7 @@ public final class DocumentPreviewStore implements DocumentStore {
 
     /** Endungen, die als Dokument gelten (wie {@code BINARY_DOCUMENT_EXTENSIONS} in MainframeMate, dazu Mail/RTF). */
     public static final Set<String> DOCUMENTS = Set.of("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt",
-            "ods", "odp", "rtf", "msg", "eml");
+            "ods", "odp", "rtf", "msg", "eml", "one");
     private static final long MAX_BYTES = 50L * 1024 * 1024;
 
     private final DocumentText text;

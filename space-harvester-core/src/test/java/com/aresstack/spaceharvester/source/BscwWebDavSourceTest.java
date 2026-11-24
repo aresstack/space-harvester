@@ -621,6 +621,19 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
+    void genericWebDavMimeDoesNotPreventDownloadingOneNoteForExtraction() throws Exception {
+        KnowledgeSourcePort source = open("reader", "secret");
+        String localId = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                root.replace("/146377797", "/780").getBytes(StandardCharsets.UTF_8));
+        assertThat(((ResourceMetadataSource) source).resourceMetadata(localId).contentType())
+                .isEqualTo("application/onenote");
+        Path target = data.resolve("notes.one");
+        assertThat(((OriginalFileSource) source).downloadOriginal(localId, target,
+                LocalFilesTextProjector::readable, 1024 * 1024)).hasValue("application/onenote");
+        assertThat(java.nio.file.Files.readAllBytes(target)).isEqualTo(ZIP_CONTENT);
+    }
+
+    @Test
     void unavailableProxyRouteHasARecognizableErrorWithoutSendingCredentials() throws Exception {
         ConfiguredSecrets secrets = new ConfiguredSecrets();
         secrets.put("bscw-test", "reader", "secret");
@@ -735,6 +748,10 @@ final class BscwWebDavSourceTest {
                     respond(exchange, 200, "first,second\\nabc,def".getBytes(StandardCharsets.UTF_8), "text/csv");
                     return;
                 }
+                if ("/sec/bscw.cgi/780".equals(path)) {
+                    respond(exchange, 200, ZIP_CONTENT, "application/octet-stream");
+                    return;
+                }
                 if ("/sec/bscw.cgi/779".equals(path)) {
                     String range = exchange.getRequestHeaders().getFirst("Range");
                     if ("bytes=2-5".equals(range)) {
@@ -780,6 +797,8 @@ final class BscwWebDavSourceTest {
             }
         } else if ("/sec/bscw.cgi/777".equals(path)) {
             xml.append(entry(path, "metrics.csv", false, "application/octet-stream"));
+        } else if ("/sec/bscw.cgi/780".equals(path)) {
+            xml.append(entry(path, "Notes.one", false, "application/octet-stream"));
         } else if ("/sec/bscw.cgi/779".equals(path)) {
             xml.append(entry(path, "recording.mp4", false, "application/octet-stream"));
         } else if ("/sec/bscw.cgi/555".equals(path)) {
