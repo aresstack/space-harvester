@@ -8,8 +8,6 @@ import com.aresstack.spaceharvester.app.ui.controls.SaveChooser;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
-import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
-import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
 import com.aresstack.spaceharvester.app.ui.extraction.ExtractionView;
 import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider;
@@ -519,13 +517,13 @@ final class EakteBrowser extends JPanel {
         DocumentEditor editor = new DocumentEditor(opened);
         editor.readOnlyView(); // ganze Fläche fürs Dokument; gesucht wird nur mit der Lupe des Deck
         previewStage.add(editor, opened.location());
-        ReaderAttachment attachment = new ReaderAttachment(entry.href(), entry.name(), entry.contentType(),
-                entry.size());
-        viewer = new AttachmentViewerPanel(attachment, fileLoader(file), null, null);
+        // Gemeinsamer Viewer für lokale Dateien im Deck (wie im Bereich Dateien); Umschalter in der Titelleiste
+        DeckFileViewer fileViewer = new DeckFileViewer(file, entry.name(), null);
+        viewer = fileViewer.viewer();
         viewer.detachFooter(); // Speichern/Öffnen stehen schon in der Fußleiste des Deck
         viewer.onHeadings(this::refreshOutline);
-        previewStage.add(viewer, VIEWER_CARD);
-        if (!AttachmentViewerPanel.showsFormatted(attachment) && PREVIEW.equals(viewToggle.selected())) {
+        previewStage.add(fileViewer, VIEWER_CARD);
+        if (!DeckFileViewer.shows(entry.name()) && PREVIEW.equals(viewToggle.selected())) {
             viewToggle.select(TEXT); // etwa Outlook-Nachrichten: dafür hat der Viewer keine Vorschau, der Text schon
         }
         extraction.show(documentRef(entry));
@@ -543,7 +541,7 @@ final class EakteBrowser extends JPanel {
         EditorSession old = shownPreview;
         shownPreview = null;
         for (Component component : previewStage.getComponents()) {
-            if (component instanceof DocumentEditor || component instanceof AttachmentViewerPanel) {
+            if (component instanceof DocumentEditor || component instanceof DeckFileViewer) {
                 previewStage.remove(component);
             }
         }
@@ -557,23 +555,6 @@ final class EakteBrowser extends JPanel {
         showView();
         editors.close(old);
         deleteQuietly(previewFiles.remove(old));
-    }
-
-    /** Liefert dem Viewer die schon geholte Kopie im temporären Ordner (gelesen abseits des EDT). */
-    private static ReaderAttachmentLoader fileLoader(Path file) {
-        return (attachment, done, failed) -> CompletableFuture.supplyAsync(() -> {
-            try {
-                return Files.readAllBytes(file);
-            } catch (IOException e) {
-                throw new java.io.UncheckedIOException(e);
-            }
-        }).whenComplete((bytes, error) -> SwingUtilities.invokeLater(() -> {
-            if (error != null) {
-                failed.accept(EakteSessions.describe(error));
-            } else {
-                done.accept(bytes);
-            }
-        }));
     }
 
     /** Öffnen mit dem zugehörigen Programm über eine Kopie im temporären Ordner dieser Sitzung. */
