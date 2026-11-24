@@ -877,6 +877,45 @@ class ContentViewTest {
     }
 
     @Test
+    void aFavoritesFolderShowsItsOverviewInBothViewsWithoutTheScopeToggle() throws Exception {
+        String space = space("handbuch");
+        ExportPanel.Selection.Collection folder = new ExportPanel.Selection.Collection("ordner-1", "Mein Ordner",
+                List.of(com.aresstack.spaceharvester.application.holdings.Selection.Root.space("handbuch", space)),
+                false);
+        onEdt(() -> {
+            view.selection(folder);
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().showsFolder(folder))).isTrue();
+        assertThat(onEdt(() -> view.detail().areaView().folder())).isEqualTo(folder);
+        assertThat(onEdt(() -> view.detail().areaView().isVisible())).as("Leseansicht: Überblick des Ordners")
+                .isTrue();
+        assertThat(onEdt(() -> view.detail().sourceView().isVisible())).isFalse();
+        assertThat(onEdt(() -> view.detail().scopeToggles())).as("am Ordner keine Änderungen, kein Umschalter")
+                .allSatisfy(toggle -> assertThat(toggle.getParent().isVisible()).isFalse());
+
+        onEdt(() -> {
+            view.detail().tabs().select("Podcast-Ansicht");
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().areaPodcast().isVisible())).isTrue();
+        assertThat(onEdt(() -> view.detail().areaPodcast().folder())).isEqualTo(folder);
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(view.detail().folderSubfolders(),
+                view.tools()))).as("„mit Unterseiten“ auch in der Podcast-Ansicht").isTrue();
+        assertThat(onEdt(() -> menuEntries(view.detail())))
+                .startsWith(PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)");
+
+        // Zurück zu einer Quelle: wieder deren Seite, der Ordner ist weg.
+        onEdt(() -> {
+            view.detail().tabs().select("Leseansicht");
+            view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().areaView().folder())).isNull();
+        assertThat(onEdt(() -> view.detail().sourceView().sourceId())).isEqualTo("handbuch");
+    }
+
+    @Test
     void backAndForwardAlsoReturnToSourcesAndSpacesChosenInTheTree() throws Exception {
         // Angelo, 17.11.2026: Bereich um Bereich im Baum gewählt, dann Zurück – nichts passierte, weil nur Seiten im
         // Verlauf standen. Jetzt stehen Quelle und Space darin, und Bereichsanzeige und Baum folgen jedem Schritt.

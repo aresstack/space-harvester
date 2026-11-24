@@ -391,7 +391,13 @@ public final class ContentView implements View {
             // Erweitert) haben dafür keinen Inhalt und zeigen leer statt der vorher geöffneten Seite; Export und Chat
             // folgen der Auswahl (Angelo, 16.11.2026).
             String space = selection.spaceKey() == null || selection.spaceKey().isBlank() ? null : selection.spaceKey();
-            if (!selection.page()) {
+            if (selection instanceof ExportPanel.Selection.Collection collection) {
+                // Ein Favoriten-Ordner: der Überblick über seine Favoriten (ADR 0034 §7, Paket 5c); eine Änderung am
+                // Ordner zeigt nur „veraltet“, nie einen KI-Lauf von selbst.
+                if (!detail.showsFolder(collection)) {
+                    detail.showFolder(collection);
+                }
+            } else if (!selection.page()) {
                 // Die Wurzel einer Quelle oder ein Space: die Quellenseite mit den Updates dieser Ebene (ADR 0030,
                 // Nachtrag TZ5); schon gezeigt, bleibt sie.
                 if (!detail.showsLevel(selection.sourceId(), space)) {
