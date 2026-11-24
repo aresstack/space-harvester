@@ -676,6 +676,13 @@ class ChatToolsTurnTest {
                 .allSatisfy(line -> assertThat(line.split(" \\| ")).hasSize(2));
         assertThat(hits).doesNotContain("vollem Spool").doesNotContain("Ablage der Ausgaben");
         assertThat(released()).containsExactly(open);
+        // Angelo 24.11.2026: Der Balken zählt Seiten, keine Runden mit fester Höchstzahl: gelesen ist die offene
+        // Seite, gefunden sind die Treffer der Suche samt ihr.
+        java.util.Set<String> found = new java.util.HashSet<>();
+        hits.lines().filter(line -> line.startsWith("- ")).forEach(line -> found.add(line.substring(2).split(" \\| ")[0]));
+        found.add(ChatTools.ref(open));
+        assertThat(events.progress).isNotEmpty();
+        assertThat(events.progress.get(events.progress.size() - 1)).containsExactly(1, found.size());
     }
 
     @Test
@@ -1247,6 +1254,13 @@ class ChatToolsTurnTest {
         @Override
         public void released(int count) {
             released += count;
+        }
+
+        final List<int[]> progress = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void progress(int done, int total) {
+            progress.add(new int[] {done, total});
         }
 
         final List<String> tools = new CopyOnWriteArrayList<>();

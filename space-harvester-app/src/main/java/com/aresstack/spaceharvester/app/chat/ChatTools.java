@@ -105,6 +105,10 @@ final class ChatTools {
          * Scheitert der Eintrag, wirft es, und die Seite geht nicht hinaus (ADR 0033 Punkt 8, für alle Werkzeuge).
          */
         void delivered(String spaceKey, PageKey key);
+
+        /** Eine Suche nannte die Seite als Treffer (nur Kennung und Titel, keine Freigabe); für den Fortschritt. */
+        default void found(PageKey key) {
+        }
     }
 
     /** Der Eintrag in die Liste freigegebener Seiten ist gescheitert; die Seite geht nicht an das Modell. */
@@ -870,6 +874,7 @@ final class ChatTools {
             if (!allows(key) || !seen.add(key)) {
                 continue;
             }
+            sources.found(key);
             b.append("- ").append(ref(key)).append(" | ").append(oneLine(hit.title() == null ? hit.pageId()
                     : hit.title()));
             b.append('\n');
@@ -1006,6 +1011,7 @@ final class ChatTools {
                 continue;
             }
             granted.add(key);
+            sources.found(key);
             b.append("- ").append(ref(key)).append(" | ").append(oneLine(hit.title() == null ? hit.pageId()
                     : hit.title())).append(" | Quelle ").append(hit.sourceId()).append('\n');
             if (seen.size() >= most) {
