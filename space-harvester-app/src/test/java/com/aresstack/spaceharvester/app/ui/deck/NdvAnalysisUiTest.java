@@ -89,6 +89,37 @@ class NdvAnalysisUiTest {
     }
 
     @Test
+    void besideTheSourceThereIsNothingTheRelationsAreTabsOfTheSideBarWithItsOneSearch() throws Exception {
+        NdvBrowser browser = connect();
+        SwingUtilities.invokeAndWait(() -> {
+            browser.selectObject("LAGER002");
+            browser.openSelected();
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor editor = browser.editor();
+            com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor.SidePanels side = editor.detachSidePanels();
+            // Ressourcen, Callees/Caller und Gliederung liegen nicht mehr im Editor, sondern in der Seitenleiste.
+            for (javax.swing.JComponent panel : List.of(side.resources(), side.calls(), side.outline())) {
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(panel, editor)).isFalse();
+                assertThat(javax.swing.SwingUtilities.isDescendingFrom(panel, browser)).isTrue();
+            }
+            assertThat(javax.swing.SwingUtilities.isDescendingFrom(browser.relationsPanel(), browser.editor()
+                    .getParent().getParent())).as("Aufrufe/Daten nicht mehr rechts neben dem Quelltext").isFalse();
+            browser.selectSide(NdvBrowser.SIDE_RELATIONS);
+            assertThat(browser.sideTab()).isEqualTo(NdvBrowser.SIDE_RELATIONS);
+            assertThat(browser.relationsPanel().isShowing()).isFalse(); // ohne Fenster nie „showing“
+            assertThat(browser.relationsPanel().rows()).containsExactly("LAGERN01  [CALLNAT]  Zeile 2");
+            browser.sideFilter(NdvBrowser.SIDE_RELATIONS).setText("gibt es nicht");
+            assertThat(browser.relationsPanel().rows()).isEmpty();
+            browser.sideFilter(NdvBrowser.SIDE_RELATIONS).setText("n01");
+            assertThat(browser.relationsPanel().rows()).containsExactly("LAGERN01  [CALLNAT]  Zeile 2");
+            browser.sideFilter(NdvBrowser.SIDE_RELATIONS).setText("");
+            browser.selectSide(NdvBrowser.SIDE_LIBRARIES);
+        });
+    }
+
+    @Test
     void listingPrefetchesAndTheOpenObjectShowsCallsCallersAndData() throws Exception {
         NdvBrowser browser = connect();
         assertThat(browser.library()).isEqualTo("LAGER");

@@ -103,6 +103,25 @@ final class NdvBrowser extends JPanel {
     private final List<String> allLibraries = new ArrayList<>();
     private final JList<String> libraryList = new JList<>(libraries);
     private final PlaceholderField libraryFilter = new PlaceholderField(10, "Bibliothek filtern");
+    /**
+     * Seitenleiste links (Angelo 24.11.): oben die eine Suche, darunter ein Reiter, unten in der Fußleiste die Reiter.
+     * Nichts mehr neben dem Quelltext; Ressourcen, Callees/Caller, Aufrufe/Daten und Gliederung stehen hier.
+     */
+    static final String SIDE_LIBRARIES = "Bibliotheken";
+    static final String SIDE_RESOURCES = "Ressourcen";
+    static final String SIDE_CALLS = "Callees/Caller";
+    static final String SIDE_RELATIONS = "Aufrufe/Daten";
+    static final String SIDE_OUTLINE = "Gliederung";
+    private final CardLayout sideCards = new CardLayout();
+    private final JPanel sideStage = new JPanel(sideCards);
+    private final CardLayout sideSearchCards = new CardLayout();
+    private final JPanel sideSearch = new JPanel(sideSearchCards);
+    private final Map<String, IconButton> sideTabs = new LinkedHashMap<>();
+    private final Map<String, PlaceholderField> sideFilters = new LinkedHashMap<>();
+    private final JPanel resourcesHolder = new JPanel(new BorderLayout());
+    private final JPanel callsHolder = new JPanel(new BorderLayout());
+    private final JPanel outlineHolder = new JPanel(new BorderLayout());
+    private String sideTab = SIDE_LIBRARIES;
     private final ObjectModel objects = new ObjectModel();
     private final JTable objectTable = Comic.table(new JTable(objects));
     private final TableRowSorter<ObjectModel> sorter = new TableRowSorter<>(objects);
@@ -156,8 +175,6 @@ final class NdvBrowser extends JPanel {
     private final NdvAnalysis analysis;
     private final NdvAccessRules rules = NdvAnalysisSettings.rules();
     private final IconButton hideBlockedToggle = new IconButton(Glyph.LOCK, "Gesperrte ausblenden (Sperrliste)");
-    private final IconButton relationsToggle = new IconButton(Glyph.NEIGHBOURS,
-            "Beziehungen des geöffneten Objekts: Aufrufe, Aufrufer, Daten");
     private final IconButton indexToggle = new IconButton(Glyph.PULSE,
             "Index-Leiste: Zwischenspeicher, Sperrliste, Suche im Quelltext");
     private final NdvIndexPanel indexPanel;
@@ -177,7 +194,6 @@ final class NdvBrowser extends JPanel {
     java.util.function.BiFunction<String, String, String> askLibrary = this::askLibrary;
     private boolean hideBlocked;
     private boolean indexVisible;
-    private boolean relationsVisible;
     private String lastPrefetch = "";
     /** Je Bibliothek die Regeln, mit denen der Graph zuletzt gebaut wurde. */
     private final Map<String, Integer> builtWith = new java.util.concurrent.ConcurrentHashMap<>();
@@ -221,7 +237,6 @@ final class NdvBrowser extends JPanel {
         hiddenTypes.addAll(state.hiddenTypes());
         hideBlocked = state.hideBlacklisted();
         indexVisible = state.indexVisible();
-        relationsVisible = state.relationsVisible();
         analysis = NdvAnalysisSettings.analysis(session.profile().label());
         indexPanel = new NdvIndexPanel(this::openHit);
         relationsPanel = new NdvRelationsPanel(new NdvRelationsPanel.Navigator() {
@@ -251,13 +266,8 @@ final class NdvBrowser extends JPanel {
         });
         Comic.style(libraryFilter);
         libraryFilter.getDocument().addDocumentListener(changes(this::filterLibraries));
-        JPanel left = new JPanel(new BorderLayout(0, 6));
-        left.setOpaque(false);
-        left.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 6));
-        left.add(InputFrame.search(libraryFilter), BorderLayout.NORTH);
         libraryBusy = new BusyOverlay(Comic.scroll(libraryList));
-        left.add(libraryBusy, BorderLayout.CENTER);
-        left.setMinimumSize(new Dimension(150, 0));
+        JPanel left = sideBar();
 
         // Rechts oben: Objekte als Liste (sortierbar, Mehrfachauswahl) oder nach Art gruppiert.
         objectTable.setRowSorter(sorter);
@@ -396,8 +406,6 @@ final class NdvBrowser extends JPanel {
         sourcePanel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
         sourcePanel.add(heading, BorderLayout.NORTH);
         sourcePanel.add(sourceStage, BorderLayout.CENTER);
-        sourcePanel.add(relationsPanel, BorderLayout.EAST);
-        relationsPanel.setVisible(relationsVisible);
 
         right = new JSplitPane(JSplitPane.VERTICAL_SPLIT, objectPanel, sourcePanel);
         right.setResizeWeight(0.4);
@@ -455,15 +463,6 @@ final class NdvBrowser extends JPanel {
             filterLibraries();
         });
         hideBlockedToggle.marked(hideBlocked);
-        relationsToggle.addActionListener(e -> {
-            relationsVisible = !relationsVisible;
-            state.relationsVisible(relationsVisible);
-            relationsToggle.marked(relationsVisible);
-            relationsPanel.setVisible(relationsVisible);
-            revalidate();
-            repaint();
-        });
-        relationsToggle.marked(relationsVisible);
         indexToggle.addActionListener(e -> showIndex(!indexVisible));
         indexToggle.marked(indexVisible);
         indexPanel.cacheSelection.addActionListener(e -> cacheSelectedOrAll());
@@ -493,7 +492,6 @@ final class NdvBrowser extends JPanel {
         tools.add(detailsToggle);
         tools.add(linkToggle);
         tools.add(hideBlockedToggle);
-        tools.add(relationsToggle);
         tools.add(indexToggle);
         tools.add(refresh);
 
@@ -883,6 +881,130 @@ final class NdvBrowser extends JPanel {
         }
     }
 
+    /** Die Seitenleiste: Suche oben (je Reiter ein Feld, sichtbar immer eins), Reiter, Fußleiste mit den Reitern. */
+    private JPanel sideBar() {
+        sideFilters.put(SIDE_LIBRARIES, libraryFilter);
+        sideFilters.put(SIDE_RESOURCES, new PlaceholderField(10, "Ressourcen filtern"));
+        sideFilters.put(SIDE_CALLS, new PlaceholderField(10, "Callees/Caller filtern (Ausdruck)"));
+        sideFilters.put(SIDE_RELATIONS, new PlaceholderField(10, "Aufrufe/Daten filtern"));
+        sideFilters.put(SIDE_OUTLINE, new PlaceholderField(10, "Gliederung filtern"));
+        sideSearch.setOpaque(false);
+        sideFilters.forEach((name, field) -> {
+            if (field != libraryFilter) {
+                Comic.style(field);
+                field.getAccessibleContext().setAccessibleName(name + " filtern");
+                field.getDocument().addDocumentListener(changes(() -> applySideFilter(name)));
+            }
+            sideSearch.add(InputFrame.search(field), name);
+        });
+        for (JPanel holder : List.of(resourcesHolder, callsHolder, outlineHolder)) {
+            holder.setOpaque(false);
+        }
+        sideStage.setOpaque(false);
+        sideStage.add(libraryBusy, SIDE_LIBRARIES);
+        sideStage.add(resourcesHolder, SIDE_RESOURCES);
+        sideStage.add(callsHolder, SIDE_CALLS);
+        sideStage.add(relationsPanel, SIDE_RELATIONS);
+        sideStage.add(outlineHolder, SIDE_OUTLINE);
+        sideTabs.put(SIDE_LIBRARIES, new IconButton(FilesIcons.folder(), "Bibliotheken"));
+        sideTabs.put(SIDE_RESOURCES, new IconButton(Glyph.TABLE, "Ressourcen: Daten, Data Areas, Datasets des "
+                + "geöffneten Quelltexts"));
+        sideTabs.put(SIDE_CALLS, new IconButton(com.aresstack.spaceharvester.app.ui.deck.editor.EditorIcons
+                .relations(), "Callees/Caller: was der Quelltext aufruft und wer ihn aufruft"));
+        sideTabs.put(SIDE_RELATIONS, new IconButton(Glyph.GRAPH, "Aufrufe/Aufrufer/Daten aus dem Index der "
+                + "Bibliothek (Tiefe bis " + NdvAnalysis.HIERARCHY_DEPTH + ")"));
+        sideTabs.put(SIDE_OUTLINE, new IconButton(com.aresstack.spaceharvester.app.ui.deck.editor.EditorIcons
+                .outline(), "Gliederung des geöffneten Quelltexts"));
+        JPanel tabs = new JPanel(new java.awt.GridLayout(1, 0, 2, 0));
+        tabs.setOpaque(false);
+        sideTabs.forEach((name, tab) -> {
+            tab.getAccessibleContext().setAccessibleName(name);
+            tab.addActionListener(e -> selectSide(name));
+            tabs.add(tab);
+        });
+        JPanel footer = new JPanel(new BorderLayout());
+        footer.setOpaque(false);
+        footer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(4, 0, 0, 0)));
+        footer.add(tabs, BorderLayout.CENTER);
+        JPanel left = new JPanel(new BorderLayout(0, 6));
+        left.setOpaque(false);
+        left.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 6));
+        left.add(sideSearch, BorderLayout.NORTH);
+        left.add(sideStage, BorderLayout.CENTER);
+        left.add(footer, BorderLayout.SOUTH);
+        left.setMinimumSize(new Dimension(150, 0));
+        String remembered = state.sideTab();
+        selectSide(sideTabs.containsKey(remembered) ? remembered : SIDE_LIBRARIES);
+        return left;
+    }
+
+    /** Zeigt einen Reiter der Seitenleiste samt seiner Suche. */
+    void selectSide(String name) {
+        if (!sideTabs.containsKey(name)) {
+            return;
+        }
+        sideTab = name;
+        state.sideTab(name);
+        sideCards.show(sideStage, name);
+        sideSearchCards.show(sideSearch, name);
+        sideTabs.forEach((tab, button) -> button.marked(tab.equals(name)));
+    }
+
+    String sideTab() {
+        return sideTab;
+    }
+
+    PlaceholderField sideFilter(String name) {
+        return sideFilters.get(name);
+    }
+
+    private void applySideFilter(String name) {
+        String text = sideFilters.get(name).getText();
+        DocumentEditor editor = document == null ? null : editorOf.get(document);
+        switch (name) {
+            case SIDE_RESOURCES -> {
+                if (editor != null) {
+                    editor.filterResources(text);
+                }
+            }
+            case SIDE_CALLS -> {
+                if (editor != null) {
+                    editor.filterCalls(text);
+                }
+            }
+            case SIDE_OUTLINE -> {
+                if (editor != null) {
+                    editor.filterOutline(text);
+                }
+            }
+            case SIDE_RELATIONS -> relationsPanel.query(text);
+            default -> {
+            }
+        }
+    }
+
+    /** Legt Ressourcen, Callees/Caller und Gliederung des gezeigten Editors in die Seitenleiste. */
+    private void sideFor(DocumentEditor editor) {
+        DocumentEditor.SidePanels panels = editor.detachSidePanels();
+        place(resourcesHolder, panels.resources());
+        place(callsHolder, panels.calls());
+        place(outlineHolder, panels.outline());
+        applySideFilter(SIDE_RESOURCES);
+        applySideFilter(SIDE_CALLS);
+        applySideFilter(SIDE_OUTLINE);
+    }
+
+    private static void place(JPanel holder, JComponent panel) {
+        if (holder.getComponentCount() == 1 && holder.getComponent(0) == panel) {
+            return;
+        }
+        holder.removeAll();
+        holder.add(panel, BorderLayout.CENTER);
+        holder.revalidate();
+        holder.repaint();
+    }
+
     /** Schreibt den Quelltext im Editor auf den Server (Konfliktprüfung macht die Ablage). */
     void save() {
         if (document != null && document.dirty()) {
@@ -898,6 +1020,7 @@ final class NdvBrowser extends JPanel {
                 right.setDividerLocation(0.4);
             }
             editor = new DocumentEditor(opened);
+            editor.detachSidePanels();
             editorOf.put(opened, editor);
             sourceStage.add(editor, opened.location());
             opened.observe(changed -> SwingUtilities.invokeLater(() -> documentChanged(changed)));
@@ -906,6 +1029,7 @@ final class NdvBrowser extends JPanel {
         // Neu gezeigt: der geladene Stand wird gemeldet, auch wenn das Laden schon fertig war.
         announcedRevision = -1;
         sourceCards.show(sourceStage, opened.location());
+        sideFor(editor);
         if (opened.state() == EditorSession.State.LOADING) {
             note("Lade Quelltext: " + opened.location() + " …", false);
         }
