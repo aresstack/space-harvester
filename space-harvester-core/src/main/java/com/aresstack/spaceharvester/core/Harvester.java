@@ -2668,6 +2668,12 @@ public final class Harvester implements AutoCloseable {
         return RemoteAi.of(settings, catalog, trustBundles, userAgent).models();
     }
 
+    /** Wie {@link #aiModels(AiServiceSettings)} mit den wirksamen Einstellungen; ohne Dienst leer. */
+    public List<AiModel> aiModels() {
+        AiServiceSettings current = currentAi.get();
+        return current == null ? List.of() : aiModels(current);
+    }
+
     /**
      * Der Chat-Port des KI-Dienstes der wirksamen Konfiguration für den Chat der App (ADR 0012: der Chat selbst
      * bleibt außerhalb des Core): Route, TLS, Token und Frist wie {@link #aiModels}; {@code null} ohne Dienst oder

@@ -2025,6 +2025,11 @@ public final class Workspace {
         return harvester.aiModels(settings);
     }
 
+    /** Die Modelle des KI-Dienstes mit den gespeicherten Einstellungen (Modellwahl im Menü am Dreieck); ohne Dienst leer. */
+    public List<AiModel> aiModels() {
+        return harvester.aiModels();
+    }
+
     /** Misst die Vektordimension eines Embedding-Modells für {@code embedding-dimensions}. */
     public int aiEmbeddingDimension(AiServiceSettings settings, String embeddingModel) {
         return harvester.aiEmbeddingDimension(settings, embeddingModel);
