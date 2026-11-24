@@ -62,6 +62,9 @@ final class SsoHttp {
         this.trace = trace;
     }
 
+    /** Die zuletzt aufgerufene Seite der Anmeldung (für {@code Referer}). */
+    private volatile URI previous;
+
     EakteProfile profile() {
         return profile;
     }
@@ -75,18 +78,37 @@ final class SsoHttp {
     }
 
     Response get(URI target) throws IOException {
-        return send("GET", target, Map.of(), null);
+        return navigate("GET", target, Map.of(), null);
     }
 
     Response postForm(URI target, String body) throws IOException {
-        return send("POST", target, Map.of("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"),
+        return navigate("POST", target, Map.of("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"),
                 body.getBytes(StandardCharsets.UTF_8));
     }
 
+    /** REST von OpenAM; wie v2.0 ohne Referer, und die nächste Seite danach beginnt ohne. */
     Response postJson(URI target, String json) throws IOException {
+        previous = null;
         return send("POST", target, Map.of("Content-Type", "application/json; charset=UTF-8",
                 "Accept", "application/json", "Accept-API-Version", "resource=2.0, protocol=1.0"),
                 json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Seitenaufrufe der Anmeldung wie in v2.0 ({@code SessionTest.execute}): mit {@code Referer} der vorigen Seite,
+     * wenn sie auf demselben Host lag.
+     */
+    private Response navigate(String method, URI target, Map<String, String> headers, byte[] body)
+            throws IOException {
+        URI from = previous;
+        Map<String, String> all = headers;
+        if (from != null && from.getHost() != null && from.getHost().equalsIgnoreCase(target.getHost())) {
+            all = new java.util.LinkedHashMap<>(headers);
+            all.put("Referer", from.toString());
+        }
+        Response response = send(method, target, all, body);
+        previous = target;
+        return response;
     }
 
     /**

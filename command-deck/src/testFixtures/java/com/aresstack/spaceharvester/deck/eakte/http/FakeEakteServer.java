@@ -99,6 +99,7 @@ public final class FakeEakteServer implements AutoCloseable {
     private final Map<String, String> providerPending = new ConcurrentHashMap<>(); // provider session -> redirect
     private final Set<String> providerLoggedIn = ConcurrentHashMap.newKeySet();
     private final AtomicInteger passwordPosts = new AtomicInteger();
+    private final List<String> loginReferers = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final AtomicInteger restPasswordAnswers = new AtomicInteger();
     private final List<String> requests = new CopyOnWriteArrayList<>();
     private volatile boolean separateWebDavSession;
@@ -143,6 +144,11 @@ public final class FakeEakteServer implements AutoCloseable {
     }
 
     /** Wie oft ein Kennwort ans Anmeldeformular ging. */
+    /** Der {@code Referer} jedes Kennwort-POST am Formular des Identitätsdienstes ({@code "null"} ohne). */
+    public List<String> loginReferers() {
+        return List.copyOf(loginReferers);
+    }
+
     public int passwordPosts() {
         return passwordPosts.get();
     }
@@ -462,6 +468,7 @@ public final class FakeEakteServer implements AutoCloseable {
         if (path.equals("/eai/mapz/login")) {
             if (exchange.getRequestMethod().equals("POST")) {
                 passwordPosts.incrementAndGet();
+                loginReferers.add(String.valueOf(exchange.getRequestHeaders().getFirst("Referer")));
                 Map<String, String> form = form(exchange);
                 if (USER.equals(form.get("uid")) && PASSWORD.equals(form.get("password"))
                         && "Anmelden".equals(form.get("doLogin")) && session != null) {

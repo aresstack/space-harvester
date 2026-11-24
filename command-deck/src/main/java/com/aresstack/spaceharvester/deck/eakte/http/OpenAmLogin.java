@@ -43,11 +43,21 @@ final class OpenAmLogin {
     private final char[] password;
     private boolean credentialsSent;
     private boolean done;
+    /** Endeten die Weiterleitungen schon bei der E-Akte, deren Antwort (v2.0: {@code returnedToFabasoft}). */
+    private SsoHttp.Response reachedEakte;
+    private int samlForms;
 
     OpenAmLogin(SsoHttp http, String user, char[] password) {
         this.http = http;
         this.user = user;
         this.password = password.clone();
+    }
+
+    /** Die Antwort der E-Akte, wenn die Anmeldung schon dort ankam; einmalig. */
+    SsoHttp.Response takeReachedEakte() {
+        SsoHttp.Response reached = reachedEakte;
+        reachedEakte = null;
+        return reached;
     }
 
     boolean done() {
@@ -156,6 +166,13 @@ final class OpenAmLogin {
                         ? new LoginRefusedException("Identitätsdienst lehnt die Anmeldung ab: HTTP " + response.status())
                         : new IOException("Identitätsdienst antwortet HTTP " + response.status());
             }
+            // v2.0: Die Weiterleitungen enden schon bei der E-Akte; dann gleich weiter mit WebDAV.
+            if (http.profile().isEakte(response.uri()) && response.status() == 200) {
+                http.trace("Rückkehr zur E-Akte schon während der Anmeldung");
+                reachedEakte = response;
+                done = true;
+                return;
+            }
             if (!response.html()) {
                 throw new IOException("Identitätsdienst liefert keine Seite (" + response.contentType() + ")");
             }
@@ -167,7 +184,25 @@ final class OpenAmLogin {
                 response = http.get(scripted);
                 continue;
             }
+            // v2.0: ein vom Server geliefertes SAML-Formular unterwegs (höchstens drei) einfach übermitteln.
+            var saml = SsoPages.samlResponse(page);
+            if (saml.isPresent() && samlForms++ < 3) {
+                URI acs = saml.get().action();
+                if (!http.profile().allows(acs)) {
+                    throw new IOException("SAML-Formular verweist auf einen fremden Server: " + SsoHttp.host(acs));
+                }
+                http.trace("Übermittle vom Server geliefertes SAML-Formular");
+                response = http.postForm(acs, saml.get().encode(null, null));
+                continue;
+            }
             var form = SsoPages.login(page);
+            if (form.isEmpty() && http.cookies().has(api, SESSION_COOKIE)
+                    && origin(response.uri()).equalsIgnoreCase(origin(api))) {
+                // v2.0: zurück bei OpenAM und dessen Sitzungscookie ist da.
+                http.trace("OpenAM-Sitzungscookie nach der Rückkehr vom Identitätsdienst vorhanden");
+                done = true;
+                return;
+            }
             if (form.isEmpty()) {
                 throw new IOException("Unerwartete Seite des Identitätsdienstes: „" + SsoPages.title(page) + "“ auf "
                         + SsoHttp.host(response.uri()));

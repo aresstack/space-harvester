@@ -215,4 +215,18 @@ class HttpEakteServerTest {
         assertThat(trace).anyMatch(line -> line.contains("JavaScript-Weiterleitung erkannt"));
         assertThat(String.join("\n", trace)).doesNotContain("code=");
     }
+
+    /** Wie v2.0: auf der Zwischenseite erst loginUrl (→ XUI/), dann REST; das Formular mit Referer der Seite. */
+    @Test
+    void visitsLoginUrlBeforeRestAndPostsTheFormWithReferer() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            connection.list(connection.rootHref());
+        }
+        List<String> openam = fake.requests().stream().filter(line -> line.startsWith("openam ")).toList();
+        int rest = openam.indexOf("openam POST /openam/json/authenticate");
+        assertThat(openam.subList(rest - 2, rest + 1)).containsExactly("openam GET /openam/UI/Login",
+                "openam GET /openam/XUI/", "openam POST /openam/json/authenticate");
+        assertThat(fake.loginReferers()).hasSize(1);
+        assertThat(fake.loginReferers().get(0)).contains("/eai/mapz/login");
+    }
 }
