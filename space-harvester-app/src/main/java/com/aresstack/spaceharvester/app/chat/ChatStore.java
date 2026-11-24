@@ -29,6 +29,10 @@ public final class ChatStore {
 
     private static final System.Logger LOG = System.getLogger(ChatStore.class.getName());
     private static final String SUFFIX = ".json";
+    /** Ein gelöschter Chat bis zum nächsten Start der App: wiederherstellbar, nicht in den Listen. */
+    private static final String DELETED = SUFFIX + ".deleted";
+    /** Die Chat-Ordner, deren Gelöschte dieser Programmlauf schon endgültig entfernt hat (einmal je Start). */
+    private static final java.util.Set<Path> PURGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final Pattern ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
     private static final ObjectMapper JSON = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
 
@@ -91,6 +95,7 @@ public final class ChatStore {
 
     /** Alle gespeicherten Chats aller Bereiche, zuletzt geänderte zuerst; leer ohne Ordner. */
     public synchronized List<Entry> all() {
+        purgeOnce();
         List<Entry> entries = new ArrayList<>();
         Path base = root.get();
         if (base == null || !Files.isDirectory(base)) {
@@ -171,6 +176,117 @@ public final class ChatStore {
         } catch (IOException e) {
             LOG.log(System.Logger.Level.WARNING, "Chat nicht gelöscht: " + e.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * Löscht einen Chat vorläufig (Angelo 24.11.2026): Er verschwindet aus den Listen, steht aber bis zum nächsten Start
+     * der App unter {@link #deleted()} und lässt sich mit {@link #restore} zurückholen. Endgültig weg ist er erst beim
+     * nächsten Start.
+     */
+    public synchronized void trash(Path folder, String chatId) {
+        Path directory = resolve(folder);
+        if (directory == null || !ID.matcher(chatId).matches()) {
+            return;
+        }
+        purgeOnce();
+        Path file = directory.resolve(chatId + SUFFIX);
+        if (!Files.isRegularFile(file)) {
+            return;
+        }
+        try {
+            Files.move(file, directory.resolve(chatId + DELETED), StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Chat nicht gelöscht: " + e.getClass().getSimpleName());
+        }
+    }
+
+    /** Holt einen vorläufig gelöschten Chat zurück; liefert ihn, oder {@code null}, wenn es ihn nicht mehr gibt. */
+    public synchronized ChatRecord restore(Path folder, String chatId) {
+        Path directory = resolve(folder);
+        if (directory == null || !ID.matcher(chatId).matches()) {
+            return null;
+        }
+        Path deleted = directory.resolve(chatId + DELETED);
+        if (!Files.isRegularFile(deleted)) {
+            return load(folder, chatId);
+        }
+        try {
+            Path file = directory.resolve(chatId + SUFFIX);
+            Files.move(deleted, file, StandardCopyOption.REPLACE_EXISTING);
+            return read(file, chatId);
+        } catch (IOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Chat nicht wiederhergestellt: " + e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    /** Die in diesem Programmlauf vorläufig gelöschten Chats, zuletzt geänderte zuerst. */
+    public synchronized List<Entry> deleted() {
+        purgeOnce();
+        List<Entry> entries = new ArrayList<>();
+        Path base = root.get();
+        if (base == null || !Files.isDirectory(base)) {
+            return entries;
+        }
+        for (Path file : files(base, DELETED)) {
+            String name = file.getFileName().toString();
+            String id = name.substring(0, name.length() - DELETED.length());
+            ChatRecord record = read(file, id);
+            if (record != null) {
+                entries.add(new Entry(base.relativize(file.getParent()), record));
+            }
+        }
+        entries.sort(Comparator.comparingLong((Entry entry) -> entry.record().modifiedAt()).reversed());
+        return entries;
+    }
+
+    /** Löscht alle Chats aller Bereiche endgültig, auch die vorläufig gelöschten; liefert ihre Kennungen. */
+    public synchronized List<String> deleteAll() {
+        List<String> ids = new ArrayList<>();
+        Path base = root.get();
+        if (base == null || !Files.isDirectory(base)) {
+            return ids;
+        }
+        for (String suffix : new String[] {SUFFIX, DELETED}) {
+            for (Path file : files(base, suffix)) {
+                String name = file.getFileName().toString();
+                try {
+                    Files.deleteIfExists(file);
+                    ids.add(name.substring(0, name.length() - suffix.length()));
+                } catch (IOException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Chat nicht gelöscht: " + e.getClass().getSimpleName());
+                }
+            }
+        }
+        return ids;
+    }
+
+    /** Beim ersten Zugriff eines Programmlaufs: Was im letzten Lauf gelöscht wurde, geht endgültig. */
+    private void purgeOnce() {
+        Path base = root.get();
+        if (base == null || !Files.isDirectory(base) || !PURGED.add(base.toAbsolutePath().normalize())) {
+            return;
+        }
+        for (Path file : files(base, DELETED)) {
+            try {
+                Files.deleteIfExists(file);
+            } catch (IOException e) {
+                LOG.log(System.Logger.Level.WARNING, "Gelöschter Chat nicht entfernt: " + e.getClass().getSimpleName());
+            }
+        }
+    }
+
+    /** Die Dateien mit {@code suffix} in den Bereichsordnern (höchstens drei Ebenen tief, wie {@link #all()}). */
+    private static List<Path> files(Path base, String suffix) {
+        List<Path> files = new ArrayList<>();
+        try (java.util.stream.Stream<Path> walk = Files.walk(base, 4)) {
+            walk.filter(Files::isRegularFile).filter(file -> file.getFileName().toString().endsWith(suffix)
+                    && ID.matcher(file.getFileName().toString().substring(0,
+                    file.getFileName().toString().length() - suffix.length())).matches()).forEach(files::add);
+        } catch (IOException | java.io.UncheckedIOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Chat-Ordner nicht lesbar: " + e.getClass().getSimpleName());
+        }
+        return files;
     }
 
     private static ChatRecord read(Path file, String chatId) {

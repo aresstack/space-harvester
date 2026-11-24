@@ -150,7 +150,10 @@ public final class FakeTn3270Host implements AutoCloseable {
                             if (b == EOR) {
                                 state = 0;
                                 recordStart = true;
-                                inputs.incrementAndGet();
+                                synchronized (inputs) {
+                                    inputs.incrementAndGet();
+                                    inputs.notifyAll();
+                                }
                                 synchronized (out) {
                                     out.write(dataStream());
                                     out.write(new byte[] {(byte) IAC, (byte) EOR});
@@ -186,6 +189,26 @@ public final class FakeTn3270Host implements AutoCloseable {
     /** Die AID-Bytes der Eingaben in Reihenfolge (0x7D ENTER, 0x6D CLEAR, 0xF1–0xF9 PF1–PF9, 0x6C PA1 …). */
     public List<Integer> aids() {
         return List.copyOf(aids);
+    }
+
+    /**
+     * Wartet, bis der Host mindestens {@code count} abgeschlossene Eingaben bekommen hat; geweckt von jeder Eingabe,
+     * kein Abfragen. {@code timeout} ist nur die Notbremse für einen hängenden Test.
+     *
+     * @return ob die Eingaben da sind
+     */
+    public boolean awaitInputs(int count, java.time.Duration timeout) throws InterruptedException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        synchronized (inputs) {
+            while (inputs.get() < count) {
+                long left = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (left <= 0) {
+                    return false;
+                }
+                inputs.wait(left);
+            }
+            return true;
+        }
     }
 
     /** Wie viele abgeschlossene Eingaben (AID mit IAC EOR) der Host bekommen hat. */

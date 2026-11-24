@@ -20,6 +20,7 @@ public final class ChatSidebar extends JPanel {
 
     public static final String TITLE = "Chat";
     public static final String COLLAPSE = "Seitenleiste einklappen";
+    public static final String DELETE_ALL = ChatPanel.DELETE_ALL;
     public static final String MORE = "Weitere Aktionen zum Chat";
     public static final String ENLARGE = "Groß anzeigen";
     public static final String SHRINK = "Wieder als Leiste anzeigen (Esc)";
@@ -87,13 +88,18 @@ public final class ChatSidebar extends JPanel {
         return more;
     }
 
-    /** Das Menü hinter dem Dreieck: „Seitenleiste einklappen“. */
+    /** Das Menü hinter dem Dreieck: „Seitenleiste einklappen“ und „Alle Chats löschen“ (mit Ja/Nein-Rückfrage). */
     public javax.swing.JPopupMenu moreMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
         javax.swing.JMenuItem item = new javax.swing.JMenuItem(COLLAPSE, collapseIcon());
         item.setFont(Comic.regular(13f));
         item.addActionListener(e -> collapse.run());
         menu.add(item);
+        javax.swing.JMenuItem deleteAll = new javax.swing.JMenuItem(DELETE_ALL,
+                com.aresstack.spaceharvester.app.ui.Glyph.TRASH);
+        deleteAll.setFont(Comic.regular(13f));
+        deleteAll.addActionListener(e -> chat.deleteAllChats());
+        menu.add(deleteAll);
         return menu;
     }
 
