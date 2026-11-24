@@ -765,20 +765,20 @@ class ContentViewTest {
         String space = space("handbuch");
         List<String> pages = context.runtime().workspace().liveMetadata("handbuch", space, null, 10).entries().stream()
                 .map(entry -> entry.page().pageId()).toList();
-        assertThat(onEdt(() -> detail.backButton().isEnabled())).isFalse();
-        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+        assertThat(onEdt(() -> detail.canGoBack())).isFalse();
+        assertThat(onEdt(() -> detail.canGoForward())).isFalse();
         onEdt(() -> {
             view.openPage("handbuch", pages.get(0));
             view.openPage("handbuch", pages.get(1));
             return null;
         });
         await(() -> shown(detail, pages.get(1)));
-        assertThat(onEdt(() -> detail.backButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> detail.canGoBack())).isTrue();
 
         onEdt(detail::back);
         await(() -> shown(detail, pages.get(0)));
-        assertThat(onEdt(() -> detail.backButton().isEnabled())).isFalse();
-        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> detail.canGoBack())).isFalse();
+        assertThat(onEdt(() -> detail.canGoForward())).isTrue();
 
         // Maustaste Vor (5) irgendwo in der Seitenansicht, danach Zurück (4); eine andere Taste tut nichts.
         assertThat(onEdt(() -> detail.mouseButton(PageDetailPanel.MOUSE_FORWARD_BUTTON, detail.tabs()))).isTrue();
@@ -795,8 +795,8 @@ class ContentViewTest {
             return null;
         });
         await(() -> shown(detail, pages.get(2)));
-        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
-        assertThat(onEdt(() -> detail.backButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> detail.canGoForward())).isFalse();
+        assertThat(onEdt(() -> detail.canGoBack())).isTrue();
 
         // Auch nach einem Wechsel des Space (keine Seite gezeigt) verwirft eine neue Seite den Vor-Verlauf.
         onEdt(detail::back);
@@ -807,7 +807,7 @@ class ContentViewTest {
             return null;
         });
         await(() -> shown(detail, pages.get(1)));
-        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+        assertThat(onEdt(() -> detail.canGoForward())).isFalse();
     }
 
     @Test
@@ -937,8 +937,8 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.showsLevel("notizen", null))).isTrue();
-        assertThat(onEdt(() -> detail.backButton().isEnabled())).isTrue();
-        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+        assertThat(onEdt(() -> detail.canGoBack())).isTrue();
+        assertThat(onEdt(() -> detail.canGoForward())).isFalse();
 
         assertThat(onEdt(detail::back)).isTrue();
         assertThat(onEdt(() -> detail.showsLevel("notizen", notizen))).isTrue();
@@ -946,21 +946,21 @@ class ContentViewTest {
         assertThat(onEdt(detail::back)).isTrue();
         await(() -> shown(detail, page));
         assertThat(located).containsExactly("notizen/" + notizen, "handbuch#" + page);
-        assertThat(onEdt(() -> detail.backButton().isEnabled())).isFalse();
-        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> detail.canGoBack())).isFalse();
+        assertThat(onEdt(() -> detail.canGoForward())).isTrue();
         // Der Baum wählt die Seite wieder: die Auswahl kommt an der Mitte an, ohne die gezeigte Seite zu leeren.
         onEdt(() -> {
             view.selection(new ExportPanel.Selection.Node("handbuch", handbuch, page, "handbuch 0"));
             return null;
         });
         assertThat(onEdt(() -> shown(detail, page))).isTrue();
-        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isTrue();
+        assertThat(onEdt(() -> detail.canGoForward())).isTrue();
 
         assertThat(onEdt(detail::forward)).isTrue();
         assertThat(onEdt(() -> detail.showsLevel("notizen", notizen))).isTrue();
         assertThat(onEdt(detail::forward)).isTrue();
         assertThat(onEdt(() -> detail.showsLevel("notizen", null))).isTrue();
-        assertThat(onEdt(() -> detail.forwardButton().isEnabled())).isFalse();
+        assertThat(onEdt(() -> detail.canGoForward())).isFalse();
 
         // Von der Quellenseite zu einer Seite einer anderen Quelle (Baum: Auswahl, dann Öffnen): Zurück führt zur Quelle.
         String other = context.runtime().workspace().liveMetadata("handbuch", handbuch, null, 10).entries().get(1)

@@ -117,8 +117,9 @@ public final class MainWindow implements AppContext.Navigator {
     private static final String PERSPECTIVE_STATUS = "perspective:";
     private JobStatusLine jobStatus;
     /**
-     * Zurück und Vor des sichtbaren Bereichs (Seiten bzw. Suche), direkt links an der Suchleiste der Kopfzeile; der
-     * freie Platz liegt links davor (Angelo, 24.11.2026).
+     * Das eine Paar Zurück und Vor, direkt links an der Suchleiste der Kopfzeile, in jedem Bereich sichtbar: in der
+     * Suche blättert es zwischen den Suchen, sonst zwischen den Seiten; der freie Platz liegt links davor (Angelo,
+     * 24.11.2026).
      */
     private final JPanel backForward = new JPanel(new BorderLayout());
     private final JLabel status = Comic.muted(" ");
@@ -990,7 +991,7 @@ public final class MainWindow implements AppContext.Navigator {
         }
         stageCards.show(stage, next.id());
         if (!harvester) {
-            // Stand, Aktionen und Zurück/Vor der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.
+            // Stand und Aktionen der Bereiche gehören zum Space Harvester; Aufträge und Copyright bleiben.
             // Eine Perspektive mit eigenem Stand zeigt ihn an derselben Stelle.
             if (next.status() != null) {
                 viewStatusCards.show(viewStatus, PERSPECTIVE_STATUS + next.id());
@@ -998,7 +999,6 @@ public final class MainWindow implements AppContext.Navigator {
             } else {
                 viewStatus.setVisible(false);
             }
-            backForward.setVisible(false);
             // Die Bereichsknöpfe (auch das Zahnrad der Einstellungen) gehören zum Space Harvester: In einer anderen
             // Perspektive bleibt keiner gedrückt, wenn die Einstellungen zugehen (Angelo, 24.11.).
             navGroup.clearSelection();
@@ -1134,7 +1134,6 @@ public final class MainWindow implements AppContext.Navigator {
         // ADR 0033: Der Chat bezieht sich auf die Ansicht, die vorne ist (Leseansicht: offene Seite; Suche: Filter).
         content.chatSidebar().chat().searchFront(section == AppContext.Section.SEARCH);
         content.chatSidebar().chat().readingFront(section == AppContext.Section.CONTENT);
-        backForward.setVisible(section == AppContext.Section.CONTENT || section == AppContext.Section.SEARCH);
         findBar.tools(view.tools());
         view.shown();
         if (changed) {
@@ -1144,7 +1143,6 @@ public final class MainWindow implements AppContext.Navigator {
             // Über der Perspektive: deren Navigation und Titel bleiben, die Mitte zeigt die Einstellungen.
             stageCards.show(stage, Perspectives.HARVESTER);
             viewStatus.setVisible(false);
-            backForward.setVisible(false);
         }
     }
 

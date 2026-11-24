@@ -144,8 +144,8 @@ final class NdvBrowser extends JPanel {
             "Mit Editor verknüpfen: das geöffnete Objekt in der Liste markieren");
     private final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Gruppen aufklappen");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Gruppen zuklappen");
-    private final IconButton backButton = new IconButton(Glyph.BACK, "Zurück (Pfeil links in der Liste)");
-    private final IconButton forwardButton = new IconButton(Glyph.FORWARD, "Vorwärts (Pfeil rechts in der Liste)");
+    /** Das eine Zurück wie im Space Harvester; gedrückt halten zeigt den Verlauf, Vor per Pfeil rechts/Maustaste. */
+    private final com.aresstack.spaceharvester.app.ui.controls.BackButton backButton = new com.aresstack.spaceharvester.app.ui.controls.BackButton("Zurück (Pfeil links in der Liste)");
     private final PlaceholderField pathField = new PlaceholderField(20, "host:port/BIBLIOTHEK");
     private final IconButton bookmarkStar = new IconButton(Glyph.STAR, "Lesezeichen für diese Bibliothek");
     private final IconButton bookmarkMenu = new IconButton(Glyph.MORE, "Lesezeichen");
@@ -379,14 +379,13 @@ final class NdvBrowser extends JPanel {
         InputFrame pathFrame = new InputFrame(pathField);
         javax.swing.JButton go = pathFrame.addButton(InputFrame.flatButton("Öffnen", "Pfad öffnen (Eingabe)"));
         go.addActionListener(e -> navigateToPath());
-        backButton.addActionListener(e -> navigateBack());
-        forwardButton.addActionListener(e -> navigateForward());
+        backButton.navigator(com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator.of(this::visits, this::jump));
         bookmarkStar.addActionListener(e -> toggleLibraryBookmark());
         bookmarkMenu.addActionListener(e -> bookmarkMenu().show(bookmarkMenu, 0, bookmarkMenu.getHeight()));
         JPanel pathBar = new JPanel(new BorderLayout(4, 0));
         pathBar.setOpaque(false);
         pathBar.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
-        pathBar.add(Comic.row(backButton, forwardButton), BorderLayout.WEST);
+        pathBar.add(backButton, BorderLayout.WEST);
         pathBar.add(pathFrame, BorderLayout.CENTER);
         pathBar.add(Comic.row(bookmarkStar, bookmarkMenu), BorderLayout.EAST);
         JPanel objectPanel = new JPanel(new BorderLayout());
@@ -747,6 +746,31 @@ final class NdvBrowser extends JPanel {
         updatePath();
     }
 
+    /** Springt {@code steps} Einträge weit (Verlauf des Zurück-Knopfs); ein Schritt wie die Maustasten. */
+    void jump(int steps) {
+        if (steps == -1) {
+            navigateBack();
+        } else if (steps == 1) {
+            navigateForward();
+        } else {
+            history.go(steps).ifPresent(this::go);
+            updatePath();
+        }
+    }
+
+    /** Der Verlauf mit Namen; ohne Einträge zurück, aber in einer Bibliothek, führt Zurück zur Bibliotheksliste. */
+    private com.aresstack.spaceharvester.app.ui.controls.BackButton.History visits() {
+        java.util.List<String> back = history.backEntries().stream().map(NdvBrowser::visitName).toList();
+        if (back.isEmpty() && library != null) {
+            back = java.util.List.of(visitName(""));
+        }
+        return new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(history.forwardEntries().stream().map(NdvBrowser::visitName).toList(), back);
+    }
+
+    private static String visitName(String entry) {
+        return entry.isEmpty() ? "Bibliotheken" : entry;
+    }
+
     private void go(String entry) {
         if (entry.isEmpty()) {
             showLibraries();
@@ -764,8 +788,7 @@ final class NdvBrowser extends JPanel {
         libraryChanged.run();
         updateIndex();
         pathField.setText(session.profile().label() + (library != null ? "/" + library : ""));
-        backButton.setEnabled(history.canBack() || library != null);
-        forwardButton.setEnabled(history.canForward());
+        backButton.refresh();
         boolean marked = library != null && state.bookmarks(session.profile().host())
                 .contains(new NdvBookmark(library, ""));
         bookmarkStar.setIcon(marked ? Glyph.STAR_FILLED : Glyph.STAR);
@@ -2409,11 +2432,11 @@ final class NdvBrowser extends JPanel {
     }
 
     boolean canBack() {
-        return backButton.isEnabled();
+        return history.canBack() || library != null;
     }
 
     boolean canForward() {
-        return forwardButton.isEnabled();
+        return history.canForward();
     }
 
     int visibleColumns() {

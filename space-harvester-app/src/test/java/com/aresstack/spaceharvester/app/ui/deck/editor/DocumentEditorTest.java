@@ -93,6 +93,55 @@ class DocumentEditorTest {
         assertThat(on(editor::searchCount)).isEqualTo("ungültig");
     }
 
+    /**
+     * Angelo 24.11.2026: eine Suchleiste. Der Editor hat keine eigene Suchzeile mehr; die Lupe des Deck sucht in ihm,
+     * mit dem Falt-Umschalter (Filter-Symbol) und ▲▼ im Feld, und die Sprachauswahl steht rechts in ihrer Leiste.
+     */
+    @Test
+    void theDeckSearchBarSearchesAndFoldsInTheEditorWhichHasNoSearchRowOfItsOwn() throws Exception {
+        DocumentEditor editor = open("BEISPJOB.jcl", JCL);
+        javax.swing.JPanel area = new javax.swing.JPanel(new java.awt.BorderLayout());
+        AtomicReference<com.aresstack.spaceharvester.app.ui.FindBar> holder = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            area.add(editor);
+            holder.set(new com.aresstack.spaceharvester.app.ui.FindBar(() -> area));
+        });
+        com.aresstack.spaceharvester.app.ui.FindBar bar = holder.get();
+
+        assertThat(on(() -> components(editor).stream().map(DocumentEditorTest::name)
+                .anyMatch(n -> n.equals("Suchen") || n.equals("Sprache"))))
+                .as("keine Suchzeile, keine Sprachauswahl im Editor").isFalse();
+
+        SwingUtilities.invokeAndWait(() -> bar.search("exec"));
+        assertThat(on(bar::counterText)).isEqualTo("2 Treffer in 2 Zeilen");
+        assertThat(on(editor::hiddenLines)).isPositive();
+        assertThat(on(() -> bar.foldToggle().isVisible() && bar.foldToggle().marked())).isTrue();
+        assertThat(on(() -> components(bar.cornerArea()).stream().map(DocumentEditorTest::name).anyMatch("Sprache"::equals)))
+                .as("Sprachauswahl rechts in der Leiste").isTrue();
+
+        SwingUtilities.invokeAndWait(() -> bar.foldToggle().doClick());
+        assertThat(on(editor::hiddenLines)).isZero();
+        SwingUtilities.invokeAndWait(bar::next);
+        assertThat(on(bar::counterText)).isEqualTo("1 / 2");
+        assertThat(on(editor::caretLine)).isEqualTo(3);
+    }
+
+    private static String name(java.awt.Component component) {
+        return component.getAccessibleContext() == null || component.getAccessibleContext().getAccessibleName() == null
+                ? "" : component.getAccessibleContext().getAccessibleName();
+    }
+
+    private static java.util.List<java.awt.Component> components(java.awt.Container root) {
+        java.util.List<java.awt.Component> all = new java.util.ArrayList<>();
+        for (java.awt.Component child : root.getComponents()) {
+            all.add(child);
+            if (child instanceof java.awt.Container inner) {
+                all.addAll(components(inner));
+            }
+        }
+        return all;
+    }
+
     @Test
     void editingRefreshesTheSearchMatches() throws Exception {
         DocumentEditor editor = open("BEISPJOB.jcl", JCL);

@@ -167,8 +167,8 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private final JPanel center = new JPanel(cards);
     private final JPanel browserTools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
 
-    private final IconButton back = new IconButton(ComposerIcons.chevronLeft(), "Zurück (Alt+Links)");
-    private final IconButton forward = new IconButton(ComposerIcons.chevronRight(), "Vorwärts (Alt+Rechts)");
+    /** Das eine Zurück wie im Space Harvester; gedrückt halten zeigt den Verlauf, Vor per Alt+Rechts/Maustaste. */
+    private final com.aresstack.spaceharvester.app.ui.controls.BackButton back = new com.aresstack.spaceharvester.app.ui.controls.BackButton("Zurück (Alt+Links)");
     private final IconButton up = new IconButton(ComposerIcons.chevronUp(), "Übergeordneter Ordner (Rücktaste)");
     private final IconButton refresh = new IconButton(Glyph.REFRESH, "Neu laden (F5)");
     private final JTextField path = Comic.field(30);
@@ -464,8 +464,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
 
     private JComponent browserCard() {
         // Pfadzeile: Navigation, dann das Pfadfeld mit „Orte“ im Feld.
-        back.addActionListener(e -> browser.back());
-        forward.addActionListener(e -> browser.forward());
+        back.navigator(com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator.of(
+                () -> new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(browser.forwardEntries(), browser.backEntries()),
+                steps -> browser.go(steps)));
         up.addActionListener(e -> browser.up());
         refresh.addActionListener(e -> browser.refresh());
         path.getAccessibleContext().setAccessibleName("Pfad");
@@ -485,7 +486,6 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         JPanel navigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
         navigation.setOpaque(false);
         navigation.add(back);
-        navigation.add(forward);
         navigation.add(up);
         navigation.add(refresh);
         JPanel pathRow = new JPanel(new BorderLayout(8, 0));
@@ -588,8 +588,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     // ---- Anzeige ---------------------------------------------------------------------------------------------------
 
     private void render() {
-        back.setEnabled(browser.canGoBack());
-        forward.setEnabled(browser.canGoForward());
+        back.refresh();
         up.setEnabled(browser.canGoUp());
         String location = browser.location().orElse("");
         if (!path.isFocusOwner() && !path.getText().equals(location)) {

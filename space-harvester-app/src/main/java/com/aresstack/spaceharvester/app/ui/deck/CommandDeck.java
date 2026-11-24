@@ -218,6 +218,9 @@ public final class CommandDeck {
         stage.add(findBar, BorderLayout.SOUTH);
         // Bereiche mit Seitenleiste nehmen die Lupe unter ihre Arbeitsfläche (DeckBars.FindSlot), wie im Space Harvester.
         stage.putClientProperty(DeckBars.FIND_HOST, (Runnable) this::placeFindBar);
+        // Ein Editor wird gezeigt oder verdeckt: Falt-Umschalter, Sprachauswahl und Treffer folgen ihm.
+        stage.putClientProperty(com.aresstack.spaceharvester.app.ui.FindBar.VIEW_HOST,
+                (Runnable) findBar::viewChanged);
         stage.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke(
                 java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
         stage.getActionMap().put("find", new javax.swing.AbstractAction() {

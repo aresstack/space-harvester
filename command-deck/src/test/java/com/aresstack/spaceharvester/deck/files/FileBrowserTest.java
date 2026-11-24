@@ -82,6 +82,28 @@ class FileBrowserTest {
         assertThat(names()).hasSize(5);
     }
 
+    /** Verlauf des Zurück-Knopfs (Angelo 24.11.2026): mehrere Schritte auf einmal, wie im Browser. */
+    @Test
+    void jumpsSeveralStepsAndListsTheHistoryNearestFirst() throws IOException {
+        Path a = Files.createDirectories(root.resolve("a"));
+        Path b = Files.createDirectories(a.resolve("b"));
+        browser.open(root.toString());
+        browser.open(a.toString());
+        browser.open(b.toString());
+        assertThat(browser.backEntries()).containsExactly(a.toString(), root.toString());
+
+        browser.go(-2);
+        assertThat(browser.location()).contains(root.toString());
+        assertThat(browser.backEntries()).isEmpty();
+        assertThat(browser.forwardEntries()).containsExactly(a.toString(), b.toString());
+
+        browser.go(2);
+        assertThat(browser.location()).contains(b.toString());
+        assertThat(browser.backEntries()).containsExactly(a.toString(), root.toString());
+        browser.go(5);
+        assertThat(browser.location()).as("zu weit: bleibt").contains(b.toString());
+    }
+
     @Test
     void navigatesIntoFoldersBackForwardAndUp() {
         browser.open(root.toString());
