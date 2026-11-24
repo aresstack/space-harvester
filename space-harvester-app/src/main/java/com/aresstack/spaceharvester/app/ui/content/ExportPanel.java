@@ -62,6 +62,8 @@ import java.util.function.Consumer;
  * Spaces (Angelo 17.11.2026): jeder Format-Knopf startet je Space eigene Aufträge und getrennte Dateien, auch
  * Confluence-Metadaten und Analytics; die Dateiliste nennt je Space seine laufenden Aufträge und fertigen Dateien.
  * Die Übersicht der Spaces mit ihrem Stand steht im Reiter „Info“, nicht hier.
+ * Ein Favoriten-Ordner (ADR 0034, Sammlung) verhält sich genauso: je Favorit eine Zeile, ein Auftragspaar und eine
+ * Datei (eine Seite samt Unterseiten, ein Space, eine ganze Quelle wieder je Space).
  *
  * <p>Übergang bis zur Bestandsübersicht des Core: „Stand“ ist der jüngste fertige Download genau dieser Auswahl
  * (ganzer Space bzw. dieselbe Startseite); die Ausgabe arbeitet auf seinem Datenbestand. Änderungen kommen über die
@@ -283,6 +285,8 @@ public final class ExportPanel extends JPanel {
     static final String INCOMPLETE = "lückenhaft, Space ohne Inventur";
     static final String ALL_TITLE = "Alle Wissensquellen?";
     static final String NO_SPACES = "keine Spaces bekannt";
+    /** Ein leerer Favoriten-Ordner (ADR 0034): nichts zu exportieren. */
+    static final String NO_FAVORITES = "keine Favoriten im Ordner";
     static final String NOTHING_YET = "noch nichts ausgegeben";
     /*
      * Die Karte „Stand“ mit „Samt Unterseiten laden“, „Nur diese Seite laden“ und „Bilder/Anhänge beschaffen“ ist weg
@@ -332,8 +336,8 @@ public final class ExportPanel extends JPanel {
     final JTextArea noticeList = Comic.note("");
     private final JComponent outputPlate;
     /**
-     * Für eine Quelle und „Wissensquellen“ statt {@link #files}: je Space eine Zeile mit seinen laufenden Aufträgen
-     * und fertigen Dateien; die jüngste Datei öffnet ein Knopf in der Zeile.
+     * Für eine Quelle, „Wissensquellen“ und eine Sammlung statt {@link #files}: je Space bzw. Favorit eine Zeile mit
+     * ihren laufenden Aufträgen und fertigen Dateien; die jüngste Datei öffnet ein Knopf in der Zeile.
      */
     final Facts spaces = new Facts();
     /** Rückfrage vor einem Start für „Wissensquellen“ (Ja/Nein); Tests setzen eine eigene Antwort. */
@@ -354,9 +358,9 @@ public final class ExportPanel extends JPanel {
     /** Anmeldung bei den Auftragsmeldungen des Core; je Laufzeit eine. */
     private Subscription subscription;
     private AppRuntime subscribed;
-    /** Anmeldung bei den Bestandsmeldungen des Core für Quelle und Space der Auswahl (die Zeile „Bestand“). */
-    private Subscription holdingsSubscription;
-    private String holdingsKey;
+    /** Anmeldungen bei den Bestandsmeldungen des Core je Wurzel der Auswahl (die Zeile „Bestand“). */
+    private final List<Subscription> holdingsSubscriptions = new ArrayList<>();
+    private List<com.aresstack.spaceharvester.application.holdings.Selection.Root> holdingsKey;
     /** Eine Auffrischung ist schon angestoßen; weitere Meldungen bis dahin verfallen. */
     private boolean refreshPending;
     /** Der Bestand der gezeigten Auswahl; {@code null} ohne Auswahl oder für eine Quelle. */
@@ -489,18 +493,18 @@ public final class ExportPanel extends JPanel {
     }
 
     /**
-     * Die Auswahl für den Core: für eine Quelle und „Wissensquellen“ ausdrücklich je Space eine Wurzel aus der
-     * Space-Liste der Quelle, wie der Download-Knopf in der Seitenleiste; der Core selbst kennt bei einer Quellen-Wurzel
-     * nur Spaces mit Seiten im Cache, und ein Format-Knopf soll auch nie geladene Spaces erst laden (Angelo 16./17.11.).
+     * Die Auswahl für den Core: für eine Quelle, „Wissensquellen“ und eine Sammlung ausdrücklich je Zeile der
+     * Dateiliste eine Wurzel ({@link #parts}), wie der Download-Knopf in der Seitenleiste; der Core selbst kennt bei
+     * einer Quellen-Wurzel nur Spaces mit Seiten im Cache, und ein Format-Knopf soll auch nie geladene Spaces erst
+     * laden (Angelo 16./17.11.).
      */
     private com.aresstack.spaceharvester.application.holdings.Selection coreSelection(AppRuntime runtime,
                                                                                        Selection current) {
         if (current.spaceKey() != null || !Objects.equals(shown.selection(), current) || shown.spaces().isEmpty()) {
             return current.toCore(runtime);
         }
-        return new com.aresstack.spaceharvester.application.holdings.Selection(shown.spaces().stream().map(row ->
-                com.aresstack.spaceharvester.application.holdings.Selection.Root.space(row.sourceId(),
-                        row.space().key())).toList());
+        return new com.aresstack.spaceharvester.application.holdings.Selection(shown.spaces().stream()
+                .map(row -> row.part().root()).toList());
     }
 
     /** Für Tests: die Wurzeln, die ein Start für die gezeigte Auswahl dem Core gibt. */
@@ -552,42 +556,35 @@ public final class ExportPanel extends JPanel {
     }
 
     /**
-     * Meldet sich für den Bestand von Quelle und Space der Auswahl an, damit die Zeile „Bestand“ auch nach Abgleich,
-     * Import oder Bereinigung stimmt (ADR 0027); eine andere Auswahl oder Laufzeit meldet neu an.
+     * Meldet sich für den Bestand jeder Wurzel der Auswahl an ({@link SelectionHoldings}), damit die Zeile „Bestand“
+     * auch nach Abgleich, Import oder Bereinigung stimmt (ADR 0027); eine Quelle hört auf alle ihre Spaces, eine
+     * Sammlung auf die ihrer Favoriten, „Wissensquellen“ nur auf die Aufträge. Eine andere Auswahl oder Laufzeit meldet
+     * neu an.
      */
     private void subscribeHoldings(AppRuntime runtime) {
         Selection current = selection;
-        // Eine Quelle meldet sich für alle ihre Spaces an (Space null); „Wissensquellen“ nur für die Aufträge.
-        String key = runtime == null || current == null || current.global() ? null
-                : current.sourceId() + "\u0000" + current.spaceKey();
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> key = runtime == null
+                || current == null || current.global() ? null : SelectionHoldings.areas(runtime, current);
         if (runtime == subscribed && Objects.equals(key, holdingsKey)) {
             return;
         }
-        if (holdingsSubscription != null) {
-            holdingsSubscription.close();
-            holdingsSubscription = null;
-        }
+        holdingsSubscriptions.forEach(Subscription::close);
+        holdingsSubscriptions.clear();
         holdingsKey = key;
         if (key == null) {
             return;
         }
-        try {
-            holdingsSubscription = runtime.workspace().subscribeHoldings(current.sourceId(), current.spaceKey(),
-                    new HoldingsListener() {
-                        @Override
-                        public void pagesChanged(String sourceId, String spaceKey, Set<String> pageIds) {
-                            scheduleRefresh();
-                        }
+        holdingsSubscriptions.addAll(SelectionHoldings.watch(runtime, key, new HoldingsListener() {
+            @Override
+            public void pagesChanged(String sourceId, String spaceKey, Set<String> pageIds) {
+                scheduleRefresh();
+            }
 
-                        @Override
-                        public void spaceChanged(String sourceId, String spaceKey) {
-                            scheduleRefresh();
-                        }
-                    });
-        } catch (RuntimeException gone) {
-            // Die Quelle gibt es in dieser Laufzeit nicht mehr; der Baum räumt die Auswahl gleich weg.
-            holdingsSubscription = null;
-        }
+            @Override
+            public void spaceChanged(String sourceId, String spaceKey) {
+                scheduleRefresh();
+            }
+        }));
     }
 
     /**
@@ -652,57 +649,73 @@ public final class ExportPanel extends JPanel {
         }
         Path directory = context.settings() == null ? null : context.settings().outputDirectory();
         Map<Selection, String> preferred = Map.copyOf(lastOutput);
-        Background.run(() -> gather(runtime, current, directory, watchedJobs, watchedSource, preferred), data -> {
-            if (ticket == request) {
-                render(data);
-            }
-        }, error -> {
-            if (ticket == request) {
-                render(Data.NONE);
-                feedback.problem(error);
-            }
-        });
+        Map<com.aresstack.spaceharvester.application.holdings.Selection.Root, String> names = favoriteNames();
+        Background.run(() -> gather(runtime, current, directory, watchedJobs, watchedSource, preferred, names),
+                data -> {
+                    if (ticket == request) {
+                        render(data);
+                    }
+                }, error -> {
+                    if (ticket == request) {
+                        render(Data.NONE);
+                        feedback.problem(error);
+                    }
+                });
     }
 
-    /** Der Stand der Auswahl: jüngster fertiger Download, laufender Auftrag, Datenbestand, Dateien; je Space einer Quelle. */
+    /**
+     * Die Namen der Favoriten je Wurzel für die Zeilen einer Sammlung (ADR 0034): der Titel des Favoriten; auf dem EDT
+     * gelesen, weil der Ordnerbaum dort lebt.
+     */
+    private Map<com.aresstack.spaceharvester.application.holdings.Selection.Root, String> favoriteNames() {
+        if (!(selection instanceof Selection.Collection) || context.favorites() == null) {
+            return Map.of();
+        }
+        Map<com.aresstack.spaceharvester.application.holdings.Selection.Root, String> names = new HashMap<>();
+        for (com.aresstack.spaceharvester.app.ui.Favorites.Favorite favorite : context.favorites().all()) {
+            names.putIfAbsent(favorite.root(), favorite.title());
+        }
+        return names;
+    }
+
+    /**
+     * Der Stand der Auswahl: jüngster fertiger Download, laufender Auftrag, Datenbestand, Dateien; für eine Quelle,
+     * „Wissensquellen“ und eine Sammlung je Zeile der Dateiliste ({@link #parts}).
+     */
     private static Data gather(AppRuntime runtime, Selection selection, Path directory, Set<String> watched,
-                               Set<String> watchedSource, Map<Selection, String> preferred) {
+                               Set<String> watchedSource, Map<Selection, String> preferred,
+                               Map<com.aresstack.spaceharvester.application.holdings.Selection.Root, String> names) {
         List<JobStatus> jobs = runtime.workspace().jobs();
         Data ended = finished(jobs, runtime, watched, watchedSource);
         List<JobStatus> finished = ended.finished();
         List<JobStatus> finishedSource = ended.finishedSource();
         Map<String, ExportConversions.ConvertedFile> produced = ended.produced();
-        // Eine Quelle: ihre Spaces; „Wissensquellen“: die Spaces aller Quellen, je mit Quellentitel davor.
-        List<HarvestSource> sources = selection.global() ? runtime.workspace().sources()
-                : runtime.workspace().sources().stream().filter(s -> s.id().equals(selection.sourceId())).toList();
-        boolean restQueries = sources.stream().anyMatch(s -> runtime.workspace().sourceQueryExportsSupported(s.id()));
-        // Der Bestand der Auswahl aus dem Core (ADR 0029): Seite samt Unterseiten, Quelle über alle ihre Spaces.
-        PageSelection holdings = runtime.workspace().resolveSelection(selection.toCore(runtime));
+        boolean restQueries = sourceIds(runtime, selection).stream()
+                .anyMatch(id -> runtime.workspace().sourceQueryExportsSupported(id));
+        // Der Bestand der Auswahl aus dem Core (ADR 0029): Seite samt Unterseiten, Quelle über alle ihre Spaces; eine
+        // Sammlung nachsichtig, ein veralteter Favorit bricht nicht den ganzen Ordner (ADR 0034 §4).
+        PageSelection holdings = SelectionHoldings.resolve(runtime, selection);
         if (selection.spaceKey() == null) {
             List<SpaceRow> rows = new ArrayList<>();
-            for (HarvestSource source : sources) {
-                String prefix = selection.global()
-                        ? (source.title() == null || source.title().isBlank() ? source.id() : source.title()) : null;
-                for (Partition space : runtime.workspace().spaces(source.id())) {
-                    Selection whole = new Selection.Node(source.id(), space.key(), null, null);
-                    JobStatus newest = newest(jobs, whole, preferred.get(whole));
-                    ExportDatasetInfo dataset = newest == null ? null
-                            : runtime.workspace().exportDataset(newest.id()).orElse(null);
-                    List<JobStatus> sourceRunning = jobs.stream().filter(job -> watchedSource.contains(job.id())
-                            && !job.state().terminal() && whole.covers(job)).toList();
-                    rows.add(new SpaceRow(prefix, source.id(), space, running(jobs, whole), conversion(jobs, whole),
-                            dataset == null ? List.of() : outputFiles(directory, dataset.exportId()), sourceRunning));
-                }
+            for (Part part : parts(runtime, selection, names)) {
+                Selection.Node whole = part.node();
+                JobStatus newest = newest(jobs, whole, preferred.get(whole));
+                ExportDatasetInfo dataset = newest == null ? null
+                        : runtime.workspace().exportDataset(newest.id()).orElse(null);
+                List<JobStatus> sourceRunning = jobs.stream().filter(job -> watchedSource.contains(job.id())
+                        && !job.state().terminal() && whole.covers(job)).toList();
+                rows.add(new SpaceRow(part.label(), whole, running(jobs, whole), conversion(jobs, whole),
+                        dataset == null ? List.of() : outputFiles(directory, dataset.exportId()), sourceRunning));
             }
-            // Spaces der Quelle, von denen der Bestand nichts hat: die Zeile „Bestand“ darf dann nicht grün sein.
+            // Spaces, von denen der Bestand nichts hat: die Zeile „Bestand“ darf dann nicht grün sein.
             Set<String> loaded = new java.util.HashSet<>();
             for (SpaceSummary summary : holdings.spaces()) {
                 if (summary.counts().stored() > 0 || summary.inventoried()) {
                     loaded.add(summary.sourceId() + "\u0000" + summary.spaceKey());
                 }
             }
-            int notLoaded = (int) rows.stream().filter(row -> !loaded.contains(row.sourceId() + "\u0000"
-                    + row.space().key())).count();
+            int notLoaded = (int) rows.stream().filter(row -> !loaded.contains(row.part().sourceId() + "\u0000"
+                    + row.part().spaceKey())).count();
             return new Data(selection, null, running(jobs, selection), null, List.of(), rows, holdings,
                     conversion(jobs, selection), finished, finishedSource, produced, restQueries, notLoaded);
         }
@@ -712,6 +725,79 @@ public final class ExportPanel extends JPanel {
         List<String> files = dataset == null ? List.of() : outputFiles(directory, dataset.exportId());
         return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings,
                 conversion(jobs, selection), finished, finishedSource, produced, restQueries, 0);
+    }
+
+    /** Die Quellen der Auswahl: alle bei „Wissensquellen“, die eine eines Knotens, die der Favoriten einer Sammlung. */
+    private static List<String> sourceIds(AppRuntime runtime, Selection selection) {
+        return switch (selection) {
+            case Selection.All ignored -> runtime.workspace().sources().stream().map(HarvestSource::id).toList();
+            case Selection.Node node -> List.of(node.sourceId());
+            case Selection.Collection collection -> collection.roots(runtime).stream()
+                    .map(com.aresstack.spaceharvester.application.holdings.Selection.Root::sourceId).distinct()
+                    .toList();
+        };
+    }
+
+    /**
+     * Eine Zeile der Dateiliste mit eigenen Aufträgen und Dateien: ein Space oder bei einer Sammlung auch eine Seite
+     * samt Unterseiten.
+     */
+    record Part(String label, Selection.Node node) {
+    }
+
+    /**
+     * Die Zeilen der Dateiliste, in die ein Format-Knopf die Auswahl teilt, je Zeile ein Auftragspaar und eine Datei
+     * (Angelo 17.11.2026): für eine Quelle je Space, für „Wissensquellen“ je Space jeder Quelle mit Quellentitel davor,
+     * für eine Sammlung je Favorit (ADR 0034 §1: eine Seite samt Unterseiten, ein Space, eine Quelle wieder je Space)
+     * mit dem Namen des Favoriten. Ein Favorit, dessen Quelle es nicht mehr gibt oder nicht sichtbar ist, fällt weg.
+     */
+    static List<Part> parts(AppRuntime runtime, Selection selection,
+                            Map<com.aresstack.spaceharvester.application.holdings.Selection.Root, String> names) {
+        List<Part> parts = new ArrayList<>();
+        switch (selection) {
+            case Selection.All ignored -> {
+                for (HarvestSource source : runtime.workspace().sources()) {
+                    spaces(runtime, source.id(), source.title() == null || source.title().isBlank() ? source.id()
+                            : source.title(), parts);
+                }
+            }
+            case Selection.Node node -> {
+                if (node.spaceKey() == null) {
+                    spaces(runtime, node.sourceId(), null, parts);
+                }
+            }
+            case Selection.Collection collection -> {
+                for (var root : collection.roots(runtime)) {
+                    String name = names.get(root);
+                    if (root.spaceKey() == null) {
+                        spaces(runtime, root.sourceId(), name == null ? root.sourceId() : name, parts);
+                    } else {
+                        parts.add(new Part(name != null ? name : root.pageId() == null ? root.spaceKey()
+                                : "Seite " + root.pageId(), new Selection.Node(root.sourceId(), root.spaceKey(),
+                                root.pageId(), null)));
+                    }
+                }
+            }
+        }
+        // Ein Space doppelt (Favorit der ganzen Quelle und desselben Space) gibt nur eine Zeile und einen Auftrag.
+        Map<Selection.Node, Part> unique = new LinkedHashMap<>();
+        parts.forEach(part -> unique.putIfAbsent(part.node(), part));
+        return List.copyOf(unique.values());
+    }
+
+    /** Je Space der Quelle eine Zeile, mit {@code prefix} davor; eine nicht mehr vorhandene Quelle liefert keine. */
+    private static void spaces(AppRuntime runtime, String sourceId, String prefix, List<Part> parts) {
+        List<Partition> spaces;
+        try {
+            spaces = runtime.workspace().spaces(sourceId);
+        } catch (RuntimeException gone) {
+            return;
+        }
+        for (Partition space : spaces) {
+            String name = space.name() == null || space.name().isBlank() ? space.key() : space.name();
+            parts.add(new Part(prefix == null ? name : prefix + " › " + name,
+                    new Selection.Node(sourceId, space.key(), null, null)));
+        }
     }
 
     /** Ein noch nicht beendeter Auftrag „Datei erzeugen“ dieser Auswahl (wartend, laufend, angehalten). */
@@ -780,17 +866,11 @@ public final class ExportPanel extends JPanel {
     }
 
     /**
-     * Ein Space in der Dateiliste einer Quelle: sein laufender Download, sein offener Auftrag „Datei erzeugen“, die
-     * Dateien seiner jüngsten Ausgabe und seine laufenden Exporte aus der Quelle; {@code source} nur bei
-     * „Wissensquellen“ (Quellentitel davor).
+     * Eine Zeile der Dateiliste ({@link Part}): ihr laufender Download, ihr offener Auftrag „Datei erzeugen“, die
+     * Dateien ihrer jüngsten Ausgabe und ihre laufenden Exporte aus der Quelle.
      */
-    record SpaceRow(String source, String sourceId, Partition space, JobStatus running, JobStatus conversion,
+    record SpaceRow(String label, Selection.Node part, JobStatus running, JobStatus conversion,
                     List<String> files, List<JobStatus> sourceRunning) {
-
-        String label() {
-            String name = space.name() == null || space.name().isBlank() ? space.key() : space.name();
-            return source == null ? name : source + " › " + name;
-        }
 
         /** „Download läuft · 3 von 9 Seiten · PDF: wird erzeugt … · Analytics läuft … · ab12.pdf“ oder „noch nichts ausgegeben“. */
         String text() {
@@ -837,13 +917,18 @@ public final class ExportPanel extends JPanel {
     }
 
     /**
-     * Die Dateiliste einer Quelle: je Space eine Zeile mit laufenden Aufträgen und fertigen Dateien, die jüngste
-     * Datei öffnet der Knopf in der Zeile (Architekt 17.11.2026); ohne Spaces nur „keine Spaces bekannt“.
+     * Die Dateiliste einer Quelle oder Sammlung: je Zeile ({@link #parts}) laufende Aufträge und fertige Dateien, die
+     * jüngste Datei öffnet der Knopf in der Zeile (Architekt 17.11.2026); ohne Zeilen nur „keine Spaces bekannt“ bzw.
+     * bei einem leeren Ordner „keine Favoriten im Ordner“.
      */
-    private void renderSpaces(List<SpaceRow> rows, Path directory) {
+    private void renderSpaces(Selection owner, List<SpaceRow> rows, Path directory) {
         spaces.reset();
         if (rows.isEmpty()) {
-            spaces.add("Spaces", NO_SPACES, Comic.MUTED);
+            if (owner instanceof Selection.Collection) {
+                spaces.add("Favoriten", NO_FAVORITES, Comic.MUTED);
+            } else {
+                spaces.add("Spaces", NO_SPACES, Comic.MUTED);
+            }
             return;
         }
         for (SpaceRow row : rows) {
@@ -912,7 +997,7 @@ public final class ExportPanel extends JPanel {
             cardImages.setVisible(false);
             toggleNotices.setVisible(false);
             noticeList.setVisible(false);
-            renderSpaces(data.spaces(), directory);
+            renderSpaces(data.selection(), data.spaces(), directory);
             return;
         }
         if (dataset == null) {
@@ -1003,6 +1088,9 @@ public final class ExportPanel extends JPanel {
         if (current == null || context.runtime() == null) {
             return NO_SELECTION;
         }
+        if (current instanceof Selection.Collection collection && collection.roots().isEmpty()) {
+            return NO_FAVORITES;
+        }
         if (starting != null && starting.equals(current)) {
             return Format.title(startingFormat) + IN_PROGRESS;
         }
@@ -1067,7 +1155,7 @@ public final class ExportPanel extends JPanel {
             }
             JobStatus data = jobs.get(0);
             exportStatus(Format.title(format) + ": " + (current.spaceKey() == null
-                    ? Texts.count(jobs.size() / 2, "Auftrag", "Aufträge") + " je Space eingeplant, "
+                    ? Texts.count(jobs.size() / 2, "Auftrag", "Aufträge") + " " + perPart(current) + " eingeplant, "
                     + "die Dateien entstehen in " + name(directory)
                     : data.state() == JobState.COMPLETED ? "Datei wird erzeugt …"
                     : loadsFirst() ? "Seiten werden erst geladen, dann entsteht die Datei …"
@@ -1081,6 +1169,11 @@ public final class ExportPanel extends JPanel {
             failedStart(Format.title(format), error, current);
             renderButtons();
         });
+    }
+
+    /** Wie eine Auswahl in Aufträge zerfällt: je Space, bei einer Sammlung je Favorit. */
+    static String perPart(Selection selection) {
+        return selection instanceof Selection.Collection ? "je Favorit" : "je Space";
     }
 
     /**
@@ -1220,7 +1313,8 @@ public final class ExportPanel extends JPanel {
             }
             exportStatus(sourceTitle(kind) + ": " + Texts.count(jobs.size(), "Auftrag", "Aufträge")
                     + (jobs.size() == 1 ? " eingeplant; die Datei entsteht in "
-                    : " je Space eingeplant; die Dateien entstehen in ") + name(directory), Severity.INFO, false);
+                    : " " + perPart(current) + " eingeplant; die Dateien entstehen in ") + name(directory),
+                    Severity.INFO, false);
             context.navigator().followJobs();
             renderButtons();
             refresh();

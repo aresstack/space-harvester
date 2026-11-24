@@ -250,6 +250,10 @@ class WorkspaceTest {
         assertThat(bySpace.test(gone)).isFalse();
         assertThat(bySpace.test(known)).isTrue();
         assertThat(bySource.test(known)).isTrue();
+        // ADR 0034 §3: bei einer Sammlung löscht auch ein Quellen-Favorit nur die aufgelösten Seiten.
+        var inCollection = Workspace.analysesOf(sourceSelection, workspace.resolveSelection(sourceSelection), false);
+        assertThat(inCollection.test(gone)).isFalse();
+        assertThat(inCollection.test(known)).isTrue();
         assertThat(bySource.test(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "100")))
                 .isFalse();
     }

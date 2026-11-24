@@ -217,8 +217,7 @@ final class StandingTab extends JPanel {
             return new Actions() {
                 @Override
                 public StatusQuoView view(ExportPanel.Selection selection, BooleanSupplier cancelled) {
-                    return runtime.workspace().statusQuo(
-                            runtime.workspace().resolveSelection(selection.toCore(runtime)), cancelled);
+                    return runtime.workspace().statusQuo(SelectionHoldings.resolve(runtime, selection), cancelled);
                 }
 
                 @Override
@@ -254,13 +253,15 @@ final class StandingTab extends JPanel {
 
                 @Override
                 public ReadingList reading(ExportPanel.Selection selection, String topic, BooleanSupplier cancelled) {
-                    return runtime.workspace().readingList(
-                            runtime.workspace().resolveSelection(selection.toCore(runtime)), topic, cancelled);
+                    return runtime.workspace().readingList(SelectionHoldings.resolve(runtime, selection), topic,
+                            cancelled);
                 }
 
                 @Override
                 public int deleteAnalyses(ExportPanel.Selection selection) {
-                    return runtime.workspace().deleteStatementAnalyses(selection.toCore(runtime));
+                    // Ohne veraltete Favoriten, sonst bräche die strenge Auflösung den ganzen Ordner (ADR 0034 §4).
+                    return runtime.workspace().deleteStatementAnalyses(SelectionHoldings.core(runtime, selection),
+                            false, !(selection instanceof ExportPanel.Selection.Collection));
                 }
 
                 @Override
@@ -270,7 +271,9 @@ final class StandingTab extends JPanel {
 
                 @Override
                 public int deleteEverything(ExportPanel.Selection selection) {
-                    return runtime.workspace().deleteStatementAnalyses(selection.toCore(runtime), true);
+                    // Ohne veraltete Favoriten, sonst bräche die strenge Auflösung den ganzen Ordner (ADR 0034 §4).
+                    return runtime.workspace().deleteStatementAnalyses(SelectionHoldings.core(runtime, selection),
+                            true, !(selection instanceof ExportPanel.Selection.Collection));
                 }
 
                 @Override
@@ -908,18 +911,26 @@ final class StandingTab extends JPanel {
 
     /** Die Rückfrage vor dem Löschen, mit dem Namen des gewählten Knotens. */
     static String deleteQuestion(ExportPanel.Selection selection) {
-        if (selection.global()) {
-            return "Wirklich die Aussagen-Analysen aller Wissensquellen löschen? Die Seiten bleiben.";
-        }
-        return "Wirklich die Aussagen-Analysen von „" + selection.title() + "“ samt Unterseiten löschen? Die Seiten "
-                + "bleiben.";
+        return "Wirklich die Aussagen-Analysen " + where(selection) + " löschen? Die Seiten bleiben.";
     }
 
     /** Die Rückfrage vor „Alles löschen“: Analysen und KI-Urteile. */
     static String deleteEverythingQuestion(ExportPanel.Selection selection) {
-        String where = selection.global() ? "aller Wissensquellen" : "von „" + selection.title() + "“ samt Unterseiten";
-        return EVERYTHING_PREFIX + where + " löschen, also die Aussagen-Analysen und die KI-Urteile aus „Aussagen "
-                + "prüfen“? Die Seiten bleiben.";
+        return EVERYTHING_PREFIX + where(selection) + " löschen, also die Aussagen-Analysen und die KI-Urteile aus "
+                + "„Aussagen prüfen“? Die Seiten bleiben.";
+    }
+
+    /**
+     * Wovon gelöscht wird: alle Wissensquellen, ein Knoten samt Unterseiten oder die Favoriten eines Ordners samt
+     * Unterseiten (ADR 0034: nur die aufgelösten Seiten, nie eine ganze Quelle).
+     */
+    private static String where(ExportPanel.Selection selection) {
+        return switch (selection) {
+            case ExportPanel.Selection.All ignored -> "aller Wissensquellen";
+            case ExportPanel.Selection.Node node -> "von „" + node.title() + "“ samt Unterseiten";
+            case ExportPanel.Selection.Collection collection -> "der Favoriten in „" + collection.title()
+                    + "“ samt Unterseiten";
+        };
     }
 
     /** Das Menü hinter dem Dreieck neben dem Papierkorb. */
