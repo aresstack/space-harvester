@@ -48,7 +48,15 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
         setOpaque(false);
         search = new SearchPane(this);
         documents = new DocumentPane(this);
-        split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, search, documents);
+        // Zweigeteilt wie im Space Harvester (Angelo 24.11.2026): unter der Suche die Fußleiste der Seitenleiste, unter
+        // den Dokumenten die Leiste mit der Lupe.
+        javax.swing.JPanel side = new javax.swing.JPanel(new java.awt.BorderLayout());
+        side.setOpaque(false);
+        side.add(search, java.awt.BorderLayout.CENTER);
+        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(null, null, null),
+                java.awt.BorderLayout.SOUTH);
+        split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, side,
+                com.aresstack.spaceharvester.app.ui.deck.DeckBars.withFind(documents));
         ComicDivider.install(split);
         split.setBorder(null);
         split.setOpaque(false);

@@ -216,6 +216,8 @@ public final class CommandDeck {
         stage.setOpaque(false);
         stage.add(workspace, BorderLayout.CENTER);
         stage.add(findBar, BorderLayout.SOUTH);
+        // Bereiche mit Seitenleiste nehmen die Lupe unter ihre Arbeitsfläche (DeckBars.FindSlot), wie im Space Harvester.
+        stage.putClientProperty(DeckBars.FIND_HOST, (Runnable) this::placeFindBar);
         stage.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke(
                 java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
         stage.getActionMap().put("find", new javax.swing.AbstractAction() {
@@ -452,9 +454,34 @@ public final class CommandDeck {
         // Die Suche gilt dem gezeigten Bereich: Markierungen des vorigen weg, seine Bedienelemente neben die Lupe.
         findBar.tools(areaView(next) instanceof DeckBars.FootTools with ? with.footTools() : null);
         findBar.areaChanged();
+        placeFindBar();
         if (areaObservers != null) {
             areaObservers.forEach(Runnable::run);
         }
+    }
+
+    /**
+     * Setzt die Leiste mit der Lupe unter die Arbeitsfläche des gezeigten Bereichs, wenn er eine Seitenleiste hat
+     * ({@link DeckBars.FindSlot}); sonst unter den ganzen Bereich. Zweigeteilt wie im Space Harvester (Angelo
+     * 24.11.2026): Unter der Seitenleiste steht deren eigene Fußleiste.
+     */
+    void placeFindBar() {
+        java.awt.Container target = DeckBars.showingSlot(workspace);
+        if (target == null) {
+            target = stage;
+        }
+        if (findBar.getParent() == target) {
+            return;
+        }
+        java.awt.Container old = findBar.getParent();
+        if (old != null) {
+            old.remove(findBar);
+            old.revalidate();
+            old.repaint();
+        }
+        target.add(findBar, BorderLayout.SOUTH);
+        target.revalidate();
+        target.repaint();
     }
 
     /** Zurück ({@code true}) oder Vor im Verlauf des gezeigten Bereichs; Bereiche ohne Verlauf bleiben stehen. */
