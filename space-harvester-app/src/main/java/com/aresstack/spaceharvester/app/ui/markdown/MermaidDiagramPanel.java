@@ -65,6 +65,16 @@ public final class MermaidDiagramPanel extends JPanel {
         return new MermaidDiagramPanel(svgSource, theme, svgRenderer, "SVG-Grafik", true);
     }
 
+    /**
+     * Ein draw.io-Diagramm aus der Antwort, gezeichnet mit drawio-java: gleicher Bild- und Overlay-Weg wie Mermaid;
+     * scheitert das Zeichnen, zeigt die Blase den XML-Quelltext mit dem Grund.
+     */
+    static MermaidDiagramPanel drawio(String xml, MarkdownTheme theme, MermaidImageRenderer drawioRenderer) {
+        return new MermaidDiagramPanel(xml, theme, drawioRenderer, DRAWIO, true);
+    }
+
+    static final String DRAWIO = "draw.io-Diagramm";
+
     private MermaidDiagramPanel(String diagramCode, MarkdownTheme theme, MermaidImageRenderer imageRenderer,
                                 String kindLabel, boolean showSourceOnFailure) {
         this.kindLabel = kindLabel;
@@ -94,7 +104,8 @@ public final class MermaidDiagramPanel extends JPanel {
 
     private JComponent buildToolbar() {
         MarkdownActionButton copyCodeButton = new MarkdownActionButton(new MarkdownActionButton.CopyIcon(),
-                kindLabel.startsWith("SVG") ? "SVG-Code kopieren" : "Mermaid-Code kopieren", theme.getMutedForeground(), this::copyCodeToClipboard);
+                kindLabel.startsWith("SVG") ? "SVG-Code kopieren"
+                        : DRAWIO.equals(kindLabel) ? "draw.io-Code kopieren" : "Mermaid-Code kopieren", theme.getMutedForeground(), this::copyCodeToClipboard);
         copyCodeButton.setEnabled(diagramCode.trim().length() > 0);
 
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
@@ -131,7 +142,10 @@ public final class MermaidDiagramPanel extends JPanel {
                         errorMessage = kindLabel + " konnte nicht gerendert werden.";
                     }
                 } catch (Exception ex) {
-                    errorMessage = kindLabel + ": Fehler beim Rendern: " + ex.getMessage();
+                    // Der Grund des Renderers, nicht die Hülle des SwingWorkers (ExecutionException).
+                    Throwable cause = ex instanceof java.util.concurrent.ExecutionException && ex.getCause() != null
+                            ? ex.getCause() : ex;
+                    errorMessage = kindLabel + ": Fehler beim Rendern: " + cause.getMessage();
                 } finally {
                     if (image == null && showSourceOnFailure) {
                         showSourceInstead();
@@ -157,7 +171,7 @@ public final class MermaidDiagramPanel extends JPanel {
         error.setFont(theme.getBodyFont());
         error.setForeground(theme.getErrorForeground());
         add(error, BorderLayout.NORTH);
-        add(new CodeBlockPanel("svg", diagramCode, theme), BorderLayout.CENTER);
+        add(new CodeBlockPanel(DRAWIO.equals(kindLabel) ? "xml" : "svg", diagramCode, theme), BorderLayout.CENTER);
         revalidate();
         repaint();
     }
