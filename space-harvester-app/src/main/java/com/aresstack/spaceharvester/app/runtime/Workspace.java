@@ -3564,6 +3564,25 @@ public final class Workspace {
         return harvester.changeLog().summarizeArea(caller, area(sourceId, spaceKey), interactive);
     }
 
+    /**
+     * Die Bereichszusammenfassung einer beliebigen Auswahl, etwa eines Favoriten-Ordners (ADR 0034 §7, Paket 5c):
+     * abgelegt je Aufrufer nach den aufgelösten Wurzeln, nachsichtig aufgelöst. Nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> areaSummary(
+            com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.changeLog().areaSummary(caller, selection);
+    }
+
+    /**
+     * Startet „Zusammenfassen“ für den Bestand einer beliebigen Auswahl.
+     *
+     * @param interactive ein Klick auf „Zusammenfassen“; {@code false} für den Lauf beim Öffnen
+     */
+    public JobStatus summarizeArea(com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                   boolean interactive) {
+        return harvester.changeLog().summarizeArea(caller, selection, interactive);
+    }
+
     private static com.aresstack.spaceharvester.application.holdings.Selection area(String sourceId, String spaceKey) {
         return com.aresstack.spaceharvester.application.holdings.Selection.of(spaceKey == null
                 ? com.aresstack.spaceharvester.application.holdings.Selection.Root.source(sourceId)

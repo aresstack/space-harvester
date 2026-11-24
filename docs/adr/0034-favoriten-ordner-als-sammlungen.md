@@ -108,8 +108,9 @@ abgeleitet aus der heutigen `toCore`-Logik.
 - **Veraltet** = Fingerabdruck der Wurzeln oder Inhalte (Abschnitt 4) hat sich geändert. **Eine Änderung am Ordner
   startet nie von selbst einen KI-Lauf**, sie markiert nur „veraltet“; neu erstellt wird über den Symbolknopf
   „Zusammenfassen“. Fehlt die Zusammenfassung bei einem nie zusammengefassten Ordner, startet sie beim Öffnen wie bei
-  Updates. Leerer Ordner: Hinweis, kein Modellaufruf. Feste Regel: Der automatische Lauf beim Öffnen ist ein
-  Hintergrundauftrag (BACKGROUND), ein Klick auf „Zusammenfassen“ ein normaler Auftrag (`submitInteractive`).
+  Updates. Leerer Ordner: Hinweis, kein Modellaufruf. Feste Regel: Der automatische Lauf beim Öffnen ist wie an
+  Quelle und Space ein nachrangiger Folgeauftrag (`jobs.submit(UPDATE_SUMMARY)`), ein Klick auf „Zusammenfassen“
+  läuft über `submitInteractive`.
 - **Aufräumen:** Eine neue Zusammenfassung ersetzt die vorige desselben Platzes samt Podcasts. Beim Löschen eines
   Ordners ruft die App nach „wirklich …?“ `forget(caller, Selection)` auf; Rückfallnetz ist die vorhandene
   Aufbewahrungsfrist.

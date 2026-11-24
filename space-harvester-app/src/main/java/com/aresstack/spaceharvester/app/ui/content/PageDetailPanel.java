@@ -226,6 +226,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private final List<com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle> scopeToggles =
             new java.util.ArrayList<>();
+    private final List<JComponent> scopeRows = new java.util.ArrayList<>();
     /** „Eigenschaften“ der Quellenseite: Kennzahlen und Einstellungen der Quelle. */
     private final SourcePropertiesView sourceProperties;
     private final JLabel state = Comic.muted(" ");
@@ -451,6 +452,8 @@ public final class PageDetailPanel extends JPanel {
     private final JPanel readingSourceFoot = footRow();
     /** Podcast-Ansicht des Bereichs: Transkript, Umschalter, Untertitel. */
     private final JPanel areaFoot = footRow();
+    /** In der Podcast-Ansicht eines Ordners der Platz für „mit Unterseiten“. */
+    private final JPanel areaFolderSlot = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
     private final JPanel pageFoot = footRow();
 
     private static JPanel footRow() {
@@ -470,6 +473,7 @@ public final class PageDetailPanel extends JPanel {
         JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
         row.setOpaque(false);
         row.add(toggle);
+        scopeRows.add(row);
         return row;
     }
 
@@ -483,7 +487,8 @@ public final class PageDetailPanel extends JPanel {
 
     /** Ob die Quellenseite statt der Änderungen den Überblick über den Bereich zeigt. */
     private boolean areaShown() {
-        return SOURCE_CARD.equals(pageCard) && sourceView.sourceId() != null && AreaSummaryView.areaChosen();
+        return folderShown()
+                || SOURCE_CARD.equals(pageCard) && sourceView.sourceId() != null && AreaSummaryView.areaChosen();
     }
 
     /** Für Tests: der Überblick zum Lesen und zum Hören, der Umschalter der Leseansicht. */
@@ -707,7 +712,12 @@ public final class PageDetailPanel extends JPanel {
         readingSourceFoot.add(scopeRow(), BorderLayout.CENTER);
         areaFoot.add(Comic.row(areaPodcast.podcast().transcriptCopy()), BorderLayout.WEST);
         areaFoot.add(Comic.row(areaPodcast.podcast().subtitleToggle()), BorderLayout.EAST);
-        areaFoot.add(scopeRow(), BorderLayout.CENTER);
+        JPanel areaCenter = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
+        areaCenter.setOpaque(false);
+        areaFolderSlot.setOpaque(false);
+        areaCenter.add(scopeRow());
+        areaCenter.add(areaFolderSlot);
+        areaFoot.add(areaCenter, BorderLayout.CENTER);
         readerPage.setOrb(pagePodcast.orb());
         // Der Chat liest mit derselben Sprachausgabe vor; sein Knopf steht auf der Höhe dieser Knöpfe (Angelo 23.11.2026).
         chat.useReadAloud(this::readAloudBinding);
@@ -1147,6 +1157,9 @@ public final class PageDetailPanel extends JPanel {
         String selected = tabs.selected();
         // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
         boolean area = areaShown();
+        // Ein Ordner hat keine Änderungen: dort kein Umschalter.
+        boolean folderNow = folderShown();
+        scopeRows.forEach(row -> row.setVisible(!folderNow));
         sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected) && !area);
         sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected) && !area);
         areaView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected) && area);
@@ -1225,6 +1238,35 @@ public final class PageDetailPanel extends JPanel {
         sourceProperties.all(sourceIds);
         pageCard = SOURCE_CARD;
         showDeck();
+    }
+
+    /**
+     * Ein Favoriten-Ordner (ADR 0034 §7, Paket 5c): Lese- und Podcast-Ansicht zeigen den Überblick über seine Favoriten,
+     * mit derselben Ansicht wie „Bereich“ an Quelle und Space; Änderungen gibt es am Ordner nicht, also keinen
+     * Umschalter. Die Überschrift ist der Ordnername.
+     */
+    public void showFolder(ExportPanel.Selection.Collection folder) {
+        clearState();
+        String shownTitle = folder.title() == null || folder.title().isBlank() ? folder.folderId() : folder.title();
+        this.title.setText(shownTitle);
+        empty.setText(EMPTY_SOURCE);
+        sourceView.source(null, null, shownTitle);
+        sourceChanges.source(null, null, shownTitle);
+        sourceProperties.source(null);
+        areaView.folder(folder);
+        areaPodcast.folder(folder);
+        pageCard = SOURCE_CARD;
+        showDeck();
+    }
+
+    /** Ob gerade genau dieser Ordner (samt Favoriten und Unterordner-Stellung) gezeigt wird. */
+    boolean showsFolder(ExportPanel.Selection.Collection folder) {
+        return showsSource() && java.util.Objects.equals(areaView.folder(), folder);
+    }
+
+    /** Ob die Quellenseite gerade einen Favoriten-Ordner zeigt. */
+    private boolean folderShown() {
+        return SOURCE_CARD.equals(pageCard) && areaView.folder() != null;
     }
 
     /** Ob gerade die Gesamtsicht über genau diese Wissensquellen gezeigt wird. */
@@ -3113,6 +3155,11 @@ public final class PageDetailPanel extends JPanel {
                 : READ.equals(selected) && PAGE.equals(pageCard) ? pageFoot
                 : wide && folder != null ? folderFoot
                 : null;
+        // Podcast-Ansicht eines Ordners: „mit Unterseiten“ mittig in ihrer Leiste, wie sonst in der Ordnerleiste.
+        if (shown == areaFoot && folderShown() && folderSubfolders.getParent() != areaFolderSlot) {
+            areaFolderSlot.add(folderSubfolders);
+            areaFolderSlot.revalidate();
+        }
         if (footTools.getComponentCount() == (shown == null ? 0 : 1)
                 && (shown == null || footTools.getComponent(0) == shown)) {
             return;
@@ -5723,7 +5770,7 @@ public final class PageDetailPanel extends JPanel {
     /** Auf der Quellenseite in der Leseansicht hat das Dreieck die Speicher-Einträge der Zusammenfassung. */
     private boolean sourceMenuShown() {
         return SOURCE_CARD.equals(pageCard) && (READING.equals(tabs.selected()) || READ.equals(tabs.selected()))
-                && sourceView.sourceId() != null;
+                && (sourceView.sourceId() != null || areaView.folder() != null);
     }
 
     /**
