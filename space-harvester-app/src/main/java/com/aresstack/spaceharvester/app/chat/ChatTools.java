@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.chat;
 
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
+import com.aresstack.spaceharvester.app.ui.SearchView;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.holdings.HoldingState;
 import com.aresstack.spaceharvester.application.holdings.PageHolding;
@@ -76,7 +77,10 @@ final class ChatTools {
     static final int PAGE_SIZE = 100;
     /** So viele Zeichen liefert ein Lesen höchstens; der Rest folgt mit Versatz. */
     static final int READ_CHARS = 12_000;
-    /** So viele Treffer liefert die Suche höchstens. */
+    /**
+     * So viele Treffer nennt die Suche höchstens über die Liste der Suchleiste hinaus (die Funde der progressiven Suche:
+     * Varianten, Bewertung, Nachbarn); die Liste der Suchleiste nennt sie immer ganz ({@link #barHits}).
+     */
     static final int SEARCH_HITS = 10;
     /** Längstens so lange wartet ein Suchaufruf; danach zählen die bis dahin bewerteten Treffer. */
     static final long SEARCH_SECONDS = 60;
@@ -855,7 +859,10 @@ final class ChatTools {
             return "Bitte Suchbegriffe angeben.";
         }
         query = clampQuery(query);
-        List<KeywordSearch.Hit> hits = hits(query);
+        KeywordSearch.Query search = areaQuery(query, scope).withGlossarySynonyms(glossarySynonyms);
+        List<KeywordSearch.Hit> bar = barHits(search);
+        List<KeywordSearch.Hit> hits = listed(bar, ranked(search, neighbors, false));
+        int most = bar.size() + SEARCH_HITS;
         StringBuilder b = new StringBuilder();
         Set<PageKey> seen = new LinkedHashSet<>();
         for (KeywordSearch.Hit hit : hits) {
@@ -866,16 +873,49 @@ final class ChatTools {
             b.append("- ").append(ref(key)).append(" | ").append(oneLine(hit.title() == null ? hit.pageId()
                     : hit.title()));
             b.append('\n');
-            if (seen.size() >= SEARCH_HITS) {
+            if (seen.size() >= most) {
                 break;
             }
         }
         return seen.isEmpty() ? "Keine Treffer im gewählten Bereich." : b.toString().stripTrailing();
     }
 
-    /** Die progressive Suche nur in den Seiten des Bereichs, wie die Suche mit Auswahl links. */
-    List<KeywordSearch.Hit> hits(String query) {
-        return ranked(areaQuery(query, scope).withGlossarySynonyms(glossarySynonyms), neighbors, false);
+    /**
+     * Dieselbe Schlagwortsuche wie die Suchleiste ({@code SearchView.run}: {@code keywordSearchIn} mit
+     * {@link SearchView#LIMIT}) und dieselbe Liste ({@code results.ranked()}: Treffer aus dem Cache, dann die Funde der
+     * Quelle selbst). Bis 24.11.2026 fragte der Chat nur die progressive Suche mit {@code Harvester.searchProfile()},
+     * die die Suchleiste nur mit dem Haken „semantisch“ nimmt. Mit eingerichtetem Embedding-Dienst ist dieses Profil
+     * semantisch ({@code SemanticVariantSearch.profile}): Treffer kommen dann nur aus der Vektorsuche, nie aus der
+     * Schlagwortsuche über Titel und Volltext; ohne ist es die Schlagwortsuche, von der der Chat die ersten
+     * {@value #SEARCH_HITS} nahm (unbewertet je Anfrage erst alle Cache-Treffer, dann die Funde der Quelle). Ein
+     * Seitentitel, den die Suchleiste zeigte, kam so nicht in die Liste (Angelo 24.11.2026, „Team 10“). Scheitert die
+     * Schlagwortsuche, bleibt die progressive Suche.
+     */
+    private List<KeywordSearch.Hit> barHits(KeywordSearch.Query search) {
+        if (cancelled) {
+            return List.of();
+        }
+        try {
+            return workspace.keywordSearchIn(java.util.UUID.randomUUID().toString(), search, null, SearchView.LIMIT,
+                    null).ranked();
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Schlagwortsuche nicht möglich ({0})", e.getClass().getName());
+            return List.of();
+        }
+    }
+
+    /** Erst die Liste der Suchleiste in ihrer Reihenfolge, dann die übrigen Treffer der progressiven Suche. */
+    static List<KeywordSearch.Hit> listed(List<KeywordSearch.Hit> bar, List<KeywordSearch.Hit> progressive) {
+        Set<PageKey> seen = new java.util.HashSet<>();
+        List<KeywordSearch.Hit> all = new ArrayList<>();
+        for (List<KeywordSearch.Hit> part : List.of(bar, progressive)) {
+            for (KeywordSearch.Hit hit : part) {
+                if (seen.add(new PageKey(hit.sourceId(), hit.pageId()))) {
+                    all.add(hit);
+                }
+            }
+        }
+        return all;
     }
 
     /**
@@ -954,8 +994,10 @@ final class ChatTools {
         String single = searched.size() == 1 ? searched.iterator().next() : null;
         KeywordSearch.Query search = new KeywordSearch.Query(query, single, single == null ? searched : Set.of(),
                 Set.of()).ofKinds(kinds).withGlossarySynonyms(arguments.path("synonyme").asBoolean(false));
-        List<KeywordSearch.Hit> hits = ranked(search, arguments.path("nachbarseiten").asBoolean(false),
-                arguments.path("fachbegriffe").asBoolean(false));
+        List<KeywordSearch.Hit> bar = barHits(search);
+        List<KeywordSearch.Hit> hits = listed(bar, ranked(search, arguments.path("nachbarseiten").asBoolean(false),
+                arguments.path("fachbegriffe").asBoolean(false)));
+        int most = bar.size() + SEARCH_HITS;
         StringBuilder b = new StringBuilder();
         Set<PageKey> seen = new LinkedHashSet<>();
         for (KeywordSearch.Hit hit : hits) {
@@ -966,7 +1008,7 @@ final class ChatTools {
             granted.add(key);
             b.append("- ").append(ref(key)).append(" | ").append(oneLine(hit.title() == null ? hit.pageId()
                     : hit.title())).append(" | Quelle ").append(hit.sourceId()).append('\n');
-            if (seen.size() >= SEARCH_HITS) {
+            if (seen.size() >= most) {
                 break;
             }
         }

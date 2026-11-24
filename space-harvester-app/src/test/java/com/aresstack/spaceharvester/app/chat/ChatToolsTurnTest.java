@@ -617,6 +617,34 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void theChatListsEveryHitTheSearchBarListsForTheSameArea() throws Exception {
+        ChatTools probe = new ChatTools(workspace, space, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 1;
+            }
+
+            @Override
+            public void delivered(String spaceKey, PageKey key) {
+            }
+        });
+        // Der Suchindex entsteht nach dem Sync im Hintergrund: warten, bis die Suchleiste alle Seiten mit dem Wort kennt.
+        // Dieselbe Anfrage wie die Suchleiste mit derselben Auswahl: keywordSearchIn, ein Stapel der Suchleiste.
+        List<com.aresstack.spaceharvester.application.query.KeywordSearch.Hit> bar = await(() -> {
+            var ranked = workspace.keywordSearchIn(java.util.UUID.randomUUID().toString(),
+                    ChatTools.areaQuery("Spool", space), null, com.aresstack.spaceharvester.app.ui.SearchView.LIMIT,
+                    null).ranked();
+            return ranked.size() > 1 ? ranked : null;
+        });
+
+        String listed = probe.search("Spool");
+
+        for (var hit : bar) {
+            assertThat(listed).contains(ChatTools.ref(new PageKey(hit.sourceId(), hit.pageId())));
+        }
+    }
+
+    @Test
     void onlyTheOpenPageIsReleasedASearchReleasesNothingAndSendsNoPageText() throws Exception {
         PageKey open = page("datenhaus");
         // Der Suchindex entsteht nach dem Sync im Hintergrund: erst warten, bis die Suche Treffer liefert.
