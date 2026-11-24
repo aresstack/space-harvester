@@ -9,7 +9,7 @@ import java.awt.RenderingHints;
 import javax.swing.Icon;
 
 /** Gezeichnete Symbole des Arbeitsbereichs Dateien (keine Schriftzeichen, siehe Glyph). */
-final class FilesIcons {
+public final class FilesIcons {
 
     private static final Color FOLDER_FILL = new Color(0xFFE08A);
     private static final Color FOLDER_EDGE = new Color(0xC99A00);
@@ -82,8 +82,8 @@ final class FilesIcons {
         };
     }
 
-    /** Ordner mit Plus: „Neuer Ordner“. */
-    static StrokeIcon newFolder() {
+    /** Ordner mit Plus: „Neuer Ordner“ (Dateien im Deck und Favoriten-Ordner in der Seitenleiste). */
+    public static StrokeIcon newFolder() {
         return new StrokeIcon() {
             @Override
             protected void paint(Graphics2D g2) {

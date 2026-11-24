@@ -714,9 +714,12 @@ public final class Explorer {
         // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
         note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
         favoritesOnly.addActionListener(e -> showOnlyFavorites(!onlyFavorites));
+        // „Neuer Ordner“ nur, solange die Favoriten gezeigt werden (Angelo 24.11.2026: unten in der Fußleiste).
+        favorites.newFolderButton().setVisible(false);
         // Die gemeinsame Fußleiste aller Seitenleisten, so hoch wie die Leiste mit der Lupe daneben.
         root.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
-                com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, showCurrent), note,
+                com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, showCurrent,
+                        favorites.newFolderButton()), note,
                 favoritesOnly), BorderLayout.SOUTH);
         context.onChange(ignored -> refreshSources());
         refreshSources();
@@ -2178,6 +2181,7 @@ public final class Explorer {
         favoritesOnly.setIcon(only ? Glyph.STAR_FILLED : Glyph.STAR);
         favoritesOnly.setToolTipText(only ? ALL_NODES : ONLY_FAVORITES);
         favoritesOnly.getAccessibleContext().setAccessibleName(only ? ALL_NODES : ONLY_FAVORITES);
+        favorites.newFolderButton().setVisible(only);
         favoritesChanged();
         if (filter.getText().trim().isEmpty()) {
             cards.show(deck, only ? FAVORITES : TREE);

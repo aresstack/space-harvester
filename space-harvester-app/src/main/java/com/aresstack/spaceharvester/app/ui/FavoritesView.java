@@ -12,7 +12,6 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Component;
-import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
@@ -28,7 +27,7 @@ import java.util.function.Supplier;
  * Die Favoritenansicht des Explorers (ADR 0034): der Ordnerbaum der Favoriten, den der Stern-Umschalter unten rechts an
  * Stelle des Seitenbaums zeigt. Darstellung und Bedienung über das generische {@link FolderTree} (Ziehen mit
  * Einfügemarke, „Verschieben nach …“, F2, Entf, Rückfrage nur bei Ordnern mit Inhalt); jede Änderung geht an
- * {@link Favorites}, der Baum baut sich auf dessen Meldung neu auf. „Neuer Ordner“ als Symbolknopf oben rechts.
+ * {@link Favorites}, der Baum baut sich auf dessen Meldung neu auf. „Neuer Ordner“ steht als Symbolknopf unten in der Fußleiste des Explorers ({@link #newFolderButton()}).
  *
  * <p>Ein Klick oder Enter auf einen Favoriten öffnet ihn wie bisher; auf einen Ordner wählt ihn als Sammlung (die
  * Mitte und rechts folgen, {@link #onFolder}). Ein neuer Stern landet im gewählten Ordner ({@link Favorites#target}),
@@ -44,7 +43,8 @@ final class FavoritesView {
     /** Zeigt eine ganze Quelle im Baum; Mitte und rechts folgen der Auswahl. */
     private final Consumer<String> revealSource;
     private final FolderTree<Favorites.Entry> tree;
-    private final IconButton newFolder = new IconButton(Glyph.PLUS, NEW_FOLDER_TIP);
+    private final IconButton newFolder = new IconButton(
+            com.aresstack.spaceharvester.app.ui.deck.FilesIcons.newFolder(), NEW_FOLDER_TIP);
     private final JPanel component = new JPanel(new BorderLayout());
     /** Ordner gewählt: ID und Name; die Auswahl als Sammlung baut der Empfänger (ADR 0034, eine Auflösung). */
     private BiConsumer<String, String> onFolder = (id, name) -> { };
@@ -147,11 +147,7 @@ final class FavoritesView {
             }
         });
         newFolder.addActionListener(e -> tree.createFolder());
-        JPanel bar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
-        bar.setOpaque(false);
-        bar.add(newFolder);
         component.setOpaque(false);
-        component.add(bar, BorderLayout.NORTH);
         JScrollPane scroll = Comic.scroll(view);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         component.add(scroll, BorderLayout.CENTER);
@@ -159,6 +155,11 @@ final class FavoritesView {
 
     JComponent component() {
         return component;
+    }
+
+    /** „Neuer Ordner“ für die Fußleiste des Explorers (Angelo 24.11.: unten in der Leiste, keine eigene Leiste oben). */
+    IconButton newFolderButton() {
+        return newFolder;
     }
 
     /** Ordner gewählt: bekommt ID und Namen, um die Sammlung zu wählen (ADR 0034 Abschnitt 3). */
