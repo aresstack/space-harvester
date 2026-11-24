@@ -63,6 +63,28 @@ class ConnectionChecksTest {
     }
 
     @Test
+    void overlappingChecksShareOneBracketAndALaterCheckGetsItsOwn() throws Exception {
+        // Angelo 24.11.2026: die Prüfung mehrerer Quellen stand ohne Klammer da.
+        ConnectionChecks.Check wiki = checks.begin("wiki").orElseThrow();
+        ConnectionChecks.Check tickets = checks.begin("tickets").orElseThrow();
+        eventually(() -> background.parts(ConnectionChecks.KIND).size() == 2);
+        assertThat(background.parts(ConnectionChecks.KIND)).extracting(p -> p.parameter(BackgroundJobs.GROUP))
+                .containsOnly(background.parts(ConnectionChecks.KIND).getFirst().parameter(BackgroundJobs.GROUP));
+
+        wiki.finish(null);
+        tickets.finish(null);
+        eventually(() -> background.parts(ConnectionChecks.KIND).stream()
+                .allMatch(p -> p.state() == JobState.COMPLETED));
+        String first = background.parts(ConnectionChecks.KIND).getFirst().parameter(BackgroundJobs.GROUP);
+
+        ConnectionChecks.Check later = checks.begin("wiki").orElseThrow();
+        eventually(() -> background.parts(ConnectionChecks.KIND).size() == 3);
+        assertThat(background.parts(ConnectionChecks.KIND)).extracting(p -> p.parameter(BackgroundJobs.GROUP))
+                .filteredOn(group -> !group.equals(first)).hasSize(1);
+        later.finish(null);
+    }
+
+    @Test
     void aFailedCheckEndsRedWithItsReason() throws Exception {
         ConnectionChecks.Check check = checks.begin("wiki").orElseThrow();
         eventually(() -> part().map(p -> p.state() == JobState.RUNNING).orElse(false));
