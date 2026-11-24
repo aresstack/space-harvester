@@ -46,7 +46,10 @@ jobs:
         run: |
           set -euo pipefail
           export GRADLE_USER_HOME="$GITHUB_WORKSPACE/.chatgpt/gradle-home"
-          xvfb-run -a bash "$GITHUB_WORKSPACE/gradlew" --no-daemon --console=plain --refresh-dependencies clean build
+          # Ohne eigene Heap-Angabe bekommt der Gradle-Prozess nur 512 MB und bricht im vollen Bau mit
+          # "garbage collector is thrashing" ab (main 485767f und 5b3352c, 24.11.).
+          xvfb-run -a bash "$GITHUB_WORKSPACE/gradlew" --no-daemon --console=plain --refresh-dependencies \
+            "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError" clean build
 
       - name: Clean transient Gradle state
         shell: bash
