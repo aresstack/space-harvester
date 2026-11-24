@@ -568,8 +568,11 @@ public final class AppSettingsLoader {
         // K4: terms.glossary.automatic, Standard aus, wie beim Dienst.
         boolean glossaryAutomatic = flag(get(map(get(terms, "glossary")), "automatic"), false,
                 "space-harvester." + TermSettings.GLOSSARY_AUTOMATIC, problems);
+        // Geprüfte Glossare: terms.glossary.approved, Standard an, wie beim Dienst.
+        boolean glossaryApproved = flag(get(map(get(terms, "glossary")), "approved"), true,
+                "space-harvester." + TermSettings.GLOSSARY_APPROVED, problems);
         return terms(terms, problems).withGlossaryRules(glossaryRules(map(get(glossary, "rules")), problems))
-                .withGlossaryAutomatic(glossaryAutomatic);
+                .withGlossaryAutomatic(glossaryAutomatic).withGlossaryApproved(glossaryApproved);
     }
 
     /**
@@ -1216,7 +1219,8 @@ public final class AppSettingsLoader {
                 text(get(ai, "vision-max-tokens"), problems), text(get(ai, "image-model"), problems),
                 text(get(ai, "image-max-tokens"), problems), text(get(ai, "vision-thinking"), problems),
                 text(get(ai, "image-thinking"), problems), use(ai, "summary", problems),
-                use(ai, "summary-plan", problems), use(ai, "podcast", problems), use(ai, "image-plan", problems));
+                use(ai, "summary-plan", problems), use(ai, "podcast", problems), use(ai, "image-plan", problems),
+                use(ai, "deadline", problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1228,7 +1232,8 @@ public final class AppSettingsLoader {
                 draft.context(), draft.loadDuration(), draft.retryCount(),
                 draft.pollDuration(), draft.thinking(), draft.parallelCount(), draft.visionTokens(),
                 draft.imageModel(), draft.imageTokens(), draft.visionLevel(), draft.imageLevel(),
-                draft.summary().use(), draft.summaryPlan().use(), draft.podcast().use(), draft.imagePlan().use());
+                draft.summary().use(), draft.summaryPlan().use(), draft.podcast().use(), draft.imagePlan().use(),
+                draft.deadline().use());
     }
 
     /** Eine eigene Modellzeile ({@code <prefix>-model}, {@code -max-tokens}, {@code -thinking}) als Eingaben. */

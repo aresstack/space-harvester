@@ -1,6 +1,6 @@
 # ADR 0035: Fristen-Fachlogik nach Grundsatz und Ausnahme
 
-- Status: **Angenommen** (23.11.2026), vom Architekten abgenommen. Vorgaben Angelos bindend; O1 offen.
+- Status: **Angenommen** (23.11.2026), vom Architekten abgenommen. Vorgaben Angelos bindend.
 - Bezüge: [ADR 0012](0012-core-als-gemeinsame-bibliothek.md) §4 (Abgrenzung), [ADR 0026](0026-anhaenge-und-enthaltene-dateien-als-dokumente.md)
   (Dokumenttext), ADR 0027 (Beobachter statt Abfragen), ADR 0028 (KI-Freigabe je Seite),
   [ADR 0032](0032-fachlogik-aus-aussagen.md) (Analyseschritte, `StepModel`). Ergebnismodell: Paket
@@ -137,8 +137,13 @@ Benutzerdaten (Wissensquelle oder Core-Speicher), nie im Repo oder in der YAML.
 
 Belegt: § 60 Abs. 1 Satz 2 BHO (https://www.gesetze-im-internet.de/bho/__60.html, abgerufen 23.11.2026): „Ein
 Vorschuß ist bis zum Ende des zweiten auf seine Entstehung folgenden Haushaltsjahres endgültig zu buchen; Ausnahmen
-bedürfen der Einwilligung des Bundesministeriums der Finanzen.“ Nr. 6 und Nr. 8 VO/VW-RiB nur mit Wortlaut aus
-öffentlicher Quelle (O1), sonst Benutzerdaten.
+bedürfen der Einwilligung des Bundesministeriums der Finanzen.“ Belegt ebenso Nr. 6 und Nr. 8 VO/VW-RiB (Stand
+04/21, GMBl 2021 Nr. 57, S. 1246; https://www.verwaltungsvorschriften-im-internet.de/bsvwvbund_01092021_IIE4H10052010006003.htm
+und https://zrb.bund.de/vorschriften/verwaltungsvorschriften-zur-bho; von Angelo am 23.11.2026 geschickt, Wortlaut
+geprüft). Umgesetzt in `PublicDeadlineRules`: Grundsatz Nr. 6 bzw. Nr. 8 Satz 1; Ausnahmen Sockelbeträge,
+durchlaufende Gelder, Sicherheiten, beschlagnahmte Gelder, unanbringliche Auszahlungen, Einwilligung/Zulassung des
+BMF (nur mit nachgewiesener Genehmigung). Für § 60 BHO ist kein Datum der Fassung belegt; die Wirksamkeit bleibt dort
+offen.
 
 ### 8. Abgrenzung
 Im Core erlaubt (README, ADR 0012 §4, ADR 0032): Faktenextraktion, der deterministische `DeadlineRuleEvaluator`,
@@ -169,7 +174,7 @@ Pyloros mit dem erfundenen Erlass.
 | UI | Extraktionsansicht (Strang Extraktionsansicht, nur App), gegen Beispieldaten | nach #1279 |
 
 ## Offene Punkte
-- O1: Offizielle Quelle für den Wortlaut von Nr. 6/8 VO/VW-RiB (bei Angelo angefragt).
+- O1: erledigt — Wortlaut Nr. 6/8 VO/VW-RiB belegt (23.11.2026).
 - O2: entschieden — Abschluss nur durch ausdrückliche Bestätigung des Benutzers.
 - O3: entschieden — frühere Erlasse in denselben Wissensquellen, über Metadaten.
 - O4: entschieden — neues, abhängigkeitsfreies Modul `nlp-lexicon` mit den Wortlisten für Modalität und Verneinung;

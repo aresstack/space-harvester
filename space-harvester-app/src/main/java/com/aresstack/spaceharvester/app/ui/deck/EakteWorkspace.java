@@ -57,6 +57,8 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
     private final JPanel center = new JPanel(cards);
     private final CardLayout toolCards = new CardLayout();
     private final JPanel footTools = new JPanel(toolCards);
+    /** Titelleiste: der Umschalter „Vorschau | Extraktion“ der gewählten Sitzung. */
+    private final JPanel headTools = new JPanel(new BorderLayout());
     private final EakteConnectForm form;
     /** Sitzungen in der Anmeldung mit einem KeePass-Eintrag, bis sie angemeldet sind oder scheitern. */
     private final Map<EakteSession, String> loggingIn = new HashMap<>();
@@ -65,6 +67,9 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
     private boolean directPending;
     private boolean autoTried;
     private EakteSession selected;
+    /** Dokumentanalyse für die Extraktion jedes Browsers (ADR 0035); ohne Analysedienst nichts. */
+    private com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider analyses =
+            com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider.NONE;
 
     /**
      * @param accounts Zugänge aus KeePass (dieselbe Kopplung wie die anderen Bereiche, aber ein eigener Eintrag)
@@ -89,6 +94,7 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         JPanel none = new JPanel();
         none.setOpaque(false);
         footTools.add(none, FORM);
+        headTools.setOpaque(false);
         add(DeckBars.head(pills, null), BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
         sessions.onOpened(session -> SwingUtilities.invokeLater(() -> added(session)));
@@ -103,6 +109,11 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
                 }
             }
         });
+    }
+
+    /** Der Umschalter „Vorschau | Extraktion“ der gewählten Sitzung für die Titelleiste (nur im E-Akte-Bereich). */
+    public JComponent tools() {
+        return headTools;
     }
 
     /** Ob die E-Akte den Proxy der App nimmt (Erweitert im Formular; Vorgabe ja). */
@@ -148,6 +159,21 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         });
     }
 
+    /**
+     * Die Dokumentanalyse für die Extraktion aller vorhandenen und künftigen Browser (ADR 0035); {@code null} heißt
+     * keine. Auf dem EDT.
+     */
+    public void analyses(com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider provider) {
+        analyses = provider == null
+                ? com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider.NONE : provider;
+        browserOf.values().forEach(browser -> browser.extraction().provider(analyses));
+    }
+
+    /** Die E-Akte als Ablage der Dokumentanalyse: liest über die angemeldeten Sitzungen. */
+    public com.aresstack.spaceharvester.application.extraction.DocumentContent content() {
+        return new EakteDocumentContent(sessions);
+    }
+
     private void added(EakteSession session) {
         if (pillOf.containsKey(session)) {
             return;
@@ -168,6 +194,9 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
         EakteBrowser browser = new EakteBrowser(session, previews, previewStore);
+        if (analyses != com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider.NONE) {
+            browser.extraction().provider(analyses);
+        }
         browser.onStatus(note -> {
             if (selected == session) {
                 statusInfo.show(note);
@@ -231,6 +260,12 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         cards.show(center, session == null ? FORM : session.id());
         toolCards.show(footTools, session == null ? FORM : session.id());
         EakteBrowser browser = session == null ? null : browserOf.get(session);
+        headTools.removeAll();
+        if (browser != null) {
+            headTools.add(browser.viewToggle(), BorderLayout.CENTER);
+        }
+        headTools.revalidate();
+        headTools.repaint();
         statusInfo.show(browser == null ? StatusNote.plain(" ") : session.failure()
                 .map(reason -> new StatusNote(reason, StatusNote.Tone.ERROR, null, null))
                 .orElse(browser.status()));

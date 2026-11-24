@@ -16,6 +16,8 @@ java {
 }
 
 dependencies {
+    // Wortlisten für Verneinung und Modalverben (ADR 0035, O4)
+    implementation project(':nlp-lexicon')
     // MaltParser 1.9.2 bringt Log4j 1.2.16 mit (CVE-2019-17571, CVE-2021-4104, CVE-2022-23302/23305/23307);
     // reload4j ist der gepflegte, API-gleiche Ersatz im selben Paket org.apache.log4j.
     implementation(libs.maltparser) {

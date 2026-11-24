@@ -107,6 +107,13 @@ public final class ChatStepModel implements StepModel {
         return current.forChat(step, limit, think);
     }
 
+    /** Wie {@link ChatUpdateSummaryModel#retries()}: {@code ai.retries}, mindestens 2. */
+    @Override
+    public int retries() {
+        AiServiceSettings current = settings.get();
+        return current == null ? 2 : Math.max(2, current.retries());
+    }
+
     /** Verfahren, Modell und ein Fingerabdruck der Dienstadresse; nie die Adresse selbst. */
     @Override
     public String version() {

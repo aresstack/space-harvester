@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.application.enrichment.statements;
 
+import com.aresstack.spaceharvester.application.text.GroundedText;
+
 /**
  * Unter welchen Umständen eine Aussage gilt, jeder Teil im eigenen Satz verankert: eine Verneinung („nicht“), eine
  * Modalität („kann“, „muss“) oder eine Bedingung („wenn der Betrag … übersteigt“). Eine Aussage mit Kontext ist kein

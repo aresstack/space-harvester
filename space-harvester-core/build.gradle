@@ -47,6 +47,8 @@ dependencies {
     // Satzmodell (UD German GSD, rund 100 KB), dieselben Versionen wie :nlp-parser; Tokens, Wortarten und Parser nicht
     implementation libs.opennlp.tools
     runtimeOnly libs.opennlp.models.sentdetect.de
+    // Verneinung und Modalverben für Fristsätze der Regex-Stufe (ADR 0035, O4), dieselben Listen wie :nlp-parser
+    implementation project(':nlp-lexicon')
     // Word-Ausgabe: Exporter des Enterprise AI Client mit Inhaltsverzeichnis (Kopie, document-export/UPSTREAM.md)
     implementation project(':document-export')
 

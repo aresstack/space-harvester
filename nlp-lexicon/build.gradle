@@ -1,0 +1,37 @@
+// Gemeinsame deutsche Wortlisten ohne Abhängigkeiten (ADR 0035, O4): Verneinung und Modalverben. Der Parser
+// (:nlp-parser) und der Core nutzen dieselben Listen, ohne voneinander abzuhängen.
+plugins {
+    id 'java-library'
+}
+
+description = 'Deutsche Wortlisten (Verneinung, Modalverben) ohne Abhängigkeiten (ADR 0035).'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    testImplementation platform(libs.junit.bom)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// Eigene Publikation, weil der Core davon abhängt und seine POM keine unveröffentlichte Projektabhängigkeit nennen
+// darf (docs/MODULES.md).
+ext.publishedArtifactId = 'space-harvester-nlp-lexicon'
+apply from: rootProject.file('gradle/publishing.gradle')

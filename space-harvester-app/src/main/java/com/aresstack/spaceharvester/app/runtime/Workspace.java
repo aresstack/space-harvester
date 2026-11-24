@@ -553,6 +553,14 @@ public final class Workspace {
     }
 
     /**
+     * Die Dokumentanalyse der Fristen-Fachlogik (ADR 0035): Ergebnisse je Dokumentstand, Analysieren als Auftrag; die
+     * Ablage (E-Akte) schließt das Command Deck an.
+     */
+    public com.aresstack.spaceharvester.application.deadlines.DeadlineAnalysisService documentAnalyses() {
+        return harvester.documentAnalyses();
+    }
+
+    /**
      * Lese-Ansicht einer Seite ({@code …/pages/{pageId}/reading-view}, #176): gerendertes HTML der Quelle mit den
      * Bildern, die sie zeigt; Rechte und Version prüft der Core.
      */

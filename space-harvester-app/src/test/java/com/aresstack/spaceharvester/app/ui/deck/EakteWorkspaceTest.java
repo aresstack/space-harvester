@@ -157,6 +157,18 @@ class EakteWorkspaceTest {
 
         SwingUtilities.invokeAndWait(browser::previewSelected);
         await(() -> onEdt(() -> browser.shownPreview() != null), "Vorschau");
+        // Umschalter „Vorschau | Extraktion“ in der Titelleiste; Extraktion ohne Analysedienst: nicht analysiert
+        assertThat(onEdt(() -> browser.viewToggle().isVisible())).isTrue();
+        assertThat(onEdt(() -> workspace.tools().getComponent(0) == browser.viewToggle())).isTrue();
+        String href = onEdt(() -> browser.entries().get(0).href());
+        assertThat(onEdt(() -> browser.extraction().shown()))
+                .isEqualTo(new com.aresstack.spaceharvester.application.extraction.DocumentRef("eakte", href,
+                        "\"4711-1\""));
+        SwingUtilities.invokeAndWait(() -> ((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle)
+                browser.viewToggle()).select(EakteBrowser.EXTRACTION));
+        await(() -> onEdt(() -> browser.status().text().equals("Extraktion: Noch nicht analysiert")),
+                "Extraktion nicht analysiert");
+        assertThat(onEdt(() -> browser.extraction().actions().isVisible())).isTrue();
         Path temp = onEdt(browser::tempFolder);
         assertThat(temp).isNotNull();
 
