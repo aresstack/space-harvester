@@ -76,6 +76,80 @@ class FtpWorkspaceTest {
     }
 
     @Test
+    void chatFollowsActiveFtpViewAndNavigatesVisibleJesResults() throws Exception {
+        try (FakeMvsFtpHost host = FakeMvsFtpHost.sample()) {
+            ServerAccounts accounts = keePass(host);
+            List<ServerAccount> entries = accounts.accounts();
+            SwingUtilities.invokeAndWait(() -> {
+                deck = new CommandDeck(accounts);
+                deck.show(DeckArea.FTP);
+                deck.ftp().toggle().select(FtpSessionView.DATASETS);
+                FtpConnectForm form = deck.ftp().form();
+                form.show(entries);
+                form.server.setSelectedIndex(1);
+                form.port.setText(String.valueOf(host.port()));
+                form.timeout.setText("10");
+                form.submit();
+            });
+            FtpSession session = deck.ftpSessions().all().get(0);
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            waitFor(() -> session.state() == ConnectionState.CONNECTED, until);
+            FtpSessionView view = onEdt(() -> deck.ftp().view(session));
+            waitFor(() -> onEdt(() -> view.datasets().shown().size() == 3), until);
+            SwingUtilities.invokeAndWait(() -> view.datasets().openRow(1));
+            waitFor(() -> onEdt(() -> view.datasets().current().equals("'KKR.JCL'")
+                    && view.datasets().shown().size() == 2), until);
+            SwingUtilities.invokeAndWait(() -> view.datasets().openRow(0));
+            waitFor(() -> onEdt(() -> view.datasets().documentText().startsWith("//BUILD")), until);
+            var datasets = onEdt(deck::chatScope);
+            assertThat(datasets.area()).endsWith("Datasets");
+            assertThat(datasets.system()).contains("//BUILD");
+            assertThat(datasets.tools().definitions()).extracting(com.aresstack.spaceharvester.ai.AiChat.Tool::name)
+                    .contains("dataset_lesen").doesNotContain("jobs_auflisten", "jobs_suchen", "spool_lesen");
+            assertThat(tool(datasets, "jobs_auflisten", "{}")).contains("Abgelehnt");
+
+            SwingUtilities.invokeAndWait(() -> deck.ftp().toggle().select(FtpSessionView.JOBS));
+            waitFor(() -> onEdt(() -> view.jobs().shownJobs().size() == 3), until);
+            var jes = onEdt(deck::chatScope);
+            assertThat(jes.area()).endsWith("JES-Jobs");
+            assertThat(jes.system()).contains("Aktive FTP-Unteransicht: JES-Jobs", "JOB04700", "JOB04701")
+                    .doesNotContain("//BUILD    JOB");
+            assertThat(jes.tools().definitions()).extracting(com.aresstack.spaceharvester.ai.AiChat.Tool::name)
+                    .contains("jobs_suchen", "job_auswaehlen", "spool_auswaehlen", "spool_lesen")
+                    .doesNotContain("dataset_lesen");
+            assertThat(tool(datasets, "dataset_lesen", "{\"pfad\":\"KKR.JCL(BUILD)\"}")).contains("anderen Bereich");
+            assertThat(tool(jes, "jobs_suchen", "{\"besitzer\":\"KKR\",\"jobname\":\"BUILD\"}"))
+                    .contains("JOB04700").doesNotContain("JOB04701");
+            assertThat(onEdt(view.jobs()::filter).jobName()).isEqualTo("BUILD");
+            assertThat(onEdt(view.jobs()::shownJobs)).extracting(JesJob::jobId).containsExactly("JOB04700");
+            assertThat(tool(jes, "job_auswaehlen", "{\"job_id\":\"JOB04701\"}")).contains("nicht in der Trefferliste");
+            assertThat(tool(jes, "job_auswaehlen", "{\"job_id\":\"JOB04700\"}"))
+                    .contains("JOB04700", "JESJCL", "SYSPRINT");
+            int jclId = onEdt(() -> view.jobs().shownSpool().stream()
+                    .filter(file -> file.ddName().equals("JESJCL")).findFirst().orElseThrow().id());
+            assertThat(tool(jes, "spool_auswaehlen", "{\"job_id\":\"JOB04700\",\"spool_id\":" + jclId + "}"))
+                    .contains("JOB04700", "JESJCL", "STEP1");
+            assertThat(onEdt(view.jobs()::spoolTextValue)).contains("STEP1");
+            var selected = onEdt(deck::chatScope);
+            assertThat(selected.system()).contains("Ausgewählter Job: JOB04700", "Ausgewählter Spool:", "JESJCL", "STEP1");
+            assertThat(tool(selected, "spool_lesen", "{}")).contains("STEP1", "JOB04700");
+
+            SwingUtilities.invokeAndWait(() -> deck.ftp().toggle().select(FtpSessionView.DATASETS));
+            assertThat(tool(jes, "jobs_suchen", "{\"jobname\":\"*\"}")).contains("anderen Bereich");
+            assertThat(onEdt(view.jobs()::filter).jobName()).isEqualTo("BUILD");
+            assertThat(onEdt(deck::chatScope).system()).doesNotContain("Aktive FTP-Unteransicht: JES-Jobs");
+            SwingUtilities.invokeAndWait(() -> deck.ftp().toggle().select(FtpSessionView.JOBS));
+            assertThat(tool(jes, "jobs_auflisten", "{}")).contains("anderen Bereich");
+        }
+    }
+
+    private static String tool(com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope scope,
+                               String name, String args) {
+        return scope.tools().run(new com.aresstack.spaceharvester.ai.AiChat.ToolCall("test", name, args));
+    }
+
+
+    @Test
     void theAdvancedSettingsOfTheConnectionGoIntoTheProfile() throws Exception {
         ServerAccount account = new ServerAccount("Raumhafen", "sternwarte.example", "KKR");
         ServerAccounts keePass = new ServerAccounts() {
