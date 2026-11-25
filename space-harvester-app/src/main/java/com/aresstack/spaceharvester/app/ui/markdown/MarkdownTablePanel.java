@@ -42,7 +42,7 @@ import java.util.List;
 
 /**
  * Rendert eine Markdown-Tabelle als nicht editierbare Swing-Tabelle (aus askai-java8 {@code MarkdownTablePanel}); volle
- * Höhe bis zur Kappung, darüber vertikal scrollbar, ein nötiger horizontaler Balken wird eingerechnet.
+ * Höhe ohne vertikale Kappung; ein nötiger horizontaler Balken wird eingerechnet.
  *
  * <p>Jede Zelle wird wie ein Absatz über den {@link InlineMarkdownRenderer} gesetzt: Links, Fett, Kursiv, Code und das
  * Inline-HTML, das Modelle in Zellen schreiben ({@code <ul><li>}, {@code <br>}), erscheinen formatiert statt als
@@ -64,7 +64,7 @@ final class MarkdownTablePanel extends CappedScrollPane implements SelectableTex
 
     MarkdownTablePanel(TableBlock tableBlock, MarkdownTheme theme, InlineMarkdownRenderer inlineRenderer,
                        DesktopLinkOpener linkOpener) {
-        super(new JTable(createModel(tableBlock, theme, inlineRenderer)), 400, 4, theme);
+        super(new JTable(createModel(tableBlock, theme, inlineRenderer)), 400, 4, theme, HeightPolicy.FULL_CONTENT);
         this.linkOpener = linkOpener;
         final JTable table = (JTable) getViewport().getView();
         table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);

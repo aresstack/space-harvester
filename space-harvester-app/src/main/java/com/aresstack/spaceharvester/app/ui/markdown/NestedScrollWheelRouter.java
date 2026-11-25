@@ -48,10 +48,13 @@ final class NestedScrollWheelRouter implements MouseWheelListener {
         forwardToParent(event);
     }
 
-    /** Pick the horizontal bar for shift-wheel or when no vertical bar is shown, as Swing's own handler does. */
+    /** Route ordinary wheel input through full-height blocks to the surrounding transcript. */
     private JScrollBar barFor(MouseWheelEvent event) {
         JScrollBar vertical = scrollPane.getVerticalScrollBar();
         boolean verticalUsable = vertical != null && vertical.isVisible();
+        if (scrollPane.getVerticalScrollBarPolicy() == JScrollPane.VERTICAL_SCROLLBAR_NEVER && !event.isShiftDown()) {
+            return null;
+        }
         if (event.isShiftDown() || !verticalUsable) {
             JScrollBar horizontal = scrollPane.getHorizontalScrollBar();
             if (horizontal != null && horizontal.isVisible()) {

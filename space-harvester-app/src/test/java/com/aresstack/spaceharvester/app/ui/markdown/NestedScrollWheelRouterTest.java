@@ -109,6 +109,34 @@ public class NestedScrollWheelRouterTest {
         SwingUtilities.invokeAndWait(body);
     }
 
+    @Test
+    public void fullHeightWideBlockScrollsChatNormallyAndHorizontallyWithShift() throws Exception {
+        onEdt(() -> {
+            JTextArea wide = new JTextArea("x".repeat(400));
+            CappedScrollPane inner = new CappedScrollPane(wide, 300, 8, THEME,
+                    CappedScrollPane.HeightPolicy.FULL_CONTENT);
+            JPanel column = new JPanel(null);
+            column.setPreferredSize(new Dimension(400, 3000));
+            inner.setBounds(0, 0, 300, inner.preferredHeightForWidth(300));
+            column.add(inner);
+            JScrollPane outer = new JScrollPane(column, ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS,
+                    ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+            outer.setSize(420, 500);
+            outer.doLayout();
+            outer.getViewport().doLayout();
+            inner.doLayout();
+            inner.getViewport().doLayout();
+            assertTrue(inner.getHorizontalScrollBar().isVisible());
+            wheel(inner, 1.0);
+            assertTrue(outer.getVerticalScrollBar().getValue() > 0);
+            assertEquals(0, inner.getHorizontalScrollBar().getValue());
+            int position = outer.getVerticalScrollBar().getValue();
+            inner.dispatchEvent(event(inner, 1.0, InputEvent.SHIFT_DOWN_MASK));
+            assertTrue(inner.getHorizontalScrollBar().getValue() > 0);
+            assertEquals(position, outer.getVerticalScrollBar().getValue());
+        });
+    }
+
     private static void wheel(CappedScrollPane target, double rotation) {
         target.dispatchEvent(event(target, rotation, 0));
     }

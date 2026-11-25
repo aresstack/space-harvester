@@ -10,8 +10,8 @@ import java.awt.Dimension;
 import java.awt.Insets;
 
 /**
- * Ein Scrollbereich für Codeblöcke und Tabellen in Antworten: zeigt den Inhalt in voller Höhe bis zur Kappung von
- * {@value #MAX_CONTENT_HEIGHT} px und scrollt darüber vertikal. Braucht der Inhalt bei der gegebenen Breite einen
+ * Measure Markdown blocks at their natural height. Cap code blocks at
+ * {@value #MAX_CONTENT_HEIGHT} px; display tables at their full content height. Braucht der Inhalt bei der gegebenen Breite einen
  * horizontalen Scrollbalken, wird dessen Höhe eingerechnet, damit er nicht den Ausschnitt verkleinert und einem kurzen
  * Block zusätzlich einen vertikalen Scrollbalken beschert. Die Höhe hängt damit von der Breite ab
  * ({@link WidthAwareHeight}), was {@link MarkdownHeights} beim Layout der Blase berücksichtigt.
@@ -26,6 +26,11 @@ class CappedScrollPane extends JScrollPane implements WidthAwareHeight {
 
     private final int preferredWidth;
     private final int extraHeight;
+    private final HeightPolicy heightPolicy;
+
+    enum HeightPolicy {
+        CAPPED, FULL_CONTENT
+    }
 
     /**
      * @param view           der Inhalt (Textfläche oder Tabelle), der seine natürliche Größe meldet
@@ -34,7 +39,13 @@ class CappedScrollPane extends JScrollPane implements WidthAwareHeight {
      * @param theme          liefert die Daumenfarben der Comic-Balken
      */
     CappedScrollPane(Component view, int preferredWidth, int extraHeight, MarkdownTheme theme) {
+        this(view, preferredWidth, extraHeight, theme, HeightPolicy.CAPPED);
+    }
+
+    CappedScrollPane(Component view, int preferredWidth, int extraHeight, MarkdownTheme theme,
+                     HeightPolicy heightPolicy) {
         super(view);
+        this.heightPolicy = java.util.Objects.requireNonNull(heightPolicy, "heightPolicy");
         this.preferredWidth = preferredWidth;
         this.extraHeight = extraHeight;
         ComicScrollBarUI.install(getVerticalScrollBar(), theme.getMutedForeground(), theme.getForeground());
@@ -42,14 +53,15 @@ class CappedScrollPane extends JScrollPane implements WidthAwareHeight {
         setOpaque(false);
         setHorizontalScrollBarPolicy(HORIZONTAL_SCROLLBAR_AS_NEEDED);
         // Ab der Kappung scrollt der Inhalt vertikal, statt die restlichen Zeilen abzuschneiden.
-        setVerticalScrollBarPolicy(VERTICAL_SCROLLBAR_AS_NEEDED);
+        setVerticalScrollBarPolicy(heightPolicy == HeightPolicy.FULL_CONTENT
+                ? VERTICAL_SCROLLBAR_NEVER : VERTICAL_SCROLLBAR_AS_NEEDED);
         // Hand the wheel to the chat once this block has nothing left to scroll in that direction.
         NestedScrollWheelRouter.install(this);
     }
 
     @Override
     public int preferredHeightForWidth(int width) {
-        int height = cappedContentHeight();
+        int height = contentHeight();
         if (needsHorizontalBar(width)) {
             height += getHorizontalScrollBar().getPreferredSize().height;
         }
@@ -65,7 +77,7 @@ class CappedScrollPane extends JScrollPane implements WidthAwareHeight {
         return new Dimension(preferredWidth, preferredHeightForWidth(width));
     }
 
-    /** Natürliche Höhe des Inhalts samt Spaltenkopf und Luft, gekappt; ohne Scrollbalken. */
+    /** Measure the content, header and padding before adding the horizontal scrollbar. */
     private int cappedContentHeight() {
         Component view = getViewport().getView();
         int content = view == null ? 0 : view.getPreferredSize().height;
@@ -74,7 +86,9 @@ class CappedScrollPane extends JScrollPane implements WidthAwareHeight {
             content += columnHeader.getView().getPreferredSize().height;
         }
         Insets insets = getInsets();
-        return Math.min(MAX_CONTENT_HEIGHT, content + extraHeight) + insets.top + insets.bottom;
+        int naturalHeight = content + extraHeight;
+        int height = heightPolicy == HeightPolicy.FULL_CONTENT ? naturalHeight : Math.min(MAX_CONTENT_HEIGHT, naturalHeight);
+        return height + insets.top + insets.bottom;
     }
 
     /** Braucht der Inhalt mehr Breite, als der Ausschnitt bei {@code width} hat, erscheint der horizontale Balken. */
