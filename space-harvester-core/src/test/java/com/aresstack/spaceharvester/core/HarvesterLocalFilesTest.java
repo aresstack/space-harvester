@@ -54,7 +54,7 @@ class HarvesterLocalFilesTest {
 
             assertThat(manager.apply(HarvesterConfiguration.DEFAULT.withLocalFiles(
                     new LocalFileSettings(false, List.of(elsewhere)))).activated()).isTrue();
-            assertThat(read(harvester, "a.md")).isEqualTo("Inhalt a.md");
+            assertThat(read(harvester, "a.md")).contains("Inhalt a.md");
 
             assertThat(manager.apply(HarvesterConfiguration.DEFAULT).activated()).isTrue();
             assertThatThrownBy(() -> read(harvester, "b.md")).isInstanceOf(SourceAccessException.class);
@@ -95,13 +95,13 @@ class HarvesterLocalFilesTest {
     }
 
     @Test
-    void referenceModeConnectsTheRealCacheReaderAndSearchPipeline() throws IOException {
+    void defaultStorageConnectsTheRealCacheReaderAndSearchPipeline() throws IOException {
         Path file = directory.resolve("notiz.txt");
         Files.writeString(file, "Beginning\n" + "ordinary paragraph\n\n".repeat(7000) + "Zielbegriff");
         String id = Base64.getUrlEncoder().withoutPadding().encodeToString(
                 "notiz.txt".getBytes(StandardCharsets.UTF_8));
         try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
-                .localOriginalReferences(true).build()) {
+                .build()) {
             PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "docs", id, false).snapshot();
             var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
                     .read(snapshot.payload()).orElseThrow();
@@ -118,7 +118,7 @@ class HarvesterLocalFilesTest {
             assertThat(Files.readString(file)).endsWith("Zielbegriff");
         }
         try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
-                .localOriginalReferences(true).build()) {
+                .build()) {
             PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "docs", id, false).snapshot();
             assertThat(com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
                     .read(snapshot.payload())).isPresent();
@@ -133,7 +133,7 @@ class HarvesterLocalFilesTest {
         String id = Base64.getUrlEncoder().withoutPadding().encodeToString(
                 "backup.bin".getBytes(StandardCharsets.UTF_8));
         try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
-                .localOriginalReferences(true).build()) {
+                .build()) {
             PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "docs", id, false).snapshot();
             var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
                     .read(snapshot.payload()).orElseThrow();
@@ -153,7 +153,7 @@ class HarvesterLocalFilesTest {
         var formats = List.of("json", "json-package", "markdown");
         var owner = Harvester.OWNER;
         try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
-                .localOriginalReferences(true).build()) {
+                .build()) {
             var request = com.aresstack.spaceharvester.application.export.ExportRequest.of("docs", "docs", owner,
                     formats);
             var normal = harvester.exports().start(request);
@@ -221,8 +221,8 @@ class HarvesterLocalFilesTest {
 
     private static String read(Harvester harvester, String name) {
         String id = Base64.getUrlEncoder().withoutPadding().encodeToString(name.getBytes(StandardCharsets.UTF_8));
-        return new String(harvester.pages().page(harvester.caller(), "docs", id, false).snapshot().payload().bytes(),
-                StandardCharsets.UTF_8);
+        PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "docs", id, false).snapshot();
+        return harvester.pageText(snapshot).map(PageText::text).orElseThrow().strip();
     }
 
     private SourceSettingsConfig docs() {
