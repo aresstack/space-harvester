@@ -469,6 +469,10 @@ class LocalFolderHierarchyTest {
             int calls = input.size();
             analyses.indexedLocal(current.get());
             assertThat(input).hasSize(calls);
+            var recomputed = analyses.recomputeLocal(current.get(), "section-test", null);
+            assertThat(recomputed.computed()).isEqualTo(calls);
+            assertThat(recomputed.failed()).isZero();
+            assertThat(input).hasSize(calls * 2);
             Files.writeString(directory.resolve("notiz.txt"), "New revision");
             current.set(snapshots.fetch("docs", id("notiz.txt")));
             analyses.indexedLocal(current.get());
