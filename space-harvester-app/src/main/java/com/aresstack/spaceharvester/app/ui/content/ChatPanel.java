@@ -2401,6 +2401,9 @@ public final class ChatPanel extends JPanel {
             }
             waiting = true;
             row.setVisible(false);
+            bubble.setSources(null);
+            links.standalone(true);
+            transcript.add(links);
             links.setVisible(false);
         }
 
@@ -2451,7 +2454,8 @@ public final class ChatPanel extends JPanel {
             transcript.remove(row);
             transcript.remove(links);
             transcript.add(row);
-            transcript.add(links);
+            links.standalone(false);
+            bubble.setSources(links);
             row.setVisible(true);
             links.setVisible(links.getComponentCount() > 0);
             transcript.revalidate();
@@ -2756,8 +2760,7 @@ public final class ChatPanel extends JPanel {
                                         String text, long at) {
         SpeechBubblePanel bubble = new SpeechBubblePanel(side, background, foreground, header, text);
         bubble.setMaximumBubbleWidth(640);
-        bubble.setHeaderTimestamp(at);
-        bubble.setHeaderTrailingAccessory(headerButtons(foreground, header, () -> text));
+        bubble.setHeaderTrailingAccessory(userMessageActions(foreground, header, () -> text, at));
         BubbleMessageRow row = new BubbleMessageRow(bubble, side);
         row.setAlignmentX(LEFT_ALIGNMENT);
         emptyNote.setVisible(false);
@@ -2782,36 +2785,48 @@ public final class ChatPanel extends JPanel {
         AssistantMarkdownMessage bubble = new AssistantMarkdownMessage(view, theme.getMutedForeground());
         bubble.setTimestamp(at);
         // Read the current Markdown when an action is invoked, including a streamed response.
-        bubble.setActions(headerButtons(theme.getMutedForeground(), ASSISTANT, view::getMarkdown));
+        bubble.setActions(copyActions(theme.getMutedForeground(), view::getMarkdown));
+        bubble.setQrAction(qrAction(theme.getMutedForeground(), ASSISTANT, view::getMarkdown));
         emptyNote.setVisible(false);
         transcript.add(bubble);
         answeringRow = bubble;
         answeringSources = new SourceLinks(this::openSource);
         answeringSources.setAlignmentX(LEFT_ALIGNMENT);
-        transcript.add(answeringSources);
+        bubble.setSources(answeringSources);
         transcript.revalidate();
         transcript.repaint();
         scrollDown();
         return bubble;
     }
 
-    /**
-     * Rechts in der Kopfzeile, direkt links vom Zeitstempel (Angelo 24.11.2026): der QR-Knopf (Nachricht als QR-Code,
-     * zum Lesen mit dem Diensttelefon), daneben der Kopierknopf des EAC ({@code ChatTranscriptPanel.copyButton}).
-     * Vordergrund mit Alpha 200; beide lesen den Text erst beim Klick.
-     */
-    private JComponent headerButtons(Color foreground, String name, java.util.function.Supplier<String> text) {
-        Color ink = new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 200);
-        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+    /** Keep the copy action, timestamp and QR action together at the right edge of a user message. */
+    private JComponent userMessageActions(Color foreground, String name, java.util.function.Supplier<String> text, long at) {
+        JPanel controls = copyActions(foreground, text);
+        com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp timestamp =
+                new com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp(messageInk(foreground));
+        timestamp.setTime(at);
+        controls.add(timestamp);
+        controls.add(qrAction(foreground, name, text));
+        return controls;
+    }
+
+    private JPanel copyActions(Color foreground, java.util.function.Supplier<String> text) {
+        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 3, 0));
         buttons.setOpaque(false);
-        buttons.add(new MessageQrButton(ink, () -> qrCodes.accept(name, text.get())));
-        MessageCopyButton copy = new MessageCopyButton(ink, text, value -> clipboard.accept(value));
+        MessageCopyButton copy = new MessageCopyButton(messageInk(foreground), text, value -> clipboard.accept(value));
         copy.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
         buttons.add(copy);
         return buttons;
     }
 
-    /** Was der QR-Knopf öffnet; für Tests ohne Fenster austauschbar. */
+    private MessageQrButton qrAction(Color foreground, String name, java.util.function.Supplier<String> text) {
+        return new MessageQrButton(messageInk(foreground), () -> qrCodes.accept(name, text.get()));
+    }
+
+    private static Color messageInk(Color foreground) {
+        return new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 200);
+    }
+
     private java.util.function.BiConsumer<String, String> qrCodes =
             (name, text) -> com.aresstack.spaceharvester.app.ui.QrCodesView.openText(this, name, text);
 
@@ -2857,7 +2872,7 @@ public final class ChatPanel extends JPanel {
 
     private void answerActions(AssistantMarkdownMessage message, ChatRecord snapshot, ChatRecord.Message answer) {
         Color ink = MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground()).getMutedForeground();
-        JPanel buttons = (JPanel) headerButtons(ink, ASSISTANT, message.view()::getMarkdown);
+        JPanel buttons = copyActions(ink, message.view()::getMarkdown);
         addExportButton(buttons, Glyph.EXPORT, "Antwort exportieren", snapshot, answer,
                 com.aresstack.spaceharvester.app.chat.ChatExport.Scope.ANSWER);
         addExportButton(buttons, Glyph.SOURCES_EXPORT, "Quellen exportieren", snapshot, answer,
@@ -3285,7 +3300,7 @@ public final class ChatPanel extends JPanel {
      * „[n] Titel“ in der Nummer, die die Antwort nennt. Ohne Quellen ist die Zeile nicht da; die Links brechen in
      * der schmalen Leiste um. Eine Quelle ohne Seite (ein Dateianhang) steht als Text da.
      */
-    static final class SourceLinks extends JPanel {
+    static final class SourceLinks extends JPanel implements com.aresstack.enterpriseai.ui.comic.bubble.WidthAwareHeight {
 
         static final int TITLE_LENGTH = 48;
 
@@ -3293,10 +3308,10 @@ public final class ChatPanel extends JPanel {
         private List<ChatRecord.Source> shown = List.of();
 
         SourceLinks(java.util.function.Consumer<ChatRecord.Source> open) {
-            super(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(FlowLayout.LEFT, 10, 2));
+            super(null);
             this.open = open;
             setOpaque(false);
-            setBorder(BorderFactory.createEmptyBorder(0, 14, 6, 14));
+            standalone(false);
             setVisible(false);
         }
 
@@ -3346,6 +3361,58 @@ public final class ChatPanel extends JPanel {
             return texts;
         }
 
+        void standalone(boolean value) {
+            setBorder(BorderFactory.createEmptyBorder(0, value ? 14 : 0, value ? 6 : 0, value ? 14 : 0));
+        }
+
+        @Override
+        public int preferredHeightForWidth(int width) {
+            return layoutEntries(width, false);
+        }
+
+        @Override
+        public void doLayout() {
+            layoutEntries(getWidth(), true);
+        }
+
+        private int layoutEntries(int width, boolean place) {
+            java.awt.Insets insets = getInsets();
+            int available = Math.max(1, width - insets.left - insets.right);
+            int x = 0;
+            int y = insets.top + 2;
+            int rowHeight = 0;
+            for (Component entry : getComponents()) {
+                Dimension preferred = entry.getPreferredSize();
+                int entryWidth = Math.min(available, preferred.width);
+                if (x > 0 && x + entryWidth > available) {
+                    x = 0;
+                    y += rowHeight + 2;
+                    rowHeight = 0;
+                }
+                if (place) {
+                    entry.setBounds(insets.left + x, y, entryWidth, preferred.height);
+                }
+                x += entryWidth + 10;
+                rowHeight = Math.max(rowHeight, preferred.height);
+            }
+            return y + rowHeight + 2 + insets.bottom;
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            int width = getWidth();
+            if (width <= 0 && getParent() != null) {
+                width = getParent().getWidth();
+            }
+            width = Math.max(1, width);
+            return new Dimension(width, preferredHeightForWidth(width));
+        }
+
+        @Override
+        public Dimension getMinimumSize() {
+            return new Dimension(0, getPreferredSize().height);
+        }
+
         @Override
         public Dimension getMaximumSize() {
             return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
@@ -3357,6 +3424,8 @@ public final class ChatPanel extends JPanel {
         List<SourceLinks> rows = new ArrayList<>();
         for (Component row : transcript.getComponents()) {
             if (row instanceof SourceLinks links) {
+                rows.add(links);
+            } else if (row instanceof AssistantMarkdownMessage answer && answer.sources() instanceof SourceLinks links) {
                 rows.add(links);
             }
         }

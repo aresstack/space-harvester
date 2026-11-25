@@ -29,7 +29,7 @@ public class MarkdownComicStyleTest {
         Container rendered = render("| Kapitel | Wo |\n|---|---|\n| 2 Zweck | S. 3-4 |\n");
         MarkdownTablePanel panel = find(rendered, MarkdownTablePanel.class);
         assertNotNull(panel);
-        assertTrue(panel.getVerticalScrollBar().getUI() instanceof ComicScrollBarUI);
+        assertEquals(JScrollPane.VERTICAL_SCROLLBAR_NEVER, panel.getVerticalScrollBarPolicy());
         assertTrue(panel.getHorizontalScrollBar().getUI() instanceof ComicScrollBarUI);
         assertEquals(ComicScrollBarUI.BAR_THICKNESS, panel.getHorizontalScrollBar().getPreferredSize().height);
 
@@ -48,9 +48,10 @@ public class MarkdownComicStyleTest {
     @Test
     public void codeBlocksUseComicScrollBars() {
         Container rendered = render("```java\nint a = 1;\n```\n");
-        CappedScrollPane scroll = find(rendered, CappedScrollPane.class);
+        MarkdownScrollPane scroll = find(rendered, MarkdownScrollPane.class);
         assertNotNull(scroll);
-        assertTrue(scroll.getVerticalScrollBar().getUI() instanceof ComicScrollBarUI);
+        assertEquals(JScrollPane.VERTICAL_SCROLLBAR_NEVER, scroll.getVerticalScrollBarPolicy());
+        assertTrue(scroll.getHorizontalScrollBar().getUI() instanceof ComicScrollBarUI);
     }
 
     @Test
