@@ -42,7 +42,20 @@ public class SharePointKnowledgeSourceTest {
     private final List<String> requestedUris = new ArrayList<String>();
     private final char[] password = "geheim".toCharArray();
 
+    private final List<String> postBodies = new ArrayList<String>();
+    private final Map<String, String> posts = new HashMap<String, String>();
+
     private final SharePointTransport fake = new SharePointTransport() {
+        @Override
+        public Response post(URI uri, String authorization, String digest, byte[] body, long maxBytes) {
+            String key = uri.toString();
+            postBodies.add(new String(body, StandardCharsets.UTF_8));
+            if (key.endsWith("/GetChanges")) assertEquals("test-digest", digest);
+            String payload = posts.get(key);
+            return payload == null ? new Response(404, "application/json", null)
+                    : new Response(200, "application/json", payload.getBytes(StandardCharsets.UTF_8),
+                    java.time.Instant.parse("2026-11-25T20:00:00Z").toEpochMilli());
+        }
         @Override
         public Response download(URI uri, String authorization, java.nio.file.Path target, long maxBytes) throws java.io.IOException {
             Response response = get(uri, null, authorization, maxBytes);
@@ -152,6 +165,38 @@ public class SharePointKnowledgeSourceTest {
             }
         }
         assertFalse(requestedUris.contains("https://outside.example.test/_api/web/Files"));
+    }
+
+    @Test
+    public void nativeChangeLogResolvesChangedFileAndFallsBackForStructuralEvents() throws Exception {
+        SharePointKnowledgeSource source = source();
+        String list = "11111111-2222-3333-4444-555555555555";
+        String listApi = API + "lists(guid'" + list + "')";
+        json.put(API + "lists?$select=Id,Hidden,RootFolder/ServerRelativeUrl&$expand=RootFolder&$filter=BaseTemplate%20eq%20101",
+                "{\"d\":{\"results\":[{\"Id\":\"" + list + "\",\"Hidden\":false,\"RootFolder\":{\"ServerRelativeUrl\":\"/sites/team/Dokumente\"}}]}}");
+        posts.put(SITE + "/_api/contextinfo", "{\"d\":{\"GetContextWebInformation\":{\"FormDigestValue\":\"test-digest\"}}}");
+        String item = listApi + "/items(1)?$select=FileSystemObjectType,File/Name,File/ServerRelativeUrl,File/TimeLastModified,File/Length,File/UIVersionLabel&$expand=File";
+        json.put(item, "{\"d\":{\"FileSystemObjectType\":0,\"File\":" + file("/sites/team/Dokumente/IAR Handbuch.txt", 5) + "}}");
+        String event = "{\"__metadata\":{\"type\":\"SP.ChangeItem\"},\"ChangeType\":2,\"ItemId\":1,\"ListId\":\"" + list
+                + "\",\"ChangeToken\":{\"StringValue\":\"1;3;" + list + ";639000000000000000;5\"}}";
+        posts.put(listApi + "/GetChanges", "{\"d\":{\"results\":[" + event + "]}}");
+        com.aresstack.enterpriseai.source.api.PartitionResources changed =
+                source.changedResources(source.sourceId().value(), java.time.Duration.ofHours(1), "", 10);
+        assertEquals(1, changed.resources().size());
+        assertEquals("IAR Handbuch.txt", changed.resources().get(0).title());
+        assertTrue(requestedUris.contains(item));
+        assertTrue(postBodies.get(1).contains("ChangeTokenStart"));
+        assertTrue(postBodies.get(1).contains("1;3;" + list + ";"));
+        assertTrue(requestedUris.stream().noneMatch(uri -> uri.contains("GetFolderByServerRelativeUrl")));
+        posts.put(listApi + "/GetChanges", "{\"d\":{\"results\":[" + event.replace("\"ChangeType\":2", "\"ChangeType\":3") + "]}}");
+        com.aresstack.enterpriseai.source.api.PartitionResources first =
+                source.changedResources(source.sourceId().value(), java.time.Duration.ofHours(1), "", 1);
+        assertEquals(1, first.resources().size());
+        assertFalse(first.complete());
+        com.aresstack.enterpriseai.source.api.PartitionResources last =
+                source.changedResources(source.sourceId().value(), java.time.Duration.ofHours(1), first.nextCursor(), 1);
+        assertEquals(1, last.resources().size());
+        assertTrue(last.complete());
     }
 
     @Test

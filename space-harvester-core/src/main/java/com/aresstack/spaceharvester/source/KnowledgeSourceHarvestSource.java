@@ -866,7 +866,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         ChangeListingSource changes = changes();
         PartitionResources batch;
         try {
-            batch = changes.changedResources(partitionKey, within, cursor == null ? "" : cursor, limit);
+            batch = changes.changedResources(changePartition(partitionKey), within, cursor == null ? "" : cursor, limit);
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
@@ -879,7 +879,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         ChangeListingSource changes = changes();
         PartitionResources batch;
         try {
-            batch = changes.removedResources(partitionKey, cursor == null ? "" : cursor, limit);
+            batch = changes.removedResources(changePartition(partitionKey), cursor == null ? "" : cursor, limit);
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
@@ -910,6 +910,16 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw accessFailure(e);
         }
         return new PageIdBatch(batch.localIds(), batch.nextCursor());
+    }
+
+    private String changePartition(String partitionKey) {
+        if (discovering() && "sharepoint".equals(type)) {
+            if (!id.equals(partitionKey)) {
+                throw new SourceAccessException(id, SourceAccessException.Reason.NOT_FOUND, "Unbekannte Partition", null);
+            }
+            return port.sourceId().value();
+        }
+        return partitionKey;
     }
 
     private ChangeListingSource changes() {
@@ -1436,7 +1446,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             case NO -> Boolean.FALSE;
             case UNKNOWN -> null;
         };
-        PageNode.Kind kind = node.isFolder() ? PageNode.Kind.GROUP : PageNode.Kind.PAGE;
+        PageNode.Kind kind = node.isFolder() ? PageNode.Kind.GROUP
+                : "sharepoint".equals(type) ? PageNode.Kind.FILE : PageNode.Kind.PAGE;
         if (!node.isFolder() && port instanceof ResourceNodeKindSource presentation) {
             try {
                 kind = presentation.kind(node.resource());

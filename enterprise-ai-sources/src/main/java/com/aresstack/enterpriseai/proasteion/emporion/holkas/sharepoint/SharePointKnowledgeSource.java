@@ -32,6 +32,8 @@ import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.aresstack.enterpriseai.source.api.PartitionInventorySource;
+import com.aresstack.enterpriseai.source.api.ChangeListingSource;
+import com.aresstack.enterpriseai.source.api.PartitionResources;
 import java.util.function.Consumer;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -73,7 +75,7 @@ import java.util.Set;
  *       Anmeldedaten entscheidet das JDK (Windows-Anmeldung).</li>
  * </ul>
  */
-final class SharePointKnowledgeSource implements SearchableKnowledgeSource, SourceConnectionVerifier, ResourceMetadataSource, PageNavigationSource, StoredContentSource, PartitionInventorySource, com.aresstack.enterpriseai.source.api.FileDownloadSource {
+final class SharePointKnowledgeSource implements SearchableKnowledgeSource, SourceConnectionVerifier, ResourceMetadataSource, PageNavigationSource, StoredContentSource, PartitionInventorySource, ChangeListingSource, com.aresstack.enterpriseai.source.api.FileDownloadSource {
 
     static final String SCHEME = "sharepoint";
     static final String ALL_LIBRARIES = ".";
@@ -96,6 +98,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
     private final ExtractionRegistry extractors;
     private final long maxFileBytes;
     private final SourceScope configuredScope;
+    private final SharePointChangePages changePages = new SharePointChangePages();
 
     SharePointKnowledgeSource(SourceAddress sourceId, URI siteUri, SharePointCredentialsProvider credentials,
                               SharePointTransport transport, ContentDetector detector, ExtractionRegistry extractors,
@@ -206,6 +209,136 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
                 }
             }, () -> false, strict);
         }
+    }
+
+    @Override
+    public PartitionResources changedResources(String partitionKey, java.time.Duration within, String cursor, int limit)
+            throws KnowledgeSourceException {
+        requirePartition(partitionKey);
+        return changePages.page(cursor, limit, () -> changedSnapshot(within));
+    }
+
+    @Override
+    public PartitionResources removedResources(String partitionKey, String cursor, int limit)
+            throws KnowledgeSourceException {
+        requirePartition(partitionKey);
+        if ((cursor != null && !cursor.isEmpty()) || limit < 1) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Löschcursor");
+        }
+        // Reconcile missing paths through inventory; deleted list item IDs cannot identify the old paths.
+        return new PartitionResources(Collections.emptyList(), "");
+    }
+
+    private void requirePartition(String partitionKey) throws KnowledgeSourceException {
+        if (!sourceId.value().equals(partitionKey)) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "SharePoint: unbekannte Partition");
+        }
+    }
+
+    private List<KnowledgeResource> changedSnapshot(java.time.Duration within) throws KnowledgeSourceException {
+        if (within == null || within.isNegative() || within.isZero()) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Änderungszeitraum");
+        }
+        try {
+            if (configuredScope.maxDepth() == Integer.MAX_VALUE && configuredScope.maxResources() == Integer.MAX_VALUE) {
+                return nativeChanges(within);
+            }
+        } catch (KnowledgeSourceException unavailable) {
+            if (Thread.currentThread().isInterrupted()) throw unavailable;
+            // Fall back to inventory instead of accepting an incomplete delta.
+        }
+        List<KnowledgeResource> all = new ArrayList<KnowledgeResource>();
+        walk(configuredScope, () -> {}, all::add, true);
+        return all;
+    }
+
+    private List<KnowledgeResource> nativeChanges(java.time.Duration within) throws KnowledgeSourceException {
+        String auth = authorization();
+        List<String> roots = searchRoots(auth);
+        if (roots.isEmpty()) return Collections.emptyList();
+        Map<String, String> lists = changeLibraries(roots, auth);
+        URI context = URI.create(trimTrailingSlash(siteUri.toString()) + "/_api/contextinfo");
+        SharePointTransport.Response info = post(context, auth, null, new byte[0]);
+        JsonObject data = json(info).getAsJsonObject("GetContextWebInformation");
+        String digest = data == null ? null : string(data, "FormDigestValue");
+        if (digest == null || digest.isEmpty() || info.serverDateMillis() <= 0) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: Änderungsabfrage ohne Serverzeit oder Digest");
+        }
+        Instant end = Instant.ofEpochMilli(info.serverDateMillis());
+        Map<String, KnowledgeResource> found = new LinkedHashMap<String, KnowledgeResource>();
+        for (Map.Entry<String, String> list : lists.entrySet()) {
+            String id = list.getKey();
+            String endpoint = "lists(guid'" + id + "')";
+            URI changes = api(endpoint + "/GetChanges");
+            SharePointChangeLog.visit(id, end.minus(within), end,
+                    query -> json(post(changes, auth, digest, query)), event -> {
+                JsonObject metadata = changedFile(event, endpoint, id, auth);
+                String path = string(metadata, "ServerRelativeUrl");
+                if (path == null || !path.startsWith(list.getValue() + "/")) {
+                    throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: geänderte Datei außerhalb der Bibliothek");
+                }
+                if (!withinRoots(path, roots) || path.startsWith(list.getValue() + "/Forms/")) return;
+                KnowledgeResource resource = resourceOf(metadata, true);
+                if (resource != null) found.put(resource.id().value(), resource);
+            });
+        }
+        return new ArrayList<KnowledgeResource>(found.values());
+    }
+
+    private Map<String, String> changeLibraries(List<String> roots, String auth) throws KnowledgeSourceException {
+        JsonArray libraries = collection(api("lists?$select=Id,Hidden,RootFolder/ServerRelativeUrl"
+                + "&$expand=RootFolder&$filter=BaseTemplate%20eq%20101"), auth);
+        Map<String, String> lists = new LinkedHashMap<String, String>();
+        Set<String> covered = new LinkedHashSet<String>();
+        for (JsonElement element : libraries) {
+            JsonObject list = element.getAsJsonObject();
+            if (list.has("Hidden") && list.get("Hidden").getAsBoolean()) continue;
+            JsonObject root = list.getAsJsonObject("RootFolder");
+            String path = root == null ? null : string(root, "ServerRelativeUrl");
+            if (!insideSite(path)) continue;
+            for (String configured : roots) {
+                if (configured.equals(path) || configured.startsWith(path + "/")) {
+                    String id = SharePointChangeLog.guid(string(list, "Id"));
+                    lists.put(id, path);
+                    covered.add(configured);
+                }
+            }
+        }
+        if (!covered.containsAll(roots)) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: Änderungsumfang nicht vollständig");
+        }
+        return lists;
+    }
+
+    private JsonObject changedFile(JsonObject event, String listEndpoint, String listId, String auth)
+            throws KnowledgeSourceException {
+        String change = string(event, "ChangeType");
+        if (!"1".equals(change) && !"2".equals(change)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: strukturelle Änderung erfordert Inventur");
+        }
+        String eventList = string(event, "ListId");
+        if (eventList != null && !listId.equalsIgnoreCase(eventList)) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: fremder Änderungsdatensatz");
+        }
+        JsonObject meta = event.getAsJsonObject("__metadata");
+        String kind = meta == null ? null : string(meta, "type");
+        String fields = "Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel";
+        if ("SP.ChangeFile".equals(kind)) {
+            String id = SharePointChangeLog.guid(string(event, "UniqueId"));
+            return get(api("GetFileById(guid'" + id + "')?$select=" + fields), auth);
+        }
+        if ("SP.ChangeItem".equals(kind)) {
+            long item = number(event, "ItemId");
+            if (item < 1 || item > Integer.MAX_VALUE) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: fehlende Element-ID");
+            }
+            JsonObject record = get(api(listEndpoint + "/items(" + item + ")?$select=FileSystemObjectType,File/"
+                    + fields.replace(",", ",File/") + "&$expand=File"), auth);
+            if ("0".equals(string(record, "FileSystemObjectType")) && record.has("File") && record.get("File").isJsonObject()) {
+                return record.getAsJsonObject("File");
+            }
+        }
+        throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: nicht eindeutig einer Datei zuordenbare Änderung");
     }
 
     @Override
@@ -654,7 +787,29 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
     }
 
     private JsonObject get(URI uri, String authorization) throws KnowledgeSourceException {
-        SharePointTransport.Response response = request(uri, JSON, authorization, MAX_JSON_BYTES);
+        return json(request(uri, JSON, authorization, MAX_JSON_BYTES));
+    }
+
+    private SharePointTransport.Response post(URI uri, String authorization, String digest, byte[] body)
+            throws KnowledgeSourceException {
+        requireApiUri(uri);
+        String path = uri.getPath();
+        if (!(sitePath + "/_api/contextinfo").equals(path)
+                && !path.matches(java.util.regex.Pattern.quote(sitePath + "/_api/web/lists(guid'")
+                        + "[0-9a-f-]{36}" + java.util.regex.Pattern.quote("')/GetChanges"))) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: POST-Endpunkt nicht freigegeben");
+        }
+        SharePointTransport.Response response;
+        try {
+            response = transport.post(uri, authorization, digest, body, MAX_JSON_BYTES);
+        } catch (IOException e) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "SharePoint: Änderungsabfrage nicht erreichbar");
+        }
+        requireSuccess(response);
+        return response;
+    }
+
+    private JsonObject json(SharePointTransport.Response response) throws KnowledgeSourceException {
         if (response.contentType() == null || !response.contentType().toLowerCase(Locale.ROOT).contains("json")) {
             throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: REST-Antwort ist kein JSON");
         }

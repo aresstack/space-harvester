@@ -55,6 +55,27 @@ final class UrlConnectionSharePointTransport implements SharePointTransport {
     }
 
     @Override
+    public Response post(URI uri, String authorization, String digest, byte[] body, long maxBytes) throws IOException {
+        HttpURLConnection connection = open(uri, "application/json;odata=verbose", authorization);
+        try {
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json;odata=verbose");
+            if (digest != null) connection.setRequestProperty("X-RequestDigest", digest);
+            // Retain buffered request mode for integrated-authentication retries.
+            try (java.io.OutputStream output = connection.getOutputStream()) {
+                output.write(body);
+            }
+            int status = connection.getResponseCode();
+            InputStream in = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            return new Response(status, connection.getContentType(), read(in, maxBytes),
+                    connection.getHeaderFieldDate("Date", 0));
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    @Override
     public Response download(URI uri, String authorization, java.nio.file.Path target, long maxBytes) throws IOException {
         HttpURLConnection connection = open(uri, null, authorization);
         try {

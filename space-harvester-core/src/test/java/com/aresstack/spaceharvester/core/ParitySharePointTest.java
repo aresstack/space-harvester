@@ -74,6 +74,20 @@ class ParitySharePointTest {
     }
 
     @Test
+    void changeLogReadsOnlyChangedMetadataUsingNativePost() throws Exception {
+        try (ParitySharePoint site = ParitySharePoint.start();
+             Harvester harvester = Harvester.builder()
+                     .source(new SourceSettingsConfig("parity", "sharepoint", "Parity", null, null,
+                             Map.of("siteUrl", site.siteUrl())))
+                     .dataDirectory(data).build()) {
+            assertThat(harvester.sources().listsChanges("parity")).isTrue();
+            var delta = harvester.sources().changedPageMetadata("parity", "parity", Duration.ofHours(1), null, 10);
+            assertThat(delta.entries()).extracting(entry -> entry.page().title()).containsExactly("Ablauf.txt");
+            assertThat(delta.entries()).extracting(entry -> entry.page().partitionKey()).containsExactly("parity");
+        }
+    }
+
+    @Test
     void downloadsLargeOriginalThroughHarvesterWithoutCache() throws Exception {
         byte[] bytes = new byte[11 * 1024 * 1024];
         java.util.Arrays.fill(bytes, (byte) 'x');
