@@ -170,7 +170,7 @@ class HarvesterLocalFilesTest {
                 assertThat(page.payload().nativeFormat()).isEqualTo("file");
                 assertThat(page.payload().bytes()).isEqualTo(content.getBytes(StandardCharsets.UTF_8));
             }
-            try (var md = harvester.exports().artifactFile(normal.id(), owner, "export.md").orElseThrow()) {
+            try (var md = harvester.exports().artifactFile(normal.id(), owner, "pages.md").orElseThrow()) {
                 assertThat(new String(md.readAllBytes(), StandardCharsets.UTF_8)).contains("Zielbegriff");
             }
             var cached = harvester.pages().cached(harvester.caller(), "docs", id).orElseThrow().snapshot();
@@ -200,7 +200,7 @@ class HarvesterLocalFilesTest {
             try (var json = harvester.exports().artifactFile(holdings.id(), owner, "pages.json").orElseThrow()) {
                 assertThat(new String(json.readAllBytes(), StandardCharsets.UTF_8)).contains("Zielbegriff");
             }
-            try (var md = harvester.exports().artifactFile(holdings.id(), owner, "export.md").orElseThrow()) {
+            try (var md = harvester.exports().artifactFile(holdings.id(), owner, "pages.md").orElseThrow()) {
                 assertThat(new String(md.readAllBytes(), StandardCharsets.UTF_8)).contains("Zielbegriff");
             }
             assertThat(harvester.pages().cached(harvester.caller(), "docs", id).orElseThrow()
