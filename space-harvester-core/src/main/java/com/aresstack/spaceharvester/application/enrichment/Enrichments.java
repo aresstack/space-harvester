@@ -636,10 +636,11 @@ public class Enrichments {
     }
 
     private Run run(PageSnapshot snapshot, String only, boolean force) {
-        if (processors.values().stream().noneMatch(processor ->
+        var local = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.read(snapshot.payload());
+        if (local.isPresent() && processors.values().stream().noneMatch(processor ->
                 (only == null || only.equals(processor.id())) && !sectionOwned(snapshot, processor)
                         && processor.appliesTo(snapshot.key()))) {
-            return new Run(false, 0, 0, 0);
+            return new Run(local.get().extractionKey() != null, 0, 0, 0);
         }
         Optional<PageText> projected = projection(snapshot);
         if (projected.isEmpty()) {
