@@ -60,6 +60,7 @@ public final class InMemoryKnowledgeGraphStore implements KnowledgeGraphStore {
             analyses.remove(document);
         } else {
             analyses.keySet().removeIf(other -> other.page().equals(document.page())
+                    && other.localOriginal() == document.localOriginal()
                     && other.attachmentId().equals(document.attachmentId()));
         }
     }

@@ -28,6 +28,8 @@ import com.aresstack.spaceharvester.application.observe.Coalescer;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference;
+import java.util.function.Function;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -115,6 +117,42 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
     private final Map<String, Integer> removals = new HashMap<>();
     /** Anhänge für den Bestand ({@link #catchUp}); ohne sie holt der Lauf nichts nach. */
     private volatile DocumentInventory assets;
+    private volatile LocalDocuments localDocuments;
+
+    private record LocalDocuments(Function<PageKey, Optional<PageSnapshot>> snapshots,
+                                  DocumentExtractions extractions) {
+    }
+
+    public void localDocuments(Function<PageKey, Optional<PageSnapshot>> snapshots, DocumentExtractions extractions) {
+        this.localDocuments = new LocalDocuments(Objects.requireNonNull(snapshots, "snapshots"),
+                Objects.requireNonNull(extractions, "extractions"));
+    }
+
+    private Optional<Pending> localPending(PageKey page) {
+        LocalDocuments local = localDocuments;
+        if (local == null) {
+            return Optional.empty();
+        }
+        return local.snapshots().apply(page).flatMap(snapshot -> LocalOriginalReference.read(snapshot.payload())
+                .flatMap(reference -> Optional.ofNullable(reference.extractionKey()))
+                .map(key -> new Pending(DocumentKey.localOriginal(page), snapshot.spaceKey(), key.sha256(),
+                        local.extractions(), key)));
+    }
+
+    /** Schedule the newly committed local original, not a preview or a synthetic attachment. */
+    public void indexedLocal(PageSnapshot snapshot) {
+        if (localDocuments == null || !LocalOriginalReference.recognizes(snapshot.payload())) {
+            return;
+        }
+        Optional<Pending> item = localPending(snapshot.key());
+        if (item.isEmpty()) {
+            // No readable original in this revision: discard the previous sectioned analysis.
+            enrichments.store().removeDocument(DocumentKey.localOriginal(snapshot.key()));
+            enrichments.flush();
+        } else if (enabled.getAsBoolean() && !enrichments.documentProcessorIds().isEmpty()) {
+            enqueue(item.get());
+        }
+    }
     /** Der Netzzustand, oder {@code null}: dann zählt ein Netzfehler eines Prozessors wie jeder andere. */
     private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
 
@@ -305,6 +343,13 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
     public Optional<PageText> sectionText(DocumentKey document, int section, String inputSha256,
                                           String extraction) {
         Objects.requireNonNull(document, "document");
+        if (document.localOriginal()) {
+            return localPending(document.page()).flatMap(Pending::extraction)
+                    .filter(current -> extraction == null || extraction.startsWith(basis(current) + "|"))
+                    .flatMap(current -> localDocuments.extractions().documentSection(current, document.part(), section))
+                    .map(DocumentSectionText::project)
+                    .filter(text -> inputSha256 != null && inputSha256.equals(text.inputSha256()));
+        }
         DocumentInventory source = assets;
         if (source == null || document.attachmentId().isEmpty() || inputSha256 == null) {
             return Optional.empty();
@@ -335,7 +380,15 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
     }
 
     /** Ein gemeldeter Anhang. */
-    private record Pending(DocumentKey attachment, String spaceKey, String sha256, DocumentExtractions extractions) {
+    private record Pending(DocumentKey attachment, String spaceKey, String sha256, DocumentExtractions extractions,
+                           ExtractionKey exactExtraction) {
+        Pending(DocumentKey attachment, String spaceKey, String sha256, DocumentExtractions extractions) {
+            this(attachment, spaceKey, sha256, extractions, null);
+        }
+
+        Optional<StoredExtraction> extraction() {
+            return exactExtraction == null ? extractions.readable(sha256) : extractions.stored(exactExtraction);
+        }
     }
 
     @Override
@@ -343,14 +396,19 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         if (!enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
             return;
         }
+        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+        enqueue(new Pending(DocumentKey.attachment(page, asset.attachmentId()), list.spaceKey(),
+                asset.sha256(), Objects.requireNonNull(extractions, "extractions")));
+    }
+
+    private void enqueue(Pending item) {
+        String sourceId = item.attachment().page().sourceId();
+        String spaceKey = item.spaceKey();
         if (background != null) {
-            note(new Partition(list.sourceId(), list.spaceKey()));
+            note(new Partition(sourceId, spaceKey));
             return;
         }
-        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
-        Pending item = new Pending(DocumentKey.attachment(page, asset.attachmentId()), list.spaceKey(),
-                asset.sha256(), Objects.requireNonNull(extractions, "extractions"));
-        String partition = partition(list.sourceId(), list.spaceKey());
+        String partition = partition(sourceId, spaceKey);
         String job;
         synchronized (this) {
             // Ein erneut gemeldeter Anhang rückt nach hinten und rechnet mit seinem neuesten Stand.
@@ -359,20 +417,20 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             job = scheduled.get(partition);
         }
         if (jobs == null) {
-            drain(list.sourceId(), list.spaceKey(), null);
+            drain(sourceId, spaceKey, null);
             return;
         }
         if (job != null && alive(job)) {
             return;
         }
         try {
-            String id = submit(list.sourceId(), list.spaceKey());
+            String id = submit(sourceId, spaceKey);
             synchronized (this) {
                 scheduled.put(partition, id);
             }
         } catch (JobCapacityExceededException | IllegalStateException e) {
             LOG.log(System.Logger.Level.INFO, "Analysen der Anhänge in {0} nicht eingeplant ({1}); die nächste "
-                    + "Meldung holt sie nach", list.sourceId(), e.getClass().getSimpleName());
+                    + "Meldung holt sie nach", sourceId, e.getClass().getSimpleName());
         }
     }
 
@@ -631,7 +689,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             Iterator<Pending> iterator = pending.values().iterator();
             while (iterator.hasNext()) {
                 DocumentKey attachment = iterator.next().attachment();
-                if (attachment.page().equals(page) && !attachmentIds.contains(attachment.attachmentId().orElse(""))) {
+                if (!attachment.localOriginal() && attachment.page().equals(page)
+                        && !attachmentIds.contains(attachment.attachmentId().orElse(""))) {
                     iterator.remove();
                     removals.merge(attachment.value(), 1, Integer::sum);
                 }
@@ -719,7 +778,9 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
 
     /** Wurde der Anhang entfernt, während er rechnete, fällt auch das eben Gespeicherte wieder weg. */
     private void forgetIfRemoved(Pending item, int before) {
-        if (removals(item) != before) {
+        if (removals(item) != before || item.attachment().localOriginal()
+                && localPending(item.attachment().page()).filter(current ->
+                        Objects.equals(current.exactExtraction(), item.exactExtraction())).isEmpty()) {
             enrichments.store().removeDocument(item.attachment());
         }
     }
@@ -731,15 +792,10 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Manifest, ohne einen Abschnitt zu lesen. Läuft im Auftrag der Anreicherung nach einem Abgleich.
      */
     public void catchUp(String sourceId, String spaceKey, Collection<String> pageIds, JobContext context) {
-        DocumentInventory source = assets;
-        if (source == null || !enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
+        if (!enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
             return;
         }
-        Optional<DocumentExtractions> structured = source.documentExtractions();
-        if (structured.isEmpty()) {
-            return;
-        }
-        List<Asset> documents = source.indexedDocuments(sourceId, pageIds);
+        List<Pending> documents = work(sourceId, spaceKey, pageIds);
         if (documents.isEmpty()) {
             return;
         }
@@ -751,13 +807,10 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 : new com.aresstack.spaceharvester.application.network.NetworkWait(net, context, COMPONENT);
         try {
             for (int next = 0; next < documents.size(); next++) {
-                Asset asset = documents.get(next);
                 if (context != null) {
                     context.checkpoint();
                 }
-                PageKey page = new PageKey(sourceId, asset.pageId());
-                Pending item = new Pending(DocumentKey.attachment(page, asset.attachmentId()), spaceKey,
-                        asset.sha256(), structured.get());
+                Pending item = documents.get(next);
                 int removed = removals(item);
                 try {
                     process(item, context, wait);
@@ -801,22 +854,15 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Abkürzung in {@link #process}: ohne einen Abschnitt zu lesen und ohne Prozessor.
      */
     private boolean anyDue(String sourceId, String spaceKey, Collection<String> pageIds, JobContext context) {
-        DocumentInventory source = assets;
-        if (source == null || !enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
+        if (!enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
             return false;
         }
-        Optional<DocumentExtractions> structured = source.documentExtractions();
-        if (structured.isEmpty()) {
-            return false;
-        }
-        for (Asset asset : source.indexedDocuments(sourceId, pageIds)) {
+        for (Pending item : work(sourceId, spaceKey, pageIds)) {
             if (context != null) {
                 context.checkpoint();
             }
-            Pending item = new Pending(DocumentKey.attachment(new PageKey(sourceId, asset.pageId()),
-                    asset.attachmentId()), spaceKey, asset.sha256(), structured.get());
             try {
-                Optional<StoredExtraction> extraction = item.extractions().readable(item.sha256());
+                Optional<StoredExtraction> extraction = item.extraction();
                 if (extraction.isPresent() && !manifest(item, extraction.get()).current()) {
                     return true;
                 }
@@ -827,6 +873,23 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             }
         }
         return false;
+    }
+
+    private List<Pending> work(String sourceId, String spaceKey, Collection<String> pageIds) {
+        List<Pending> result = new ArrayList<>();
+        for (String pageId : pageIds) {
+            localPending(new PageKey(sourceId, pageId)).ifPresent(result::add);
+        }
+        DocumentInventory source = assets;
+        if (source != null) {
+            source.documentExtractions().ifPresent(structured -> {
+                for (Asset asset : source.indexedDocuments(sourceId, pageIds)) {
+                    result.add(new Pending(DocumentKey.attachment(new PageKey(sourceId, asset.pageId()),
+                            asset.attachmentId()), spaceKey, asset.sha256(), structured));
+                }
+            });
+        }
+        return result;
     }
 
     /**
@@ -871,7 +934,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
     private void process(Pending item, JobContext context,
                          com.aresstack.spaceharvester.application.network.NetworkWait wait) {
         com.aresstack.spaceharvester.application.network.NetworkState net = wait == null ? null : network;
-        Optional<StoredExtraction> extraction = item.extractions().readable(item.sha256());
+        Optional<StoredExtraction> extraction = item.extraction();
         if (extraction.isEmpty()) {
             // Ohne lesbare Extraktion gilt der alte Stand weiter.
             return;
@@ -1001,7 +1064,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         Map<String, String> versions = enrichments.documentProcessorVersions(attachment.page());
         Map<DocumentKey, List<Enrichment>> stored = new HashMap<>();
         for (Enrichment enrichment : enrichments.store().findDocuments(attachment.page())) {
-            if (enrichment.document().attachmentId().equals(attachment.attachmentId())) {
+            if (enrichment.document().localOriginal() == attachment.localOriginal()
+                    && enrichment.document().attachmentId().equals(attachment.attachmentId())) {
                 stored.computeIfAbsent(enrichment.document(), key -> new ArrayList<>()).add(enrichment);
             }
         }
