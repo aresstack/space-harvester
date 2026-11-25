@@ -450,6 +450,10 @@ public class Enrichments {
      */
     public int recomputeInBackground(PageSnapshot snapshot, Collection<String> processorIds)
             throws InterruptedException {
+        if (processors.values().stream().noneMatch(processor -> processorIds.contains(processor.id())
+                && !sectionOwned(snapshot, processor))) {
+            return 0;
+        }
         Optional<PageText> projected = projection(snapshot);
         if (projected.isEmpty()) {
             return 0;
@@ -621,6 +625,11 @@ public class Enrichments {
     }
 
     private Run run(PageSnapshot snapshot, String only, boolean force) {
+        if (processors.values().stream().noneMatch(processor ->
+                (only == null || only.equals(processor.id())) && !sectionOwned(snapshot, processor)
+                        && processor.appliesTo(snapshot.key()))) {
+            return new Run(false, 0, 0, 0);
+        }
         Optional<PageText> projected = projection(snapshot);
         if (projected.isEmpty()) {
             return new Run(false, 0, 0, 0);
