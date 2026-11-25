@@ -78,8 +78,15 @@ def verifyUpstreamCopy = tasks.register('verifyUpstreamCopy') {
         def expected = [:] as TreeMap
         manifestFile.asFile.eachLine { line ->
             if (!line.startsWith('#') && !line.isBlank()) {
-                def parts = line.split('  ', 2)
-                expected[parts[1]] = parts[0]
+                def entry = (line =~ /^([0-9a-f]{64}) [ *](.+)$/)
+                if (!entry.matches()) {
+                    throw new GradleException("Ungültiger Prüfsummeneintrag in UPSTREAM.sha256: $line")
+                }
+                def path = entry.group(2)
+                if (expected.containsKey(path)) {
+                    throw new GradleException("Doppelter Prüfsummeneintrag in UPSTREAM.sha256: $path")
+                }
+                expected[path] = entry.group(1)
             }
         }
         def actual = [:] as TreeMap
