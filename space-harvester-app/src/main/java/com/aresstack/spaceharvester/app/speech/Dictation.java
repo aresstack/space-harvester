@@ -42,6 +42,7 @@ public final class Dictation implements DictationControl {
     /** The live transcription of the current recording; only touched on the worker thread. */
     private LiveSession live;
     private ScheduledFuture<?> livePolling;
+    private boolean experimental;
     /** Die zuletzt fehlgeschlagene Aufnahme (für „Erneut“); weg nach Erfolg, Verwerfen oder neuer Aufnahme. */
     private RecordedSpeech failedSpeech;
     /** Jede Aufnahme und jedes Verwerfen zählt hoch; ein altes Ergebnis kommt nicht mehr an. */
@@ -78,21 +79,27 @@ public final class Dictation implements DictationControl {
         }
         final JavaSoundRecorder active = recorder;
         final long expected = generation;
-        livePolling = worker.scheduleWithFixedDelay(() -> decodeWhileRecording(active, result, expected),
+        experimental = LiveDictationPreference.enabled();
+        final boolean preview = experimental;
+        livePolling = worker.scheduleWithFixedDelay(() -> decodeWhileRecording(active, result, expected, preview),
                 LIVE_POLL_SECONDS, LIVE_POLL_SECONDS, TimeUnit.SECONDS);
     }
 
     /** Worker thread: decode every completed window of the running recording. */
-    private void decodeWhileRecording(JavaSoundRecorder active, Result result, long expected) {
+    private void decodeWhileRecording(JavaSoundRecorder active, Result result, long expected, boolean preview) {
         if (expected != generation) {
             return;
         }
         try {
             if (live == null || live.generation != expected) {
-                live = new LiveSession(expected, service.startLive(active.liveAudio(), partial(result, expected)));
+                live = new LiveSession(expected, service.startLive(active.liveAudio(),
+                        preview ? ignored -> { } : partial(result, expected)));
             }
             if (!live.failed) {
                 live.transcription.decodeAvailable();
+                if (preview && !live.previewFailed) {
+                    preview(active, result, expected);
+                }
             }
         } catch (Exception | OutOfMemoryError failed) {
             if (expected != generation) {
@@ -106,6 +113,33 @@ public final class Dictation implements DictationControl {
                 live = new LiveSession(expected, null);
                 live.failed = true;
             }
+        }
+    }
+
+    private void preview(JavaSoundRecorder active, Result result, long expected) {
+        try {
+            var source = active.liveAudio();
+            long end = source.sampleCount();
+            long committed = live.transcription.committedSamples();
+            DictationPreviewWindow window = DictationPreviewWindow.capture(source, committed, live.previewEnd);
+            if (window == null) {
+                return;
+            }
+            live.previewEnd = end;
+            String text = service.preview(window);
+            SwingUtilities.invokeLater(() -> {
+                if (expected == generation && recorder == active) {
+                    result.preview(text);
+                }
+            });
+        } catch (Exception | OutOfMemoryError failure) {
+            live.previewFailed = true;
+            LOG.log(Level.WARNING, "Experimental dictation preview disabled for this recording", failure);
+            SwingUtilities.invokeLater(() -> {
+                if (expected == generation && recorder == active) {
+                    result.preview("");
+                }
+            });
         }
     }
 
@@ -138,7 +172,7 @@ public final class Dictation implements DictationControl {
             return;
         }
         try {
-            transcribe(active.stop(), result, current, true);
+            transcribe(active.stop(), result, current, true, experimental);
         } catch (IOException failed) {
             active.close();
             LOG.log(Level.WARNING, "Mikrofonaufnahme fehlgeschlagen", failed);
@@ -161,7 +195,7 @@ public final class Dictation implements DictationControl {
             result.failed(current == null ? description : "Keine Aufnahme zum Wiederholen");
             return;
         }
-        transcribe(speech, result, current, false);
+        transcribe(speech, result, current, false, false);
     }
 
     @Override
@@ -181,7 +215,7 @@ public final class Dictation implements DictationControl {
      * Nach einer Aufnahme mit Live-Erkennung bleibt nur der Rest zu erkennen.
      */
     private void transcribe(final RecordedSpeech speech, final Result result, final WhisperDictationService current,
-                            final boolean continueLive) {
+                            final boolean continueLive, final boolean preview) {
         failedSpeech = null;
         final long expected = generation;
         worker.execute(() -> {
@@ -194,7 +228,7 @@ public final class Dictation implements DictationControl {
                 if (continueLive && session != null && session.generation == expected && !session.failed) {
                     text = current.finishLive(session.transcription, speech);
                 } else {
-                    text = current.transcribe(speech, partial(result, expected));
+                    text = current.transcribe(speech, preview ? ignored -> { } : partial(result, expected));
                 }
                 LOG.info("Spracheingabe: " + speech.durationMillis() + " ms Audio, nach dem Stopp "
                         + (System.currentTimeMillis() - started) + " ms bis zum Ergebnis");
@@ -266,6 +300,8 @@ public final class Dictation implements DictationControl {
         final long generation;
         final WhisperIncrementalTranscription transcription;
         boolean failed;
+        boolean previewFailed;
+        long previewEnd;
 
         LiveSession(long generation, WhisperIncrementalTranscription transcription) {
             this.generation = generation;

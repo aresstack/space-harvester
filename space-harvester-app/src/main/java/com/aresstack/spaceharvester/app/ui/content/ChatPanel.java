@@ -327,6 +327,7 @@ public final class ChatPanel extends JPanel {
     private final ComposerWaveformOverlay waveform = new ComposerWaveformOverlay();
     private final Timer levelTimer = new Timer(100, event -> sampleDictationLevel());
     private final Dictation dictation = new Dictation();
+    private final javax.swing.JTextArea dictationPreview = new javax.swing.JTextArea(2, 20);
     private DictationPhase dictationPhase = DictationPhase.IDLE;
     private long recordingStartedMillis;
 
@@ -500,6 +501,17 @@ public final class ChatPanel extends JPanel {
         above.setOpaque(false);
         above.add(feedback, BorderLayout.NORTH);
         above.add(quickActions, BorderLayout.CENTER);
+        dictationPreview.setEditable(false);
+        dictationPreview.setFocusable(false);
+        dictationPreview.setOpaque(false);
+        dictationPreview.setLineWrap(true);
+        dictationPreview.setWrapStyleWord(true);
+        dictationPreview.setFont(Comic.regular(12f));
+        dictationPreview.setForeground(Comic.MUTED);
+        dictationPreview.setBorder(BorderFactory.createEmptyBorder(4, 12, 4, 12));
+        dictationPreview.setVisible(false);
+        dictationPreview.getAccessibleContext().setAccessibleName("Experimentelle Diktatvorschau");
+        above.add(dictationPreview, BorderLayout.SOUTH);
         JPanel south = new JPanel(new BorderLayout(0, 4));
         south.setOpaque(false);
         south.add(above, BorderLayout.NORTH);
@@ -853,6 +865,18 @@ public final class ChatPanel extends JPanel {
             }
 
             @Override
+            public void preview(String text) {
+                if (dictationPhase == DictationPhase.RECORDING) {
+                    String value = text == null ? "" : text.strip();
+                    dictationPreview.setText(value.isEmpty() ? "" : "Vorschau: " + value);
+                    dictationPreview.setVisible(!value.isEmpty());
+                    dictationPreview.setCaretPosition(dictationPreview.getDocument().getLength());
+                    dictationPreview.getParent().revalidate();
+                    dictationPreview.getParent().repaint();
+                }
+            }
+
+            @Override
             public void recognized(String text) {
                 dictationPhase = DictationPhase.IDLE;
                 stopDictationLevelMeter();
@@ -927,6 +951,8 @@ public final class ChatPanel extends JPanel {
 
     private void stopDictationLevelMeter() {
         levelTimer.stop();
+        dictationPreview.setText("");
+        dictationPreview.setVisible(false);
         waveform.setActive(false);
         levelBar.setValue(0);
     }

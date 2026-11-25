@@ -611,6 +611,13 @@ final class AiSettingsPanel {
                     new HelpButton(Dialogs.CLOSE_SIZE, WHISPER_TRANSCRIPTS_LABEL, WHISPER_TRANSCRIPTS_HELP)), null);
             modelRows.add(WHISPER_DICTATION_LABEL, Comic.row(dictationChoice, dictationInstall,
                     new HelpButton(Dialogs.CLOSE_SIZE, WHISPER_DICTATION_LABEL, WHISPER_DICTATION_HELP)), null);
+            javax.swing.JCheckBox livePreview = Comic.checkBox("Live-Transkription (experimentell)");
+            livePreview.setSelected(com.aresstack.spaceharvester.app.speech.LiveDictationPreference.enabled());
+            livePreview.setToolTipText("Zeigt eine vorläufige Erkennung während der Aufnahme; "
+                    + "die endgültige Erkennung bleibt unverändert. Gilt ab der nächsten Aufnahme.");
+            livePreview.addActionListener(e -> com.aresstack.spaceharvester.app.speech.LiveDictationPreference
+                    .setEnabled(livePreview.isSelected()));
+            modelRows.add("Spracheingabe", livePreview, null);
             whisperChoice.addActionListener(e -> {
                 int index = whisperChoice.getSelectedIndex();
                 if (showingWhisper || index < 0 || context.settings() == null) {

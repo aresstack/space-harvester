@@ -51,3 +51,17 @@ Source of the delayed chunk algorithm:
 `aresstack/win-directml-java`,
 `directml-workbench/.../whisper/ChunkedPcmAudioSource.java`
 (reused as an application-private class).
+
+
+## Experimental live preview (opt-in)
+
+Enable **Einstellungen › Modelle › Spracheingabe › Live-Transkription (experimentell)**.
+The local application-state preference defaults to off and is sampled at recording start.
+The existing incremental recognition of completed 30-second windows remains the default.
+When enabled, the same background worker periodically freezes a short rolling audio window
+(4–12 seconds, at least 2 seconds of new audio). The normal guarded Whisper path handles
+short final windows using the model's padded encoder input. This preview is replaceable,
+is never appended to the editor and is cleared at stop, cancellation or failure.
+The final transcript is inserted only once, using the complete incremental result or the
+ordinary full-recording fallback. Preview failures disable the experiment for that recording.
+Actual latency and accuracy depend on model, CPU and speech; this is not token-by-token streaming.
