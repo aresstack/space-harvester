@@ -82,6 +82,11 @@ public final class DocumentExtractions {
         return extractions.find(key(sha256));
     }
 
+    /** Find exactly the extraction referenced by a snapshot, not a different generation of the bytes. */
+    public Optional<StoredExtraction> stored(ExtractionKey key) {
+        return extractions.find(key);
+    }
+
     /**
      * Die Extraktion dieser Bytes für Leser (ADR 0026, Punkt 11, Abnahme 8): die aktuelle, wenn sie Text hat, sonst die
      * jüngste lesbare einer anderen Extraktion, Version oder eines anderen Strukturmodells. Diese gilt als veraltet
@@ -141,6 +146,75 @@ public final class DocumentExtractions {
                     document.directory(), target.blocks, target.chars));
         } catch (UncheckedIOException e) {
             throw new AssetStoreException("Dokument nicht lesbar", e.getCause());
+        }
+    }
+
+    /**
+     * Stage an extraction of an original outside the asset store. Publish only after the owning source
+     * has validated the read. Close an uncommitted stage to discard every block and embedded part.
+     */
+    PreparedOriginal prepareOriginal(Path original, String title, String mediaType, String originalSha256) {
+        ExtractionKey key = key(originalSha256);
+        Optional<StoredExtraction> known = extractions.find(key);
+        if (known.isPresent()) {
+            return new PreparedOriginal(known.get(), null, null);
+        }
+        Target target = new Target(() -> extractions.writer(key));
+        try {
+            StructuredDocument document = structure.extract(original, title, mediaType, limits, target,
+                    rules.forContainer(originalSha256));
+            Optional<Outcome> temporaryFailure = transientFailure(document);
+            if (temporaryFailure.isPresent()) {
+                throw failure(temporaryFailure.get());
+            }
+            return new PreparedOriginal(null, target, document);
+        } catch (RuntimeException | Error failure) {
+            target.close();
+            throw failure;
+        }
+    }
+
+    /** A bounded compatibility projection; the complete structured extraction remains in the extraction store. */
+    public OriginalPreview originalPreview(StoredExtraction extraction) {
+        TextCollector text = new TextCollector(maxTextChars);
+        if (usable(extraction.document().outcome())) {
+            collect(extraction, text);
+        }
+        return new OriginalPreview(text.text.toString(), text.cut || extraction.document().outcome().truncated());
+    }
+
+    public record OriginalPreview(String text, boolean truncated) {
+    }
+
+    static final class PreparedOriginal implements AutoCloseable {
+
+        private StoredExtraction committed;
+        private final Target target;
+        private final StructuredDocument document;
+
+        private PreparedOriginal(StoredExtraction committed, Target target, StructuredDocument document) {
+            this.committed = committed;
+            this.target = target;
+            this.document = document;
+        }
+
+        StoredExtraction commit() {
+            if (committed == null) {
+                committed = target.writer.commit(new StructuredDocument(document.head(), document.outcome(),
+                        document.directory(), target.blocks, target.chars));
+            }
+            return committed;
+        }
+
+        boolean alreadyStored() {
+            return target == null;
+        }
+
+        @Override
+        public void close() {
+            if (target != null) {
+                target.close();
+            }
         }
     }
 

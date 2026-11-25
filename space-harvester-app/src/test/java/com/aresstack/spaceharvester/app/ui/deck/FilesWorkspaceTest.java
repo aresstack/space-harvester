@@ -79,6 +79,33 @@ class FilesWorkspaceTest {
     }
 
     @Test
+    void explorerKeepsAncestorsAndOpensFilesWhileAddressFollowsTabs() throws Exception {
+        start();
+        String folder = root.resolve("Berichte").toString();
+        String file = root.resolve("job.jcl").toString();
+        SwingUtilities.invokeAndWait(() -> {
+            var tree = workspace.navigationTree();
+            assertThat(tree.pathFor(root.toString())).isNotNull();
+            assertThat(tree.pathFor(folder)).isNotNull();
+            tree.expandPath(tree.pathFor(folder));
+        });
+        flush();
+        assertThat(workspace.pathField().getText()).isEqualTo(folder);
+        SwingUtilities.invokeAndWait(() -> {
+            var tree = workspace.navigationTree();
+            assertThat(tree.pathFor(root.toString())).isNotNull();
+            assertThat(tree.pathFor(file)).isNotNull();
+            tree.setSelectionPath(tree.pathFor(file));
+            tree.getActionMap().get("open-file").actionPerformed(null);
+        });
+        flush();
+        assertThat(workspace.selected().location()).isEqualTo(file);
+        assertThat(workspace.pathField().getText()).isEqualTo(file);
+        SwingUtilities.invokeAndWait(() -> workspace.select(null));
+        assertThat(workspace.pathField().getText()).isEqualTo(folder);
+    }
+
+    @Test
     void createsAFolderFromTheNameRow() throws Exception {
         start();
 

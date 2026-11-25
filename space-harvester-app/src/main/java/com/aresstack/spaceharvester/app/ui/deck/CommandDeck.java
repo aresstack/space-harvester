@@ -110,6 +110,7 @@ public final class CommandDeck {
     private final DeckHome home;
     private volatile DeckArea area = DeckArea.HOME;
     private volatile long chatGeneration;
+    private final java.util.List<Runnable> sidebarObservers = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /** Ohne Passwortspeicher und Proxy (Tests). */
     public CommandDeck() {
@@ -233,6 +234,8 @@ public final class CommandDeck {
         stage.add(findBar(), BorderLayout.SOUTH);
         // Bereiche mit Seitenleiste nehmen die Lupe unter ihre Arbeitsfläche (DeckBars.FindSlot), wie im Space Harvester.
         stage.putClientProperty(DeckBars.FIND_HOST, (Runnable) this::placeFindBar);
+        stage.putClientProperty(com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane.HOST,
+                (Runnable) () -> sidebarObservers.forEach(Runnable::run));
         // Ein Editor wird gezeigt oder verdeckt: Falt-Umschalter, Sprachauswahl und Treffer folgen ihm.
         stage.putClientProperty(com.aresstack.spaceharvester.app.ui.FindBar.VIEW_HOST,
                 (Runnable) () -> findBar().viewChanged());
@@ -478,6 +481,14 @@ public final class CommandDeck {
             case FILES -> files;
             case EAKTE -> eakte;
         };
+    }
+
+    public com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane activeSidebar() {
+        return com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane.activeIn(workspace);
+    }
+
+    public void onSidebarChanged(Runnable observer) {
+        sidebarObservers.add(observer);
     }
 
     /** Meldet jeden Wechsel des Bereichs (der Chat passt Hinweis und Vorschläge an). */

@@ -112,7 +112,8 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
             return;
         }
         documents.keySet().removeIf(key -> key.equals(document) || !document.isEmbedded()
-                && key.page().equals(document.page()) && key.attachmentId().equals(document.attachmentId()));
+                && key.page().equals(document.page()) && key.localOriginal() == document.localOriginal()
+                && key.attachmentId().equals(document.attachmentId()));
     }
 
     /** Abschnitt (sortierbar) und Prozessor: Ergebnisse aufsteigend nach Abschnitt, darin nach Prozessor. */

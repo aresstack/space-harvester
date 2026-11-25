@@ -313,6 +313,9 @@ public final class KnowledgeGraphJsonLd {
             json.writeStringProperty("@id", document(analysis));
             json.writeStringProperty("@type", "Document");
             json.writeStringProperty("documentOf", page);
+            if (analysis.document().localOriginal()) {
+                json.writeBooleanProperty("localOriginal", true);
+            }
             optional(json, "attachmentId", analysis.document().attachmentId().orElse(null));
             optional(json, "partId", analysis.document().part().map(part -> part.value()).orElse(null));
             optional(json, "title", analysis.title());

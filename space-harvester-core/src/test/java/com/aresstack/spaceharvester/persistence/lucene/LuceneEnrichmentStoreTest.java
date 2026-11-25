@@ -57,6 +57,27 @@ class LuceneEnrichmentStoreTest extends EnrichmentStoreContract {
         return store;
     }
 
+    @Test
+    void localDocumentSectionsKeepTheirIdentityAcrossReopeningAndDoNotDeleteRealAttachments() {
+        var page = new PageKey("files", "local");
+        var local = com.aresstack.spaceharvester.application.assets.DocumentKey.localOriginal(page);
+        var attachment = com.aresstack.spaceharvester.application.assets.DocumentKey.attachment(page, "a1");
+        for (var document : List.of(local, attachment)) {
+            store.save(new Enrichment(page, "test", "1", "hash", "revision", Enrichment.Status.OK,
+                    "{}", List.of(), null, Instant.EPOCH, document, 2, "basis"));
+        }
+        store.close();
+        store = LuceneEnrichmentStore.open(directory);
+        assertThat(store.find(local)).singleElement().satisfies(result -> {
+            assertThat(result.document()).isEqualTo(local);
+            assertThat(result.section()).isEqualTo(2);
+        });
+        assertThat(store.find(page)).isEmpty();
+        store.removeDocument(local);
+        assertThat(store.find(local)).isEmpty();
+        assertThat(store.find(attachment)).hasSize(1);
+    }
+
     @Nested
     class AsEmbeddingIndex extends EmbeddingIndexContract {
 
