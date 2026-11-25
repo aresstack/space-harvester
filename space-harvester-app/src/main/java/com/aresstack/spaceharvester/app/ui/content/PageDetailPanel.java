@@ -5779,12 +5779,9 @@ public final class PageDetailPanel extends JPanel {
                 standingHelp, glossaryHelp, graphHelp, star, more);
     }
 
-    /** Zurück und Vor links an der Suchleiste des Hauptfensters. */
+    /** Return the existing document-history control for the fixed viewer header. */
     JComponent navigation() {
-        JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 2, 0));
-        row.setOpaque(false);
-        row.add(backButton);
-        return row;
+        return backButton;
     }
 
     javax.swing.AbstractButton moreButton() {
