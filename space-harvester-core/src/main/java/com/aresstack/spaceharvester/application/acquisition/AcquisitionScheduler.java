@@ -305,15 +305,13 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 entry.queued = Priority.FOREGROUND;
                 promoted++;
             }
-            ticket = new Ticket(entry, priority, priority == Priority.FOREGROUND && mode.deferred(), mode);
+            ticket = new Ticket(entry, priority, priority == Priority.FOREGROUND && mode.deferred(), mode,
+                    priority == Priority.BACKGROUND ? caller : null);
             if (priority == Priority.FOREGROUND) {
                 lastForeground = System.nanoTime();
                 entry.foreground.put(ticket, caller);
             } else {
                 entry.background.add(ticket);
-                if (entry.technical == null) {
-                    entry.technical = caller;
-                }
             }
         } finally {
             lock.unlock();
@@ -643,12 +641,14 @@ public final class AcquisitionScheduler implements AutoCloseable {
             List<Ticket> permitted = entry.tickets().stream()
                     .filter(ticket -> allowed.test(source, ticket.mode.trigger())).toList();
             if (permitted.isEmpty()) {
+                // Detach the denied entry before releasing the lock so a new explicit request can start independently.
+                entries.remove(entry.key, entry);
                 return null;
             }
             List<Ticket> background = permitted.stream().filter(ticket -> ticket.priority == Priority.BACKGROUND)
                     .toList();
             AccessContext caller = background.isEmpty()
-                    ? entry.foreground.get(permitted.getFirst()) : entry.technical;
+                    ? entry.foreground.get(permitted.getFirst()) : background.getFirst().technicalCaller;
             boolean strict = !background.isEmpty() || permitted.stream().anyMatch(ticket -> ticket.mode.refresh());
             ChangeTrigger trigger = permitted.stream().map(ticket -> ticket.mode.trigger())
                     .filter(Objects::nonNull).findFirst().orElse(null);
@@ -761,8 +761,6 @@ public final class AcquisitionScheduler implements AutoCloseable {
         private boolean running;
         /** Auf welchem Platz sie lädt. */
         private Priority slot;
-        /** Der technische Aufrufer des Hintergrunds, wenn der die Seite auch braucht. */
-        private AccessContext technical;
         /** Ob der laufende Abruf einen Platz für Nachladen belegt ({@link Mode#deferred()}). */
         private boolean deferredSlot;
         private final Map<Ticket, AccessContext> foreground = new LinkedHashMap<>();
@@ -806,12 +804,14 @@ public final class AcquisitionScheduler implements AutoCloseable {
 
         private final boolean deferred;
         private final Mode mode;
+        private final AccessContext technicalCaller;
 
-        private Ticket(Entry entry, Priority priority, boolean deferred, Mode mode) {
+        private Ticket(Entry entry, Priority priority, boolean deferred, Mode mode, AccessContext technicalCaller) {
             this.entry = entry;
             this.priority = priority;
             this.deferred = deferred;
             this.mode = mode;
+            this.technicalCaller = technicalCaller;
         }
 
         public CompletableFuture<Boolean> done() {
@@ -859,9 +859,6 @@ public final class AcquisitionScheduler implements AutoCloseable {
                     entry.foreground.remove(this);
                 } else {
                     entry.background.remove(this);
-                    if (entry.background.isEmpty()) {
-                        entry.technical = null;
-                    }
                 }
                 if (!entry.running && entries.get(entry.key) == entry) {
                     if (entry.foreground.isEmpty() && entry.background.isEmpty()) {
