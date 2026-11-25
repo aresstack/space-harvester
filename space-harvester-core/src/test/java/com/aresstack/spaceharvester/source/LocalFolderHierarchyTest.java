@@ -480,7 +480,7 @@ class LocalFolderHierarchyTest {
     @Test
     void readerCombinesSectionAnalysesAtExactOffsetsAndKeepsResolvablePassageIds() throws IOException {
         Files.writeString(directory.resolve("notiz.txt"),
-                "API (Application Programming Interface).\n" + "A normal sentence.\n".repeat(3000)
+                "API (Application Programming Interface).\n" + "A normal sentence.\n\n".repeat(7000)
                         + "XML (Extensible Markup Language).");
         var source = open();
         var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
@@ -512,7 +512,7 @@ class LocalFolderHierarchyTest {
                 enrichments, null, () -> true)) {
             analyses.localDocuments(key -> java.util.Optional.of(current.get()).filter(page -> page.key().equals(key)),
                     documents);
-            assertThat(reader.read(current.get()).orElseThrow().slices()).hasSizeGreaterThan(1);
+            assertThat(reader.read(current.get()).orElseThrow().slices().size()).isGreaterThan(1);
             assertThat(analyses.hasCurrentLocalAnalysis(current.get(), "passages")).isFalse();
             assertThat(analyses.prepareLocal(current.get(), "passages")).isTrue();
             assertThat(analyses.hasCurrentLocalAnalysis(current.get(), "passages")).isTrue();
