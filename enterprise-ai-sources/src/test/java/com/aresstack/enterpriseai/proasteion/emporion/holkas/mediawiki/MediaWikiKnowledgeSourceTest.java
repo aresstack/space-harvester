@@ -31,6 +31,16 @@ public class MediaWikiKnowledgeSourceTest {
             MediaWikiCredentialsProvider.anonymous());
 
     @Test
+    public void automaticallyDiscoverTheActualLocalizedMainPage() throws Exception {
+        wiki.mainPage = "Willkommen im Wiki";
+        wiki.page(wiki.mainPage, "<p>Willkommen</p>", 44, 45, "Glossar");
+        assertEquals("Test Wiki", source.siteInfo().siteName());
+        assertEquals(Arrays.asList("wiki:intranet/Willkommen_im_Wiki", "wiki:intranet/Glossar"),
+                ids(source.discover(SourceScope.builder().automaticStartPoints().maxDepth(1).build())));
+        assertEquals(Arrays.asList("wiki:intranet/Handbuch"), ids(source.discover(SourceScope.of("Handbuch"))));
+    }
+
+    @Test
     public void discoveredResourcesCarryStableIdsRevisionLocationParentAndMetadata() throws Exception {
         List<KnowledgeResource> resources =
                 source.discover(SourceScope.builder().startPoint("hauptseite").maxDepth(1).build());

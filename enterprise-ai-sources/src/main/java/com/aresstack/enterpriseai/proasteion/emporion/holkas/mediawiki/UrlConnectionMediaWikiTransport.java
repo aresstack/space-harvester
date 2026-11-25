@@ -62,6 +62,54 @@ final class UrlConnectionMediaWikiTransport implements MediaWikiTransport {
     }
 
     @Override
+    public byte[] getImage(URI target, int maxBytes) throws IOException {
+        URI origin = URI.create(endpoint);
+        URI current = target;
+        for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
+            if (current.getRawUserInfo() != null || !sameOrigin(origin, current)) {
+                throw new IOException("Image URL outside wiki origin");
+            }
+            HttpURLConnection conn = open(current.toString(), "GET");
+            conn.setRequestProperty("Accept", "image/*");
+            try {
+                int status = conn.getResponseCode();
+                storeCookies(conn);
+                String location = conn.getHeaderField("Location");
+                if (isRedirect(status) && location != null && !location.isEmpty()) {
+                    current = current.resolve(location);
+                    continue;
+                }
+                if (status == 401 || status == 403) {
+                    throw new MediaWikiImageAccessException(status);
+                }
+                if (status != 200) {
+                    throw new IOException("Image request failed (HTTP " + status + ")");
+                }
+                String type = conn.getContentType();
+                if (type == null || !type.toLowerCase(java.util.Locale.ROOT).startsWith("image/")
+                        || type.toLowerCase(java.util.Locale.ROOT).startsWith("image/svg")) {
+                    throw new IOException("Unsupported image content type");
+                }
+                try (InputStream in = conn.getInputStream()) {
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    byte[] buffer = new byte[8192];
+                    int count;
+                    while ((count = in.read(buffer)) != -1) {
+                        if (count > maxBytes - out.size()) {
+                            throw new IOException("Image exceeds size limit");
+                        }
+                        out.write(buffer, 0, count);
+                    }
+                    return out.toByteArray();
+                }
+            } finally {
+                conn.disconnect();
+            }
+        }
+        throw new IOException("Too many image redirects");
+    }
+
+    @Override
     public void resetSession() {
         cookies = newCookieManager();
     }

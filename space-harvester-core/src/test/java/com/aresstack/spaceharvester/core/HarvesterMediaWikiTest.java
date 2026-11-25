@@ -13,6 +13,8 @@ import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
+import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
+import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.MediaWikiSources;
 import com.aresstack.spaceharvester.source.SourceSecrets;
@@ -61,13 +63,95 @@ class HarvesterMediaWikiTest {
                 + "<ul><li>Pumpe prüfen</li><li>Ventil schließen</li></ul>", 2, 102, "Hauptseite", "Tresorraum");
         wiki.page("Urlaub", "<p>Urlaubsplanung für das Team</p>", 3, 103);
         wiki.page("Tresorraum", "<p>Zahlenkombination des Tresorraums</p>", 4, 104);
-        wiki.page("Verwaist", "<p>Nicht verlinkt und deshalb außerhalb des Umfangs</p>", 5, 105);
+        wiki.page("Verwaist", "<p>Nicht verlinkter Artikel</p>", 5, 105);
         front = new WikiFront(wiki);
     }
 
     @AfterEach
     void stop() {
         front.close();
+    }
+
+    @Test
+    void sourceWithoutStartPointsVerifiesApiAndDiscoversLocalizedMainPage() throws Exception {
+        wiki.mainPage = "Willkommen";
+        wiki.page("Willkommen", "<p>Start</p>", 6, 106, "Betrieb");
+        SourceSettingsConfig config = new SourceSettingsConfig("wiki", MediaWikiSources.TYPE,
+                "Testwiki", null, Auth.anonymous(),
+                Map.of("apiUrl", front.apiUrl(), "maxDepth", "0"));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            SourceManagement.ConnectionCheck check = harvester.sourceManagement().test(config, false);
+            assertThat(check.successful()).isTrue();
+            assertThat(front.queries()).anySatisfy(query -> assertThat(query).contains("meta=siteinfo"))
+                    .noneSatisfy(query -> assertThat(query).contains("prop=links"));
+            wiki.requiredUser = "test";
+            wiki.requiredPassword = "test";
+            assertThat(harvester.sourceManagement().test(config, false).successful()).isFalse();
+            wiki.requiredUser = null;
+            wiki.requiredPassword = null;
+        }
+        try (Harvester harvester = Harvester.builder().source(config).dataDirectory(data).build()) {
+            JobStatus sync = harvester.await(harvester.sync("wiki", "wiki").id(), Duration.ofSeconds(30));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "wiki", null, 100).pages())
+                    .extracting(page -> page.header().metadata().title()).containsExactlyInAnyOrder(
+                            "Willkommen", "Hauptseite", "Betrieb", "Urlaub", "Tresorraum", "Verwaist");
+        }
+    }
+
+    @Test
+    void liveNavigationAndReadingWorkWithoutSynchronization() throws Exception {
+        wiki.inventoryPageSize = 2;
+        wiki.categories.put("Betrieb", List.of("Betrieb", "Verwaist"));
+        wiki.categories.put("Handbuch", List.of("Verwaist"));
+        try (Harvester harvester = Harvester.builder().source(wikiSource(Auth.anonymous(),
+                Map.of("maxDepth", "0", "maxResources", "1"))).dataDirectory(data).build()) {
+            PageNavigation.Children root = harvester.navigation().children(harvester.caller(), "wiki", "wiki", null, null);
+            assertThat(root.pages()).extracting(PageNode::title).containsExactly("Hauptseite", "Alle Seiten", "Kategorien");
+            assertThat(root.pages().get(1).kind()).isEqualTo(PageNode.Kind.GROUP);
+            String all = root.pages().get(1).pageId();
+            List<String> titles = new ArrayList<>();
+            String cursor = null;
+            do {
+                PageNavigation.Children batch = harvester.navigation().children(harvester.caller(), "wiki", "wiki", all, cursor);
+                titles.addAll(batch.pages().stream().map(PageNode::title).toList());
+                cursor = batch.nextCursor();
+            } while (cursor != null);
+            assertThat(titles).containsExactlyInAnyOrder("Hauptseite", "Betrieb", "Urlaub", "Tresorraum", "Verwaist");
+            String categories = root.pages().get(2).pageId();
+            PageNavigation.Children groups = harvester.navigation().children(harvester.caller(), "wiki", "wiki", categories, null);
+            assertThat(groups.pages()).extracting(PageNode::title).containsExactly("Betrieb", "Handbuch");
+            PageNavigation.Children members = harvester.navigation().children(harvester.caller(), "wiki", "wiki",
+                    groups.pages().get(0).pageId(), null);
+            assertThat(members.pages()).extracting(PageNode::pageId).contains(id("Verwaist"));
+            assertThat(harvester.navigation().position(harvester.caller(), "wiki", id("Verwaist")).spaceKey())
+                    .isEqualTo("wiki");
+            assertThat(harvester.navigation().cachedChildren(harvester.caller(), "wiki", "wiki", null).pages()).isEmpty();
+            assertThat(front.queries()).noneSatisfy(query -> assertThat(query).contains("action=parse"));
+            String article = new String(harvester.pages().page(harvester.caller(), "wiki", id("Verwaist"), false)
+                    .snapshot().payload().bytes(), StandardCharsets.UTF_8);
+            assertThat(article).contains("Nicht verlinkter Artikel");
+            var reading = harvester.readingViews().view(harvester.caller(), "wiki", id("Hauptseite"), false);
+            assertThat(reading.status()).isEqualTo(
+                    com.aresstack.spaceharvester.application.reading.ReadingView.Status.AVAILABLE);
+            assertThat(reading.html()).contains("<b>Betriebshandbuch</b>");
+        }
+    }
+
+    @Test
+    void explicitCrawlScopeRestrictsSyncButNeverNavigation() throws Exception {
+        try (Harvester harvester = Harvester.builder().source(wikiSource(Auth.anonymous(),
+                Map.of("maxDepth", "0", "maxResources", "1"))).dataDirectory(data).build()) {
+            JobStatus sync = harvester.await(harvester.sync("wiki", "wiki").id(), Duration.ofSeconds(30));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "wiki", null, 100).pages())
+                    .extracting(page -> page.header().metadata().title()).containsExactly("Hauptseite");
+            assertThat(front.queries()).noneSatisfy(query -> assertThat(query).contains("list=allpages"));
+            PageNavigation.Children root = harvester.navigation().children(harvester.caller(), "wiki", "wiki", null, null);
+            PageNavigation.Children all = harvester.navigation().children(harvester.caller(), "wiki", "wiki",
+                    root.pages().get(1).pageId(), null);
+            assertThat(all.pages()).extracting(PageNode::title).contains("Verwaist", "Betrieb");
+        }
     }
 
     @Test
@@ -221,10 +305,10 @@ class HarvesterMediaWikiTest {
                         "sources[0] (id=wiki): auth.type pat passt nicht zu type mediawiki (none oder basic)",
                         "sources[0] (id=wiki): options.credentialRef ist nicht erlaubt; dafür gibt es auth"));
         assertThatThrownBy(() -> Harvester.builder().source(new SourceSettingsConfig("wiki", MediaWikiSources.TYPE,
-                null, null, null, Map.of("apiUrl", front.apiUrl()))).dataDirectory(data).build())
+                null, null, null, Map.of("apiUrl", front.apiUrl(), "maxDepth", "-1"))).dataDirectory(data).build())
                 .isInstanceOf(InvalidSourceConfigurationException.class)
                 .satisfies(e -> assertThat(((InvalidSourceConfigurationException) e).problems())
-                        .singleElement().asString().startsWith("sources[0] (id=wiki): options.startPoints"));
+                        .singleElement().asString().startsWith("sources[0] (id=wiki): options.maxDepth"));
     }
 
     private SourceSettingsConfig wikiSource(Auth auth, Map<String, String> options) {

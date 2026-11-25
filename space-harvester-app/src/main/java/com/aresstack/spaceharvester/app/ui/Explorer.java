@@ -167,6 +167,7 @@ public final class Explorer {
                             source.sourceId(), null, null, source.title());
                     case SpaceItem space -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
                             space.sourceId(), space.spaceKey(), null, space.name());
+                    case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP -> null;
                     case PageItem page -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
                             page.sourceId(), page.spaceKey(), page.pageId(), page.title());
                     default -> null;
@@ -1229,6 +1230,8 @@ public final class Explorer {
                 Scope scope = switch (node.item()) {
                     case SourceItem source -> new Scope(source.sourceId(), null);
                     case SpaceItem space -> new Scope(space.sourceId(), space.spaceKey());
+                    case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP ->
+                            new Scope(page.sourceId(), page.spaceKey());
                     case PageItem page -> new Scope(page.sourceId(), page.spaceKey(), page.pageId(), page.title());
                     default -> null;
                 };
@@ -1425,7 +1428,13 @@ public final class Explorer {
             return;
         }
         switch (node.item()) {
-            case PageItem page -> context.navigator().openFromTree(page.sourceId(), page.pageId());
+            case PageItem page -> {
+                if (page.kind() == HarvestSource.PageNode.Kind.GROUP) {
+                    tree.expandPath(path);
+                } else {
+                    context.navigator().openFromTree(page.sourceId(), page.pageId());
+                }
+            }
             case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
@@ -1806,6 +1815,7 @@ public final class Explorer {
         Enumeration<?> all = top.breadthFirstEnumeration();
         while (all.hasMoreElements() && found.size() < MATCH_LIMIT) {
             if (all.nextElement() instanceof Node node && node.item() instanceof PageItem page
+                    && page.kind() != HarvestSource.PageNode.Kind.GROUP
                     && page.title().toLowerCase(Locale.ROOT).contains(needle)) {
                 found.putIfAbsent(page.sourceId() + "/" + page.pageId(), new Match(page.sourceId(), page.spaceKey(),
                         page.pageId(), page.title(), where(page.sourceId(), page.spaceKey())));
@@ -1961,6 +1971,7 @@ public final class Explorer {
                 case SourceItem ignored -> setIcon(MainWindow.database());
                 case SpaceItem ignored -> setIcon(SidebarIcons.folder());
                 case PageItem page -> setIcon(page.kind() == HarvestSource.PageNode.Kind.FOLDER
+                        || page.kind() == HarvestSource.PageNode.Kind.GROUP
                         ? SidebarIcons.folder() : SidebarIcons.page());
                 case MoreItem ignored -> {
                     setIcon(null);
@@ -2052,7 +2063,8 @@ public final class Explorer {
 
     /** Indexieren gibt es für Quellen, Spaces und Seiten (Seite samt Unterseiten). */
     static boolean indexable(Item item) {
-        return item instanceof SourceItem || item instanceof SpaceItem || item instanceof PageItem;
+        return item instanceof SourceItem || item instanceof SpaceItem
+                || item instanceof PageItem page && page.kind() != HarvestSource.PageNode.Kind.GROUP;
     }
 
     /**
@@ -2118,6 +2130,7 @@ public final class Explorer {
         return switch (item) {
             case SourceItem source -> states.all(List.of(source.sourceId()), treeSpaces());
             case SpaceItem space -> states.space(space.sourceId(), space.spaceKey());
+            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP -> TreeStates.Badge.NONE;
             case PageItem page -> states.page(page.sourceId(), page.spaceKey(), page.pageId(),
                     !Boolean.FALSE.equals(page.hasChildren()));
             case null, default -> TreeStates.Badge.NONE;
@@ -2140,7 +2153,8 @@ public final class Explorer {
 
     /** Favorit werden können Spaces und Seiten (Angelo, 13.11.2026) und ganze Quellen (16.11.2026). */
     static boolean starrable(Item item) {
-        return item instanceof SourceItem || item instanceof SpaceItem || item instanceof PageItem;
+        return item instanceof SourceItem || item instanceof SpaceItem
+                || item instanceof PageItem page && page.kind() != HarvestSource.PageNode.Kind.GROUP;
     }
 
     boolean isFavorite(Item item) {
@@ -2260,6 +2274,9 @@ public final class Explorer {
     /** Das Kontextmenü eines Knotens (für Tests ohne Mausereignis). */
     javax.swing.JPopupMenu menu(Item item) {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        if (item instanceof PageItem page && page.kind() == HarvestSource.PageNode.Kind.GROUP) {
+            return menu;
+        }
         if (item instanceof PageItem page) {
             javax.swing.JMenuItem open = new javax.swing.JMenuItem("Öffnen");
             open.addActionListener(e -> context.navigator().openPage(page.sourceId(), page.pageId()));
@@ -2341,6 +2358,7 @@ public final class Explorer {
         return switch (item) {
             case SourceItem source -> new StatementAnalysisJobs.Scope.Source(source.sourceId());
             case SpaceItem space -> new StatementAnalysisJobs.Scope.Space(space.sourceId(), space.spaceKey());
+            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP -> null;
             case PageItem page -> pageOnly || leafPage(page)
                     ? new StatementAnalysisJobs.Scope.SinglePage(page.sourceId(), page.spaceKey(), page.pageId())
                     : new StatementAnalysisJobs.Scope.Subtree(page.sourceId(), page.spaceKey(), page.pageId());

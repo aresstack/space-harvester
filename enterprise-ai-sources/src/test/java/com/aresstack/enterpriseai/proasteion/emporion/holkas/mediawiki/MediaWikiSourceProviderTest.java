@@ -27,6 +27,18 @@ public class MediaWikiSourceProviderTest {
             new MediaWikiSourceProvider(ref -> MediaWikiCredentialsProvider.anonymous(), null, null, "Test");
 
     @Test
+    public void optionalStartPointsResolveAtRuntime() throws Exception {
+        Map<String, String> options = new HashMap<String, String>();
+        options.put("apiUrl", "https://wiki.example/w");
+        SourceSettings settings = SourceSettings.of(options);
+        assertTrue(provider.validate(settings).isEmpty());
+        assertTrue(provider.scope(settings).startPoints().isEmpty());
+        KnowledgeSourcePort source = provider.withTransports((id, site) ->
+                MediaWikiKnowledgeSourceContractTest.sampleWiki()).open(SOURCE, settings);
+        assertEquals("Hauptseite", source.discover(provider.scope(settings)).get(0).title());
+    }
+
+    @Test
     public void openUsesTheTransportOfTheFactoryWithTheSiteFromTheSettings() throws Exception {
         final FakeMediaWikiTransport wiki = MediaWikiKnowledgeSourceContractTest.sampleWiki();
         final List<MediaWikiSiteConfig> sites = new ArrayList<MediaWikiSiteConfig>();

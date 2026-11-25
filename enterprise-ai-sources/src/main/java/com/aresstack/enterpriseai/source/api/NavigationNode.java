@@ -23,9 +23,10 @@ public final class NavigationNode {
     private final KnowledgeResourceId resource;
     private final String startPoint;
     private final Children children;
+    private final boolean folder;
 
     private NavigationNode(String key, String title, KnowledgeResourceId resource, String startPoint,
-                           Children children) {
+                           Children children, boolean folder) {
         if (key == null || key.trim().isEmpty()) {
             throw new IllegalArgumentException("key must not be blank");
         }
@@ -34,11 +35,12 @@ public final class NavigationNode {
         this.resource = resource;
         this.startPoint = startPoint == null ? "" : startPoint.trim();
         this.children = children == null ? Children.UNKNOWN : children;
+        this.folder = folder;
     }
 
     /** Create the root of a partition, e.g. {@code root("space:DEV", "Development", "space:DEV", YES)}. */
     public static NavigationNode root(String key, String title, String startPoint, Children children) {
-        return new NavigationNode(key, title, null, startPoint, children);
+        return new NavigationNode(key, title, null, startPoint, children, false);
     }
 
     /** Create a page node; its key is the resource id. */
@@ -46,7 +48,19 @@ public final class NavigationNode {
         if (resource == null) {
             throw new IllegalArgumentException("resource must not be null");
         }
-        return new NavigationNode(resource.value(), title, resource, "", children);
+        return new NavigationNode(resource.value(), title, resource, "", children, false);
+    }
+
+    /** Represent a navigation-only grouping node with a source-local identity. */
+    public static NavigationNode folder(KnowledgeResourceId resource, String title, Children children) {
+        if (resource == null) {
+            throw new IllegalArgumentException("resource must not be null");
+        }
+        return new NavigationNode(resource.value(), title, resource, "", children, true);
+    }
+
+    public boolean isFolder() {
+        return folder;
     }
 
     public String key() {

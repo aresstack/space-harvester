@@ -211,6 +211,59 @@ class SourceFormTest {
     }
 
     @Test
+    void genericVaultAddressFieldsUseLocationOrHostWithoutOverwritingTypedValues() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        SettingDialogsTest.FakeKeePass keePass = new SettingDialogsTest.FakeKeePass() {
+            @Override
+            public com.aresstack.enterpriseai.adyton.VaultEntryDraft read(String title)
+                    throws com.aresstack.enterpriseai.adyton.SecretUnavailableException {
+                try (com.aresstack.enterpriseai.adyton.VaultEntryDraft entry = super.read(title)) {
+                    return new com.aresstack.enterpriseai.adyton.VaultEntryDraft(title, "reader",
+                            entry.copyPassword(), entry.location(), entry.fields());
+                }
+            }
+        };
+        keePass.entries.put("Wiki Server", new String[] {
+                "https://wiki.example.org/w/index.php?title=Start", "secret"
+        });
+        keePass.entries.put("Second Server", new String[] {
+                "https://second.example.org/w", "secret"
+        });
+        start(config, null);
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> true));
+        SourceForm[] form = new SourceForm[1];
+        SwingUtilities.invokeAndWait(() -> {
+            form[0] = new SourceForm(context);
+            form[0].kind.setSelectedItem("MediaWiki");
+        });
+        awaitOnEdt(() -> form[0].keePassEntry.getItemCount() == 2);
+        SwingUtilities.invokeAndWait(() -> form[0].keePassEntry.setSelectedItem("Wiki Server"));
+        awaitOnEdt(() -> form[0].keePassSecretRead()
+                && "https://wiki.example.org/w/index.php?title=Start".equals(form[0].draft().extraOptions().get("apiUrl")));
+        SwingUtilities.invokeAndWait(() -> {
+            PlaceholderField api = (PlaceholderField) form[0].fields.input("apiUrl");
+            assertThat(api.getText()).isEmpty();
+            assertThat(api.placeholder()).startsWith("https://wiki.example.org");
+            assertThat(form[0].validateInput()).isTrue();
+            api.setText("https://manual.example.org/w");
+            form[0].keePassEntry.setSelectedItem("Second Server");
+        });
+        awaitOnEdt(() -> form[0].keePassSecretRead()
+                && "Second Server".equals(form[0].keePassEntry.getSelectedItem()));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(form[0].draft().extraOptions()).containsEntry("apiUrl", "https://manual.example.org/w");
+            form[0].kind.setSelectedItem("JES");
+            form[0].fields.vaultLocation("https://second.example.org/w");
+            assertThat(form[0].fields.effectiveAddress()).isEqualTo("second.example.org");
+            assertThat(form[0].draft().extraOptions()).containsEntry("host", "second.example.org");
+        });
+    }
+
+    @Test
     void bscwClassicSelectsBasicAuthenticationAndExposesTheFolderUrl() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
@@ -577,7 +630,7 @@ class SourceFormTest {
     @Test
     void confluenceAsksForLoginAndCertificatesOnTheSamePage() throws Exception {
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), home.resolve("app.yml"),
-                "test");
+                "test", new SecretVault(home.resolve("secrets"), null));
         SwingUtilities.invokeAndWait(() -> {
             SourceForm f = new SourceForm(context);
             f.id.setText("Wiki.Neu");

@@ -19,6 +19,11 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
     final List<Map<String, String>> requests = new ArrayList<Map<String, String>>();
     final List<String> failLinksFor = new ArrayList<String>();
     boolean readOnly;
+    public String mainPage = "Hauptseite";
+    public int inventoryPageSize = 50;
+    public boolean mainNamespaceSubpages;
+    public final Map<Integer, List<String>> namespaceTitles = new LinkedHashMap<Integer, List<String>>();
+    public final Map<String, List<String>> categories = new LinkedHashMap<String, List<String>>();
     final List<String> unavailableLinksFor = new ArrayList<String>();
     int linkPageSize = 500;
     int sessionResets;
@@ -79,6 +84,37 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
             }
             return ok("{\"error\":{\"code\":\"readapidenied\",\"info\":\"You need read permission.\"}}");
         }
+        if ("query".equals(action) && "siteinfo".equals(p.get("meta"))) {
+            StringBuilder namespaces = new StringBuilder();
+            for (Integer id : namespaceTitles.keySet()) {
+                append(namespaces, q(id.toString()) + ":{\"id\":" + id + ",\"content\":\"\"}");
+            }
+            if (mainNamespaceSubpages && !namespaceTitles.containsKey(0)) {
+                append(namespaces, "\"0\":{\"id\":0,\"content\":\"\",\"subpages\":\"\",\"*\":\"\"}");
+            }
+            return ok("{\"query\":{\"general\":{\"mainpage\":" + q(mainPage)
+                    + ",\"sitename\":\"Test Wiki\"},\"namespaces\":{" + namespaces + "}}}");
+        }
+        if ("query".equals(action) && "allpages".equals(p.get("list"))) {
+            int namespace = Integer.parseInt(p.get("apnamespace"));
+            List<String> titles = new ArrayList<String>(namespaceTitles.isEmpty() && namespace == 0
+                    ? pages.keySet() : namespaceTitles.getOrDefault(namespace, java.util.Collections.<String>emptyList()));
+            if (p.containsKey("apprefix")) {
+                titles.removeIf(title -> !title.startsWith(p.get("apprefix")));
+            }
+            java.util.Collections.sort(titles);
+            return ok(titleListing("allpages", "title", "apcontinue", p, titles, "aplimit"));
+        }
+        if ("query".equals(action) && "allcategories".equals(p.get("list"))) {
+            return ok(titleListing("allcategories", "category", "accontinue", p,
+                    new ArrayList<String>(categories.keySet()), "aclimit"));
+        }
+        if ("query".equals(action) && "categorymembers".equals(p.get("list"))) {
+            String name = p.get("cmtitle").substring("Category:".length());
+            List<String> members = categories.get(name);
+            return ok(titleListing("categorymembers", "title", "cmcontinue", p,
+                    members == null ? java.util.Collections.<String>emptyList() : members, "cmlimit"));
+        }
         if ("parse".equals(action)) {
             Page page = resolve(p.get("page"));
             if (page == null) {
@@ -111,6 +147,20 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
             return ok(sb.append("]}}").toString());
         }
         return ok("{\"error\":{\"code\":\"badvalue\",\"info\":\"unsupported\"}}");
+    }
+
+    private String titleListing(String list, String field, String token, Map<String, String> params,
+                                List<String> titles, String limitKey) {
+        int start = params.containsKey(token) ? Integer.parseInt(params.get(token)) : 0;
+        int end = Math.min(titles.size(), start + Math.min(inventoryPageSize, Integer.parseInt(params.get(limitKey))));
+        StringBuilder rows = new StringBuilder();
+        for (int index = start; index < end; index++) {
+            append(rows, "{\"" + field + "\":" + q(titles.get(index)) + "}");
+        }
+        String body = "\"query\":{\"" + list + "\":[" + rows + "]}";
+        return end < titles.size()
+                ? "{\"continue\":{\"continue\":\"-||\",\"" + token + "\":\"" + end + "\"}," + body + "}"
+                : "{\"batchcomplete\":true," + body + "}";
     }
 
     private Response login(Map<String, String> p) {

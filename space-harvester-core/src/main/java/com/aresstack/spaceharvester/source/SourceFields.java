@@ -19,6 +19,7 @@ final class SourceFields {
 
     private static SourceField of(SourceSettingField field) {
         return new SourceField(field.key(), field.label(), field.hint(), SourceField.Kind.valueOf(field.kind().name()),
-                field.isRequired(), field.isAdvanced(), field.defaultValue());
+                field.isRequired(), field.isAdvanced(), field.defaultValue(),
+                SourceField.VaultValue.valueOf(field.vaultValue().name()));
     }
 }

@@ -37,11 +37,12 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
                     .fromVault(SourceSettingField.VaultValue.LOCATION))
             .field(SourceSettingField.of("credentialRef", SourceSettingField.Kind.SECRET_REF,
                     "KeePass-Eintrag", "Eintrag mit Benutzername, Passwort und URL des Wikis; leer = anonym"))
-            .field(SourceSettingField.text("startPoints", "Startpunkte", "Kommagetrennte Seitentitel").required())
+            .field(SourceSettingField.text("startPoints", "Startpunkte (optional)",
+                    "Nur für begrenzte Synchronisation; leer = alle Inhaltsseiten"))
             .field(SourceSettingField.of("maxDepth", SourceSettingField.Kind.NUMBER, "Tiefe",
-                    "Wie viele Linkebenen ab den Startpunkten verfolgt werden (0 = nur Startpunkte)").withDefault("1").advanced())
+                    "Nur für Link-Crawls: Tiefe ab Startpunkten; keine Begrenzung der Seitenliste").withDefault("1").advanced())
             .field(SourceSettingField.of("maxResources", SourceSettingField.Kind.NUMBER,
-                    "Höchstzahl Seiten (optional)", "Obergrenze je Lauf; leer = Standard").advanced())
+                    "Höchstzahl Seiten (optional)", "Nur für Link-Crawls; die vollständige Seitenliste bleibt unbegrenzt").advanced())
             .field(SourceSettingField.of("requiresLogin", SourceSettingField.Kind.FLAG, "Anmeldung erforderlich",
                     "Vor dem Lesen anmelden (Standard: ja, wenn ein KeePass-Eintrag gesetzt ist)").advanced())
             .field(SourceSettingField.text("displayName", "Anzeigename (optional)", "Name der Quelle in Quellenangaben").advanced())
@@ -119,13 +120,13 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
     public List<String> validate(SourceSettings settings) {
         SourceSettingsReader reader = new SourceSettingsReader(TYPE, settings);
         site(reader);
-        reader.scope(null, 1, SourceScope.DEFAULT_MAX_RESOURCES);
+        reader.automaticScope(1, SourceScope.DEFAULT_MAX_RESOURCES);
         return reader.problems();
     }
 
     @Override
     public SourceScope scope(SourceSettings settings) {
-        return new SourceSettingsReader(TYPE, settings).scope(null, 1, SourceScope.DEFAULT_MAX_RESOURCES);
+        return new SourceSettingsReader(TYPE, settings).automaticScope(1, SourceScope.DEFAULT_MAX_RESOURCES);
     }
 
     @Override
@@ -155,13 +156,16 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
     }
 
     static String siteLocator(String apiUrl) {
-        String locator = SourceLocators.url(apiUrl);
+        if (SourceLocators.url(apiUrl).isEmpty()) {
+            return "";
+        }
+        String locator = SourceLocators.url(MediaWikiSiteConfig.endpoint(URI.create(apiUrl.trim())).toString());
         return locator.endsWith("/api.php") ? locator.substring(0, locator.length() - "/api.php".length()) : locator;
     }
 
     /** Die Site-Konfiguration oder {@code null} (dann sind Probleme vermerkt). */
     private MediaWikiSiteConfig site(SourceSettingsReader r) {
-        URI apiUrl = r.httpUri("apiUrl", true);
+        URI apiUrl = r.httpUri("apiUrl", true, true);
         SecretRef credentialRef = r.secretRef("credentialRef");
         String displayName = r.text("displayName", null);
         boolean requiresLogin = r.bool("requiresLogin", credentialRef != null);

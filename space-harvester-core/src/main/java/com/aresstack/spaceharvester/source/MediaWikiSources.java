@@ -12,7 +12,7 @@ import java.util.logging.Logger;
  * HTML in Klartext ({@code load}), Revision aus {@code touched} und {@code lastrevid}.
  *
  * <p>Einstellungen unter {@code options} mit den Schlüsseln des Upstream-Typs: {@code apiUrl} (Pflicht),
- * {@code startPoints} (Pflicht), {@code maxDepth}, {@code maxResources}, {@code requiresLogin},
+ * {@code startPoints} (optional; leer: Hauptseite automatisch), {@code maxDepth}, {@code maxResources}, {@code requiresLogin},
  * {@code linkNamespaces}, {@code connectTimeoutMillis}, {@code readTimeoutMillis}, {@code userAgent}; {@code title}
  * wird {@code displayName}. Anmeldung mit {@code auth.type basic} (Benutzer und Passwort, etwa ein Bot-Passwort):
  * der Adapter fordert sie erst beim Login über {@link SecretBackedMediaWikiCredentialsProvider} unter

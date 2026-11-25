@@ -32,6 +32,11 @@ public interface MediaWikiTransport {
      */
     Response postForm(String formBody) throws IOException;
 
+    /** Read a bounded image from the same wiki origin using the current session. */
+    default byte[] getImage(java.net.URI target, int maxBytes) throws IOException {
+        throw new UnsupportedOperationException("MediaWiki image transport not implemented");
+    }
+
     /** Verwirft die Sitzung (Cookies), z. B. vor einem neuen Login. */
     void resetSession();
 
