@@ -191,9 +191,16 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             return new StoredContent(resource, new byte[0], "application/x-space-harvester-remote-media",
                     "remote-media-metadata", Instant.now());
         }
-        StoredContent content = stored.storedContent(localId);
-        return new StoredContent(describeFile(content.resource()), content.payload(), content.mediaType(),
-                content.nativeFormat(), content.retrievedAt());
+        try {
+            StoredContent content = stored.storedContent(localId);
+            return new StoredContent(describeFile(content.resource()), content.payload(), content.mediaType(),
+                    content.nativeFormat(), content.retrievedAt());
+        } catch (com.aresstack.enterpriseai.source.api.ResponseTooLargeException oversized) {
+            // Retain the file as a metadata-only resource when its source read limit is lower than the cache limit.
+            return new StoredContent(resource, new byte[0],
+                    com.aresstack.spaceharvester.application.snapshot.LargeFiles.MEDIA_TYPE,
+                    com.aresstack.spaceharvester.application.snapshot.LargeFiles.FORMAT, Instant.now());
+        }
     }
 
     @Override

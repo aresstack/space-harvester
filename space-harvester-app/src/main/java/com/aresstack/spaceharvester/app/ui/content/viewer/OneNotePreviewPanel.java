@@ -3,6 +3,8 @@ package com.aresstack.spaceharvester.app.ui.content.viewer;
 import com.aresstack.spaceharvester.application.assets.OneNotePreview;
 import com.aresstack.spaceharvester.application.assets.Outcome;
 import com.aresstack.spaceharvester.application.assets.StatusReason;
+import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
 import javax.swing.*;
 import java.awt.BorderLayout;
 import java.awt.Component;
@@ -14,10 +16,17 @@ final class OneNotePreviewPanel extends JPanel {
 
     OneNotePreviewPanel(OneNotePreview preview) {
         super(new BorderLayout());
+        setBackground(Comic.SURFACE);
         DefaultListModel<OneNotePreview.Section> model = new DefaultListModel<>();
         preview.sections().forEach(model::addElement);
         sections = new JList<>(model);
         sections.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        sections.setFont(Comic.regular(13f));
+        sections.setBackground(Comic.SURFACE);
+        sections.setForeground(Comic.TEXT);
+        sections.setSelectionBackground(Comic.PALETTE.getAccentYellow());
+        sections.setSelectionForeground(Comic.INK);
+        sections.setFixedCellHeight(32);
         // Keep horizontal navigation inside the notebook while its page list has focus.
         bindPageNavigation("LEFT", -1);
         bindPageNavigation("RIGHT", 1);
@@ -25,11 +34,18 @@ final class OneNotePreviewPanel extends JPanel {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value, int index,
                                                           boolean selected, boolean focus) {
-                return super.getListCellRendererComponent(list,
+                JLabel label = (JLabel) super.getListCellRendererComponent(list,
                         ((OneNotePreview.Section) value).label(), index, selected, focus);
+                label.setBorder(BorderFactory.createEmptyBorder(4, 12, 4, 12));
+                label.setFont(selected ? Comic.semiBold(13f) : Comic.regular(13f));
+                return label;
             }
         });
         text.setEditable(false);
+        text.setFont(Comic.regular(14f));
+        text.setForeground(Comic.TEXT);
+        text.setBackground(java.awt.Color.WHITE);
+        text.setBorder(BorderFactory.createEmptyBorder(18, 24, 18, 24));
         text.setLineWrap(true);
         text.setWrapStyleWord(true);
         sections.addListSelectionListener(event -> {
@@ -37,17 +53,26 @@ final class OneNotePreviewPanel extends JPanel {
                 displaySelectedSection();
             }
         });
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
-                new JScrollPane(sections), new JScrollPane(text));
-        split.setDividerLocation(180);
-        add(split, BorderLayout.CENTER);
+        JScrollPane document = Comic.scroll(text);
+        document.getViewport().setBackground(java.awt.Color.WHITE);
+        if (preview.hasPageBoundaries()) {
+            ComicSplitPane split = new ComicSplitPane(Comic.scroll(sections), document, 140, 360, Comic.PALETTE);
+            split.setBackground(Comic.SURFACE);
+            split.setPreferredLeftWidth(200);
+            add(split, BorderLayout.CENTER);
+        } else {
+            // Use the entire available width when the parser cannot recover the page structure.
+            add(document, BorderLayout.CENTER);
+        }
         String notice = preview.hasPageBoundaries()
-                ? "Extrahierter Text; kein originales OneNote-Layout."
-                : "Der Parser liefert keine Seitengrenzen.";
+                ? "Textvorschau – Originalformatierung nicht verfügbar."
+                : "Textvorschau – Seitenstruktur dieser Datei konnte nicht gelesen werden.";
         if (preview.outcome().truncated()) {
             notice += " Vorschau gekürzt.";
         }
-        add(new JLabel(notice), BorderLayout.SOUTH);
+        JLabel hint = Comic.muted(notice);
+        hint.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+        add(hint, BorderLayout.SOUTH);
         if (!model.isEmpty()) {
             selectSection(0);
         }

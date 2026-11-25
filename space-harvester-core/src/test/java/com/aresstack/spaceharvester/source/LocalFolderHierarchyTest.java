@@ -139,6 +139,30 @@ class LocalFolderHierarchyTest {
     }
 
     @Test
+    void disabledFilterIncludesUnknownEmptyAndLargeFilesInNavigationAndInventory() throws IOException {
+        write("notes.one", "not a real section");
+        write("unknown.zzz", "unknown");
+        write("empty", "");
+        Files.write(directory.resolve("large.bin"), new byte[2 * 1024 * 1024]);
+        SourceSettingsConfig config = new SourceSettingsConfig("docs", "files", null, null, null,
+                Map.of("directory", directory.toString(), "include", "*.md", "includeEnabled", "false",
+                        "maxFileMegabytes", "1"));
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("docs", "files", "docs",
+                new LocalFilesSourceAdapter().open(config, null).port());
+        assertThat(source.children("docs", null, null).pages()).extracting(HarvestSource.PageNode::title)
+                .contains("notes.one", "unknown.zzz", "empty", "large.bin", "notiz.txt");
+        assertThat(titles(list(source, 500))).contains("notes.one", "unknown.zzz", "empty", "large.bin");
+        assertThat(source.storedPage(id("empty")).payload()).isEmpty();
+        assertThat(source.storedPage(id("large.bin")).nativeFormat())
+                .isEqualTo(com.aresstack.spaceharvester.application.snapshot.LargeFiles.FORMAT);
+        SourceSettingsConfig filtered = new SourceSettingsConfig("docs", "files", null, null, null,
+                Map.of("directory", directory.toString(), "include", "*.zzz", "includeEnabled", "true"));
+        KnowledgeSourceHarvestSource restricted = new KnowledgeSourceHarvestSource("docs", "files", "docs",
+                new LocalFilesSourceAdapter().open(filtered, null).port());
+        assertThat(titles(list(restricted, 500))).containsExactly("unknown.zzz");
+    }
+
+    @Test
     void completeInventoryDoesNotWrapAnEmptyCursor() {
         KnowledgeSourceHarvestSource source = open();
         PageMetadataBatch batch = source.pageMetadata("docs", null, 500);

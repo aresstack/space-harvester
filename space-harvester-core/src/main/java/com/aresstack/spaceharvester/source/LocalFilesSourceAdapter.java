@@ -77,7 +77,7 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
                     return granted == null ? LocalFileAccessPolicy.none()
                             : LocalFileAccessPolicy.of(granted.allowAll(),
                                     granted.roots().stream().filter(Files::isDirectory).toList());
-                }, VideoFileTypes::streamableType);
+                }, VideoFileTypes::streamableType, true);
     }
 
     @Override
@@ -98,7 +98,10 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
     /** Die Felder des Upstream-Typs ohne {@code title}, der außerhalb von {@code options} steht. */
     @Override
     public List<SourceField> fields() {
-        return SourceFields.of(provider.type(), Set.of("title"));
+        List<SourceField> fields = new ArrayList<>(SourceFields.of(provider.type(), Set.of("title")));
+        fields.add(new SourceField("includeEnabled", "Dateifilter aktivieren",
+                "Aus: alle regulären Dateien", SourceField.Kind.FLAG, false, false, "false"));
+        return List.copyOf(fields);
     }
 
     @Override
@@ -158,6 +161,10 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
 
     private static SourceSettings settings(SourceSettingsConfig config) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
+        String enabled = values.remove("includeEnabled");
+        if (!com.aresstack.spaceharvester.application.sources.LocalFileFilter.enabled(values.get("include"), enabled)) {
+            values.remove("include");
+        }
         values.putIfAbsent("maxFileMegabytes", Integer.toString(DEFAULT_MAX_FILE_MEGABYTES));
         if (config.title() != null) {
             values.put("title", config.title());

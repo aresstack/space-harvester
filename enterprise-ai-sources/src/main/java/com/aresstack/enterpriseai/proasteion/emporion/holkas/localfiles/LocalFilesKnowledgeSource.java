@@ -132,6 +132,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     private final Supplier<LocalFileAccessPolicy> access;
     private final FilePatterns patterns;
     private final BiFunction<String, String, String> streamingType;
+    private final boolean inventoryAllFiles;
 
     public LocalFilesKnowledgeSource(SourceAddress sourceId, Path root, ContentDetector detector,
                                      ExtractionRegistry extractors, long maxFileBytes) {
@@ -155,6 +156,15 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
                                      ExtractionRegistry extractors, long maxFileBytes,
                                      Supplier<LocalFileAccessPolicy> access, List<String> includes,
                                      List<String> excludes, BiFunction<String, String, String> streamingType) {
+        this(sourceId, root, detector, extractors, maxFileBytes, access, includes, excludes, streamingType, false);
+    }
+
+    /** Admit all regular visible files for inventory without relaxing bounded content reads. */
+    public LocalFilesKnowledgeSource(SourceAddress sourceId, Path root, ContentDetector detector,
+                                     ExtractionRegistry extractors, long maxFileBytes,
+                                     Supplier<LocalFileAccessPolicy> access, List<String> includes,
+                                     List<String> excludes, BiFunction<String, String, String> streamingType,
+                                     boolean inventoryAllFiles) {
         if (sourceId == null || root == null || detector == null || extractors == null) {
             throw new IllegalArgumentException("sourceId, root, detector and extractors are required");
         }
@@ -167,6 +177,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         this.detector = detector;
         this.extractors = extractors;
         this.maxFileBytes = maxFileBytes;
+        this.inventoryAllFiles = inventoryAllFiles;
         this.streamingType = java.util.Objects.requireNonNull(streamingType, "streamingType");
         this.access = access == null ? LocalFileAccessPolicy::none : access;
         this.patterns = new FilePatterns(includes == null ? Collections.<String>emptyList() : includes,
@@ -472,7 +483,13 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         }
         try {
             long size = Files.size(file);
-            if (Files.isHidden(file) || size == 0) {
+            if (Files.isHidden(file)) {
+                return false;
+            }
+            if (inventoryAllFiles) {
+                return true;
+            }
+            if (size == 0) {
                 return false;
             }
             if (streamType(file) != null) {
@@ -521,7 +538,9 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         if (streamType(file) != null || !wanted.test(type)) {
             return Optional.empty();
         }
-        long limit = maxBytes > 0 ? Math.min(maxFileBytes, maxBytes) : maxFileBytes;
+        // Apply the caller's bound for disk copies, never the in-memory limit in inventory mode.
+        long limit = inventoryAllFiles ? (maxBytes > 0 ? maxBytes : Long.MAX_VALUE)
+                : (maxBytes > 0 ? Math.min(maxFileBytes, maxBytes) : maxFileBytes);
         try {
             long size = Files.size(file);
             if (size > limit) {
