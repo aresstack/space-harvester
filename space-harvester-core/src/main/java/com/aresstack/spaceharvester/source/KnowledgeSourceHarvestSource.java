@@ -325,7 +325,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public boolean navigationUsesGroups() {
-        return port instanceof SinglePartitionListingSource;
+        return port instanceof SinglePartitionListingSource || "sharepoint".equals(type);
     }
 
     @Override
@@ -639,12 +639,15 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public boolean visitInventory(String partitionKey, Runnable checkpoint,
                                   java.util.function.Consumer<PageMetadata> found) {
-        if (restriction != null || scope != null
+        boolean completeSharePointScope = "sharepoint".equals(type) && scope != null
+                && scope.maxDepth() == Integer.MAX_VALUE && scope.maxResources() == Integer.MAX_VALUE
+                && id.equals(partitionKey);
+        if (restriction != null || (scope != null && !completeSharePointScope)
                 || !(port instanceof com.aresstack.enterpriseai.source.api.PartitionInventorySource inventory)) {
             return false;
         }
         try {
-            inventory.visitInventory(partitionKey, checkpoint,
+            inventory.visitInventory(completeSharePointScope ? port.sourceId().value() : partitionKey, checkpoint,
                     resource -> found.accept(pageMetadata(resource, partitionKey)));
             return true;
         } catch (KnowledgeSourceException e) {
@@ -863,7 +866,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         ChangeListingSource changes = changes();
         PartitionResources batch;
         try {
-            batch = changes.changedResources(partitionKey, within, cursor == null ? "" : cursor, limit);
+            batch = changes.changedResources(changePartition(partitionKey), within, cursor == null ? "" : cursor, limit);
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
@@ -876,7 +879,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         ChangeListingSource changes = changes();
         PartitionResources batch;
         try {
-            batch = changes.removedResources(partitionKey, cursor == null ? "" : cursor, limit);
+            batch = changes.removedResources(changePartition(partitionKey), cursor == null ? "" : cursor, limit);
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
@@ -907,6 +910,16 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw accessFailure(e);
         }
         return new PageIdBatch(batch.localIds(), batch.nextCursor());
+    }
+
+    private String changePartition(String partitionKey) {
+        if (discovering() && "sharepoint".equals(type)) {
+            if (!id.equals(partitionKey)) {
+                throw new SourceAccessException(id, SourceAccessException.Reason.NOT_FOUND, "Unbekannte Partition", null);
+            }
+            return port.sourceId().value();
+        }
+        return partitionKey;
     }
 
     private ChangeListingSource changes() {
@@ -972,11 +985,14 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public Optional<String> downloadOriginal(String pageId, java.nio.file.Path target,
                                              java.util.function.Predicate<String> wanted, long maxBytes) {
-        if (!(port instanceof OriginalFileSource files)) {
-            return Optional.empty();
-        }
         try {
-            return files.downloadOriginal(pageId, target, wanted, maxBytes);
+            if (port instanceof com.aresstack.enterpriseai.source.api.FileDownloadSource files) {
+                return files.downloadOriginal(pageId, target, wanted, maxBytes);
+            }
+            if (port instanceof OriginalFileSource files) {
+                return files.downloadOriginal(pageId, target, wanted, maxBytes);
+            }
+            return Optional.empty();
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
@@ -1390,7 +1406,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             com.aresstack.enterpriseai.source.api.PagePosition position = navigation.position(resource(pageId).id());
             String partition = position.root().key().startsWith(SPACE_NODE)
                     ? position.root().key().substring(SPACE_NODE.length()) : position.root().key();
-            if (port instanceof SinglePartitionListingSource) {
+            if (port instanceof SinglePartitionListingSource || "sharepoint".equals(type)) {
                 partition = id;
             }
             String localPartition = partition;
@@ -1430,7 +1446,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             case NO -> Boolean.FALSE;
             case UNKNOWN -> null;
         };
-        PageNode.Kind kind = node.isFolder() ? PageNode.Kind.GROUP : PageNode.Kind.PAGE;
+        PageNode.Kind kind = node.isFolder() ? PageNode.Kind.GROUP
+                : "sharepoint".equals(type) ? PageNode.Kind.FILE : PageNode.Kind.PAGE;
         if (!node.isFolder() && port instanceof ResourceNodeKindSource presentation) {
             try {
                 kind = presentation.kind(node.resource());

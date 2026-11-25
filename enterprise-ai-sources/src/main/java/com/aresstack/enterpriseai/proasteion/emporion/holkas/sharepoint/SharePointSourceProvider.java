@@ -45,9 +45,9 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
             .field(SourceSettingField.text("startPoints", "Bibliotheken oder Ordner",
                     "Kommagetrennt relativ zur Site, z. B. Dokumente/Handbuch (. = alle Bibliotheken)").withDefault(".").advanced())
             .field(SourceSettingField.of("maxDepth", SourceSettingField.Kind.NUMBER, "Tiefe",
-                    "Wie viele Ordnerebenen durchsucht werden").withDefault("10").advanced())
+                    "Optional; leer = keine Tiefenbegrenzung").advanced())
             .field(SourceSettingField.of("maxResources", SourceSettingField.Kind.NUMBER,
-                    "Höchstzahl Dateien (optional)", "Obergrenze je Lauf; leer = 2000").advanced())
+                    "Höchstzahl Dateien (optional)", "Obergrenze je Lauf; leer = alle").advanced())
             .field(SourceSettingField.of("maxFileMegabytes", SourceSettingField.Kind.NUMBER,
                     "Größte Datei in MB (optional)", "Größere Dateien werden übersprungen; leer = 50").advanced())
             .build();
@@ -115,6 +115,7 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
         long maxFileBytes = maxFileBytes(reader);
         int[] timeouts = timeouts(reader);
         String userAgent = reader.text("userAgent", defaultUserAgent);
+        SourceScope configuredScope = scope(reader);
         if (reader.hasProblems() || siteUrl == null) {
             throw new IllegalArgumentException("SharePoint-Quelle " + sourceId + " ist fehlerhaft: " + reader.problems());
         }
@@ -122,7 +123,7 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
                 : credentials.apply(credentialRef);
         return new SharePointKnowledgeSource(sourceId, siteUrl, provider,
                 new UrlConnectionSharePointTransport(routes, sslSocketFactory, userAgent, timeouts[0], timeouts[1]),
-                detector, extraction, maxFileBytes);
+                detector, extraction, maxFileBytes, configuredScope);
     }
 
     /** Die Site ohne Schema, z. B. {@code sp.intern/sites/team}; Teil jeder Ressourcen-ID. */
@@ -145,6 +146,10 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
     }
 
     private static SourceScope scope(SourceSettingsReader r) {
-        return r.scope(SharePointKnowledgeSource.ALL_LIBRARIES, 10, 2000);
+        List<String> starts = r.list("startPoints");
+        return SourceScope.builder()
+                .startPoints(starts.isEmpty() ? java.util.Collections.singletonList(SharePointKnowledgeSource.ALL_LIBRARIES) : starts)
+                .maxDepth(r.integer("maxDepth", Integer.MAX_VALUE, 0, 100))
+                .maxResources(r.integer("maxResources", Integer.MAX_VALUE, 1, 1000000)).build();
     }
 }

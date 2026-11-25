@@ -35,6 +35,7 @@ import java.util.regex.Pattern;
 public final class ParitySharePoint implements AutoCloseable {
 
     public static final String SITE_PATH = "/sites/parity";
+    private static final String LIST_ID = "11111111-2222-3333-4444-555555555555";
     public static final String LIBRARY = SITE_PATH + "/Dokumente";
     public static final String[] DOCUMENTS = {LIBRARY + "/Lies mich.txt", LIBRARY + "/Betrieb/Handbuch.txt",
             LIBRARY + "/Betrieb/Nacht/Ablauf.txt", LIBRARY + "/Notizen.md"};
@@ -70,10 +71,18 @@ public final class ParitySharePoint implements AutoCloseable {
     }
 
     private final HttpServer server;
+    private final Map<String, byte[]> documents;
 
     private ParitySharePoint(int port) throws IOException {
+        this(port, FILES);
+    }
+
+    private ParitySharePoint(int port, Map<String, byte[]> documents) throws IOException {
+        this.documents = documents;
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 0);
-        server.createContext(SITE_PATH + "/_api/web/", this::handle);
+        server.createContext(SITE_PATH + "/_api/web", this::handle);
+        server.createContext(SITE_PATH + "/_api/contextinfo", this::contextInfo);
+        server.createContext(SITE_PATH + "/_api/search/query", this::search);
         server.start();
     }
 
@@ -92,6 +101,12 @@ public final class ParitySharePoint implements AutoCloseable {
         return "http://127.0.0.1:" + port() + SITE_PATH;
     }
 
+    public static ParitySharePoint withFile(String path, byte[] bytes) throws IOException {
+        Map<String, byte[]> documents = new LinkedHashMap<String, byte[]>(FILES);
+        documents.put(path, bytes);
+        return new ParitySharePoint(0, documents);
+    }
+
     public int port() {
         return server.getAddress().getPort();
     }
@@ -103,12 +118,21 @@ public final class ParitySharePoint implements AutoCloseable {
 
     private void handle(HttpExchange exchange) throws IOException {
         try {
-            String call = exchange.getRequestURI().getPath().substring(SITE_PATH.length() + "/_api/web/".length());
-            if (!"GET".equals(exchange.getRequestMethod())) {
+            String path = exchange.getRequestURI().getPath();
+            if (path.equals(SITE_PATH + "/_api/web")) {
+                json(exchange, "{\"d\":{\"Id\":\"parity-site\"}}");
+                return;
+            }
+            String call = path.substring(SITE_PATH.length() + "/_api/web/".length());
+            if ("POST".equals(exchange.getRequestMethod()) && call.equals("lists(guid'" + LIST_ID + "')/GetChanges")) {
+                changes(exchange);
+            } else if (!"GET".equals(exchange.getRequestMethod())) {
                 send(exchange, 405, "text/plain", new byte[0]);
+            } else if (call.equals("lists(guid'" + LIST_ID + "')/items(1)")) {
+                json(exchange, "{\"d\":{\"FileSystemObjectType\":0,\"File\":" + metadata(SEARCH_HIT) + "}}");
             } else if ("lists".equals(call)) {
                 json(exchange, "{\"d\":{\"results\":["
-                        + "{\"Title\":\"Dokumente\",\"Hidden\":false,\"BaseTemplate\":101,"
+                        + "{\"Id\":\"" + LIST_ID + "\",\"Title\":\"Dokumente\",\"Hidden\":false,\"BaseTemplate\":101,"
                         + "\"RootFolder\":{\"ServerRelativeUrl\":\"" + LIBRARY + "\"}},"
                         + "{\"Title\":\"Intern\",\"Hidden\":true,\"BaseTemplate\":101,"
                         + "\"RootFolder\":{\"ServerRelativeUrl\":\"" + SITE_PATH + "/Intern\"}}]}}");
@@ -128,11 +152,58 @@ public final class ParitySharePoint implements AutoCloseable {
         }
     }
 
-    private static void folder(HttpExchange exchange, String path, boolean files) throws IOException {
+    private void contextInfo(HttpExchange exchange) throws IOException {
+        try {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                send(exchange, 405, "text/plain", new byte[0]);
+                return;
+            }
+            json(exchange, "{\"d\":{\"GetContextWebInformation\":{\"FormDigestValue\":\"parity-digest\"}}}");
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private void changes(HttpExchange exchange) throws IOException {
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        try (java.io.InputStream in = exchange.getRequestBody()) {
+            byte[] buffer = new byte[1024];
+            int n;
+            while ((n = in.read(buffer)) != -1) bytes.write(buffer, 0, n);
+        }
+        String query = new String(bytes.toByteArray(), UTF_8);
+        if (!"parity-digest".equals(exchange.getRequestHeaders().getFirst("X-RequestDigest"))
+                || !query.contains("ChangeTokenStart") || !query.contains(LIST_ID)) {
+            send(exchange, 400, "application/json", new byte[0]);
+            return;
+        }
+        json(exchange, "{\"d\":{\"results\":[{\"__metadata\":{\"type\":\"SP.ChangeItem\"},\"ChangeType\":2,\"ItemId\":1,"
+                + "\"ListId\":\"" + LIST_ID + "\",\"ChangeToken\":{\"StringValue\":\"1;3;" + LIST_ID
+                + ";639000000000000000;5\"}}]}}");
+    }
+
+    private void search(HttpExchange exchange) throws IOException {
+        try {
+            String query = exchange.getRequestURI().getQuery();
+            String row = "";
+            if (query != null && query.contains(SEARCH) && query.contains(LIBRARY)
+                    && !query.contains("startrow=1")) {
+                String url = siteUrl() + SEARCH_HIT.substring(SITE_PATH.length());
+                row = "{\"Cells\":{\"results\":[{\"Key\":\"Path\",\"Value\":\"" + url
+                        + "\"},{\"Key\":\"IsDocument\",\"Value\":\"true\"}]}}";
+            }
+            json(exchange, "{\"d\":{\"query\":{\"PrimaryQueryResult\":{\"RelevantResults\":{\"Table\":{\"Rows\":{\"results\":["
+                    + row + "]}}}}}}}");
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private void folder(HttpExchange exchange, String path, boolean files) throws IOException {
         String prefix = path + "/";
         TreeSet<String> names = new TreeSet<String>();
         boolean exists = false;
-        for (String file : FILES.keySet()) {
+        for (String file : documents.keySet()) {
             if (!file.startsWith(prefix)) {
                 continue;
             }
@@ -158,8 +229,8 @@ public final class ParitySharePoint implements AutoCloseable {
         json(exchange, "{\"d\":{\"results\":[" + results + "]}}");
     }
 
-    private static void file(HttpExchange exchange, String path, boolean content) throws IOException {
-        byte[] bytes = FILES.get(path);
+    private void file(HttpExchange exchange, String path, boolean content) throws IOException {
+        byte[] bytes = documents.get(path);
         if (bytes == null) {
             send(exchange, 404, "application/json", new byte[0]);
         } else if (content) {
@@ -169,9 +240,9 @@ public final class ParitySharePoint implements AutoCloseable {
         }
     }
 
-    private static String metadata(String path) {
+    private String metadata(String path) {
         return "{\"Name\":\"" + path.substring(path.lastIndexOf('/') + 1) + "\",\"ServerRelativeUrl\":\"" + path
-                + "\",\"TimeLastModified\":\"" + TIME + "\",\"Length\":\"" + FILES.get(path).length
+                + "\",\"TimeLastModified\":\"" + TIME + "\",\"Length\":\"" + documents.get(path).length
                 + "\",\"UIVersionLabel\":\"3.0\"}";
     }
 

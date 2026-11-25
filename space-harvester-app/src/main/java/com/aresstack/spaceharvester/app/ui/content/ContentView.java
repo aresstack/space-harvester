@@ -273,7 +273,7 @@ public final class ContentView implements View {
             for (HarvestSource.PageNode ancestor : position.ancestors()) {
                 String pageId = ancestor.pageId();
                 if (ancestor.kind() == HarvestSource.PageNode.Kind.GROUP) {
-                    parts.add(new LocationBar.Part(Breadcrumbs.title(ancestor), null, null));
+                    parts.add(new LocationBar.Part(Breadcrumbs.title(ancestor), "Ordner im Baum zeigen", () -> locatePage.accept(source, pageId)));
                 } else {
                     parts.add(new LocationBar.Part(Breadcrumbs.title(ancestor), "Seite öffnen und im Baum zeigen",
                             () -> open(source, pageId)));
