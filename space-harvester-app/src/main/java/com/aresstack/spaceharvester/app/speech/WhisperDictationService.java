@@ -64,6 +64,12 @@ final class WhisperDictationService {
         return live.finish().getText();
     }
 
+    /** Decode a frozen short sample using the existing guarded and padded Whisper pipeline. */
+    synchronized String preview(WhisperAudioSource window) throws IOException {
+        load();
+        return audioPipeline.transcribe(window, transcriber, ignored -> { }).getText();
+    }
+
     private void load() throws IOException {
         // Die Spracheingabe hat ihr eigenes Modell (Einstellungen › Modelle, Vorgabe Tiny); eine andere Wahl gilt ab
         // der nächsten Aufnahme.

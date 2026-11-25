@@ -23,6 +23,9 @@ public interface DictationControl {
         default void partial(String text) {
         }
 
+        /** Replace the provisional preview; do not commit it to the draft. */
+        default void preview(String text) { }
+
         void recognized(String text);
 
         void failed(String message);
