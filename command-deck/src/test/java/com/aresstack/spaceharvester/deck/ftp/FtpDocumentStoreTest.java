@@ -67,6 +67,25 @@ class FtpDocumentStoreTest {
     }
 
     @Test
+    void resolvesCopybooksInConfiguredOrderAndQualifiedLibrary() throws Exception {
+        host.member("KKR.CPY1", "OTHER", "       01 OTHER PIC X.");
+        host.member("KKR.CPY2", "BOOK", "       01 SECOND-FIELD PIC X.");
+        host.member("KKR.JCL", "BOOK", "       01 FALLBACK PIC X.");
+        session.disconnect();
+        session = new FtpSessions(new CommonsNetFtpConnector(), pool).open(
+                host.profile().withSyslib(java.util.List.of("KKR.CPY1", "KKR.CPY2")), "Testhost",
+                () -> new ServerCredentials(new ServerAccount("Testhost", host.host(), "KKR"), "geheim".toCharArray()));
+        store = new FtpDocumentStore(session);
+        assertThat(store.resolveCopybook("'KKR.JCL(BUILD)'", "BOOK", "").orElseThrow().text())
+                .contains("SECOND-FIELD");
+        assertThat(store.resolveCopybook("'KKR.JCL(BUILD)'", "BOOK", "KKR.CPY2")).isPresent();
+        assertThat(store.resolveCopybook("'KKR.JCL(BUILD)'", "BOOK", "CPY2")).isPresent();
+        assertThat(store.resolveCopybook("'KKR.JCL(BUILD)'", "MISSING", "")).isEmpty();
+        assertThatThrownBy(() -> store.resolveCopybook("'KKR.JCL(BUILD)'", "BOOK", "OTHER.LIB"))
+                .isInstanceOf(DocumentException.class);
+    }
+
+    @Test
     void normalizesOnlyMvsRecords() {
         assertThat(FtpDocumentStore.expected("A  \nB ", true)).isEqualTo("A\nB");
         assertThat(FtpDocumentStore.expected("a  \nb\n", false)).isEqualTo("a  \nb\n");

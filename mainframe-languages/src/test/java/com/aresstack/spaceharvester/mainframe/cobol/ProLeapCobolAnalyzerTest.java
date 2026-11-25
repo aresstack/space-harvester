@@ -281,6 +281,133 @@ class ProLeapCobolAnalyzerTest {
         assertThat(result.elements()).extracting(Element::name).contains("WS-ID", "VALID-FLAG");
     }
 
+    @Test
+    void replacementDoesNotRewriteLiteralsOrCascadeIntoAnotherRule() {
+        String source = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           COPY CPY REPLACING ==OLD-NAME== BY ==NEW-NAME==
+                               ==NEW-NAME== BY ==FINAL-NAME==.
+                       PROCEDURE DIVISION.
+                           STOP RUN.
+                """;
+        String copy = """
+                       01 OLD-NAME PIC X(8) VALUE 'OLD-NAME'.
+                       01 NEW-NAME PIC X(8).
+                """;
+        CobolAnalysis result = analyzer.analyze(CobolSource.fixed("DEMO.cbl", source),
+                (including, name, library) -> Optional.of(CobolSource.fixed("CPY", copy)));
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(element(result, "NEW-NAME").attributes()).containsEntry("VALUE", "'OLD-NAME'");
+        assertThat(element(result, "FINAL-NAME").kind()).isEqualTo(Kind.LEVEL_01);
+    }
+
+    @Test
+    void replaceOffEndsReplacementScope() {
+        CobolAnalysis result = analyze("""
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           REPLACE ==OLD-NAME== BY ==NEW-NAME==.
+                       01 OLD-NAME PIC X.
+                           REPLACE OFF.
+                       01 OLD-NAME PIC X.
+                       PROCEDURE DIVISION.
+                           STOP RUN.
+                """);
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(element(result, "NEW-NAME").span().start().line()).isEqualTo(6);
+        assertThat(element(result, "OLD-NAME").span().start().line()).isEqualTo(8);
+    }
+
+    @Test
+    void supportsLeadingTrailingAndEmptyReplacementOperands() {
+        String source = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           COPY CPY REPLACING LEADING ==PRE-== BY ====
+                               TRAILING ==-OLD== BY ==-NEW==.
+                       PROCEDURE DIVISION.
+                           STOP RUN.
+                """;
+        String copy = """
+                       01 PRE-WS-COUNT PIC 9.
+                       01 FIELD-OLD PIC X.
+                       01 WS-OTHER PIC X(8) VALUE 'PRE-OLD'.
+                """;
+        CobolAnalysis result = analyzer.analyze(CobolSource.fixed("DEMO.cbl", source),
+                (including, name, library) -> Optional.of(CobolSource.fixed("CPY", copy)));
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(element(result, "WS-COUNT").span().start().source()).isEqualTo("CPY");
+        assertThat(element(result, "FIELD-NEW").span().start().line()).isEqualTo(2);
+        assertThat(element(result, "WS-OTHER").attributes()).containsEntry("VALUE", "'PRE-OLD'");
+    }
+
+    @Test
+    void supportsMultipleReplacementClausesOnSameLineAndTags() {
+        String source = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           COPY CPY REPLACING ==:TAG:== BY ==WS== ==X== BY ==9==.
+                       PROCEDURE DIVISION.
+                           STOP RUN.
+                """;
+        String copy = "       01 :TAG:-COUNT PIC X.\n";
+        CobolAnalysis result = analyzer.analyze(CobolSource.fixed("DEMO.cbl", source),
+                (including, name, library) -> Optional.of(CobolSource.fixed("CPY", copy)));
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(element(result, "WS-COUNT").attributes()).containsEntry("PIC", "9");
+    }
+
+    @Test
+    void supportsPartialWordsInReplaceStatement() {
+        CobolAnalysis result = analyze("""
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           REPLACE LEADING ==XX-== BY ====.
+                       01 XX-WS-COUNT PIC 9.
+                           REPLACE OFF.
+                       01 XX-WS-COUNT PIC 9.
+                       PROCEDURE DIVISION.
+                           STOP RUN.
+                """);
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(element(result, "WS-COUNT").span().start().line()).isEqualTo(6);
+        assertThat(element(result, "XX-WS-COUNT").span().start().line()).isEqualTo(8);
+    }
+
+    @Test
+    void analyzesLargeFixedFormatProgram() {
+        StringBuilder source = new StringBuilder("""
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. LARGE-PGM.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                       01 WS-COUNT PIC 9(8).
+                       PROCEDURE DIVISION.
+                """);
+        for (int i = 0; i < 49992; i++) {
+            source.append("           ADD 1 TO WS-COUNT.\n");
+        }
+        source.append("           CALL 'LASTPGM'.\n           STOP RUN.\n");
+        long start = System.nanoTime();
+        CobolAnalysis result = analyze(source.toString());
+        System.out.println("50,000-line analysis: " + (System.nanoTime() - start) / 1_000_000 + " ms");
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(result.semanticAnalysisComplete()).isTrue();
+        assertThat(result.references()).hasSizeGreaterThanOrEqualTo(49992);
+        assertThat(result.calls().getFirst().span().start().line()).isEqualTo(49999);
+    }
+
     private CobolAnalysis analyze(String content) {
         return analyzer.analyze(CobolSource.fixed("DEMO.cbl", content), CopybookResolver.NONE);
     }

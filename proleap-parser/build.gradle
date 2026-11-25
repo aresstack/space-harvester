@@ -27,6 +27,8 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+apply from: 'ibm-replacement.gradle'
+
 tasks.named('generateGrammarSource') {
     arguments += ['-visitor', '-listener', '-package', 'io.proleap.cobol']
 }

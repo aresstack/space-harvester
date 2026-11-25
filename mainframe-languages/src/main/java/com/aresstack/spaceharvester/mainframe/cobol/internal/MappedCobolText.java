@@ -6,8 +6,6 @@ import org.antlr.v4.runtime.Token;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** Store contiguous source positions as runs rather than allocating a position per character. */
 final class MappedCobolText {
@@ -93,16 +91,17 @@ final class MappedCobolText {
         }
     }
 
-    MappedCobolText replace(Pattern pattern, String replacement) {
-        Matcher matcher = pattern.matcher(text);
+    record Replacement(int start, int end, String text) { }
+
+    MappedCobolText replaceAll(List<Replacement> replacements) {
         Builder result = new Builder();
         int offset = 0;
-        while (matcher.find()) {
-            result.appendSlice(this, offset, matcher.start());
-            Position origin = matcher.start() < text.length()
-                    ? runs.get(runIndex(matcher.start())).position(matcher.start()) : Position.UNKNOWN;
-            result.append(replacement, new Position(origin.source(), origin.line(), 0, origin.debuggingLine()));
-            offset = matcher.end();
+        for (Replacement replacement : replacements) {
+            result.appendSlice(this, offset, replacement.start());
+            Position origin = runs.get(runIndex(replacement.start())).position(replacement.start());
+            // Anchor generated characters to the original replaced range's first character.
+            result.append(replacement.text(), origin);
+            offset = replacement.end();
         }
         result.appendSlice(this, offset, text.length());
         return result.build();

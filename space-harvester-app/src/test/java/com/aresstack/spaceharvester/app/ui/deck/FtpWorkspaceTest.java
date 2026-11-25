@@ -97,6 +97,7 @@ class FtpWorkspaceTest {
             form.controlTimeout.setText("");
             form.dataTimeout.setText("90");
             form.startHlq.setText("orbit");
+            form.syslib.setText("orbit.copylib, 'ORBIT.CPY'");
             form.fileType.setSelectedItem(TransferOptions.FileType.EBCDIC);
             form.textFormat.setSelectedItem(TransferOptions.TextFormat.CARRIAGE_CONTROL);
             form.structure.setSelectedItem(TransferOptions.Structure.FILE);
@@ -113,6 +114,8 @@ class FtpWorkspaceTest {
             assertThat(profile.controlTimeoutSeconds()).as("leer = wie das Zeitlimit").isEqualTo(15);
             assertThat(profile.dataTimeoutSeconds()).isEqualTo(90);
             assertThat(profile.startHlq()).isEqualTo("ORBIT");
+            assertThat(profile.syslib()).containsExactly("ORBIT.COPYLIB", "ORBIT.CPY");
+            assertThat(profile.withUseProxy(false).syslib()).isEqualTo(profile.syslib());
             assertThat(profile.transfer()).isEqualTo(new TransferOptions(TransferOptions.FileType.EBCDIC,
                     TransferOptions.TextFormat.CARRIAGE_CONTROL, TransferOptions.Structure.FILE,
                     TransferOptions.TransferMode.STREAM));

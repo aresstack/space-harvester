@@ -20,7 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Parse once and project ProLeap's syntax and semantic facts onto our own model. */
-public final class ProLeapCobolAnalyzer implements CobolAnalyzer {
+final class ProLeapCobolAnalyzer implements CobolAnalyzer {
     @Override
     public CobolAnalysis analyze(CobolSource source, CopybookResolver copybooks) {
         if (source.content().isBlank()) {

@@ -25,4 +25,13 @@ The Gradle task `verifyUpstreamCopy` checks for modified, missing and additional
 files before compiling; regenerate the manifest from the verified upstream
 snapshot when updating the import.
 
+The local build-time overlay `ibm-replacement.gradle` derives the grammar in
+the build directory and adds explicit LEADING/TRAILING partial-word rules and
+same-line replacement clauses. It does not modify the verified upstream
+files. The adapter implements replacement and source mapping; see IBM
+Enterprise COBOL comparison and replacement rules:
+https://www.ibm.com/docs/en/cobol-zos/6.3.0?topic=statement-comparison-replacement-rules
+and https://www.ibm.com/docs/en/cobol-zos/6.4.0?topic=statements-replace-statement.
+This is not a claim of complete IBM compiler conformance.
+
 Issue: #1422.

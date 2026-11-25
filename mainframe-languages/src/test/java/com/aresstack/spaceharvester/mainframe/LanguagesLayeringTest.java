@@ -22,6 +22,13 @@ class LanguagesLayeringTest {
     }
 
     @Test
+    void internalCobolAdapterIsAccessedOnlyThroughFactory() {
+        noClasses().that().resideOutsideOfPackage("..mainframe.cobol..")
+                .should().dependOnClassesThat().resideInAPackage("..mainframe.cobol.internal..")
+                .check(classes);
+    }
+
+    @Test
     void parsersHaveNoUi() {
         noClasses().that().resideInAnyPackage("..mainframe.parser..", "..mainframe.model..", "..mainframe.outline..",
                         "..mainframe.calltree..", "..mainframe.diagram..", "..mainframe.dependency..", "..mainframe.cobol..")

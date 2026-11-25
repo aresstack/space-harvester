@@ -49,6 +49,48 @@ public final class FtpDocumentStore implements DocumentStore {
         return siblingPaths(location, name);
     }
 
+    @Override
+    public java.util.Optional<EditorDocument> resolveCopybook(String location, String name, String library)
+            throws DocumentException {
+        if (!MvsPath.isMember(location)) {
+            return DocumentStore.super.resolveCopybook(location, name, library);
+        }
+        if (!MvsPath.isMemberName(name)) {
+            throw new DocumentException("Ungültiger COPY-Membername: " + name);
+        }
+        var datasets = new java.util.LinkedHashSet<String>();
+        if (library.isBlank()) {
+            datasets.addAll(session.profile().syslib());
+            datasets.add(MvsPath.splitMember(location)[0]);
+        } else {
+            String qualifier = MvsPath.unquote(library);
+            session.profile().syslib().stream()
+                    .filter(ds -> ds.equalsIgnoreCase(qualifier))
+                    .forEach(datasets::add);
+            if (datasets.isEmpty()) {
+                session.profile().syslib().stream()
+                        .filter(ds -> ds.substring(ds.lastIndexOf('.') + 1).equalsIgnoreCase(qualifier))
+                        .forEach(datasets::add);
+            }
+            if (datasets.size() > 1) {
+                throw new DocumentException("Mehrdeutige SYSLIB-Zuordnung für " + library);
+            }
+            if (datasets.isEmpty()) {
+                throw new DocumentException("Keine SYSLIB-Zuordnung für " + library);
+            }
+        }
+        for (String dataset : datasets) {
+            // List members first: distinguish absence from rejected or inaccessible reads.
+            var entries = await(session.files(files -> files.list(MvsPath.absolute(dataset))), "SYSLIB " + dataset);
+            for (RemoteEntry entry : entries) {
+                if (!entry.directory() && entry.name().equalsIgnoreCase(name)) {
+                    return java.util.Optional.of(load(entry.path()));
+                }
+            }
+        }
+        return java.util.Optional.empty();
+    }
+
     static java.util.List<String> siblingPaths(String location, String name) {
         if (location == null || name == null || name.isBlank()) {
             return java.util.List.of();

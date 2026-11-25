@@ -10,7 +10,6 @@ import com.aresstack.spaceharvester.mainframe.dependency.SourceRelations;
 import com.aresstack.spaceharvester.mainframe.outline.Outline;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -70,22 +69,12 @@ final class CobolEditorAnalysis {
         }
 
         private Resolution load(CobolSource including, String name, String library) {
-            if (!library.isBlank()) {
-                return failure("Qualified COPY library requires an explicit library mapping: " + library);
-            }
             if (!safeName(name)) {
                 return failure("Unsupported COPY name: " + name);
             }
             try {
-                List<String> candidates = store.siblings(including.name(), name);
-                if (candidates.isEmpty()) {
-                    return new Resolution(Optional.empty(), null);
-                }
-                if (candidates.size() != 1) {
-                    return failure("Ambiguous COPY " + name + ": " + candidates.size() + " matching sources");
-                }
-                var document = store.load(candidates.getFirst());
-                return new Resolution(Optional.of(new CobolSource(document.location(), document.text(), including.format())), null);
+                return new Resolution(store.resolveCopybook(including.name(), name, library)
+                        .map(document -> new CobolSource(document.location(), document.text(), including.format())), null);
             } catch (DocumentException error) {
                 return failure(error.getMessage());
             }

@@ -1,0 +1,32 @@
+// Derive the parser grammar from the verified upstream snapshot.
+def grammarInput = layout.projectDirectory.dir('src/main/antlr')
+def grammarOutput = layout.buildDirectory.dir('patched-antlr')
+def prepareGrammar = tasks.register('prepareGrammar', Sync) {
+    from grammarInput
+    into grammarOutput
+    inputs.file(layout.projectDirectory.file('ibm-replacement.gradle'))
+    doLast {
+        def grammar = grammarOutput.get().file('io/proleap/cobol/CobolPreprocessor.g4').asFile
+        def source = grammar.getText('UTF-8').replace('\r\n', '\n')
+        def substitutions = [
+            [': REPLACING NEWLINE* replaceClause (NEWLINE+ replaceClause)*',
+             ': REPLACING NEWLINE* replaceClause (NEWLINE* replaceClause)*'],
+            [': replaceable NEWLINE* BY NEWLINE* replacement',
+             ': partialReplaceMode? replaceable NEWLINE* BY NEWLINE* replacement'],
+            ['replaceable\n   : literal', 'partialReplaceMode\n   : LEADING | TRAILING\n   ;\n\nreplaceable\n   : literal'],
+            ['| IN | INTDATE', '| IN | INTDATE | LEADING | TRAILING'],
+            ['IDENTIFIER : [a-zA-Z0-9]+', 'LEADING : L E A D I N G;\nTRAILING : T R A I L I N G;\nIDENTIFIER : [a-zA-Z0-9]+']
+        ]
+        substitutions.each { pair ->
+            if (source.indexOf(pair[0]) < 0 || source.indexOf(pair[0]) != source.lastIndexOf(pair[0])) {
+                throw new GradleException("ProLeap replacement grammar patch does not match upstream: ${pair[0]}")
+            }
+            source = source.replace(pair[0], pair[1])
+        }
+        grammar.setText(source, 'UTF-8')
+    }
+}
+sourceSets.main.antlr.setSrcDirs([grammarOutput])
+tasks.named('generateGrammarSource') {
+    dependsOn prepareGrammar
+}

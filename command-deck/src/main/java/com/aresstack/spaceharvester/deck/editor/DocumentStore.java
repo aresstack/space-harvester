@@ -38,6 +38,19 @@ public interface DocumentStore {
         throw new DocumentException("„Speichern unter“ geht hier nicht.");
     }
 
+    /** Resolve a copybook by the source-specific search rules. */
+    default java.util.Optional<EditorDocument> resolveCopybook(String location, String name, String library)
+            throws DocumentException {
+        if (!library.isBlank()) {
+            throw new DocumentException("Keine Zuordnung für COPY-Bibliothek: " + library);
+        }
+        var candidates = siblings(location, name);
+        if (candidates.size() > 1) {
+            throw new DocumentException("Mehrdeutiges Copybook: " + name);
+        }
+        return candidates.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(load(candidates.getFirst()));
+    }
+
     /**
      * Adressen in dieser Ablage, unter denen ein Objekt namens {@code name} neben {@code location} liegen kann (gleicher
      * Ordner, gleiche Bibliothek, gleiches PDS), für die Diagramm-Ansicht: Aufrufziele der Mindmap auflösen und per
