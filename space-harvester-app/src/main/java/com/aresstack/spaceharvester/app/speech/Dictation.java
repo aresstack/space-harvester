@@ -118,7 +118,7 @@ public final class Dictation implements DictationControl {
 
     private void preview(JavaSoundRecorder active, Result result, long expected) {
         try {
-            var source = active.liveAudio();
+            com.aresstack.windirectml.inference.whisper.WhisperAudioSource source = active.liveAudio();
             long end = source.sampleCount();
             long committed = live.transcription.committedSamples();
             DictationPreviewWindow window = DictationPreviewWindow.capture(source, committed, live.previewEnd);
@@ -226,7 +226,15 @@ public final class Dictation implements DictationControl {
                 LiveSession session = live;
                 live = null;
                 if (continueLive && session != null && session.generation == expected && !session.failed) {
-                    text = current.finishLive(session.transcription, speech);
+                    try {
+                        text = current.finishLive(session.transcription, speech);
+                    } catch (Exception failed) {
+                        if (!preview) {
+                            throw failed;
+                        }
+                        LOG.log(Level.WARNING, "Experimental dictation: retry complete recording", failed);
+                        text = current.transcribe(speech, ignored -> { });
+                    }
                 } else {
                     text = current.transcribe(speech, preview ? ignored -> { } : partial(result, expected));
                 }
