@@ -27,6 +27,7 @@ public final class ContentView implements View {
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout());
     private final LocationBar crumbs = new LocationBar();
+    private JPanel historyHeader;
     /** Pfad der gezeigten Seite, sobald der Core ihn geliefert hat: die Vorfahren in der Bereichsanzeige. */
     private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position position;
     private java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position>
@@ -89,7 +90,8 @@ public final class ContentView implements View {
                 BorderFactory.createEmptyBorder(4, 12, 4, 12)));
         // Eine Zeile statt zwei (Angelo, 16.11.2026): links, wo die Seite liegt, mittig ihre Überschrift, rechts Stern
         // und das Dreieck mit den weiteren Aktionen. Die Überschrift kürzt sich mit „…“, wenn der Platz nicht reicht.
-        top.add(locationHeader(), BorderLayout.WEST);
+        historyHeader = locationHeader();
+        top.add(historyHeader, BorderLayout.WEST);
         top.add(detail.headerTitle(), BorderLayout.CENTER);
         top.add(detail.headerActions(), BorderLayout.EAST);
 
@@ -420,7 +422,7 @@ public final class ContentView implements View {
     }
 
     /** Keep the existing history button immediately before the breadcrumb, within its original width budget. */
-    private JComponent locationHeader() {
+    private JPanel locationHeader() {
         JComponent navigation = detail.navigation();
         JPanel header = new JPanel(new BorderLayout(6, 0)) {
             @Override
@@ -436,6 +438,24 @@ public final class ContentView implements View {
         header.add(navigation, BorderLayout.WEST);
         header.add(crumbs, BorderLayout.CENTER);
         return header;
+    }
+
+    /** Expose the one document-history control for placement in the active view header. */
+    public JComponent documentNavigation() {
+        return detail.navigation();
+    }
+
+    public void restoreDocumentNavigation() {
+        JComponent navigation = documentNavigation();
+        if (navigation.getParent() != historyHeader) {
+            historyHeader.add(navigation, BorderLayout.WEST);
+            historyHeader.revalidate();
+            historyHeader.repaint();
+        }
+    }
+
+    public void beforeHistoryNavigation(Runnable listener) {
+        detail.beforeHistoryNavigation(listener);
     }
 
     PageDetailPanel detail() {

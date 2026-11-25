@@ -545,6 +545,7 @@ public final class PageDetailPanel extends JPanel {
     private java.util.function.Consumer<Place> navigated = place -> { };
     /** Solange Zurück/Vor lädt, kommt die verlassene Seite nicht noch einmal in den Verlauf. */
     private boolean navigating;
+    private Runnable beforeHistoryNavigation = () -> { };
     /** Zählt Link-Aktivierungen; nur die Auflösung des zuletzt geklickten Links wirkt. */
     private int linkRequest;
     /** Anker des Links, der die gerade ladende Seite geöffnet hat; die Leseansicht rollt dorthin. */
@@ -3917,6 +3918,11 @@ public final class PageDetailPanel extends JPanel {
         this.navigated = java.util.Objects.requireNonNull(listener, "listener");
     }
 
+    /** Reveal the document view before loading a history destination from another view. */
+    void beforeHistoryNavigation(Runnable listener) {
+        beforeHistoryNavigation = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
     private boolean step(java.util.Deque<Place> from, java.util.Deque<Place> to) {
         return step(from, to, 1);
     }
@@ -3926,6 +3932,7 @@ public final class PageDetailPanel extends JPanel {
         if (steps < 1 || from.size() < steps || context.runtime() == null) {
             return false;
         }
+        beforeHistoryNavigation.run();
         Place now = current();
         Place next = null;
         for (int i = 0; i < steps; i++) {
@@ -3975,7 +3982,7 @@ public final class PageDetailPanel extends JPanel {
         if (source == null || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
             return false;
         }
-        // Über der Suche gelten ihr eigenes Zurück und Vor (Angelo, 23.11.2026): im ganzen Fenster, solange sie zu sehen ist.
+        // Respect independent mouse navigation in other perspectives, not in the search view.
         if (javax.swing.SwingUtilities.getRootPane(source) instanceof javax.swing.JRootPane root
                 && Boolean.TRUE.equals(root.getClientProperty(OWN_MOUSE_NAVIGATION))) {
             return false;

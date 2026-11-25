@@ -351,11 +351,8 @@ public final class SearchView implements View {
                         }
                     }
                 });
-        heading.leading(backVisit);
         repeat = heading.tool(Glyph.SYNC, REPEAT_TIP, this::repeat);
         repeat.setEnabled(false);
-        // Solange die Suche zu sehen ist, gehören die Maustasten 4/5 im ganzen Fenster ihr.
-        com.aresstack.spaceharvester.app.ui.controls.MouseNavigation.install(frame, this::back, this::forward);
         heading.onSelect(() -> {
             table.clearSelection();
             pinned.clearSelection();

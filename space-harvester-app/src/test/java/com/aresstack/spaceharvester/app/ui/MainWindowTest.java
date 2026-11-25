@@ -731,8 +731,9 @@ class MainWindowTest {
                 layout(surface);
                 assertThat(arrows(bar.getParent())).isEmpty();
                 assertThat(bar.getWidth()).isBetween(SearchBarLayout.MIN_WIDTH, SearchBarLayout.MAX_WIDTH);
-                java.awt.Component searchBack = window.searchView().backVisit;
-                assertThat(arrows(surface)).containsExactly(searchBack);
+                java.awt.Component searchBack = documentBack;
+                assertThat(arrows(surface)).containsExactly(documentBack);
+                assertThat(window.searchView().backVisit.getParent()).isNull();
                 assertThat(searchBack.getParent()).isSameAs(window.searchView().heading);
                 assertThat(SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, searchBack)).isNull();
                 java.awt.Component title = ((java.awt.BorderLayout) searchBack.getParent().getLayout())

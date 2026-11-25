@@ -278,6 +278,7 @@ public final class MainWindow implements AppContext.Navigator {
         content = new ContentView(context);
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
+        content.beforeHistoryNavigation(() -> showSection(AppContext.Section.CONTENT, true));
         settings = new SettingsView(context);
         settings.onLeave(this::leaveSettings);
         explorer = new Explorer(context);
@@ -1066,6 +1067,10 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Zeigt den Bereich, ohne die große Chat-Ansicht zu verlassen (Auswahl im Explorer). */
     private void showSection(AppContext.Section section) {
+        showSection(section, false);
+    }
+
+    private void showSection(AppContext.Section section, boolean followingDocumentHistory) {
         // Ein Bereich des Space Harvesters (auch über einen Link im Chat) führt in dessen Perspektive zurück; die Aufträge
         // stehen in der globalen Seitenleiste und lassen die Perspektive, wie sie ist. Die Einstellungen gehören allen
         // Perspektiven und öffnen über der aktuellen.
@@ -1098,7 +1103,8 @@ public final class MainWindow implements AppContext.Navigator {
         }
         boolean leftSearch = changed && current == AppContext.Section.SEARCH;
         current = section;
-        if (leftSearch && explorer.scopes().isEmpty() && !explorer.allSelected()) {
+        placeDocumentNavigation(section);
+        if (!followingDocumentHistory && leftSearch && explorer.scopes().isEmpty() && !explorer.allSelected()) {
             // Raus aus der Suche ohne Auswahl: „Wissensquellen“ wird gewählt und gelb markiert, als hätte man es
             // angeklickt (Angelo, 24.11.2026).
             explorer.selectAll();
@@ -1142,6 +1148,16 @@ public final class MainWindow implements AppContext.Navigator {
             // Über der Perspektive: deren Navigation und Titel bleiben, die Mitte zeigt die Einstellungen.
             stageCards.show(stage, Perspectives.HARVESTER);
             viewStatus.setVisible(false);
+        }
+    }
+
+    /** Move the same document history control between the two view headers. */
+    private void placeDocumentNavigation(AppContext.Section section) {
+        if (section == AppContext.Section.SEARCH) {
+            searchView.heading.leading(content.documentNavigation());
+        } else {
+            searchView.heading.leading(null);
+            content.restoreDocumentNavigation();
         }
     }
 
