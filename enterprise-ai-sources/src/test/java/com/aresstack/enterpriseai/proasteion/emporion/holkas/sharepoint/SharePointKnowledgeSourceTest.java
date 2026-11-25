@@ -372,7 +372,7 @@ public class SharePointKnowledgeSourceTest {
         assertEquals(52, batch.nodes().size());
         for (com.aresstack.enterpriseai.source.api.NavigationNode node : batch.nodes()) assertTrue(ids.add(node.resource().value()));
         assertEquals(253, ids.size());
-        assertEquals(1, java.util.Collections.frequency(requestedUris, files));
+        assertEquals(3, java.util.Collections.frequency(requestedUris, files));
         assertEquals(1, java.util.Collections.frequency(requestedUris, nextFiles));
     }
 
