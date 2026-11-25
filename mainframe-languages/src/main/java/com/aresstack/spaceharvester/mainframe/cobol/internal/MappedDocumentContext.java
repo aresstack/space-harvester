@@ -19,6 +19,11 @@ import java.util.regex.Matcher;
 final class MappedDocumentContext extends CobolDocumentContext {
     private MappedCobolText.Builder output = new MappedCobolText.Builder();
     private List<ReplaceClauseContext> clauses = List.of();
+    private final java.util.function.BiConsumer<ReplaceClauseContext, String> invalidClause;
+
+    MappedDocumentContext(java.util.function.BiConsumer<ReplaceClauseContext, String> invalidClause) {
+        this.invalidClause = invalidClause;
+    }
 
     void appendToken(MappedCobolText source, org.antlr.v4.runtime.Token token) {
         source.appendTokenTo(output, token);
@@ -67,9 +72,14 @@ final class MappedDocumentContext extends CobolDocumentContext {
             }
             Mode mode = clause.partialReplaceMode() == null ? Mode.FULL
                     : Mode.valueOf(clause.partialReplaceMode().getText().toUpperCase(java.util.Locale.ROOT));
-            List<TextWord> pattern = patternWords(from);
-            if (!pattern.isEmpty()) {
-                rules.add(new Rule(pattern, to, mode));
+            try {
+                List<TextWord> pattern = mode == Mode.FULL ? patternWords(from)
+                        : List.of(new TextWord(from, 0, from.length()));
+                if (!pattern.isEmpty()) {
+                    rules.add(new Rule(pattern, to, mode));
+                }
+            } catch (IllegalArgumentException invalid) {
+                invalidClause.accept(clause, invalid.getMessage());
             }
         }
         List<MappedCobolText.Replacement> matches = new ArrayList<>();
@@ -95,7 +105,7 @@ final class MappedDocumentContext extends CobolDocumentContext {
     // Treat literals as indivisible, including common national and hexadecimal literal prefixes.
     private static final Pattern TEXT_WORD = Pattern.compile(
             "\\*>[^\\r\\n]*|(?i:(?:NX|UX|BX|N|X|G|Z|U|B)?)(?:'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\")|[A-Za-z0-9_$@#-]+|[^\\s]");
-    private static final Pattern ORDINARY_WORD = Pattern.compile("[A-Za-z0-9_$@#-]+");
+    private static final Pattern ORDINARY_WORD = Pattern.compile("[A-Za-z0-9_$@#:-]+");
 
     private enum Mode { FULL, LEADING, TRAILING }
 
@@ -133,7 +143,7 @@ final class MappedDocumentContext extends CobolDocumentContext {
 
         Match match(List<TextWord> input, int start) {
             if (mode != Mode.FULL) {
-                return matchPartial(input.get(start), start);
+                return matchPartial(input, start);
             }
             int cursor = start;
             for (int i = 0; i < pattern.size(); i++) {
@@ -151,14 +161,28 @@ final class MappedDocumentContext extends CobolDocumentContext {
                     input.get(cursor - 1).end(), replacement), cursor);
         }
 
-        private Match matchPartial(TextWord word, int index) {
-            String needle = pattern.getFirst().text();
-            int offset = mode == Mode.LEADING ? 0 : word.text().length() - needle.length();
-            if (!word.isOrdinary() || offset < 0 || !word.text().regionMatches(true, offset, needle, 0, needle.length())) {
+        private Match matchPartial(List<TextWord> input, int index) {
+            TextWord first = input.get(index);
+            if (!first.isOrdinary() || index > 0 && adjacent(input.get(index - 1), first)) {
                 return null;
             }
-            int start = word.start() + offset;
-            return new Match(new MappedCobolText.Replacement(start, start + needle.length(), replacement), index + 1);
+            // Combine contiguous pseudo-text pieces only for partial-word matching.
+            StringBuilder word = new StringBuilder(first.text());
+            int next = index + 1;
+            while (next < input.size() && adjacent(input.get(next - 1), input.get(next))) {
+                word.append(input.get(next++).text());
+            }
+            String needle = pattern.getFirst().text();
+            int offset = mode == Mode.LEADING ? 0 : word.length() - needle.length();
+            if (offset < 0 || !word.toString().regionMatches(true, offset, needle, 0, needle.length())) {
+                return null;
+            }
+            int start = first.start() + offset;
+            return new Match(new MappedCobolText.Replacement(start, start + needle.length(), replacement), next);
+        }
+
+        private boolean adjacent(TextWord left, TextWord right) {
+            return left.isOrdinary() && right.isOrdinary() && left.end() == right.start();
         }
     }
 

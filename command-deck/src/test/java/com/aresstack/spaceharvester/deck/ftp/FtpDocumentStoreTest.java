@@ -86,6 +86,49 @@ class FtpDocumentStoreTest {
     }
 
     @Test
+    void cachesMemberListsAcrossLookupsAndRefreshesAfterTtl() throws Exception {
+        host.member("KKR.CPY", "BOOK1", "       01 FIELD1 PIC X.");
+        host.member("KKR.CPY", "BOOK2", "       01 FIELD2 PIC X.");
+        session.disconnect();
+        session = new FtpSessions(new CommonsNetFtpConnector(), pool).open(
+                host.profile().withSyslib(java.util.List.of("KKR.CPY")), "Testhost",
+                () -> new ServerCredentials(new ServerAccount("Testhost", host.host(), "KKR"), "geheim".toCharArray()));
+        var clock = new java.util.concurrent.atomic.AtomicLong();
+        store = new FtpDocumentStore(session, clock::get);
+        assertThat(store.resolveCopybook("'KKR.JCL(BUILD)'", "BOOK1", "").orElseThrow().text()).contains("FIELD1");
+        long lists = host.commands().stream().filter(c -> c.startsWith("NLST") && c.contains("KKR.CPY(*)")).count();
+        assertThat(lists).isEqualTo(1);
+        assertThat(store.resolveCopybook("'KKR.JCL(STERNE)'", "BOOK2", "").orElseThrow().text()).contains("FIELD2");
+        assertThat(store.resolveCopybook("'KKR.JCL(BUILD)'", "LATER", "CPY")).isEmpty();
+        assertThat(host.commands().stream().filter(c -> c.startsWith("NLST") && c.contains("KKR.CPY(*)")).count())
+                .isEqualTo(lists);
+        host.member("KKR.CPY", "LATER", "       01 FIELD3 PIC X.");
+        clock.addAndGet(CopybookMemberIndex.TTL_NANOS);
+        assertThat(store.resolveCopybook("'KKR.JCL(BUILD)'", "LATER", "CPY")).isPresent();
+        assertThat(host.commands().stream().filter(c -> c.startsWith("NLST") && c.contains("KKR.CPY(*)")).count())
+                .isEqualTo(lists + 1);
+        assertThat(store.copybookLookupScope("'kkr.jcl(BUILD)'", ""))
+                .isEqualTo(store.copybookLookupScope("'KKR.JCL(STERNE)'", ""));
+        assertThat(store.copybookLookupScope("'KKR.JCL(BUILD)'", ""))
+                .isNotEqualTo(store.copybookLookupScope("'KKR.CPY(BOOK1)'", ""));
+        assertThat(store.copybookLookupScope("'KKR.JCL(BUILD)'", "CPY"))
+                .isEqualTo(store.copybookLookupScope("'KKR.CPY(BOOK1)'", "CPY"));
+    }
+
+    @Test
+    void inaccessibleLibraryIsNotCachedAsEmpty() throws Exception {
+        session.disconnect();
+        session = new FtpSessions(new CommonsNetFtpConnector(), pool).open(
+                host.profile().withSyslib(java.util.List.of("KKR.NEWCPY")), "Testhost",
+                () -> new ServerCredentials(new ServerAccount("Testhost", host.host(), "KKR"), "geheim".toCharArray()));
+        store = new FtpDocumentStore(session);
+        assertThatThrownBy(() -> store.resolveCopybook("'KKR.JCL(BUILD)'", "BOOK", "NEWCPY"))
+                .isInstanceOf(DocumentException.class).hasMessageContaining("SYSLIB");
+        host.member("KKR.NEWCPY", "BOOK", "       01 NEW-FIELD PIC X.");
+        assertThat(store.resolveCopybook("'KKR.JCL(BUILD)'", "BOOK", "NEWCPY")).isPresent();
+    }
+
+    @Test
     void normalizesOnlyMvsRecords() {
         assertThat(FtpDocumentStore.expected("A  \nB ", true)).isEqualTo("A\nB");
         assertThat(FtpDocumentStore.expected("a  \nb\n", false)).isEqualTo("a  \nb\n");

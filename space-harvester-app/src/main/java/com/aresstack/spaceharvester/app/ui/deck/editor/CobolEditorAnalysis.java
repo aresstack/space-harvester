@@ -48,7 +48,7 @@ final class CobolEditorAnalysis {
 
     /** Cache positive and negative sibling resolutions for a loaded editor revision. */
     private static final class EditorCopybookResolver implements CopybookResolver {
-        private record Key(String source, String name, String library) { }
+        private record Key(String scope, String name, String library, CobolSource.Format format) { }
         private record Resolution(Optional<CobolSource> copybook, String error) { }
 
         private final DocumentStore store;
@@ -60,7 +60,7 @@ final class CobolEditorAnalysis {
 
         @Override
         public Optional<CobolSource> resolve(CobolSource including, String name, String library) throws IOException {
-            Key key = new Key(including.name(), name, library);
+            Key key = new Key(store.copybookLookupScope(including.name(), library), name, library, including.format());
             Resolution resolution = cache.computeIfAbsent(key, ignored -> load(including, name, library));
             if (resolution.error() != null) {
                 throw new IOException(resolution.error());

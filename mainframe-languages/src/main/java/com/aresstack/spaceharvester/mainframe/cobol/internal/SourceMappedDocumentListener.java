@@ -63,7 +63,9 @@ final class SourceMappedDocumentListener extends CobolDocumentParserListenerImpl
 
     @Override
     protected MappedDocumentContext push() {
-        MappedDocumentContext context = new MappedDocumentContext();
+        MappedDocumentContext context = new MappedDocumentContext((clause, message) ->
+                diagnostics.add(new Diagnostic("Unsupported replacement clause: " + message,
+                        input.at(clause.getStart()), DiagnosticKind.COPYBOOK)));
         contexts.push(context);
         return context;
     }
@@ -109,9 +111,8 @@ final class SourceMappedDocumentListener extends CobolDocumentParserListenerImpl
             return;
         }
         push();
-        for (ReplacingPhraseContext phrase : ctx.replacingPhrase()) {
-            context().storeReplaceablesAndReplacements(phrase.replaceClause());
-        }
+        context().storeReplaceablesAndReplacements(ctx.replacingPhrase().stream()
+                .flatMap(phrase -> phrase.replaceClause().stream()).toList());
         try {
             context().append(prepareCopybook.apply(copybook.get()));
             context().append("\n", span.end());

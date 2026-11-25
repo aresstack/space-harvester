@@ -38,6 +38,11 @@ public interface DocumentStore {
         throw new DocumentException("„Speichern unter“ geht hier nicht.");
     }
 
+    /** Return a stable cache scope for sources with identical copybook search paths. */
+    default String copybookLookupScope(String location, String library) {
+        return location;
+    }
+
     /** Resolve a copybook by the source-specific search rules. */
     default java.util.Optional<EditorDocument> resolveCopybook(String location, String name, String library)
             throws DocumentException {

@@ -17,9 +17,17 @@ import java.util.concurrent.ExecutionException;
 public final class FtpDocumentStore implements DocumentStore {
 
     private final FtpSession session;
+    private final CopybookMemberIndex copybookMembers;
 
     public FtpDocumentStore(FtpSession session) {
+        this(session, System::nanoTime);
+    }
+
+    FtpDocumentStore(FtpSession session, java.util.function.LongSupplier clock) {
         this.session = Objects.requireNonNull(session, "session");
+        this.copybookMembers = new CopybookMemberIndex(clock,
+                dataset -> await(session.files(files -> files.listCopybookMembers(MvsPath.absolute(dataset))),
+                        "SYSLIB " + dataset));
     }
 
     /**
@@ -80,15 +88,20 @@ public final class FtpDocumentStore implements DocumentStore {
             }
         }
         for (String dataset : datasets) {
-            // List members first: distinguish absence from rejected or inaccessible reads.
-            var entries = await(session.files(files -> files.list(MvsPath.absolute(dataset))), "SYSLIB " + dataset);
-            for (RemoteEntry entry : entries) {
-                if (!entry.directory() && entry.name().equalsIgnoreCase(name)) {
-                    return java.util.Optional.of(load(entry.path()));
-                }
+            String memberPath = copybookMembers.find(dataset, name);
+            if (memberPath != null) {
+                return java.util.Optional.of(load(memberPath));
             }
         }
         return java.util.Optional.empty();
+    }
+
+    @Override
+    public String copybookLookupScope(String location, String library) {
+        if (!MvsPath.isMember(location)) {
+            return DocumentStore.super.copybookLookupScope(location, library);
+        }
+        return library.isBlank() ? MvsPath.splitMember(location)[0].toUpperCase(java.util.Locale.ROOT) : "";
     }
 
     static java.util.List<String> siblingPaths(String location, String name) {
@@ -119,6 +132,7 @@ public final class FtpDocumentStore implements DocumentStore {
         try {
             RemoteFile written = session.filesOnce(files -> files.writeIfUnchanged(path, outgoing,
                     overwrite ? null : loaded.hash())).get();
+            copybookMembers.invalidate(written.path());
             RemoteFile fresh = await(session.files(files -> files.read(written.path())), "Lesen nach dem Speichern");
             if (fresh.text().equals(expected(outgoing, records))) {
                 // Der Editor behält seinen Text als Stand (sonst bliebe er nach dem Speichern „geändert“), der

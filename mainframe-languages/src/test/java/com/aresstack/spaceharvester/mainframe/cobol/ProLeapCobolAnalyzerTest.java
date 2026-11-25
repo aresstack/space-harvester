@@ -386,6 +386,96 @@ class ProLeapCobolAnalyzerTest {
     }
 
     @Test
+    void replacesColonTagsWithLeadingAndTrailingWithoutChangingLiterals() {
+        String source = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           COPY CPY REPLACING LEADING ==:TAG:-== BY ==WS-==
+                               TRAILING ==-:TAIL:== BY ==-NEW==.
+                       PROCEDURE DIVISION.
+                           STOP RUN.
+                """;
+        String copy = """
+                       01 :TAG:-COUNT PIC 9.
+                       01 FIELD-:TAIL: PIC X.
+                       01 WS-TEXT PIC X(20) VALUE ':TAG:-COUNT'.
+                """;
+        CobolAnalysis result = analyzer.analyze(CobolSource.fixed("DEMO.cbl", source),
+                (including, name, library) -> Optional.of(CobolSource.fixed("CPY", copy)));
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(element(result, "WS-COUNT").span().start()).isEqualTo(new Position("CPY", 1, 8));
+        assertThat(element(result, "FIELD-NEW").span().start().line()).isEqualTo(2);
+        assertThat(element(result, "WS-TEXT").attributes()).containsEntry("VALUE", "':TAG:-COUNT'");
+    }
+
+    @Test
+    void leadingColonTagInReplaceStatementRespectsScope() {
+        CobolAnalysis result = analyze("""
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           REPLACE LEADING ==:TAG:== BY ==WS==.
+                       01 :TAG:-COUNT PIC 9.
+                           REPLACE OFF.
+                       01 WS-OTHER PIC 9.
+                       PROCEDURE DIVISION.
+                           STOP RUN.
+                """);
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(element(result, "WS-COUNT").span().start().line()).isEqualTo(6);
+        assertThat(element(result, "WS-OTHER").span().start().line()).isEqualTo(8);
+    }
+
+    @Test
+    void skipsInvalidPartialRuleButKeepsCopybookAndValidRules() {
+        String source = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           COPY CPY REPLACING LEADING ==A B== BY ==C==
+                               ==OLD-NAME== BY ==NEW-NAME==.
+                       PROCEDURE DIVISION.
+                           CALL 'LASTPGM'.
+                           STOP RUN.
+                """;
+        CobolAnalysis result = analyzer.analyze(CobolSource.fixed("DEMO.cbl", source),
+                (including, name, library) -> Optional.of(CobolSource.fixed("CPY",
+                        "       01 OLD-NAME PIC X.\n")));
+        assertThat(result.diagnostics()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.kind()).isEqualTo(DiagnosticKind.COPYBOOK);
+            assertThat(diagnostic.position().source()).isEqualTo("DEMO.cbl");
+            assertThat(diagnostic.position().line()).isEqualTo(5);
+        });
+        assertThat(result.isPartial()).isTrue();
+        assertThat(element(result, "NEW-NAME").span().start().source()).isEqualTo("CPY");
+        assertThat(result.calls()).extracting(ProgramCall::target).containsExactly("LASTPGM");
+    }
+
+    @Test
+    void invalidReplaceRuleDoesNotDiscardProgram() {
+        CobolAnalysis result = analyze("""
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           REPLACE LEADING ==A B== BY ==C==.
+                       01 WS-COUNT PIC 9.
+                           REPLACE OFF.
+                       PROCEDURE DIVISION.
+                           CALL 'LASTPGM'.
+                           STOP RUN.
+                """);
+        assertThat(result.diagnostics()).singleElement().satisfies(diagnostic ->
+                assertThat(diagnostic.kind()).isEqualTo(DiagnosticKind.COPYBOOK));
+        assertThat(element(result, "WS-COUNT").span().start().line()).isEqualTo(6);
+        assertThat(result.calls()).extracting(ProgramCall::target).containsExactly("LASTPGM");
+    }
+
+    @Test
     void analyzesLargeFixedFormatProgram() {
         StringBuilder source = new StringBuilder("""
                        IDENTIFICATION DIVISION.
