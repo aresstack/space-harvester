@@ -743,9 +743,18 @@ public final class Harvester implements AutoCloseable {
             List<String> linkSources = catalog.configs().stream().map(SourceSettingsConfig::id).toList();
             startScans.add(() -> pageLinks.reconcileOnStart(linkSources));
             // ADR 0028: Eintragen aus der Auswahl, gebündelte Liste und Entfernen für die Oberfläche.
+            AtomicReference<DocumentEnrichments> sectionTexts = new AtomicReference<>();
             this.pageReleaseService = new PageReleaseService(pageReleases, holdings, access, cache::findHeader,
-                    key -> enrichmentStore.find(key).stream().anyMatch(found -> "embedding".equals(found.processorId())
-                            && found.status() == Enrichment.Status.OK), clock);
+                    key -> {
+                        Optional<PageSnapshot> snapshot = cache.find(key);
+                        if (snapshot.isPresent() && com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                                .recognizes(snapshot.get().payload())) {
+                            DocumentEnrichments sections = sectionTexts.get();
+                            return sections != null && sections.hasCurrentLocalAnalysis(snapshot.get(), "embedding");
+                        }
+                        return enrichmentStore.find(key).stream().anyMatch(found -> "embedding".equals(found.processorId())
+                                && found.status() == Enrichment.Status.OK);
+                    }, clock);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
             this.snapshots = builder.localOriginalReferences
@@ -769,7 +778,6 @@ public final class Harvester implements AutoCloseable {
             this.spaceKeys = new SpaceKeyCheck(sources);
             this.freshness = new PageFreshness(sources, snapshots, clock, builder.checkTimeout,
                     builder.largeFileTimeout);
-            AtomicReference<DocumentEnrichments> sectionTexts = new AtomicReference<>();
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting),
                             enrichments, texts, snapshot -> {
@@ -999,7 +1007,11 @@ public final class Harvester implements AutoCloseable {
             // ADR 0013, Punkt 3: mit Haken erst finden, laden und fehlende Embeddings berechnen.
             SemanticPreparation preparation = embedding == null || prefetch == null ? null
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
-                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT, jobs);
+                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT, jobs,
+                    (snapshot, processorId) -> {
+                        DocumentEnrichments sections = sectionTexts.get();
+                        return sections != null && sections.prepareLocal(snapshot, processorId);
+                    });
             // Angelo 24.11.2026: Aufträge „Suchtreffer vorbereiten“ entstehen nicht mehr; unterbrochene alte entfallen.
             SemanticPreparation.forgetInterrupted(jobs);
             // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.

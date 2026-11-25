@@ -139,6 +139,54 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                         local.extractions(), key)));
     }
 
+    /** Check a completed analysis against the exact extraction and current processor version. */
+    public boolean hasCurrentLocalAnalysis(PageSnapshot snapshot, String processorId) {
+        Optional<LocalOriginalReference> reference = LocalOriginalReference.read(snapshot.payload());
+        Optional<Pending> pending = localPending(snapshot.key());
+        if (reference.isEmpty() || pending.isEmpty()
+                || !Objects.equals(reference.get().extractionKey(), pending.get().exactExtraction())) {
+            return false;
+        }
+        Pending item = pending.get();
+        return item.extraction().map(extraction -> {
+            Manifest manifest = manifest(item, extraction);
+            String version = manifest.versions().get(processorId);
+            if (version == null) {
+                return false;
+            }
+            List<DocumentKey> expected = item.extractions().documents(extraction).stream()
+                    .map(part -> part.map(entry -> item.attachment().child(entry.id())).orElse(item.attachment()))
+                    .toList();
+            return !expected.isEmpty() && expected.stream().allMatch(document -> {
+                List<Enrichment> results = manifest.stored().getOrDefault(document, List.of()).stream()
+                        .filter(result -> processorId.equals(result.processorId())).toList();
+                return !results.isEmpty() && results.stream().allMatch(result ->
+                        result.status() == Enrichment.Status.OK && version.equals(result.processorVersion())
+                                && manifest.basis().equals(result.extraction()) && !enrichments.outdated(result));
+            });
+        }).orElse(false);
+    }
+
+    /** Delegate search preparation to the existing document scheduler; do not compute a second page embedding. */
+    public boolean prepareLocal(PageSnapshot snapshot, String processorId) {
+        if (!enabled.getAsBoolean()
+                || !enrichments.documentProcessorVersions(snapshot.key()).containsKey(processorId)
+                || LocalOriginalReference.read(snapshot.payload())
+                        .map(reference -> reference.extractionKey() == null).orElse(true)) {
+            return true;
+        }
+        Optional<Pending> pending = localPending(snapshot.key());
+        if (pending.isPresent() && pending.get().extraction()
+                .map(extraction -> pending.get().extractions().documents(extraction).isEmpty()).orElse(false)) {
+            return true;
+        }
+        if (hasCurrentLocalAnalysis(snapshot, processorId)) {
+            return true;
+        }
+        indexedLocal(snapshot);
+        return hasCurrentLocalAnalysis(snapshot, processorId);
+    }
+
     /** Schedule the newly committed local original, not a preview or a synthetic attachment. */
     public void indexedLocal(PageSnapshot snapshot) {
         if (localDocuments == null || !LocalOriginalReference.recognizes(snapshot.payload())) {
@@ -1076,7 +1124,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         boolean current = expected.isEmpty() ? stored.isEmpty() : expected.stream().allMatch(document -> {
             List<Enrichment> results = stored.get(document);
             return current(results, versions, basis)
-                    && (results == null || results.stream().noneMatch(enrichments::outdated));
+                    && (results == null || results.stream().noneMatch(result -> enrichments.outdated(result)
+                    || attachment.localOriginal() && result.status() == Enrichment.Status.FAILED));
         });
         return new Manifest(basis, embeddingMaxChars, versions, stored, current);
     }
@@ -1112,7 +1161,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 for (Enrichment result : stored) {
                     if (result.processorId().equals(processor.getKey())
                             && result.processorVersion().equals(processor.getValue())
-                            && hash.equals(result.revision()) && !enrichments.outdated(result)) {
+                            && hash.equals(result.revision()) && !enrichments.outdated(result)
+                            && (!result.document().localOriginal() || result.status() == Enrichment.Status.OK)) {
                         done.add(result.section());
                     }
                 }

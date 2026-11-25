@@ -361,6 +361,7 @@ public class Enrichments {
             }
             Enrichment old = previous.get(processor.id());
             if (old != null && old.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT
+                    && (!document.localOriginal() || old.status() == Enrichment.Status.OK)
                     && processor.current(old, text, position)) {
                 current++;
                 continue;
