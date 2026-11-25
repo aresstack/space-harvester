@@ -157,8 +157,8 @@ class HarvesterLocalFilesTest {
             var request = com.aresstack.spaceharvester.application.export.ExportRequest.of("docs", "docs", owner,
                     formats);
             var normal = harvester.exports().start(request);
-            assertThat(harvester.jobs().await(normal.id(), owner, java.time.Duration.ofSeconds(60)).state().name())
-                    .isEqualTo("COMPLETED");
+            var normalStatus = harvester.jobs().await(normal.id(), owner, java.time.Duration.ofSeconds(60));
+            assertThat(normalStatus.state().name()).as("Export: %s", normalStatus.error()).isEqualTo("COMPLETED");
             Path rawPackage = data.resolve("original-export.zip");
             try (var zip = harvester.exports().artifactFile(normal.id(), owner, "export.zip").orElseThrow()) {
                 Files.copy(zip, rawPackage);
@@ -178,8 +178,8 @@ class HarvesterLocalFilesTest {
                     .read(cached.payload()).orElseThrow();
             Files.delete(original);
             var holdings = harvester.exports().startFromHoldings(request.withHoldingsOnly(true));
-            assertThat(harvester.jobs().await(holdings.id(), owner, java.time.Duration.ofSeconds(60)).state().name())
-                    .isEqualTo("COMPLETED");
+            var holdingsStatus = harvester.jobs().await(holdings.id(), owner, java.time.Duration.ofSeconds(60));
+            assertThat(holdingsStatus.state().name()).as("Export: %s", holdingsStatus.error()).isEqualTo("COMPLETED");
             Path portablePackage = data.resolve("portable-export.zip");
             try (var zip = harvester.exports().artifactFile(holdings.id(), owner, "export.zip").orElseThrow()) {
                 Files.copy(zip, portablePackage);
