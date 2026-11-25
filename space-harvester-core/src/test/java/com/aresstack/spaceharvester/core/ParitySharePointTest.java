@@ -53,6 +53,25 @@ class ParitySharePointTest {
         }
     }
 
+    @Test
+    void defaultInventoryAndLiveNavigationUseTheSamePartition() throws Exception {
+        try (ParitySharePoint site = ParitySharePoint.start();
+             Harvester harvester = Harvester.builder()
+                     .source(new SourceSettingsConfig("parity", "sharepoint", "Parity", null, null,
+                             Map.of("siteUrl", site.siteUrl())))
+                     .dataDirectory(data).build()) {
+            var libraries = harvester.navigation().children(harvester.caller(), "parity", "parity", null, null);
+            assertThat(libraries.pages()).extracting(node -> node.title()).containsExactly("Dokumente");
+            var library = libraries.pages().get(0);
+            var children = harvester.navigation().children(harvester.caller(), "parity", "parity",
+                    library.pageId(), null);
+            assertThat(children.spaceKey()).isEqualTo("parity");
+            assertThat(children.pages()).extracting(node -> node.title())
+                    .containsExactlyInAnyOrder("Betrieb", "Lies mich.txt", "Notizen.md");
+            assertThat(sync(harvester).keySet()).containsExactlyInAnyOrder(ParitySharePoint.DOCUMENTS);
+        }
+    }
+
     private Harvester harvester(ParitySharePoint server) {
         return harvester(server, ParitySharePoint.DEPTH);
     }

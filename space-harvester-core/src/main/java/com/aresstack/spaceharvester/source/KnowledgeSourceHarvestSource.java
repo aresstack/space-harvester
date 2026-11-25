@@ -325,7 +325,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public boolean navigationUsesGroups() {
-        return port instanceof SinglePartitionListingSource;
+        return port instanceof SinglePartitionListingSource || "sharepoint".equals(type);
     }
 
     @Override
@@ -639,12 +639,15 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public boolean visitInventory(String partitionKey, Runnable checkpoint,
                                   java.util.function.Consumer<PageMetadata> found) {
-        if (restriction != null || scope != null
+        boolean completeSharePointScope = "sharepoint".equals(type) && scope != null
+                && scope.maxDepth() == Integer.MAX_VALUE && scope.maxResources() == Integer.MAX_VALUE
+                && id.equals(partitionKey);
+        if (restriction != null || (scope != null && !completeSharePointScope)
                 || !(port instanceof com.aresstack.enterpriseai.source.api.PartitionInventorySource inventory)) {
             return false;
         }
         try {
-            inventory.visitInventory(partitionKey, checkpoint,
+            inventory.visitInventory(completeSharePointScope ? port.sourceId().value() : partitionKey, checkpoint,
                     resource -> found.accept(pageMetadata(resource, partitionKey)));
             return true;
         } catch (KnowledgeSourceException e) {
@@ -1390,7 +1393,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             com.aresstack.enterpriseai.source.api.PagePosition position = navigation.position(resource(pageId).id());
             String partition = position.root().key().startsWith(SPACE_NODE)
                     ? position.root().key().substring(SPACE_NODE.length()) : position.root().key();
-            if (port instanceof SinglePartitionListingSource) {
+            if (port instanceof SinglePartitionListingSource || "sharepoint".equals(type)) {
                 partition = id;
             }
             String localPartition = partition;

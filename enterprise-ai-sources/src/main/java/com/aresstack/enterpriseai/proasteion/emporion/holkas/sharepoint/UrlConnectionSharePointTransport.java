@@ -36,7 +36,7 @@ final class UrlConnectionSharePointTransport implements SharePointTransport {
         HttpURLConnection connection = RouteConnections.open(uri, routes, sslSocketFactory, userAgent);
         try {
             connection.setRequestMethod("GET");
-            connection.setInstanceFollowRedirects(true);
+            connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(connectTimeoutMillis);
             connection.setReadTimeout(readTimeoutMillis);
             if (accept != null) {

@@ -18,6 +18,21 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.enterpriseai.source.api.SourceConnectionVerifier;
+import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
+import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
+import com.aresstack.enterpriseai.source.api.SourceQuery;
+import com.aresstack.enterpriseai.source.api.SourceSearchHit;
+import com.aresstack.enterpriseai.source.api.PageNavigationSource;
+import com.aresstack.enterpriseai.source.api.NavigationNode;
+import com.aresstack.enterpriseai.source.api.NavigationChildren;
+import com.aresstack.enterpriseai.source.api.PagePosition;
+import com.aresstack.enterpriseai.source.api.CrossReferences;
+import com.aresstack.enterpriseai.source.api.StoredContent;
+import com.aresstack.enterpriseai.source.api.StoredContentSource;
+import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
+import com.aresstack.enterpriseai.source.api.PartitionInventorySource;
+import java.util.function.Consumer;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -58,7 +73,7 @@ import java.util.Set;
  *       Anmeldedaten entscheidet das JDK (Windows-Anmeldung).</li>
  * </ul>
  */
-final class SharePointKnowledgeSource implements KnowledgeSourcePort {
+final class SharePointKnowledgeSource implements SearchableKnowledgeSource, SourceConnectionVerifier, ResourceMetadataSource, PageNavigationSource, StoredContentSource, PartitionInventorySource {
 
     static final String SCHEME = "sharepoint";
     static final String ALL_LIBRARIES = ".";
@@ -80,10 +95,19 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
     private final ContentDetector detector;
     private final ExtractionRegistry extractors;
     private final long maxFileBytes;
+    private final SourceScope configuredScope;
 
     SharePointKnowledgeSource(SourceAddress sourceId, URI siteUri, SharePointCredentialsProvider credentials,
                               SharePointTransport transport, ContentDetector detector, ExtractionRegistry extractors,
                               long maxFileBytes) {
+        this(sourceId, siteUri, credentials, transport, detector, extractors, maxFileBytes,
+                SourceScope.builder().startPoint(ALL_LIBRARIES).maxDepth(Integer.MAX_VALUE)
+                        .maxResources(Integer.MAX_VALUE).build());
+    }
+
+    SharePointKnowledgeSource(SourceAddress sourceId, URI siteUri, SharePointCredentialsProvider credentials,
+                              SharePointTransport transport, ContentDetector detector, ExtractionRegistry extractors,
+                              long maxFileBytes, SourceScope configuredScope) {
         if (sourceId == null || siteUri == null || credentials == null || transport == null || detector == null
                 || extractors == null) {
             throw new IllegalArgumentException("sourceId, siteUri, credentials, transport, detector and extractors are required");
@@ -97,6 +121,7 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
         this.detector = detector;
         this.extractors = extractors;
         this.maxFileBytes = maxFileBytes;
+        this.configuredScope = configuredScope;
     }
 
     @Override
@@ -105,9 +130,33 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
     }
 
     @Override
+    public void verifyConnection() throws KnowledgeSourceException {
+        JsonObject web = get(api("?$select=Id"), authorization());
+        if (string(web, "Id") == null) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: Site-ID fehlt");
+        }
+    }
+
+    @Override
     public List<KnowledgeResource> discover(SourceScope scope) throws KnowledgeSourceException {
-        String authorization = authorization();
         List<KnowledgeResource> found = new ArrayList<KnowledgeResource>();
+        walk(scope, () -> {}, found::add, false);
+        return found;
+    }
+
+    @Override
+    public void visitInventory(String partitionKey, Runnable checkpoint, Consumer<KnowledgeResource> found)
+            throws KnowledgeSourceException {
+        if (!sourceId.value().equals(partitionKey) || configuredScope.maxDepth() != Integer.MAX_VALUE
+                || configuredScope.maxResources() != Integer.MAX_VALUE) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: keine vollständige Inventur für diesen Umfang");
+        }
+        walk(configuredScope, checkpoint, found, true);
+    }
+
+    private void walk(SourceScope scope, Runnable checkpoint, Consumer<KnowledgeResource> found, boolean strict)
+            throws KnowledgeSourceException {
+        String authorization = authorization();
         Set<String> seenFolders = new LinkedHashSet<String>();
         Set<String> seenFiles = new LinkedHashSet<String>();
         Deque<Object[]> queue = new ArrayDeque<Object[]>();
@@ -120,49 +169,273 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
                 queue.add(new Object[] {serverRelative(startPoint), 0, Boolean.TRUE});
             }
         }
-        while (!queue.isEmpty() && found.size() < scope.maxResources()) {
+        while (!queue.isEmpty() && seenFiles.size() < scope.maxResources()) {
+            checkpoint.run();
             Object[] next = queue.poll();
             String folder = (String) next[0];
             int depth = (Integer) next[1];
             boolean libraryRoot = (Boolean) next[2];
+            if (!insideSite(folder)) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: Ordner außerhalb der Site");
+            }
             if (!seenFolders.add(folder.toLowerCase(Locale.ROOT))) {
                 continue;
             }
-            JsonArray files;
+            URI files = api("GetFolderByServerRelativeUrl(" + odataString(folder) + ")/Files"
+                    + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel");
             try {
-                files = results(get(api("GetFolderByServerRelativeUrl(" + odataString(folder) + ")/Files"
-                        + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel"), authorization));
+                visitCollection(files, authorization, checkpoint, element -> {
+                    if (seenFiles.size() >= scope.maxResources()) return;
+                    KnowledgeResource resource = resourceOf(element.getAsJsonObject(), true);
+                    if (resource != null && seenFiles.add(resource.id().value())) found.accept(resource);
+                }, () -> seenFiles.size() >= scope.maxResources(), strict);
             } catch (KnowledgeSourceException e) {
-                if (e.kind() == Kind.NOT_FOUND) {
-                    continue;
-                }
+                if (!strict && e.kind() == Kind.NOT_FOUND && libraryRoot) continue;
                 throw e;
-            }
-            for (JsonElement element : files) {
-                if (found.size() >= scope.maxResources()) {
-                    break;
-                }
-                KnowledgeResource resource = resourceOf(element.getAsJsonObject(), true);
-                if (resource != null && seenFiles.add(resource.id().value())) {
-                    found.add(resource);
-                }
             }
             if (depth >= scope.maxDepth()) {
                 continue;
             }
-            JsonArray folders = results(get(api("GetFolderByServerRelativeUrl(" + odataString(folder) + ")/Folders"
-                    + "?$select=Name,ServerRelativeUrl"), authorization));
-            for (JsonElement element : folders) {
+            if (seenFiles.size() >= scope.maxResources()) break;
+            visitCollection(api("GetFolderByServerRelativeUrl(" + odataString(folder) + ")/Folders"
+                    + "?$select=Name,ServerRelativeUrl"), authorization, checkpoint, element -> {
                 JsonObject sub = element.getAsJsonObject();
                 String name = string(sub, "Name");
                 String path = string(sub, "ServerRelativeUrl");
-                if (path == null || name == null || libraryRoot && "Forms".equalsIgnoreCase(name)) {
-                    continue;
+                if (path != null && name != null && !(libraryRoot && "Forms".equalsIgnoreCase(name))
+                        && path.startsWith(folder + "/") && path.lastIndexOf('/') == folder.length()) {
+                    queue.add(new Object[] {path, depth + 1, Boolean.FALSE});
                 }
-                queue.add(new Object[] {path, depth + 1, Boolean.FALSE});
+            }, () -> false, strict);
+        }
+    }
+
+    @Override
+    public List<SourceSearchHit> search(SourceQuery query) throws KnowledgeSourceException {
+        String authorization = authorization();
+        List<String> roots = searchRoots(authorization);
+        if (roots.isEmpty()) return Collections.emptyList();
+        String expression = SharePointSearch.query(query, roots, this::location);
+        Map<String, SourceSearchHit> matches = new LinkedHashMap<String, SourceSearchHit>();
+        for (int start = 0; start <= 50000 && matches.size() < query.limit();) {
+            int pageSize = Math.min(100, query.limit() - matches.size());
+            URI endpoint = URI.create(trimTrailingSlash(siteUri.toString()) + "/_api/search/query?querytext="
+                    + odataString(expression) + "&rowlimit=" + pageSize + "&startrow=" + start
+                    + "&trimduplicates=false&selectproperties='Path,Filename,Title,LastModifiedTime,IsDocument'");
+            List<Map<String, String>> rows = SharePointSearch.rows(get(endpoint, authorization));
+            if (rows.isEmpty()) break;
+            for (Map<String, String> row : rows) {
+                SourceSearchHit hit = searchHit(row, roots, query);
+                if (hit != null && matches.size() < query.limit()) matches.putIfAbsent(hit.resourceId().value(), hit);
+            }
+            start += rows.size();
+            if (rows.size() < pageSize) break;
+        }
+        return new ArrayList<SourceSearchHit>(matches.values());
+    }
+
+    private List<String> searchRoots(String authorization) throws KnowledgeSourceException {
+        Set<String> roots = new LinkedHashSet<String>();
+        for (String start : configuredScope.startPoints()) {
+            if (ALL_LIBRARIES.equals(start)) {
+                roots.addAll(libraries(authorization));
+            } else {
+                roots.add(serverRelative(start));
             }
         }
-        return found;
+        for (String root : roots) {
+            if (!insideSite(root)) throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: Suchumfang ungültig");
+        }
+        return new ArrayList<String>(roots);
+    }
+
+    private SourceSearchHit searchHit(Map<String, String> row, List<String> roots, SourceQuery query) {
+        if (!"true".equalsIgnoreCase(row.get("IsDocument"))) return null;
+        URI url;
+        try {
+            url = URI.create(row.getOrDefault("Path", ""));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        if (url.getHost() == null || !siteUri.getHost().equalsIgnoreCase(url.getHost())
+                || !siteUri.getScheme().equalsIgnoreCase(url.getScheme())
+                || effectivePort(siteUri) != effectivePort(url) || url.getRawUserInfo() != null
+                || url.getRawQuery() != null || url.getRawFragment() != null || !insideSite(url.getPath())) return null;
+        String path = url.getPath();
+        boolean allowed = false;
+        for (String root : roots) {
+            if (path.startsWith(root + "/")) { allowed = true; break; }
+        }
+        if (!allowed) return null;
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        if (name.startsWith("~$") || !INDEXABLE.contains(detector.detect(name, null, null).category())) return null;
+        if (query.titleOnly() && !name.toLowerCase(Locale.ROOT).contains(query.text().toLowerCase(Locale.ROOT))) return null;
+        String relative = path.substring(sitePath.length() + 1);
+        KnowledgeResourceId id = KnowledgeResourceId.of(SCHEME, locator + "/" + relative);
+        return new SourceSearchHit(id, name, "", KnowledgeRevision.unknown(), url);
+    }
+
+    @Override
+    public String localId(KnowledgeResourceId resourceId) {
+        try {
+            if (isFolderId(resourceId)) folderPath(resourceId);
+            else serverRelativeOf(resourceId);
+            // Preserve the existing encoded resource IDs in the Harvester cache.
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(resourceId.value().getBytes(StandardCharsets.UTF_8));
+        } catch (KnowledgeSourceException invalid) {
+            return null;
+        }
+    }
+
+    private KnowledgeResourceId decodeLocalId(String localId) throws KnowledgeSourceException {
+        try {
+            if (localId == null) throw new IllegalArgumentException("missing id");
+            KnowledgeResourceId id = KnowledgeResourceId.of(new String(Base64.getUrlDecoder().decode(localId), StandardCharsets.UTF_8));
+            if (localId.equals(localId(id))) return id;
+        } catch (IllegalArgumentException ignored) {
+            // Reject invalid and foreign identifiers.
+        }
+        throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültige Ressourcen-ID");
+    }
+
+    @Override
+    public KnowledgeResource resourceMetadata(String localId) throws KnowledgeSourceException {
+        KnowledgeResourceId id = decodeLocalId(localId);
+        if (isFolderId(id)) return folderResource(folderPath(id));
+        String path = serverRelativeOf(id);
+        JsonObject metadata = get(api("GetFileByServerRelativeUrl(" + odataString(path)
+                + ")?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel"), authorization());
+        KnowledgeResource resource = resourceOf(metadata, false);
+        if (resource == null || !path.equals(string(metadata, "ServerRelativeUrl"))) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: unvollständige Dateiangaben");
+        }
+        return resource;
+    }
+
+    private static final String FOLDER_SCHEME = "sharepoint-folder";
+
+    private KnowledgeResourceId folderId(String path) {
+        return KnowledgeResourceId.of(FOLDER_SCHEME, locator + "/" + path.substring(sitePath.length() + 1));
+    }
+
+    private boolean isFolderId(KnowledgeResourceId id) {
+        return id.value().startsWith(FOLDER_SCHEME + ":");
+    }
+
+    private String folderPath(KnowledgeResourceId id) throws KnowledgeSourceException {
+        String prefix = FOLDER_SCHEME + ":" + locator + "/";
+        if (!id.value().startsWith(prefix) || id.value().length() == prefix.length()) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: fremder Ordner");
+        }
+        String path = sitePath + "/" + id.value().substring(prefix.length());
+        if (!insideSite(path)) throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: fremder Ordner");
+        return path;
+    }
+
+    private KnowledgeResource folderResource(String path) {
+        return KnowledgeResource.builder(folderId(path), sourceId)
+                .title(path.substring(path.lastIndexOf('/') + 1))
+                .scope(sourceId.value()).revision(KnowledgeRevision.unknown()).build();
+    }
+
+    private NavigationNode folderNode(String path) {
+        return NavigationNode.folder(folderId(path), path.substring(path.lastIndexOf('/') + 1), NavigationNode.Children.UNKNOWN);
+    }
+
+    private NavigationNode fileNode(KnowledgeResource resource) {
+        return NavigationNode.page(resource.id(), resource.title(), NavigationNode.Children.NO);
+    }
+
+    @Override
+    public NavigationChildren children(NavigationNode parent, String cursor) throws KnowledgeSourceException {
+        if (cursor != null && !cursor.isEmpty()) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Navigationscursor");
+        }
+        String authorization = authorization();
+        List<String> roots = searchRoots(authorization);
+        List<NavigationNode> nodes = new ArrayList<NavigationNode>();
+        if (parent.isRoot()) {
+            for (String root : roots) nodes.add(folderNode(root));
+            return new NavigationChildren(nodes, "");
+        }
+        if (!isFolderId(parent.resource())) return new NavigationChildren(nodes, "");
+        String folder = folderPath(parent.resource());
+        if (!withinRoots(folder, roots)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: Ordner außerhalb des Umfangs");
+        }
+        String endpoint = "GetFolderByServerRelativeUrl(" + odataString(folder) + ")";
+        for (JsonElement element : collection(api(endpoint + "/Folders?$select=Name,ServerRelativeUrl"), authorization)) {
+            JsonObject sub = element.getAsJsonObject();
+            String path = string(sub, "ServerRelativeUrl");
+            String name = string(sub, "Name");
+            if (insideSite(path) && path.startsWith(folder + "/") && path.lastIndexOf('/') == folder.length()
+                    && name != null && !"Forms".equalsIgnoreCase(name)) nodes.add(folderNode(path));
+        }
+        for (JsonElement element : collection(api(endpoint + "/Files?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel"), authorization)) {
+            JsonObject file = element.getAsJsonObject();
+            String path = string(file, "ServerRelativeUrl");
+            KnowledgeResource resource = resourceOf(file, true);
+            if (resource != null && path.startsWith(folder + "/") && path.lastIndexOf('/') == folder.length()) {
+                nodes.add(fileNode(resource));
+            }
+        }
+        return new NavigationChildren(nodes, "");
+    }
+
+    private static boolean withinRoots(String path, List<String> roots) {
+        for (String root : roots) {
+            if (path.equals(root) || path.startsWith(root + "/")) return true;
+        }
+        return false;
+    }
+
+    @Override
+    public PagePosition position(KnowledgeResourceId page) throws KnowledgeSourceException {
+        List<String> roots = searchRoots(authorization());
+        String path = isFolderId(page) ? folderPath(page) : serverRelativeOf(page);
+        String root = null;
+        for (String candidate : roots) {
+            if ((path.equals(candidate) || path.startsWith(candidate + "/"))
+                    && (root == null || candidate.length() < root.length())) root = candidate;
+        }
+        if (root == null) throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: Ressource außerhalb des Umfangs");
+        List<NavigationNode> ancestors = new ArrayList<NavigationNode>();
+        if (!path.equals(root)) {
+            ancestors.add(folderNode(root));
+            int slash = path.indexOf('/', root.length() + 1);
+            while (slash >= 0) {
+                ancestors.add(folderNode(path.substring(0, slash)));
+                slash = path.indexOf('/', slash + 1);
+            }
+        }
+        NavigationNode site = NavigationNode.root(sourceId.value(), locator, sourceId.value(), NavigationNode.Children.YES);
+        NavigationNode node = isFolderId(page) ? folderNode(path) : fileNode(resourceMetadata(localId(page)));
+        return new PagePosition(site, ancestors, node);
+    }
+
+    @Override
+    public CrossReferences crossReferences(KnowledgeResourceId page) throws KnowledgeSourceException {
+        if (isFolderId(page)) folderPath(page);
+        else serverRelativeOf(page);
+        return CrossReferences.outgoingOnly(Collections.emptyList());
+    }
+
+    @Override
+    public StoredContent storedContent(String localId) throws KnowledgeSourceException {
+        KnowledgeResourceId id = decodeLocalId(localId);
+        if (isFolderId(id)) throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: Ordner ist kein Dokument");
+        KnowledgeResource before = resourceMetadata(localId);
+        long length = Long.parseLong(before.metadata().asMap().get("file.size"));
+        if (length > maxFileBytes) throw new ResponseTooLargeException("SharePoint: Datei überschreitet das Limit", maxFileBytes);
+        byte[] bytes = request(api("GetFileByServerRelativeUrl(" + odataString(serverRelativeOf(id)) + ")/$value"),
+                null, authorization(), maxFileBytes).body();
+        KnowledgeResource after = resourceMetadata(localId);
+        if (!before.revision().equals(after.revision()) || !before.metadata().asMap().get("file.size")
+                .equals(after.metadata().asMap().get("file.size")) || bytes.length != length) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "SharePoint: Datei änderte sich beim Abruf oder ist unvollständig");
+        }
+        DetectedContentType type = detector.detect(before.title(), null, Arrays.copyOf(bytes, Math.min(bytes.length, PREFIX_BYTES)));
+        return new StoredContent(after.toBuilder().contentType(type.mimeType()).build(), bytes, type.mimeType(), "file", Instant.now());
     }
 
     @Override
@@ -170,10 +443,10 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
         String path = serverRelativeOf(resourceId);
         String authorization = authorization();
         String file = "GetFileByServerRelativeUrl(" + odataString(path) + ")";
-        JsonObject metadata = (get(api(file + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel"),
-                authorization));
+        JsonObject metadata = get(api(file + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel"),
+                authorization);
         KnowledgeResource resource = resourceOf(metadata, false);
-        if (resource == null) {
+        if (resource == null || !path.equals(string(metadata, "ServerRelativeUrl"))) {
             throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, resourceId + ": unvollständige Dateiangaben");
         }
         long length = number(metadata, "Length");
@@ -211,8 +484,8 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
 
     /** Serverrelative Wurzelordner aller sichtbaren Dokumentbibliotheken (BaseTemplate 101). */
     private List<String> libraries(String authorization) throws KnowledgeSourceException {
-        JsonArray lists = results(get(api("lists?$select=Title,Hidden,BaseTemplate,RootFolder/ServerRelativeUrl"
-                + "&$expand=RootFolder&$filter=BaseTemplate%20eq%20101"), authorization));
+        JsonArray lists = collection(api("lists?$select=Title,Hidden,BaseTemplate,RootFolder/ServerRelativeUrl"
+                + "&$expand=RootFolder&$filter=BaseTemplate%20eq%20101"), authorization);
         List<String> roots = new ArrayList<String>();
         for (JsonElement element : lists) {
             JsonObject list = element.getAsJsonObject();
@@ -221,7 +494,7 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
             }
             JsonElement root = list.get("RootFolder");
             String path = root != null && root.isJsonObject() ? string(root.getAsJsonObject(), "ServerRelativeUrl") : null;
-            if (path != null) {
+            if (insideSite(path)) {
                 roots.add(path);
             }
         }
@@ -232,12 +505,12 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
     private KnowledgeResource resourceOf(JsonObject file, boolean filterByType) {
         String name = string(file, "Name");
         String path = string(file, "ServerRelativeUrl");
-        if (name == null || path == null || !path.startsWith(sitePath + "/")) {
+        if (name == null || path == null || !insideSite(path)) {
             return null;
         }
         long length = number(file, "Length");
         DetectedContentType type = detector.detect(name, null, null);
-        if (filterByType && (name.startsWith("~$") || length > maxFileBytes || length == 0
+        if (filterByType && (name.startsWith("~$") || length == 0
                 || !INDEXABLE.contains(type.category()))) {
             return null;
         }
@@ -259,6 +532,16 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
             builder.location(location);
         }
         return builder.build();
+    }
+
+    private boolean insideSite(String path) {
+        if (path == null || !path.startsWith(sitePath + "/") || path.indexOf('\\') >= 0) {
+            return false;
+        }
+        for (String segment : path.split("/")) {
+            if ("..".equals(segment) || ".".equals(segment)) return false;
+        }
+        return true;
     }
 
     private URI location(String serverRelative) {
@@ -284,7 +567,7 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, resourceId + " gehört nicht zur Quelle " + sourceId);
         }
         String relative = value.substring(prefix.length());
-        if (relative.contains("/../") || relative.startsWith("../") || relative.endsWith("/..")) {
+        if (!insideSite(sitePath + "/" + relative)) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, resourceId + " gehört nicht zur Quelle " + sourceId);
         }
         return sitePath + "/" + relative;
@@ -323,7 +606,7 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
 
     private URI api(String relative) throws KnowledgeSourceException {
         try {
-            return new URI(trimTrailingSlash(siteUri.toString()) + "/_api/web/" + relative);
+            return new URI(trimTrailingSlash(siteUri.toString()) + "/_api/web" + (relative.startsWith("?") ? "" : "/") + relative);
         } catch (URISyntaxException e) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint " + sourceId + ": ungültiger Pfad", e);
         }
@@ -331,6 +614,9 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
 
     private JsonObject get(URI uri, String authorization) throws KnowledgeSourceException {
         SharePointTransport.Response response = request(uri, JSON, authorization, MAX_JSON_BYTES);
+        if (response.contentType() == null || !response.contentType().toLowerCase(Locale.ROOT).contains("json")) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: REST-Antwort ist kein JSON");
+        }
         try {
             JsonElement root = JsonParser.parseString(new String(response.body(), StandardCharsets.UTF_8));
             if (!root.isJsonObject() || !root.getAsJsonObject().has("d") || !root.getAsJsonObject().get("d").isJsonObject()) {
@@ -346,6 +632,7 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
 
     private SharePointTransport.Response request(URI uri, String accept, String authorization, long maxBytes)
             throws KnowledgeSourceException {
+        requireApiUri(uri);
         SharePointTransport.Response response;
         try {
             response = transport.get(uri, accept, authorization, maxBytes);
@@ -371,9 +658,75 @@ final class SharePointKnowledgeSource implements KnowledgeSourcePort {
 
     // ── JSON ─────────────────────────────────────────────────────────────────────────────────────────────────
 
-    private static JsonArray results(JsonObject d) {
-        JsonElement results = d.get("results");
-        return results != null && results.isJsonArray() ? results.getAsJsonArray() : new JsonArray();
+    /** Follow server-issued OData continuations only within the same API and origin. */
+    private JsonArray collection(URI first, String authorization) throws KnowledgeSourceException {
+        JsonArray all = new JsonArray();
+        visitCollection(first, authorization, () -> {}, all::add, () -> false, true);
+        return all;
+    }
+
+    private void visitCollection(URI first, String authorization, Runnable checkpoint, Consumer<JsonElement> found,
+                                 java.util.function.BooleanSupplier done, boolean strict) throws KnowledgeSourceException {
+        Set<URI> visited = new LinkedHashSet<URI>();
+        URI next = first;
+        while (next != null && !done.getAsBoolean()) {
+            checkpoint.run();
+            if (Thread.currentThread().isInterrupted()) {
+                throw new KnowledgeSourceException(Kind.UNAVAILABLE, "SharePoint: Abruf abgebrochen");
+            }
+            if (!visited.add(next)) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: wiederholte OData-Folgeseite");
+            }
+            JsonObject data;
+            try {
+                data = get(next, authorization);
+            } catch (KnowledgeSourceException e) {
+                if (!strict && visited.size() > 1 && e.kind() == Kind.NOT_FOUND) {
+                    throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: OData-Folgeseite fehlt");
+                }
+                throw e;
+            }
+            JsonElement rows = data.get("results");
+            if (rows == null || !rows.isJsonArray()) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: OData-Ergebnisliste fehlt");
+            }
+            for (JsonElement row : rows.getAsJsonArray()) {
+                checkpoint.run();
+                if (done.getAsBoolean()) break;
+                found.accept(row);
+            }
+            String continuation = string(data, "__next");
+            if (continuation == null || continuation.isEmpty()) {
+                next = null;
+            } else {
+                try {
+                    next = continuation.startsWith("?")
+                            ? URI.create(next.toString().split("\\?", 2)[0] + continuation)
+                            : next.resolve(URI.create(continuation));
+                    requireApiUri(next);
+                    if (!first.getPath().equals(next.getPath())) {
+                        throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: fremde OData-Folgeseite");
+                    }
+                } catch (IllegalArgumentException invalid) {
+                    throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: ungültige OData-Folgeseite");
+                }
+            }
+        }
+    }
+
+    private void requireApiUri(URI uri) throws KnowledgeSourceException {
+        if (uri.getHost() == null || !siteUri.getHost().equalsIgnoreCase(uri.getHost())
+                || !siteUri.getScheme().equalsIgnoreCase(uri.getScheme())
+                || effectivePort(siteUri) != effectivePort(uri) || uri.getRawUserInfo() != null
+                || uri.getRawFragment() != null || uri.getPath() == null
+                || !uri.getPath().startsWith(sitePath + "/_api/")
+                || !uri.normalize().getPath().equals(uri.getPath())) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: fremder REST-Endpunkt abgelehnt");
+        }
+    }
+
+    private static int effectivePort(URI uri) {
+        return uri.getPort() >= 0 ? uri.getPort() : "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
     }
 
     private static String string(JsonObject object, String key) {

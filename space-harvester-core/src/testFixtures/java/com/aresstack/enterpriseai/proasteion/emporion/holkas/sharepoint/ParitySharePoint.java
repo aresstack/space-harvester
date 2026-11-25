@@ -73,7 +73,8 @@ public final class ParitySharePoint implements AutoCloseable {
 
     private ParitySharePoint(int port) throws IOException {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 0);
-        server.createContext(SITE_PATH + "/_api/web/", this::handle);
+        server.createContext(SITE_PATH + "/_api/web", this::handle);
+        server.createContext(SITE_PATH + "/_api/search/query", this::search);
         server.start();
     }
 
@@ -103,7 +104,12 @@ public final class ParitySharePoint implements AutoCloseable {
 
     private void handle(HttpExchange exchange) throws IOException {
         try {
-            String call = exchange.getRequestURI().getPath().substring(SITE_PATH.length() + "/_api/web/".length());
+            String path = exchange.getRequestURI().getPath();
+            if (path.equals(SITE_PATH + "/_api/web")) {
+                json(exchange, "{\"d\":{\"Id\":\"parity-site\"}}");
+                return;
+            }
+            String call = path.substring(SITE_PATH.length() + "/_api/web/".length());
             if (!"GET".equals(exchange.getRequestMethod())) {
                 send(exchange, 405, "text/plain", new byte[0]);
             } else if ("lists".equals(call)) {
@@ -123,6 +129,23 @@ public final class ParitySharePoint implements AutoCloseable {
                     send(exchange, 404, "application/json", new byte[0]);
                 }
             }
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private void search(HttpExchange exchange) throws IOException {
+        try {
+            String query = exchange.getRequestURI().getQuery();
+            String row = "";
+            if (query != null && query.contains(SEARCH) && query.contains(LIBRARY)
+                    && !query.contains("startrow=1")) {
+                String url = siteUrl() + SEARCH_HIT.substring(SITE_PATH.length());
+                row = "{\"Cells\":{\"results\":[{\"Key\":\"Path\",\"Value\":\"" + url
+                        + "\"},{\"Key\":\"IsDocument\",\"Value\":\"true\"}]}}";
+            }
+            json(exchange, "{\"d\":{\"query\":{\"PrimaryQueryResult\":{\"RelevantResults\":{\"Table\":{\"Rows\":{\"results\":["
+                    + row + "]}}}}}}}");
         } finally {
             exchange.close();
         }
