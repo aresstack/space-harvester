@@ -76,7 +76,8 @@ public final class MarkdownTheme {
         Color bg = background == null ? color("Panel.background", Color.WHITE) : background;
         Color fg = color("Label.foreground", Color.BLACK);
         if (ColorContrast.ratio(fg, bg) < 4.5) {
-            fg = luminance(bg) > 0.5f ? Color.BLACK : Color.WHITE;
+            fg = ColorContrast.ratio(Color.BLACK, bg) >= ColorContrast.ratio(Color.WHITE, bg)
+                    ? Color.BLACK : Color.WHITE;
         }
         Font body = bodyFont();
         Color muted = blend(bg, fg, 0.72f);

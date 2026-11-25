@@ -123,8 +123,16 @@ class ChatPanelTest {
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
             assertThat(panel[0].chatName()).isEqualTo(earlier.id());
             assertThat(panel[0].bubbles()).isEqualTo(5);
-            // Wie im EAC: jede Sprechblase mit Datum und Uhrzeit oben rechts und dem Kopierknopf; die Antwort kopiert
-            // ihren Markdown-Quelltext, die Frage ihren Text.
+            // Preserve the user speech bubble and put the assistant actions below the Markdown body.
+            java.util.List<com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage> answers =
+                    new java.util.ArrayList<>();
+            collect(panel[0], com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage.class, answers);
+            assertThat(answers).isNotEmpty().allSatisfy(answer -> assertThat(answer.isOpaque()).isFalse());
+            java.util.List<com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel> questions =
+                    new java.util.ArrayList<>();
+            collect(panel[0], com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel.class, questions);
+            assertThat(questions).isNotEmpty();
+            // Preserve timestamps and copy the original message text or Markdown.
             for (long at : new long[] {1_000, 1_500, 1_600, 1_700, 1_800}) {
                 assertThat(labelsWithTooltip(panel[0],
                         com.aresstack.enterpriseai.ui.comic.bubble.BubbleTimestamps.tooltip(at))).isNotZero();
