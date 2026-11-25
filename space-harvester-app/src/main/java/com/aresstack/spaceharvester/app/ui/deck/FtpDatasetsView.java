@@ -401,6 +401,10 @@ final class FtpDatasetsView extends JPanel {
     }
 
     private void navigate(String target, Move move) {
+        navigate(target, move, () -> { });
+    }
+
+    private void navigate(String target, Move move, Runnable afterRefresh) {
         FtpSession session = owner.session();
         if (session.mvs() && (target == null || target.isBlank() || MvsPath.ROOT.equals(MvsPath.absolute(target)))) {
             message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
@@ -442,6 +446,7 @@ final class FtpDatasetsView extends JPanel {
                     newBar.setVisible(false);
                     showList();
                     enableActions();
+                    afterRefresh.run();
                 }));
     }
 
@@ -1043,15 +1048,14 @@ final class FtpDatasetsView extends JPanel {
             }
             return new DeleteResult(done, failures);
         }), "Löschen fehlgeschlagen", result -> {
-            navigate(current, false);
-            if (result.failures().isEmpty()) {
-                owner.status(result.done() == 1 ? "Gelöscht: " + chosen.get(0).name() : result.done() + " gelöscht",
-                        false);
-            } else {
-                String text = result.done() + " gelöscht, " + result.failures().size() + " fehlgeschlagen:\n\n"
-                        + String.join("\n", result.failures());
-                owner.status(result.done() + " gelöscht, " + result.failures().size() + " fehlgeschlagen", true);
-                report.accept(text);
+            boolean failed = !result.failures().isEmpty();
+            String status = failed ? result.done() + " gelöscht, " + result.failures().size() + " fehlgeschlagen"
+                    : result.done() == 1 ? "Gelöscht: " + chosen.get(0).name() : result.done() + " gelöscht";
+            // Preserve the operation result when the asynchronous refresh completes.
+            navigate(current, Move.STAY, () -> owner.status(status, failed));
+            owner.status(status, failed);
+            if (failed) {
+                report.accept(status + ":\n\n" + String.join("\n", result.failures()));
             }
         });
     }
