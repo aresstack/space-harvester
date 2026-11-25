@@ -48,6 +48,10 @@ public final class PassageQueries {
      */
     public PagePassages page(AccessContext caller, String sourceId, String pageId) {
         DeliveredPage page = pages.page(caller, sourceId, pageId, false);
+        var local = enrichments.localReading(page.snapshot());
+        if (local.isPresent()) {
+            return local.get().passages();
+        }
         PageText text = text(page);
         PagePassages passages = PagePassages.read(page.snapshot().key(), enrichments.view(page.snapshot()), text);
         if (text == null || passages.state() == PagePassages.State.CURRENT

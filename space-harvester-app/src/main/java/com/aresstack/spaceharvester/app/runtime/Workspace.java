@@ -844,6 +844,12 @@ public final class Workspace {
         return harvester.pages().pageByUrl(caller, sourceId, url, refresh);
     }
 
+    /** Read local section analyses only after page content access has been checked. */
+    public Optional<com.aresstack.spaceharvester.application.enrichment.LocalReaderAnalyses.Result> localReading(
+            DeliveredPage page) {
+        return harvester.enrichments().localReading(page.snapshot());
+    }
+
     /** Anreicherungen einer gelieferten Seite ({@code view=extended}); das Lesen der Seite hat CONTENT geprüft. */
     public List<Enrichments.View> enrichments(DeliveredPage page) {
         return harvester.enrichments().view(page.snapshot());

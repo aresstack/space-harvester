@@ -1835,7 +1835,8 @@ public final class PageDetailPanel extends JPanel {
                     null, checked, passage, unchecked);
         }
         List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
-        ReaderDocument document = document(source, id, enrichments, text, font);
+        ReaderDocument document = localDocument(runtime.workspace(), delivered, font)
+                .orElseGet(() -> document(source, id, enrichments, text, font));
         relations(runtime, document, source, delivered.header().metadata().partitionKey());
         navigation(runtime, document, source, id);
         return new Loaded(delivered, enrichments, document,
@@ -2403,7 +2404,8 @@ public final class PageDetailPanel extends JPanel {
         if (text == null) {
             return List.of();
         }
-        PagePassages found = PagePassages.read(key, workspace.enrichments(page), text);
+        PagePassages found = workspace.localReading(page).map(result -> result.passages())
+                .orElseGet(() -> PagePassages.read(key, workspace.enrichments(page), text));
         if (found.state() != PagePassages.State.CURRENT) {
             return null;
         }
@@ -3343,6 +3345,12 @@ public final class PageDetailPanel extends JPanel {
     static boolean recomputeOffered(PageAcronyms.State acronyms, PagePassages.State passages) {
         return acronyms != PageAcronyms.State.CURRENT
                 || passages == PagePassages.State.STALE || passages == PagePassages.State.FAILED;
+    }
+
+    private static java.util.Optional<ReaderDocument> localDocument(
+            com.aresstack.spaceharvester.app.runtime.Workspace workspace, DeliveredPage page, Font font) {
+        return workspace.localReading(page).map(result -> ReaderDocument.build(result.text(),
+                result.acronyms(), result.terms(), font).withPassages(result.passages()));
     }
 
     /** Baut den Lesetext mit den Akronymen der Seite {@code sourceId}/{@code pageId}; außerhalb des EDT. */
@@ -5785,7 +5793,8 @@ public final class PageDetailPanel extends JPanel {
                     }));
             DeliveredPage cached = runtime.workspace().page(source, id, false);
             List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
-            ReaderDocument document = document(source, id, updated, text, font);
+            ReaderDocument document = localDocument(runtime.workspace(), cached, font)
+                    .orElseGet(() -> document(source, id, updated, text, font));
             relations(runtime, document, source, cached.header().metadata().partitionKey());
             navigation(runtime, document, source, id);
             return new Recomputed(run, updated, document);

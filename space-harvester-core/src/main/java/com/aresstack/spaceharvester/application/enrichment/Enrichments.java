@@ -135,6 +135,16 @@ public class Enrichments {
     private static final Pattern ID = Pattern.compile("[a-z][a-z0-9-]{0,63}");
 
     private final PageTextProjector projector;
+    private volatile LocalReaderAnalyses localReader;
+
+    public void localReader(LocalReaderAnalyses localReader) {
+        this.localReader = Objects.requireNonNull(localReader, "localReader");
+    }
+
+    public Optional<LocalReaderAnalyses.Result> localReading(PageSnapshot snapshot) {
+        LocalReaderAnalyses reader = localReader;
+        return reader == null ? Optional.empty() : reader.read(snapshot);
+    }
     private final Map<String, EnrichmentProcessor> processors = new LinkedHashMap<>();
     private final EnrichmentStore store;
     private final Clock clock;

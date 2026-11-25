@@ -648,6 +648,9 @@ public final class Harvester implements AutoCloseable {
                     new com.aresstack.spaceharvester.application.presentation.VideoTranscriptTextProjector(
                             this::assets)));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
+            enrichments.localReader(new com.aresstack.spaceharvester.application.enrichment.LocalReaderAnalyses(
+                    new com.aresstack.spaceharvester.application.enrichment.LocalReadingText(structuredDocuments),
+                    enrichments, navigationBuilder));
             // Angelo 22.11.2026: Auch die KI-Anreicherung rechnet so breit, wie ai.parallel erlaubt, gelesen je Teil.
             enrichments.parallel(() -> {
                 AiServiceSettings ai = currentAi.get();
