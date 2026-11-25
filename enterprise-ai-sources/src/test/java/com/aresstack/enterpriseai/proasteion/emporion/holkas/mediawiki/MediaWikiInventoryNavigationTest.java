@@ -62,6 +62,60 @@ public class MediaWikiInventoryNavigationTest {
     }
 
     @Test
+    public void normalizeWikiScriptAddressesWithoutChangingIdentity() {
+        for (String address : Arrays.asList("https://wiki.example/w", "https://wiki.example/w/",
+                "https://wiki.example/w/api.php", "https://wiki.example/w/index.php?title=Start",
+                "https://wiki.example/w/index.php/Start#Section")) {
+            assertEquals("https://wiki.example/w/api.php",
+                    MediaWikiSiteConfig.builder("wiki", address).build().apiEndpoint());
+            assertEquals("wiki.example/w", MediaWikiSourceProvider.siteLocator(address));
+        }
+    }
+
+    @Test
+    public void nestedCategoriesDoNotFollowCycles() throws Exception {
+        wiki.page("Hauptseite", "<p>Start</p>", 1, 1);
+        wiki.categories.put("A", Arrays.asList("Category:B"));
+        wiki.categories.put("B", Arrays.asList("Category:A", "Hauptseite"));
+        NavigationNode categories = source.children(
+                NavigationNode.root("space:wiki", "Wiki", "", NavigationNode.Children.YES), "").nodes().get(2);
+        NavigationNode a = source.children(categories, "").nodes().get(0);
+        NavigationNode b = source.children(a, "").nodes().get(0);
+        assertTrue(b.isFolder());
+        assertEquals("B", b.title());
+        assertEquals("B", source.resourceMetadata(source.localId(b.resource())).title());
+        NavigationChildren children = source.children(b, "");
+        assertEquals(1, children.nodes().size());
+        assertEquals("Hauptseite", children.nodes().get(0).title());
+    }
+
+    @Test
+    public void realSubpagesAreExpandableOnlyWhenNamespaceAllowsThem() throws Exception {
+        wiki.mainNamespaceSubpages = true;
+        wiki.page("Hauptseite", "<p>Start</p>", 1, 1);
+        wiki.page("Hauptseite/A", "<p>A</p>", 2, 2);
+        wiki.page("Hauptseite/A/B", "<p>B</p>", 3, 3);
+        NavigationNode home = source.children(
+                NavigationNode.root("space:wiki", "Wiki", "", NavigationNode.Children.YES), "").nodes().get(0);
+        assertEquals(NavigationNode.Children.UNKNOWN, home.children());
+        NavigationChildren children = source.children(home, "");
+        assertEquals(1, children.nodes().size());
+        assertEquals("Hauptseite/A", children.nodes().get(0).title());
+        assertEquals("Hauptseite/A/B", source.children(children.nodes().get(0), "").nodes().get(0).title());
+    }
+
+    @Test
+    public void sameOriginImagesAreListedButForeignImagesAreNot() {
+        com.aresstack.enterpriseai.source.api.PageView view = WikiReadingView.of(
+                "<img src='/w/images/a.png' alt='A'><img src='https://other.example/a.png' alt='B'>",
+                "https://wiki.example/w/index.php", java.net.URI.create("https://wiki.example/w/api.php"));
+        assertEquals(1, view.images().size());
+        assertEquals("https://wiki.example/w/images/a.png", view.images().get(0).src());
+        assertTrue(view.html().contains("https://wiki.example/w/images/a.png"));
+        assertFalse(view.html().contains("other.example"));
+    }
+
+    @Test
     public void renderedHtmlIsAvailableWithoutActiveContent() throws Exception {
         wiki.page("Hauptseite", "<h2>Abschnitt</h2><p>Text <b>fett</b></p>"
                 + "<script>alert(1)</script><img src='https://other.example/pixel' alt='Bild'>"

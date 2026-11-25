@@ -75,8 +75,19 @@ final class MediaWikiResponses {
         }
         List<Integer> namespaces = new ArrayList<Integer>();
         namespaces.add(0);
+        java.util.Map<Integer, String> subpageNamespaces = new java.util.LinkedHashMap<Integer, String>();
+        String categoryPrefix = "Category";
         for (JsonObject namespace : objects(query, "namespaces")) {
             int id = (int) number(namespace, "id");
+            String name = string(namespace, "name", string(namespace, "*", ""));
+            if (id == 14 && !name.isEmpty()) {
+                categoryPrefix = name;
+            }
+            JsonElement subpages = namespace.get("subpages");
+            if (subpages != null && !subpages.isJsonNull()
+                    && !(subpages.isJsonPrimitive() && subpages.getAsJsonPrimitive().isBoolean() && !subpages.getAsBoolean())) {
+                subpageNamespaces.put(id, name);
+            }
             JsonElement content = namespace.get("content");
             if (id > 0 && content != null && !content.isJsonNull()
                     && !(content.isJsonPrimitive() && content.getAsJsonPrimitive().isBoolean() && !content.getAsBoolean())
@@ -85,7 +96,8 @@ final class MediaWikiResponses {
             }
         }
         Collections.sort(namespaces);
-        return new MediaWikiSiteInfo(title.getAsString(), stringOrNull(general, "sitename"), namespaces);
+        return new MediaWikiSiteInfo(title.getAsString(), stringOrNull(general, "sitename"), namespaces,
+                subpageNamespaces, categoryPrefix);
     }
 
     static MediaWikiTitleBatch titleBatch(String body, String list, String field, String continuationKey)

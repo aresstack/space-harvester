@@ -30,35 +30,58 @@ final class MediaWikiNavigation {
             throws KnowledgeSourceException {
         if (parent.isRoot()) {
             requireFirstBatch(cursor);
-            return new NavigationChildren(Arrays.asList(article(info.mainPage()), folder(ALL, "Alle Seiten"),
+            return new NavigationChildren(Arrays.asList(article(info.mainPage(), info), folder(ALL, "Alle Seiten"),
                     folder(CATEGORIES, "Kategorien")), "");
         }
         String group = groupOf(parent.resource());
         if (group == null) {
-            requireFirstBatch(cursor);
-            return new NavigationChildren(Collections.<NavigationNode>emptyList(), "");
+            String title = WikiResourceIds.titleOf(siteKey, parent.resource().value());
+            Integer namespace = title == null ? null : info.subpageNamespace(title);
+            if (namespace == null) {
+                requireFirstBatch(cursor);
+                return new NavigationChildren(Collections.<NavigationNode>emptyList(), "");
+            }
+            return articles(inventory.subpages(title, namespace, cursor), info);
         }
         if (ALL.equals(group)) {
-            return articles(inventory.pages(info.contentNamespaces(), cursor, MediaWikiInventory.BATCH_SIZE));
+            return articles(inventory.pages(info.contentNamespaces(), cursor, MediaWikiInventory.BATCH_SIZE), info);
         }
         if (CATEGORIES.equals(group)) {
             MediaWikiInventory.Batch batch = inventory.categories(cursor);
             List<NavigationNode> nodes = new ArrayList<NavigationNode>();
             for (String name : batch.titles) {
-                nodes.add(folder(CATEGORY + name, WikiResourceIds.displayTitle(name)));
+                String normalized = WikiResourceIds.displayTitle(name);
+                nodes.add(folder(CATEGORY + normalized, normalized));
             }
             return new NavigationChildren(nodes, batch.next);
         }
-        return articles(inventory.members(group.substring(CATEGORY.length()), info.contentNamespaces(), cursor));
+        List<String> path = Arrays.asList(group.substring(CATEGORY.length()).split("\\n", -1));
+        String current = path.get(path.size() - 1);
+        MediaWikiInventory.Batch batch = inventory.members(current, info.contentNamespaces(), cursor);
+        List<NavigationNode> nodes = new ArrayList<NavigationNode>();
+        for (String title : batch.titles) {
+            String prefix = info.categoryPrefix() + ":";
+            if (title.regionMatches(true, 0, prefix, 0, prefix.length())
+                    || title.regionMatches(true, 0, "Category:", 0, "Category:".length())) {
+                String name = WikiResourceIds.displayTitle(title.substring(title.indexOf(':') + 1));
+                if (!path.contains(name)) {
+                    nodes.add(folder(group + "\n" + name, name));
+                }
+            } else {
+                nodes.add(article(title, info));
+            }
+        }
+        return new NavigationChildren(nodes, batch.next);
     }
 
     NavigationNode allPages() {
         return folder(ALL, "Alle Seiten");
     }
 
-    NavigationNode article(String title) {
+    NavigationNode article(String title, MediaWikiSiteInfo info) {
         return NavigationNode.page(KnowledgeResourceId.of(WikiResourceIds.idFor(siteKey, title)),
-                WikiResourceIds.displayTitle(title), NavigationNode.Children.NO);
+                WikiResourceIds.displayTitle(title), info.subpageNamespace(title) == null
+                        ? NavigationNode.Children.NO : NavigationNode.Children.UNKNOWN);
     }
 
     String groupOf(KnowledgeResourceId id) {
@@ -81,7 +104,7 @@ final class MediaWikiNavigation {
         if (CATEGORIES.equals(group)) {
             return "Kategorien";
         }
-        return WikiResourceIds.displayTitle(group.substring(CATEGORY.length()));
+        return WikiResourceIds.displayTitle(group.substring(Math.max(CATEGORY.length(), group.lastIndexOf('\n') + 1)));
     }
 
     private NavigationNode folder(String group, String title) {
@@ -89,10 +112,10 @@ final class MediaWikiNavigation {
                 title, NavigationNode.Children.YES);
     }
 
-    private NavigationChildren articles(MediaWikiInventory.Batch batch) {
+    private NavigationChildren articles(MediaWikiInventory.Batch batch, MediaWikiSiteInfo info) {
         List<NavigationNode> nodes = new ArrayList<NavigationNode>();
         for (String title : batch.titles) {
-            nodes.add(article(title));
+            nodes.add(article(title, info));
         }
         return new NavigationChildren(nodes, batch.next);
     }

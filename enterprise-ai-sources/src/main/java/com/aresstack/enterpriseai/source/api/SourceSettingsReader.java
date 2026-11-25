@@ -113,6 +113,11 @@ public final class SourceSettingsReader {
 
     /** Absolute http(s)-URI ohne Benutzerinfo, Query und Fragment; {@code null} bei Fehler oder fehlendem Wert. */
     public URI httpUri(String key, boolean required) {
+        return httpUri(key, required, false);
+    }
+
+    /** Allow a source-specific normalizer to interpret page addresses with a query or fragment. */
+    public URI httpUri(String key, boolean required, boolean allowPageAddress) {
         String value = required ? required(key) : text(key, null);
         if (value == null) {
             return null;
@@ -133,7 +138,7 @@ public final class SourceSettingsReader {
             problem(key, "darf keine Zugangsdaten enthalten (KeePass-Eintrag verwenden)");
             return null;
         }
-        if (uri.getRawQuery() != null || uri.getRawFragment() != null) {
+        if (!allowPageAddress && (uri.getRawQuery() != null || uri.getRawFragment() != null)) {
             problem(key, "darf weder Query noch Fragment enthalten");
             return null;
         }

@@ -100,6 +100,38 @@ public class UrlConnectionMediaWikiTransportTest {
     }
 
     @Test
+    public void imageUsesSessionAndRefusesForeignRedirectAndOversize() throws IOException {
+        server.createContext("/image", exchange -> {
+            cookiesSeen.add(exchange.getRequestHeaders().getFirst("Cookie"));
+            if (exchange.getRequestURI().getQuery() != null) {
+                exchange.getResponseHeaders().add("Location", "http://localhost:" + server.getAddress().getPort() + "/image");
+                exchange.sendResponseHeaders(302, -1);
+            } else {
+                exchange.getResponseHeaders().add("Content-Type", "image/png");
+                exchange.sendResponseHeaders(200, 4);
+                exchange.getResponseBody().write(new byte[] {1, 2, 3, 4});
+            }
+            exchange.close();
+        });
+        transport.postForm("x=1");
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/image";
+        assertEquals(4, transport.getImage(java.net.URI.create(url), 4).length);
+        assertEquals("wikiSession=abc", cookiesSeen.get(cookiesSeen.size() - 1));
+        try {
+            transport.getImage(java.net.URI.create(url), 3);
+            fail("Oversize image must fail");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("size limit"));
+        }
+        try {
+            transport.getImage(java.net.URI.create(url + "?redirect"), 4);
+            fail("Foreign redirect must fail");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("outside wiki origin"));
+        }
+    }
+
+    @Test
     public void returnsErrorStatusWithBody() throws IOException {
         MediaWikiTransport.Response response = transport.get("fail=1");
         assertEquals(503, response.status());

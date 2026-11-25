@@ -21,6 +21,7 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
     boolean readOnly;
     public String mainPage = "Hauptseite";
     public int inventoryPageSize = 50;
+    public boolean mainNamespaceSubpages;
     public final Map<Integer, List<String>> namespaceTitles = new LinkedHashMap<Integer, List<String>>();
     public final Map<String, List<String>> categories = new LinkedHashMap<String, List<String>>();
     final List<String> unavailableLinksFor = new ArrayList<String>();
@@ -88,6 +89,9 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
             for (Integer id : namespaceTitles.keySet()) {
                 append(namespaces, q(id.toString()) + ":{\"id\":" + id + ",\"content\":\"\"}");
             }
+            if (mainNamespaceSubpages && !namespaceTitles.containsKey(0)) {
+                append(namespaces, "\"0\":{\"id\":0,\"content\":\"\",\"subpages\":\"\",\"*\":\"\"}");
+            }
             return ok("{\"query\":{\"general\":{\"mainpage\":" + q(mainPage)
                     + ",\"sitename\":\"Test Wiki\"},\"namespaces\":{" + namespaces + "}}}");
         }
@@ -95,6 +99,9 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
             int namespace = Integer.parseInt(p.get("apnamespace"));
             List<String> titles = new ArrayList<String>(namespaceTitles.isEmpty() && namespace == 0
                     ? pages.keySet() : namespaceTitles.getOrDefault(namespace, java.util.Collections.<String>emptyList()));
+            if (p.containsKey("apprefix")) {
+                titles.removeIf(title -> !title.startsWith(p.get("apprefix")));
+            }
             java.util.Collections.sort(titles);
             return ok(titleListing("allpages", "title", "apcontinue", p, titles, "aplimit"));
         }

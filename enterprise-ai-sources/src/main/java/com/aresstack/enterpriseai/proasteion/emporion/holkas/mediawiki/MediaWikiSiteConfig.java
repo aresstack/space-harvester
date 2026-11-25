@@ -14,6 +14,7 @@ import java.util.regex.Pattern;
 public final class MediaWikiSiteConfig {
 
     private static final Pattern SITE_KEY = Pattern.compile("[a-z0-9][A-Za-z0-9._:/~%-]*");
+    private static final Pattern WIKI_SCRIPT = Pattern.compile("(^|/)(?:index|api)\\.php(?:/.*)?$");
 
     private final String siteKey;
     private final String displayName;
@@ -60,11 +61,19 @@ public final class MediaWikiSiteConfig {
 
     /** Die URL von {@code api.php}, abgeleitet wie in MainframeMate {@code JwbfWikiContentService.buildApiUrl}. */
     public String apiEndpoint() {
-        String base = apiUrl.toString();
-        if (base.endsWith("api.php")) {
-            return base;
+        return endpoint(apiUrl).toString();
+    }
+
+    static URI endpoint(URI address) {
+        String path = address.getRawPath();
+        path = path == null ? "" : path;
+        java.util.regex.Matcher script = WIKI_SCRIPT.matcher(path);
+        if (script.find()) {
+            path = path.substring(0, script.start()) + script.group(1) + "api.php";
+        } else {
+            path = path.endsWith("/") ? path + "api.php" : path + "/api.php";
         }
-        return base.endsWith("/") ? base + "api.php" : base + "/api.php";
+        return URI.create(address.getScheme() + "://" + address.getRawAuthority() + path);
     }
 
     public boolean requiresLogin() {
@@ -121,14 +130,15 @@ public final class MediaWikiSiteConfig {
             if (uri.isOpaque() || uri.getHost() == null) {
                 throw new IllegalArgumentException("apiUrl must be a hierarchical URL with host: " + apiUrl);
             }
-            if (uri.getRawQuery() != null || uri.getRawFragment() != null) {
-                throw new IllegalArgumentException("apiUrl must not contain query or fragment");
+            if ((uri.getRawQuery() != null || uri.getRawFragment() != null)
+                    && !WIKI_SCRIPT.matcher(uri.getRawPath()).find()) {
+                throw new IllegalArgumentException("Only wiki script addresses may contain a query or fragment");
             }
             if (uri.getRawUserInfo() != null) {
                 throw new IllegalArgumentException("apiUrl must not contain user info");
             }
             this.siteKey = siteKey;
-            this.apiUrl = uri;
+            this.apiUrl = uri.getRawQuery() != null || uri.getRawFragment() != null ? endpoint(uri) : uri;
         }
 
         public Builder displayName(String value) {

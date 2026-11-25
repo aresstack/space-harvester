@@ -42,6 +42,6 @@ public final class SourceFields {
                     + "Programms, z. B. keepass:jes; nur ohne Anmeldung hier", kind, false, true, "");
         }
         return new SourceFieldSpec(field.key(), field.label(), field.hint(), kind, field.required(),
-                field.advanced(), field.defaultValue());
+                field.advanced(), field.defaultValue(), field.vaultValue());
     }
 }

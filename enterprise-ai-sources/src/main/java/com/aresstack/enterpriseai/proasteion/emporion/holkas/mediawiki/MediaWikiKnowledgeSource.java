@@ -210,7 +210,7 @@ public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource
     public PagePosition position(KnowledgeResourceId id) throws KnowledgeSourceException {
         WikiPageInfo info = existingPage(id);
         return new PagePosition(navigation.root(site.displayName()),
-                Collections.singletonList(navigation.allPages()), navigation.article(info.title()));
+                Collections.singletonList(navigation.allPages()), navigation.article(info.title(), navigationInfo()));
     }
 
     @Override
@@ -241,12 +241,16 @@ public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource
         WikiPageInfo info = existingPage(resourceId);
         URI pageLocation = location(info.fullUrl());
         String base = pageLocation == null ? site.apiEndpoint() : pageLocation.toString();
-        return WikiReadingView.of(client.parse(info.title()).html(), base);
+        return WikiReadingView.of(client.parse(info.title()).html(), base, URI.create(site.apiEndpoint()));
     }
 
     @Override
     public byte[] loadViewImage(String src) throws KnowledgeSourceException {
-        throw new KnowledgeSourceException(Kind.UNSUPPORTED, "MediaWiki image transport not supported");
+        URI target = WikiReadingView.sameOriginImage(src, URI.create(site.apiEndpoint()));
+        if (target == null) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Image outside MediaWiki origin");
+        }
+        return client.image(target);
     }
 
     @Override

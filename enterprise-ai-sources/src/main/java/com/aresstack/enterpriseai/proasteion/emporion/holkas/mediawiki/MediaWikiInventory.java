@@ -61,6 +61,28 @@ final class MediaWikiInventory {
         return null;
     }
 
+    Batch subpages(String title, int namespace, String cursor) throws KnowledgeSourceException {
+        String key = "subpages:" + title;
+        Cursor position = decode(key, cursor);
+        String prefix = (namespace == 0 ? title : title.substring(title.indexOf(':') + 1)) + "/";
+        String fullPrefix = title + "/";
+        do {
+            MediaWikiTitleBatch batch = client.subpages(namespace, prefix, BATCH_SIZE, position.token);
+            String next = next(key, batch, position.token.isEmpty() ? "" : encode(key, 0, position.token));
+            java.util.List<String> children = new java.util.ArrayList<String>();
+            for (String candidate : batch.titles) {
+                if (candidate.startsWith(fullPrefix)
+                        && candidate.substring(fullPrefix.length()).indexOf('/') < 0) {
+                    children.add(candidate);
+                }
+            }
+            if (!children.isEmpty() || next.isEmpty()) {
+                return new Batch(children, next);
+            }
+            position = decode(key, next);
+        } while (true);
+    }
+
     Batch categories(String cursor) throws KnowledgeSourceException {
         Cursor position = decode("categories", cursor);
         MediaWikiTitleBatch batch = client.categories(BATCH_SIZE, position.token);

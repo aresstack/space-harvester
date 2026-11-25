@@ -17,7 +17,13 @@ import java.util.Objects;
  * @param defaultValue Vorgabe für neue Quellen; leer, wenn keine
  */
 public record SourceFieldSpec(String key, String label, String hint, Kind kind, boolean required, boolean advanced,
-                              String defaultValue) {
+                              String defaultValue, com.aresstack.spaceharvester.application.sources.SourceField.VaultValue vaultValue) {
+
+    public SourceFieldSpec(String key, String label, String hint, Kind kind, boolean required, boolean advanced,
+                           String defaultValue) {
+        this(key, label, hint, kind, required, advanced, defaultValue,
+                com.aresstack.spaceharvester.application.sources.SourceField.VaultValue.NONE);
+    }
 
     /** Wie das Feld eingegeben wird. */
     public enum Kind {
@@ -47,6 +53,7 @@ public record SourceFieldSpec(String key, String label, String hint, Kind kind, 
         label = label.strip();
         hint = hint == null ? "" : hint.strip();
         defaultValue = defaultValue == null ? "" : defaultValue.strip();
+        vaultValue = vaultValue == null ? com.aresstack.spaceharvester.application.sources.SourceField.VaultValue.NONE : vaultValue;
     }
 
     /**
