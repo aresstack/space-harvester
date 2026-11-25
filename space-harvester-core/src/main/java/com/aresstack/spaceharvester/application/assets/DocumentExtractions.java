@@ -67,6 +67,11 @@ public final class DocumentExtractions {
         return structure.version();
     }
 
+    /** Maximum size of the compatibility reader projection, not of the section index. */
+    public int maxTextChars() {
+        return maxTextChars;
+    }
+
     /** Die Grenzen, unter denen gelesen wird. */
     public ExtractionLimits limits() {
         return limits;

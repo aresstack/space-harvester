@@ -1213,7 +1213,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Undurchsichtige Kennung einer abgelegten Extraktion; nur verglichen, nie zerlegt. Mit Ablagezeitpunkt und
      * Zählern, denn ein erneutes Lesen mit weiteren Grenzen ersetzt die Abschnitte unter demselben Schlüssel.
      */
-    private static String basis(StoredExtraction extraction) {
+    static String basis(StoredExtraction extraction) {
         ExtractionKey key = extraction.key();
         return key.sha256() + "|" + key.extractor() + "|" + key.version() + "|" + key.model() + "|"
                 + extraction.createdAt() + "|" + extraction.sections() + "|" + extraction.blocks() + "|"
