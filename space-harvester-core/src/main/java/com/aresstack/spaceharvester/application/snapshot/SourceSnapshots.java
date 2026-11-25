@@ -141,6 +141,39 @@ public class SourceSnapshots implements PageContentFetcher {
         }
     }
 
+    /** Read verified original bytes only for an explicit export; never populate the page cache. */
+    public java.util.Optional<NativePayload> exportLocalOriginal(PageSnapshot snapshot,
+                                                                 LocalOriginalReference reference) {
+        if (reference.originalSha256() == null || reference.originalMediaType() == null) {
+            return java.util.Optional.empty();
+        }
+        long configured = maxBytes.getAsLong();
+        long limit = configured > 0 ? Math.min(configured, 20L * 1024 * 1024) : 20L * 1024 * 1024;
+        if (LargeFiles.size(snapshot.metadata()) > limit) {
+            return java.util.Optional.empty();
+        }
+        return catalog.find(snapshot.key().sourceId())
+                .filter(source -> "files".equals(source.type()) && source.readsOriginalInPlace())
+                .flatMap(source -> source.readOriginalInPlace(snapshot.key().pageId(), type -> true, limit,
+                        (path, actual, type) -> {
+                            com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions
+                                    .requireSameRevision(source, snapshot.metadata(), actual);
+                            if (java.nio.file.Files.size(path) > limit) {
+                                throw new SourceAccessException(source.id(), SourceAccessException.Reason.INVALID_RESPONSE,
+                                        "Datei größer als die Exportgrenze", null);
+                            }
+                            try (var in = java.nio.file.Files.newInputStream(path)) {
+                                byte[] bytes = in.readNBytes((int) limit + 1);
+                                if (bytes.length > limit) {
+                                    throw new SourceAccessException(source.id(), SourceAccessException.Reason.INVALID_RESPONSE,
+                                            "Datei größer als die Exportgrenze", null);
+                                }
+                                return new NativePayload(bytes, reference.originalMediaType(), "file");
+                            }
+                        }))
+                .filter(payload -> reference.originalSha256().equals(payload.rawSha256()));
+    }
+
     /**
      * Wie {@link #fetch(String, String)}; eine Datei über {@link #maxBytes} lädt es nicht als Original, sondern als
      * Textauszug, wenn sie lesbaren Text hat und nicht größer ist als {@link #maxTextBytes}, sonst gar nicht
