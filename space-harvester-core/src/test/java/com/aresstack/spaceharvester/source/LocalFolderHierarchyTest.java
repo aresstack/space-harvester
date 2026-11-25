@@ -420,6 +420,59 @@ class LocalFolderHierarchyTest {
         }
     }
 
+    @Test
+    void localDocumentAnalysesUseAllStoredSectionsWithoutSyntheticAttachments() throws IOException {
+        Files.writeString(directory.resolve("notiz.txt"),
+                "Beginning\n" + "ordinary paragraph\n\n".repeat(7000) + "Zielbegriff");
+        KnowledgeSourceHarvestSource source = open();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, 8);
+        var strategy = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), strategy);
+        var current = new java.util.concurrent.atomic.AtomicReference<>(
+                snapshots.fetch("docs", id("notiz.txt")));
+        var results = new com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore();
+        var input = new ArrayList<String>();
+        var processor = new com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor() {
+            public String id() { return "section-test"; }
+            public String version() { return "1"; }
+            public boolean documents() { return true; }
+            public com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput process(
+                    com.aresstack.spaceharvester.application.enrichment.PageText text) {
+                input.add(text.text());
+                return com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput.of("{}");
+            }
+        };
+        var enrichments = new com.aresstack.spaceharvester.application.enrichment.Enrichments(
+                snapshot -> java.util.Optional.empty(), List.of(processor), results, java.time.Clock.systemUTC());
+        try (var analyses = new com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments(
+                enrichments, null, () -> true)) {
+            analyses.localDocuments(key -> java.util.Optional.of(current.get()).filter(page -> page.key().equals(key)),
+                    documents);
+            analyses.indexedLocal(current.get());
+            var key = com.aresstack.spaceharvester.application.assets.DocumentKey.localOriginal(current.get().key());
+            assertThat(input).anyMatch(text -> text.contains("Zielbegriff"));
+            assertThat(results.find(key)).hasSizeGreaterThan(1);
+            var found = results.find(key).getLast();
+            assertThat(found.document().attachmentId()).isEmpty();
+            assertThat(analyses.sectionText(key, found.section(), found.inputSha256(), found.extraction()))
+                    .hasValueSatisfying(text -> assertThat(text.text()).contains("Zielbegriff"));
+            int calls = input.size();
+            analyses.indexedLocal(current.get());
+            assertThat(input).hasSize(calls);
+            Files.writeString(directory.resolve("notiz.txt"), "New revision");
+            current.set(snapshots.fetch("docs", id("notiz.txt")));
+            analyses.indexedLocal(current.get());
+            assertThat(results.find(key)).hasSize(1);
+            assertThat(analyses.sectionText(key, found.section(), found.inputSha256(), found.extraction())).isEmpty();
+        }
+    }
+
     private static com.aresstack.spaceharvester.application.sources.SourceCatalog catalog(HarvestSource source) {
         return new com.aresstack.spaceharvester.application.sources.SourceCatalog() {
             @Override
