@@ -311,6 +311,54 @@ class LocalFolderHierarchyTest {
     }
 
     @Test
+    void exportRejectsChangedBytesEvenWithRestoredMetadataAndKeepsTheStoredText() throws IOException {
+        Path file = directory.resolve("notiz.txt");
+        String content = "Alte Fassung " + "Überblick \"😀\".\n\n".repeat(200);
+        Files.writeString(file, content);
+        var source = open();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, 8);
+        var strategy = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), strategy);
+        snapshots.maxBytes(() -> 100_000);
+        var snapshot = snapshots.fetch("docs", id("notiz.txt"));
+        var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                .read(snapshot.payload()).orElseThrow();
+        var exporter = new com.aresstack.spaceharvester.application.export.LocalExportSnapshots(
+                documents, snapshots::exportLocalOriginal, 100_000);
+        assertThat(exporter.prepare(snapshot, false).snapshot().payload().bytes()).isEqualTo(
+                content.getBytes(StandardCharsets.UTF_8));
+        var modified = Files.getLastModifiedTime(file);
+        Files.writeString(file, content.replace("Alte Fassung", "Neue Fassung"));
+        Files.setLastModifiedTime(file, modified);
+        assertThat(source.pageMetadata(id("notiz.txt")).version()).isEqualTo(snapshot.revision());
+        assertThat(snapshots.exportLocalOriginal(snapshot, reference)).isEmpty();
+        var fallback = exporter.prepare(snapshot, false);
+        assertThat(fallback.incomplete()).isTrue();
+        assertThat(fallback.warning()).contains("nicht in der gespeicherten Fassung");
+        var portable = com.aresstack.spaceharvester.application.snapshot.PortableLocalDocument
+                .read(fallback.snapshot().payload()).orElseThrow();
+        assertThat(portable.text()).contains("Alte Fassung", "Überblick").doesNotContain("Neue Fassung");
+        assertThat(portable.textTruncated()).isFalse();
+
+        var offline = new com.aresstack.spaceharvester.application.export.LocalExportSnapshots(
+                documents, (page, manifest) -> { throw new AssertionError("Do not read the original"); }, 512);
+        var bounded = offline.prepare(snapshot, true);
+        assertThat(bounded.snapshot().payload().length()).isLessThanOrEqualTo(512);
+        assertThat(bounded.incomplete()).isTrue();
+        assertThat(com.aresstack.spaceharvester.application.snapshot.PortableLocalDocument
+                .read(bounded.snapshot().payload())).hasValueSatisfying(document -> {
+                    assertThat(document.textTruncated()).isTrue();
+                    assertThat(document.text()).contains("Alte Fassung");
+                });
+    }
+
+    @Test
     void aChangedOriginalCannotPublishItsStagedStructuredExtraction() throws IOException {
         KnowledgeSourceHarvestSource source = open();
         Path file = directory.resolve("notiz.txt");
