@@ -143,6 +143,71 @@ class HarvesterLocalFilesTest {
         }
     }
 
+    @Test
+    void localExportsContainVerifiedOriginalsOrSelfContainedTextWithoutReadingTheSource() throws Exception {
+        Path original = directory.resolve("notiz.txt");
+        String content = "Beginn\n" + "ordinary paragraph\n\n".repeat(7000) + "Zielbegriff";
+        Files.writeString(original, content, StandardCharsets.UTF_8);
+        String id = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "notiz.txt".getBytes(StandardCharsets.UTF_8));
+        var formats = List.of("json", "json-package", "markdown");
+        var owner = Harvester.OWNER;
+        try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
+                .localOriginalReferences(true).build()) {
+            var request = com.aresstack.spaceharvester.application.export.ExportRequest.of("docs", "docs", owner,
+                    formats);
+            var normal = harvester.exports().start(request);
+            assertThat(harvester.jobs().await(normal.id(), owner, java.time.Duration.ofSeconds(60)).state().name())
+                    .isEqualTo("COMPLETED");
+            Path rawPackage = data.resolve("original-export.zip");
+            try (var zip = harvester.exports().artifactFile(normal.id(), owner, "export.zip").orElseThrow()) {
+                Files.copy(zip, rawPackage);
+            }
+            var reader = new com.aresstack.spaceharvester.output.export.ZipExportPackageReader(
+                    20L * 1024 * 1024, 20L * 1024 * 1024);
+            try (var exported = reader.open(rawPackage)) {
+                var page = exported.snapshot(id);
+                assertThat(page.payload().nativeFormat()).isEqualTo("file");
+                assertThat(page.payload().bytes()).isEqualTo(content.getBytes(StandardCharsets.UTF_8));
+            }
+            try (var md = harvester.exports().artifactFile(normal.id(), owner, "export.md").orElseThrow()) {
+                assertThat(new String(md.readAllBytes(), StandardCharsets.UTF_8)).contains("Zielbegriff");
+            }
+            var cached = harvester.pages().cached(harvester.caller(), "docs", id).orElseThrow().snapshot();
+            var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                    .read(cached.payload()).orElseThrow();
+            Files.delete(original);
+            var holdings = harvester.exports().startFromHoldings(request.withHoldingsOnly(true));
+            assertThat(harvester.jobs().await(holdings.id(), owner, java.time.Duration.ofSeconds(60)).state().name())
+                    .isEqualTo("COMPLETED");
+            Path portablePackage = data.resolve("portable-export.zip");
+            try (var zip = harvester.exports().artifactFile(holdings.id(), owner, "export.zip").orElseThrow()) {
+                Files.copy(zip, portablePackage);
+            }
+            try (var exported = reader.open(portablePackage)) {
+                var page = exported.snapshot(id);
+                var portable = com.aresstack.spaceharvester.application.snapshot.PortableLocalDocument
+                        .read(page.payload()).orElseThrow();
+                assertThat(portable.originalSha256()).isEqualTo(reference.originalSha256());
+                assertThat(portable.referenceSha256()).isEqualTo(cached.payload().rawSha256());
+                assertThat(portable.text()).contains("Zielbegriff");
+                assertThat(portable.textTruncated()).isFalse();
+                assertThat(page.payload().rawSha256()).isNotEqualTo(reference.originalSha256());
+                assertThat(new com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector()
+                        .project(page)).map(PageText::text).hasValueSatisfying(text -> assertThat(text)
+                        .contains("Zielbegriff"));
+            }
+            try (var json = harvester.exports().artifactFile(holdings.id(), owner, "pages.json").orElseThrow()) {
+                assertThat(new String(json.readAllBytes(), StandardCharsets.UTF_8)).contains("Zielbegriff");
+            }
+            try (var md = harvester.exports().artifactFile(holdings.id(), owner, "export.md").orElseThrow()) {
+                assertThat(new String(md.readAllBytes(), StandardCharsets.UTF_8)).contains("Zielbegriff");
+            }
+            assertThat(harvester.pages().cached(harvester.caller(), "docs", id).orElseThrow()
+                    .snapshot().payload().rawSha256()).isEqualTo(cached.payload().rawSha256());
+        }
+    }
+
     private static String read(Harvester harvester, String name) {
         String id = Base64.getUrlEncoder().withoutPadding().encodeToString(name.getBytes(StandardCharsets.UTF_8));
         return new String(harvester.pages().page(harvester.caller(), "docs", id, false).snapshot().payload().bytes(),
