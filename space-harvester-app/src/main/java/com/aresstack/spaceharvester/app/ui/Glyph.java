@@ -197,9 +197,9 @@ public enum Glyph implements Icon {
                 }
                 case SOURCES_EXPORT -> {
                     for (int row = 0; row < 3; row++) {
-                        double y = 3.0 + 5.0 * row;
-                        g.fill(new Ellipse2D.Double(1.0, y - 1.0, 2.0, 2.0));
-                        g.draw(new Line2D.Double(5.0, y, row == 2 ? 9.0 : 14.0, y));
+                        double rowY = 3.0 + 5.0 * row;
+                        g.fill(new Ellipse2D.Double(1.0, rowY - 1.0, 2.0, 2.0));
+                        g.draw(new Line2D.Double(5.0, rowY, row == 2 ? 9.0 : 14.0, rowY));
                     }
                     g.draw(new Line2D.Double(12.0, 8.5, 12.0, 15.0));
                     g.draw(new Line2D.Double(9.5, 12.5, 12.0, 15.0));
