@@ -289,7 +289,16 @@ class QueryConfiguration {
         return new AcquisitionScheduler((caller, key, background) -> (caller == BACKGROUND ? technical : pages)
                 .acquire(caller, key, background),
                 new AcquisitionScheduler.Limits(defaults.foreground(), live.current().sync().backgroundParallelism(),
-                        defaults.perSource(), defaults.capacity()), null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
+                        defaults.perSource(), defaults.capacity()), null, AcquisitionScheduler.DEFAULT_RESUME_DELAY,
+                (sourceId, trigger) -> {
+                    if (trigger == com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH) {
+                        return live.current().sync().override(sourceId).effectivePrefetch(live.current().search().prefetchHits());
+                    }
+                    if (trigger == com.aresstack.spaceharvester.application.changelog.ChangeTrigger.BACKGROUND) {
+                        return live.current().syncFor(sourceId).backgroundFill();
+                    }
+                    return true;
+                });
     }
 
     /**

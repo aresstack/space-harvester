@@ -444,6 +444,34 @@ class AcquisitionSchedulerTest {
     }
 
     @Test
+    void disabledAutomaticRequestsAreSkippedButSharedExplicitRequestsStillLoad() throws Exception {
+        var prefetch = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var tasks = new java.util.ArrayDeque<Runnable>();
+        var search = new AcquisitionScheduler.Mode(false, false,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH);
+        var explicit = new AcquisitionScheduler.Mode(false, false,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.MANUAL);
+        try (var planner = new AcquisitionScheduler((caller, key, strict) -> {
+            started.add(key.pageId());
+            callers.add(caller);
+        }, new AcquisitionScheduler.Limits(2, 1, 2, 50), tasks::add, Duration.ZERO,
+                (source, trigger) -> trigger != search.trigger() || prefetch.get())) {
+            var automaticOnly = planner.request(APP, key("automatic"), AcquisitionScheduler.Priority.FOREGROUND, search);
+            var shared = planner.request(APP, key("shared"), AcquisitionScheduler.Priority.FOREGROUND, search);
+            var manual = planner.request(USER, key("shared"), AcquisitionScheduler.Priority.FOREGROUND, explicit);
+            prefetch.set(false);
+            while (!tasks.isEmpty()) {
+                tasks.removeFirst().run();
+            }
+            assertThat(automaticOnly.done().get()).isFalse();
+            assertThat(manual.done().get()).isTrue();
+            assertThat(shared.done().get()).isTrue();
+            assertThat(started).containsExactly("shared");
+            assertThat(callers).containsExactly(USER);
+        }
+    }
+
+    @Test
     void theBackgroundNeverTakesAUserCredential() {
         AcquisitionScheduler planner = scheduler(1, 1, 1);
 

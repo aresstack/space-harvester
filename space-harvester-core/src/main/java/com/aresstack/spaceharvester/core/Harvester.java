@@ -930,7 +930,17 @@ public final class Harvester implements AutoCloseable {
                     new AcquisitionScheduler.Limits(SEARCH_FILL_PARALLEL,
                             fillQueue != null ? backgroundParallelism : 0,
                             AcquisitionScheduler.Limits.DEFAULT.perSource(), AcquisitionScheduler.Limits.DEFAULT.capacity()),
-                    null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
+                    null, AcquisitionScheduler.DEFAULT_RESUME_DELAY, (sourceId, trigger) -> {
+                        if (trigger == ChangeTrigger.SEARCH) {
+                            return manager != null && !builder.prefetchSearchHitsFixed
+                                    ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
+                                    : builder.prefetchSearchHits;
+                        }
+                        if (trigger == ChangeTrigger.BACKGROUND) {
+                            return fillFollows ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill;
+                        }
+                        return true;
+                    });
             opened.add(scheduler);
             this.acquisition = scheduler;
             this.pageLoads = new com.aresstack.spaceharvester.application.background.PageLoads(backgroundJobs,

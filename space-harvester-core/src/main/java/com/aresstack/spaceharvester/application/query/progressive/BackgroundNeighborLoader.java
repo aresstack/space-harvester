@@ -50,7 +50,8 @@ public final class BackgroundNeighborLoader implements NeighborLoader {
         if (eligible.isEmpty()) {
             return Optional.empty();
         }
-        PageLoads.Joined joined = loads.join(caller, TITLE, eligible);
+        PageLoads.Joined joined = loads.join(caller, TITLE, eligible, false,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH);
         if (joined.groups().isEmpty()) {
             return Optional.empty();
         }
