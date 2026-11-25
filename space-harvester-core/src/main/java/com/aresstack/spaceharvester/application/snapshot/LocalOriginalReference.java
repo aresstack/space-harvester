@@ -50,6 +50,11 @@ public record LocalOriginalReference(String originalSha256, String originalMedia
         return payload != null && FORMAT.equals(payload.nativeFormat());
     }
 
+    @Override
+    public String toString() {
+        return "LocalOriginalReference[status=" + status + ", previewChars=" + preview.length() + "]";
+    }
+
     public static Optional<LocalOriginalReference> read(NativePayload payload) {
         return recognizes(payload) ? Optional.of(JSON.readValue(payload.bytes(), LocalOriginalReference.class))
                 : Optional.empty();

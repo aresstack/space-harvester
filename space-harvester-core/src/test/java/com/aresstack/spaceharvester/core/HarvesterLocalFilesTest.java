@@ -94,6 +94,55 @@ class HarvesterLocalFilesTest {
         }
     }
 
+    @Test
+    void referenceModeConnectsTheRealCacheReaderAndSearchPipeline() throws IOException {
+        Path file = directory.resolve("notiz.txt");
+        Files.writeString(file, "Beginning\n" + "ordinary paragraph\n\n".repeat(7000) + "Zielbegriff");
+        String id = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "notiz.txt".getBytes(StandardCharsets.UTF_8));
+        try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
+                .localOriginalReferences(true).build()) {
+            PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "docs", id, false).snapshot();
+            var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                    .read(snapshot.payload()).orElseThrow();
+            assertThat(reference.extractionKey()).isNotNull();
+            assertThat(reference.preview()).hasSizeLessThanOrEqualTo(8192).doesNotContain("Zielbegriff");
+            assertThat(reference.originalSha256()).isNotEqualTo(snapshot.payload().rawSha256());
+            assertThat(harvester.pageText(snapshot)).map(PageText::text)
+                    .hasValueSatisfying(text -> assertThat(text).contains("Zielbegriff"));
+            var query = new com.aresstack.spaceharvester.application.query.KeywordSearch.Query(
+                    "Zielbegriff", "docs", java.util.Set.of(), java.util.Set.of());
+            assertThat(harvester.keywordSearch().search(harvester.caller(), query, null, 10).hits())
+                    .extracting(com.aresstack.spaceharvester.application.query.KeywordSearch.Hit::pageId)
+                    .contains(id);
+            assertThat(Files.readString(file)).endsWith("Zielbegriff");
+        }
+        try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
+                .localOriginalReferences(true).build()) {
+            PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "docs", id, false).snapshot();
+            assertThat(com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                    .read(snapshot.payload())).isPresent();
+            assertThat(harvester.pageText(snapshot)).map(PageText::text)
+                    .hasValueSatisfying(text -> assertThat(text).contains("Zielbegriff"));
+        }
+    }
+
+    @Test
+    void unsupportedBinaryIsRepresentedWithoutAnOriginalHashOrExtraction() throws IOException {
+        Files.write(directory.resolve("backup.bin"), new byte[] {0, 1, 2, 3});
+        String id = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "backup.bin".getBytes(StandardCharsets.UTF_8));
+        try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
+                .localOriginalReferences(true).build()) {
+            PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "docs", id, false).snapshot();
+            var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                    .read(snapshot.payload()).orElseThrow();
+            assertThat(reference.originalSha256()).isNull();
+            assertThat(reference.extractionKey()).isNull();
+            assertThat(reference.preview()).isEmpty();
+        }
+    }
+
     private static String read(Harvester harvester, String name) {
         String id = Base64.getUrlEncoder().withoutPadding().encodeToString(name.getBytes(StandardCharsets.UTF_8));
         return new String(harvester.pages().page(harvester.caller(), "docs", id, false).snapshot().payload().bytes(),

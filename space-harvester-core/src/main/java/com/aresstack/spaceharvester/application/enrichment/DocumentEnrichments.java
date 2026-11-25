@@ -139,6 +139,74 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                         local.extractions(), key)));
     }
 
+    /** Check a completed analysis against the exact extraction and current processor version. */
+    public boolean hasCurrentLocalAnalysis(PageSnapshot snapshot, String processorId) {
+        Optional<LocalOriginalReference> reference = LocalOriginalReference.read(snapshot.payload());
+        Optional<Pending> pending = localPending(snapshot.key());
+        if (reference.isEmpty() || pending.isEmpty()
+                || !Objects.equals(reference.get().extractionKey(), pending.get().exactExtraction())) {
+            return false;
+        }
+        Pending item = pending.get();
+        return item.extraction().map(extraction -> {
+            Manifest manifest = manifest(item, extraction);
+            String version = manifest.versions().get(processorId);
+            if (version == null) {
+                return false;
+            }
+            List<DocumentKey> expected = item.extractions().documents(extraction).stream()
+                    .map(part -> part.map(entry -> item.attachment().child(entry.id())).orElse(item.attachment()))
+                    .toList();
+            return !expected.isEmpty() && expected.stream().allMatch(document -> {
+                List<Enrichment> results = manifest.stored().getOrDefault(document, List.of()).stream()
+                        .filter(result -> processorId.equals(result.processorId())).toList();
+                return !results.isEmpty() && results.stream().allMatch(result ->
+                        result.status() == Enrichment.Status.OK && version.equals(result.processorVersion())
+                                && manifest.basis().equals(result.extraction()) && !enrichments.outdated(result));
+            });
+        }).orElse(false);
+    }
+
+    /** Delegate search preparation to the existing document scheduler; do not compute a second page embedding. */
+    public boolean prepareLocal(PageSnapshot snapshot, String processorId) {
+        if (!enabled.getAsBoolean()
+                || !enrichments.documentProcessorVersions(snapshot.key()).containsKey(processorId)
+                || LocalOriginalReference.read(snapshot.payload())
+                        .map(reference -> reference.extractionKey() == null).orElse(true)) {
+            return true;
+        }
+        Optional<Pending> pending = localPending(snapshot.key());
+        if (pending.isPresent() && pending.get().extraction()
+                .map(extraction -> pending.get().extractions().documents(extraction).isEmpty()).orElse(false)) {
+            return true;
+        }
+        if (hasCurrentLocalAnalysis(snapshot, processorId)) {
+            return true;
+        }
+        indexedLocal(snapshot);
+        return hasCurrentLocalAnalysis(snapshot, processorId);
+    }
+
+    /** Explicitly recompute local section results in the existing interactive job. */
+    public Enrichments.Run recomputeLocal(PageSnapshot snapshot, String processorId, JobContext context) {
+        if (!enabled.getAsBoolean()) {
+            return new Enrichments.Run(false, 0, 0, 0);
+        }
+        Optional<Pending> pending = localPending(snapshot.key());
+        if (pending.isEmpty() || !LocalOriginalReference.read(snapshot.payload())
+                .map(reference -> Objects.equals(reference.extractionKey(), pending.get().exactExtraction()))
+                .orElse(false)) {
+            return new Enrichments.Run(false, 0, 0, 0);
+        }
+        Pending item = pending.get();
+        int removed = removals(item);
+        try {
+            return process(item, context, null, true, processorId);
+        } finally {
+            forgetIfRemoved(item, removed);
+        }
+    }
+
     /** Schedule the newly committed local original, not a preview or a synthetic attachment. */
     public void indexedLocal(PageSnapshot snapshot) {
         if (localDocuments == null || !LocalOriginalReference.recognizes(snapshot.payload())) {
@@ -877,8 +945,10 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
 
     private List<Pending> work(String sourceId, String spaceKey, Collection<String> pageIds) {
         List<Pending> result = new ArrayList<>();
-        for (String pageId : pageIds) {
-            localPending(new PageKey(sourceId, pageId)).ifPresent(result::add);
+        if (localDocuments != null) {
+            for (String pageId : pageIds) {
+                localPending(new PageKey(sourceId, pageId)).ifPresent(result::add);
+            }
         }
         DocumentInventory source = assets;
         if (source != null) {
@@ -933,16 +1003,23 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      */
     private void process(Pending item, JobContext context,
                          com.aresstack.spaceharvester.application.network.NetworkWait wait) {
+        process(item, context, wait, false, null);
+    }
+
+    private Enrichments.Run process(Pending item, JobContext context,
+                                    com.aresstack.spaceharvester.application.network.NetworkWait wait,
+                                    boolean force, String processorId) {
         com.aresstack.spaceharvester.application.network.NetworkState net = wait == null ? null : network;
         Optional<StoredExtraction> extraction = item.extraction();
         if (extraction.isEmpty()) {
-            // Ohne lesbare Extraktion gilt der alte Stand weiter.
-            return;
+            // Keep the previous result if the extraction is unavailable.
+            return new Enrichments.Run(false, 0, 0, 0);
         }
         Manifest manifest = manifest(item, extraction.get());
-        if (manifest.current()) {
-            return;
+        if (!force && manifest.current()) {
+            return new Enrichments.Run(true, 0, 0, 0);
         }
+        int[] counts = new int[3];
         long embeddingMaxChars = manifest.embeddingMaxChars();
         String basis = manifest.basis();
         Map<String, String> versions = manifest.versions();
@@ -963,7 +1040,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             List<Enrichment> results = stored.getOrDefault(hash.getKey(), List.of());
             // Andere Grenze oder inzwischen freigegeben: der zweite Durchgang entscheidet je Abschnitt und rechnet nur,
             // was an dieser Stelle nicht mehr gilt (Enrichments#refreshDocument).
-            if (!covered(results, versions, hash.getValue(), seen.get(hash.getKey()))
+            if (force || !covered(results, versions, hash.getValue(), seen.get(hash.getKey()))
                     || results.stream().anyMatch(result -> !Objects.equals(previousLimit(result.extraction()),
                     "embedding-max-chars=" + embeddingMaxChars))
                     || results.stream().anyMatch(enrichments::outdated)) {
@@ -984,9 +1061,16 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                     context.discovered(1);
                 }
                 // Ohne Extraktion: die trägt erst der Abschluss unten nach, wenn alle Abschnitte durchliefen.
+                List<Enrichment> previous = stored.getOrDefault(document, List.of());
+                if (force) {
+                    previous = processorId == null ? List.of() : previous.stream()
+                            .filter(result -> !processorId.equals(result.processorId())).toList();
+                }
                 Enrichments.Run run = enrichments.refreshDocument(document, index, hashes.get(document), null, text,
-                        stored.getOrDefault(document, List.of()), null, new DocumentPosition(offset,
-                                embeddingMaxChars));
+                        previous, null, new DocumentPosition(offset, embeddingMaxChars));
+                counts[0] += run.computed();
+                counts[1] += run.current();
+                counts[2] += run.failed();
                 if (wait != null && run.failed() > 0 && !net.online()) {
                     // Am Netz gescheitert: nichts rot, kein Versuch verbraucht. Das gespeicherte FAILED gälte beim
                     // Wiederholen als aktuell (gleiche Eingabe und Version) und der Abschnitt bekäme nie sein
@@ -1028,6 +1112,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                     .forEach(section -> enrichments.store().removeSection(document, section));
         }
         enrichments.flush();
+        return new Enrichments.Run(true, counts[0], counts[1], counts[2]);
     }
 
     /** Entfernt die gescheiterten Ergebnisse eines Abschnitts und behält die gelungenen. */
@@ -1074,7 +1159,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         boolean current = expected.isEmpty() ? stored.isEmpty() : expected.stream().allMatch(document -> {
             List<Enrichment> results = stored.get(document);
             return current(results, versions, basis)
-                    && (results == null || results.stream().noneMatch(enrichments::outdated));
+                    && (results == null || results.stream().noneMatch(result -> enrichments.outdated(result)
+                    || attachment.localOriginal() && result.status() == Enrichment.Status.FAILED));
         });
         return new Manifest(basis, embeddingMaxChars, versions, stored, current);
     }
@@ -1110,7 +1196,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 for (Enrichment result : stored) {
                     if (result.processorId().equals(processor.getKey())
                             && result.processorVersion().equals(processor.getValue())
-                            && hash.equals(result.revision()) && !enrichments.outdated(result)) {
+                            && hash.equals(result.revision()) && !enrichments.outdated(result)
+                            && (!result.document().localOriginal() || result.status() == Enrichment.Status.OK)) {
                         done.add(result.section());
                     }
                 }
@@ -1161,7 +1248,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Undurchsichtige Kennung einer abgelegten Extraktion; nur verglichen, nie zerlegt. Mit Ablagezeitpunkt und
      * Zählern, denn ein erneutes Lesen mit weiteren Grenzen ersetzt die Abschnitte unter demselben Schlüssel.
      */
-    private static String basis(StoredExtraction extraction) {
+    static String basis(StoredExtraction extraction) {
         ExtractionKey key = extraction.key();
         return key.sha256() + "|" + key.extractor() + "|" + key.version() + "|" + key.model() + "|"
                 + extraction.createdAt() + "|" + extraction.sections() + "|" + extraction.blocks() + "|"

@@ -61,6 +61,21 @@ public final class DocumentPassages {
         return null;
     }
 
+    /** Resolve the stable IDs once per document for a multi-section reader. */
+    public static Map<Integer, List<String>> sectionIds(DocumentKey document, List<Enrichment> results) {
+        return layout(document, results).map(layout -> {
+            Map<Integer, List<String>> ids = new LinkedHashMap<>();
+            for (Section section : layout.sections()) {
+                List<String> positions = new ArrayList<>();
+                for (int index = 0; index < section.parsed().passages().size(); index++) {
+                    positions.add(layout.id(document, section.base() + index));
+                }
+                ids.put(section.result().section(), positions);
+            }
+            return ids;
+        }).orElseGet(Map::of);
+    }
+
     /**
      * Löst die ID eines Absatzes eines Dokuments auf. Den Absatz gibt es nicht mehr ({@link PassageLookup.Match#OLDER_VERSION},
      * ohne Absätze), wenn das Dokument nicht mehr vorliegt (etwa eine Positionskennung nach dem Neulesen des

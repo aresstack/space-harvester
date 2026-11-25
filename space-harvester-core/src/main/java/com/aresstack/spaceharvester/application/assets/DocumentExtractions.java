@@ -67,6 +67,11 @@ public final class DocumentExtractions {
         return structure.version();
     }
 
+    /** Maximum size of the compatibility reader projection, not of the section index. */
+    public int maxTextChars() {
+        return maxTextChars;
+    }
+
     /** Die Grenzen, unter denen gelesen wird. */
     public ExtractionLimits limits() {
         return limits;
@@ -176,7 +181,16 @@ public final class DocumentExtractions {
 
     /** A bounded compatibility projection; the complete structured extraction remains in the extraction store. */
     public OriginalPreview originalPreview(StoredExtraction extraction) {
-        TextCollector text = new TextCollector(maxTextChars);
+        return originalText(extraction, Math.min(maxTextChars, 8192));
+    }
+
+    /** Read the retained text from the extraction, not the snapshot preview. */
+    public OriginalPreview originalText(StoredExtraction extraction) {
+        return originalText(extraction, maxTextChars);
+    }
+
+    private OriginalPreview originalText(StoredExtraction extraction, int maxChars) {
+        TextCollector text = new TextCollector(maxChars);
         if (usable(extraction.document().outcome())) {
             collect(extraction, text);
         }

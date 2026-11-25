@@ -499,7 +499,7 @@ public class SearchController {
                             new ChunkResponse(relevance.charStart(), relevance.charEnd()),
                             relevance.freshness() == RelevanceSearch.Freshness.CURRENT ? "current" : "stale",
                             relevance.passageId(), relevance.attachmentId(), relevance.attachmentTitle(),
-                            relevance.partId(), relevance.partTitle(), relevance.section()));
+                            relevance.partId(), relevance.partTitle(), relevance.section(), relevance.localOriginal()));
         }
     }
 
@@ -525,7 +525,15 @@ public class SearchController {
                                     @JsonInclude(JsonInclude.Include.NON_NULL) String attachmentTitle,
                                     @JsonInclude(JsonInclude.Include.NON_NULL) String partId,
                                     @JsonInclude(JsonInclude.Include.NON_NULL) String partTitle,
-                                    @JsonInclude(JsonInclude.Include.NON_NULL) Integer section) {
+                                    @JsonInclude(JsonInclude.Include.NON_NULL) Integer section,
+                                    boolean localOriginal) {
+
+        public RelevanceResponse(double similarity, ChunkResponse chunk, String freshness, String passageId,
+                                 String attachmentId, String attachmentTitle, String partId, String partTitle,
+                                 Integer section) {
+            this(similarity, chunk, freshness, passageId, attachmentId, attachmentTitle, partId, partTitle,
+                    section, false);
+        }
 
         public RelevanceResponse(double similarity, ChunkResponse chunk, String freshness, String passageId) {
             this(similarity, chunk, freshness, passageId, null, null, null, null, null);

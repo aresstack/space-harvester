@@ -162,6 +162,11 @@ public class SourceSnapshots implements PageContentFetcher {
     }
 
     @Override
+    public boolean mayExtractLocalOriginal(String sourceId) {
+        return localOriginals != null && catalog.find(sourceId).filter(localOriginals::supportsSource).isPresent();
+    }
+
+    @Override
     public boolean loadsWhole(PageMetadata metadata) {
         return !LargeFiles.tooLarge(metadata, maxBytes.getAsLong());
     }
