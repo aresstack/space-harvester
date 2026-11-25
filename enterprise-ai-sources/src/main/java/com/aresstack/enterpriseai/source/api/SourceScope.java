@@ -115,6 +115,7 @@ public final class SourceScope {
         private int maxDepth;
         private int maxResources = DEFAULT_MAX_RESOURCES;
         private boolean selectionApplies = true;
+        private boolean automaticStartPoints;
 
         private Builder() {
         }
@@ -165,8 +166,14 @@ public final class SourceScope {
             return this;
         }
 
+        /** Allow the source to determine its own start points. */
+        public Builder automaticStartPoints() {
+            this.automaticStartPoints = true;
+            return this;
+        }
+
         public SourceScope build() {
-            if (startPoints.isEmpty()) {
+            if (startPoints.isEmpty() && !automaticStartPoints) {
                 throw new IllegalArgumentException("at least one start point is required");
             }
             return new SourceScope(Collections.unmodifiableList(new ArrayList<String>(startPoints)),

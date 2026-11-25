@@ -47,6 +47,50 @@ final class MediaWikiClient {
         this.credentialsProvider = credentialsProvider;
     }
 
+    MediaWikiSiteInfo siteInfo() throws KnowledgeSourceException {
+        return MediaWikiResponses.siteInfo(read("action=query&meta=siteinfo&siprop=general%7Cnamespaces&format=json"));
+    }
+
+    MediaWikiTitleBatch allPages(int namespace, int limit, String continuation) throws KnowledgeSourceException {
+        return titleBatch("allpages", "title", "apcontinue", "&apnamespace=" + namespace
+                + "&apfilterredir=nonredirects&aplimit=" + limit, continuation);
+    }
+
+    MediaWikiTitleBatch categories(int limit, String continuation) throws KnowledgeSourceException {
+        return titleBatch("allcategories", "category", "accontinue", "&aclimit=" + limit, continuation);
+    }
+
+    MediaWikiTitleBatch categoryMembers(String category, List<Integer> namespaces, int limit, String continuation)
+            throws KnowledgeSourceException {
+        StringBuilder ids = new StringBuilder();
+        for (Integer namespace : namespaces) {
+            if (ids.length() > 0) {
+                ids.append('|');
+            }
+            ids.append(namespace);
+        }
+        return titleBatch("categorymembers", "title", "cmcontinue", "&cmtitle=" + enc("Category:" + category)
+                + "&cmtype=page&cmnamespace=" + enc(ids.toString()) + "&cmlimit=" + limit, continuation);
+    }
+
+    private MediaWikiTitleBatch titleBatch(String list, String field, String continuationKey,
+                                          String options, String continuation) throws KnowledgeSourceException {
+        String query = "action=query&format=json&formatversion=2&list=" + list + options;
+        if (continuation != null && !continuation.isEmpty()) {
+            JsonObject token = MediaWikiResponses.parseObject(continuation);
+            String value = MediaWikiResponses.stringOrNull(token, continuationKey);
+            if (value == null) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid MediaWiki continuation");
+            }
+            query += "&" + continuationKey + "=" + enc(value);
+            String general = MediaWikiResponses.stringOrNull(token, "continue");
+            if (general != null) {
+                query += "&continue=" + enc(general);
+            }
+        }
+        return MediaWikiResponses.titleBatch(read(query), list, field, continuationKey);
+    }
+
     WikiParsedPage parse(String title) throws KnowledgeSourceException {
         String query = "action=parse&format=json&formatversion=2&prop=text%7Crevid&redirects=1"
                 + "&disabletoc=1&disableeditsection=1&page=" + enc(title);

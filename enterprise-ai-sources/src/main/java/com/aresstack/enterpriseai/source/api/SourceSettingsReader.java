@@ -172,8 +172,18 @@ public final class SourceSettingsReader {
      * Startpunkte gilt {@code defaultStartPoint}, oder es ist ein Problem, wenn er {@code null} ist.
      */
     public SourceScope scope(String defaultStartPoint, int defaultDepth, int defaultMaxResources) {
+        return scope(defaultStartPoint, defaultDepth, defaultMaxResources, false);
+    }
+
+    /** Allow the source to resolve its initial resource at runtime. */
+    public SourceScope automaticScope(int defaultDepth, int defaultMaxResources) {
+        return scope(null, defaultDepth, defaultMaxResources, true);
+    }
+
+    private SourceScope scope(String defaultStartPoint, int defaultDepth, int defaultMaxResources,
+                              boolean automaticStartPoints) {
         List<String> startPoints = list("startPoints");
-        if (startPoints.isEmpty()) {
+        if (startPoints.isEmpty() && !automaticStartPoints) {
             if (defaultStartPoint == null) {
                 problem("startPoints", "fehlt (mindestens ein Startpunkt)");
                 startPoints = Collections.singletonList("-");
@@ -184,7 +194,9 @@ public final class SourceSettingsReader {
         int maxDepth = integer("maxDepth", defaultDepth, 0, 100);
         int maxResources = integer("maxResources", defaultMaxResources, 1, 1000000);
         try {
-            return SourceScope.builder().startPoints(startPoints).maxDepth(maxDepth).maxResources(maxResources).build();
+            SourceScope.Builder builder = SourceScope.builder().startPoints(startPoints)
+                    .maxDepth(maxDepth).maxResources(maxResources);
+            return (automaticStartPoints ? builder.automaticStartPoints() : builder).build();
         } catch (IllegalArgumentException e) {
             problem("startPoints", "Crawl-Umfang ungültig");
             return SourceScope.of("-");

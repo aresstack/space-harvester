@@ -37,11 +37,12 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
                     .fromVault(SourceSettingField.VaultValue.LOCATION))
             .field(SourceSettingField.of("credentialRef", SourceSettingField.Kind.SECRET_REF,
                     "KeePass-Eintrag", "Eintrag mit Benutzername, Passwort und URL des Wikis; leer = anonym"))
-            .field(SourceSettingField.text("startPoints", "Startpunkte", "Kommagetrennte Seitentitel").required())
+            .field(SourceSettingField.text("startPoints", "Startpunkte (optional)",
+                    "Kommagetrennte Seitentitel; leer = Hauptseite automatisch ermitteln"))
             .field(SourceSettingField.of("maxDepth", SourceSettingField.Kind.NUMBER, "Tiefe",
-                    "Wie viele Linkebenen ab den Startpunkten verfolgt werden (0 = nur Startpunkte)").withDefault("1").advanced())
+                    "Nur für Link-Crawls: Tiefe ab Startpunkten; keine Begrenzung der Seitenliste").withDefault("1").advanced())
             .field(SourceSettingField.of("maxResources", SourceSettingField.Kind.NUMBER,
-                    "Höchstzahl Seiten (optional)", "Obergrenze je Lauf; leer = Standard").advanced())
+                    "Höchstzahl Seiten (optional)", "Nur für Link-Crawls; die vollständige Seitenliste bleibt unbegrenzt").advanced())
             .field(SourceSettingField.of("requiresLogin", SourceSettingField.Kind.FLAG, "Anmeldung erforderlich",
                     "Vor dem Lesen anmelden (Standard: ja, wenn ein KeePass-Eintrag gesetzt ist)").advanced())
             .field(SourceSettingField.text("displayName", "Anzeigename (optional)", "Name der Quelle in Quellenangaben").advanced())
@@ -119,13 +120,13 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
     public List<String> validate(SourceSettings settings) {
         SourceSettingsReader reader = new SourceSettingsReader(TYPE, settings);
         site(reader);
-        reader.scope(null, 1, SourceScope.DEFAULT_MAX_RESOURCES);
+        reader.automaticScope(1, SourceScope.DEFAULT_MAX_RESOURCES);
         return reader.problems();
     }
 
     @Override
     public SourceScope scope(SourceSettings settings) {
-        return new SourceSettingsReader(TYPE, settings).scope(null, 1, SourceScope.DEFAULT_MAX_RESOURCES);
+        return new SourceSettingsReader(TYPE, settings).automaticScope(1, SourceScope.DEFAULT_MAX_RESOURCES);
     }
 
     @Override

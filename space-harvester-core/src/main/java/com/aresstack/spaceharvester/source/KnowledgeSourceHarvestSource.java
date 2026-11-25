@@ -29,6 +29,8 @@ import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.SourceFile;
+import com.aresstack.enterpriseai.source.api.SourceConnectionVerifier;
+import com.aresstack.enterpriseai.source.api.SinglePartitionListingSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.SourceQuery;
@@ -250,8 +252,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         // Kennung der Adapter-Instanz (nicht geheim): Einmalcode-Abfrage, Absenden und Abrufe zeigen sie, damit das
         // Protokoll zeigt, ob alles über dieselbe Instanz und damit dieselbe Web-Sitzung läuft (#571).
         LOG.info("Quelle {} geöffnet: Adapter-Instanz {}", id, instance(port));
-        this.scope = port instanceof PartitionListingSource ? null : scope;
-        this.restriction = port instanceof PartitionListingSource ? scope : null;
+        boolean singlePartition = port instanceof SinglePartitionListingSource;
+        this.scope = port instanceof PartitionListingSource && !singlePartition ? null : scope;
+        this.restriction = port instanceof PartitionListingSource && !singlePartition ? scope : null;
     }
 
     /** Die Adapter-Instanz der Quelle (Prüfungen im Paket). */
@@ -318,6 +321,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public String title() {
         return title;
+    }
+
+    @Override
+    public boolean navigationUsesGroups() {
+        return port instanceof SinglePartitionListingSource;
     }
 
     @Override
@@ -615,12 +623,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public List<Partition> partitions() {
-        if (discovering()) {
-            return List.of(new Partition(id, title, null));
-        }
         try {
             if (port instanceof SourceConnectionVerifier verifier) {
                 verifier.verifyConnection();
+            }
+            if (discovering()) {
+                return List.of(new Partition(id, title, null));
             }
             return port.partitions().stream().map(this::partition).toList();
         } catch (KnowledgeSourceException e) {
@@ -630,6 +638,18 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit) {
+        if (port instanceof SinglePartitionListingSource listing) {
+            if (!id.equals(partitionKey)) {
+                throw new SourceAccessException(id, SourceAccessException.Reason.NOT_FOUND, "Unbekannte Partition", null);
+            }
+            try {
+                PartitionResources batch = listing.resources(listing.partitionKey(), cursor == null ? "" : cursor, limit);
+                return new PageMetadataBatch(batch.resources().stream()
+                        .map(resource -> pageMetadata(resource, id)).toList(), batch.nextCursor());
+            } catch (KnowledgeSourceException e) {
+                throw accessFailure(e);
+            }
+        }
         if (discovering()) {
             return discovered(partitionKey, cursor, limit);
         }
@@ -1334,9 +1354,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             com.aresstack.enterpriseai.source.api.PagePosition position = navigation.position(resource(pageId).id());
             String partition = position.root().key().startsWith(SPACE_NODE)
                     ? position.root().key().substring(SPACE_NODE.length()) : position.root().key();
-            return new PagePosition(partition, position.root().title(),
-                    position.ancestors().stream().map(node -> node(node, partition)).toList(),
-                    node(position.page(), partition));
+            if (port instanceof SinglePartitionListingSource) {
+                partition = id;
+            }
+            String localPartition = partition;
+            return new PagePosition(localPartition, position.root().title(),
+                    position.ancestors().stream().map(node -> node(node, localPartition)).toList(),
+                    node(position.page(), localPartition));
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
@@ -1370,8 +1394,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             case NO -> Boolean.FALSE;
             case UNKNOWN -> null;
         };
-        PageNode.Kind kind = PageNode.Kind.PAGE;
-        if (port instanceof ResourceNodeKindSource presentation) {
+        PageNode.Kind kind = node.isFolder() ? PageNode.Kind.GROUP : PageNode.Kind.PAGE;
+        if (!node.isFolder() && port instanceof ResourceNodeKindSource presentation) {
             try {
                 kind = presentation.kind(node.resource());
             } catch (KnowledgeSourceException failure) {
