@@ -106,6 +106,7 @@ class HarvesterLocalFilesTest {
             var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
                     .read(snapshot.payload()).orElseThrow();
             assertThat(reference.extractionKey()).isNotNull();
+            assertThat(reference.preview()).hasSizeLessThanOrEqualTo(8192).doesNotContain("Zielbegriff");
             assertThat(reference.originalSha256()).isNotEqualTo(snapshot.payload().rawSha256());
             assertThat(harvester.pageText(snapshot)).map(PageText::text)
                     .hasValueSatisfying(text -> assertThat(text).contains("Zielbegriff"));
@@ -123,6 +124,22 @@ class HarvesterLocalFilesTest {
                     .read(snapshot.payload())).isPresent();
             assertThat(harvester.pageText(snapshot)).map(PageText::text)
                     .hasValueSatisfying(text -> assertThat(text).contains("Zielbegriff"));
+        }
+    }
+
+    @Test
+    void unsupportedBinaryIsRepresentedWithoutAnOriginalHashOrExtraction() throws IOException {
+        Files.write(directory.resolve("backup.bin"), new byte[] {0, 1, 2, 3});
+        String id = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "backup.bin".getBytes(StandardCharsets.UTF_8));
+        try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
+                .localOriginalReferences(true).build()) {
+            PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "docs", id, false).snapshot();
+            var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                    .read(snapshot.payload()).orElseThrow();
+            assertThat(reference.originalSha256()).isNull();
+            assertThat(reference.extractionKey()).isNull();
+            assertThat(reference.preview()).isEmpty();
         }
     }
 

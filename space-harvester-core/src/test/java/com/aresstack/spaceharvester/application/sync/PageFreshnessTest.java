@@ -125,6 +125,31 @@ class PageFreshnessTest {
     }
 
     @Test
+    void firstLocalReadUsesTheExtractionDeadlineWithoutACachedHeader() {
+        PageContentFetcher fetcher = new PageContentFetcher() {
+            @Override
+            public boolean mayExtractLocalOriginal(String sourceId) {
+                return true;
+            }
+
+            @Override
+            public PageSnapshot fetch(String sourceId, String pageId) {
+                try {
+                    Thread.sleep(150);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+                return snapshot(source.pageMetadata(pageId));
+            }
+        };
+        PageFreshness local = new PageFreshness(source.queries(), fetcher, FakeSource.CLOCK,
+                Duration.ofMillis(50), Duration.ofSeconds(5));
+        assertThat(local.check("wiki", "1", Optional.empty(), Optional.empty()).outcome())
+                .isEqualTo(PageFreshness.Outcome.CONTENT_CHANGED);
+    }
+
+    @Test
     void withoutAFetcherNoCheckIsPossible() {
         PageFreshness without = new PageFreshness(source.queries(), null, FakeSource.CLOCK);
 

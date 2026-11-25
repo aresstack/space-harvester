@@ -449,11 +449,15 @@ class LocalFolderHierarchyTest {
             }
         };
         var enrichments = new com.aresstack.spaceharvester.application.enrichment.Enrichments(
-                snapshot -> java.util.Optional.empty(), List.of(processor), results, java.time.Clock.systemUTC());
+                new LocalReferenceTextProjector(documents), List.of(processor), results, java.time.Clock.systemUTC());
         try (var analyses = new com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments(
                 enrichments, null, () -> true)) {
             analyses.localDocuments(key -> java.util.Optional.of(current.get()).filter(page -> page.key().equals(key)),
                     documents);
+            enrichments.refresh(current.get());
+            enrichments.recompute(current.get(), null);
+            assertThat(input).isEmpty();
+            assertThat(results.find(current.get().key())).isEmpty();
             analyses.indexedLocal(current.get());
             var key = com.aresstack.spaceharvester.application.assets.DocumentKey.localOriginal(current.get().key());
             assertThat(input).anyMatch(text -> text.contains("Zielbegriff"));
