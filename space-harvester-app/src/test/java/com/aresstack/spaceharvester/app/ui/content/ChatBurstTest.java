@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.enterpriseai.ui.comic.bubble.AgentActivityBubblePanel;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
+import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
@@ -162,7 +163,7 @@ class ChatBurstTest {
             int links = indexOf(rows, row -> row instanceof ChatPanel.SourceLinks);
             assertThat(thought).isNotNegative();
             assertThat(links).as("Quellen unter der gelben Blase").isGreaterThan(thought);
-            assertThat(indexOf(rows, row -> row instanceof ChatPanel.OrbClearance)).as("noch keine Antwort")
+            assertThat(indexOf(rows, row -> row instanceof AssistantMarkdownMessage)).as("noch keine Antwort")
                     .isNegative();
             assertThat(thought(rows.get(thought)).getExplanation()).doesNotContain("Quellen:");
             layoutAll(panel[0]);
@@ -175,7 +176,7 @@ class ChatBurstTest {
         await(() -> onEdt(() -> {
             List<Component> rows = panel[0].transcriptRows();
             return indexOf(rows, row -> thought(row) != null) >= 0 && !sourcesShown(panel[0])
-                    && indexOf(rows, row -> row instanceof ChatPanel.OrbClearance) < 0;
+                    && indexOf(rows, row -> row instanceof AssistantMarkdownMessage) < 0;
         }));
         SwingUtilities.invokeAndWait(() -> {
             layoutAll(panel[0]);
@@ -183,13 +184,13 @@ class ChatBurstTest {
         });
         await(() -> onEdt(() -> {
             List<Component> rows = panel[0].transcriptRows();
-            return indexOf(rows, row -> row instanceof ChatPanel.OrbClearance) >= 0
+            return indexOf(rows, row -> row instanceof AssistantMarkdownMessage) >= 0
                     && indexOf(rows, row -> thought(row) != null) < 0 && sourcesShown(panel[0]);
         }));
         SwingUtilities.invokeAndWait(() -> {
             layoutAll(panel[0]);
             List<Component> rows = panel[0].transcriptRows();
-            int answerRow = indexOf(rows, row -> row instanceof ChatPanel.OrbClearance);
+            int answerRow = indexOf(rows, row -> row instanceof AssistantMarkdownMessage);
             int links = indexOf(rows, row -> row instanceof ChatPanel.SourceLinks);
             assertThat(links).as("Quellen unter der Antwort").isEqualTo(answerRow + 1);
             assertThat(rows.get(answerRow).getY()).as("Antwort genau an der Stelle der gelben Blase, ohne Lücke")

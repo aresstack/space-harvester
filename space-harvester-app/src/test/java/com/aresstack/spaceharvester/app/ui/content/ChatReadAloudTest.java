@@ -1,11 +1,8 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
-import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
-import com.aresstack.enterpriseai.ui.comic.bubble.BubblePalette;
-import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
 import com.aresstack.spaceharvester.app.speech.FakeReadAloud;
 import com.aresstack.spaceharvester.app.speech.ReadAloudBinding;
-import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownBubble;
+import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage;
 import com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView;
 import com.aresstack.spaceharvester.app.ui.markdown.MarkdownTheme;
 import org.junit.jupiter.api.Test;
@@ -34,7 +31,7 @@ class ChatReadAloudTest {
         JPanel transcript = new JPanel();
         ChatReadAloud reading = onEdt(() -> new ChatReadAloud(transcript));
         try {
-            AssistantMarkdownBubble first = onEdt(() -> bubble(FIRST));
+            AssistantMarkdownMessage first = onEdt(() -> bubble(FIRST));
             SwingUtilities.invokeAndWait(() -> {
                 reading.bind(binding);
                 reading.answer(first);
@@ -79,7 +76,7 @@ class ChatReadAloudTest {
             assertThat(fake.spoken.get(1)).isEqualTo("Bereitschaft ist erreichbar.");
 
             // eine neue Antwort wird bei aktivem Vorlesen gleich vorgelesen (wie im EAC)
-            AssistantMarkdownBubble second = onEdt(() -> bubble(SECOND));
+            AssistantMarkdownMessage second = onEdt(() -> bubble(SECOND));
             SwingUtilities.invokeAndWait(() -> reading.answered(second));
             assertThat(fake.await(3)).isTrue();
             assertThat(fake.spoken.get(2)).isEqualTo(SECOND);
@@ -100,8 +97,8 @@ class ChatReadAloudTest {
         ReadAloudBinding binding = new ReadAloudBinding(() -> fake, message -> { });
         ChatReadAloud reading = onEdt(() -> new ChatReadAloud(new JPanel()));
         try {
-            AssistantMarkdownBubble first = onEdt(() -> bubble(FIRST));
-            AssistantMarkdownBubble second = onEdt(() -> bubble(SECOND));
+            AssistantMarkdownMessage first = onEdt(() -> bubble(FIRST));
+            AssistantMarkdownMessage second = onEdt(() -> bubble(SECOND));
             SwingUtilities.invokeAndWait(() -> {
                 reading.bind(binding);
                 reading.answer(first);
@@ -136,8 +133,7 @@ class ChatReadAloudTest {
     private static int measured(int before, int after) {
         JPanel transcript = new JPanel();
         transcript.setLayout(new javax.swing.BoxLayout(transcript, javax.swing.BoxLayout.Y_AXIS));
-        ChatPanel.OrbClearance clearance = new ChatPanel.OrbClearance(new BubbleMessageRow(
-                bubble(FIRST + "\n\n" + FIRST), BubbleSide.LEFT), new JPanel());
+        AssistantMarkdownMessage clearance = bubble(FIRST + "\n\n" + FIRST);
         transcript.add(clearance);
         transcript.setSize(before, 2000);
         layout(transcript);
@@ -170,39 +166,22 @@ class ChatReadAloudTest {
     }
 
     @Test
-    void anAnswerNeverReachesTheButton() {
-        // „Da dürfte er nicht stören, weil der Assistent sowieso eingerückt ist“: auch in der schmalen Leiste nicht
+    void neitherUserNorAssistantCanReachThePlaybackControl() {
         for (int width = 200; width <= 1200; width += 7) {
-            int inset = ChatPanel.OrbClearance.inset(width);
-            int row = width - inset;
-            int bubble = Math.max(120, (int) Math.floor((row - 28) * 0.92d));
-            int gap = width - 14 - bubble;
-            assertThat(gap).as("Breite %d", width).isGreaterThanOrEqualTo(ChatPanel.OrbClearance.needed());
+            int orbX = width - 60;
+            for (int scrollbarWidth : new int[] {0, 15}) {
+                int inset = ChatPanel.transcriptInset(width, orbX, scrollbarWidth, true);
+                assertThat(width - scrollbarWidth - inset).isLessThan(orbX);
+                assertThat(ChatPanel.transcriptInset(width, orbX, scrollbarWidth, false)).isZero();
+            }
         }
     }
 
-    @Test
-    void theAnswerRowKeepsItsClearanceOnlyWhileTheButtonIsShown() throws Exception {
-        AtomicReference<int[]> insets = new AtomicReference<>();
-        SwingUtilities.invokeAndWait(() -> {
-            JPanel orb = new JPanel();
-            ChatPanel.OrbClearance clearance = new ChatPanel.OrbClearance(new BubbleMessageRow(bubble(SECOND),
-                    BubbleSide.LEFT), orb);
-            clearance.setSize(320, 100);
-            int shown = clearance.getInsets().right;
-            orb.setVisible(false);
-            insets.set(new int[] {shown, clearance.getInsets().right});
-        });
-        assertThat(insets.get()[0]).isPositive();
-        assertThat(insets.get()[1]).isZero();
-    }
-
-    private static AssistantMarkdownBubble bubble(String markdown) {
-        BubblePalette palette = BubblePalette.windowsPhoneInspired();
-        MarkdownMessageView view = new MarkdownMessageView(MarkdownTheme.forBubble(palette.getAssistantBackground(),
-                palette.getAssistantForeground()), url -> { }, (code, width) -> null);
+    private static AssistantMarkdownMessage bubble(String markdown) {
+        MarkdownTheme theme = MarkdownTheme.forSurface(java.awt.Color.WHITE);
+        MarkdownMessageView view = new MarkdownMessageView(theme, url -> { }, (code, width) -> null);
         view.setMarkdown(markdown);
-        AssistantMarkdownBubble bubble = new AssistantMarkdownBubble(BubbleSide.LEFT, palette, "Assistent", view);
+        AssistantMarkdownMessage bubble = new AssistantMarkdownMessage(view, theme.getMutedForeground());
         bubble.setSize(600, bubble.preferredHeightForWidth(600));
         layout(bubble);
         return bubble;
@@ -217,7 +196,7 @@ class ChatReadAloudTest {
         }
     }
 
-    private static JTextComponent lastText(AssistantMarkdownBubble bubble, String containing) {
+    private static JTextComponent lastText(AssistantMarkdownMessage bubble, String containing) {
         JTextComponent found = null;
         for (JTextComponent text : ChatReadAloud.texts(bubble)) {
             if (text(text).contains(containing)) {

@@ -71,6 +71,22 @@ public final class MarkdownTheme {
                 quoteBorder, separator, error);
     }
 
+    /** Derive a readable document theme from the actual transcript surface and look and feel. */
+    public static MarkdownTheme forSurface(Color background) {
+        Color bg = background == null ? color("Panel.background", Color.WHITE) : background;
+        Color fg = color("Label.foreground", Color.BLACK);
+        if (ColorContrast.ratio(fg, bg) < 4.5) {
+            fg = ColorContrast.ratio(Color.BLACK, bg) >= ColorContrast.ratio(Color.WHITE, bg)
+                    ? Color.BLACK : Color.WHITE;
+        }
+        Font body = bodyFont();
+        Color muted = blend(bg, fg, 0.72f);
+        Color link = linkColorFor(bg, fg);
+        return new MarkdownTheme(body, new Font(Font.MONOSPACED, Font.PLAIN, body.getSize()),
+                fg, muted, link, blend(bg, fg, 0.055f), blend(bg, fg, 0.28f),
+                blend(bg, fg, 0.16f), ResearchUiPalette.DANGER_RED);
+    }
+
     private static Font bodyFont() {
         Font base = UIManager.getFont("TextArea.font");
         if (base == null) {

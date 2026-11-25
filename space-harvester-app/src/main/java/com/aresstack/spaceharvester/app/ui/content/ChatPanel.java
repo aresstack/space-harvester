@@ -7,7 +7,7 @@ import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
 import com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton;
 import com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
-import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownBubble;
+import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage;
 import com.aresstack.spaceharvester.app.ui.markdown.CachingMermaidImageRenderer;
 import com.aresstack.spaceharvester.app.ui.markdown.DesktopLinkOpener;
 import com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView;
@@ -263,8 +263,8 @@ public final class ChatPanel extends JPanel {
     private boolean settled;
     /** Ergebnisse der verfolgten Aufträge, gemeldet erst, wenn alle geendet haben. */
     private final List<JobStatus> jobOutcomes = new ArrayList<>();
-    private AssistantMarkdownBubble answering;
-    /** Antworten rendert der Chat als Markdown wie der EAC (AssistantMarkdownBubble, MarkdownMessageView). */
+    private AssistantMarkdownMessage answering;
+    /** Antworten rendert der Chat als Markdown wie der EAC (AssistantMarkdownMessage, MarkdownMessageView). */
     private final DesktopLinkOpener linkOpener = DesktopLinkOpener.systemDefault();
     private MermaidImageRenderer mermaid;
     /** Die Auftragskennungen des zuletzt hier gestarteten Downloads, bis der Auftrag endet. */
@@ -442,8 +442,7 @@ public final class ChatPanel extends JPanel {
         transcriptScroll = Comic.scroll(transcriptHolder);
         transcriptScroll.setBorder(BorderFactory.createEmptyBorder());
         transcriptScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        // Der Vorlese-Knopf liegt über dem Verlauf, wo er im Lesebereich liegt: gleicher Abstand vom rechten Rand
-        // (neben der Bildlaufleiste), gleiche Höhe (Angelo 23.11.2026).
+        // Reserve a separate right-hand lane for playback while keeping its alignment with the reader.
         transcriptLayers = new JLayeredPane() {
             @Override
             public void doLayout() {
@@ -2264,7 +2263,7 @@ public final class ChatPanel extends JPanel {
 
         private final ChatRecord started;
         private final Path startedNode;
-        private final AssistantMarkdownBubble bubble;
+        private final AssistantMarkdownMessage bubble;
         private final SourceLinks links;
         private final StringBuilder text = new StringBuilder();
         /** Die nummerierten Quellen dieser Antwort, wie zuletzt gemeldet; gehen mit der Antwort in den Verlauf. */
@@ -2325,7 +2324,7 @@ public final class ChatPanel extends JPanel {
                     com.aresstack.enterpriseai.astu.approval.ApprovalDecision.Outcome.CANCELLED));
         }
 
-        TurnListener(ChatRecord started, Path startedNode, AssistantMarkdownBubble bubble, SourceLinks links) {
+        TurnListener(ChatRecord started, Path startedNode, AssistantMarkdownMessage bubble, SourceLinks links) {
             this.started = started;
             this.startedNode = startedNode;
             this.bubble = bubble;
@@ -2582,7 +2581,7 @@ public final class ChatPanel extends JPanel {
         public void failed(String message) {
             finishWebCard(false);
             show(message);
-            bubble.setHeaderColor(Comic.RED);
+            bubble.markFailed(Comic.RED);
             // Eine gescheiterte Antwort wird nicht gespeichert (wie im EAC); die Frage bleibt im Chat.
             boolean shown = !detached;
             finish(null, message.lines().findFirst().orElse(" "));
@@ -2737,25 +2736,21 @@ public final class ChatPanel extends JPanel {
     /** Die Zeile der Antwortblase, die gerade geschrieben wird (für das Warten hinter den Wolken). */
     private JComponent answeringRow;
 
-    /** Eine Antwortblase mit Markdown-Körper wie im EAC ({@code ChatTranscriptPanel.createMarkdownBubble}). */
-    private AssistantMarkdownBubble addAnswer(String markdown, long at) {
+    /** Add a full-width assistant message using the existing Markdown renderer. */
+    private AssistantMarkdownMessage addAnswer(String markdown, long at) {
         if (mermaid == null) {
             mermaid = CachingMermaidImageRenderer.forChat();
         }
-        MarkdownMessageView view = new MarkdownMessageView(MarkdownTheme.forBubble(bubbles.getAssistantBackground(),
-                bubbles.getAssistantForeground()), linkOpener, mermaid);
+        MarkdownTheme theme = MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground());
+        MarkdownMessageView view = new MarkdownMessageView(theme, linkOpener, mermaid);
         view.setMarkdown(markdown);
-        AssistantMarkdownBubble bubble = new AssistantMarkdownBubble(BubbleSide.LEFT, bubbles, ASSISTANT, view);
-        bubble.setHeaderTimestamp(at);
-        // Wie im EAC der Markdown-Quelltext, beim Klick gelesen: auch eine Antwort, die noch geschrieben wird.
-        bubble.setHeaderTrailingAccessory(headerButtons(bubbles.getAssistantForeground(), ASSISTANT,
-                view::getMarkdown));
-        BubbleMessageRow row = new BubbleMessageRow(bubble, BubbleSide.LEFT);
-        OrbClearance clearance = new OrbClearance(row, readAloud.orb());
-        clearance.setAlignmentX(LEFT_ALIGNMENT);
+        AssistantMarkdownMessage bubble = new AssistantMarkdownMessage(view, theme.getMutedForeground());
+        bubble.setTimestamp(at);
+        // Read the current Markdown when an action is invoked, including a streamed response.
+        bubble.setActions(headerButtons(theme.getMutedForeground(), ASSISTANT, view::getMarkdown));
         emptyNote.setVisible(false);
-        transcript.add(clearance);
-        answeringRow = clearance;
+        transcript.add(bubble);
+        answeringRow = bubble;
         answeringSources = new SourceLinks(this::openSource);
         answeringSources.setAlignmentX(LEFT_ALIGNMENT);
         transcript.add(answeringSources);
@@ -2840,7 +2835,7 @@ public final class ChatPanel extends JPanel {
                 addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du",
                         message.text(), message.at());
             } else {
-                AssistantMarkdownBubble answer = addAnswer(message.cancelled()
+                AssistantMarkdownMessage answer = addAnswer(message.cancelled()
                         ? message.text() + "\n\n" + CANCELLED : message.text(), message.at());
                 answeringSources.show(message.sources());
                 readAloud.answer(answer);
@@ -3344,8 +3339,8 @@ public final class ChatPanel extends JPanel {
         AppRuntime runtime = context.runtime();
         readAloud.bind(runtime != null ? readAloudBindings.get() : null, ChatReadAloud.NO_RUNTIME_TIP);
         if (transcriptLayers != null) {
+            relayoutOrb();
             transcriptLayers.revalidate();
-            transcriptLayers.repaint();
         }
     }
 
@@ -3405,7 +3400,6 @@ public final class ChatPanel extends JPanel {
     private void layoutTranscript() {
         int width = transcriptLayers.getWidth();
         int height = transcriptLayers.getHeight();
-        transcriptScroll.setBounds(0, 0, width, height);
         javax.swing.JScrollBar bar = transcriptScroll.getVerticalScrollBar();
         int barWidth = bar.isVisible() ? bar.getWidth() : 0;
         int size = com.aresstack.spaceharvester.app.ui.controls.PodcastOrb.SIZE;
@@ -3420,7 +3414,14 @@ public final class ChatPanel extends JPanel {
         }
         top = Math.max(0, Math.min(top, height - size));
         gap = Math.max(gap, barWidth + NavigableDocumentPage.ORB_INSET);
-        readAloud.orb().setBounds(width - gap - size, top, size, size);
+        int orbX = Math.max(0, width - gap - size);
+        transcriptScroll.setBounds(0, 0, width, height);
+        int inset = transcriptInset(width, orbX, barWidth, readAloud.orb().isVisible());
+        if (transcript.getInsets().right != inset) {
+            transcript.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, inset));
+            transcript.revalidate();
+        }
+        readAloud.orb().setBounds(orbX, top, size, size);
     }
 
     /**
@@ -3463,80 +3464,15 @@ public final class ChatPanel extends JPanel {
         return found;
     }
 
-    /**
-     * Hält eine Antwortblase vom Vorlese-Knopf fern (Angelo 23.11.2026: er überlagert nur die rechtsbündige Frage,
-     * nie die eingerückte Antwort): Ist der Knopf zu sehen, rückt die Zeile rechts so weit ein, dass zwischen Blase
-     * und rechtem Rand Platz für den Knopf bleibt. Die Blase nimmt 92 % der Zeile abzüglich 14 px Rand je Seite
-     * ({@code BubbleRowGeometry}).
-     */
-    static final class OrbClearance extends JPanel {
-
-        private final JComponent orb;
-
-        OrbClearance(BubbleMessageRow row, JComponent orb) {
-            super(new BorderLayout());
-            this.orb = orb;
-            setOpaque(false);
-            add(row, BorderLayout.CENTER);
-        }
-
-        /** Wie viel rechts frei bleiben muss: Knopf, sein Abstand zum Rand und etwas Luft. */
-        static int needed() {
-            return com.aresstack.spaceharvester.app.ui.controls.PodcastOrb.SIZE + NavigableDocumentPage.ORB_INSET + 6;
-        }
-
-        /** Der Einzug rechts bei dieser Breite, damit die Blase {@link #needed()} vom Rand bleibt. */
-        static int inset(int width) {
-            int inset = 0;
-            while (inset < width / 2 && gap(width - inset) + inset < needed()) {
-                inset++;
-            }
-            return inset;
-        }
-
-        /** Abstand der Blase vom rechten Rand einer Zeile dieser Breite. */
-        private static int gap(int rowWidth) {
-            int bubble = Math.max(120, (int) Math.floor((rowWidth - 28) * 0.92d));
-            return rowWidth - 14 - bubble;
-        }
-
-        @Override
-        public java.awt.Insets getInsets() {
-            return new java.awt.Insets(0, 0, 0, orb.isVisible() ? inset(getWidth()) : 0);
-        }
-
-        /**
-         * Die Zeile misst ihre Höhe an der Breite ihres Elternteils, hier also an dieser Hülle: Bevor der Verlauf die
-         * Höhen verteilt, bekommt die Hülle schon seine neue Breite, sonst bräche die Blase nach dem Verkleinern
-         * schmaler um, als ihre Höhe gemessen wurde, und würde abgeschnitten.
-         */
-        @Override
-        public Dimension getPreferredSize() {
-            java.awt.Container parent = getParent();
-            if (parent != null && parent.getWidth() > 0) {
-                java.awt.Insets insets = parent.getInsets();
-                int inner = parent.getWidth() - insets.left - insets.right;
-                if (inner > 0 && inner != getWidth()) {
-                    setSize(inner, getHeight());
-                }
-            }
-            return super.getPreferredSize();
-        }
-
-        @Override
-        public Dimension getMaximumSize() {
-            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-        }
-
-        BubbleMessageRow row() {
-            return (BubbleMessageRow) getComponent(0);
-        }
+    /** Reserve space inside the scrollable surface without moving the scrollbar. */
+    static int transcriptInset(int width, int orbX, int scrollbarWidth, boolean orbVisible) {
+        return orbVisible ? Math.max(0, width - scrollbarWidth - orbX + 6) : 0;
     }
 
     int bubbles() {
         int count = 0;
         for (Component row : transcript.getComponents()) {
-            if (row instanceof BubbleMessageRow || row instanceof OrbClearance) {
+            if (row instanceof BubbleMessageRow || row instanceof AssistantMarkdownMessage) {
                 count++;
             }
         }
