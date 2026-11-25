@@ -61,6 +61,7 @@ final class FtpConnectForm extends JPanel {
     static final String CONTROL_TIMEOUT_KEY = "deck.ftp.timeout.control";
     static final String DATA_TIMEOUT_KEY = "deck.ftp.timeout.data";
     static final String HLQ_KEY = "deck.ftp.hlq";
+    static final String SYSLIB_KEY = "deck.ftp.syslib";
     static final String FILE_TYPE_KEY = "deck.ftp.transfer.type";
     static final String TEXT_FORMAT_KEY = "deck.ftp.transfer.format";
     static final String STRUCTURE_KEY = "deck.ftp.transfer.structure";
@@ -89,6 +90,7 @@ final class FtpConnectForm extends JPanel {
     final PlaceholderField controlTimeout = new PlaceholderField(6, "wie oben");
     final PlaceholderField dataTimeout = new PlaceholderField(6, "wie oben");
     final PlaceholderField startHlq = new PlaceholderField(12, "Anmeldename");
+    final PlaceholderField syslib = new PlaceholderField(22, "HLQ.COPYLIB, HLQ.CPY");
     final JCheckBox useProxy = Comic.checkBox("Proxy verwenden");
     final JComboBox<TransferOptions.FileType> fileType = combo(TransferOptions.FileType.values(),
             TransferOptions.FileType::label);
@@ -160,6 +162,9 @@ final class FtpConnectForm extends JPanel {
         row(left, 10, "Textformat", textFormat);
         row(left, 11, "Struktur", structure);
         row(left, 12, "Modus", transferMode);
+        section(left, 13, "COBOL");
+        row(left, 14, "SYSLIB", syslib);
+        syslib.setToolTipText("Absolute Copybook-Datasets, durch Komma getrennt, in Suchreihenfolge");
         section(right, 0, "Wiederholung lesender Aufträge");
         row(right, 1, "Versuche", attempts);
         row(right, 2, "Wartezeit (ms)", backoff);
@@ -356,7 +361,7 @@ final class FtpConnectForm extends JPanel {
         return new FtpProfile(target, number(port.getText(), FtpProfile.DEFAULT_PORT, "Port"), encoding.getText(),
                 connectSeconds, number(controlTimeout.getText(), connectSeconds, "Zeitlimit Antworten"),
                 number(dataTimeout.getText(), connectSeconds, "Zeitlimit Daten"), transfer, retry, startHlq.getText(),
-                naming, useProxy.isSelected());
+                naming, useProxy.isSelected()).withSyslib(java.util.Arrays.asList(syslib.getText().split(",")));
     }
 
     /** Die Datenumwandlung aus den Feldern (leer = aus, wie in MainframeMate). */
@@ -471,6 +476,7 @@ final class FtpConnectForm extends JPanel {
         values.put(CONTROL_TIMEOUT_KEY, controlTimeout.getText().trim());
         values.put(DATA_TIMEOUT_KEY, dataTimeout.getText().trim());
         values.put(HLQ_KEY, startHlq.getText().trim());
+        values.put(SYSLIB_KEY, syslib.getText().trim());
         values.put(FILE_TYPE_KEY, ((Enum<?>) fileType.getSelectedItem()).name());
         values.put(TEXT_FORMAT_KEY, ((Enum<?>) textFormat.getSelectedItem()).name());
         values.put(STRUCTURE_KEY, ((Enum<?>) structure.getSelectedItem()).name());
@@ -503,6 +509,7 @@ final class FtpConnectForm extends JPanel {
         controlTimeout.setText(nonNull(state.get(CONTROL_TIMEOUT_KEY)));
         dataTimeout.setText(nonNull(state.get(DATA_TIMEOUT_KEY)));
         startHlq.setText(nonNull(state.get(HLQ_KEY)));
+        syslib.setText(nonNull(state.get(SYSLIB_KEY)));
         select(fileType, TransferOptions.FileType.class, state.get(FILE_TYPE_KEY), TransferOptions.DEFAULT.fileType());
         select(textFormat, TransferOptions.TextFormat.class, state.get(TEXT_FORMAT_KEY),
                 TransferOptions.DEFAULT.textFormat());

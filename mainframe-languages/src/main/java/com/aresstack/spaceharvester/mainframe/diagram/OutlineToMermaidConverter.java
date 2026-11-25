@@ -1313,6 +1313,14 @@ public final class OutlineToMermaidConverter {
 
     /** Find the enclosing paragraph name for a PERFORM/CALL element. */
     private static String findParentParagraph(JclElement target, List<JclElement> all) {
+        for (JclElement parent = target.getParent(); parent != null; parent = parent.getParent()) {
+            if (parent.getType() == JclElementType.PARAGRAPH) {
+                return parent.getName();
+            }
+        }
+        if (target.getParent() != null || target.getLineNumber() <= 0) {
+            return null;
+        }
         int targetLine = target.getLineNumber();
         String best = null;
         int bestLine = -1;

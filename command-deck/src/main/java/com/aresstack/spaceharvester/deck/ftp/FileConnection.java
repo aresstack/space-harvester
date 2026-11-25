@@ -21,6 +21,11 @@ public interface FileConnection extends AutoCloseable {
 
     List<RemoteEntry> list(String path) throws IOException;
 
+    /** List only PDS members for copybook resolution, without traversing sub-datasets. */
+    default List<RemoteEntry> listCopybookMembers(String dataset) throws IOException {
+        return list(dataset);
+    }
+
     /**
      * Listet mit Details (auf MVS RECFM, LRECL, Dsorg, Datum, Zeilen aus {@code LIST}), wie die Detailansicht von
      * MainframeMate. Ohne Details gleich {@link #list(String)}.

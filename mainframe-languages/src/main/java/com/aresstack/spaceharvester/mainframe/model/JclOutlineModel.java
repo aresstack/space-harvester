@@ -11,7 +11,16 @@ public class JclOutlineModel {
     public enum Language { JCL, COBOL, NATURAL, DDM, UNKNOWN }
 
     private final List<JclElement> elements = new ArrayList<>();
+    private List<String> analysisDiagnostics = List.of();
     private String sourceName;
+
+    public List<String> getAnalysisDiagnostics() {
+        return analysisDiagnostics;
+    }
+
+    public void setAnalysisDiagnostics(List<String> diagnostics) {
+        analysisDiagnostics = List.copyOf(diagnostics);
+    }
     private int totalLines;
     private Language language = Language.UNKNOWN;
 
@@ -40,11 +49,15 @@ public class JclOutlineModel {
     // ── COBOL helpers ───────────────────────────────────────────────
 
     public List<JclElement> getDivisions() {
-        return filterByType(JclElementType.DIVISION);
+        return elements.stream().filter(e -> e.getType() == JclElementType.DIVISION
+                || e.getType() == JclElementType.PROCEDURE_DIVISION).toList();
     }
 
     public List<JclElement> getSections() {
-        return filterByType(JclElementType.SECTION);
+        return elements.stream().filter(e -> switch (e.getType()) {
+            case SECTION, WORKING_STORAGE, LINKAGE_SECTION, FILE_SECTION, SCREEN_SECTION -> true;
+            default -> false;
+        }).toList();
     }
 
     public List<JclElement> getParagraphs() {

@@ -59,6 +59,7 @@ include 'comic-controls'
 include 'command-deck'
 // Parser und Hervorhebung für JCL, COBOL und Natural aus MainframeMate (Gliederung, TokenMaker), eigenes Modul (#1142)
 include 'mainframe-languages'
+include 'proleap-parser'
 // Diagramm-Ansicht „Visuell“ im Command Deck: Mermaid-Renderer aus MainframeMate (GraalJS, Batik), nur für die Desktop-App
 include 'mermaid-renderer'
 include 'space-harvester-app'

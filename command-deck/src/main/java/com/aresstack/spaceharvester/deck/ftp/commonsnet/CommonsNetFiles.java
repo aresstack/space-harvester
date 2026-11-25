@@ -132,6 +132,50 @@ final class CommonsNetFiles implements FileConnection {
     }
 
     @Override
+    public List<RemoteEntry> listCopybookMembers(String dataset) throws IOException {
+        if (!mvs) {
+            return list(dataset);
+        }
+        String base = MvsPath.unquote(dataset).toUpperCase(Locale.ROOT);
+        String query = MvsPath.absolute(base + "(*)");
+        String[] names = ftp.listNames(query);
+        int reply = ftp.getReplyCode();
+        if (!org.apache.commons.net.ftp.FTPReply.isPositiveCompletion(reply)) {
+            String message = Clients.reply(ftp);
+            // Accept only the explicit empty-PDS response, not ambiguous access or dataset errors.
+            if (reply == 550 && message.toLowerCase(Locale.ROOT).contains("no members found")) {
+                return List.of();
+            }
+            if (reply == 421 || org.apache.commons.net.ftp.FTPReply.isNegativeTransient(reply)) {
+                throw new IOException("SYSLIB " + query + " – " + message);
+            }
+            throw new FtpReplyException("SYSLIB " + query + " – " + message, reply);
+        }
+        if (names == null) {
+            throw new IOException("SYSLIB " + query + ": member listing not received");
+        }
+        List<RemoteEntry> members = new ArrayList<>();
+        for (String raw : names) {
+            String name = MvsPath.unquote(raw).trim().toUpperCase(Locale.ROOT);
+            if (name.isBlank()) {
+                continue;
+            }
+            if (MvsPath.isMember(name)) {
+                String[] parts = MvsPath.splitMember(name);
+                if (!base.equals(parts[0])) {
+                    throw new IOException("Unexpected SYSLIB member: " + raw);
+                }
+                name = parts[1];
+            }
+            if (!MvsPath.isMemberName(name)) {
+                throw new IOException("Unexpected SYSLIB listing entry: " + raw);
+            }
+            members.add(RemoteEntry.file(name, MvsPath.absolute(MvsPath.memberSpec(base, name))));
+        }
+        return List.copyOf(members);
+    }
+
+    @Override
     public List<RemoteEntry> list(String path, boolean details) throws IOException {
         List<RemoteEntry> entries = list(path);
         return details && mvs ? withDetails(MvsPath.absolute(path), entries) : entries;
