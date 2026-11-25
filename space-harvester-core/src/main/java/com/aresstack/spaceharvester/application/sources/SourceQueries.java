@@ -216,6 +216,15 @@ public class SourceQueries {
         return lists;
     }
 
+    /** Use a source's optional single-pass inventory without changing its public cursor API. */
+    public boolean visitInventory(String sourceId, String partitionKey, Runnable checkpoint,
+                                  java.util.function.Consumer<PageMetadataListing.Entry> found) {
+        HarvestSource source = source(sourceId);
+        return source.visitInventory(partitionKey, checkpoint,
+                page -> found.accept(new PageMetadataListing.Entry(page, MetadataHash.of(source.id(), page),
+                        AttributesHash.of(source.id(), page))));
+    }
+
     private HarvestSource source(String sourceId) {
         return catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
     }

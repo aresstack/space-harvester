@@ -330,6 +330,52 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     }
 
     /**
+     * Traverse the partition once without collecting or sorting all paths.
+     * Fail incomplete inventories instead of silently treating inaccessible files as deleted.
+     */
+    public void visitInventory(String partitionKey, Runnable checkpoint,
+                               java.util.function.Consumer<KnowledgeResource> found) throws KnowledgeSourceException {
+        if (!sourceId.value().equals(partitionKey)) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "Keine Partition dieser Quelle: " + partitionKey);
+        }
+        final LocalFileAccessPolicy access = policy();
+        try {
+            Files.walkFileTree(root, EnumSet.noneOf(FileVisitOption.class), PARTITION_DEPTH + 1,
+                    new SimpleFileVisitor<Path>() {
+                        @Override
+                        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attributes) {
+                            checkpoint.run();
+                            return dir.equals(root) || !dir.getFileName().toString().startsWith(".")
+                                    && patterns.entersFolder(relative(dir))
+                                    ? FileVisitResult.CONTINUE : FileVisitResult.SKIP_SUBTREE;
+                        }
+
+                        @Override
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                            checkpoint.run();
+                            if (attributes.isRegularFile() && patterns.acceptsFile(relative(file))
+                                    && candidate(file, attributes.size())) {
+                                if (!access.isAllowed(file)) {
+                                    throw new java.nio.file.AccessDeniedException(file.toString());
+                                }
+                                found.accept(resource(file, typeByName(file), false, attributes));
+                            }
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        @Override
+                        public FileVisitResult visitFileFailed(Path file, IOException failure) throws IOException {
+                            checkpoint.run();
+                            throw failure;
+                        }
+                    });
+        } catch (IOException | SecurityException failure) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Inventur unvollständig: " + failure.getMessage(),
+                    failure);
+        }
+    }
+
+    /**
      * Die Dateien der Partition nach relativem Pfad sortiert, so wie {@link #discover} sie mit Startpunkt {@code .}
      * und Tiefe {@value #PARTITION_DEPTH} findet, aber ohne Gesamtgrenze. Der Cursor nennt die letzte gelieferte
      * Datei: Neue oder gelöschte Dateien verschieben keinen Stapel.
@@ -471,34 +517,36 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     }
 
     private boolean candidate(Path file) {
+        try {
+            return candidate(file, Files.size(file));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private boolean candidate(Path file, long size) throws IOException {
         String name = file.getFileName().toString();
         if (name.startsWith("~$")) {
             return false;
         }
-        // Versteckte Dateien und alles in versteckten Ordnern (.git, .docker, .ssh) unterhalb der Wurzel nie.
         for (String segment : relative(file).split("/")) {
             if (segment.startsWith(".")) {
                 return false;
             }
         }
-        try {
-            long size = Files.size(file);
-            if (Files.isHidden(file)) {
-                return false;
-            }
-            if (inventoryAllFiles) {
-                return true;
-            }
-            if (size == 0) {
-                return false;
-            }
-            if (streamType(file) != null) {
-                return true;
-            }
-            return size <= maxFileBytes && (ownType(file) != null || INDEXABLE.contains(typeByName(file).category()));
-        } catch (IOException e) {
+        if (Files.isHidden(file)) {
             return false;
         }
+        if (inventoryAllFiles) {
+            return true;
+        }
+        if (size == 0) {
+            return false;
+        }
+        if (streamType(file) != null) {
+            return true;
+        }
+        return size <= maxFileBytes && (ownType(file) != null || INDEXABLE.contains(typeByName(file).category()));
     }
 
     private String streamType(Path file) {
@@ -614,7 +662,11 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
      *                 relativ)
      */
     private KnowledgeResource resource(Path file, DetectedContentType type, boolean location) throws IOException {
-        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class);
+        return resource(file, type, location, Files.readAttributes(file, BasicFileAttributes.class));
+    }
+
+    private KnowledgeResource resource(Path file, DetectedContentType type, boolean location,
+                                       BasicFileAttributes attributes) {
         String relative = relative(file);
         Map<String, String> metadata = new LinkedHashMap<String, String>();
         metadata.put("file.path", relative);

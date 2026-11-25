@@ -637,6 +637,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     @Override
+    public boolean visitInventory(String partitionKey, Runnable checkpoint,
+                                  java.util.function.Consumer<PageMetadata> found) {
+        if (restriction != null || scope != null
+                || !(port instanceof com.aresstack.enterpriseai.source.api.PartitionInventorySource inventory)) {
+            return false;
+        }
+        try {
+            inventory.visitInventory(partitionKey, checkpoint,
+                    resource -> found.accept(pageMetadata(resource, partitionKey)));
+            return true;
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+    }
+
+    @Override
     public PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit) {
         if (port instanceof SinglePartitionListingSource listing
                 && (scope == null || scope.startPoints().isEmpty())) {

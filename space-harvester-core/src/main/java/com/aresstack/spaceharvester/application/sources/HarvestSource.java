@@ -94,6 +94,12 @@ public interface HarvestSource {
      */
     PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit);
 
+    /** Visit a complete partition in one traversal, or return false without emitting anything to use cursor paging. */
+    default boolean visitInventory(String partitionKey, Runnable checkpoint,
+                                   java.util.function.Consumer<PageMetadata> found) {
+        return false;
+    }
+
     /**
      * Metadaten einer einzelnen Seite ohne Inhalt über ihre ID in der Quelle, unabhängig vom Space (eine verschobene
      * Seite behält ihre ID).

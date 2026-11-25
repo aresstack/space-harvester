@@ -61,6 +61,27 @@ class LocalFolderHierarchyTest {
     }
 
     @Test
+    void singlePassInventoryMatchesPagedMetadataAndChecksCancellationDuringTraversal() {
+        KnowledgeSourceHarvestSource source = open();
+        Map<String, PageMetadata> visited = new LinkedHashMap<>();
+        java.util.concurrent.atomic.AtomicInteger checkpoints = new java.util.concurrent.atomic.AtomicInteger();
+        assertThat(source.visitInventory("docs", checkpoints::incrementAndGet,
+                page -> {
+                    assertThat(visited.put(page.pageId(), page)).isNull();
+                })).isTrue();
+        assertThat(visited.keySet()).containsExactlyInAnyOrderElementsOf(list(source, 1).keySet());
+        visited.forEach((id, page) -> assertThat(page.attributes()).isEqualTo(source.pageMetadata(id).attributes()));
+        assertThat(checkpoints.get()).isGreaterThanOrEqualTo(6);
+
+        java.util.concurrent.atomic.AtomicInteger cancelled = new java.util.concurrent.atomic.AtomicInteger();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> source.visitInventory("docs", () -> {
+            if (cancelled.incrementAndGet() == 3) {
+                throw new java.util.concurrent.CancellationException();
+            }
+        }, page -> { })).isInstanceOf(java.util.concurrent.CancellationException.class);
+    }
+
+    @Test
     void aFolderIsMarkedAsFolderAndHasNoContent() {
         KnowledgeSourceHarvestSource source = open();
 
