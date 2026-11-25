@@ -699,6 +699,56 @@ class MainWindowTest {
     }
 
     @Test
+    void searchesAndDocumentVisitsShareOneChronologicalBackAndForwardHistory() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("alpha.md"), "# Alpha\n\nText.\n");
+        Files.writeString(files.resolve("beta.md"), "# Beta\n\nText.\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        String space = context.runtime().workspace().spaces("handbuch").get(0).key();
+        List<String> pages = context.runtime().workspace().liveMetadata("handbuch", space, null, 10).entries().stream()
+                .map(entry -> entry.page().pageId()).toList();
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            window.openPage("handbuch", pages.get(0));
+            window.openSearchTab();
+            window.search("Alpha");
+            window.search("Beta");
+            window.searchView().scope(List.of(new Explorer.Scope("handbuch", space)));
+            window.openPage("handbuch", pages.get(1));
+            AbstractButton back = (AbstractButton) arrows(surface).get(0);
+            assertThat(back.isEnabled()).isTrue();
+            back.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
+            assertThat(window.searchView().queryText()).isEqualTo("Beta");
+            assertThat(window.searchView().searchedScopes).containsExactly(new Explorer.Scope("handbuch", space));
+            back.doClick();
+            assertThat(window.searchView().queryText()).isEqualTo("Beta");
+            assertThat(window.searchView().searchedScopes).isEmpty();
+            back.doClick();
+            assertThat(window.searchView().queryText()).isEqualTo("Alpha");
+            back.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.CONTENT);
+            assertThat(arrows(surface)).containsExactly(back);
+        });
+    }
+
+    @Test
     void theSearchHeaderReturnsToTheLastOpenedDocumentEvenWithoutAnEarlierPage() throws Exception {
         Path files = Files.createDirectories(home.resolve("handbuch"));
         Files.writeString(files.resolve("alpha.md"), "# Alpha\n\nText.\n");
