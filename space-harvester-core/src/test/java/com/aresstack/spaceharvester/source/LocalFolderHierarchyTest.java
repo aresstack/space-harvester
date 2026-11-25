@@ -249,6 +249,25 @@ class LocalFolderHierarchyTest {
         assertThat(temporary).doesNotExist();
     }
 
+    @Test
+    void sameSizeModificationChangesTheContentRevisionInInventoryAndSingleRead() throws IOException {
+        KnowledgeSourceHarvestSource source = open();
+        Path file = directory.resolve("notiz.txt");
+        String pageId = id("notiz.txt");
+        PageMetadata previous = source.pageMetadata(pageId);
+        byte[] bytes = Files.readAllBytes(file);
+        bytes[0] = 'X';
+        Files.write(file, bytes);
+        Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.from(previous.modifiedAt().plusSeconds(5)));
+        PageMetadata current = source.pageMetadata(pageId);
+        assertThat(current.version()).isNotEqualTo(previous.version());
+        assertThat(current.version()).isEqualTo(list(source, 500).get(pageId).version());
+        assertThat(source.storedPage(pageId).metadata().version()).isEqualTo(current.version());
+        Map<String, PageMetadata> inventory = new LinkedHashMap<>();
+        source.visitInventory("docs", () -> { }, page -> inventory.put(page.pageId(), page));
+        assertThat(inventory.get(pageId).version()).isEqualTo(current.version());
+    }
+
     private Map<String, PageMetadata> list(KnowledgeSourceHarvestSource source, int limit) {
         Map<String, PageMetadata> pages = new LinkedHashMap<>();
         String cursor = null;

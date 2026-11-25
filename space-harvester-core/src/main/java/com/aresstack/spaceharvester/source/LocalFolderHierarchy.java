@@ -366,7 +366,12 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             attributes = attributes.with(PageMetadata.REMOTE_MEDIA, "true")
                     .with(PageMetadata.REMOTE_MEDIA_TYPE, videoType);
         }
-        KnowledgeResource.Builder builder = file.toBuilder().metadata(attributes);
+        // The upstream version is the file size; include the modification time to detect same-size edits.
+        KnowledgeRevision revision = file.revision();
+        String version = "local-file/v1:" + revision.version() + ":"
+                + revision.modifiedAt().map(Instant::toString).orElse("unknown");
+        KnowledgeResource.Builder builder = file.toBuilder().metadata(attributes)
+                .revision(KnowledgeRevision.of(revision.modifiedAt().orElse(null), version));
         String path = pathOf(file);
         String parent = path == null ? null : parentOf(path);
         if (parent != null) {
