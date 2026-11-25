@@ -10,7 +10,7 @@ import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
-import java.nio.charset.StandardCharsets;
+import com.aresstack.spaceharvester.application.enrichment.PageText;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -69,9 +69,9 @@ class ParityFilesTest {
                 .map(page -> page.header().metadata().attributes().get("file.path")).toList())
                 .containsExactlyInAnyOrder("docs", "docs/betrieb", "docs/betrieb/nacht", "docs/bilder", "daten");
         return pages.stream().filter(page -> !isFolder(page))
-                .collect(Collectors.toMap(this::path, page -> new String(harvester.pages()
-                .page(harvester.caller(), "parity", page.header().key().pageId(), false).snapshot().payload().bytes(),
-                StandardCharsets.UTF_8)));
+                .collect(Collectors.toMap(this::path, page -> harvester.pageText(harvester.pages()
+                .page(harvester.caller(), "parity", page.header().key().pageId(), false).snapshot())
+                .map(PageText::text).orElse("")));
     }
 
     private static boolean isFolder(ListedPage page) {
