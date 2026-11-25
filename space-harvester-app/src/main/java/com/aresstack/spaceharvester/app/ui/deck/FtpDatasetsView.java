@@ -117,6 +117,8 @@ final class FtpDatasetsView extends JPanel {
     private final IconButton sortButton = new IconButton(new DrawnIcon(true), "Sortieren …");
     private final IconButton detailsButton = new IconButton(Glyph.TABLE, "Details zeigen (Größe, Datum, RECFM/LRECL)");
     private final IconButton groupButton = new IconButton(new DrawnIcon(false), "Nach Endung gruppieren");
+    private final CobolAnalysisAreaSettings analysisSettings = new CobolAnalysisAreaSettings();
+    private final IconButton analysisHome = new IconButton(Glyph.GRAPH, "COBOL-Analysebereich konfigurieren");
     private final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Gruppen aufklappen");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Gruppen zuklappen");
     private EntryList.Sort sort = EntryList.Sort.NAME_ASC;
@@ -325,10 +327,11 @@ final class FtpDatasetsView extends JPanel {
         // dann Ressourcen, Callees/Caller, Gliederung des gezeigten Editors und in der Diagramm-Ansicht deren
         // Werkzeuge; unten die gemeinsame Fußleiste mit den Reitern. Unter der Arbeitsfläche rechts die Leiste mit der
         // Lupe (DeckBars.withFind); nichts steht rechts neben Quelltext oder Diagramm.
+        analysisHome.addActionListener(event -> configureAnalysisArea());
         sideBar = new EditorSideBar(new EditorSideBar.Home(SIDE_DATASETS, FilesIcons.folder(), "Datasets",
                 new com.aresstack.spaceharvester.app.ui.controls.SideHead(SIDE_DATASETS, filter)
                         .actions(sortButton, detailsButton, groupButton),
-                listArea, com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll)),
+                listArea, com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll, analysisHome)),
                 List.of(), AppState.shared().get(SIDE_TAB_KEY),
                 name -> AppState.shared().put(SIDE_TAB_KEY, name));
         javax.swing.JComponent side = sideBar;
@@ -953,7 +956,72 @@ final class FtpDatasetsView extends JPanel {
         return chosen;
     }
 
+    java.util.Optional<com.aresstack.spaceharvester.deck.ftp.CobolAnalysisArea> analysisArea() {
+        return analysisSettings.load(owner.session());
+    }
+
+    void setAnalysisHome(String home) {
+        analysisSettings.save(owner.session(), home);
+        refreshAnalysisHome();
+    }
+
+    private void refreshAnalysisHome() {
+        boolean available = connected && CobolAnalysisAreaSettings.available(owner.session());
+        analysisHome.setEnabled(available);
+        analysisHome.setVisible(owner.session().mvs());
+        if (!available) {
+            analysisHome.setToolTipText("COBOL-Analysebereich: keine aktive MVS-Verbindung");
+            analysisHome.marked(false);
+            return;
+        }
+        try {
+            var area = analysisArea();
+            analysisHome.marked(area.isPresent());
+            analysisHome.setToolTipText(area.map(value -> "COBOL-Home: " + value.absoluteHome())
+                    .orElse("COBOL-Analysebereich konfigurieren (noch kein Home)"));
+        } catch (IllegalArgumentException invalid) {
+            analysisHome.marked(false);
+            analysisHome.setToolTipText("COBOL-Analysebereich: gespeichertes Home ungültig");
+        }
+    }
+
+    private void configureAnalysisArea() {
+        if (!CobolAnalysisAreaSettings.available(owner.session())) {
+            return;
+        }
+        var home = new PlaceholderField(30, "HLQ.COBOL");
+        try {
+            analysisArea().ifPresent(area -> home.setText(area.absoluteHome()));
+        } catch (IllegalArgumentException invalid) {
+            // Allow the user to replace invalid stored settings.
+        }
+        JPanel fields = new JPanel();
+        fields.setOpaque(false);
+        fields.setLayout(new javax.swing.BoxLayout(fields, javax.swing.BoxLayout.Y_AXIS));
+        fields.add(Comic.caption("COBOL-Home (Dataset oder Präfix; leer = deaktiviert)"));
+        fields.add(home);
+        var useCurrent = Comic.button("Aktuellen Pfad übernehmen", null);
+        useCurrent.setEnabled(!current.isBlank() && !MvsPath.ROOT.equals(current));
+        useCurrent.addActionListener(event -> home.setText(current));
+        fields.add(useCurrent);
+        String libraries = String.join(", ", owner.session().profile().syslib());
+        fields.add(Comic.note("SYSLIB aus dem FTP-Verbindungsprofil: "
+                + (libraries.isEmpty() ? "nicht konfiguriert" : libraries)));
+        fields.add(Comic.note("Nur lokale Konfiguration. Es werden keine Programme geladen oder verändert."));
+        while (Dialogs.formOverlay(this, "COBOL-Analysebereich", fields, "Speichern")) {
+            try {
+                setAnalysisHome(home.getText());
+                owner.status(analysisArea().map(area -> "COBOL-Home: " + area.absoluteHome())
+                        .orElse("COBOL-Analysebereich deaktiviert"), false);
+                return;
+            } catch (IllegalArgumentException | IllegalStateException invalid) {
+                Dialogs.view(this, "COBOL-Analysebereich", Comic.note(invalid.getMessage()));
+            }
+        }
+    }
+
     private void enableActions() {
+        refreshAnalysisHome();
         RemoteEntry entry = selected();
         if (diagnosis != null && (!connected || entry == null || selectedAll().size() != 1
                 || !diagnosis.path().equals(entry.path()))) revokeDiagnosis();

@@ -65,7 +65,7 @@ public record FtpProfile(String host, int port, String encoding, int connectTime
                 transfer, retry, startHlq, spoolNaming, useProxy, libraries);
     }
 
-    private static java.util.List<String> normalizeSyslib(java.util.List<String> libraries) {
+    static java.util.List<String> normalizeSyslib(java.util.List<String> libraries) {
         if (libraries == null) {
             return java.util.List.of();
         }

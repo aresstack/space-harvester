@@ -262,6 +262,20 @@ class FtpWorkspaceTest {
             assertThat(onEdt(() -> datasets.shown().stream().map(RemoteEntry::name).toList()))
                     .containsExactly("DATA", "JCL", "SRC");
 
+            // Configure the analysis boundary without issuing any FTP requests.
+            var commandsBefore = List.copyOf(host.commands());
+            try {
+                SwingUtilities.invokeAndWait(() -> datasets.setAnalysisHome("'KKR.SRC'"));
+                assertThat(onEdt(datasets::analysisArea).orElseThrow().home()).isEqualTo("KKR.SRC");
+                assertThat(onEdt(datasets::current)).isEqualTo("'KKR'");
+                assertThat(host.commands()).containsExactlyElementsOf(commandsBefore);
+                assertThat(new CobolAnalysisAreaSettings().load(session).orElseThrow().home()).isEqualTo("KKR.SRC");
+            } finally {
+                SwingUtilities.invokeAndWait(() -> datasets.setAnalysisHome(""));
+            }
+            assertThat(onEdt(datasets::analysisArea)).isEmpty();
+            assertThat(host.commands()).containsExactlyElementsOf(commandsBefore);
+
             // Wie MainframeMate: sortieren, Detail-Spalten, Filter mit roter Warnung.
             SwingUtilities.invokeAndWait(() -> datasets.sort(EntryList.Sort.NAME_DESC));
             assertThat(onEdt(() -> datasets.shown().stream().map(RemoteEntry::name).toList()))
