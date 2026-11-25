@@ -115,7 +115,7 @@ class MediaWikiNetworkTest {
     @Test
     void requestsGoThroughTheProxyThePacScriptChoosesForTheWiki() {
         assertThat(titles(source(plain.apiUrl("wiki.proxied.test"), null, null)))
-                .containsExactly("Betrieb", "Hauptseite");
+                .containsExactly("Hauptseite", "Betrieb");
 
         assertThat(proxy.requestLines()).isNotEmpty().allSatisfy(line ->
                 assertThat(line).startsWith("GET http://wiki.proxied.test:"));

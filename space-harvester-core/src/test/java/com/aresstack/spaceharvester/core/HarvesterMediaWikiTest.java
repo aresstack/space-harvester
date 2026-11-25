@@ -131,6 +131,26 @@ class HarvesterMediaWikiTest {
             String article = new String(harvester.pages().page(harvester.caller(), "wiki", id("Verwaist"), false)
                     .snapshot().payload().bytes(), StandardCharsets.UTF_8);
             assertThat(article).contains("Nicht verlinkter Artikel");
+            var reading = harvester.readingViews().view(harvester.caller(), "wiki", id("Hauptseite"), false);
+            assertThat(reading.status()).isEqualTo(
+                    com.aresstack.spaceharvester.application.reading.ReadingView.Status.AVAILABLE);
+            assertThat(reading.html()).contains("<b>Betriebshandbuch</b>");
+        }
+    }
+
+    @Test
+    void explicitCrawlScopeRestrictsSyncButNeverNavigation() throws Exception {
+        try (Harvester harvester = Harvester.builder().source(wikiSource(Auth.anonymous(),
+                Map.of("maxDepth", "0", "maxResources", "1"))).dataDirectory(data).build()) {
+            JobStatus sync = harvester.await(harvester.sync("wiki", "wiki").id(), Duration.ofSeconds(30));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "wiki", null, 100).pages())
+                    .extracting(page -> page.header().metadata().title()).containsExactly("Hauptseite");
+            assertThat(front.queries()).noneSatisfy(query -> assertThat(query).contains("list=allpages"));
+            PageNavigation.Children root = harvester.navigation().children(harvester.caller(), "wiki", "wiki", null, null);
+            PageNavigation.Children all = harvester.navigation().children(harvester.caller(), "wiki", "wiki",
+                    root.pages().get(1).pageId(), null);
+            assertThat(all.pages()).extracting(PageNode::title).contains("Verwaist", "Betrieb");
         }
     }
 
@@ -150,7 +170,7 @@ class HarvesterMediaWikiTest {
             // Katalog und Cache: die Startseite und was bis Tiefe 2 verlinkt ist, mit Titeln aus dem Wiki.
             List<ListedPage> pages = harvester.pages().pages(harvester.caller(), "wiki", "wiki", null, 100).pages();
             assertThat(pages).extracting(page -> page.header().metadata().title())
-                    .containsExactlyInAnyOrder("Hauptseite", "Betrieb", "Urlaub", "Tresorraum", "Verwaist");
+                    .containsExactlyInAnyOrder("Hauptseite", "Betrieb", "Urlaub", "Tresorraum");
             assertThat(pages).extracting(page -> page.header().key().pageId())
                     .contains(id("Betrieb"), id("Hauptseite"));
             String betrieb = new String(harvester.pages().page(harvester.caller(), "wiki", id("Betrieb"), false)
@@ -166,7 +186,7 @@ class HarvesterMediaWikiTest {
             JobStatus export = harvester.await(harvester.export("wiki", "wiki", List.of("markdown")).id(),
                     Duration.ofSeconds(30));
             assertThat(export.state()).isEqualTo(JobState.COMPLETED);
-            assertThat(export.progress().written()).isEqualTo(5);
+            assertThat(export.progress().written()).isEqualTo(4);
             ExportArtifact artifact = harvester.exportArtifact(export.id()).orElseThrow();
             ExportArtifact.File markdown = artifact.files().stream().filter(file -> file.name().endsWith(".md"))
                     .findFirst().orElseThrow();
@@ -192,7 +212,7 @@ class HarvesterMediaWikiTest {
             JobStatus sync = harvester.await(harvester.sync("wiki", "wiki").id(), Duration.ofSeconds(30));
 
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
-            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "wiki", null, 100).pages()).hasSize(5);
+            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "wiki", null, 100).pages()).hasSize(4);
         }
         assertThat(wiki.logins).isPositive();
         assertThat(output.getAll()).doesNotContain("bot-geheim-4711").doesNotContain("Tresorraum");
@@ -244,12 +264,12 @@ class HarvesterMediaWikiTest {
             // Stand ohne sie und meldet sie als nicht abgeglichen, wie jede Seite, die die Quelle nicht liefert.
             assertThat(sync.state()).isEqualTo(JobState.FAILED);
             assertThat(sync.error().code()).isEqualTo("SYNC_PARTIAL");
-            assertThat(sync.progress().written()).isEqualTo(4);
+            assertThat(sync.progress().written()).isEqualTo(3);
             assertThat(sync.progress().failed()).isEqualTo(1);
 
             assertThat(harvester.pages().pages(harvester.caller(), "wiki", "wiki", null, 100).pages())
                     .extracting(page -> page.header().metadata().title())
-                    .containsExactlyInAnyOrder("Hauptseite", "Betrieb", "Urlaub", "Verwaist");
+                    .containsExactlyInAnyOrder("Hauptseite", "Betrieb", "Urlaub");
             assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Zahlenkombination"),
                     null, 10).hits()).isEmpty();
             assertThatThrownBy(() -> harvester.pages().page(harvester.caller(), "wiki", id("Tresorraum"), false))
@@ -266,7 +286,7 @@ class HarvesterMediaWikiTest {
             harvester.await(harvester.sync("wiki", "wiki").id(), Duration.ofSeconds(30));
 
             assertThat(harvester.pages().pages(harvester.caller(), "wiki", "wiki", null, 100).pages())
-                    .extracting(page -> page.header().key().pageId()).doesNotContain(hidden).hasSize(4);
+                    .extracting(page -> page.header().key().pageId()).doesNotContain(hidden).hasSize(3);
             assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Urlaubsplanung"),
                     null, 10).hits()).isEmpty();
         }

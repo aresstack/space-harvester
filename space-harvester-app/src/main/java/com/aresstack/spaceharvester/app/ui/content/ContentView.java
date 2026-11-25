@@ -268,8 +268,12 @@ public final class ContentView implements View {
         if (position != null && source.equals(position.sourceId()) && Objects.equals(space, position.spaceKey())) {
             for (HarvestSource.PageNode ancestor : position.ancestors()) {
                 String pageId = ancestor.pageId();
-                parts.add(new LocationBar.Part(Breadcrumbs.title(ancestor), "Seite öffnen und im Baum zeigen",
-                        () -> open(source, pageId)));
+                if (ancestor.kind() == HarvestSource.PageNode.Kind.GROUP) {
+                    parts.add(new LocationBar.Part(Breadcrumbs.title(ancestor), null, null));
+                } else {
+                    parts.add(new LocationBar.Part(Breadcrumbs.title(ancestor), "Seite öffnen und im Baum zeigen",
+                            () -> open(source, pageId)));
+                }
             }
         }
         crumbs.show(parts);

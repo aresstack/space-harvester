@@ -21,6 +21,7 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
     boolean readOnly;
     public String mainPage = "Hauptseite";
     public int inventoryPageSize = 50;
+    public final Map<Integer, List<String>> namespaceTitles = new LinkedHashMap<Integer, List<String>>();
     public final Map<String, List<String>> categories = new LinkedHashMap<String, List<String>>();
     final List<String> unavailableLinksFor = new ArrayList<String>();
     int linkPageSize = 500;
@@ -83,11 +84,17 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
             return ok("{\"error\":{\"code\":\"readapidenied\",\"info\":\"You need read permission.\"}}");
         }
         if ("query".equals(action) && "siteinfo".equals(p.get("meta"))) {
+            StringBuilder namespaces = new StringBuilder();
+            for (Integer id : namespaceTitles.keySet()) {
+                append(namespaces, q(id.toString()) + ":{\"id\":" + id + ",\"content\":\"\"}");
+            }
             return ok("{\"query\":{\"general\":{\"mainpage\":" + q(mainPage)
-                    + ",\"sitename\":\"Test Wiki\"}}}");
+                    + ",\"sitename\":\"Test Wiki\"},\"namespaces\":{" + namespaces + "}}}");
         }
         if ("query".equals(action) && "allpages".equals(p.get("list"))) {
-            List<String> titles = new ArrayList<String>(pages.keySet());
+            int namespace = Integer.parseInt(p.get("apnamespace"));
+            List<String> titles = new ArrayList<String>(namespaceTitles.isEmpty() && namespace == 0
+                    ? pages.keySet() : namespaceTitles.getOrDefault(namespace, java.util.Collections.<String>emptyList()));
             java.util.Collections.sort(titles);
             return ok(titleListing("allpages", "title", "apcontinue", p, titles, "aplimit"));
         }

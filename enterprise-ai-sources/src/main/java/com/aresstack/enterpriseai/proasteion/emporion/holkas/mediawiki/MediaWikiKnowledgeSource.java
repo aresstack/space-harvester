@@ -16,6 +16,8 @@ import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.PageNavigationSource;
+import com.aresstack.enterpriseai.source.api.PageViewSource;
+import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.NavigationNode;
 import com.aresstack.enterpriseai.source.api.NavigationChildren;
 import com.aresstack.enterpriseai.source.api.PagePosition;
@@ -57,7 +59,7 @@ import java.util.Map;
  * diese Parameter bleibt für die JVM-Standards erhalten.
  */
 public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource, SourceConnectionVerifier,
-        SinglePartitionListingSource, ResourceMetadataSource, PageNavigationSource {
+        SinglePartitionListingSource, ResourceMetadataSource, PageNavigationSource, PageViewSource {
 
     static final String CONTENT_TYPE = "text/html";
 
@@ -232,6 +234,19 @@ public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource
             throw new KnowledgeSourceException(Kind.NOT_FOUND, "MediaWiki main page not found");
         }
         return resources;
+    }
+
+    @Override
+    public PageView pageView(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+        WikiPageInfo info = existingPage(resourceId);
+        URI pageLocation = location(info.fullUrl());
+        String base = pageLocation == null ? site.apiEndpoint() : pageLocation.toString();
+        return WikiReadingView.of(client.parse(info.title()).html(), base);
+    }
+
+    @Override
+    public byte[] loadViewImage(String src) throws KnowledgeSourceException {
+        throw new KnowledgeSourceException(Kind.UNSUPPORTED, "MediaWiki image transport not supported");
     }
 
     @Override

@@ -28,6 +28,18 @@ public class MediaWikiInventoryNavigationTest {
     }
 
     @Test
+    public void emptyContentNamespacesDoNotCreateEmptyContinuationBatches() throws Exception {
+        wiki.page("Hauptseite", "<p>Start</p>", 1, 1);
+        wiki.namespaceTitles.put(0, java.util.Collections.<String>emptyList());
+        wiki.namespaceTitles.put(100, Arrays.asList("Hauptseite"));
+        wiki.namespaceTitles.put(102, java.util.Collections.<String>emptyList());
+        PartitionResources only = source.resources(source.partitionKey(), "", 100);
+        assertTrue(only.complete());
+        assertEquals(1, only.resources().size());
+        assertEquals("Hauptseite", only.resources().get(0).title());
+    }
+
+    @Test
     public void inventoryFindsUnlinkedPagesAcrossContinuationWithoutLoadingContents() throws Exception {
         wiki.page("Hauptseite", "<p>Start</p>", 1, 1, "B");
         wiki.page("B", "<p>Linked</p>", 2, 2);
@@ -47,6 +59,21 @@ public class MediaWikiInventoryNavigationTest {
         assertFalse(wiki.requests.stream().anyMatch(p -> "parse".equals(p.get("action"))));
         assertFalse(wiki.requests.stream().anyMatch(p -> "links".equals(p.get("prop"))));
         assertTrue(wiki.requests.stream().anyMatch(p -> "-||".equals(p.get("continue"))));
+    }
+
+    @Test
+    public void renderedHtmlIsAvailableWithoutActiveContent() throws Exception {
+        wiki.page("Hauptseite", "<h2>Abschnitt</h2><p>Text <b>fett</b></p>"
+                + "<script>alert(1)</script><img src='https://other.example/pixel' alt='Bild'>"
+                + "<a href='javascript:alert(1)'>Link</a><p onclick='alert(1)'>Klick</p>", 1, 1);
+        String html = source.pageView(source.children(
+                NavigationNode.root("space:wiki", "Wiki", "", NavigationNode.Children.YES), "")
+                .nodes().get(0).resource()).html();
+        assertTrue(html.contains("<h2>Abschnitt</h2>"));
+        assertTrue(html.contains("<b>fett</b>"));
+        assertTrue(html.contains("Bild"));
+        assertFalse(html.contains("alert("));
+        assertFalse(html.contains("<img"));
     }
 
     @Test

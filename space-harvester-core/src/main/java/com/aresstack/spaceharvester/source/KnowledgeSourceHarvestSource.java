@@ -638,7 +638,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit) {
-        if (port instanceof SinglePartitionListingSource listing) {
+        if (port instanceof SinglePartitionListingSource listing
+                && (scope == null || scope.startPoints().isEmpty())) {
             if (!id.equals(partitionKey)) {
                 throw new SourceAccessException(id, SourceAccessException.Reason.NOT_FOUND, "Unbekannte Partition", null);
             }

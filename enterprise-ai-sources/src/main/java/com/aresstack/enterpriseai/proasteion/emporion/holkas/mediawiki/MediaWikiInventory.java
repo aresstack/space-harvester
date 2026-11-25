@@ -23,14 +23,42 @@ final class MediaWikiInventory {
         if (position.index >= namespaces.size()) {
             throw invalidCursor();
         }
-        MediaWikiTitleBatch batch = client.allPages(namespaces.get(position.index),
-                Math.max(1, Math.min(BATCH_SIZE, limit)), position.token);
-        String next = !batch.continuation.isEmpty() ? encode(key, position.index, batch.continuation)
-                : position.index + 1 < namespaces.size() ? encode(key, position.index + 1, "") : "";
-        if (!next.isEmpty() && next.equals(cursor)) {
+        int batchSize = Math.max(1, Math.min(BATCH_SIZE, limit));
+        while (position.index < namespaces.size()) {
+            MediaWikiTitleBatch batch = client.allPages(namespaces.get(position.index), batchSize, position.token);
+            Cursor next = advance(position, batch);
+            if (!batch.titles.isEmpty()) {
+                // Avoid a continuation node that only leads to empty namespaces.
+                Cursor remaining = firstNonEmptyNamespace(namespaces, next);
+                return new Batch(batch.titles, remaining == null ? "" : encode(key, remaining.index, remaining.token));
+            }
+            position = next;
+        }
+        return new Batch(java.util.Collections.<String>emptyList(), "");
+    }
+
+    private Cursor advance(Cursor current, MediaWikiTitleBatch batch) throws KnowledgeSourceException {
+        if (batch.continuation.isEmpty()) {
+            return new Cursor(current.index + 1, "");
+        }
+        if (batch.continuation.equals(current.token)) {
             throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "MediaWiki inventory did not advance");
         }
-        return new Batch(batch.titles, next);
+        return new Cursor(current.index, batch.continuation);
+    }
+
+    private Cursor firstNonEmptyNamespace(List<Integer> namespaces, Cursor position) throws KnowledgeSourceException {
+        if (!position.token.isEmpty()) {
+            return position;
+        }
+        while (position.index < namespaces.size()) {
+            MediaWikiTitleBatch probe = client.allPages(namespaces.get(position.index), 1, position.token);
+            if (!probe.titles.isEmpty()) {
+                return position;
+            }
+            position = advance(position, probe);
+        }
+        return null;
     }
 
     Batch categories(String cursor) throws KnowledgeSourceException {
