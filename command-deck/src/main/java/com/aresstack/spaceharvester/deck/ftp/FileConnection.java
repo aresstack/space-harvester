@@ -49,6 +49,21 @@ public interface FileConnection extends AutoCloseable {
     /** Liest Bytes ohne Umwandlung. */
     byte[] readBinary(String path) throws IOException;
 
+    /** Capture a bounded prefix without text conversion; report size and hash of the completed transfer. */
+    default BinarySample readBinarySample(String path, int limit) throws IOException {
+        throw new IOException("Binärdiagnose wird von dieser Verbindung nicht unterstützt.");
+    }
+
+    /** Stream original transfer bytes to the caller-owned output without closing it. */
+    default void downloadBinary(String path, java.io.OutputStream output) throws IOException {
+        throw new IOException("Binärdownload wird von dieser Verbindung nicht unterstützt.");
+    }
+
+    /** Read the DCB metadata if the server exposes it. */
+    default RemoteEntry.Details datasetDetails(String path) throws IOException {
+        return RemoteEntry.Details.NONE;
+    }
+
     /** Schreibt Text; auf MVS mit Satzstruktur wird jede Zeile ein Satz. */
     void write(String path, String text) throws IOException;
 
@@ -76,6 +91,7 @@ public interface FileConnection extends AutoCloseable {
     default RemoteFile writeIfUnchanged(String path, String text, String expectedHash) throws IOException {
         if (expectedHash != null && !expectedHash.isEmpty()) {
             RemoteFile current = read(path);
+            if (!current.writeRestriction().isEmpty()) throw new IOException(current.writeRestriction());
             if (!current.hash().equals(expectedHash)) {
                 throw new WriteConflictException(current);
             }

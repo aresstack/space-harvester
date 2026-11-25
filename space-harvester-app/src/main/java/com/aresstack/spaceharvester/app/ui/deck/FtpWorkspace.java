@@ -298,6 +298,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
 
     /** Zeigt die Sitzung (oder mit {@code null} das Formular „Neue Verbindung“). */
     void select(FtpSession session) {
+        if (selected != session && activeSessionView() != null) activeSessionView().datasets().revokeDiagnosis();
         chatGeneration++;
         selected = session;
         ComposerToggleButton pill = session == null ? newPill : pillOf.get(session);
