@@ -477,6 +477,77 @@ class LocalFolderHierarchyTest {
         }
     }
 
+    @Test
+    void readerCombinesSectionAnalysesAtExactOffsetsAndKeepsResolvablePassageIds() throws IOException {
+        Files.writeString(directory.resolve("notiz.txt"),
+                "API (Application Programming Interface).\n" + "A normal sentence.\n".repeat(3000)
+                        + "XML (Extensible Markup Language).");
+        var source = open();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(1, 2048), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS);
+        var strategy = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), strategy);
+        var current = new java.util.concurrent.atomic.AtomicReference<>(snapshots.fetch("docs", id("notiz.txt")));
+        var results = new com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore();
+        var acronymProcessor = new com.aresstack.spaceharvester.application.enrichment.AcronymProcessor();
+        var navigation = new com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder();
+        var rules = KnowledgeTextSegmentation.defaults();
+        var passageProcessor = new com.aresstack.spaceharvester.application.passages.PassageProcessor(
+                com.aresstack.spaceharvester.application.passages.SentenceSegmenter.splitter(rules), rules, null);
+        var navigationProcessor = new com.aresstack.spaceharvester.application.passages.NavigationProcessor(
+                navigation, null, results::find, results::find, null);
+        var termProcessor = new com.aresstack.spaceharvester.application.enrichment.language.TermProcessor(acronymProcessor);
+        var reader = new com.aresstack.spaceharvester.application.enrichment.LocalReadingText(documents);
+        var enrichments = new com.aresstack.spaceharvester.application.enrichment.Enrichments(
+                new LocalReferenceTextProjector(reader),
+                List.of(acronymProcessor, termProcessor, passageProcessor, navigationProcessor),
+                results, java.time.Clock.systemUTC());
+        var views = new com.aresstack.spaceharvester.application.enrichment.LocalReaderAnalyses(reader, enrichments, navigation);
+        try (var analyses = new com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments(
+                enrichments, null, () -> true)) {
+            analyses.localDocuments(key -> java.util.Optional.of(current.get()).filter(page -> page.key().equals(key)),
+                    documents);
+            assertThat(reader.read(current.get()).orElseThrow().slices()).hasSizeGreaterThan(1);
+            assertThat(analyses.hasCurrentLocalAnalysis(current.get(), "passages")).isFalse();
+            assertThat(analyses.prepareLocal(current.get(), "passages")).isTrue();
+            assertThat(analyses.hasCurrentLocalAnalysis(current.get(), "passages")).isTrue();
+            var view = views.read(current.get()).orElseThrow();
+            assertThat(view.acronyms().state().name()).isEqualTo("CURRENT");
+            assertThat(view.terms().state().name()).isEqualTo("CURRENT");
+            assertThat(view.passages().state().name()).isEqualTo("CURRENT");
+            assertThat(view.navigation().state().name()).isEqualTo("CURRENT");
+            assertThat(view.acronyms().acronyms()).extracting(a -> a.acronym()).contains("API", "XML");
+            for (var acronym : view.acronyms().acronyms()) {
+                for (var occurrence : acronym.occurrences()) {
+                    assertThat(view.text().text().substring(occurrence.start(), occurrence.end()))
+                            .startsWith(acronym.acronym());
+                }
+            }
+            var last = view.passages().passages().getLast();
+            assertThat(last.text()).contains("XML");
+            assertThat(view.text().text().substring(last.start(), last.end())).isEqualTo(last.text());
+            assertThat(last.id()).contains("~local-original");
+            var resolved = com.aresstack.spaceharvester.application.passages.DocumentPassages.resolve(
+                    com.aresstack.spaceharvester.application.passages.PassageId.parse(last.id()),
+                    results.findDocuments(current.get().key()), analyses::sectionText, 1);
+            assertThat(resolved.match().name()).isEqualTo("FOUND");
+            assertThat(resolved.passages()).anyMatch(passage -> passage.id().equals(last.id())
+                    && passage.text().equals(last.text()));
+            assertThat(results.find(current.get().key())).isEmpty();
+            Files.writeString(directory.resolve("notiz.txt"), "A completely different text.");
+            current.set(snapshots.fetch("docs", id("notiz.txt")));
+            assertThat(analyses.hasCurrentLocalAnalysis(current.get(), "passages")).isFalse();
+            var stale = views.read(current.get()).orElseThrow();
+            assertThat(stale.passages().passages()).isEmpty();
+            assertThat(stale.acronyms().acronyms()).isEmpty();
+        }
+    }
+
     private static com.aresstack.spaceharvester.application.sources.SourceCatalog catalog(HarvestSource source) {
         return new com.aresstack.spaceharvester.application.sources.SourceCatalog() {
             @Override
