@@ -73,6 +73,25 @@ class ParitySharePointTest {
         }
     }
 
+    @Test
+    void downloadsLargeOriginalThroughHarvesterWithoutCache() throws Exception {
+        byte[] bytes = new byte[11 * 1024 * 1024];
+        java.util.Arrays.fill(bytes, (byte) 'x');
+        String path = ParitySharePoint.LIBRARY + "/Large.txt";
+        try (ParitySharePoint site = ParitySharePoint.withFile(path, bytes);
+             Harvester harvester = harvester(site)) {
+            var library = harvester.navigation().children(harvester.caller(), "parity", "parity", null, null).pages().get(0);
+            var file = harvester.navigation().children(harvester.caller(), "parity", "parity", library.pageId(), null)
+                    .pages().stream().filter(node -> "Large.txt".equals(node.title())).findFirst().orElseThrow();
+            var metadata = harvester.sources().pageMetadata("parity", file.pageId()).entry().page();
+            Path target = data.resolve("large-original.txt");
+            harvester.snapshots().downloadOriginal("parity", metadata, target);
+            assertThat(java.nio.file.Files.size(target)).isEqualTo(bytes.length);
+            assertThat(java.nio.file.Files.readAllBytes(target)).isEqualTo(bytes);
+            assertThat(harvester.snapshots().original("parity", metadata)).isEqualTo(bytes);
+        }
+    }
+
     private Harvester harvester(ParitySharePoint server) {
         return harvester(server, ParitySharePoint.DEPTH);
     }

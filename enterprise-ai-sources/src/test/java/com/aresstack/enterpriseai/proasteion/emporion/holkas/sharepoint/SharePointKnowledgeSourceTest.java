@@ -155,6 +155,18 @@ public class SharePointKnowledgeSourceTest {
     }
 
     @Test
+    public void usesResourcePathForSpecialNames() throws Exception {
+        SharePointKnowledgeSource source = source();
+        String path = "/sites/team/Dokumente/100% + #.txt";
+        String id = source.localId(KnowledgeResourceId.of("sharepoint:sp.example.test" + path));
+        String endpoint = API + "GetFileByServerRelativePath(decodedurl=@p)?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel&@p="
+                + SharePointKnowledgeSource.odataString(path);
+        json.put(endpoint, "{\"d\":" + file(path, 5) + "}");
+        assertEquals("100% + #.txt", source.resourceMetadata(id).title());
+        assertTrue(requestedUris.contains(endpoint));
+    }
+
+    @Test
     public void kqlUsesSeparateTermsAndDecodedLibraryPaths() throws Exception {
         com.aresstack.enterpriseai.source.api.SourceQuery query =
                 new com.aresstack.enterpriseai.source.api.SourceQuery("Vertrag 2026", 10);
@@ -172,7 +184,7 @@ public class SharePointKnowledgeSourceTest {
                 path -> URI.create("https://sp.example.test" + path));
         String endpoint = SITE + "/_api/search/query?querytext=" + SharePointKnowledgeSource.odataString(kql)
                 + "&rowlimit=3&startrow=0&trimduplicates=false&selectproperties='Path,Filename,Title,LastModifiedTime,IsDocument'";
-        json.put(endpoint, searchRows("https://sp.example.test/sites/team/Dokumente/test file.txt",
+        json.put(endpoint, searchRows("https://sp.example.test/sites/team/Dokumente/test file.txt?d=w123",
                 "https://sp.example.test/sites/team/Intern/test.txt", "https://other.example.test/sites/team/Dokumente/test.txt"));
         json.put(endpoint.replace("rowlimit=3&startrow=0", "rowlimit=2&startrow=3"), searchRows());
         java.util.List<com.aresstack.enterpriseai.source.api.SourceSearchHit> hits = source.search(query);

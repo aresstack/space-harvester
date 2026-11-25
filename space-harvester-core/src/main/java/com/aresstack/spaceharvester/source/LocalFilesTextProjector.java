@@ -98,8 +98,11 @@ public final class LocalFilesTextProjector implements PageTextProjector {
 
     private static boolean textual(String mediaType) {
         String type = base(mediaType);
-        return type.startsWith("text/") || type.equals("application/json") || type.equals("application/xml")
-                || type.endsWith("+json") || type.endsWith("+xml");
+        return (type.startsWith("text/") && !type.equals("text/html")) || type.equals("application/json") || type.equals("application/xml")
+                || type.endsWith("+json") || (type.endsWith("+xml") && !type.equals("application/xhtml+xml"))
+                || type.equals("application/sql") || type.equals("application/javascript")
+                || type.equals("application/x-javascript") || type.equals("application/yaml")
+                || type.equals("application/x-yaml") || type.equals("application/toml");
     }
 
     /** Ob eine Datei dieses Typs lesbaren Text hat: Textdateien und Dokumente; Bilder, Medien, Archive nicht. */
@@ -110,7 +113,7 @@ public final class LocalFilesTextProjector implements PageTextProjector {
     /** Dokumentformate, aus denen die Extraktion Text liest; Bilder, Audio, Video und Unbekanntes nicht. */
     private static boolean document(String mediaType) {
         String type = base(mediaType);
-        return type.equals("application/onenote") || type.equals("application/pdf") || type.equals("application/rtf")
+        return type.equals("text/html") || type.equals("application/xhtml+xml") || type.equals("application/onenote") || type.equals("application/pdf") || type.equals("application/rtf")
                 || type.equals("application/msword")
                 || type.startsWith("application/vnd.openxmlformats-officedocument.")
                 || type.startsWith("application/vnd.ms-") || type.startsWith("application/vnd.oasis.opendocument.")

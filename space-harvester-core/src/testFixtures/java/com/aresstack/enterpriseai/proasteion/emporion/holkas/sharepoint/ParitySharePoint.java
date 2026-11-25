@@ -70,8 +70,14 @@ public final class ParitySharePoint implements AutoCloseable {
     }
 
     private final HttpServer server;
+    private final Map<String, byte[]> documents;
 
     private ParitySharePoint(int port) throws IOException {
+        this(port, FILES);
+    }
+
+    private ParitySharePoint(int port, Map<String, byte[]> documents) throws IOException {
+        this.documents = documents;
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 0);
         server.createContext(SITE_PATH + "/_api/web", this::handle);
         server.createContext(SITE_PATH + "/_api/search/query", this::search);
@@ -91,6 +97,12 @@ public final class ParitySharePoint implements AutoCloseable {
     /** Adresse der Site für {@code options.siteUrl}, z. B. {@code http://127.0.0.1:4711/sites/parity}. */
     public String siteUrl() {
         return "http://127.0.0.1:" + port() + SITE_PATH;
+    }
+
+    public static ParitySharePoint withFile(String path, byte[] bytes) throws IOException {
+        Map<String, byte[]> documents = new LinkedHashMap<String, byte[]>(FILES);
+        documents.put(path, bytes);
+        return new ParitySharePoint(0, documents);
     }
 
     public int port() {
@@ -151,11 +163,11 @@ public final class ParitySharePoint implements AutoCloseable {
         }
     }
 
-    private static void folder(HttpExchange exchange, String path, boolean files) throws IOException {
+    private void folder(HttpExchange exchange, String path, boolean files) throws IOException {
         String prefix = path + "/";
         TreeSet<String> names = new TreeSet<String>();
         boolean exists = false;
-        for (String file : FILES.keySet()) {
+        for (String file : documents.keySet()) {
             if (!file.startsWith(prefix)) {
                 continue;
             }
@@ -181,8 +193,8 @@ public final class ParitySharePoint implements AutoCloseable {
         json(exchange, "{\"d\":{\"results\":[" + results + "]}}");
     }
 
-    private static void file(HttpExchange exchange, String path, boolean content) throws IOException {
-        byte[] bytes = FILES.get(path);
+    private void file(HttpExchange exchange, String path, boolean content) throws IOException {
+        byte[] bytes = documents.get(path);
         if (bytes == null) {
             send(exchange, 404, "application/json", new byte[0]);
         } else if (content) {
@@ -192,9 +204,9 @@ public final class ParitySharePoint implements AutoCloseable {
         }
     }
 
-    private static String metadata(String path) {
+    private String metadata(String path) {
         return "{\"Name\":\"" + path.substring(path.lastIndexOf('/') + 1) + "\",\"ServerRelativeUrl\":\"" + path
-                + "\",\"TimeLastModified\":\"" + TIME + "\",\"Length\":\"" + FILES.get(path).length
+                + "\",\"TimeLastModified\":\"" + TIME + "\",\"Length\":\"" + documents.get(path).length
                 + "\",\"UIVersionLabel\":\"3.0\"}";
     }
 

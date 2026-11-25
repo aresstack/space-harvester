@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -41,6 +42,20 @@ class LocalFilesTextProjectorTest {
         assertThat(pdf).map(PageText::schema).contains(LocalFilesTextProjector.DOCUMENT_SCHEMA);
         assertThat(pdf.orElseThrow().text()).contains("Baustellenplan Ostflügel");
         assertThat(pptx.orElseThrow().text()).contains("Strategie Folie");
+    }
+
+    @Test
+    void htmlUsesVisibleTextAndApplicationTextFormatsAreIndexed() {
+        assertThat(projector.project(file("page.html", "text/html",
+                "<html><body><p>Sichtbarer Inhalt</p></body></html>".getBytes(StandardCharsets.UTF_8))))
+                .map(PageText::text).hasValueSatisfying(text -> {
+                    assertThat(text).contains("Sichtbarer Inhalt").doesNotContain("<p>");
+                });
+        for (String mime : List.of("application/sql", "application/javascript", "application/yaml", "application/toml")) {
+            assertThat(LocalFilesTextProjector.readable(mime)).isTrue();
+            assertThat(projector.project(file("code", mime, "test content".getBytes(StandardCharsets.UTF_8))))
+                    .map(PageText::text).contains("test content");
+        }
     }
 
     @Test
