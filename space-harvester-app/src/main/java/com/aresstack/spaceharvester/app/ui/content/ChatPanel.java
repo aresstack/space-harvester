@@ -1669,7 +1669,9 @@ public final class ChatPanel extends JPanel {
         }
         Set<String> ids = new java.util.TreeSet<>();
         for (HarvestSource source : runtime.workspace().sources()) {
-            if (allowed(settings, source.id())) {
+            if (allowed(settings, source.id()) && settings.sources().stream()
+                    .filter(entry -> entry.id().equals(source.id()))
+                    .allMatch(entry -> entry.config().includeInGlobalSearch())) {
                 ids.add(source.id());
             }
         }

@@ -1248,7 +1248,11 @@ public final class Explorer {
     /** Die Wurzelknoten: alle Quellen der Laufzeit, in deren Reihenfolge; unverändert, solange dieselben bleiben. */
     private void refreshSources() {
         AppRuntime runtime = context.runtime();
-        List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
+        List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources().stream()
+                .filter(source -> runtime.settings().sources().stream()
+                        .filter(entry -> entry.id().equals(source.id()))
+                        .allMatch(entry -> entry.config().showInExplorer()))
+                .toList();
         List<String> ids = sources.stream().map(HarvestSource::id).toList();
         // Vor dem Vergleich: eine neue Laufzeit mit denselben Quellen meldet die Zeichen neu an.
         states.watch(ids);

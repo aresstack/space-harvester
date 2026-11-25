@@ -41,6 +41,7 @@ class GlobalPageSearchTest {
     private static final Instant T0 = Instant.parse("2026-10-01T00:00:00Z");
 
     private final List<String> configured = new ArrayList<>(List.of("wiki-a", "wiki-b"));
+    private final Set<String> directOnly = new HashSet<>();
     private final InMemorySearchIndex index = new InMemorySearchIndex();
     private final List<ListedPage> reference = new ArrayList<>();
 
@@ -48,6 +49,11 @@ class GlobalPageSearchTest {
         @Override
         public List<HarvestSource> all() {
             return configured.stream().map(GlobalPageSearchTest::source).toList();
+        }
+
+        @Override
+        public boolean includeInGlobalSearch(String sourceId) {
+            return !directOnly.contains(sourceId);
         }
 
         @Override
@@ -131,6 +137,25 @@ class GlobalPageSearchTest {
         // Gleicher Titel und gleiche ID in beiden Quellen: zwei Treffer, nach Quelle geordnet ("Ü" folgt "Z").
         assertThat(keys(results)).containsExactly("wiki-a/3", "wiki-b/4", "wiki-a/1", "wiki-b/1");
         assertThat(results.complete()).isTrue();
+    }
+
+    @Test
+    void directOnlySourcesStayAvailableForExplicitScopesButNotGlobalSearch() {
+        twoSources();
+        directOnly.add("wiki-b");
+        PageSearch search = search(ALLOW_ALL);
+
+        assertThat(keys(search.search(CALLER, global("architektur", SearchSort.TITLE), null, 10)))
+                .containsExactly("wiki-a/3", "wiki-a/1");
+        PageSearchQuery explicit = PageSearchQuery.of(null, List.of("wiki-b"), List.of(),
+                "architektur", null, null, null, null, null, SearchSort.TITLE);
+        assertThat(keys(search.search(CALLER, explicit, null, 10)))
+                .containsExactly("wiki-b/4", "wiki-b/1");
+        var pages = com.aresstack.spaceharvester.application.snapshot.PageSet.of(Map.of("wiki-b", List.of("1")));
+        assertThat(keys(search.search(CALLER, global("architektur", SearchSort.TITLE).within(pages), null, 10)))
+                .containsExactly("wiki-b/1");
+        directOnly.add("wiki-a");
+        assertThat(search.search(CALLER, global("architektur", SearchSort.TITLE), null, 10).hits()).isEmpty();
     }
 
     @Test

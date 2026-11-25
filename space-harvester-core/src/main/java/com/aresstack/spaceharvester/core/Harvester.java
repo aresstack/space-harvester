@@ -1040,7 +1040,7 @@ public final class Harvester implements AutoCloseable {
             Harvester searching = this;
             Holdings termHoldings = this.holdings;
             this.termSearch = new com.aresstack.spaceharvester.application.query.progressive.TermSearch(keywordSearch,
-                    (who, query) -> searchScope(termHoldings, catalog.all().stream().map(HarvestSource::id).toList(),
+                    (who, query) -> searchScope(termHoldings, catalog.globalSearchSources().stream().map(HarvestSource::id).toList(),
                             who, query),
                     com.aresstack.spaceharvester.application.query.progressive.TermSearch.Knowledge.of(
                             searching::termKnowledge, searching::termVocabulary));

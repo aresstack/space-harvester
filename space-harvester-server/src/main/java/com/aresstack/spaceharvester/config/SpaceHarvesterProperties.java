@@ -119,11 +119,13 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
      *                    Server-/Proxy-CAs (optional; ohne Angabe {@code network.tls})
      */
     public record Source(String id, String type, String title, URI baseUrl, Auth auth, Map<String, String> options,
-                         ClientCertificate clientCertificate, String trustBundle) {
+                         ClientCertificate clientCertificate, String trustBundle,
+                         Boolean showInExplorer, Boolean includeInGlobalSearch) {
 
         SourceSettingsConfig toSettings() {
             return new SourceSettingsConfig(id, type, title, baseUrl, auth == null ? null : auth.toSettings(),
-                    options, clientCertificate == null ? null : clientCertificate.toSettings(), trustBundle);
+                    options, clientCertificate == null ? null : clientCertificate.toSettings(), trustBundle,
+                    !Boolean.FALSE.equals(showInExplorer), !Boolean.FALSE.equals(includeInGlobalSearch));
         }
     }
 
