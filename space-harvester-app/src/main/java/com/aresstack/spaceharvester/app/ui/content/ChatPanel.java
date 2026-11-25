@@ -2847,8 +2847,11 @@ public final class ChatPanel extends JPanel {
         button.setBorderPainted(false);
         javax.swing.JMenu formats = exportMenu(label, snapshot, answer, scope);
         button.setEnabled(formats.isEnabled());
-        button.addActionListener(e -> exportMenu(label, snapshot, answer, scope).getPopupMenu()
-                .show(button, 0, button.getHeight()));
+        button.addActionListener(e -> {
+            ChatRecord current = chat.id().equals(snapshot.id()) ? chat : snapshot;
+            ChatRecord named = snapshot.withTitle(current.title(), snapshot.modifiedAt());
+            exportMenu(label, named, answer, scope).getPopupMenu().show(button, 0, button.getHeight());
+        });
         buttons.add(button);
     }
 
