@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
 import com.aresstack.spaceharvester.app.ui.deck.visual.SpoolDiagram;
+import com.aresstack.spaceharvester.app.chat.JesChatTools;
+import java.util.concurrent.CompletableFuture;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Glyph;
@@ -66,7 +68,7 @@ import org.fife.ui.rtextarea.RTextScrollPane;
  * Tabelle und ihr Text (JESJCL zu einreichbarer JCL bereinigt). Einreichen, Aktualisieren, Spool speichern und Löschen
  * stehen unten. Aktualisiert wird nur auf Wunsch und nach eigenem Einreichen oder Löschen, nie von selbst.
  */
-final class FtpJobsView extends JPanel {
+final class FtpJobsView extends JPanel implements JesChatTools.Access {
 
     private final FtpSessionView owner;
     private final PlaceholderField ownerField = new PlaceholderField(8, "eigene");
@@ -103,6 +105,10 @@ final class FtpJobsView extends JPanel {
     private boolean started;
     private boolean connected;
     private boolean refreshWanted;
+    private JobFilter appliedFilter;
+    private CompletableFuture<Void> listReady = CompletableFuture.completedFuture(null);
+    private CompletableFuture<Void> jobReady = CompletableFuture.completedFuture(null);
+    private CompletableFuture<Void> spoolReady = CompletableFuture.completedFuture(null);
     /** Was der nächsten Liste im Stand vorangestellt wird (etwa „Job … eingereicht“), damit es nicht verschwindet. */
     private String note = "";
     /** Rückfrage „… wirklich löschen?“; Tests ersetzen sie. */
@@ -353,7 +359,10 @@ final class FtpJobsView extends JPanel {
         return new JobFilter(ownerField.getText(), jobName.getText(), (JobStatus) status.getSelectedItem());
     }
 
-    void refresh() {
+    CompletableFuture<Void> refresh() {
+        supersede(listReady);
+        CompletableFuture<Void> request = new CompletableFuture<>();
+        listReady = request;
         started = true;
         refreshWanted = false;
         FtpSession session = owner.session();
@@ -367,6 +376,12 @@ final class FtpJobsView extends JPanel {
         owner.status(prefix + "Suche Jobs …", false);
         refresh.setEnabled(false);
         owner.later(session.jobs(jes -> jes.jobs(filter)), jobs -> {
+            if (listReady != request) return;
+            if (request.isCancelled()) {
+                updateActions();
+                return;
+            }
+            appliedFilter = filter;
             allJobs.clear();
             allJobs.addAll(jobs);
             applyLocalFilter();
@@ -380,10 +395,18 @@ final class FtpJobsView extends JPanel {
                 clearSpool();
             }
             updateActions();
+            request.complete(null);
         }, error -> {
+            if (listReady != request) return;
+            if (request.isCancelled()) {
+                updateActions();
+                return;
+            }
             owner.status(prefix + "Suche fehlgeschlagen – " + FtpWorkspace.describe(error), true);
             updateActions();
+            request.completeExceptionally(error);
         });
+        return request;
     }
 
     /** Lokale Filter (Besitzer, Jobname) und Suche über Job-ID/Jobname; rot, wenn ungültig oder nichts passt. */
@@ -542,17 +565,18 @@ final class FtpJobsView extends JPanel {
             return;
         }
         info.setText(info(job));
-        if (job.jobId().equals(outputJob) && output != null) {
+        if (job.jobId().equals(outputJob) && !jobReady.isCompletedExceptionally()) {
             return;
         }
         clearSpool();
         info.setText(info(job));
         outputJob = job.jobId();
+        CompletableFuture<Void> request = new CompletableFuture<>();
+        jobReady = request;
         SpoolNaming naming = owner.session().profile().spoolNaming();
         owner.status(naming.mode() == SpoolNaming.Mode.OFF ? "Lade gesamten Output …" : "Lade Spool-Liste …", false);
-        owner.run(owner.session().jobs(jes -> JobOutput.load(jes, job.jobId(), naming)),
-                "Spool von " + job.jobId() + " nicht geladen", loaded -> {
-                    if (!job.jobId().equals(outputJob)) {
+        owner.later(owner.session().jobs(jes -> JobOutput.load(jes, job.jobId(), naming)), loaded -> {
+                    if (jobReady != request || request.isCancelled() || !job.jobId().equals(outputJob)) {
                         return;
                     }
                     output = loaded;
@@ -571,6 +595,11 @@ final class FtpJobsView extends JPanel {
                         owner.status(job.jobId() + " · keine Spool-Dateien", false);
                     }
                     updateActions();
+                    request.complete(null);
+                }, error -> {
+                    if (jobReady != request || request.isCancelled()) return;
+                    owner.status("Spool von " + job.jobId() + " nicht geladen – " + FtpWorkspace.describe(error), true);
+                    request.completeExceptionally(error);
                 });
     }
 
@@ -603,28 +632,39 @@ final class FtpJobsView extends JPanel {
     }
 
     private void spoolSelected() {
+        supersede(spoolReady);
+        CompletableFuture<Void> request = new CompletableFuture<>();
+        spoolReady = request;
         int row = spoolTable.getSelectedRow();
-        SpoolFile file = row < 0 ? null : spoolModel.at(row);
+        SpoolFile file = row < 0 ? null : spoolModel.at(spoolTable.convertRowIndexToModel(row));
         JobOutput current = output;
         String jobId = outputJob;
         // Den alten Text sofort verwerfen: sonst speichert „Spool speichern“ den Text der vorigen Datei unter neuem Namen.
         loadedSpool = null;
         wholeShown = false;
         if (file == null || current == null) {
+            setText("", null);
             updateActions();
+            request.complete(null);
             return;
         }
         setText("Lade " + file.ddName() + " (Spool #" + file.id() + ") …", null);
         updateActions();
-        owner.run(owner.session().jobs(jes -> current.text(jes, jobId, file)),
-                "Spool-Datei " + file.ddName() + " nicht geladen", text -> {
+        owner.later(owner.session().jobs(jes -> current.text(jes, jobId, file)), text -> {
                     int now = spoolTable.getSelectedRow();
-                    if (now >= 0 && spoolModel.at(now).id() == file.id() && jobId.equals(outputJob)) {
+                    if (spoolReady == request && !request.isCancelled() && now >= 0
+                            && spoolModel.at(spoolTable.convertRowIndexToModel(now)).id() == file.id()
+                            && jobId.equals(outputJob)) {
                         loadedSpool = file;
                         setText(text, file.ddName());
                         owner.status(file.ddName() + " geladen (" + lines(spoolText.getText()) + " Zeilen)", false);
                         updateActions();
+                        request.complete(null);
                     }
+                }, error -> {
+                    if (spoolReady != request || request.isCancelled()) return;
+                    owner.status("Spool-Datei " + file.ddName() + " nicht geladen – " + FtpWorkspace.describe(error), true);
+                    request.completeExceptionally(error);
                 });
     }
 
@@ -639,18 +679,30 @@ final class FtpJobsView extends JPanel {
             showWhole(output.whole().get());
             return;
         }
+        supersede(spoolReady);
+        CompletableFuture<Void> request = new CompletableFuture<>();
+        spoolReady = request;
+        loadedSpool = null;
+        wholeShown = false;
+        updateActions();
         owner.status("Lade gesamten Output …", false);
         setText("Lade alle Spool-Dateien für " + jobId + " …", null);
-        owner.run(owner.session().jobs(jes -> jes.allSpool(jobId)), "Gesamter Output von " + jobId + " nicht geladen",
-                text -> {
-                    if (jobId.equals(outputJob)) {
-                        showWhole(text);
-                    }
-                });
+        owner.later(owner.session().jobs(jes -> jes.allSpool(jobId)), text -> {
+            if (spoolReady == request && !request.isCancelled() && jobId.equals(outputJob)) {
+                request.complete(null);
+                showWhole(text);
+            }
+        }, error -> {
+            if (spoolReady != request || request.isCancelled()) return;
+            owner.status("Gesamter Output von " + jobId + " nicht geladen – " + FtpWorkspace.describe(error), true);
+            request.completeExceptionally(error);
+        });
     }
 
     private void showWhole(String text) {
+        supersede(spoolReady);
         spoolTable.clearSelection();
+        spoolReady = CompletableFuture.completedFuture(null);
         // Nicht als JESJCL bereinigen: das würde Job-Log und Programmausgabe wegwerfen; nur Steuerzeichen weg.
         setText(text, null, false);
         loadedSpool = null;
@@ -705,6 +757,10 @@ final class FtpJobsView extends JPanel {
     }
 
     private void clearSpool() {
+        supersede(jobReady);
+        supersede(spoolReady);
+        jobReady = CompletableFuture.completedFuture(null);
+        spoolReady = CompletableFuture.completedFuture(null);
         output = null;
         outputJob = null;
         loadedSpool = null;
@@ -791,6 +847,72 @@ final class FtpJobsView extends JPanel {
 
     private static int lines(String text) {
         return text.isEmpty() ? 0 : text.split("\n", -1).length;
+    }
+
+    private static void supersede(CompletableFuture<Void> request) {
+        request.completeExceptionally(new IllegalStateException("Die Auswahl oder Abfrage wurde geändert."));
+    }
+
+    @Override
+    public JesChatTools.Snapshot chatSnapshot() {
+        List<JesJob> visible = new ArrayList<>();
+        for (int row = 0; row < table.getRowCount(); row++) {
+            visible.add(model.at(table.convertRowIndexToModel(row)));
+        }
+        int row = spoolTable.getSelectedRow();
+        SpoolFile selected = row < 0 ? null : spoolModel.at(spoolTable.convertRowIndexToModel(row));
+        return new JesChatTools.Snapshot(filter(), appliedFilter,
+                owner.statusText() + " · Lokale Suche: " + search.getText()
+                        + " · Liste: " + requestState(listReady) + " · Jobdetails: " + requestState(jobReady)
+                        + " · Spool: " + requestState(spoolReady),
+                visible, selectedJob(), shownSpool(), selected, loadedSpool, wholeShown, spoolTextValue());
+    }
+
+    private static String requestState(CompletableFuture<Void> request) {
+        return !request.isDone() ? "lädt" : request.isCompletedExceptionally() ? "fehlgeschlagen/abgebrochen" : "bereit";
+    }
+
+    @Override
+    public CompletableFuture<Void> chatSearch(String ownerPattern, String namePattern) {
+        if (!connected) return CompletableFuture.failedFuture(new IllegalStateException("Nicht verbunden."));
+        ownerField.setText(ownerPattern);
+        jobName.setText(namePattern);
+        return refresh();
+    }
+
+    @Override
+    public CompletableFuture<Void> chatSelectJob(String id) {
+        if (!connected) return CompletableFuture.failedFuture(new IllegalStateException("Nicht verbunden."));
+        int modelRow = model.indexOf(id.toUpperCase(Locale.ROOT));
+        int row = modelRow < 0 ? -1 : table.convertRowIndexToView(modelRow);
+        if (row < 0) return CompletableFuture.failedFuture(new IllegalArgumentException("Job nicht in der Trefferliste."));
+        if (table.getSelectedRow() == row) {
+            if (jobReady.isCompletedExceptionally()) jobSelected();
+        } else {
+            table.setRowSelectionInterval(row, row);
+        }
+        table.scrollRectToVisible(table.getCellRect(row, 0, true));
+        return jobReady;
+    }
+
+    @Override
+    public CompletableFuture<Void> chatSelectSpool(String jobId, int id) {
+        if (!connected || selectedJob() == null || !selectedJob().jobId().equalsIgnoreCase(jobId)
+                || !jobId.equalsIgnoreCase(outputJob) || output == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Job nicht ausgewählt oder Details nicht geladen."));
+        }
+        for (int row = 0; row < spoolTable.getRowCount(); row++) {
+            if (spoolModel.at(spoolTable.convertRowIndexToModel(row)).id() == id) {
+                if (spoolTable.getSelectedRow() == row) {
+                    if (spoolReady.isCompletedExceptionally() || loadedSpool == null && spoolReady.isDone()) spoolSelected();
+                } else {
+                    spoolTable.setRowSelectionInterval(row, row);
+                }
+                spoolTable.scrollRectToVisible(spoolTable.getCellRect(row, 0, true));
+                return spoolReady;
+            }
+        }
+        return CompletableFuture.failedFuture(new IllegalArgumentException("Spool nicht in der Liste des ausgewählten Jobs."));
     }
 
     /** Für Tests. */

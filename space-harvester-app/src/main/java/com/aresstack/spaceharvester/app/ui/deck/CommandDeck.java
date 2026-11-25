@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
+import com.aresstack.spaceharvester.app.chat.JesChatTools;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess;
@@ -107,7 +108,8 @@ public final class CommandDeck {
     private final Perspective perspective;
     /** Startseite: beim Wechsel ins Deck gewählt, verbindet nichts. */
     private final DeckHome home;
-    private DeckArea area = DeckArea.HOME;
+    private volatile DeckArea area = DeckArea.HOME;
+    private volatile long chatGeneration;
 
     /** Ohne Passwortspeicher und Proxy (Tests). */
     public CommandDeck() {
@@ -162,6 +164,7 @@ public final class CommandDeck {
                         new com.aresstack.spaceharvester.deck.files.sharepoint.windows.NetUseLogin(), connecting),
                 () -> sharePointSites.get(), accounts);
         ftp = new FtpWorkspace(ftpSessions, accounts, editors);
+        ftp.onChatChanged(() -> { if (area == DeckArea.FTP) areaObservers.forEach(Runnable::run); });
         tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts, editors);
         eakte = new EakteWorkspace(eakteSessions, accounts);
@@ -335,14 +338,36 @@ public final class CommandDeck {
                     com.aresstack.spaceharvester.app.chat.TerminalChatTools.systemMessage(where));
         }
         JComponent shown = areaView(sent);
+        long areaGeneration = chatGeneration;
+        long ftpGeneration = ftp.chatGeneration();
+        java.util.function.BooleanSupplier stillShown = () -> area == sent && chatGeneration == areaGeneration
+                && (sent != DeckArea.FTP || ftp.chatGeneration() == ftpGeneration);
         com.aresstack.spaceharvester.app.chat.ChatToolset extra = null;
         String listing = "";
         java.util.List<String> rules = java.util.List.of();
         String where = "Command Deck › " + sent.title();
         String key = "command-deck/" + sent.name().toLowerCase(java.util.Locale.ROOT);
         if (sent == DeckArea.FTP) {
-            extra = new com.aresstack.spaceharvester.app.chat.FtpChatTools(ftp.selected(), ftp::selected);
-            rules = com.aresstack.spaceharvester.app.chat.FtpChatTools.rules();
+            FtpSessionView active = ftp.activeSessionView();
+            if (active != null) {
+                where += " › " + active.view();
+                key += "/" + active.session().id() + "/" + active.view();
+                if (FtpSessionView.JOBS.equals(active.view())) {
+                    shown = active.jobs();
+                    JesChatTools jes = new JesChatTools(active.jobs(), stillShown);
+                    extra = jes;
+                    rules = JesChatTools.rules();
+
+                } else {
+                    shown = active.datasets();
+                    extra = new com.aresstack.spaceharvester.app.chat.FtpChatTools(ftp.selected(), ftp::selected);
+                    rules = com.aresstack.spaceharvester.app.chat.FtpChatTools.rules();
+                    var diagnosis = active.datasets().diagnosis();
+                    if (diagnosis != null) {
+                        extra = new com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools(extra, diagnosis, stillShown);
+                    }
+                }
+            }
         } else if (sent == DeckArea.NDV) {
             extra = new com.aresstack.spaceharvester.app.chat.NdvChatTools(ndv.selected(), ndv::selected);
             rules = com.aresstack.spaceharvester.app.chat.NdvChatTools.rules();
@@ -360,8 +385,9 @@ public final class CommandDeck {
                 key += "/" + folder;
             }
         }
+        JComponent activeView = shown;
         com.aresstack.spaceharvester.app.chat.DeckChatTools tools =
-                new com.aresstack.spaceharvester.app.chat.DeckChatTools(() -> shown, () -> area == sent, extra);
+                new com.aresstack.spaceharvester.app.chat.DeckChatTools(() -> activeView, stillShown, extra);
         return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(where, key, tools,
                 com.aresstack.spaceharvester.app.chat.DeckChatTools.systemMessage(where, about(sent), rules,
                         tools.snapshot() + (listing.isEmpty() ? ""
@@ -370,6 +396,19 @@ public final class CommandDeck {
 
     /** Hinweis über dem Eingabefeld und Vorschläge (Chips) für den gewählten Bereich. */
     public com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints chatHints() {
+        if (area == DeckArea.FTP && ftp.activeSessionView() != null
+                && FtpSessionView.JOBS.equals(ftp.activeSessionView().view())) {
+            return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints(
+                    "JES-Jobs: Der Chat darf suchen, Jobs und Spool auswählen und lesen. Keine Host-Änderungen.",
+                    java.util.List.of(action("Job erklären", "Erkläre den ausgewählten Job."),
+                            action("Spool zusammenfassen", "Fasse den geöffneten Spool zusammen.")));
+        }
+        if (area == DeckArea.FTP && ftp.activeSessionView() != null) {
+            return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints(
+                    "Datasets: Der Chat liest Datasets und Members. JES-Werkzeuge sind nur in JES-Jobs verfügbar.",
+                    java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
+                            action("Member zusammenfassen", "Fasse den offenen Editorinhalt zusammen.")));
+        }
         return chatHints(area);
     }
 
@@ -459,6 +498,12 @@ public final class CommandDeck {
 
     /** Zeigt einen Arbeitsbereich; offene Sitzungen der anderen bleiben, wie sie sind. */
     public void show(DeckArea next) {
+        if (area != next) {
+            chatGeneration++;
+            if (area == DeckArea.FTP && ftp.activeSessionView() != null) {
+                ftp.activeSessionView().datasets().revokeDiagnosis();
+            }
+        }
         area = next;
         buttons.get(next).setSelected(true);
         cards.show(workspace, next.name());

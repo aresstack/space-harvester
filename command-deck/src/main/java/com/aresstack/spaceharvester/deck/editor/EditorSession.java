@@ -68,7 +68,7 @@ public final class EditorSession {
 
     /** {@code false} für reine Ansichten der Ablage. */
     public boolean writable() {
-        return store.writable();
+        return read(() -> store.writable() && (document == null || document.writeRestriction().isEmpty()));
     }
 
     /** Die lokal aufbewahrten Versionen dieses Dokuments, neueste zuerst (wie der Verlauf von MainframeMate). */
@@ -154,7 +154,7 @@ public final class EditorSession {
         background.execute(() -> {
             try {
                 EditorDocument loaded = store.load(location());
-                remember(loaded.text(), "geöffnet");
+                if (loaded.writeRestriction().isEmpty()) remember(loaded.text(), "geöffnet");
                 lock.lock();
                 try {
                     document = loaded;
@@ -190,7 +190,7 @@ public final class EditorSession {
         String edited;
         lock.lock();
         try {
-            if (document == null || state == State.SAVING || state == State.LOADING || !store.writable()) {
+            if (document == null || state == State.SAVING || state == State.LOADING || !store.writable() || !document.writeRestriction().isEmpty()) {
                 return;
             }
             base = document;

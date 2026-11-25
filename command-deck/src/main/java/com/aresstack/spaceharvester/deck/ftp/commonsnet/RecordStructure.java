@@ -52,6 +52,34 @@ final class RecordStructure {
         return stripLines(new String(transformed, charset));
     }
 
+    /** Detect suspicious control bytes before the lossy editor conversion. */
+    static boolean suspectBinary(byte[] raw, Charset charset, TextTransform transform, boolean framed) {
+        byte[] marker = transform.recordMarkerBytes();
+        byte[] end = transform.fileEndMarkerBytes();
+        int limit = raw.length;
+        if (framed && end != null && end.length > 0 && endsWith(raw, end)) limit -= end.length;
+        int start = 0;
+        for (int i = 0; i <= limit; i++) {
+            boolean boundary = framed && marker != null && marker.length > 0
+                    && i + marker.length <= limit && matchesAt(raw, i, marker);
+            if (i == limit || boundary) {
+                int stop = i;
+                Byte pad = transform.paddingByte();
+                if (framed && pad != null) {
+                    while (stop > start && raw[stop - 1] == pad) stop--;
+                }
+                String text = new String(raw, start, stop - start, charset);
+                if (text.codePoints().anyMatch(c -> c == 0xfffd || (Character.isISOControl(c)
+                        && c != '\n' && c != '\r' && c != '\t' && c != '\f'))) return true;
+                if (boundary) {
+                    i += marker.length - 1;
+                    start = i + 1;
+                }
+            }
+        }
+        return false;
+    }
+
     static byte[] encode(String text, Charset charset) throws TextEncodingException {
         return encode(text, charset, TextTransform.DEFAULT);
     }

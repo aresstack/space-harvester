@@ -65,7 +65,9 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     private final EditorSessions editors;
     /** Der Stand der gewählten Sitzung für die Statuszeile der App (links); leer beim Formular. */
     private final StatusLabel status = new StatusLabel();
-    private FtpSession selected;
+    private volatile FtpSession selected;
+    private volatile long chatGeneration;
+    private Runnable chatChanged = () -> { };
 
     /** Mit eigenem Editor (Tests). */
     public FtpWorkspace(FtpSessions sessions, ServerAccounts accounts) {
@@ -111,10 +113,12 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
             toggle.select(FtpSessionView.JOBS);
         }
         toggle.onSelect(view -> {
+            chatGeneration++;
             AppState.shared().put(VIEW_KEY, view);
             if (selected != null) {
                 viewOf.get(selected).show(view);
             }
+            chatChanged.run();
         });
 
         add(head, BorderLayout.NORTH);
@@ -294,6 +298,8 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
 
     /** Zeigt die Sitzung (oder mit {@code null} das Formular „Neue Verbindung“). */
     void select(FtpSession session) {
+        if (selected != session && activeSessionView() != null) activeSessionView().datasets().revokeDiagnosis();
+        chatGeneration++;
         selected = session;
         ComposerToggleButton pill = session == null ? newPill : pillOf.get(session);
         if (pill != null) {
@@ -319,6 +325,19 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
             cards.show(center, session.id());
             footCards.show(footTools, session.id());
         }
+        chatChanged.run();
+    }
+
+    FtpSessionView activeSessionView() {
+        return viewOf.get(selected);
+    }
+
+    long chatGeneration() {
+        return chatGeneration;
+    }
+
+    void onChatChanged(Runnable listener) {
+        chatChanged = listener;
     }
 
     /** Eine nie verbundene Sitzung ist gescheitert: Reiter weg, Formular mit dem Grund. */

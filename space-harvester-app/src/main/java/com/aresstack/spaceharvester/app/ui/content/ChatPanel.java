@@ -2169,6 +2169,7 @@ public final class ChatPanel extends JPanel {
                 listener, SwingUtilities::invokeLater);
         if (custom != null) {
             // #1151: dieselbe Unterhaltung, aber die Werkzeuge der Perspektive (Command Deck: Maskenassistent).
+            custom.tools().modelSelected(modelName);
             turn.withToolset(custom.tools(), custom.system());
         } else {
             // ADR 0033: Was offen ist, sieht das Modell; den Rest des Bereichs holt es sich per Werkzeug.
