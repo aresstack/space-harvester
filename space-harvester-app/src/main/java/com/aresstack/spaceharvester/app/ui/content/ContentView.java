@@ -463,6 +463,23 @@ public final class ContentView implements View {
         detail.searchFront(active);
     }
 
+    public void useWorkspaceHistory(com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator navigator,
+                                    java.util.function.Consumer<PageDetailPanel.Place> listener) {
+        detail.useWorkspaceHistory(navigator, listener);
+    }
+
+    public void refreshHistoryNavigation() {
+        detail.refreshHistoryNavigation();
+    }
+
+    public java.util.Optional<PageDetailPanel.Place> currentHistoryPlace() {
+        return detail.currentHistoryPlace();
+    }
+
+    public void restoreHistoryPlace(PageDetailPanel.Place place) {
+        detail.restoreHistoryPlace(place);
+    }
+
     public void beforeHistoryNavigation(Runnable listener) {
         detail.beforeHistoryNavigation(listener);
     }

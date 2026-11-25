@@ -387,7 +387,7 @@ public final class SearchView implements View {
         technicalTerms.addItemListener(e -> {
             SearchMethods.user().technicalTermsOnly(technicalTerms.isSelected());
             mode();
-            if (technicalTerms.isSelected()) {
+            if (technicalTerms.isSelected() && !restoringHistory) {
                 searchTechnicalTerms();
             }
         });
@@ -716,7 +716,11 @@ public final class SearchView implements View {
             // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
             searchTechnicalTerms();
         } else if (searchedText != null && searchedText.equals(query.getText().trim())) {
-            filterTo(selection);
+            if (ADDRESS.matcher(searchedText).matches()) {
+                search();
+            } else {
+                filterTo(selection);
+            }
         }
     }
 
@@ -1030,7 +1034,6 @@ public final class SearchView implements View {
      */
     private void started(AppRuntime runtime, String text) {
         searchedScopes = List.copyOf(scopes);
-        remember(text, searchedScopes);
         // Ganz durchsucht sind nur Quellen ohne Space- oder Seitengrenze; der Filter braucht sie nicht neu.
         Set<String> whole = new LinkedHashSet<>(searchedSources());
         scopes.stream().filter(scope -> scope.spaceKey() != null || scope.pageId() != null)
@@ -1221,9 +1224,44 @@ public final class SearchView implements View {
     int visit = -1;
     /** Während Zurück/Vor eine frühere Suche wiederholt, kommt sie nicht neu in den Verlauf. */
     private boolean revisiting;
+    private boolean restoringHistory;
+    private java.util.function.Consumer<SearchLocation> searchLocationListener = location -> { };
+
+    record SearchLocation(String text, List<Explorer.Scope> area, boolean technical, String label) {
+        SearchLocation {
+            area = List.copyOf(area);
+        }
+    }
+
+    void onSearchLocation(java.util.function.Consumer<SearchLocation> listener) {
+        searchLocationListener = java.util.Objects.requireNonNull(listener);
+    }
+
+    private void publishSearchLocation(String text, List<Explorer.Scope> area) {
+        if (!restoringHistory) {
+            searchLocationListener.accept(new SearchLocation(text, area, technicalTerms.isSelected(),
+                    "Suche: " + visitName(new Visit(text, area))));
+        }
+    }
+
+    void restoreSearchLocation(SearchLocation location) {
+        restoringHistory = true;
+        revisiting = true;
+        try {
+            marked = location.area();
+            use(location.area());
+            query.setText(location.text());
+            technicalTerms.setSelected(location.technical());
+            search();
+        } finally {
+            revisiting = false;
+            restoringHistory = false;
+        }
+    }
 
     /** Merkt eine startende Suche im Verlauf; Vor-Einträge hinter der gezeigten fallen weg. */
     private void remember(String text, List<Explorer.Scope> area) {
+        publishSearchLocation(text, area);
         if (revisiting) {
             return;
         }
@@ -1603,6 +1641,7 @@ public final class SearchView implements View {
             return;
         }
         feedback.clear();
+        remember(query.getText().trim(), scopes);
         termsPanel.search(query.getText(), technicalScope());
     }
 
@@ -1762,6 +1801,7 @@ public final class SearchView implements View {
             return;
         }
         if (ADDRESS.matcher(text).matches()) {
+            remember(text, scopes);
             open(runtime, text);
             return;
         }
@@ -1798,6 +1838,7 @@ public final class SearchView implements View {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
         }
+        remember(text, scopes);
         List<Explorer.Scope> pageScopes = scopes.stream().filter(scope -> scope.pageId() != null
                 && searchedSources().contains(scope.sourceId())).toList();
         if (pageScopes.isEmpty()) {

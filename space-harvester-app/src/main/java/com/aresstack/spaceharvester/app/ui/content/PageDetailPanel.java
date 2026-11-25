@@ -547,6 +547,8 @@ public final class PageDetailPanel extends JPanel {
     private boolean navigating;
     private Runnable beforeHistoryNavigation = () -> { };
     private boolean searchFront;
+    private com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator workspaceHistory;
+    private java.util.function.Consumer<Place> locationVisited = place -> { };
     /** Zählt Link-Aktivierungen; nur die Auflösung des zuletzt geklickten Links wirkt. */
     private int linkRequest;
     /** Anker des Links, der die gerade ladende Seite geöffnet hat; die Leseansicht rollt dorthin. */
@@ -3881,6 +3883,9 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         Place now = current();
+        if (next != null) {
+            locationVisited.accept(next);
+        }
         if (next != null && next.sameAs(now)) {
             return;
         }
@@ -3894,19 +3899,31 @@ public final class PageDetailPanel extends JPanel {
 
     /** Zurück zum zuvor Gezeigten; das Aktuelle kommt in den Vor-Verlauf. */
     public boolean back() {
+        if (workspaceHistory != null) {
+            return goWorkspace(-1);
+        }
         return navigateHistory(-1);
     }
 
     /** Vor zum zuletzt per Zurück Verlassenen. */
     public boolean forward() {
+        if (workspaceHistory != null) {
+            return goWorkspace(1);
+        }
         return navigateHistory(1);
     }
 
     public boolean canGoBack() {
+        if (workspaceHistory != null) {
+            return !workspaceHistory.history().back().isEmpty();
+        }
         return searchFront && current() != null || !backStack.isEmpty();
     }
 
     public boolean canGoForward() {
+        if (workspaceHistory != null) {
+            return !workspaceHistory.history().forward().isEmpty();
+        }
         return !forwardStack.isEmpty();
     }
 
@@ -3986,6 +4003,44 @@ public final class PageDetailPanel extends JPanel {
         updateNavigation();
         navigated.accept(next);
         return true;
+    }
+
+    void useWorkspaceHistory(com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator navigator,
+                             java.util.function.Consumer<Place> listener) {
+        workspaceHistory = java.util.Objects.requireNonNull(navigator);
+        locationVisited = java.util.Objects.requireNonNull(listener);
+        backButton.navigator(navigator);
+    }
+
+    private boolean goWorkspace(int steps) {
+        if (steps < 0 ? !canGoBack() : !canGoForward()) {
+            return false;
+        }
+        workspaceHistory.go(steps);
+        updateNavigation();
+        return true;
+    }
+
+    void refreshHistoryNavigation() {
+        updateNavigation();
+    }
+
+    java.util.Optional<Place> currentHistoryPlace() {
+        return java.util.Optional.ofNullable(current());
+    }
+
+    void restoreHistoryPlace(Place place) {
+        navigating = true;
+        try {
+            if (place.page() && !showsPage(place.sourceId(), place.pageId())) {
+                load(place.sourceId(), place.pageId(), false);
+            } else if (!place.page() && !showsLevel(place.sourceId(), place.spaceKey())) {
+                showSource(place.sourceId(), place.spaceKey(), place.title());
+            }
+        } finally {
+            navigating = false;
+        }
+        navigated.accept(place);
     }
 
     private void updateNavigation() {

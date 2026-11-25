@@ -213,6 +213,8 @@ public final class MainWindow implements AppContext.Navigator {
     private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
+    private final WorkspaceHistory<WorkspaceLocation> history = new WorkspaceHistory<>(WorkspaceLocation::label,
+            this::restoreHistoryLocation);
     private final ActivitiesView activities;
     private final SearchView searchView;
     private final SettingsView settings;
@@ -278,7 +280,18 @@ public final class MainWindow implements AppContext.Navigator {
         content = new ContentView(context);
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
-        content.beforeHistoryNavigation(() -> showSection(AppContext.Section.CONTENT, true));
+        content.useWorkspaceHistory(history, place -> {
+            if (current == AppContext.Section.CONTENT) {
+                history.visit(new WorkspaceLocation.Document(place));
+                content.refreshHistoryNavigation();
+            }
+        });
+        searchView.onSearchLocation(location -> {
+            if (current == AppContext.Section.SEARCH) {
+                history.visit(new WorkspaceLocation.Search(location));
+                content.refreshHistoryNavigation();
+            }
+        });
         settings = new SettingsView(context);
         settings.onLeave(this::leaveSettings);
         explorer = new Explorer(context);
@@ -286,7 +299,7 @@ public final class MainWindow implements AppContext.Navigator {
         // anklickt (etwa einen Treffer), ändert ihn nicht; die Lupe hebt die Auswahl beim Betreten der Suche auf
         // (Angelo, 24.11.2026).
         explorer.onScope(scopes -> {
-            if (current == AppContext.Section.SEARCH) {
+            if (current == AppContext.Section.SEARCH && !history.restoring()) {
                 searchView.scope(scopes);
             }
         });
@@ -1063,6 +1076,10 @@ public final class MainWindow implements AppContext.Navigator {
             placeChat();
         }
         showSection(section);
+        if (section == AppContext.Section.CONTENT && !history.restoring()) {
+            content.currentHistoryPlace().ifPresent(place -> history.visit(new WorkspaceLocation.Document(place)));
+            content.refreshHistoryNavigation();
+        }
     }
 
     /** Zeigt den Bereich, ohne die große Chat-Ansicht zu verlassen (Auswahl im Explorer). */
@@ -1111,7 +1128,9 @@ public final class MainWindow implements AppContext.Navigator {
         content.searchFront(section == AppContext.Section.SEARCH);
         placeDocumentNavigation(section);
         placeOverlay();
-        if (changed && section == AppContext.Section.SEARCH) {
+        if (changed && section == AppContext.Section.SEARCH && !history.restoring()) {
+            history.preview();
+            content.refreshHistoryNavigation();
             // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
             searchView.scope(explorer.scopes());
         }
@@ -1150,6 +1169,18 @@ public final class MainWindow implements AppContext.Navigator {
             stageCards.show(stage, Perspectives.HARVESTER);
             viewStatus.setVisible(false);
         }
+    }
+
+    private void restoreHistoryLocation(WorkspaceLocation location) {
+        if (location instanceof WorkspaceLocation.Document document) {
+            showSection(AppContext.Section.CONTENT, true);
+            content.restoreHistoryPlace(document.place());
+        } else if (location instanceof WorkspaceLocation.Search search) {
+            showSection(AppContext.Section.SEARCH, true);
+            explorer.select(search.location().area());
+            searchView.restoreSearchLocation(search.location());
+        }
+        SwingUtilities.invokeLater(content::refreshHistoryNavigation);
     }
 
     /** Move the same document history control between the two view headers. */
