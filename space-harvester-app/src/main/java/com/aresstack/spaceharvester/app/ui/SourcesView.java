@@ -633,7 +633,15 @@ public final class SourcesView implements View {
                             (typed, ok, failed) -> saveField(entry, d -> with(d, d.title(), d.baseUrl(), typed), ok,
                                     failed)));
                 } else {
-                    row(EditableProperty.view("Option " + key, value, Comic.INK));
+                    String label = switch (key) {
+                        case "include" -> "Dateimuster";
+                        case "includeEnabled" -> "Dateifilter aktiv";
+                        case "exclude" -> "Ausgeschlossene Dateien";
+                        default -> "Option " + key;
+                    };
+                    String displayed = "includeEnabled".equals(key) ? (Boolean.parseBoolean(value) ? "ja" : "nein")
+                            : value;
+                    row(EditableProperty.view(label, displayed, Comic.INK));
                 }
             });
             boolean authenticated = config.auth().type() != SourceSettingsConfig.AuthType.NONE;

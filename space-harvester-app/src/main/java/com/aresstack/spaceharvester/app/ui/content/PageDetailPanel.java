@@ -2657,7 +2657,8 @@ public final class PageDetailPanel extends JPanel {
         if (fileSize <= 0) {
             try {
                 fileSize = Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength",
-                        metadata.attributes().getOrDefault("fileSize", "-1")));
+                        metadata.attributes().getOrDefault("file.size",
+                                metadata.attributes().getOrDefault("fileSize", "-1"))));
             } catch (NumberFormatException ignored) {
                 fileSize = -1L;
             }

@@ -444,7 +444,8 @@ space-harvester:
       title: Betriebshandbuch
       options:
         directory: /srv/handbuch       # Pflicht
-        include: "*.md, *.txt, *.pdf"  # optional; außerdem exclude, maxDepth (20), maxFileMegabytes (20, höchstens 64)
+        includeEnabled: false  # false: alle regulären Dateien; true: Dateimuster anwenden
+        include: "*.md, *.txt, *.pdf"  # gespeicherte Muster; außerdem exclude, maxDepth (20), maxFileMegabytes (20, höchstens 64)
 ```
 
 Das Verzeichnis ist eine Partition mit der Quellen-ID als Schlüssel (`/spaces/handbuch/...`). Die Seiten-ID ist der

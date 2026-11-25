@@ -92,6 +92,7 @@ final class SourceForm {
     final PlaceholderField baseUrl = new PlaceholderField(32, DEFAULT_URL);
     final JTextField directory = Comic.field(32);
     final JTextField include = Comic.field(24);
+    final JCheckBox includeEnabled = Comic.checkBox("Dateifilter aktivieren");
     /** Woher Benutzer und Passwort bzw. Token kommen: KeePass-Eintrag oder Manuell (Tresor), wie beim KI-Dienst. */
     final JComboBox<String> origin = Comic.combo();
     final JComboBox<String> keePassEntry = Comic.combo();
@@ -193,7 +194,9 @@ final class SourceForm {
         if (settings != null) {
             settings.trustStores().keySet().stream().sorted().forEach(trust::addItem);
         }
-        include.setText("*.md, *.txt, *.pdf, *.docx, *.html");
+        include.setText(com.aresstack.spaceharvester.application.sources.LocalFileFilter.DEFAULT_PATTERNS);
+        include.setEnabled(false);
+        includeEnabled.addItemListener(e -> include.setEnabled(includeEnabled.isSelected()));
         kind.addActionListener(e -> {
             loadFields();
             refreshAuth();
@@ -279,6 +282,7 @@ final class SourceForm {
         int mainFields = form.reserve(SourceFieldsEditor.ROWS);
         form.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.row("Ordner", Comic.fieldWithButton(directory, browse(directory, true)), null);
+        form.row("Dateifilter", includeEnabled, "Aus: alle Dateien berücksichtigen");
         form.row("Dateien", include, "Muster, durch Komma getrennt");
         form.row("Anzeigename", title, "So heißt die Quelle in der App; leer lassen für den Vorschlag");
         onEdit(baseUrl, this::derive);
@@ -784,6 +788,9 @@ final class SourceForm {
     private Map<String, String> options(boolean ownForm) {
         Map<String, String> options = new java.util.TreeMap<>(editing == null ? Map.of()
                 : editing.draft().extraOptions());
+        if (SourceDraft.FILES.equals(typeId())) {
+            options.put("includeEnabled", Boolean.toString(includeEnabled.isSelected()));
+        }
         if (!ownForm && fields.active()) {
             return fields.apply(options);
         }
@@ -1188,7 +1195,11 @@ final class SourceForm {
                 : source.baseUrl();
         baseUrl.setText(address == null ? "" : address);
         directory.setText(source.directory() == null ? "" : source.directory());
-        include.setText(source.include() == null ? "" : source.include());
+        include.setText(source.include() == null
+                ? com.aresstack.spaceharvester.application.sources.LocalFileFilter.DEFAULT_PATTERNS : source.include());
+        includeEnabled.setSelected(com.aresstack.spaceharvester.application.sources.LocalFileFilter.enabled(
+                source.include(), source.extraOptions().get("includeEnabled")));
+        include.setEnabled(includeEnabled.isSelected());
         auth.setSelectedItem(switch (source.authType()) {
             case PAT -> PAT;
             case BASIC -> BASIC;
@@ -1604,6 +1615,7 @@ final class SourceForm {
                 : !confluence ? "Startadresse der Quelle (base-url)"
                 : "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.visible(directory, files);
+        form.visible(includeEnabled, files);
         form.visible(include, files);
         boolean login = serverAddress || generic && (auth.getItemCount() > 1
                 || auth.getItemCount() == 1 && !NONE.equals(auth.getItemAt(0)));

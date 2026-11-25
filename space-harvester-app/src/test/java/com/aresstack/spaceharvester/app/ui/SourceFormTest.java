@@ -115,6 +115,18 @@ class SourceFormTest {
                 saved.countDown();
             });
             f.kind.setSelectedIndex(1);
+            assertThat(f.includeEnabled.isVisible()).isTrue();
+            assertThat(f.includeEnabled.isSelected()).isFalse();
+            assertThat(f.include.isEnabled()).isFalse();
+            assertThat(f.include.getText()).contains("*.one", "*.mp4", "*.xls", "*.xlsx");
+            f.includeEnabled.doClick();
+            assertThat(f.include.isEnabled()).isTrue();
+            f.include.setText("*.md, *.one");
+            assertThat(f.draft().extraOptions()).containsEntry("includeEnabled", "true");
+            f.includeEnabled.doClick();
+            assertThat(f.include.isEnabled()).isFalse();
+            assertThat(f.draft().include()).isEqualTo("*.md, *.one");
+            assertThat(f.draft().extraOptions()).containsEntry("includeEnabled", "false");
             assertThat(f.validateInput()).as("Ordner und Kennung fehlen").isFalse();
             assertThat(f.error(f.directory)).isEqualTo("Bitte einen Ordner wählen.");
             assertThat(f.error(f.id)).startsWith("Bitte eine Kennung");

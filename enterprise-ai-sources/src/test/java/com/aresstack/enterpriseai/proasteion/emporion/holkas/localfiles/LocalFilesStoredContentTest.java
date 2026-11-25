@@ -93,6 +93,30 @@ public class LocalFilesStoredContentTest {
     }
 
     @Test
+    public void inventoryIncludesUnknownEmptyAndLargeFilesWithoutRelaxingReadLimit() throws Exception {
+        write("empty", "");
+        Files.write(root.resolve("large.bin"), new byte[2048]);
+        LocalFilesKnowledgeSource inventory = new LocalFilesKnowledgeSource(SOURCE, root, DETECTOR,
+                new ExtractionRegistry(), 1024,
+                com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy::none,
+                Collections.<String>emptyList(), Collections.<String>emptyList(), (name, type) -> null, true);
+        List<String> listed = paths(inventory.resources("handbuch", "", 100).resources());
+        assertTrue(listed.containsAll(Arrays.asList("empty", "bild.bin", "large.bin")));
+        assertTrue(!listed.contains(".versteckt.txt"));
+        assertEquals(0, inventory.storedContent(id("empty")).payload().length);
+        assertKind(Kind.NOT_FOUND, () -> inventory.resourceMetadata(id(".versteckt.txt")));
+        try {
+            inventory.storedContent(id("large.bin"));
+            fail("Expected bounded in-memory read");
+        } catch (ResponseTooLargeException expected) {
+            assertEquals(1024, expected.maxBytes());
+        }
+        Path target = temp.getRoot().toPath().resolve("copy.bin");
+        assertTrue(inventory.copyOriginal(id("large.bin"), target, type -> true, 4096).isPresent());
+        assertEquals(2048, Files.size(target));
+    }
+
+    @Test
     public void theFolderIsOnePartitionKeyedByTheSourceId() throws Exception {
         List<SourcePartition> partitions = source.partitions();
 
