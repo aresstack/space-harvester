@@ -76,7 +76,7 @@ jobs:
             --exclude='bin/' \
             --exclude='*.log' \
             --exclude='config/application-local.yml' \
-            --exclude='data/' \
+            --exclude='/data/' \
             "$GITHUB_WORKSPACE/" "$package_root/"
           cd "$package_parent"
           zip -qr "$GITHUB_WORKSPACE/build/$ASSET_NAME" "$PACKAGE_DIR"
