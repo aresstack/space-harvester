@@ -121,7 +121,7 @@ class ChatPanelTest {
             // Der Space zeigt seinen zuletzt geänderten Chat samt Verlauf.
             panel[0].selection(new Selection.Node("handbuch", space, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
-            assertThat(panel[0].chatName()).isEqualTo(earlier.id());
+            assertThat(panel[0].chatName()).isEqualTo("Neuer Chat");
             assertThat(panel[0].bubbles()).isEqualTo(5);
             // Preserve the user speech bubble and put the assistant actions below the Markdown body.
             java.util.List<com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage> answers =
@@ -217,7 +217,7 @@ class ChatPanelTest {
             panel[0].selection(new Selection.Node("handbuch", null, null, "Handbuch"));
             assertThat(panel[0].chat().isEmpty()).as("kein gespeicherter Chat springt mehr herein").isTrue();
             assertThat(panel[0].bubbles()).isZero();
-            assertThat(panel[0].chatName()).isEqualTo(panel[0].chat().id());
+            assertThat(panel[0].chatName()).isEqualTo("Neuer Chat");
         });
         // Senden geht erst, wenn der Core die Auswahl aufgelöst hat (im Hintergrund); ohne Chat-Modell bleibt die
         // Frage stehen und die Statuszeile sagt, was fehlt.

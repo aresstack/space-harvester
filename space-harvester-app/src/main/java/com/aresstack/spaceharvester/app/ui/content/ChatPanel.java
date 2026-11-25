@@ -2623,9 +2623,10 @@ public final class ChatPanel extends JPanel {
             if (discarded) {
                 return;
             }
+            ChatRecord latest = store.load(startedNode, started.id());
+            next = latest == null ? started : latest;
             if (answer != null) {
-                next = store.load(startedNode, started.id());
-                next = (next == null ? started : next).plus(answer, answer.at());
+                next = next.plus(answer, answer.at());
                 store.save(startedNode, next);
                 answerActions(bubble, next, answer);
             }
