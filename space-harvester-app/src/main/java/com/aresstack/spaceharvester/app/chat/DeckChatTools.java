@@ -44,6 +44,7 @@ public final class DeckChatTools implements ChatToolset {
     private final ChatToolset extra;
     /** Die Texte der zuletzt gelesenen Ansicht, damit {@value #TEXT} dieselbe Nummerierung trifft. */
     private volatile List<ScreenText.Block> blocks;
+    private volatile String blocksIdentity = "";
 
     /**
      * @param view       die Oberfläche des Bereichs, wie sie gerade angezeigt wird
@@ -58,9 +59,7 @@ public final class DeckChatTools implements ChatToolset {
 
     /** Liest die Ansicht jetzt (beim Senden), für die Systemnachricht; merkt sich ihre Texte für {@value #TEXT}. */
     public String snapshot() {
-        ScreenText screen = ScreenText.capture(view.get());
-        blocks = screen.blocks();
-        return screen.isEmpty() ? "(leer)" : screen.format(SYSTEM_VIEW_CHARS, SYSTEM_BLOCK_CHARS);
+        return capture(SYSTEM_VIEW_CHARS, SYSTEM_BLOCK_CHARS);
     }
 
     /**
@@ -83,8 +82,8 @@ public final class DeckChatTools implements ChatToolset {
         for (String rule : rules) {
             b.append("- ").append(rule).append('\n');
         }
-        b.append("- Du kannst nur lesen: nichts ändern, speichern, löschen, abschicken oder ausführen. Sag dem "
-                + "Benutzer, was er selbst tun kann.\n");
+        b.append("- Keine Hostdaten ändern, speichern, löschen, abschicken oder ausführen. Nur ausdrücklich "
+                + "freigegebene Such- und Navigationsaktionen sind erlaubt.\n");
         b.append("- Lehnt ein Werkzeug ab, nenne den Grund und schlage den nächsten Schritt vor.\n");
         b.append("Antworte auf Deutsch, kurz und konkret.\n\n");
         b.append("Aktuelle Ansicht (").append(area).append("):\n").append(shownView);
@@ -143,9 +142,24 @@ public final class DeckChatTools implements ChatToolset {
     }
 
     private String view() {
+        return capture(VIEW_CHARS, VIEW_BLOCK_CHARS);
+    }
+
+    private String capture(int max, int perBlock) {
+        if (!stillShown.getAsBoolean()) return SWITCHED;
+        String before = extra == null ? "" : extra.viewIdentity();
+        String context = extra == null ? "" : extra.viewContext();
         ScreenText screen = ScreenText.capture(view.get());
+        String after = extra == null ? "" : extra.viewIdentity();
+        if (!stillShown.getAsBoolean()) return SWITCHED;
+        if (!before.equals(after)) {
+            blocks = null;
+            return "Die Auswahl hat sich beim Lesen geändert. Bitte Ansicht erneut lesen.";
+        }
+        blocksIdentity = after;
         blocks = screen.blocks();
-        return screen.isEmpty() ? "Die Ansicht ist leer." : screen.format(VIEW_CHARS, VIEW_BLOCK_CHARS);
+        String display = screen.isEmpty() ? "(leer)" : screen.format(max, perBlock);
+        return context.isEmpty() ? display : context + "\n\n" + display;
     }
 
     private String text(JsonNode arguments) {
@@ -153,6 +167,10 @@ public final class DeckChatTools implements ChatToolset {
         if (known == null) {
             view();
             known = blocks;
+        }
+        if (known == null || !stillShown.getAsBoolean()) return SWITCHED;
+        if (extra != null && !blocksIdentity.equals(extra.viewIdentity())) {
+            return "Die Textauswahl hat sich geändert. Bitte ansicht_lesen erneut aufrufen.";
         }
         if (known.isEmpty()) {
             return "In der Ansicht ist kein Text (Editor, Spool, Dokument) offen.";
@@ -162,7 +180,8 @@ public final class DeckChatTools implements ChatToolset {
             return "Abgelehnt: nr muss zwischen 1 und " + known.size() + " liegen.";
         }
         ScreenText.Block block = known.get(nr - 1);
-        return page(block.name().isEmpty() ? "Text " + nr : block.name(), block.text(), arguments.path("ab").asInt(0));
+        return stillShown.getAsBoolean() ? page(block.name().isEmpty() ? "Text " + nr : block.name(), block.text(),
+                arguments.path("ab").asInt(0)) : SWITCHED;
     }
 
     /** Ein Abschnitt eines langen Textes mit Angabe, wo es weitergeht. */
