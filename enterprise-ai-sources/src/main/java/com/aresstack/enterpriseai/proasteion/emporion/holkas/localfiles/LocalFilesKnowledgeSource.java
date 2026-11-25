@@ -88,7 +88,7 @@ import java.nio.channels.SeekableByteChannel;
  * </ul>
  */
 public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
-        ResourceMetadataSource, StoredContentSource {
+        ResourceMetadataSource, StoredContentSource, com.aresstack.enterpriseai.source.api.PartitionInventorySource {
 
     static final String SCHEME = "file";
     /** Standardobergrenze je Datei. */
@@ -333,6 +333,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
      * Traverse the partition once without collecting or sorting all paths.
      * Fail incomplete inventories instead of silently treating inaccessible files as deleted.
      */
+    @Override
     public void visitInventory(String partitionKey, Runnable checkpoint,
                                java.util.function.Consumer<KnowledgeResource> found) throws KnowledgeSourceException {
         if (!sourceId.value().equals(partitionKey)) {
