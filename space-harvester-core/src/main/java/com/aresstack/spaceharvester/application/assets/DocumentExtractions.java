@@ -82,6 +82,11 @@ public final class DocumentExtractions {
         return extractions.find(key(sha256));
     }
 
+    /** Find exactly the extraction referenced by a snapshot, not a different generation of the bytes. */
+    public Optional<StoredExtraction> stored(ExtractionKey key) {
+        return extractions.find(key);
+    }
+
     /**
      * Die Extraktion dieser Bytes für Leser (ADR 0026, Punkt 11, Abnahme 8): die aktuelle, wenn sie Text hat, sonst die
      * jüngste lesbare einer anderen Extraktion, Version oder eines anderen Strukturmodells. Diese gilt als veraltet

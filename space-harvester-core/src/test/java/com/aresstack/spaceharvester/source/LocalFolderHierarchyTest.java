@@ -378,6 +378,48 @@ class LocalFolderHierarchyTest {
         assertThat(reference.preview()).isEmpty();
     }
 
+    @Test
+    void fullTextFindsTermsBeyondTheBoundedPreviewAndReplacesAllOldSections() throws IOException {
+        Path original = directory.resolve("notiz.txt");
+        Files.writeString(original, "Beginning\n" + "ordinary paragraph\n\n".repeat(7000) + "Zielbegriff");
+        KnowledgeSourceHarvestSource source = open();
+        String pageId = id("notiz.txt");
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, 8);
+        var storage = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), storage);
+        var first = snapshots.fetch("docs", pageId);
+        assertThat(com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.read(first.payload())
+                .orElseThrow().preview()).doesNotContain("Zielbegriff");
+        try (var index = com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex.open(
+                directory.resolve(".index"))) {
+            var texts = new com.aresstack.spaceharvester.application.query.PageTextIndexing(List.of(), index,
+                    new com.aresstack.spaceharvester.application.query.LocalPageSections(documents));
+            assertThat(texts.index(first)).isTrue();
+            var hits = index.search("Zielbegriff", java.util.Set.of("docs"),
+                    com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 10);
+            assertThat(hits).hasSize(1);
+            assertThat(hits.get(0).pageId()).isEqualTo(pageId);
+            assertThat(hits.get(0).attachmentId()).isNull();
+            assertThat(texts.index(first)).isFalse();
+            index.putAttachment(new com.aresstack.spaceharvester.application.query.PageTextIndex.AttachmentEntry(
+                    first.key(), first.spaceKey(), "real-attachment", "Attachment", "Anhangbegriff", "stand"));
+            Files.writeString(original, "Neuerbegriff");
+            assertThat(texts.index(snapshots.fetch("docs", pageId))).isTrue();
+            assertThat(index.search("Zielbegriff", java.util.Set.of("docs"),
+                    com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 10)).isEmpty();
+            assertThat(index.search("Neuerbegriff", java.util.Set.of("docs"),
+                    com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 10)).hasSize(1);
+            assertThat(index.search("Anhangbegriff", java.util.Set.of("docs"),
+                    com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 10)).hasSize(1);
+        }
+    }
+
     private static com.aresstack.spaceharvester.application.sources.SourceCatalog catalog(HarvestSource source) {
         return new com.aresstack.spaceharvester.application.sources.SourceCatalog() {
             @Override

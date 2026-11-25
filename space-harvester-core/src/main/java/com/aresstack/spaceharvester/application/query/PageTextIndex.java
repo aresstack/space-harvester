@@ -25,6 +25,11 @@ public interface PageTextIndex {
     /** Legt den Text einer Seite ab oder ersetzt ihn. */
     void put(Entry entry);
 
+    /** Atomically replace the text sections of the page itself, retaining its real attachments. */
+    default void replacePageSections(PageKey page, Iterable<Entry> sections) {
+        throw new UnsupportedOperationException("Index does not support page sections");
+    }
+
     /** Der abgelegte Stand ({@link Entry#inputSha256()}) der Seite, wenn sie im Index liegt. */
     Optional<String> inputSha256(PageKey key);
 
