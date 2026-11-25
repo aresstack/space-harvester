@@ -877,8 +877,10 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
 
     private List<Pending> work(String sourceId, String spaceKey, Collection<String> pageIds) {
         List<Pending> result = new ArrayList<>();
-        for (String pageId : pageIds) {
-            localPending(new PageKey(sourceId, pageId)).ifPresent(result::add);
+        if (localDocuments != null) {
+            for (String pageId : pageIds) {
+                localPending(new PageKey(sourceId, pageId)).ifPresent(result::add);
+            }
         }
         DocumentInventory source = assets;
         if (source != null) {
