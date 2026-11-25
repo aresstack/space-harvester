@@ -15,7 +15,11 @@ import java.util.Objects;
  * @param hash       SHA-256 der gelesenen Bytes (hex)
  */
 public record EditorDocument(String location, String name, String text, String charset, String lineEnding,
-                             String hash) {
+                             String hash, String writeRestriction) {
+
+    public EditorDocument(String location, String name, String text, String charset, String lineEnding, String hash) {
+        this(location, name, text, charset, lineEnding, hash, "");
+    }
 
     public EditorDocument {
         Objects.requireNonNull(location, "location");
@@ -24,6 +28,7 @@ public record EditorDocument(String location, String name, String text, String c
         Objects.requireNonNull(charset, "charset");
         Objects.requireNonNull(lineEnding, "lineEnding");
         Objects.requireNonNull(hash, "hash");
+        writeRestriction = writeRestriction == null ? "" : writeRestriction;
     }
 
     /** Die Dateiendung ohne Punkt in Kleinbuchstaben (für die Syntaxhervorhebung), sonst leer. */

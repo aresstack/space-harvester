@@ -88,6 +88,7 @@ final class FtpSessionView extends JPanel {
 
     /** Zeigt eine Unteransicht; die Jobliste wird beim ersten Zeigen abgefragt. */
     void show(String next) {
+        if (JOBS.equals(next)) datasets.revokeDiagnosis();
         view = JOBS.equals(next) ? JOBS : DATASETS;
         centerCards.show(center, view);
         actionCards.show(actions, view);

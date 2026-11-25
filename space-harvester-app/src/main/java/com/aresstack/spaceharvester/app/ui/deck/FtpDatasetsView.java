@@ -135,6 +135,7 @@ final class FtpDatasetsView extends JPanel {
     private String current = "";
     private boolean creatingDataset;
     private boolean connected;
+    private volatile com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools.Grant diagnosis;
 
     FtpDatasetsView(FtpSessionView owner, Runnable showJobs, EditorSessions editors) {
         super(new BorderLayout());
@@ -380,6 +381,7 @@ final class FtpDatasetsView extends JPanel {
     }
 
     void setConnected(boolean value) {
+        if (!value) revokeDiagnosis();
         connected = value;
         enableActions();
     }
@@ -405,6 +407,7 @@ final class FtpDatasetsView extends JPanel {
     }
 
     private void navigate(String target, Move move, Runnable afterRefresh) {
+        revokeDiagnosis();
         FtpSession session = owner.session();
         if (session.mvs() && (target == null || target.isBlank() || MvsPath.ROOT.equals(MvsPath.absolute(target)))) {
             message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
@@ -513,7 +516,7 @@ final class FtpDatasetsView extends JPanel {
         enableActions();
         expandAll.setVisible(groupable && grouped);
         collapseAll.setVisible(groupable && grouped);
-        detailsButton.marked(details);
+        updateDiagnosisTitle();
         sortButton.marked(sort != EntryList.Sort.NAME_ASC);
     }
 
@@ -664,6 +667,12 @@ final class FtpDatasetsView extends JPanel {
         menu.add(item("Öffnen", single != null, () -> open(single)));
         menu.addSeparator();
         menu.add(item("Herunterladen …", readable(single), this::download));
+        if (mvs) {
+            menu.add(item("Binär herunterladen …", connected && readable(single), () -> downloadBinary(single)));
+            menu.add(item("Hex-Ansicht …", connected && readable(single), () -> showHex(single)));
+            menu.add(item("Binärdiagnose für MCP freigeben …", connected && readable(single), () -> armDiagnosis(single)));
+            menu.add(item("Binärdiagnose beenden", diagnosis != null, this::revokeDiagnosis));
+        }
         menu.add(item("Als Job einreichen", readable(single), this::submit));
         menu.addSeparator();
         menu.add(item(mvs ? "Neues Dataset …" : "Neuer Ordner …", connected && !current.isEmpty(),
@@ -675,6 +684,38 @@ final class FtpDatasetsView extends JPanel {
         menu.addSeparator();
         menu.add(item("Löschen (" + chosen.size() + ") …", connected && !chosen.isEmpty(), this::delete));
         return menu;
+    }
+
+    void armDiagnosis(RemoteEntry entry) {
+        if (!connected || !owner.session().mvs() || !readable(entry)
+                || selectedAll().size() != 1 || !entry.path().equals(selected().path())) return;
+        if (!confirm.test("MCP-Binärdiagnose", "Originalbytes von " + entry.path()
+                + " für gpt-oss-120b am konfigurierten KI-Endpunkt freigeben? "
+                + "Der Chat kann bis zu 64 KiB aus einer 8-MiB-Stichprobe abrufen. "
+                + "Die Übertragung wird vollständig gelesen. Chatantworten können im Verlauf stehen. "
+                + "Nur bei einem autorisierten Endpunkt freigeben.")) return;
+        revokeDiagnosis();
+        diagnosis = new com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools.Grant(owner.session(), entry);
+        updateDiagnosisTitle();
+    }
+
+    com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools.Grant diagnosis() {
+        return diagnosis;
+    }
+
+    void revokeDiagnosis() {
+        var previous = diagnosis;
+        diagnosis = null;
+        if (previous != null) {
+            previous.revoke();
+            updateDiagnosisTitle();
+        }
+    }
+
+    private void updateDiagnosisTitle() {
+        detailsButton.marked(details || diagnosis != null);
+        detailsButton.setToolTipText(diagnosis == null ? "Details zeigen (Größe, Datum, RECFM/LRECL)"
+                : "MCP-Binärdiagnose freigegeben: " + diagnosis.path() + " (Kontextmenü zum Beenden)");
     }
 
     private static javax.swing.JMenuItem item(String text, boolean enabled, Runnable action) {
@@ -812,7 +853,10 @@ final class FtpDatasetsView extends JPanel {
         EditorSession session = document;
         String text = session.location() + " · " + session.state().label();
         boolean error = false;
-        if (session.state() == EditorSession.State.FAILED || session.state() == EditorSession.State.CONFLICT) {
+        if (session.state() == EditorSession.State.READY && !session.writable()) {
+            text += " · " + session.document().map(d -> d.writeRestriction()).orElse("Nur lesen");
+            error = true;
+        } else if (session.state() == EditorSession.State.FAILED || session.state() == EditorSession.State.CONFLICT) {
             text += session.problem().map(problem -> ": " + problem).orElse("");
             error = true;
         } else if (session.note().isPresent()) {
@@ -911,6 +955,8 @@ final class FtpDatasetsView extends JPanel {
 
     private void enableActions() {
         RemoteEntry entry = selected();
+        if (diagnosis != null && (!connected || entry == null || selectedAll().size() != 1
+                || !diagnosis.path().equals(entry.path()))) revokeDiagnosis();
         boolean file = readable(entry);
         boolean mvs = owner.session().mvs();
         download.setEnabled(connected && file);
@@ -931,7 +977,7 @@ final class FtpDatasetsView extends JPanel {
         reloadDocument.setVisible(showing);
         if (showing) {
             EditorSession.State state = document.state();
-            save.setEnabled(connected && document.dirty()
+            save.setEnabled(connected && document.writable() && document.dirty()
                     && (state == EditorSession.State.READY || state == EditorSession.State.CONFLICT));
             reloadDocument.setEnabled(connected && state != EditorSession.State.LOADING && state != EditorSession.State.SAVING);
         }
@@ -1103,6 +1149,55 @@ final class FtpDatasetsView extends JPanel {
             return target;
         }), "Herunterladen von " + entry.path() + " fehlgeschlagen",
                 saved -> owner.status("Gespeichert: " + saved, false));
+    }
+
+    private void downloadBinary(RemoteEntry entry) {
+        if (!readable(entry) || !connected) return;
+        JFileChooser chooser = SaveChooser.create(fileName(entry) + ".bin");
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        Path target = chooser.getSelectedFile().toPath().toAbsolutePath();
+        if (Files.exists(target) && !confirm.test("Überschreiben", target + " ersetzen?")) return;
+        owner.run(owner.session().filesOnce(files -> {
+            Path temporary = Files.createTempFile(target.getParent(), ".ftp-", ".part");
+            try {
+                try (var out = Files.newOutputStream(temporary)) {
+                    files.downloadBinary(entry.path(), out);
+                }
+                Files.move(temporary, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                return target;
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+        }), "Binärdownload fehlgeschlagen", saved -> owner.status("Binär gespeichert: " + saved, false));
+    }
+
+    private void showHex(RemoteEntry entry) {
+        if (!readable(entry) || !connected) return;
+        owner.run(owner.session().filesOnce(files -> files.readBinarySample(entry.path(),
+                com.aresstack.spaceharvester.deck.ftp.BinarySample.MAX_CAPTURE_BYTES)),
+                "Hex-Ansicht fehlgeschlagen", sample -> {
+                    javax.swing.JTextArea content = new javax.swing.JTextArea(24, 100);
+                    content.setEditable(false);
+                    content.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12));
+                    JPanel panel = new JPanel(new BorderLayout(4, 4));
+                    JPanel navigation = new JPanel();
+                    javax.swing.JSpinner offset = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(
+                            0, 0, Math.max(0, sample.capturedBytes() - 1), 4096));
+                    navigation.add(new JLabel("Byteoffset:"));
+                    navigation.add(offset);
+                    navigation.add(new JLabel("Stichprobe: " + sample.capturedBytes() + " / " + sample.totalBytes() + " Bytes"));
+                    Runnable render = () -> {
+                        int position = (Integer) offset.getValue();
+                        content.setText(com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools.hex(
+                                sample.slice(position, 4096), position));
+                        content.setCaretPosition(0);
+                    };
+                    offset.addChangeListener(e -> render.run());
+                    panel.add(navigation, BorderLayout.NORTH);
+                    panel.add(new javax.swing.JScrollPane(content), BorderLayout.CENTER);
+                    render.run();
+                    Dialogs.view(this, "Hex · " + entry.path(), panel);
+                });
     }
 
     private void upload() {
