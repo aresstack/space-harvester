@@ -88,6 +88,37 @@ public class MediaWikiHttpIntegrationTest {
     }
 
     @Test
+    public void renderedImagesUseTheWikiSessionAndRenewItAfterExpiry() throws Exception {
+        byte[] png = java.util.Base64.getDecoder().decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1qkAAAAASUVORK5CYII=");
+        server.createContext("/w/images/test.png", exchange -> {
+            try {
+                String cookie = exchange.getRequestHeaders().getFirst("Cookie");
+                if (session == null || !("s=" + session).equals(cookie)) {
+                    exchange.sendResponseHeaders(403, -1);
+                } else {
+                    exchange.getResponseHeaders().add("Content-Type", "image/png");
+                    exchange.sendResponseHeaders(200, png.length);
+                    exchange.getResponseBody().write(png);
+                }
+            } finally {
+                exchange.close();
+            }
+        });
+        String src = "http://127.0.0.1:" + server.getAddress().getPort() + "/w/images/test.png";
+        wiki.page("Bildseite", "<p>Abbildung</p><img src='" + src + "' alt='Testbild'>", 999, 999);
+        MediaWikiKnowledgeSource source = source("pässwört");
+        com.aresstack.enterpriseai.source.api.PageView view = source.pageView(
+                com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId.of("wiki:local/Bildseite"));
+        assertEquals(1, view.images().size());
+        org.junit.Assert.assertArrayEquals(png, source.loadViewImage(view.images().get(0).src()));
+        assertEquals(1, wiki.logins);
+        session = null;
+        org.junit.Assert.assertArrayEquals(png, source.loadViewImage(view.images().get(0).src()));
+        assertEquals(2, wiki.logins);
+    }
+
+    @Test
     public void wrongPasswordIsAccessDenied() {
         try {
             source("falsch").discover(SourceScope.of("Hauptseite"));

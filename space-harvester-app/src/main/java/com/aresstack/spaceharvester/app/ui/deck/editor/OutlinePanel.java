@@ -138,12 +138,16 @@ final class OutlinePanel extends JPanel {
                     parent = new DefaultMutableTreeNode(group.label());
                     root.add(parent);
                 }
-                for (JclElement element : group.elements()) {
-                    DefaultMutableTreeNode node = new DefaultMutableTreeNode(element);
-                    for (JclElement child : element.getChildren()) {
-                        node.add(new DefaultMutableTreeNode(child));
+                if (outline.language() == com.aresstack.spaceharvester.mainframe.outline.SourceLanguage.COBOL) {
+                    addCobolGroup(parent, group.elements());
+                } else {
+                    for (JclElement element : group.elements()) {
+                        DefaultMutableTreeNode node = new DefaultMutableTreeNode(element);
+                        for (JclElement child : element.getChildren()) {
+                            node.add(new DefaultMutableTreeNode(child));
+                        }
+                        parent.add(node);
                     }
-                    parent.add(node);
                 }
             }
             status.setText(outline.status());
@@ -151,9 +155,49 @@ final class OutlinePanel extends JPanel {
                     : String.valueOf(item));
         }
         model.reload();
-        for (int row = 0; row < tree.getRowCount(); row++) {
-            tree.expandRow(row);
+        if (outline != null && outline.language() == com.aresstack.spaceharvester.mainframe.outline.SourceLanguage.COBOL
+                && query.isBlank()) {
+            tree.expandPath(new TreePath(root.getPath()));
+            for (int i = 0; i < root.getChildCount(); i++) {
+                DefaultMutableTreeNode child = (DefaultMutableTreeNode) root.getChildAt(i);
+                if (child.getUserObject() instanceof String) {
+                    tree.expandPath(new TreePath(child.getPath()));
+                }
+            }
+        } else {
+            for (int row = 0; row < tree.getRowCount(); row++) {
+                tree.expandRow(row);
+            }
         }
+    }
+
+    private void addCobolGroup(DefaultMutableTreeNode group, List<JclElement> elements) {
+        java.util.Set<JclElement> visible = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (JclElement element : elements) {
+            boolean dataItem = switch (element.getType()) {
+                case DATA_ITEM, LEVEL_01, LEVEL_77, LEVEL_88 -> true;
+                default -> false;
+            };
+            if (!(dataItem && element.getLineNumber() == 0)
+                    && (!"FILLER".equalsIgnoreCase(element.getName()) || element.hasChildren())) {
+                visible.add(element);
+            }
+        }
+        for (JclElement element : elements) {
+            if (visible.contains(element) && !visible.contains(element.getParent())) {
+                group.add(cobolNode(element, visible));
+            }
+        }
+    }
+
+    private DefaultMutableTreeNode cobolNode(JclElement element, java.util.Set<JclElement> visible) {
+        DefaultMutableTreeNode node = new DefaultMutableTreeNode(element);
+        for (JclElement child : element.getChildren()) {
+            if (visible.contains(child)) {
+                node.add(cobolNode(child, visible));
+            }
+        }
+        return node;
     }
 
     /** Diagramm-Ansicht an/aus: Auswahl zeigt das Element im Diagramm; {@code null} = zur Zeile springen. */

@@ -1,17 +1,14 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
-import com.aresstack.enterpriseai.ui.comic.bubble.BubbleTimestamps;
 import com.aresstack.enterpriseai.ui.comic.bubble.WidthAwareHeight;
 
 import javax.swing.JComponent;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.border.EmptyBorder;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Container;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.Insets;
 import java.util.Objects;
 
@@ -23,10 +20,7 @@ public final class AssistantMarkdownMessage extends JPanel implements WidthAware
     private static final int FOOTER_GAP = 6;
 
     private final MarkdownMessageView body;
-    private final JPanel footer = new JPanel(new BorderLayout(8, 0));
-    private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-    private final JLabel timestamp = new JLabel();
-    private final JLabel failure = new JLabel("Fehler");
+    private final AssistantMessageFooter footer;
 
     public AssistantMarkdownMessage(MarkdownMessageView body, Color mutedForeground) {
         super(new BorderLayout(0, FOOTER_GAP));
@@ -35,14 +29,7 @@ public final class AssistantMarkdownMessage extends JPanel implements WidthAware
         setAlignmentX(LEFT_ALIGNMENT);
         setBorder(new EmptyBorder(VERTICAL_MARGIN, HORIZONTAL_MARGIN, VERTICAL_MARGIN, HORIZONTAL_MARGIN));
 
-        footer.setOpaque(false);
-        actions.setOpaque(false);
-        timestamp.setForeground(mutedForeground);
-        timestamp.setFont(timestamp.getFont().deriveFont(Math.max(10f, timestamp.getFont().getSize2D() - 2f)));
-        failure.setVisible(false);
-        actions.add(failure);
-        footer.add(actions, BorderLayout.WEST);
-        footer.add(timestamp, BorderLayout.EAST);
+        footer = new AssistantMessageFooter(mutedForeground);
         add(body, BorderLayout.CENTER);
         add(footer, BorderLayout.SOUTH);
     }
@@ -52,26 +39,27 @@ public final class AssistantMarkdownMessage extends JPanel implements WidthAware
     }
 
     public void setTimestamp(long epochMillis) {
-        timestamp.setText(BubbleTimestamps.timeText(epochMillis) + " · " + BubbleTimestamps.dateText(epochMillis));
-        timestamp.setToolTipText(BubbleTimestamps.tooltip(epochMillis));
-        revalidate();
+        footer.setTimestamp(epochMillis);
     }
 
     public void setActions(JComponent accessory) {
-        actions.removeAll();
-        if (accessory != null) {
-            actions.add(accessory);
-        }
-        actions.add(failure);
-        revalidate();
-        repaint();
+        footer.setActions(accessory);
+    }
+
+    public void setQrAction(JComponent accessory) {
+        footer.setQrAction(accessory);
+    }
+
+    public void setSources(JComponent sources) {
+        footer.setSources(sources);
+    }
+
+    public JComponent sources() {
+        return footer.sources();
     }
 
     public void markFailed(Color color) {
-        failure.setForeground(color);
-        failure.setVisible(true);
-        revalidate();
-        repaint();
+        footer.markFailed(color);
     }
 
     @Override
@@ -79,7 +67,7 @@ public final class AssistantMarkdownMessage extends JPanel implements WidthAware
         Insets insets = getInsets();
         int innerWidth = Math.max(1, width - insets.left - insets.right);
         return insets.top + insets.bottom + body.preferredHeightForWidth(innerWidth)
-                + FOOTER_GAP + footer.getPreferredSize().height;
+                + FOOTER_GAP + footer.preferredHeightForWidth(innerWidth);
     }
 
     @Override

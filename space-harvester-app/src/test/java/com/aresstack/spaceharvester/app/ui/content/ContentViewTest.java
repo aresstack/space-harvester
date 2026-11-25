@@ -760,6 +760,48 @@ class ContentViewTest {
     }
 
     @Test
+    void searchScopeChangesPreserveTheDocumentAndItsBackAndForwardHistory() throws Exception {
+        PageDetailPanel detail = view.detail();
+        String space = space("handbuch");
+        List<String> pages = context.runtime().workspace().liveMetadata("handbuch", space, null, 10).entries().stream()
+                .map(entry -> entry.page().pageId()).toList();
+        onEdt(() -> {
+            view.openPage("handbuch", pages.get(0));
+            return null;
+        });
+        await(() -> shown(detail, pages.get(0)));
+        onEdt(() -> {
+            assertThat(detail.backButton().isEnabled()).isFalse();
+            view.searchFront(true);
+            view.selection(null);
+            view.selection(ExportPanel.Selection.ALL);
+            view.selection(new ExportPanel.Selection.Node("notizen", null, null, "Notizen"));
+            assertThat(shown(detail, pages.get(0))).isTrue();
+            assertThat(detail.backButton().isEnabled()).isTrue();
+            detail.backButton().doClick();
+            assertThat(shown(detail, pages.get(0))).isTrue();
+            assertThat(detail.canGoBack()).isFalse();
+            view.searchFront(false);
+            view.openPage("handbuch", pages.get(1));
+            return null;
+        });
+        await(() -> shown(detail, pages.get(1)));
+        onEdt(() -> {
+            view.searchFront(true);
+            view.selection(ExportPanel.Selection.ALL);
+            detail.backButton().doClick();
+            assertThat(shown(detail, pages.get(1))).isTrue();
+            assertThat(detail.canGoBack()).isTrue();
+            detail.backButton().doClick();
+            return null;
+        });
+        await(() -> shown(detail, pages.get(0)));
+        assertThat(onEdt(detail::canGoForward)).isTrue();
+        onEdt(detail::forward);
+        await(() -> shown(detail, pages.get(1)));
+    }
+
+    @Test
     void backAndForwardReturnToThePagesShownBeforeAlsoWithTheThumbButtons() throws Exception {
         PageDetailPanel detail = view.detail();
         String space = space("handbuch");

@@ -189,11 +189,11 @@ public class PageNavigation {
      * @return leer ohne Cache oder wenn der Cache keine Kinder kennt
      */
     public Children cachedChildren(AccessContext caller, String sourceId, String spaceKey, String parentPageId) {
-        source(sourceId);
+        HarvestSource source = source(sourceId);
         access.require(caller, parentPageId == null
                 ? ResourceScope.space(sourceId, Objects.requireNonNull(spaceKey, "spaceKey"))
                 : ResourceScope.source(sourceId), AccessKind.METADATA);
-        if (cache == null) {
+        if (cache == null || source.navigationUsesGroups()) {
             return new Children(sourceId, spaceKey, parentPageId, List.of(), null);
         }
         List<com.aresstack.spaceharvester.application.snapshot.PageHeader> headers;

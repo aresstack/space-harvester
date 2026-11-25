@@ -15,7 +15,14 @@ import java.util.Objects;
  * @param defaultValue Vorgabe, {@code null} ohne
  */
 public record SourceField(String key, String label, String hint, Kind kind, boolean required, boolean advanced,
-                          String defaultValue) {
+                          String defaultValue, VaultValue vaultValue) {
+
+    public enum VaultValue { NONE, LOCATION, HOST }
+
+    public SourceField(String key, String label, String hint, Kind kind, boolean required, boolean advanced,
+                       String defaultValue) {
+        this(key, label, hint, kind, required, advanced, defaultValue, VaultValue.NONE);
+    }
 
     /** Art der Eingabe, wie {@code SourceSettingField.Kind} im Enterprise AI Client. */
     public enum Kind {
@@ -38,5 +45,6 @@ public record SourceField(String key, String label, String hint, Kind kind, bool
         Objects.requireNonNull(label, "label");
         Objects.requireNonNull(kind, "kind");
         hint = hint == null ? "" : hint;
+        vaultValue = vaultValue == null ? VaultValue.NONE : vaultValue;
     }
 }

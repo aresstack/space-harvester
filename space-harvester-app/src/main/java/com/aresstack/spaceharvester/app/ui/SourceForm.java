@@ -916,6 +916,9 @@ final class SourceForm {
      * gelesener Eintrag ohne Adresse liefert leer, damit „Die Adresse fehlt“ am Feld steht.
      */
     private String address() {
+        if (fields.address() != null && !usesBaseUrl()) {
+            return fields.effectiveAddress();
+        }
         if (!baseUrl.getText().isBlank()) {
             return baseUrl.getText();
         }
@@ -1328,7 +1331,7 @@ final class SourceForm {
         }
         List<SourceFieldsEditor.Problem> problems = new ArrayList<>(fields.problems());
         JTextField address = fields.address();
-        if (address != null && address.getText().contains("${")) {
+        if (address != null && fields.effectiveAddress().contains("${")) {
             problems.add(new SourceFieldsEditor.Problem(address, "Die Adresse darf keinen Platzhalter ${…} enthalten."));
         }
         JTextField reference = fields.secretReference();
@@ -1411,13 +1414,14 @@ final class SourceForm {
             boolean generic = !serverAddress && !SourceDraft.FILES.equals(typeId());
             // Bei Arten mit Feldern ist die Adresse das Feld des Typs; ist es ein Verzeichnis, gilt sein Name.
             JTextField addressField = fields.address();
-            String genericAddress = addressField == null ? baseUrl.getText() : addressField.getText();
+            String genericAddress = addressField == null ? baseUrl.getText() : fields.effectiveAddress();
             boolean folder = !generic || addressField != null
                     && fields.spec(addressOption()).kind() == SourceFieldSpec.Kind.DIRECTORY;
             String folderPath = generic ? genericAddress : directory.getText();
             // Der Name hängt an der Adresse (Angelo, 09.11.): eine eingetippte Adresse ist auch der Vorschlag für den
             // Namen; leer gilt der Titel des KeePass-Eintrags bzw. die Confluence-Hilfe.
-            boolean fromKeePass = serverAddress && baseUrl.getText().isBlank() && keePassAddress() != null
+            boolean fromKeePass = (serverAddress && baseUrl.getText().isBlank()
+                    || addressField != null && addressField.getText().isBlank() && !genericAddress.isBlank()) && keePassAddress() != null
                     && !keePassTitle().isEmpty();
             String proposedTitle = fromKeePass ? keePassTitle()
                     : confluence ? (baseUrl.getText().isBlank() ? titleFor(address()) : baseUrl.getText().strip())
@@ -1605,6 +1609,7 @@ final class SourceForm {
         form.visible(baseUrl, serverAddress || generic && !fields.active() && addressOption() != null);
         // Platzhalter: die Adresse des KeePass-Eintrags, sonst die Confluence-Hilfe; ein Eintrag ohne Adresse keiner.
         String fromKeePass = keePassAddress();
+        fields.vaultLocation(fromKeePass);
         baseUrl.setPlaceholder(!serverAddress ? "" : fromKeePass != null ? fromKeePass
                 : !confluence || keePassEntryWithoutAddress() || keePassAddressPending() ? "" : DEFAULT_URL);
         form.hint(baseUrl, !serverAddress ? "Adresse der Quelle (in der Datei options." + addressOption() + ")"

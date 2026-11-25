@@ -147,6 +147,12 @@ public class JclElement {
                     sb.append("  = ").append(truncate(value, 15));
                 }
                 break;
+            case DEBUG_CALL_STMT:
+                sb.append(" (nur Debug-Modus)");
+                break;
+            case DYNAMIC_CALL_STMT:
+                sb.append(" (dynamisches Ziel)");
+                break;
             case CALL_STMT:
                 String target = parameters.get("TARGET");
                 if (target != null) {

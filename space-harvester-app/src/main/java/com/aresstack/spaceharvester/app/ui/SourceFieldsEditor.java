@@ -57,6 +57,7 @@ final class SourceFieldsEditor {
     private JTextField certificateAlias;
     private ComposerButton certificateChoose;
     private String addressKey;
+    private String vaultLocation;
 
     /**
      * @param mainStart      reservierter Bereich für die Hauptfelder ({@link SourceForm.Form#reserve})
@@ -179,7 +180,8 @@ final class SourceFieldsEditor {
                 return text;
             }
             default -> {
-                JTextField text = Comic.field(28);
+                JTextField text = field.vaultValue() == com.aresstack.spaceharvester.application.sources.SourceField.VaultValue.NONE
+                        ? Comic.field(28) : new PlaceholderField(28, null);
                 text.setText(value);
                 add(label, text, hint, advanced);
                 return text;
@@ -292,7 +294,7 @@ final class SourceFieldsEditor {
                 }
                 options.put(entry.getKey(), box.isSelected() ? "true" : "false");
             } else {
-                String value = ((JTextField) input).getText().strip();
+                String value = effectiveValue(entry.getKey(), (JTextField) input);
                 if (value.isEmpty()) {
                     options.remove(entry.getKey());
                 } else {
@@ -324,7 +326,7 @@ final class SourceFieldsEditor {
             if (!(entry.getValue() instanceof JTextField text)) {
                 continue;
             }
-            String value = text.getText().strip();
+            String value = effectiveValue(entry.getKey(), text);
             if (field.required() && value.isEmpty()) {
                 problems.add(new Problem(text, "Bitte „" + field.label() + "“ eintragen."));
             } else if (field.kind() == SourceFieldSpec.Kind.NUMBER && !value.isEmpty() && !value.matches("-?\\d+")) {
@@ -342,6 +344,50 @@ final class SourceFieldsEditor {
     /** Das Feld zum Schlüssel oder {@code null}. */
     SourceFieldSpec spec(String key) {
         return specs.get(key);
+    }
+
+    void vaultLocation(String location) {
+        vaultLocation = location;
+        for (Map.Entry<String, SourceFieldSpec> entry : specs.entrySet()) {
+            if (entry.getValue().vaultValue() != com.aresstack.spaceharvester.application.sources.SourceField.VaultValue.NONE
+                    && inputs.get(entry.getKey()) instanceof JTextField text) {
+                String suggested = vaultValue(entry.getValue());
+                text.setToolTipText(suggested.isEmpty() ? null : "Leer gilt die Adresse aus KeePass: " + suggested);
+                if (text instanceof PlaceholderField field) {
+                    field.setPlaceholder(suggested);
+                }
+            }
+        }
+    }
+
+    String effectiveAddress() {
+        JTextField text = address();
+        return text == null ? "" : effectiveValue(addressKey, text);
+    }
+
+    private String effectiveValue(String key, JTextField text) {
+        String typed = text.getText().strip();
+        return typed.isEmpty() ? vaultValue(specs.get(key)) : typed;
+    }
+
+    private String vaultValue(SourceFieldSpec spec) {
+        if (spec == null || vaultLocation == null || vaultLocation.isBlank()) {
+            return "";
+        }
+        return switch (spec.vaultValue()) {
+            case NONE -> "";
+            case LOCATION -> vaultLocation;
+            case HOST -> hostValue(vaultLocation);
+        };
+    }
+
+    private static String hostValue(String value) {
+        try {
+            java.net.URI uri = java.net.URI.create(value.contains("://") ? value : "https://" + value);
+            return uri.getHost() == null ? "" : uri.getHost();
+        } catch (IllegalArgumentException invalid) {
+            return "";
+        }
     }
 
     /** Die Eingabe des Adressfelds oder {@code null}. */

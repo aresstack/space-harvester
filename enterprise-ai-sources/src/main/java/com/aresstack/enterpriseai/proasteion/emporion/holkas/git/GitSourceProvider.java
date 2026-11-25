@@ -45,7 +45,8 @@ public final class GitSourceProvider implements KnowledgeSourceProvider {
             .fullIndexing(true)
             .summaryKey("url")
             .field(SourceSettingField.text("url", "Repository-URL",
-                    "HTTPS-Adresse ohne Zugangsdaten (z. B. dev.azure.com/org/projekt/_git/repo) oder lokaler Pfad").required())
+                    "HTTPS-Adresse ohne Zugangsdaten (z. B. dev.azure.com/org/projekt/_git/repo) oder lokaler Pfad").required()
+                    .fromVault(SourceSettingField.VaultValue.LOCATION))
             .field(SourceSettingField.text("title", "Anzeigename (optional)", "Leer = Name aus der Adresse"))
             .field(SourceSettingField.text("ref", "Branch/Tag (optional)",
                     "Branch, Tag oder Commit-ID; leer = Standard-Branch des Repositorys"))

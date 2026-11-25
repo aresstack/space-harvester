@@ -113,6 +113,11 @@ public final class SourceSettingsReader {
 
     /** Absolute http(s)-URI ohne Benutzerinfo, Query und Fragment; {@code null} bei Fehler oder fehlendem Wert. */
     public URI httpUri(String key, boolean required) {
+        return httpUri(key, required, false);
+    }
+
+    /** Allow a source-specific normalizer to interpret page addresses with a query or fragment. */
+    public URI httpUri(String key, boolean required, boolean allowPageAddress) {
         String value = required ? required(key) : text(key, null);
         if (value == null) {
             return null;
@@ -133,7 +138,7 @@ public final class SourceSettingsReader {
             problem(key, "darf keine Zugangsdaten enthalten (KeePass-Eintrag verwenden)");
             return null;
         }
-        if (uri.getRawQuery() != null || uri.getRawFragment() != null) {
+        if (!allowPageAddress && (uri.getRawQuery() != null || uri.getRawFragment() != null)) {
             problem(key, "darf weder Query noch Fragment enthalten");
             return null;
         }
@@ -172,8 +177,18 @@ public final class SourceSettingsReader {
      * Startpunkte gilt {@code defaultStartPoint}, oder es ist ein Problem, wenn er {@code null} ist.
      */
     public SourceScope scope(String defaultStartPoint, int defaultDepth, int defaultMaxResources) {
+        return scope(defaultStartPoint, defaultDepth, defaultMaxResources, false);
+    }
+
+    /** Allow the source to resolve its initial resource at runtime. */
+    public SourceScope automaticScope(int defaultDepth, int defaultMaxResources) {
+        return scope(null, defaultDepth, defaultMaxResources, true);
+    }
+
+    private SourceScope scope(String defaultStartPoint, int defaultDepth, int defaultMaxResources,
+                              boolean automaticStartPoints) {
         List<String> startPoints = list("startPoints");
-        if (startPoints.isEmpty()) {
+        if (startPoints.isEmpty() && !automaticStartPoints) {
             if (defaultStartPoint == null) {
                 problem("startPoints", "fehlt (mindestens ein Startpunkt)");
                 startPoints = Collections.singletonList("-");
@@ -184,7 +199,9 @@ public final class SourceSettingsReader {
         int maxDepth = integer("maxDepth", defaultDepth, 0, 100);
         int maxResources = integer("maxResources", defaultMaxResources, 1, 1000000);
         try {
-            return SourceScope.builder().startPoints(startPoints).maxDepth(maxDepth).maxResources(maxResources).build();
+            SourceScope.Builder builder = SourceScope.builder().startPoints(startPoints)
+                    .maxDepth(maxDepth).maxResources(maxResources);
+            return (automaticStartPoints ? builder.automaticStartPoints() : builder).build();
         } catch (IllegalArgumentException e) {
             problem("startPoints", "Crawl-Umfang ungültig");
             return SourceScope.of("-");

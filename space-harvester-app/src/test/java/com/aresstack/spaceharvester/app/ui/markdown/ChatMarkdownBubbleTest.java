@@ -64,6 +64,48 @@ class ChatMarkdownBubbleTest {
     }
 
     @Test
+    void footerReservesRightEdgeForActionsAndWrapsSourcesWithoutOverlap() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            MarkdownTheme theme = MarkdownTheme.forSurface(java.awt.Color.WHITE);
+            AssistantMessageFooter footer = new AssistantMessageFooter(theme.getMutedForeground());
+            javax.swing.JPanel actions = new javax.swing.JPanel();
+            actions.add(new javax.swing.JButton("Kopieren"));
+            footer.setActions(actions);
+            footer.setTimestamp(1700000000000L);
+            javax.swing.JButton qr = new javax.swing.JButton("QR");
+            footer.setQrAction(qr);
+            javax.swing.JPanel links = new javax.swing.JPanel();
+            links.setPreferredSize(new java.awt.Dimension(300, 60));
+            footer.setSources(links);
+            for (int width : new int[] {900, 600, 300}) {
+                footer.setSize(width, footer.preferredHeightForWidth(width));
+                footer.doLayout();
+                java.awt.Rectangle controls = qr.getParent().getBounds();
+                assertThat(controls.x + controls.width).isEqualTo(width);
+                assertThat(links.getBounds().intersects(controls)).isFalse();
+                assertThat(links.getX()).isZero();
+                assertThat(links.getY() + links.getHeight()).isLessThanOrEqualTo(footer.getHeight());
+                assertThat(qr.getParent().getComponent(qr.getParent().getComponentZOrder(qr) - 1))
+                        .isInstanceOf(MessageTimestamp.class);
+            }
+        });
+    }
+
+    @Test
+    void timestampUsesTheOriginalStackedTimeOverDateFormat() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            long at = 1700000000000L;
+            MessageTimestamp stamp = new MessageTimestamp(java.awt.Color.DARK_GRAY);
+            stamp.setTime(at);
+            assertThat(stamp.getText()).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.bubble.BubbleTimestamps.stackedHtml(at));
+            assertThat(stamp.getHorizontalAlignment()).isEqualTo(javax.swing.SwingConstants.RIGHT);
+            assertThat(stamp.getToolTipText()).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.bubble.BubbleTimestamps.tooltip(at));
+        });
+    }
+
+    @Test
     void surfaceThemeKeepsReadableTextInLightAndDarkMode() {
         for (java.awt.Color background : List.of(java.awt.Color.WHITE, new java.awt.Color(24, 24, 24))) {
             MarkdownTheme theme = MarkdownTheme.forSurface(background);

@@ -545,6 +545,10 @@ public final class PageDetailPanel extends JPanel {
     private java.util.function.Consumer<Place> navigated = place -> { };
     /** Solange Zurück/Vor lädt, kommt die verlassene Seite nicht noch einmal in den Verlauf. */
     private boolean navigating;
+    private Runnable beforeHistoryNavigation = () -> { };
+    private boolean searchFront;
+    private com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator workspaceHistory;
+    private java.util.function.Consumer<Place> locationVisited = place -> { };
     /** Zählt Link-Aktivierungen; nur die Auflösung des zuletzt geklickten Links wirkt. */
     private int linkRequest;
     /** Anker des Links, der die gerade ladende Seite geöffnet hat; die Leseansicht rollt dorthin. */
@@ -951,16 +955,12 @@ public final class PageDetailPanel extends JPanel {
         backButton.navigator(new com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator() {
             @Override
             public com.aresstack.spaceharvester.app.ui.controls.BackButton.History history() {
-                return new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(names(forwardStack), names(backStack));
+                return documentHistory();
             }
 
             @Override
             public void go(int steps) {
-                if (steps < 0) {
-                    step(backStack, forwardStack, -steps);
-                } else if (steps > 0) {
-                    step(forwardStack, backStack, steps);
-                }
+                navigateHistory(steps);
             }
         });
         updateNavigation();
@@ -3884,6 +3884,13 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         Place now = current();
+        if (workspaceHistory != null) {
+            if (next != null) {
+                locationVisited.accept(next);
+            }
+            updateNavigation();
+            return;
+        }
         if (next != null && next.sameAs(now)) {
             return;
         }
@@ -3897,19 +3904,31 @@ public final class PageDetailPanel extends JPanel {
 
     /** Zurück zum zuvor Gezeigten; das Aktuelle kommt in den Vor-Verlauf. */
     public boolean back() {
-        return step(backStack, forwardStack);
+        if (workspaceHistory != null) {
+            return goWorkspace(-1);
+        }
+        return navigateHistory(-1);
     }
 
     /** Vor zum zuletzt per Zurück Verlassenen. */
     public boolean forward() {
-        return step(forwardStack, backStack);
+        if (workspaceHistory != null) {
+            return goWorkspace(1);
+        }
+        return navigateHistory(1);
     }
 
     public boolean canGoBack() {
-        return !backStack.isEmpty();
+        if (workspaceHistory != null) {
+            return !workspaceHistory.history().back().isEmpty();
+        }
+        return searchFront && current() != null || !backStack.isEmpty();
     }
 
     public boolean canGoForward() {
+        if (workspaceHistory != null) {
+            return !workspaceHistory.history().forward().isEmpty();
+        }
         return !forwardStack.isEmpty();
     }
 
@@ -3918,8 +3937,46 @@ public final class PageDetailPanel extends JPanel {
         this.navigated = java.util.Objects.requireNonNull(listener, "listener");
     }
 
-    private boolean step(java.util.Deque<Place> from, java.util.Deque<Place> to) {
-        return step(from, to, 1);
+    /** Reveal the document view before loading a history destination from another view. */
+    void beforeHistoryNavigation(Runnable listener) {
+        beforeHistoryNavigation = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    void searchFront(boolean active) {
+        searchFront = active;
+        updateNavigation();
+    }
+
+    private com.aresstack.spaceharvester.app.ui.controls.BackButton.History documentHistory() {
+        List<String> back = new java.util.ArrayList<>();
+        Place shown = current();
+        if (searchFront && shown != null) {
+            back.addAll(names(new java.util.ArrayDeque<>(List.of(shown))));
+        }
+        back.addAll(names(backStack));
+        return new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(names(forwardStack), back);
+    }
+
+    /** Return to the last document first when the search temporarily covers the document viewer. */
+    private boolean navigateHistory(int steps) {
+        if (steps == 0 || context.runtime() == null) {
+            return false;
+        }
+        Place shown = current();
+        if (steps < 0 && searchFront && shown != null) {
+            int remaining = -steps - 1;
+            if (remaining > backStack.size()) {
+                return false;
+            }
+            if (remaining == 0) {
+                beforeHistoryNavigation.run();
+                searchFront(false);
+                navigated.accept(shown);
+                return true;
+            }
+            return step(backStack, forwardStack, remaining);
+        }
+        return steps < 0 ? step(backStack, forwardStack, -steps) : step(forwardStack, backStack, steps);
     }
 
     /** Springt {@code steps} Orte weit; die übersprungenen wandern ungeladen in den Verlauf der Gegenrichtung. */
@@ -3927,6 +3984,8 @@ public final class PageDetailPanel extends JPanel {
         if (steps < 1 || from.size() < steps || context.runtime() == null) {
             return false;
         }
+        beforeHistoryNavigation.run();
+        searchFront = false;
         Place now = current();
         Place next = null;
         for (int i = 0; i < steps; i++) {
@@ -3949,6 +4008,44 @@ public final class PageDetailPanel extends JPanel {
         updateNavigation();
         navigated.accept(next);
         return true;
+    }
+
+    void useWorkspaceHistory(com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator navigator,
+                             java.util.function.Consumer<Place> listener) {
+        workspaceHistory = java.util.Objects.requireNonNull(navigator);
+        locationVisited = java.util.Objects.requireNonNull(listener);
+        backButton.navigator(navigator);
+    }
+
+    private boolean goWorkspace(int steps) {
+        if (steps < 0 ? !canGoBack() : !canGoForward()) {
+            return false;
+        }
+        workspaceHistory.go(steps);
+        updateNavigation();
+        return true;
+    }
+
+    void refreshHistoryNavigation() {
+        updateNavigation();
+    }
+
+    java.util.Optional<Place> currentHistoryPlace() {
+        return java.util.Optional.ofNullable(current());
+    }
+
+    void restoreHistoryPlace(Place place) {
+        navigating = true;
+        try {
+            if (place.page() && !showsPage(place.sourceId(), place.pageId())) {
+                load(place.sourceId(), place.pageId(), false);
+            } else if (!place.page() && !showsLevel(place.sourceId(), place.spaceKey())) {
+                showSource(place.sourceId(), place.spaceKey(), place.title());
+            }
+        } finally {
+            navigating = false;
+        }
+        navigated.accept(place);
     }
 
     private void updateNavigation() {
@@ -3976,7 +4073,7 @@ public final class PageDetailPanel extends JPanel {
         if (source == null || button != MOUSE_BACK_BUTTON && button != MOUSE_FORWARD_BUTTON) {
             return false;
         }
-        // Über der Suche gelten ihr eigenes Zurück und Vor (Angelo, 23.11.2026): im ganzen Fenster, solange sie zu sehen ist.
+        // Respect independent mouse navigation in other perspectives, not in the search view.
         if (javax.swing.SwingUtilities.getRootPane(source) instanceof javax.swing.JRootPane root
                 && Boolean.TRUE.equals(root.getClientProperty(OWN_MOUSE_NAVIGATION))) {
             return false;

@@ -699,7 +699,104 @@ class MainWindowTest {
     }
 
     @Test
-    void documentHistoryStaysInViewerAndSearchHistoryStaysWithSearchField() throws Exception {
+    void searchesAndDocumentVisitsShareOneChronologicalBackAndForwardHistory() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("alpha.md"), "# Alpha\n\nText.\n");
+        Files.writeString(files.resolve("beta.md"), "# Beta\n\nText.\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        String space = context.runtime().workspace().spaces("handbuch").get(0).key();
+        List<String> pages = context.runtime().workspace().liveMetadata("handbuch", space, null, 10).entries().stream()
+                .map(entry -> entry.page().pageId()).toList();
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            window.openPage("handbuch", pages.get(0));
+            window.openSearchTab();
+            window.search("Alpha");
+            window.search("Beta");
+            window.searchView().scope(List.of(new Explorer.Scope("handbuch", space)));
+            window.openPage("handbuch", pages.get(1));
+            AbstractButton back = (AbstractButton) arrows(surface).get(0);
+            assertThat(back.isEnabled()).isTrue();
+            back.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
+            assertThat(window.searchView().queryText()).isEqualTo("Beta");
+            assertThat(window.searchView().searchedScopes).containsExactly(new Explorer.Scope("handbuch", space));
+            back.doClick();
+            assertThat(window.searchView().queryText()).isEqualTo("Beta");
+            assertThat(window.searchView().searchedScopes).isEmpty();
+            back.doClick();
+            assertThat(window.searchView().queryText()).isEqualTo("Alpha");
+            back.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.CONTENT);
+            assertThat(arrows(surface)).containsExactly(back);
+        });
+    }
+
+    @Test
+    void theSearchHeaderReturnsToTheLastOpenedDocumentEvenWithoutAnEarlierPage() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("alpha.md"), "# Alpha\n\nText.\n");
+        Files.writeString(files.resolve("beta.md"), "# Beta\n\nText.\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        String space = context.runtime().workspace().spaces("handbuch").get(0).key();
+        List<String> pages = context.runtime().workspace().liveMetadata("handbuch", space, null, 10).entries().stream()
+                .map(entry -> entry.page().pageId()).toList();
+        assertThat(pages).hasSize(2);
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            window.openPage("handbuch", pages.get(0));
+            window.openSearchTab();
+            window.explorer().selectAll();
+            AbstractButton back = (AbstractButton) arrows(surface).get(0);
+            assertThat(back.isEnabled()).isTrue();
+            back.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.CONTENT);
+            assertThat(arrows(surface)).containsExactly(back);
+            window.openPage("handbuch", pages.get(1));
+            window.openSearchTab();
+            assertThat(back.isEnabled()).isTrue();
+            back.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.CONTENT);
+            assertThat(back.isEnabled()).isTrue();
+            back.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.CONTENT);
+        });
+    }
+
+    @Test
+    void documentAndSearchHistoryStayInTheirOwnViewHeaders() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
                 space-harvester-app:
@@ -710,12 +807,10 @@ class MainWindowTest {
             MainWindow window = new MainWindow(context);
             javax.swing.JPanel surface = window.content(() -> { }, () -> { });
             javax.swing.JComponent bar = window.searchView().searchBar();
-            javax.swing.JComponent nav = window.backForward();
             window.show(AppContext.Section.CONTENT);
             surface.setSize(1280, 820);
             layout(surface);
-            assertThat(nav.isVisible()).isFalse();
-            assertThat(nav.getComponentCount()).isZero();
+            assertThat(arrows(bar.getParent())).isEmpty();
             assertThat(arrows(surface)).hasSize(1);
             java.awt.Component documentBack = arrows(surface).get(0);
             assertThat(SwingUtilities.isDescendingFrom(documentBack,
@@ -731,19 +826,24 @@ class MainWindowTest {
             for (int width : new int[] {960, 1280, 1920}) {
                 surface.setSize(width, 820);
                 layout(surface);
-                assertThat(nav.isVisible()).isTrue();
-                assertThat(nav.getParent()).isSameAs(bar.getParent());
-                assertThat(nav.getWidth()).isPositive();
-                assertThat(nav.getX() + nav.getWidth() + SearchBarLayout.LEADING_GAP).isEqualTo(bar.getX());
+                assertThat(arrows(bar.getParent())).isEmpty();
                 assertThat(bar.getWidth()).isBetween(SearchBarLayout.MIN_WIDTH, SearchBarLayout.MAX_WIDTH);
-                assertThat(arrows(surface)).hasSize(1).doesNotContain(documentBack);
+                java.awt.Component searchBack = documentBack;
+                assertThat(arrows(surface)).containsExactly(documentBack);
+                assertThat(window.searchView().backVisit.getParent()).isNull();
+                assertThat(searchBack.getParent()).isSameAs(window.searchView().heading);
+                assertThat(SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, searchBack)).isNull();
+                java.awt.Component title = ((java.awt.BorderLayout) searchBack.getParent().getLayout())
+                        .getLayoutComponent(java.awt.BorderLayout.CENTER);
+                assertThat(searchBack.getWidth()).isPositive();
+                assertThat(searchBack.getX() + searchBack.getWidth()).isLessThan(title.getX());
             }
             window.show(AppContext.Section.CONTENT);
             layout(surface);
             assertThat(arrows(surface)).containsExactly(documentBack);
             assertThat(documentBack.getParent()).isSameAs(header);
             window.show(AppContext.Section.SETTINGS);
-            assertThat(nav.isVisible()).isFalse();
+            assertThat(arrows(bar.getParent())).isEmpty();
         });
     }
 
