@@ -56,7 +56,9 @@ public enum Glyph implements Icon {
     /** „Vorwärts“ im Verlauf (Pfeil rechts), Gegenstück zu {@link #BACK}. */
     FORWARD,
     /** „Zurücknehmen“: ein Bogen nach links mit Pfeilspitze, wie Rückgängig in jedem Editor. */
-    UNDO;
+    UNDO,
+    /** Export a list of source references. */
+    SOURCES_EXPORT;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -192,6 +194,16 @@ public enum Glyph implements Icon {
                         g.setColor(FAVORITE_EDGE);
                     }
                     g.draw(star);
+                }
+                case SOURCES_EXPORT -> {
+                    for (int row = 0; row < 3; row++) {
+                        double rowY = 3.0 + 5.0 * row;
+                        g.fill(new Ellipse2D.Double(1.0, rowY - 1.0, 2.0, 2.0));
+                        g.draw(new Line2D.Double(5.0, rowY, row == 2 ? 9.0 : 14.0, rowY));
+                    }
+                    g.draw(new Line2D.Double(12.0, 8.5, 12.0, 15.0));
+                    g.draw(new Line2D.Double(9.5, 12.5, 12.0, 15.0));
+                    g.draw(new Line2D.Double(14.5, 12.5, 12.0, 15.0));
                 }
                 case EXPORT -> {
                     // Ablage mit Pfeil nach oben: etwas verlässt die App.

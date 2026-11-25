@@ -41,6 +41,7 @@ java {
 dependencies {
     // Nur die Bibliothek, nie :space-harvester-server (#103)
     implementation project(':space-harvester-core')
+    implementation project(':document-export')
     // draw.io-XML-Schablonen (BPMN-Tasks/-Events, Flowchart, Basic, Pfeile) für drawio-java im Core
     runtimeOnly libs.drawio.stencils
     implementation project(':comic-controls')
