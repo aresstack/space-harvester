@@ -341,6 +341,9 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         }
         final LocalFileAccessPolicy access = policy();
         try {
+            if (!Files.isDirectory(root, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Inventurwurzel ist kein direktes Verzeichnis");
+            }
             Files.walkFileTree(root, EnumSet.noneOf(FileVisitOption.class), PARTITION_DEPTH + 1,
                     new SimpleFileVisitor<Path>() {
                         @Override
@@ -354,6 +357,9 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
                         @Override
                         public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
                             checkpoint.run();
+                            if (file.equals(root)) {
+                                throw new IOException("Inventurwurzel ist kein direktes Verzeichnis");
+                            }
                             if (attributes.isRegularFile() && patterns.acceptsFile(relative(file))
                                     && candidate(file, attributes.size())) {
                                 if (!access.isAllowed(file)) {

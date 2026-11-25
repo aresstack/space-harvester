@@ -181,6 +181,21 @@ public class LocalFilesStoredContentTest {
     }
 
     @Test
+    public void aRegularFileReplacingTheRootCannotConfirmAnInventory() throws Exception {
+        Path removed = Files.move(root, root.resolveSibling("removed"));
+        try {
+            Files.write(root, new byte[] {1});
+            assertKind(Kind.UNAVAILABLE, () -> {
+                source.visitInventory("handbuch", () -> { }, resource -> fail("Do not emit the root as a file"));
+                return null;
+            });
+        } finally {
+            Files.deleteIfExists(root);
+            Files.move(removed, root);
+        }
+    }
+
+    @Test
     public void aFileAddedBeforeTheCursorDoesNotShiftTheNextBatch() throws Exception {
         PartitionResources first = source.resources("handbuch", "", 2);
         write("0-neu.txt", "neu");
