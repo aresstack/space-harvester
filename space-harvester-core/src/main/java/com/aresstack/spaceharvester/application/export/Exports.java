@@ -115,6 +115,25 @@ public class Exports {
     private volatile ImportedAssets collected;
     private volatile ReadingViewStore views;
     private volatile LocalExportSnapshots localExports;
+    private volatile com.aresstack.spaceharvester.application.enrichment.PageTextProjector fileTexts =
+            snapshot -> Optional.empty();
+
+    public void fileTexts(com.aresstack.spaceharvester.application.enrichment.PageTextProjector fileTexts) {
+        this.fileTexts = Objects.requireNonNull(fileTexts, "fileTexts");
+    }
+
+    private Optional<String> projectFile(ConvertiblePage page) {
+        if (!"file".equals(page.snapshot().payload().nativeFormat())) {
+            return Optional.empty();
+        }
+        try {
+            return fileTexts.project(page.snapshot())
+                    .map(com.aresstack.spaceharvester.application.enrichment.PageText::text);
+        } catch (com.aresstack.spaceharvester.application.assets.DocumentTextException unavailable) {
+            return Optional.empty();
+        }
+    }
+
 
     public void localExports(LocalExportSnapshots localExports) {
         this.localExports = Objects.requireNonNull(localExports, "localExports");
@@ -1455,6 +1474,11 @@ public class Exports {
             List<PageHeader> headers = new ArrayList<>(exported.size());
             walk(tree, (pageId, depth) -> headers.add(exported.get(pageId).header()));
             return headers;
+        }
+
+        @Override
+        public Optional<String> fileText(ConvertiblePage page) {
+            return projectFile(page);
         }
 
         @Override

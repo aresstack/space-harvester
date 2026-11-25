@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.export;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ConversionLimitExceededException;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
@@ -50,6 +51,25 @@ public class ExportConversions {
     private final ExportArtifactWriter writer;
     private final ExportConverters converters;
     private final ExportAssetCollection images;
+    private volatile com.aresstack.spaceharvester.application.enrichment.PageTextProjector fileTexts =
+            snapshot -> Optional.empty();
+
+    public void fileTexts(com.aresstack.spaceharvester.application.enrichment.PageTextProjector fileTexts) {
+        this.fileTexts = Objects.requireNonNull(fileTexts, "fileTexts");
+    }
+
+    private Optional<String> projectFile(ConvertiblePage page) {
+        if (!"file".equals(page.snapshot().payload().nativeFormat())) {
+            return Optional.empty();
+        }
+        try {
+            return fileTexts.project(page.snapshot())
+                    .map(com.aresstack.spaceharvester.application.enrichment.PageText::text);
+        } catch (com.aresstack.spaceharvester.application.assets.DocumentTextException unavailable) {
+            return Optional.empty();
+        }
+    }
+
     /** Die erzeugten Dateien der Aufträge „Datei erzeugen“ dieses Laufs, je Auftrag. */
     private final java.util.Map<String, ConvertedFile> produced = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -338,6 +358,11 @@ public class ExportConversions {
                     checkpoint.run();
                     action.accept(page);
                 });
+            }
+
+            @Override
+            public Optional<String> fileText(ConvertiblePage page) {
+                return projectFile(page);
             }
 
             @Override

@@ -1234,6 +1234,7 @@ public final class Harvester implements AutoCloseable {
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, holdingsCatalog, clock);
             exports.localExports(new com.aresstack.spaceharvester.application.export.LocalExportSnapshots(
                     structuredDocuments, snapshots::exportLocalOriginal));
+            exports.fileTexts(new LocalFilesTextProjector());
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
             // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
@@ -1637,6 +1638,7 @@ public final class Harvester implements AutoCloseable {
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
+            conversions.fileTexts(new LocalFilesTextProjector());
             // ADR 0026, Punkt 11: abgelegte Dokumente ohne Download neu lesen; der Space für den Volltextindex
             // kommt aus dem Cache.
             this.rereads = new DocumentRereads(jobs, assets, assetStore,
