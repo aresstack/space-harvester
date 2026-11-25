@@ -2,7 +2,7 @@ package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.speech.ReadAloudBinding;
 import com.aresstack.spaceharvester.app.ui.controls.PodcastOrb;
-import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownBubble;
+import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage;
 import com.aresstack.spaceharvester.app.ui.markdown.MarkdownSpeech;
 import com.aresstack.spaceharvester.application.podcast.SpeakableText;
 
@@ -77,7 +77,7 @@ final class ChatReadAloud {
     /** Gelb wie die Marke des Podcasts, aber als Strich unter der Zeile: auf der farbigen Blase bleibt Text lesbar. */
     private final DefaultHighlighter.DefaultHighlightPainter painter = new Underline(PagePodcastPictures.MARK);
     /** Die fertigen Antworten des gezeigten Chats in Reihenfolge. */
-    private final List<AssistantMarkdownBubble> answers = new ArrayList<>();
+    private final List<AssistantMarkdownMessage> answers = new ArrayList<>();
     private final AWTEventListener doubleClicks = this::mouseEvent;
     private ReadAloudBinding binding;
     /** Warum ohne Sprachausgabe nicht vorgelesen wird (Tooltip des gesperrten Knopfs). */
@@ -91,9 +91,9 @@ final class ChatReadAloud {
     /** Kennung des laufenden Vorlesens; das Ende eines abgelösten Laufs setzt den Knopf nicht zurück. */
     private Object run;
     /** Die vorgelesene Antwort, ihr gesprochener Text und ab wo vorgelesen wird. */
-    private AssistantMarkdownBubble reading;
+    private AssistantMarkdownMessage reading;
     /** Fertig geworden, während angehalten war: wird nach der laufenden Antwort vorgelesen. */
-    private AssistantMarkdownBubble deferred;
+    private AssistantMarkdownMessage deferred;
     private String spoken = "";
     private int base;
     /** Länge des vorgelesenen Ausschnitts vor und nach der Bereinigung (die Stände rechnen anteilig zurück). */
@@ -160,13 +160,13 @@ final class ChatReadAloud {
     }
 
     /** Eine fertige Antwort des gezeigten Chats (geladen oder gerade fertig geworden). */
-    void answer(AssistantMarkdownBubble bubble) {
+    void answer(AssistantMarkdownMessage bubble) {
         answers.add(Objects.requireNonNull(bubble, "bubble"));
         style();
     }
 
     /** Eine live beantwortete Frage ist fertig: bei aktivem Vorlesen wird sie gleich vorgelesen (wie im EAC). */
-    void answered(AssistantMarkdownBubble bubble) {
+    void answered(AssistantMarkdownMessage bubble) {
         answer(bubble);
         if (binding == null || !active) {
             return;
@@ -213,7 +213,7 @@ final class ChatReadAloud {
             style();
             return;
         }
-        AssistantMarkdownBubble latest = latest();
+        AssistantMarkdownMessage latest = latest();
         if (latest == null) {
             return;
         }
@@ -221,9 +221,9 @@ final class ChatReadAloud {
         speak(latest, MarkdownSpeech.spokenText(latest.view().getMarkdown()), 0);
     }
 
-    private AssistantMarkdownBubble latest() {
+    private AssistantMarkdownMessage latest() {
         for (int i = answers.size() - 1; i >= 0; i--) {
-            AssistantMarkdownBubble bubble = answers.get(i);
+            AssistantMarkdownMessage bubble = answers.get(i);
             if (!bubble.view().getMarkdown().isBlank()) {
                 return bubble;
             }
@@ -253,8 +253,8 @@ final class ChatReadAloud {
         if (binding == null || !(speaking || active)) {
             return false;
         }
-        Object owner = SwingUtilities.getAncestorOfClass(AssistantMarkdownBubble.class, text);
-        if (!(owner instanceof AssistantMarkdownBubble bubble) || !answers.contains(bubble)) {
+        Object owner = SwingUtilities.getAncestorOfClass(AssistantMarkdownMessage.class, text);
+        if (!(owner instanceof AssistantMarkdownMessage bubble) || !answers.contains(bubble)) {
             return false;
         }
         int position = text.viewToModel2D(point);
@@ -278,7 +278,7 @@ final class ChatReadAloud {
     }
 
     /** Wo der angeklickte Absatz in der ganzen Antwort steht (alle Textblöcke hintereinander). */
-    private static ReadAloudStart.Place place(AssistantMarkdownBubble bubble, JTextComponent clicked,
+    private static ReadAloudStart.Place place(AssistantMarkdownMessage bubble, JTextComponent clicked,
                                               int paragraphStart, String paragraph) {
         StringBuilder shown = new StringBuilder();
         int offset = -1;
@@ -293,7 +293,7 @@ final class ChatReadAloud {
     }
 
     /** Liest {@code speech} ab {@code start} vor; ein laufendes Vorlesen endet vorher (dieselbe Sprachausgabe). */
-    private void speak(AssistantMarkdownBubble bubble, String speech, int start) {
+    private void speak(AssistantMarkdownMessage bubble, String speech, int start) {
         String source = speech.substring(Math.max(0, Math.min(start, speech.length())));
         String cleaned = SpeakableText.of(source);
         if (cleaned.isBlank()) {
@@ -320,7 +320,7 @@ final class ChatReadAloud {
                 paused = false;
                 reset();
                 style();
-                AssistantMarkdownBubble next = deferred;
+                AssistantMarkdownMessage next = deferred;
                 deferred = null;
                 if (next != null && active && binding != null && answers.contains(next)) {
                     speak(next, MarkdownSpeech.spokenText(next.view().getMarkdown()), 0);
@@ -562,7 +562,7 @@ final class ChatReadAloud {
     }
 
     /** Die Textblöcke einer Antwort in Lesereihenfolge. */
-    static List<JTextComponent> texts(AssistantMarkdownBubble bubble) {
+    static List<JTextComponent> texts(AssistantMarkdownMessage bubble) {
         List<JTextComponent> texts = new ArrayList<>();
         collect(bubble.view(), texts);
         return texts;
