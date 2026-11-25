@@ -70,7 +70,7 @@ class KeywordSearchFoundTest {
             return KeywordSearch.Prefetch.Fill.NONE;
         }, 1, ExcerptPriority.off(), CandidateSelectionStrategy.topN(1), com.aresstack.spaceharvester.application.searchrun.SearchRunLog.NONE, findings,
                 "fast"::equals, KeywordSearch.BeforeSearch.NONE, SearchExpansion.NONE, SearchExpansion.NONE,
-                "fast"::equals);
+                sourceId -> true);
 
         var result = search.search(APP, KeywordSearch.Query.of("betrieb"), null, 25);
 

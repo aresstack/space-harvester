@@ -192,7 +192,7 @@ class QueryConfiguration {
                 // K5a: vorgeschlagene Synonyme bestätigter Fachbegriffe, nur wenn die Anfrage es einschaltet.
                 relations.getIfAvailable() == null || glossary.getIfAvailable() == null ? SearchExpansion.NONE
                         : new GlossarySynonyms(glossary.getIfAvailable(), relations.getIfAvailable()).expansion(),
-                sourceId -> !Boolean.FALSE.equals(live.current().sync().override(sourceId).backgroundFill()));
+                sourceId -> live.current().syncFor(sourceId).backgroundFill());
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */

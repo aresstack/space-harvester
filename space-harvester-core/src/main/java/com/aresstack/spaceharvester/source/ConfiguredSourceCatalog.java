@@ -277,6 +277,11 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     }
 
     @Override
+    public boolean showInExplorer(String sourceId) {
+        return active(sourceId).map(source -> source.config().showInExplorer()).orElse(false);
+    }
+
+    @Override
     public boolean includeInGlobalSearch(String sourceId) {
         return active(sourceId).map(source -> source.config().includeInGlobalSearch()).orElse(false);
     }

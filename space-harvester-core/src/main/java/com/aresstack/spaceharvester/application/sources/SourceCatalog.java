@@ -11,6 +11,11 @@ public interface SourceCatalog {
 
     Optional<HarvestSource> find(String sourceId);
 
+    /** Show an active source in the explorer unless configured otherwise. */
+    default boolean showInExplorer(String sourceId) {
+        return true;
+    }
+
     /** Include an active source in implicit global searches unless configured otherwise. */
     default boolean includeInGlobalSearch(String sourceId) {
         return true;

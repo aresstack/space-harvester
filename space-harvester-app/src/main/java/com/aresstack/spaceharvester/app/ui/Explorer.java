@@ -159,6 +159,12 @@ public final class Explorer {
         if (global) {
             return com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.ALL;
         }
+        if (!externalScopes.isEmpty()) {
+            Scope scope = externalScopes.getFirst();
+            return new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
+                    scope.sourceId(), scope.spaceKey(), scope.pageId(),
+                    scope.pageTitle() == null ? sourceTitle(scope.sourceId()) : scope.pageTitle());
+        }
         TreePath[] paths = tree.getSelectionPaths();
         for (TreePath path : paths == null ? new TreePath[0] : paths) {
             if (path.getLastPathComponent() instanceof Node node) {
@@ -279,6 +285,7 @@ public final class Explorer {
      * Export und Analysen beziehen sich dann auf alles, im Baum ist nichts gewählt.
      */
     private boolean global;
+    private List<Scope> externalScopes = List.of();
     private final DefaultTreeModel model = new DefaultTreeModel(top);
     private final JTree tree = new JTree(model);
     /** Die Bestandszeichen je Zeile (Angelo, 13.11.2026): aus dem Core gemeldet, nie abgefragt. */
@@ -781,7 +788,8 @@ public final class Explorer {
 
     /** Hebt die Auswahl auf, auch die globale; der Umfang ist dann wieder alles. */
     public void clearSelection() {
-        boolean was = global;
+        boolean was = global || !externalScopes.isEmpty();
+        externalScopes = List.of();
         global = false;
         if (tree.getSelectionCount() > 0) {
             tree.clearSelection();
@@ -799,6 +807,7 @@ public final class Explorer {
         if (global) {
             return;
         }
+        externalScopes = List.of();
         global = true;
         paintHead();
         if (tree.getSelectionCount() > 0) {
@@ -1190,8 +1199,11 @@ public final class Explorer {
             selectAll();
             return;
         }
-        // Eine Seite als Bereich: im Baum aufklappen und wählen wie ein Suchtreffer.
-        if (scopes.size() == 1 && scopes.get(0).pageId() != null) {
+        boolean external = context.runtime() != null && scopes.stream().anyMatch(scope ->
+                !shownSources.contains(scope.sourceId()) && context.runtime().workspace().sources().stream()
+                        .anyMatch(source -> source.id().equals(scope.sourceId())));
+        // Eine sichtbare Seite als Bereich: im Baum aufklappen und wählen wie ein Suchtreffer.
+        if (!external && scopes.size() == 1 && scopes.get(0).pageId() != null) {
             revealPage(scopes.get(0).sourceId(), scopes.get(0).spaceKey(), scopes.get(0).pageId());
             return;
         }
@@ -1216,13 +1228,38 @@ public final class Explorer {
                 }
             }
         }
+        if (external) {
+            // Preserve the explicit search scope even when no matching tree node exists.
+            global = false;
+            externalScopes = List.copyOf(scopes);
+            quiet = true;
+            try {
+                tree.setSelectionPaths(paths.isEmpty() ? null : paths.toArray(TreePath[]::new));
+            } finally {
+                quiet = false;
+            }
+            clearHint();
+            paintHead();
+            scopeListener.accept(externalScopes);
+            selectionListener.accept(selection());
+            return;
+        }
         if (paths.isEmpty()) {
             return;
         }
+        boolean hadExternal = !externalScopes.isEmpty();
+        externalScopes = List.of();
         tree.setSelectionPaths(paths.toArray(TreePath[]::new));
+        if (hadExternal) {
+            scopeListener.accept(scopes());
+            selectionListener.accept(selection());
+        }
     }
 
     public List<Scope> scopes() {
+        if (!externalScopes.isEmpty()) {
+            return externalScopes;
+        }
         TreePath[] paths = tree.getSelectionPaths();
         List<Scope> scopes = new ArrayList<>();
         for (TreePath path : paths == null ? new TreePath[0] : paths) {
@@ -1286,6 +1323,7 @@ public final class Explorer {
             return;
         }
         if (!revealing) {
+            externalScopes = List.of();
             // Der Benutzer wählt selbst: die Hervorhebung eines Suchtreffers verschwindet.
             clearHint();
         }

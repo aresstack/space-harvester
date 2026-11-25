@@ -32,6 +32,51 @@ class ExplorerTest {
     }
 
     @Test
+    void selectingHiddenSourceKeepsTheExplicitSearchAndChatScope() throws Exception {
+        Path visible = Files.createDirectories(home.resolve("visible"));
+        Path hidden = Files.createDirectories(home.resolve("hidden"));
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: visible
+                      type: files
+                      options:
+                        directory: %s
+                    - id: hidden
+                      type: files
+                      show-in-explorer: false
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), visible, hidden));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            var scopes = new java.util.concurrent.atomic.AtomicReference<List<Explorer.Scope>>();
+            var selection = new java.util.concurrent.atomic.AtomicReference<
+                    com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection>();
+            explorer.onScope(scopes::set);
+            explorer.onSelection(selection::set);
+            explorer.select(List.of(new Explorer.Scope("visible", null)));
+            var wanted = List.of(new Explorer.Scope("hidden", null));
+            explorer.select(wanted);
+            assertThat(explorer.tree().getSelectionCount()).isZero();
+            assertThat(explorer.scopes()).isEqualTo(wanted);
+            assertThat(scopes.get()).isEqualTo(wanted);
+            assertThat(selection.get().sourceId()).isEqualTo("hidden");
+            explorer.selectAll();
+            assertThat(explorer.scopes()).isEmpty();
+            assertThat(selection.get().global()).isTrue();
+        });
+    }
+
+    @Test
     void nodeKindControlsIconsWithoutInspectingTheSourceType() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: "

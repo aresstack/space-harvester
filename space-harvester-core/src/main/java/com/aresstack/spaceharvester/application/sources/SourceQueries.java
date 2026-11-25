@@ -26,6 +26,14 @@ public class SourceQueries {
         return catalog.all();
     }
 
+    public boolean showInExplorer(String sourceId) {
+        return catalog.showInExplorer(sourceId);
+    }
+
+    public boolean includeInGlobalSearch(String sourceId) {
+        return catalog.includeInGlobalSearch(sourceId);
+    }
+
     /** Die Quellentypen, die der Katalog kennt, in Registrierungsreihenfolge (#187). */
     public List<SourceType> types() {
         return catalog.types();

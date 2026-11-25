@@ -992,8 +992,7 @@ public final class Harvester implements AutoCloseable {
                             before.searching(sourceIds);
                         }
                     }, SearchExpansion.typed(termRelations::counterparts), glossarySynonyms.expansion(),
-                    sourceId -> this.settings == null
-                            || !Boolean.FALSE.equals(this.settings.sync().override(sourceId).backgroundFill()));
+                    sourceId -> fillFollows ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;

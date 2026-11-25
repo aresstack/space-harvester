@@ -933,7 +933,7 @@ public class KeywordSearch {
         Set<PageKey> offered = searchId == null ? null
                 : offeredIn.computeIfAbsent(searchId, ignored -> ConcurrentHashMap.newKeySet());
         found.forEach((sourceId, matches) -> {
-            if (!cataloguing.test(sourceId)) {
+            if (!allowsPrefetch(sourceId) || !cataloguing.test(sourceId)) {
                 return;
             }
             try {
