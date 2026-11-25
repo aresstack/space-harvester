@@ -108,12 +108,34 @@ class MainWindowPerspectiveTest {
             assertThat(window.jobsOpen()).isTrue();
 
             // War der Explorer zu, bleibt er nach dem Ausflug zu.
-            window.toggleDrawer();
+            var logo = (javax.swing.AbstractButton) window.perspectiveSwitcher().logo();
+            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste einklappen");
+            logo.doClick();
             assertThat(window.split().isLeftCollapsed()).isTrue();
+            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste ausklappen");
             perspectives.select(Perspectives.COMMAND_DECK);
             assertThat(window.commandDeck().sessions().all()).as("Wechsel verbindet nicht").isEmpty();
             assertThat(window.commandDeck().area()).as("Wechsel landet auf Home")
                     .isEqualTo(com.aresstack.spaceharvester.app.ui.deck.DeckArea.HOME);
+            assertThat(logo.getToolTipText()).isEqualTo("Keine Seitenleiste verfügbar");
+            logo.doClick();
+            assertThat(window.split().isLeftCollapsed()).isTrue();
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.FILES);
+            var filesSidebar = window.commandDeck().activeSidebar();
+            assertThat(filesSidebar).isNotNull();
+            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste einklappen");
+            logo.doClick();
+            assertThat(filesSidebar.isLeftCollapsed()).isTrue();
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.TERMINAL);
+            assertThat(window.commandDeck().activeSidebar()).isNull();
+            assertThat(logo.getToolTipText()).isEqualTo("Keine Seitenleiste verfügbar");
+            logo.doClick();
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.FILES);
+            assertThat(window.commandDeck().activeSidebar()).isSameAs(filesSidebar);
+            assertThat(filesSidebar.isLeftCollapsed()).isTrue();
+            logo.doClick();
+            assertThat(filesSidebar.isLeftCollapsed()).isFalse();
+            window.commandDeck().show(com.aresstack.spaceharvester.app.ui.deck.DeckArea.HOME);
             // Der Stand des Deck-Bereichs steht links in der Statuszeile der App, je Bereich eine Karte.
             assertThat(window.viewStatus().isVisible()).isTrue();
             assertThat(visible(window.viewStatus())).isSameAs(window.commandDeck().perspective().status());
@@ -170,8 +192,10 @@ class MainWindowPerspectiveTest {
             assertThat(visible(window.stage())).isSameAs(window.commandDeck().perspective().workspace());
             // Direkt in eine andere Perspektive gewechselt: Ein zugeklappter Explorer bleibt zu.
             perspectives.select(Perspectives.HARVESTER);
-            window.toggleDrawer();
+            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste einklappen");
+            logo.doClick();
             assertThat(window.split().isLeftCollapsed()).isTrue();
+            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste ausklappen");
             perspectives.select(Perspectives.COMMAND_DECK);
             window.show(AppContext.Section.SETTINGS);
             perspectives.select(Perspectives.MISSION_CONTROL);

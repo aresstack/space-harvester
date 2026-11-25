@@ -152,10 +152,10 @@ final class FtpDatasetsView extends JPanel {
         var up = InputFrame.flatButton("↑", "Eine Ebene höher");
         up.addActionListener(e -> up());
         IconButton reload = new IconButton(Glyph.REFRESH, "Neu laden");
-        reload.addActionListener(e -> navigate(path.getText(), false));
+        reload.addActionListener(e -> navigate(current.isEmpty() ? path.getText() : current, false));
         pathFrame.addButton(up);
         pathFrame.addButton(reload);
-        path.addActionListener(e -> navigate(path.getText(), true));
+        path.addActionListener(e -> openAddress());
         path.setToolTipText("HLQ, Dataset oder Pfad; Pfeil runter springt in die Liste");
         filter.setToolTipText("<html>Filter auf den Namen, Groß-/Kleinschreibung egal.<br>"
                 + "Auf MVS: enthält; mit / am Anfang ein Regex (etwa <b>/^J.*L$</b>).<br>"
@@ -278,7 +278,11 @@ final class FtpDatasetsView extends JPanel {
         JPanel documentPanel = new JPanel(new BorderLayout(0, 4));
         documentPanel.setOpaque(false);
         documentPanel.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
-        documentPanel.add(documentsHead, BorderLayout.NORTH);
+        JPanel readingHead = new JPanel(new BorderLayout());
+        readingHead.setOpaque(false);
+        readingHead.add(north, BorderLayout.NORTH);
+        readingHead.add(documentsHead, BorderLayout.SOUTH);
+        documentPanel.add(readingHead, BorderLayout.NORTH);
         documentPanel.add(documents, BorderLayout.CENTER);
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
@@ -332,13 +336,8 @@ final class FtpDatasetsView extends JPanel {
                 List.of(), AppState.shared().get(SIDE_TAB_KEY),
                 name -> AppState.shared().put(SIDE_TAB_KEY, name));
         javax.swing.JComponent side = sideBar;
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, side, DeckBars.withFind(documentPanel));
-        ComicDivider.install(split, Comic.PALETTE);
-        split.setResizeWeight(0.42);
-        split.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 0));
-        split.setOpaque(false);
-
-        add(north, BorderLayout.NORTH);
+        var split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
+                side, DeckBars.withFind(documentPanel), 280).withDividerToggle();
         add(split, BorderLayout.CENTER);
 
         download = new IconButton(ComposerIcons.download(), "Herunterladen … – gewähltes Member als Textdatei speichern");
@@ -442,7 +441,7 @@ final class FtpDatasetsView extends JPanel {
                         }
                     }
                     current = resolved;
-                    path.setText(resolved);
+                    path.setText(document == null ? resolved : document.location());
                     model.columns(session.mvs(), withDetails);
                     widths();
                     model.show(list);
@@ -764,6 +763,23 @@ final class FtpDatasetsView extends JPanel {
                 });
     }
 
+    private void openAddress() {
+        String target = path.getText().strip();
+        if (owner.session().mvs() && MvsPath.isMember(target)) {
+            openDocument(MvsPath.absolute(target));
+            return;
+        }
+        for (RemoteEntry entry : model.all) {
+            if (entry.path().equals(target)) {
+                open(entry);
+                return;
+            }
+        }
+        showDocument(null);
+        sideBar.select(SIDE_DATASETS);
+        navigate(target, true);
+    }
+
     private void openDocument(String remotePath) {
         EditorSession session = editors.open(store, remotePath, FtpDocumentStore.name(remotePath));
         added(session);
@@ -817,6 +833,7 @@ final class FtpDatasetsView extends JPanel {
 
     private void showDocument(EditorSession session) {
         document = session;
+        path.setText(session == null ? current : session.location());
         ComposerToggleButton pill = session == null ? null : pillOf.get(session);
         if (pill != null) {
             pill.setSelected(true);

@@ -196,12 +196,8 @@ final class EakteBrowser extends JPanel {
         previewStage.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 0));
         // Seitenleiste wie der Explorer: Kopf mit Überschrift und Filter, unten die gemeinsame Fußleiste; rechts die
         // Arbeitsfläche mit dem Platz für die Leiste mit der Lupe (DeckBars.withFind), beide Leisten auf einer Linie.
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPane(), DeckBars.withFind(previewStage));
-        split.setResizeWeight(0.0);
-        split.setDividerLocation(300);
-        split.setOpaque(false);
-        split.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
-        ComicDivider.install(split);
+        var split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
+                leftPane(), DeckBars.withFind(previewStage), 300).withDividerToggle();
         add(split, BorderLayout.CENTER);
 
         // Leiste mit der Lupe unter dem Dokument: die Aktionen, mittig die vorhandene Vorschau als Reiter
