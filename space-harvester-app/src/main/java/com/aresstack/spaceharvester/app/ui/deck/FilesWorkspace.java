@@ -297,11 +297,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 () -> newTab(null));
         JPanel reading = new JPanel(new BorderLayout());
         reading.setOpaque(false);
-        JPanel readingHead = new JPanel(new BorderLayout());
-        readingHead.setOpaque(false);
-        readingHead.add(head, BorderLayout.NORTH);
-        readingHead.add(addressRow, BorderLayout.SOUTH);
-        reading.add(readingHead, BorderLayout.NORTH);
+        reading.add(addressRow, BorderLayout.NORTH);
         reading.add(center, BorderLayout.CENTER);
 
         JPanel side = new JPanel(new BorderLayout(0, 6));
@@ -313,6 +309,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         side.add(sideHead, BorderLayout.NORTH);
         side.add(Comic.scroll(explorer), BorderLayout.CENTER);
         side.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(null, null, null), BorderLayout.SOUTH);
+        add(head, BorderLayout.NORTH);
         add(new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
                 side, DeckBars.withFind(reading), 280).withDividerToggle(), BorderLayout.CENTER);
 
