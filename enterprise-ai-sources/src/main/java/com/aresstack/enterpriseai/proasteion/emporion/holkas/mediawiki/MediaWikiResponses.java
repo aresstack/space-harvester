@@ -64,6 +64,17 @@ final class MediaWikiResponses {
         return Kind.INVALID_RESPONSE;
     }
 
+    static MediaWikiSiteInfo siteInfo(String body) throws KnowledgeSourceException {
+        JsonObject general = object(object(parseObject(body), "query"), "general");
+        JsonElement title = general == null ? null : general.get("mainpage");
+        if (title == null || !title.isJsonPrimitive() || !title.getAsJsonPrimitive().isString()
+                || title.getAsString().trim().isEmpty()) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE,
+                    "MediaWiki siteinfo response without a valid main page title");
+        }
+        return new MediaWikiSiteInfo(title.getAsString(), stringOrNull(general, "sitename"));
+    }
+
     static WikiParsedPage parsedPage(String body) throws KnowledgeSourceException {
         JsonObject parse = object(parseObject(body), "parse");
         if (parse == null) {

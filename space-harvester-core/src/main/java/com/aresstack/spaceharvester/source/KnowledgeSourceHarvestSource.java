@@ -29,6 +29,7 @@ import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.SourceFile;
+import com.aresstack.enterpriseai.source.api.SourceConnectionVerifier;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.SourceQuery;
@@ -615,12 +616,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public List<Partition> partitions() {
-        if (discovering()) {
-            return List.of(new Partition(id, title, null));
-        }
         try {
             if (port instanceof SourceConnectionVerifier verifier) {
                 verifier.verifyConnection();
+            }
+            if (discovering()) {
+                return List.of(new Partition(id, title, null));
             }
             return port.partitions().stream().map(this::partition).toList();
         } catch (KnowledgeSourceException e) {

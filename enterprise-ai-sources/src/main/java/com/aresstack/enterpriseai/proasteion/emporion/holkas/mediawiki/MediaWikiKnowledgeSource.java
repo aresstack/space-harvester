@@ -11,6 +11,7 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
+import com.aresstack.enterpriseai.source.api.SourceConnectionVerifier;
 import com.aresstack.enterpriseai.source.api.SourceQuery;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.enterpriseai.source.api.SourceSearchHit;
@@ -44,7 +45,7 @@ import java.util.Map;
  * ({@link SSLSocketFactory}) mit; beides wird jeder Verbindung einzeln mitgegeben. Der Konstruktor ohne
  * diese Parameter bleibt für die JVM-Standards erhalten.
  */
-public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource {
+public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource, SourceConnectionVerifier {
 
     static final String CONTENT_TYPE = "text/html";
 
@@ -97,12 +98,30 @@ public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource
         return sourceId;
     }
 
+    /** Read the actual wiki metadata through the authenticated transport. */
+    public MediaWikiSiteInfo siteInfo() throws KnowledgeSourceException {
+        return client.siteInfo();
+    }
+
+    @Override
+    public void verifyConnection() throws KnowledgeSourceException {
+        siteInfo();
+    }
+
     @Override
     public List<KnowledgeResource> discover(SourceScope scope) throws KnowledgeSourceException {
+        List<String> startPoints = scope.startPoints();
+        boolean automatic = startPoints.isEmpty();
+        if (automatic) {
+            startPoints = Collections.singletonList(siteInfo().mainPage());
+        }
         List<KnowledgeResource> resources = new ArrayList<KnowledgeResource>();
         for (WikiCrawler.CrawledPage page :
-                crawler.crawl(scope.startPoints(), scope.maxDepth(), scope.maxResources())) {
+                crawler.crawl(startPoints, scope.maxDepth(), scope.maxResources())) {
             resources.add(resource(page.info(), page.info().revisionId(), page.parentTitle()));
+        }
+        if (automatic && resources.isEmpty()) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "MediaWiki main page not found");
         }
         return resources;
     }

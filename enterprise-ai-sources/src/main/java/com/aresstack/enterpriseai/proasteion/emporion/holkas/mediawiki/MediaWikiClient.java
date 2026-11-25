@@ -47,6 +47,10 @@ final class MediaWikiClient {
         this.credentialsProvider = credentialsProvider;
     }
 
+    MediaWikiSiteInfo siteInfo() throws KnowledgeSourceException {
+        return MediaWikiResponses.siteInfo(read("action=query&meta=siteinfo&format=json"));
+    }
+
     WikiParsedPage parse(String title) throws KnowledgeSourceException {
         String query = "action=parse&format=json&formatversion=2&prop=text%7Crevid&redirects=1"
                 + "&disabletoc=1&disableeditsection=1&page=" + enc(title);

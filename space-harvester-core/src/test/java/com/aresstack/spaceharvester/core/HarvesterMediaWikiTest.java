@@ -71,6 +71,32 @@ class HarvesterMediaWikiTest {
     }
 
     @Test
+    void sourceWithoutStartPointsVerifiesApiAndDiscoversLocalizedMainPage() throws Exception {
+        wiki.mainPage = "Willkommen";
+        wiki.page("Willkommen", "<p>Start</p>", 6, 106, "Betrieb");
+        SourceSettingsConfig config = new SourceSettingsConfig("wiki", MediaWikiSources.TYPE,
+                "Testwiki", null, Auth.anonymous(),
+                Map.of("apiUrl", front.apiUrl(), "maxDepth", "0"));
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            SourceManagement.ConnectionCheck check = harvester.sourceManagement().test(config, false);
+            assertThat(check.successful()).isTrue();
+            assertThat(front.queries()).anySatisfy(query -> assertThat(query).contains("meta=siteinfo"))
+                    .noneSatisfy(query -> assertThat(query).contains("prop=links"));
+            wiki.requiredUser = "test";
+            wiki.requiredPassword = "test";
+            assertThat(harvester.sourceManagement().test(config, false).successful()).isFalse();
+            wiki.requiredUser = null;
+            wiki.requiredPassword = null;
+        }
+        try (Harvester harvester = Harvester.builder().source(config).dataDirectory(data).build()) {
+            JobStatus sync = harvester.await(harvester.sync("wiki", "wiki").id(), Duration.ofSeconds(30));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "wiki", null, 100).pages())
+                    .extracting(page -> page.header().metadata().title()).containsExactly("Willkommen");
+        }
+    }
+
+    @Test
     void aWikiIsSyncedCachedSearchedAndExportedAsOnePartition() throws Exception {
         try (Harvester harvester = Harvester.builder().source(wikiSource(Auth.anonymous(), Map.of()))
                 .dataDirectory(data).build()) {
@@ -221,10 +247,10 @@ class HarvesterMediaWikiTest {
                         "sources[0] (id=wiki): auth.type pat passt nicht zu type mediawiki (none oder basic)",
                         "sources[0] (id=wiki): options.credentialRef ist nicht erlaubt; dafür gibt es auth"));
         assertThatThrownBy(() -> Harvester.builder().source(new SourceSettingsConfig("wiki", MediaWikiSources.TYPE,
-                null, null, null, Map.of("apiUrl", front.apiUrl()))).dataDirectory(data).build())
+                null, null, null, Map.of("apiUrl", front.apiUrl(), "maxDepth", "-1"))).dataDirectory(data).build())
                 .isInstanceOf(InvalidSourceConfigurationException.class)
                 .satisfies(e -> assertThat(((InvalidSourceConfigurationException) e).problems())
-                        .singleElement().asString().startsWith("sources[0] (id=wiki): options.startPoints"));
+                        .singleElement().asString().startsWith("sources[0] (id=wiki): options.maxDepth"));
     }
 
     private SourceSettingsConfig wikiSource(Auth auth, Map<String, String> options) {

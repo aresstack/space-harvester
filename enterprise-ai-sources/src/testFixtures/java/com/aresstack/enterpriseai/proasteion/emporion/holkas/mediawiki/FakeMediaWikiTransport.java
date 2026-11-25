@@ -19,6 +19,7 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
     final List<Map<String, String>> requests = new ArrayList<Map<String, String>>();
     final List<String> failLinksFor = new ArrayList<String>();
     boolean readOnly;
+    public String mainPage = "Hauptseite";
     final List<String> unavailableLinksFor = new ArrayList<String>();
     int linkPageSize = 500;
     int sessionResets;
@@ -78,6 +79,10 @@ public final class FakeMediaWikiTransport implements MediaWikiTransport {
                 hook.run();
             }
             return ok("{\"error\":{\"code\":\"readapidenied\",\"info\":\"You need read permission.\"}}");
+        }
+        if ("query".equals(action) && "siteinfo".equals(p.get("meta"))) {
+            return ok("{\"query\":{\"general\":{\"mainpage\":" + q(mainPage)
+                    + ",\"sitename\":\"Test Wiki\"}}}");
         }
         if ("parse".equals(action)) {
             Page page = resolve(p.get("page"));

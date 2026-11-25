@@ -22,6 +22,7 @@ import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
+import com.aresstack.enterpriseai.source.api.SourceConnectionVerifier;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.enterpriseai.source.api.StoredContent;
