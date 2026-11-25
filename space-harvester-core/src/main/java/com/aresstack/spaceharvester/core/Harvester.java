@@ -1233,7 +1233,7 @@ public final class Harvester implements AutoCloseable {
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, holdingsCatalog, clock);
             exports.localExports(new com.aresstack.spaceharvester.application.export.LocalExportSnapshots(
-                    structuredDocuments, snapshots::exportLocalOriginal));
+                    structuredDocuments, snapshots::exportLocalOriginal, builder.maxPageBytes));
             exports.fileTexts(new LocalFilesTextProjector());
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit

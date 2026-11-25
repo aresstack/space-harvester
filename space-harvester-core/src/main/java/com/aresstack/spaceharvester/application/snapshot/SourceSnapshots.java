@@ -148,7 +148,8 @@ public class SourceSnapshots implements PageContentFetcher {
             return java.util.Optional.empty();
         }
         long configured = maxBytes.getAsLong();
-        long limit = configured > 0 ? Math.min(configured, 20L * 1024 * 1024) : 20L * 1024 * 1024;
+        long memoryLimit = com.aresstack.spaceharvester.application.assets.Assets.MAX_IN_MEMORY_BYTES;
+        long limit = configured > 0 ? Math.min(configured, memoryLimit) : memoryLimit;
         if (LargeFiles.size(snapshot.metadata()) > limit) {
             return java.util.Optional.empty();
         }
