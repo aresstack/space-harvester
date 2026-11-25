@@ -116,12 +116,6 @@ public final class MainWindow implements AppContext.Navigator {
     /** Karte des Stands einer Perspektive in der Statuszeile (Präfix vor der Kennung). */
     private static final String PERSPECTIVE_STATUS = "perspective:";
     private JobStatusLine jobStatus;
-    /**
-     * Das eine Paar Zurück und Vor, direkt links an der Suchleiste der Kopfzeile, in jedem Bereich sichtbar: in der
-     * Suche blättert es zwischen den Suchen, sonst zwischen den Seiten; der freie Platz liegt links davor (Angelo,
-     * 24.11.2026).
-     */
-    private final JPanel backForward = new JPanel(new BorderLayout());
     private final JLabel status = Comic.muted(" ");
     /** ✕ hinter dem Stand der App: ein Ergebnis (etwa eines Exports) bleibt stehen, bis es der Benutzer wegklickt. */
     private final ComposerButton statusClose = closeButton();
@@ -219,6 +213,8 @@ public final class MainWindow implements AppContext.Navigator {
     private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
+    private final WorkspaceHistory<WorkspaceLocation> history = new WorkspaceHistory<>(WorkspaceLocation::label,
+            this::restoreHistoryLocation);
     private final ActivitiesView activities;
     private final SearchView searchView;
     private final SettingsView settings;
@@ -284,6 +280,18 @@ public final class MainWindow implements AppContext.Navigator {
         content = new ContentView(context);
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
+        content.useWorkspaceHistory(history, place -> {
+            if (current == AppContext.Section.CONTENT) {
+                history.visit(new WorkspaceLocation.Document(place));
+                content.refreshHistoryNavigation();
+            }
+        });
+        searchView.onSearchLocation(location -> {
+            if (current == AppContext.Section.SEARCH) {
+                history.visit(new WorkspaceLocation.Search(location));
+                content.refreshHistoryNavigation();
+            }
+        });
         settings = new SettingsView(context);
         settings.onLeave(this::leaveSettings);
         explorer = new Explorer(context);
@@ -291,7 +299,7 @@ public final class MainWindow implements AppContext.Navigator {
         // anklickt (etwa einen Treffer), ändert ihn nicht; die Lupe hebt die Auswahl beim Betreten der Suche auf
         // (Angelo, 24.11.2026).
         explorer.onScope(scopes -> {
-            if (current == AppContext.Section.SEARCH) {
+            if (current == AppContext.Section.SEARCH && !history.restoring()) {
                 searchView.scope(scopes);
             }
         });
@@ -312,6 +320,11 @@ public final class MainWindow implements AppContext.Navigator {
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
+            if (position != null) {
+                content.currentHistoryPlace().filter(place -> place.title() != null && !place.title().isBlank())
+                        .ifPresent(place -> history.updateLabel(new WorkspaceLocation.Document(place)));
+            }
+            content.refreshHistoryNavigation();
             explorer.currentPage(position);
             if (position != null && revealOpened) {
                 revealOpened = false;
@@ -495,8 +508,7 @@ public final class MainWindow implements AppContext.Navigator {
         top.add(west, BorderLayout.WEST);
         top.add(east, BorderLayout.EAST);
         // Ein Suchfeld für das ganze Fenster, mittig zwischen den Icon-Gruppen (#515).
-        backForward.setOpaque(false);
-        searchSlot = SearchBarLayout.wrap(searchView.searchBar(), backForward);
+        searchSlot = SearchBarLayout.wrap(searchView.searchBar());
         top.add(searchSlot, BorderLayout.CENTER);
         ComicWindowDragger.install(top);
         // Meldet die Leiste beim Tooltip-Dienst an; den Text liefert getToolTipText je nach Fensterzustand.
@@ -681,7 +693,6 @@ public final class MainWindow implements AppContext.Navigator {
 
         // Gesamtstand aller Aufträge; Anhalten und Abbrechen stehen für alle zugleich in der Kopfzeile der Aufträge.
         jobStatus = new JobStatusLine(context.events());
-        backForward(null);
         // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
         signInNotice = new SignInNotice(context, request -> {
             show(AppContext.Section.ACTIVITIES);
@@ -1070,10 +1081,18 @@ public final class MainWindow implements AppContext.Navigator {
             placeChat();
         }
         showSection(section);
+        if (section == AppContext.Section.CONTENT && !history.restoring()) {
+            content.currentHistoryPlace().ifPresent(place -> history.visit(new WorkspaceLocation.Document(place)));
+            content.refreshHistoryNavigation();
+        }
     }
 
     /** Zeigt den Bereich, ohne die große Chat-Ansicht zu verlassen (Auswahl im Explorer). */
     private void showSection(AppContext.Section section) {
+        showSection(section, false);
+    }
+
+    private void showSection(AppContext.Section section, boolean followingDocumentHistory) {
         // Ein Bereich des Space Harvesters (auch über einen Link im Chat) führt in dessen Perspektive zurück; die Aufträge
         // stehen in der globalen Seitenleiste und lassen die Perspektive, wie sie ist. Die Einstellungen gehören allen
         // Perspektiven und öffnen über der aktuellen.
@@ -1106,15 +1125,17 @@ public final class MainWindow implements AppContext.Navigator {
         }
         boolean leftSearch = changed && current == AppContext.Section.SEARCH;
         current = section;
-        if (leftSearch && explorer.scopes().isEmpty() && !explorer.allSelected()) {
+        if (!followingDocumentHistory && leftSearch && explorer.scopes().isEmpty() && !explorer.allSelected()) {
             // Raus aus der Suche ohne Auswahl: „Wissensquellen“ wird gewählt und gelb markiert, als hätte man es
             // angeklickt (Angelo, 24.11.2026).
             explorer.selectAll();
         }
-        // Keep search history with the search field and document history with the viewer.
-        backForward(section == AppContext.Section.SEARCH ? searchView.navigation() : null);
+        content.searchFront(section == AppContext.Section.SEARCH);
+        placeDocumentNavigation(section);
         placeOverlay();
-        if (changed && section == AppContext.Section.SEARCH) {
+        if (changed && section == AppContext.Section.SEARCH && !history.restoring()) {
+            history.preview();
+            content.refreshHistoryNavigation();
             // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
             searchView.scope(explorer.scopes());
         }
@@ -1155,23 +1176,26 @@ public final class MainWindow implements AppContext.Navigator {
         }
     }
 
-    /** Setzt Zurück und Vor eines Bereichs links an die Suchleiste. */
-    private void backForward(JComponent buttons) {
-        backForward.removeAll();
-        if (buttons != null) {
-            backForward.add(buttons, BorderLayout.CENTER);
+    private void restoreHistoryLocation(WorkspaceLocation location) {
+        if (location instanceof WorkspaceLocation.Document document) {
+            showSection(AppContext.Section.CONTENT, true);
+            content.restoreHistoryPlace(document.place());
+        } else if (location instanceof WorkspaceLocation.Search search) {
+            showSection(AppContext.Section.SEARCH, true);
+            explorer.select(search.location().area());
+            searchView.restoreSearchLocation(search.location());
         }
-        backForward.setVisible(buttons != null);
-        backForward.revalidate();
-        backForward.repaint();
-        if (searchSlot != null) {
-            searchSlot.revalidate();
-        }
+        content.refreshHistoryNavigation();
     }
 
-    /** Für Tests: Zurück und Vor links an der Suchleiste. */
-    JComponent backForward() {
-        return backForward;
+    /** Move the same document history control between the two view headers. */
+    private void placeDocumentNavigation(AppContext.Section section) {
+        if (section == AppContext.Section.SEARCH) {
+            searchView.heading.leading(content.documentNavigation());
+        } else {
+            searchView.heading.leading(null);
+            content.restoreDocumentNavigation();
+        }
     }
 
     /** „Zurück“ der Einstellungen: dorthin, woher sie kamen, auch in eine andere Perspektive. */

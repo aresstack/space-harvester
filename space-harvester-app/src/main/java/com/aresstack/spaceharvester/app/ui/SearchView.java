@@ -123,8 +123,6 @@ public final class SearchView implements View {
     final javax.swing.AbstractButton repeat;
     /** Zurück zwischen den Suchen dieser Sitzung (Begriff und Bereich); gedrückt halten zeigt den Verlauf. */
     final com.aresstack.spaceharvester.app.ui.controls.BackButton backVisit;
-    /** Zurück links an der Suchleiste, solange die Suche zu sehen ist. */
-    private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.CENTER, 2, 0));
     /** Was links im Baum markiert ist; leer für „Wissensquellen“. */
     private List<Explorer.Scope> marked = List.of();
     /** Der Bereich der letzten Suche als Schnappschuss beim Start; {@code null} vor der ersten. */
@@ -353,12 +351,8 @@ public final class SearchView implements View {
                         }
                     }
                 });
-        navigation.setOpaque(false);
-        navigation.add(backVisit);
         repeat = heading.tool(Glyph.SYNC, REPEAT_TIP, this::repeat);
         repeat.setEnabled(false);
-        // Solange die Suche zu sehen ist, gehören die Maustasten 4/5 im ganzen Fenster ihr.
-        com.aresstack.spaceharvester.app.ui.controls.MouseNavigation.install(frame, this::back, this::forward);
         heading.onSelect(() -> {
             table.clearSelection();
             pinned.clearSelection();
@@ -393,7 +387,7 @@ public final class SearchView implements View {
         technicalTerms.addItemListener(e -> {
             SearchMethods.user().technicalTermsOnly(technicalTerms.isSelected());
             mode();
-            if (technicalTerms.isSelected()) {
+            if (technicalTerms.isSelected() && !restoringHistory) {
                 searchTechnicalTerms();
             }
         });
@@ -722,7 +716,11 @@ public final class SearchView implements View {
             // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
             searchTechnicalTerms();
         } else if (searchedText != null && searchedText.equals(query.getText().trim())) {
-            filterTo(selection);
+            if (ADDRESS.matcher(searchedText).matches()) {
+                search();
+            } else {
+                filterTo(selection);
+            }
         }
     }
 
@@ -1036,7 +1034,6 @@ public final class SearchView implements View {
      */
     private void started(AppRuntime runtime, String text) {
         searchedScopes = List.copyOf(scopes);
-        remember(text, searchedScopes);
         // Ganz durchsucht sind nur Quellen ohne Space- oder Seitengrenze; der Filter braucht sie nicht neu.
         Set<String> whole = new LinkedHashSet<>(searchedSources());
         scopes.stream().filter(scope -> scope.spaceKey() != null || scope.pageId() != null)
@@ -1197,11 +1194,6 @@ public final class SearchView implements View {
     }
 
 
-    /** Zurück und Vor der Suche links an der Suchleiste des Hauptfensters. */
-    public JComponent navigation() {
-        return navigation;
-    }
-
     /** Eine frühere Suche: Begriff, Bereich (Filter) und wie weit die Liste gescrollt war. */
     record Visit(String text, List<Explorer.Scope> area, int scroll) {
         Visit(String text, List<Explorer.Scope> area) {
@@ -1232,9 +1224,55 @@ public final class SearchView implements View {
     int visit = -1;
     /** Während Zurück/Vor eine frühere Suche wiederholt, kommt sie nicht neu in den Verlauf. */
     private boolean revisiting;
+    private boolean restoringHistory;
+    private java.util.function.Consumer<SearchLocation> searchLocationListener = location -> { };
+
+    record SearchLocation(String text, List<Explorer.Scope> area, boolean technical, boolean semantic,
+                          boolean neighbors, boolean synonyms, boolean termPages, Set<DocumentKind> kinds, String label) {
+        SearchLocation {
+            area = List.copyOf(area);
+            kinds = Set.copyOf(kinds);
+        }
+    }
+
+    void onSearchLocation(java.util.function.Consumer<SearchLocation> listener) {
+        searchLocationListener = java.util.Objects.requireNonNull(listener);
+    }
+
+    private void publishSearchLocation(String text, List<Explorer.Scope> area) {
+        if (!restoringHistory) {
+            Set<DocumentKind> selectedKinds = kindBoxes.entrySet().stream()
+                    .filter(entry -> entry.getValue().isSelected()).map(Map.Entry::getKey)
+                    .collect(java.util.stream.Collectors.toSet());
+            searchLocationListener.accept(new SearchLocation(text, area, technicalTerms.isSelected(),
+                    semantic.isSelected(), neighbors.isSelected(), glossarySynonyms.isSelected(), termPages.isSelected(),
+                    selectedKinds, "Suche: " + visitName(new Visit(text, area))));
+        }
+    }
+
+    void restoreSearchLocation(SearchLocation location) {
+        restoringHistory = true;
+        revisiting = true;
+        try {
+            marked = location.area();
+            use(location.area());
+            query.setText(location.text());
+            technicalTerms.setSelected(location.technical());
+            semantic.setSelected(location.semantic());
+            neighbors.setSelected(location.neighbors());
+            glossarySynonyms.setSelected(location.synonyms());
+            termPages.setSelected(location.termPages());
+            kindBoxes.forEach((kind, box) -> box.setSelected(location.kinds().contains(kind)));
+            search();
+        } finally {
+            revisiting = false;
+            restoringHistory = false;
+        }
+    }
 
     /** Merkt eine startende Suche im Verlauf; Vor-Einträge hinter der gezeigten fallen weg. */
     private void remember(String text, List<Explorer.Scope> area) {
+        publishSearchLocation(text, area);
         if (revisiting) {
             return;
         }
@@ -1614,6 +1652,7 @@ public final class SearchView implements View {
             return;
         }
         feedback.clear();
+        remember(query.getText().trim(), scopes);
         termsPanel.search(query.getText(), technicalScope());
     }
 
@@ -1752,6 +1791,7 @@ public final class SearchView implements View {
     }
 
     private void search() {
+        pageScopeRequest++;
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             feedback.warning("Keine Laufzeit", "Die Konfiguration konnte nicht gestartet werden; siehe Einstellungen.");
@@ -1773,6 +1813,7 @@ public final class SearchView implements View {
             return;
         }
         if (ADDRESS.matcher(text).matches()) {
+            remember(text, scopes);
             open(runtime, text);
             return;
         }
@@ -1809,6 +1850,7 @@ public final class SearchView implements View {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
         }
+        remember(text, scopes);
         List<Explorer.Scope> pageScopes = scopes.stream().filter(scope -> scope.pageId() != null
                 && searchedSources().contains(scope.sourceId())).toList();
         if (pageScopes.isEmpty()) {

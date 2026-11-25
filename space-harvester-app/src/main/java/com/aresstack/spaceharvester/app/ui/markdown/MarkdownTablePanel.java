@@ -42,7 +42,7 @@ import java.util.List;
 
 /**
  * Rendert eine Markdown-Tabelle als nicht editierbare Swing-Tabelle (aus askai-java8 {@code MarkdownTablePanel}); volle
- * Höhe bis zur Kappung, darüber vertikal scrollbar, ein nötiger horizontaler Balken wird eingerechnet.
+ * Höhe ohne vertikale Kappung; ein nötiger horizontaler Balken wird eingerechnet.
  *
  * <p>Jede Zelle wird wie ein Absatz über den {@link InlineMarkdownRenderer} gesetzt: Links, Fett, Kursiv, Code und das
  * Inline-HTML, das Modelle in Zellen schreiben ({@code <ul><li>}, {@code <br>}), erscheinen formatiert statt als
@@ -53,7 +53,7 @@ import java.util.List;
  * table (via the cell editor mechanism, which forwards the drag to it) instead of selecting the row, so the quote flow
  * of {@link MarkdownMessageView} sees an ordinary text selection.
  */
-final class MarkdownTablePanel extends CappedScrollPane implements SelectableTextHost {
+final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableTextHost {
 
     static final int MAX_COLUMN_WIDTH = 420;
     private static final int CELL_PADDING = 18;

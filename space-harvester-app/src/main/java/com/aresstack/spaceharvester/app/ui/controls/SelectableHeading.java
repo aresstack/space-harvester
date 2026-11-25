@@ -62,6 +62,19 @@ public final class SelectableHeading extends JPanel {
         return title.getText();
     }
 
+    /** Place the view-specific navigation directly before the title without changing the title selection. */
+    public void leading(javax.swing.JComponent component) {
+        java.awt.Component previous = ((BorderLayout) getLayout()).getLayoutComponent(BorderLayout.WEST);
+        if (previous != null) {
+            remove(previous);
+        }
+        if (component != null) {
+            add(component, BorderLayout.WEST);
+        }
+        revalidate();
+        repaint();
+    }
+
     /** Ein Symbolknopf rechtsbündig in der Zeile. */
     public IconButton tool(Glyph glyph, String tooltip, Runnable action) {
         IconButton button = new IconButton(glyph, tooltip);

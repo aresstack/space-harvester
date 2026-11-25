@@ -44,8 +44,8 @@ final class CodeBlockPanel extends JPanel {
         textArea.setBorder(BorderFactory.createEmptyBorder(4, 2, 2, 2));
         textArea.setLineWrap(false);
 
-        // Volle Höhe bis zur Kappung, darüber vertikal scrollbar; ein nötiger horizontaler Balken wird eingerechnet.
-        CappedScrollPane scrollPane = new CappedScrollPane(textArea, 200, 8, theme);
+        // Display every line and reserve space for horizontal scrolling only.
+        MarkdownScrollPane scrollPane = new MarkdownScrollPane(textArea, 200, 8, theme);
         scrollPane.setBorder(null);
         scrollPane.setOpaque(false);
         scrollPane.getViewport().setOpaque(false);

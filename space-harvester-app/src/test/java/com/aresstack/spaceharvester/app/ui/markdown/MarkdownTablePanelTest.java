@@ -93,6 +93,41 @@ public class MarkdownTablePanelTest {
                 .getAttribute(LinkMouseListener.HREF_ATTRIBUTE));
     }
 
+    @Test
+    public void longTablesShowEveryRowAndReserveSpaceForHorizontalScrolling() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            StringBuilder markdown = new StringBuilder("| Spalte A | Spalte B |\n|---|---|\n");
+            for (int row = 0; row < 50; row++) {
+                markdown.append("| Zeile ").append(row).append(" | ")
+                        .append("Längerer Zellinhalt ".repeat(10)).append(" |\n");
+            }
+            MarkdownTheme theme = MarkdownTheme.forSurface(Color.WHITE);
+            Container rendered = new FlexmarkSwingRenderer(theme, url -> { }, null).render(markdown.toString(), true);
+            MarkdownTablePanel panel = find(rendered, MarkdownTablePanel.class);
+            assertNotNull(panel);
+            JTable table = (JTable) panel.getViewport().getView();
+            assertEquals(50, table.getRowCount());
+            for (int width : new int[] {260, 1000}) {
+                int height = panel.preferredHeightForWidth(width);
+                panel.setSize(width, height);
+                panel.doLayout();
+                panel.getViewport().doLayout();
+                table.doLayout();
+                assertTrue(height > 320);
+                assertEquals(javax.swing.JScrollPane.VERTICAL_SCROLLBAR_NEVER, panel.getVerticalScrollBarPolicy());
+                assertFalse(panel.getVerticalScrollBar().isVisible());
+                assertEquals(width == 260, panel.getHorizontalScrollBar().isVisible());
+                Rectangle last = table.getCellRect(table.getRowCount() - 1, 0, true);
+                assertTrue(panel.getViewport().getExtentSize().height >= last.y + last.height,
+                        "Display the entire last row at width " + width);
+            }
+            int before = panel.preferredHeightForWidth(1000);
+            table.getColumnModel().getColumn(1).setWidth(100);
+            assertTrue(panel.preferredHeightForWidth(1000) > before,
+                    "Grow the table after narrowing a column");
+        });
+    }
+
     private static String visibleText(JTable table, int row, int column) throws BadLocationException {
         Object value = table.getValueAt(row, column);
         assertTrue(value instanceof MarkdownTablePanel.RichCell);
