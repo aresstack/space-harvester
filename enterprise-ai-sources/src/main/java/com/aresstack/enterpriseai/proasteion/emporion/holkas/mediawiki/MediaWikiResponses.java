@@ -65,14 +65,54 @@ final class MediaWikiResponses {
     }
 
     static MediaWikiSiteInfo siteInfo(String body) throws KnowledgeSourceException {
-        JsonObject general = object(object(parseObject(body), "query"), "general");
+        JsonObject query = object(parseObject(body), "query");
+        JsonObject general = object(query, "general");
         JsonElement title = general == null ? null : general.get("mainpage");
         if (title == null || !title.isJsonPrimitive() || !title.getAsJsonPrimitive().isString()
                 || title.getAsString().trim().isEmpty()) {
             throw new KnowledgeSourceException(Kind.INVALID_RESPONSE,
                     "MediaWiki siteinfo response without a valid main page title");
         }
-        return new MediaWikiSiteInfo(title.getAsString(), stringOrNull(general, "sitename"));
+        List<Integer> namespaces = new ArrayList<Integer>();
+        namespaces.add(0);
+        for (JsonObject namespace : objects(query, "namespaces")) {
+            int id = (int) number(namespace, "id");
+            JsonElement content = namespace.get("content");
+            if (id > 0 && content != null && !content.isJsonNull()
+                    && !(content.isJsonPrimitive() && content.getAsJsonPrimitive().isBoolean() && !content.getAsBoolean())
+                    && !namespaces.contains(id)) {
+                namespaces.add(id);
+            }
+        }
+        Collections.sort(namespaces);
+        return new MediaWikiSiteInfo(title.getAsString(), stringOrNull(general, "sitename"), namespaces);
+    }
+
+    static MediaWikiTitleBatch titleBatch(String body, String list, String field, String continuationKey)
+            throws KnowledgeSourceException {
+        JsonObject root = parseObject(body);
+        JsonObject query = object(root, "query");
+        JsonElement rows = query == null ? null : query.get(list);
+        if (rows == null || !rows.isJsonArray()) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "MediaWiki list response is missing");
+        }
+        List<String> titles = new ArrayList<String>();
+        for (JsonElement row : rows.getAsJsonArray()) {
+            JsonElement title = row.isJsonObject() ? row.getAsJsonObject().get(field) : null;
+            if (title == null && row.isJsonObject() && "allcategories".equals(list)) {
+                title = row.getAsJsonObject().get("*");
+            }
+            if (title == null || !title.isJsonPrimitive() || !title.getAsJsonPrimitive().isString()
+                    || title.getAsString().trim().isEmpty()) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "MediaWiki list entry has no title");
+            }
+            titles.add(title.getAsString());
+        }
+        JsonObject continuation = object(root, "continue");
+        if (continuation != null && stringOrNull(continuation, continuationKey) == null) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "MediaWiki list continuation is invalid");
+        }
+        return new MediaWikiTitleBatch(titles, continuation == null ? "" : continuation.toString());
     }
 
     static WikiParsedPage parsedPage(String body) throws KnowledgeSourceException {

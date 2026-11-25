@@ -40,9 +40,9 @@ public final class MediaWikiSourceProvider implements KnowledgeSourceProvider {
             .field(SourceSettingField.text("startPoints", "Startpunkte (optional)",
                     "Kommagetrennte Seitentitel; leer = Hauptseite automatisch ermitteln"))
             .field(SourceSettingField.of("maxDepth", SourceSettingField.Kind.NUMBER, "Tiefe",
-                    "Wie viele Linkebenen ab den Startpunkten verfolgt werden (0 = nur Startpunkte)").withDefault("1").advanced())
+                    "Nur für Link-Crawls: Tiefe ab Startpunkten; keine Begrenzung der Seitenliste").withDefault("1").advanced())
             .field(SourceSettingField.of("maxResources", SourceSettingField.Kind.NUMBER,
-                    "Höchstzahl Seiten (optional)", "Obergrenze je Lauf; leer = Standard").advanced())
+                    "Höchstzahl Seiten (optional)", "Nur für Link-Crawls; die vollständige Seitenliste bleibt unbegrenzt").advanced())
             .field(SourceSettingField.of("requiresLogin", SourceSettingField.Kind.FLAG, "Anmeldung erforderlich",
                     "Vor dem Lesen anmelden (Standard: ja, wenn ein KeePass-Eintrag gesetzt ist)").advanced())
             .field(SourceSettingField.text("displayName", "Anzeigename (optional)", "Name der Quelle in Quellenangaben").advanced())

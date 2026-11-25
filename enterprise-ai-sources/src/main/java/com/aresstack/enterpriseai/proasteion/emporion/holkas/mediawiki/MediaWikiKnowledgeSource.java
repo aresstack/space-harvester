@@ -11,6 +11,17 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
+import com.aresstack.enterpriseai.source.api.SinglePartitionListingSource;
+import com.aresstack.enterpriseai.source.api.PartitionResources;
+import com.aresstack.enterpriseai.source.api.SourcePartition;
+import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
+import com.aresstack.enterpriseai.source.api.PageNavigationSource;
+import com.aresstack.enterpriseai.source.api.NavigationNode;
+import com.aresstack.enterpriseai.source.api.NavigationChildren;
+import com.aresstack.enterpriseai.source.api.PagePosition;
+import com.aresstack.enterpriseai.source.api.CrossReferences;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import com.aresstack.enterpriseai.source.api.SourceConnectionVerifier;
 import com.aresstack.enterpriseai.source.api.SourceQuery;
 import com.aresstack.enterpriseai.source.api.SourceScope;
@@ -45,7 +56,8 @@ import java.util.Map;
  * ({@link SSLSocketFactory}) mit; beides wird jeder Verbindung einzeln mitgegeben. Der Konstruktor ohne
  * diese Parameter bleibt für die JVM-Standards erhalten.
  */
-public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource, SourceConnectionVerifier {
+public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource, SourceConnectionVerifier,
+        SinglePartitionListingSource, ResourceMetadataSource, PageNavigationSource {
 
     static final String CONTENT_TYPE = "text/html";
 
@@ -53,6 +65,9 @@ public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource
     private final MediaWikiSiteConfig site;
     private final MediaWikiClient client;
     private final WikiCrawler crawler;
+    private final MediaWikiInventory inventory;
+    private final MediaWikiNavigation navigation;
+    private volatile MediaWikiSiteInfo cachedSiteInfo;
 
     public MediaWikiKnowledgeSource(SourceAddress sourceId, MediaWikiSiteConfig site,
                                     MediaWikiCredentialsProvider credentialsProvider) {
@@ -91,6 +106,8 @@ public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource
         this.site = requireSite(site);
         this.client = new MediaWikiClient(site, transport, credentialsProvider);
         this.crawler = new WikiCrawler(client);
+        this.inventory = new MediaWikiInventory(client, site.siteKey());
+        this.navigation = new MediaWikiNavigation(site.siteKey(), inventory);
     }
 
     @Override
@@ -100,12 +117,103 @@ public final class MediaWikiKnowledgeSource implements SearchableKnowledgeSource
 
     /** Read the actual wiki metadata through the authenticated transport. */
     public MediaWikiSiteInfo siteInfo() throws KnowledgeSourceException {
-        return client.siteInfo();
+        MediaWikiSiteInfo info = client.siteInfo();
+        cachedSiteInfo = info;
+        return info;
     }
 
     @Override
     public void verifyConnection() throws KnowledgeSourceException {
         siteInfo();
+    }
+
+    private MediaWikiSiteInfo navigationInfo() throws KnowledgeSourceException {
+        MediaWikiSiteInfo info = cachedSiteInfo;
+        return info == null ? siteInfo() : info;
+    }
+
+    @Override
+    public String partitionKey() {
+        return site.siteKey();
+    }
+
+    @Override
+    public List<SourcePartition> partitions() throws KnowledgeSourceException {
+        MediaWikiSiteInfo info = navigationInfo();
+        return Collections.singletonList(new SourcePartition(partitionKey(), site.displayName(),
+                idOf(info.mainPage()), ""));
+    }
+
+    @Override
+    public PartitionResources resources(String partitionKey, String cursor, int limit) throws KnowledgeSourceException {
+        if (!partitionKey().equals(partitionKey)) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "Unknown MediaWiki partition");
+        }
+        MediaWikiInventory.Batch batch = inventory.pages(navigationInfo().contentNamespaces(), cursor, limit);
+        List<KnowledgeResource> resources = new ArrayList<KnowledgeResource>();
+        List<WikiPageInfo> infos = client.pageInfos(batch.titles);
+        if (!batch.titles.isEmpty() && infos.isEmpty()) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "MediaWiki inventory metadata missing");
+        }
+        for (WikiPageInfo info : infos) {
+            if (!info.missing()) {
+                resources.add(resource(info, info.revisionId(), null));
+            }
+        }
+        return new PartitionResources(resources, batch.next);
+    }
+
+    @Override
+    public String localId(KnowledgeResourceId resourceId) {
+        if (WikiResourceIds.titleOf(site.siteKey(), resourceId.value()) == null
+                && navigation.groupOf(resourceId) == null) {
+            return null;
+        }
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                resourceId.value().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private KnowledgeResourceId resourceId(String localId) throws KnowledgeSourceException {
+        try {
+            KnowledgeResourceId id = KnowledgeResourceId.of(new String(Base64.getUrlDecoder().decode(localId),
+                    StandardCharsets.UTF_8));
+            if (localId.equals(localId(id))) {
+                return id;
+            }
+        } catch (IllegalArgumentException e) {
+            // Reject malformed and foreign identifiers.
+        }
+        throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid MediaWiki resource identifier");
+    }
+
+    @Override
+    public KnowledgeResource resourceMetadata(String localId) throws KnowledgeSourceException {
+        KnowledgeResourceId id = resourceId(localId);
+        String group = navigation.groupOf(id);
+        if (group != null) {
+            return KnowledgeResource.builder(id, sourceId).title(navigation.groupTitle(group))
+                    .contentType("application/x-wiki-navigation-group")
+                    .scope(partitionKey()).build();
+        }
+        WikiPageInfo info = existingPage(id);
+        return resource(info, info.revisionId(), null);
+    }
+
+    @Override
+    public NavigationChildren children(NavigationNode parent, String cursor) throws KnowledgeSourceException {
+        return navigation.children(parent, cursor, navigationInfo());
+    }
+
+    @Override
+    public PagePosition position(KnowledgeResourceId id) throws KnowledgeSourceException {
+        WikiPageInfo info = existingPage(id);
+        return new PagePosition(navigation.root(site.displayName()),
+                Collections.singletonList(navigation.allPages()), navigation.article(info.title()));
+    }
+
+    @Override
+    public CrossReferences crossReferences(KnowledgeResourceId id) throws KnowledgeSourceException {
+        return CrossReferences.outgoingOnly(discoverLinks(id));
     }
 
     @Override

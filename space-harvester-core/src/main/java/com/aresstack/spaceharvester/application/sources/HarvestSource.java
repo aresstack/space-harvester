@@ -29,6 +29,11 @@ public interface HarvestSource {
      * Indicate whether the source persists its technical navigation root as a page.
      * Represent that page through the partition row, not another folder in the explorer.
      */
+    /** Indicate that navigation groups are views, not the persisted resource hierarchy. */
+    default boolean navigationUsesGroups() {
+        return false;
+    }
+
     default boolean navigationRootIsPage() {
         return false;
     }
@@ -496,7 +501,8 @@ public interface HarvestSource {
         public enum Kind {
             PAGE,
             FOLDER,
-            FILE
+            FILE,
+            GROUP
         }
 
         public PageNode(String pageId, String title, String partitionKey, Boolean hasChildren) {

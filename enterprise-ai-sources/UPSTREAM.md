@@ -5,7 +5,7 @@ Embedding-Adapters aus [aresstack/enterprise-ai-client](https://github.com/aress
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`cf7ebd8a7c1aca8fafced4a65d0e2e325f14f8da` (enterprise-ai-client#243: MediaWiki-Auto-Konfiguration); zuvor `b409a93ff416d827b0c65004e1899c2f1be22c36` (enterprise-ai-client#241: optionaler Medienzugriff und Originalabruf); zuvor `df278fb1de239fa3a453cbae7d299a04d50a1cb9`, der Merge von enterprise-ai-client#237 (Jira: Kundenportal-Links des
+`bb41829475e502623d00a6ab588fa97e6bba8ce3` (enterprise-ai-client#243: MediaWiki-Auto-Konfiguration und paginierte Navigation); zuvor `b409a93ff416d827b0c65004e1899c2f1be22c36` (enterprise-ai-client#241: optionaler Medienzugriff und Originalabruf); zuvor `df278fb1de239fa3a453cbae7d299a04d50a1cb9`, der Merge von enterprise-ai-client#237 (Jira: Kundenportal-Links des
 Service Desk `…/servicedesk/customer/portal/<n>/KEY-1` lösen zum Vorgang auf); früher
 `da2f5c496f8cee275acbac57ee74e7ab11024972`, der Merge von enterprise-ai-client#226 (Einmalcode, der auf eine große Datei weiterleitet: `UrlConnectionConfluenceTransport#postForm` liest einen strombaren Körper nicht mehr, die
 Antwort trägt Status, Typ und die Cookies aller Schritte, der Code gilt als angenommen); davor `4b3de28cbb203ffe63ca717f531df1d6142a2031`, der Merge von enterprise-ai-client#225 (`RestQuerySource`: GET-Abfragen
