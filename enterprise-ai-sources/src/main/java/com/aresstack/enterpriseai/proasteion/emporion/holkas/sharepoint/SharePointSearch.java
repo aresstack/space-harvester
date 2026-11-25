@@ -18,13 +18,18 @@ final class SharePointSearch {
     static String query(SourceQuery query, List<String> roots, Function<String, URI> location) throws KnowledgeSourceException {
         String text = query.text().replace('"', ' ').replace('\\', ' ').replaceAll("\\p{Cntrl}", " ").trim();
         if (text.isEmpty()) throw invalid("Leerer Suchbegriff");
-        StringBuilder kql = new StringBuilder(query.titleOnly() ? "Filename:" : "")
-                .append('"').append(text).append("\" AND IsDocument:1 AND (");
+        StringBuilder kql = new StringBuilder("(");
+        for (String term : text.split("\\s+")) {
+            if (kql.length() > 1) kql.append(" AND ");
+            if (query.titleOnly()) kql.append("Filename:");
+            kql.append('"').append(term).append('"');
+        }
+        kql.append(") AND IsDocument:1 AND (");
         for (int i = 0; i < roots.size(); i++) {
             if (i > 0) kql.append(" OR ");
             URI uri = location.apply(roots.get(i));
             if (uri == null) throw invalid("Ungültiger Suchpfad");
-            kql.append("Path:\"").append(uri.toASCIIString()).append("/\"");
+            kql.append("Path:\"").append(uri.getScheme() + "://" + uri.getRawAuthority() + uri.getPath().replace("\"", "%22")).append("/\"");
         }
         return kql.append(')').toString();
     }

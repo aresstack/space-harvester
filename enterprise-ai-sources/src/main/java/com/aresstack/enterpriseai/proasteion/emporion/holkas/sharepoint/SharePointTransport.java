@@ -8,6 +8,9 @@ interface SharePointTransport {
 
     Response get(URI uri, String accept, String authorization, long maxBytes) throws IOException;
 
+    /** Stream successful responses to a temporary file; do not retain the body in memory. */
+    Response download(URI uri, String authorization, java.nio.file.Path target, long maxBytes) throws IOException;
+
     /** Status, Inhaltstyp und Rumpf einer Antwort. */
     final class Response {
 

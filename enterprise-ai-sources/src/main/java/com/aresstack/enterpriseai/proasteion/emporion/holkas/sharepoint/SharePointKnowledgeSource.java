@@ -73,7 +73,7 @@ import java.util.Set;
  *       Anmeldedaten entscheidet das JDK (Windows-Anmeldung).</li>
  * </ul>
  */
-final class SharePointKnowledgeSource implements SearchableKnowledgeSource, SourceConnectionVerifier, ResourceMetadataSource, PageNavigationSource, StoredContentSource, PartitionInventorySource {
+final class SharePointKnowledgeSource implements SearchableKnowledgeSource, SourceConnectionVerifier, ResourceMetadataSource, PageNavigationSource, StoredContentSource, PartitionInventorySource, com.aresstack.enterpriseai.source.api.FileDownloadSource {
 
     static final String SCHEME = "sharepoint";
     static final String ALL_LIBRARIES = ".";
@@ -253,7 +253,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         if (!"true".equalsIgnoreCase(row.get("IsDocument"))) return null;
         URI url;
         try {
-            url = URI.create(row.getOrDefault("Path", ""));
+            url = URI.create(row.getOrDefault("Path", "").replace(" ", "%20"));
         } catch (IllegalArgumentException e) {
             return null;
         }
@@ -374,8 +374,8 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         for (JsonElement element : collection(api(endpoint + "/Files?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel"), authorization)) {
             JsonObject file = element.getAsJsonObject();
             String path = string(file, "ServerRelativeUrl");
-            KnowledgeResource resource = resourceOf(file, true);
-            if (resource != null && path.startsWith(folder + "/") && path.lastIndexOf('/') == folder.length()) {
+            KnowledgeResource resource = resourceOf(file, false);
+            if (resource != null && !resource.title().startsWith("~$") && path.startsWith(folder + "/") && path.lastIndexOf('/') == folder.length()) {
                 nodes.add(fileNode(resource));
             }
         }
@@ -418,6 +418,42 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         if (isFolderId(page)) folderPath(page);
         else serverRelativeOf(page);
         return CrossReferences.outgoingOnly(Collections.emptyList());
+    }
+
+    @Override
+    public java.util.Optional<String> downloadOriginal(String localId, java.nio.file.Path target,
+            java.util.function.Predicate<String> wanted, long maxBytes) throws KnowledgeSourceException {
+        KnowledgeResourceId id = decodeLocalId(localId);
+        if (isFolderId(id)) return java.util.Optional.empty();
+        KnowledgeResource before = resourceMetadata(localId);
+        String type = before.contentType();
+        if (!wanted.test(type)) return java.util.Optional.empty();
+        long length = Long.parseLong(before.metadata().asMap().get("file.size"));
+        if (maxBytes > 0 && length > maxBytes) {
+            throw new ResponseTooLargeException("SharePoint: Datei überschreitet das Limit", maxBytes);
+        }
+        URI uri = api("GetFileByServerRelativeUrl(" + odataString(serverRelativeOf(id)) + ")/$value");
+        requireApiUri(uri);
+        java.nio.file.Path temporary = null;
+        try {
+            temporary = java.nio.file.Files.createTempFile(target.toAbsolutePath().getParent(), "sharepoint-", ".part");
+            SharePointTransport.Response response = transport.download(uri, authorization(), temporary, length);
+            requireSuccess(response);
+            if (response.status() != 200) throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: kein vollständiger Download");
+            KnowledgeResource after = resourceMetadata(localId);
+            if (!before.revision().equals(after.revision()) || !before.metadata().asMap().get("file.size")
+                    .equals(after.metadata().asMap().get("file.size")) || java.nio.file.Files.size(temporary) != length) {
+                throw new KnowledgeSourceException(Kind.UNAVAILABLE, "SharePoint: Datei änderte sich beim Abruf oder ist unvollständig");
+            }
+            java.nio.file.Files.move(temporary, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return java.util.Optional.of(type);
+        } catch (IOException e) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "SharePoint: Originalabruf fehlgeschlagen");
+        } finally {
+            if (temporary != null) {
+                try { java.nio.file.Files.deleteIfExists(temporary); } catch (IOException ignored) { }
+            }
+        }
     }
 
     @Override
@@ -519,6 +555,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         String version = string(file, "UIVersionLabel");
         Map<String, String> metadata = new LinkedHashMap<String, String>();
         metadata.put("sharepoint.path", path);
+        metadata.put("resource.kind", "file");
         metadata.put("file.size", String.valueOf(length));
         KnowledgeResource.Builder builder = KnowledgeResource.builder(KnowledgeResourceId.of(SCHEME, locator + "/" + relative), sourceId)
                 .title(name)
@@ -639,6 +676,11 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         } catch (IOException e) {
             throw new KnowledgeSourceException(Kind.UNAVAILABLE, "SharePoint " + sourceId + " nicht erreichbar", e);
         }
+        requireSuccess(response);
+        return response;
+    }
+
+    private void requireSuccess(SharePointTransport.Response response) throws KnowledgeSourceException {
         int status = response.status();
         if (status == 401 || status == 403) {
             throw new KnowledgeSourceException(Kind.ACCESS_DENIED, "SharePoint " + sourceId
@@ -653,7 +695,6 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         if (status / 100 != 2) {
             throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint " + sourceId + ": HTTP " + status);
         }
-        return response;
     }
 
     // ── JSON ─────────────────────────────────────────────────────────────────────────────────────────────────

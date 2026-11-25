@@ -33,21 +33,47 @@ final class UrlConnectionSharePointTransport implements SharePointTransport {
 
     @Override
     public Response get(URI uri, String accept, String authorization, long maxBytes) throws IOException {
-        HttpURLConnection connection = RouteConnections.open(uri, routes, sslSocketFactory, userAgent);
+        HttpURLConnection connection = open(uri, accept, authorization);
         try {
-            connection.setRequestMethod("GET");
-            connection.setInstanceFollowRedirects(false);
-            connection.setConnectTimeout(connectTimeoutMillis);
-            connection.setReadTimeout(readTimeoutMillis);
-            if (accept != null) {
-                connection.setRequestProperty("Accept", accept);
-            }
-            if (authorization != null) {
-                connection.setRequestProperty("Authorization", authorization);
-            }
             int status = connection.getResponseCode();
             InputStream in = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
             return new Response(status, connection.getContentType(), read(in, maxBytes));
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private HttpURLConnection open(URI uri, String accept, String authorization) throws IOException {
+        HttpURLConnection connection = RouteConnections.open(uri, routes, sslSocketFactory, userAgent);
+        connection.setRequestMethod("GET");
+        connection.setInstanceFollowRedirects(false);
+        connection.setConnectTimeout(connectTimeoutMillis);
+        connection.setReadTimeout(readTimeoutMillis);
+        if (accept != null) connection.setRequestProperty("Accept", accept);
+        if (authorization != null) connection.setRequestProperty("Authorization", authorization);
+        return connection;
+    }
+
+    @Override
+    public Response download(URI uri, String authorization, java.nio.file.Path target, long maxBytes) throws IOException {
+        HttpURLConnection connection = open(uri, null, authorization);
+        try {
+            int status = connection.getResponseCode();
+            if (status == 200) {
+                try (InputStream input = connection.getInputStream();
+                     java.io.OutputStream output = java.nio.file.Files.newOutputStream(target)) {
+                    byte[] buffer = new byte[8192];
+                    long remaining = maxBytes;
+                    int count;
+                    while ((count = input.read(buffer)) != -1) {
+                        if (Thread.currentThread().isInterrupted()) throw new IOException("Download interrupted");
+                        if (count > remaining) throw new IOException("Download exceeds expected size");
+                        output.write(buffer, 0, count);
+                        remaining -= count;
+                    }
+                }
+            }
+            return new Response(status, connection.getContentType(), null);
         } finally {
             connection.disconnect();
         }

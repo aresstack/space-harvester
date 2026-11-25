@@ -60,6 +60,7 @@ class ParitySharePointTest {
                      .source(new SourceSettingsConfig("parity", "sharepoint", "Parity", null, null,
                              Map.of("siteUrl", site.siteUrl())))
                      .dataDirectory(data).build()) {
+            assertThat(harvester.sources().partitions("parity")).extracting(partition -> partition.key()).containsExactly("parity");
             var libraries = harvester.navigation().children(harvester.caller(), "parity", "parity", null, null);
             assertThat(libraries.pages()).extracting(node -> node.title()).containsExactly("Dokumente");
             var library = libraries.pages().get(0);
@@ -67,7 +68,7 @@ class ParitySharePointTest {
                     library.pageId(), null);
             assertThat(children.spaceKey()).isEqualTo("parity");
             assertThat(children.pages()).extracting(node -> node.title())
-                    .containsExactlyInAnyOrder("Betrieb", "Lies mich.txt", "Notizen.md");
+                    .containsExactlyInAnyOrder("Betrieb", "Lies mich.txt", "Notizen.md", "bild.png");
             assertThat(sync(harvester).keySet()).containsExactlyInAnyOrder(ParitySharePoint.DOCUMENTS);
         }
     }

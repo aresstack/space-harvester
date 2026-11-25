@@ -44,6 +44,16 @@ public class SharePointKnowledgeSourceTest {
 
     private final SharePointTransport fake = new SharePointTransport() {
         @Override
+        public Response download(URI uri, String authorization, java.nio.file.Path target, long maxBytes) throws java.io.IOException {
+            Response response = get(uri, null, authorization, maxBytes);
+            if (response.status() == 200) {
+                if (response.body().length > maxBytes) throw new java.io.IOException("too large");
+                java.nio.file.Files.write(target, response.body());
+            }
+            return new Response(response.status(), response.contentType(), null);
+        }
+
+        @Override
         public Response get(URI uri, String accept, String authorization, long maxBytes) {
             authorizations.add(authorization);
             String key = uri.toString();
@@ -145,6 +155,16 @@ public class SharePointKnowledgeSourceTest {
     }
 
     @Test
+    public void kqlUsesSeparateTermsAndDecodedLibraryPaths() throws Exception {
+        com.aresstack.enterpriseai.source.api.SourceQuery query =
+                new com.aresstack.enterpriseai.source.api.SourceQuery("Vertrag 2026", 10);
+        String kql = SharePointSearch.query(query, java.util.Collections.singletonList("/sites/team/Shared Documents"),
+                path -> URI.create("https://sp.example.test" + path.replace(" ", "%20")));
+        assertTrue(kql.contains("\"Vertrag\" AND \"2026\""));
+        assertTrue(kql.contains("Path:\"https://sp.example.test/sites/team/Shared Documents/\""));
+    }
+
+    @Test
     public void nativeSearchFiltersForeignAndHiddenLibraryResults() throws Exception {
         SharePointKnowledgeSource source = source();
         com.aresstack.enterpriseai.source.api.SourceQuery query = new com.aresstack.enterpriseai.source.api.SourceQuery("test", 3);
@@ -152,12 +172,12 @@ public class SharePointKnowledgeSourceTest {
                 path -> URI.create("https://sp.example.test" + path));
         String endpoint = SITE + "/_api/search/query?querytext=" + SharePointKnowledgeSource.odataString(kql)
                 + "&rowlimit=3&startrow=0&trimduplicates=false&selectproperties='Path,Filename,Title,LastModifiedTime,IsDocument'";
-        json.put(endpoint, searchRows("https://sp.example.test/sites/team/Dokumente/test.txt",
+        json.put(endpoint, searchRows("https://sp.example.test/sites/team/Dokumente/test file.txt",
                 "https://sp.example.test/sites/team/Intern/test.txt", "https://other.example.test/sites/team/Dokumente/test.txt"));
         json.put(endpoint.replace("rowlimit=3&startrow=0", "rowlimit=2&startrow=3"), searchRows());
         java.util.List<com.aresstack.enterpriseai.source.api.SourceSearchHit> hits = source.search(query);
         assertEquals(1, hits.size());
-        assertEquals("sharepoint:sp.example.test/sites/team/Dokumente/test.txt", hits.get(0).resourceId().value());
+        assertEquals("sharepoint:sp.example.test/sites/team/Dokumente/test file.txt", hits.get(0).resourceId().value());
         assertTrue(requestedUris.contains(endpoint.replace("rowlimit=3&startrow=0", "rowlimit=2&startrow=3")));
     }
 
@@ -203,6 +223,26 @@ public class SharePointKnowledgeSourceTest {
     }
 
     @Test
+    public void streamsOriginalAndPreservesTargetOnLimitFailure() throws Exception {
+        SharePointKnowledgeSource source = source();
+        String id = source.localId(KnowledgeResourceId.of("sharepoint:sp.example.test/sites/team/Dokumente/IAR Handbuch.txt"));
+        java.nio.file.Path target = java.nio.file.Files.createTempFile("sharepoint-test-", ".txt");
+        try {
+            java.nio.file.Files.write(target, "previous".getBytes(StandardCharsets.UTF_8));
+            try {
+                source.downloadOriginal(id, target, type -> true, 4);
+                fail("Limit ignored");
+            } catch (com.aresstack.enterpriseai.source.api.ResponseTooLargeException expected) {
+                assertEquals("previous", new String(java.nio.file.Files.readAllBytes(target), StandardCharsets.UTF_8));
+            }
+            assertEquals("text/plain", source.downloadOriginal(id, target, type -> true, 0).get());
+            assertEquals("Hallo", new String(java.nio.file.Files.readAllBytes(target), StandardCharsets.UTF_8));
+        } finally {
+            java.nio.file.Files.deleteIfExists(target);
+        }
+    }
+
+    @Test
     public void lazyNavigationAndOriginalsKeepExistingResourceIds() throws Exception {
         SharePointKnowledgeSource source = source();
         com.aresstack.enterpriseai.source.api.NavigationNode root =
@@ -213,7 +253,7 @@ public class SharePointKnowledgeSourceTest {
         assertTrue(libraries.nodes().get(0).isFolder());
         assertEquals(1, requestedUris.size());
         com.aresstack.enterpriseai.source.api.NavigationChildren children = source.children(libraries.nodes().get(0), "");
-        assertEquals(2, children.nodes().size());
+        assertEquals(3, children.nodes().size());
         assertTrue(children.nodes().get(0).isFolder());
         KnowledgeResourceId id = children.nodes().get(1).resource();
         String existingId = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(id.value().getBytes(StandardCharsets.UTF_8));

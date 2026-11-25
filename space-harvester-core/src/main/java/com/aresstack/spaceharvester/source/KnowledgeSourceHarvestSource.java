@@ -975,11 +975,14 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public Optional<String> downloadOriginal(String pageId, java.nio.file.Path target,
                                              java.util.function.Predicate<String> wanted, long maxBytes) {
-        if (!(port instanceof OriginalFileSource files)) {
-            return Optional.empty();
-        }
         try {
-            return files.downloadOriginal(pageId, target, wanted, maxBytes);
+            if (port instanceof com.aresstack.enterpriseai.source.api.FileDownloadSource files) {
+                return files.downloadOriginal(pageId, target, wanted, maxBytes);
+            }
+            if (port instanceof OriginalFileSource files) {
+                return files.downloadOriginal(pageId, target, wanted, maxBytes);
+            }
+            return Optional.empty();
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
