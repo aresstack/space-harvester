@@ -181,6 +181,42 @@ public class LocalFilesStoredContentTest {
     }
 
     @Test
+    public void readsOriginalInPlaceWithMatchingRevisionAndNoServerPathInMetadata() throws Exception {
+        String text = source.readOriginal(id("b.md"), "text/markdown"::equals, 1024, (original, resource) -> {
+            assertEquals(root.resolve("b.md").toRealPath(), original);
+            assertEquals(source.resourceMetadata(id("b.md")).revision(), resource.revision());
+            assertTrue(!resource.location().isPresent());
+            return new String(Files.readAllBytes(original), StandardCharsets.UTF_8);
+        }).get();
+        assertEquals("# B\n", text);
+    }
+
+    @Test
+    public void directReadRespectsEligibilityAndSizeBeforeCallingReader() {
+        LocalFilesKnowledgeSource.OriginalReader<String> reader = (path, resource) -> {
+            fail("Reader must not be called");
+            return "";
+        };
+        assertKind(Kind.INVALID_RESPONSE, () -> source.readOriginal(id("b.md"), type -> true, 1, reader));
+        assertKind(Kind.NOT_FOUND, () -> source.readOriginal(id(".versteckt.txt"), type -> true, 1024, reader));
+        assertKind(Kind.UNSUPPORTED, () -> source.readOriginal(id("../geheim.txt"), type -> true, 1024, reader));
+        try {
+            assertTrue(!source.readOriginal(id("b.md"), type -> false, 1024, reader).isPresent());
+        } catch (KnowledgeSourceException unexpected) {
+            throw new AssertionError(unexpected);
+        }
+    }
+
+    @Test
+    public void directReadRejectsResultWhenOriginalChangesDuringExtraction() {
+        assertKind(Kind.UNAVAILABLE, () -> source.readOriginal(id("b.md"), type -> true, 1024,
+                (original, resource) -> {
+                    Files.write(original, "changed content".getBytes(StandardCharsets.UTF_8));
+                    return "stale result";
+                }));
+    }
+
+    @Test
     public void aRegularFileReplacingTheRootCannotConfirmAnInventory() throws Exception {
         Path removed = Files.move(root, root.resolveSibling("removed"));
         try {

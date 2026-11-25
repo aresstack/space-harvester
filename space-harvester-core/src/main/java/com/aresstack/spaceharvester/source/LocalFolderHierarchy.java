@@ -61,7 +61,7 @@ import java.util.Objects;
  * The navigation reads only immediate children and never traverses unopened directories.
  */
 final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListingSource, ResourceMetadataSource,
-        StoredContentSource, PageNavigationSource, ResourceNodeKindSource, OriginalFileSource, SourceMediaRange,
+        StoredContentSource, PageNavigationSource, ResourceNodeKindSource, OriginalFileSource, DirectOriginalFileSource, SourceMediaRange,
         com.aresstack.enterpriseai.source.api.PartitionInventorySource {
 
     /** {@link StoredContent#nativeFormat()} eines Ordners: kein Inhalt. */
@@ -228,6 +228,16 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
     }
 
     @Override
+    public <T> Optional<T> readOriginalInPlace(String localId, Predicate<String> wanted, long maxBytes,
+                                               DirectOriginalFileSource.Reader<T> reader) throws KnowledgeSourceException {
+        if (folderOf(localId) != null) {
+            return Optional.empty();
+        }
+        return port.readOriginal(localId, wanted, maxBytes,
+                (original, resource) -> reader.read(original, describeFile(resource)));
+    }
+
+    @Override
     public byte[] readRange(String localId, long offset, int maximumBytes) throws KnowledgeSourceException {
         return port.readMediaRange(localId, offset, maximumBytes);
     }
@@ -356,7 +366,12 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             attributes = attributes.with(PageMetadata.REMOTE_MEDIA, "true")
                     .with(PageMetadata.REMOTE_MEDIA_TYPE, videoType);
         }
-        KnowledgeResource.Builder builder = file.toBuilder().metadata(attributes);
+        // The upstream version is the file size; include the modification time to detect same-size edits.
+        KnowledgeRevision revision = file.revision();
+        String version = "local-file/v1:" + revision.version() + ":"
+                + revision.modifiedAt().map(Instant::toString).orElse("unknown");
+        KnowledgeResource.Builder builder = file.toBuilder().metadata(attributes)
+                .revision(KnowledgeRevision.of(revision.modifiedAt().orElse(null), version));
         String path = pathOf(file);
         String parent = path == null ? null : parentOf(path);
         if (parent != null) {

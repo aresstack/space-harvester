@@ -983,6 +983,25 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     @Override
+    public boolean readsOriginalInPlace() {
+        return port instanceof DirectOriginalFileSource;
+    }
+
+    @Override
+    public <T> Optional<T> readOriginalInPlace(String pageId, java.util.function.Predicate<String> wanted,
+                                               long maxBytes, DirectOriginalReader<T> reader) {
+        if (!(port instanceof DirectOriginalFileSource files)) {
+            return Optional.empty();
+        }
+        try {
+            return files.readOriginalInPlace(pageId, wanted, maxBytes,
+                    (original, resource) -> reader.read(original, withSpace(resource), resource.contentType()));
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+    }
+
+    @Override
     public boolean restQueries() {
         return port instanceof RestQuerySource;
     }

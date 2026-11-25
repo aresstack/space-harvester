@@ -585,6 +585,61 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         }
     }
 
+    /**
+     * Read an admitted local original in place. Keep the path inside the synchronous reader;
+     * do not retain it or publish it in metadata. Discard the result if the source changes
+     * or its access grant is revoked during the read.
+     *
+     * @param maxBytes caller's size limit; non-positive means no additional limit
+     */
+    public <T> Optional<T> readOriginal(String localId, Predicate<String> wanted, long maxBytes,
+                                       OriginalReader<T> reader) throws KnowledgeSourceException {
+        java.util.Objects.requireNonNull(wanted, "wanted");
+        java.util.Objects.requireNonNull(reader, "reader");
+        Path file = readable(localId);
+        DetectedContentType type = typeByName(file);
+        if (streamType(file) != null || !wanted.test(type.mimeType())) {
+            return Optional.empty();
+        }
+        long limit = inventoryAllFiles ? (maxBytes > 0 ? maxBytes : Long.MAX_VALUE)
+                : (maxBytes > 0 ? Math.min(maxFileBytes, maxBytes) : maxFileBytes);
+        try {
+            Path original = checkedRealPath(file);
+            BasicFileAttributes before = Files.readAttributes(original, BasicFileAttributes.class);
+            if (!before.isRegularFile() || before.size() > limit) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Datei größer als die erlaubte Grenze oder keine reguläre Datei");
+            }
+            T result = reader.read(original, resource(file, type, false, before));
+            Path current = checkedRealPath(readable(localId));
+            BasicFileAttributes after = Files.readAttributes(current, BasicFileAttributes.class);
+            if (!original.equals(current) || !sameOriginal(before, after)) {
+                throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Datei hat sich beim Lesen geändert");
+            }
+            return Optional.of(java.util.Objects.requireNonNull(result, "reader result"));
+        } catch (IOException e) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, localId + " nicht lesbar", e);
+        }
+    }
+
+    @FunctionalInterface
+    public interface OriginalReader<T> {
+        T read(Path original, KnowledgeResource resource) throws IOException, KnowledgeSourceException;
+    }
+
+    private Path checkedRealPath(Path file) throws IOException, KnowledgeSourceException {
+        Path real = file.toRealPath();
+        if (!policy().isAllowed(real)) {
+            throw new KnowledgeSourceException(Kind.ACCESS_DENIED, "Original liegt außerhalb der freigegebenen Ordner");
+        }
+        return real;
+    }
+
+    private static boolean sameOriginal(BasicFileAttributes before, BasicFileAttributes after) {
+        return after.isRegularFile() && before.size() == after.size()
+                && before.lastModifiedTime().equals(after.lastModifiedTime())
+                && java.util.Objects.equals(before.fileKey(), after.fileKey());
+    }
+
     /** Copy an admitted document directly to a file without materializing it in memory. */
     public Optional<String> copyOriginal(String localId, Path target, Predicate<String> wanted, long maxBytes)
             throws KnowledgeSourceException {

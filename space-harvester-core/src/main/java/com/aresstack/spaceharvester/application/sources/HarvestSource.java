@@ -141,6 +141,25 @@ public interface HarvestSource {
         return Optional.empty();
     }
 
+    /** Indicate whether this source can process originals directly at their storage location. */
+    default boolean readsOriginalInPlace() {
+        return false;
+    }
+
+    /**
+     * Read an original within a synchronous callback. Do not retain the path or publish side effects
+     * until the source has checked that the read still belongs to the same revision.
+     */
+    default <T> Optional<T> readOriginalInPlace(String pageId, java.util.function.Predicate<String> wanted,
+                                                long maxBytes, DirectOriginalReader<T> reader) {
+        return Optional.empty();
+    }
+
+    @FunctionalInterface
+    interface DirectOriginalReader<T> {
+        T read(java.nio.file.Path original, PageMetadata metadata, String mediaType) throws java.io.IOException;
+    }
+
     /**
      * Read only the requested byte range of a remotely stored media file.
      * The caller must authorize access to this resource before reading.
