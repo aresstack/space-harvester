@@ -99,6 +99,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
     private final long maxFileBytes;
     private final SourceScope configuredScope;
     private final SharePointChangePages changePages = new SharePointChangePages();
+    private final SharePointNavigationPages navigationPages = new SharePointNavigationPages();
 
     SharePointKnowledgeSource(SourceAddress sourceId, URI siteUri, SharePointCredentialsProvider credentials,
                               SharePointTransport transport, ContentDetector detector, ExtractionRegistry extractors,
@@ -478,38 +479,59 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
 
     @Override
     public NavigationChildren children(NavigationNode parent, String cursor) throws KnowledgeSourceException {
-        if (cursor != null && !cursor.isEmpty()) {
-            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Navigationscursor");
-        }
         String authorization = authorization();
         List<String> roots = searchRoots(authorization);
-        List<NavigationNode> nodes = new ArrayList<NavigationNode>();
         if (parent.isRoot()) {
+            if (cursor != null && !cursor.isEmpty()) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Navigationscursor");
+            }
+            List<NavigationNode> nodes = new ArrayList<NavigationNode>();
             for (String root : roots) nodes.add(folderNode(root));
             return new NavigationChildren(nodes, "");
         }
-        if (!isFolderId(parent.resource())) return new NavigationChildren(nodes, "");
+        if (!isFolderId(parent.resource())) {
+            if (cursor != null && !cursor.isEmpty()) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Navigationscursor");
+            }
+            return new NavigationChildren(Collections.<NavigationNode>emptyList(), "");
+        }
         String folder = folderPath(parent.resource());
         if (!withinRoots(folder, roots)) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: Ordner außerhalb des Umfangs");
         }
-        for (JsonElement element : collection(resourceApi("Folder", folder, "/Folders?$select=Name,ServerRelativeUrl"), authorization)) {
-            JsonObject sub = element.getAsJsonObject();
-            String path = string(sub, "ServerRelativeUrl");
-            String name = string(sub, "Name");
-            if (insideSite(path) && path.startsWith(folder + "/") && path.lastIndexOf('/') == folder.length()
-                    && name != null && !"Forms".equalsIgnoreCase(name)) nodes.add(folderNode(path));
+        URI folders = resourceApi("Folder", folder, "/Folders?$select=Name,ServerRelativeUrl");
+        URI files = resourceApi("Folder", folder, "/Files?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel");
+        return navigationPages.folder(parent.resource().value(), cursor, folders, files,
+                (first, current, isFolderPage) -> navigationPage(folder, first, current, isFolderPage, authorization));
+    }
+
+    private SharePointNavigationPages.Page navigationPage(String folder, URI first, URI current, boolean folders,
+                                                          String authorization) throws KnowledgeSourceException {
+        JsonObject data = get(current, authorization);
+        JsonElement rows = data.get("results");
+        if (rows == null || !rows.isJsonArray()) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: OData-Ergebnisliste fehlt");
         }
-        for (JsonElement element : collection(resourceApi("Folder", folder, "/Files?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel"), authorization)) {
-            JsonObject file = element.getAsJsonObject();
-            String path = string(file, "ServerRelativeUrl");
-            KnowledgeResource resource = resourceOf(file, false);
-            if (resource != null && !resource.title().startsWith("~$") && path.startsWith(folder + "/") && path.lastIndexOf('/') == folder.length()) {
-                nodes.add(fileNode(resource));
+        List<NavigationNode> nodes = new ArrayList<NavigationNode>();
+        for (JsonElement element : rows.getAsJsonArray()) {
+            if (!element.isJsonObject()) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: ungültiger OData-Eintrag");
+            }
+            JsonObject entry = element.getAsJsonObject();
+            String path = string(entry, "ServerRelativeUrl");
+            String name = string(entry, "Name");
+            if (!insideSite(path) || !path.startsWith(folder + "/") || path.lastIndexOf('/') != folder.length()
+                    || name == null) continue;
+            if (folders) {
+                if (!"Forms".equalsIgnoreCase(name)) nodes.add(folderNode(path));
+            } else {
+                KnowledgeResource resource = resourceOf(entry, false);
+                if (resource != null && !resource.title().startsWith("~$")) nodes.add(fileNode(resource));
             }
         }
-        return new NavigationChildren(nodes, "");
+        return new SharePointNavigationPages.Page(nodes, continuation(first, current, data));
     }
+
 
     private static boolean withinRoots(String path, List<String> roots) {
         for (String root : roots) {
@@ -895,24 +917,27 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
                 if (done.getAsBoolean()) break;
                 found.accept(row);
             }
-            String continuation = string(data, "__next");
-            if (continuation == null || continuation.isEmpty()) {
-                next = null;
-            } else {
-                try {
-                    next = continuation.startsWith("?")
-                            ? URI.create(next.toString().split("\\?", 2)[0] + continuation)
-                            : next.resolve(URI.create(continuation));
-                    requireApiUri(next);
-                    if (!first.getPath().equals(next.getPath()) || !java.util.Objects.equals(pathAlias(first), pathAlias(next))) {
-                        throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: fremde OData-Folgeseite");
-                    }
-                } catch (IllegalArgumentException invalid) {
-                    throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: ungültige OData-Folgeseite");
-                }
-            }
+            next = continuation(first, next, data);
         }
     }
+
+    private URI continuation(URI first, URI current, JsonObject data) throws KnowledgeSourceException {
+        String continuation = string(data, "__next");
+        if (continuation == null || continuation.isEmpty()) return null;
+        try {
+            URI next = continuation.startsWith("?")
+                    ? URI.create(current.toString().split("\\?", 2)[0] + continuation)
+                    : current.resolve(URI.create(continuation));
+            requireApiUri(next);
+            if (!first.getPath().equals(next.getPath()) || !java.util.Objects.equals(pathAlias(first), pathAlias(next))) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: fremde OData-Folgeseite");
+            }
+            return next;
+        } catch (IllegalArgumentException invalid) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: ungültige OData-Folgeseite");
+        }
+    }
+
 
     private static String pathAlias(URI uri) {
         String query = uri.getRawQuery();

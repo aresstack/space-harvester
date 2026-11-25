@@ -323,6 +323,98 @@ public class SharePointKnowledgeSourceTest {
     }
 
     @Test
+    public void explorerDefersServerPagesAndLimitsLargeResponses() throws Exception {
+        SharePointKnowledgeSource source = source();
+        com.aresstack.enterpriseai.source.api.NavigationNode root =
+                com.aresstack.enterpriseai.source.api.NavigationNode.root("root", "root", "root",
+                        com.aresstack.enterpriseai.source.api.NavigationNode.Children.UNKNOWN);
+        com.aresstack.enterpriseai.source.api.NavigationNode library = source.children(root, "").nodes().get(0);
+        String folders = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Folders?$select=Name,ServerRelativeUrl";
+        String files = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Files"
+                + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel";
+        String nextFolders = folders + "&$skiptoken=2";
+        String nextFiles = files + "&$skiptoken=250";
+        json.put(folders, "{\"d\":{\"results\":[{\"Name\":\"Unter\",\"ServerRelativeUrl\":\"/sites/team/Dokumente/Unter\"}],\"__next\":\""
+                + nextFolders + "\"}}");
+        json.put(nextFolders, "{\"d\":{\"results\":[{\"Name\":\"Zweite\",\"ServerRelativeUrl\":\"/sites/team/Dokumente/Zweite\"}]}}");
+        StringBuilder rows = new StringBuilder();
+        for (int i = 0; i < 250; i++) {
+            if (i > 0) rows.append(',');
+            rows.append(file("/sites/team/Dokumente/file" + i + ".txt", 5));
+        }
+        json.put(files, "{\"d\":{\"results\":[" + rows + "],\"__next\":\"" + nextFiles + "\"}}");
+        json.put(nextFiles, "{\"d\":{\"results\":[" + file("/sites/team/Dokumente/last.txt", 5) + "]}}");
+        com.aresstack.enterpriseai.source.api.NavigationChildren batch = source.children(library, "");
+        assertEquals(1, batch.nodes().size());
+        assertFalse(batch.complete());
+        assertFalse(requestedUris.contains(nextFolders));
+        assertFalse(requestedUris.contains(files));
+        try {
+            source.children(batch.nodes().get(0), batch.nextCursor());
+            fail("Foreign folder cursor accepted");
+        } catch (KnowledgeSourceException expected) {
+            assertEquals(KnowledgeSourceException.Kind.INVALID_RESPONSE, expected.kind());
+        }
+        java.util.Set<String> ids = new java.util.HashSet<String>();
+        ids.add(batch.nodes().get(0).resource().value());
+        batch = source.children(library, batch.nextCursor());
+        assertEquals(100, batch.nodes().size());
+        assertTrue(requestedUris.contains(nextFolders));
+        assertTrue(requestedUris.contains(files));
+        assertFalse(requestedUris.contains(nextFiles));
+        for (com.aresstack.enterpriseai.source.api.NavigationNode node : batch.nodes()) assertTrue(ids.add(node.resource().value()));
+        batch = source.children(library, batch.nextCursor());
+        assertEquals(100, batch.nodes().size());
+        assertFalse(requestedUris.contains(nextFiles));
+        for (com.aresstack.enterpriseai.source.api.NavigationNode node : batch.nodes()) assertTrue(ids.add(node.resource().value()));
+        batch = source.children(library, batch.nextCursor());
+        assertTrue(batch.complete());
+        assertEquals(52, batch.nodes().size());
+        for (com.aresstack.enterpriseai.source.api.NavigationNode node : batch.nodes()) assertTrue(ids.add(node.resource().value()));
+        assertEquals(253, ids.size());
+        assertEquals(1, java.util.Collections.frequency(requestedUris, files));
+        assertEquals(1, java.util.Collections.frequency(requestedUris, nextFiles));
+    }
+
+    @Test
+    public void explorerRejectsUnsafeContinuationAndAllowsRetryAfterServerFailure() throws Exception {
+        SharePointKnowledgeSource source = source();
+        com.aresstack.enterpriseai.source.api.NavigationNode root =
+                com.aresstack.enterpriseai.source.api.NavigationNode.root("root", "root", "root",
+                        com.aresstack.enterpriseai.source.api.NavigationNode.Children.UNKNOWN);
+        com.aresstack.enterpriseai.source.api.NavigationNode library = source.children(root, "").nodes().get(0);
+        String files = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Files"
+                + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel";
+        String next = files + "&$skiptoken=2";
+        json.put(files, "{\"d\":{\"results\":[" + file("/sites/team/Dokumente/first.txt", 5)
+                + "],\"__next\":\"" + next + "\"}}");
+        com.aresstack.enterpriseai.source.api.NavigationChildren first = source.children(library, "");
+        assertFalse(first.complete());
+        try {
+            source.children(library, first.nextCursor());
+            fail("Missing continuation accepted");
+        } catch (KnowledgeSourceException expected) {
+            assertEquals(KnowledgeSourceException.Kind.NOT_FOUND, expected.kind());
+        }
+        for (String unsafe : new String[]{files, "https://outside.example.test/_api/web/Files"}) {
+            json.put(next, "{\"d\":{\"results\":[],\"__next\":\"" + unsafe + "\"}}");
+            try {
+                source.children(library, first.nextCursor());
+                fail("Unsafe continuation accepted");
+            } catch (KnowledgeSourceException expected) {
+                assertEquals(KnowledgeSourceException.Kind.INVALID_RESPONSE, expected.kind());
+            }
+        }
+        json.put(next, "{\"d\":{\"results\":[" + file("/sites/team/Dokumente/last.txt", 5) + "]}}");
+        com.aresstack.enterpriseai.source.api.NavigationChildren last = source.children(library, first.nextCursor());
+        assertTrue(last.complete());
+        assertEquals(1, last.nodes().size());
+        assertEquals("last.txt", last.nodes().get(0).title());
+        assertFalse(requestedUris.contains("https://outside.example.test/_api/web/Files"));
+    }
+
+
+    @Test
     public void foreignIdIsUnsupported() {
         try {
             source().load(KnowledgeResourceId.of("sharepoint:other.example.test/x.txt"));

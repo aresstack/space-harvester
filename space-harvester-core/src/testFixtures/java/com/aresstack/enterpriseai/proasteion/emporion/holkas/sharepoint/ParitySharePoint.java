@@ -72,6 +72,8 @@ public final class ParitySharePoint implements AutoCloseable {
 
     private final HttpServer server;
     private final Map<String, byte[]> documents;
+    private int pageSize = Integer.MAX_VALUE;
+    private final java.util.concurrent.atomic.AtomicInteger continuationRequests = new java.util.concurrent.atomic.AtomicInteger();
 
     private ParitySharePoint(int port) throws IOException {
         this(port, FILES);
@@ -105,6 +107,20 @@ public final class ParitySharePoint implements AutoCloseable {
         Map<String, byte[]> documents = new LinkedHashMap<String, byte[]>(FILES);
         documents.put(path, bytes);
         return new ParitySharePoint(0, documents);
+    }
+
+    public static ParitySharePoint paginated(int files, int pageSize) throws IOException {
+        Map<String, byte[]> documents = new LinkedHashMap<String, byte[]>();
+        for (int i = 0; i < files; i++) {
+            documents.put(LIBRARY + String.format("/Datei-%04d.txt", i), "Sample text".getBytes(UTF_8));
+        }
+        ParitySharePoint site = new ParitySharePoint(0, documents);
+        site.pageSize = pageSize;
+        return site;
+    }
+
+    public int continuationRequests() {
+        return continuationRequests.get();
     }
 
     public int port() {
@@ -218,15 +234,32 @@ public final class ParitySharePoint implements AutoCloseable {
             send(exchange, 404, "application/json", new byte[0]);
             return;
         }
+        int start = 0;
+        String query = exchange.getRequestURI().getRawQuery();
+        Matcher token = Pattern.compile("(?:^|&)\\$skiptoken=(\\d+)(?:&|$)").matcher(query == null ? "" : query);
+        if (token.find()) {
+            start = Integer.parseInt(token.group(1));
+            continuationRequests.incrementAndGet();
+        }
+        int end = (int) Math.min(names.size(), (long) start + pageSize);
         StringBuilder results = new StringBuilder();
+        int index = 0;
         for (String name : names) {
+            if (index++ < start) continue;
+            if (index > end) break;
             if (results.length() > 0) {
                 results.append(',');
             }
             results.append(files ? metadata(prefix + name)
                     : "{\"Name\":\"" + name + "\",\"ServerRelativeUrl\":\"" + prefix + name + "\"}");
         }
-        json(exchange, "{\"d\":{\"results\":[" + results + "]}}");
+        String next = "";
+        if (end < names.size()) {
+            String raw = exchange.getRequestURI().getRawQuery();
+            String base = raw == null ? "" : raw.replaceAll("&?\\$skiptoken=\\d+", "");
+            next = ",\"__next\":\"?" + base + "&$skiptoken=" + end + "\"";
+        }
+        json(exchange, "{\"d\":{\"results\":[" + results + "]" + next + "}}");
     }
 
     private void file(HttpExchange exchange, String path, boolean content) throws IOException {
